@@ -1,12 +1,12 @@
-# Project Trebuchet: The Quest for Unprecedented Scale - Competitor's Codex
+# The 2power4 Massive Scale Challenge - Competitor's Codex
 
-Welcome, Trailblazers, to Project Trebuchet! This isn't just a hackathon; it's an expedition into the uncharted territories of digital interaction. We're calling on you—the brightest minds, the boldest coders, the most ingenious optimizers—to help us forge a server capable of hosting worlds teeming with thousands, even tens of thousands, of concurrent players and AI, all moving, interacting, and living at a fluid 60 FPS. Your mission: take the formidable `massive_game_server` engine and transform it into a legend.
+Welcome, Trailblazers, to the **2power4 Challenge**! This isn't just a hackathon; it's an expedition into the uncharted territories of digital interaction. We're calling on you—the brightest minds, the boldest coders, the most ingenious optimizers—to help us forge a server capable of hosting worlds teeming with thousands, even tens of thousands, of concurrent players and AI, all moving, interacting, and living at a fluid 60 FPS. Your mission: take the formidable `massive_game_server` engine and transform it into a legend.
 
-**The Grand Vision:** Imagine recreating pivotal historical moments with thousands of participants, simulating the breathtaking complexity of natural ecosystems, or building entirely new genres of games where scale *is* the experience. This is Project Trebuchet's ambition—to not just break records, but to unlock new forms of interactive storytelling and demonstrate NYC's unparalleled technological creativity.
+**The Grand Vision:** Imagine recreating pivotal historical moments with thousands of participants, simulating the breathtaking complexity of natural ecosystems, or building entirely new genres of games where scale *is* the experience. This is the **2power4** initiative's ambition—to not just break records, but to unlock new forms of interactive storytelling and demonstrate NYC's unparalleled technological creativity.
 
 ## 1. Your Call to Adventure: Eligibility & The First Trial
 
-To join the ranks of the chosen few (16-32 pioneers) who will battle in the main **Project Trebuchet Competition**, you must first prove your mettle:
+To join the ranks of the chosen few (16-32 pioneers) who will battle in the main **2power4 Massive Scale Challenge**, you must first prove your mettle:
 
 1. **Heed the Call:** Clone the `TrebuchetNetwork/massive_game_server` repository. This is your foundational toolkit.
 
@@ -18,44 +18,35 @@ To join the ranks of the chosen few (16-32 pioneers) who will battle in the main
 
 This first trial ensures every champion enters the arena with the knowledge and tools to conquer the challenges ahead.
 
-## 2. The Saga Unfolds: Hackathon Schedule & Timeline
+## 2. The Saga Unfolds: Proposed Hackathon Schedule & Timeline
 
-The Project Trebuchet saga will unfold over approximately two months, marked by three pivotal events, commencing on **Monday, June 10th, 2025**.
+We envision the **2power4 Challenge** unfolding over approximately two months, marked by three pivotal events. We propose the following timeline and welcome your feedback to help us finalize it!
 
 * **Event 1: The Gauntlet & The Gathering (Qualifier & Kick-off)**
-
-  * **The Gauntlet (Qualifier Period):** Monday, June 10, 2025 - Sunday, June 23, 2025
-    *(Two weeks to prove your worth by completing the "First Trial".)*
-
-  * **Champions Chosen (Selected Participants Announced):** Wednesday, June 26, 2025
-    *(The heralds will announce those who have earned their place.)*
-
-  * **The Gathering (Hackathon Kick-off & Grand Briefing):** Saturday, June 29, 2025
-    *(Join us, virtually or in person \[Location TBD\], as we officially launch the quest, delve deeper into the challenges, and form our fellowships!)*
+    * **The Gauntlet (Qualifier Period):** Proposed Start: **Mid-June 2025** (e.g., around June 10th). Duration: **Approx. 2 weeks.**
+        *(Time to prove your worth by completing the "First Trial".)*
+    * **Champions Chosen (Selected Participants Announced):** Proposed: **Late June 2025** (e.g., around June 26th)
+        *(The heralds will announce those who have earned their place.)*
+    * **The Gathering (Hackathon Kick-off & Grand Briefing):** Proposed: **End of June 2025** (e.g., Saturday, June 29th)
+        *(Join us, virtually or in person [Location TBD], as we officially launch the quest, delve deeper into the challenges, and form our fellowships!)*
 
 * **Event 2: The Great Forging (Main Development Sprint & Mid-Point Rally)**
-
-  * **The Forging - First Phase (Development Period):** Sunday, June 30, 2025 - Sunday, July 14, 2025
-    *(Two weeks of intensive coding, optimization, and innovation.)*
-
-  * **Mid-Point Rally (Mentorship & Progress Check-in):** Saturday, July 13, 2025 (Tentative)
-    *(A day for guidance, sharing early breakthroughs, and strategic counsel with mentors.)*
-
-  * **The Forging - Second Phase (Development Period):** Monday, July 15, 2025 - Sunday, July 28, 2025
-    *(Two more weeks to refine your creations and push the boundaries of scale.)*
+    * **The Forging - First Phase (Development Period):** Proposed Start: **Early July 2025**. Duration: **Approx. 2 weeks.**
+        *(Intensive coding, optimization, and innovation.)*
+    * **Mid-Point Rally (Mentorship & Progress Check-in):** Proposed: **Mid-July 2025** (e.g., a weekend day like July 13th/14th)
+        *(A day for guidance, sharing early breakthroughs, and strategic counsel with mentors.)*
+    * **The Forging - Second Phase (Development Period):** Proposed Start: **Mid-July 2025**. Duration: **Approx. 2 weeks.**
+        *(More time to refine your creations and push the boundaries of scale, concluding late July.)*
 
 * **Event 3: The Reckoning & The Revelation (Submissions, Judging & Grand Showcase)**
+    * **Scrolls Submitted (Submission Deadline):** Proposed: **End of July 2025** (e.g., Sunday, July 28th, End of Day, Your Timezone)
+        *(Present your masterpieces to the Council.)*
+    * **The Council Deliberates (Judging Period):** Proposed: **Early August 2025**. Duration: **Approx. 1-2 weeks.**
+        *(The wisest minds will scrutinize your innovations.)*
+    * **Legends Crowned (Winners Announced & Grand Showcase):** Proposed: **Mid-August 2025** (e.g., a weekend like August 10th/11th - Evening Event, Details TBD)
+        *(Celebrate the triumphs, witness the crowning of champions, and behold the future of massive-scale interaction!)*
 
-  * **Scrolls Submitted (Submission Deadline):** Sunday, July 28, 2025 (End of Day, Your Timezone)
-    *(Present your masterpieces to the Council.)*
-
-  * **The Council Deliberates (Judging Period):** Monday, July 29, 2025 - Friday, August 9, 2025
-    *(The wisest minds will scrutinize your innovations.)*
-
-  * **Legends Crowned (Winners Announced & Grand Showcase):** Saturday, August 10, 2025 (Evening Event - Details TBD)
-    *(Celebrate the triumphs, witness the crowning of champions, and behold the future of massive-scale interaction!)*
-
-*(All dates are subject to minor adjustments. Final details will be communicated by the Trebuchet Network organizers.)*
+*(This is a proposed timeline. Final dates will be set after considering community feedback and organizer logistics. Please share your thoughts!)*
 
 ## 3. Spoils of Victory: Prizes & Eternal Glory
 
@@ -129,7 +120,7 @@ Your creations will be judged by the Council of Elders based on these sacred ten
 
 * **FlatBuffers:** Ancient glyphs for hyper-efficient data transmission.
 
-* **Tokio:** The mystical force powering our asynchronous operations. \[cite: 1111\]
+* **Tokio:** The mystical force powering our asynchronous operations. \
 
 * **Pixi.js & Tailwind CSS:** The enchanted brushes for our client-side tapestry.
 
@@ -155,17 +146,17 @@ Your creations will be judged by the Council of Elders based on these sacred ten
 
 ### 6.5. Tuning the Harmonics (Key Configuration & Performance Areas)
 
-* **The Master Scroll:** `server/src/core/config.rs` \[cite: 1371, 1373\]
+* **The Master Scroll:** `server/src/core/config.rs` \
 
-  * `tick_rate`: Default `SERVER_TICK_RATE` (e.g., 30). \[cite: 1373, 1381\]
+  * `tick_rate`: Default `SERVER_TICK_RATE` (e.g., 30). \
 
-  * `num_player_shards`: Default 12 (attune to your CPU's soul). \[cite: 1373\]
+  * `num_player_shards`: Default 12 (attune to your CPU's soul). \
 
-  * `max_players_per_match`: Default 400 (can this number grow?). \[cite: 1373, 1374\]
+  * `max_players_per_match`: Default 400 (can this number grow?). \
 
-  * `ThreadPoolConfig`: Defaults for a 12-spirit CPU - `physics: 8`, `networking: 6`, `game_logic: 6`, `ai: 2`, `io: 2`. \[cite: 1372, 1374\]
+  * `ThreadPoolConfig`: Defaults for a 12-spirit CPU - `physics: 8`, `networking: 6`, `game_logic: 6`, `ai: 2`, `io: 2`. \
 
-* **The AI Horde:** `target_bot_count` in `server/src/server/instance.rs` (default 400). \[cite: 1901\]
+* **The AI Horde:** `target_bot_count` in `server/src/server/instance.rs` (default 400). \
 
 * **Where Legends Are Forged (Optimization Focus):** Vanquish the demons of Input/AI latency, State Synchronization overhead, and Game Logic bottlenecks when the world teems with life.
 
@@ -191,7 +182,7 @@ Your creations will be judged by the Council of Elders based on these sacred ten
 
 ### 6.8. The Alchemist's Secrets (Key Optimization Areas)
 
-* **The Symphony of Cores:** Master NUMA, thread pinning (`core_affinity` \[cite: 1112\]), and task sharding. Make all 96 cores sing in harmony.
+* **The Symphony of Cores:** Master NUMA, thread pinning (`core_affinity` \), and task sharding. Make all 96 cores sing in harmony.
 
 * **The Art of Essence (Memory):** Data-Oriented Design, object pooling, cache whispering.
 
@@ -239,7 +230,7 @@ Your creations will be judged by the Council of Elders based on these sacred ten
 
 ## 8. The Oracle's Chamber: Support & Communication
 
-* **The Grand Forum (Primary Communication Channel):** \[e.g., The Hallowed Discord Server of Trebuchet - Link to be Revealed\]
+* **The Grand Forum (Primary Communication Channel):** \[e.g., The Hallowed Discord Server for the 2power4 Challenge - Link to be Revealed\]
 
 * **The Library of Queries (GitHub Issues):** For arcane questions about the base `massive_game_server` artifact.
 
@@ -264,7 +255,7 @@ All champions must honor the [**CODE_OF_CONDUCT.md**](CODE_OF_CONDUCT.md). We se
 
 ## 10. Beyond the Horizon: Post-Hackathon Adventures
 
-* **The Ongoing Saga:** Outstanding creations or individuals may be invited to continue their journey with Trebuchet Network.
+* **The Ongoing Saga:** Outstanding creations or individuals may be invited to continue their journey with Trebuchet Network and the **2power4** initiative.
 
 * **Echoes in Eternity (Open Source Showcase):** Your triumphs may be integrated into the main `massive_game_server` or celebrated far and wide.
 
@@ -276,8 +267,8 @@ All champions must honor the [**CODE_OF_CONDUCT.md**](CODE_OF_CONDUCT.md). We se
 
 For queries regarding the organization of this grand tournament, its laws, or the logistics of your quest:
 
-* **Carrier Pigeon (Email):** \[Hackathon Organizer Email - To Be Announced\]
+* **Carrier Pigeon (Email):** \[Hackathon Organizer Email for 2power4 Challenge - To Be Announced\]
 
-* **Town Crier (Discord):** \[Admin/Organizer Handles - To Be Announced\]
+* **Town Crier (Discord):** \[Admin/Organizer Handles on Discord - To Be Announced\]
 
-May your code be swift, your algorithms elegant, and your servers unyielding! We eagerly await the legends you will forge in Project Trebuchet!
+May your code be swift, your algorithms elegant, and your servers unyielding! We eagerly await the legends you will forge in the **2power4 Challenge**!
