@@ -14,7 +14,7 @@ license = "MIT"
 readme = "README.md" # You might want a specific README for the crate itself, or point to the main one if it's suitable.
 repository = "https://github.com/TrebuchetNetwork/massive_game_server" # URL to your GitHub repo
 homepage = "https://github.com/TrebuchetNetwork/massive_game_server" # Optional
-keywords = ["game-server", "rust", "multiplayer", "webrtc", "massive-scale", "trebuchet"]
+keywords = ["game-server", "multiplayer", "webrtc", "massive-scale", "trebuchet"]
 categories = ["games", "network-programming", "simulation"] # Choose appropriate categories
 
 
