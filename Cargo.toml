@@ -1,0 +1,29 @@
+# Cargo.toml
+
+
+[workspace]
+resolver = "2"
+members = [
+    "server",
+    #"protocol", 
+    #"stress-client",
+    #"admin-tools",
+]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+opt-level = 3
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+
+[profile.bench]
+inherits = "release"
+debug = true
+
+
+

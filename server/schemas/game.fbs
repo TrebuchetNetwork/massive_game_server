@@ -1,0 +1,278 @@
+// game.fbs - Evolved FlatBuffers schema for the game protocol
+
+namespace GameProtocol;
+
+enum WeaponType : byte {
+    Pistol = 0,
+    Shotgun = 1,
+    Rifle = 2,
+    Sniper = 3,
+    Melee = 4 // Added for melee attack
+}
+
+enum MessageType : byte {
+    Welcome = 0,
+    InitialState = 1,
+    DeltaState = 2,
+    Input = 3,
+    Chat = 4,
+    MatchUpdate = 5
+    // Potentially: KillCamData = 6 (if a more detailed kill cam message is needed)
+}
+
+enum PickupType : byte {
+    Health = 0,
+    Ammo = 1,
+    WeaponCrate = 2,
+    SpeedBoost = 3,    // New powerup
+    DamageBoost = 4,   // New powerup
+    Shield = 5,        // New powerup
+    FlagRed = 6,       // CTF Red Flag (example team color)
+    FlagBlue = 7       // CTF Blue Flag (example team color)
+}
+
+enum GameModeType : byte {
+    FreeForAll = 0,
+    TeamDeathmatch = 1,
+    CaptureTheFlag = 2
+}
+
+enum FlagStatus : byte {
+    AtBase = 0,
+    Carried = 1,
+    Dropped = 2
+}
+
+// Enum for signaling various in-game events for client-side effects (particles, sounds)
+enum GameEventType : byte {
+    BulletImpact = 0,
+    Explosion = 1,
+    WeaponFire = 2,
+    PlayerDamageEffect = 3, // For visual/audio feedback on damage
+    WallImpact = 4,
+    WallDestroyed = 5,
+    PowerupActivated = 6,
+    FlagGrabbed = 7,
+    FlagDropped = 8,
+    FlagReturned = 9,
+    FlagCaptured = 10
+}
+
+enum MatchStateType : byte {
+    Waiting = 0,
+    Active = 1,
+    Ended = 2
+}
+
+enum Team : byte {
+    Spectator = 0,
+    Team1 = 1,
+    Team2 = 2
+}
+
+table MatchStatus {
+    state: MatchStateType;  // FIXED: Changed from MatchState to MatchStateType
+    time_remaining_seconds: uint32;
+    team1_score: int32;
+    team2_score: int32;
+    winning_team: Team;
+}
+
+table TeamScoreEntry { // For MatchInfo.team_scores
+    team_id: byte;
+    score: int;
+}
+
+table MatchInfo {
+    time_remaining: float;
+    match_state: MatchStateType; // Use the new enum
+    winner_id: string;
+    winner_name: string;
+    game_mode: GameModeType = FreeForAll;
+    team_scores: [TeamScoreEntry]; // Changed to vector of table
+}
+
+table Vec2 {
+    x: float;
+    y: float;
+}
+
+table PlayerState {
+    id: string;
+    username: string;
+    x: float;
+    y: float;
+    rotation: float;
+    velocity_x: float;
+    velocity_y: float;
+    health: int;
+    max_health: int;
+    alive: bool;
+    respawn_timer: float;
+    weapon: WeaponType;
+    ammo: int;
+    reload_progress: float;
+    score: int;
+    kills: int;
+    deaths: int;
+
+    // Gameplay Enhancements
+    team_id: byte = 0; // 0 for FFA/none, 1 for Team A, 2 for Team B, etc.
+
+    // Powerup effects
+    speed_boost_remaining: float = 0.0;
+    damage_boost_remaining: float = 0.0;
+    shield_current: int = 0;
+    shield_max: int = 0; // Max shield capacity if a shield powerup is active
+
+    // CTF
+    is_carrying_flag_team_id: byte = 0; // 0 if not carrying, otherwise team ID of the flag being carried
+}
+
+table ProjectileState {
+    id: string;
+    x: float;
+    y: float;
+    owner_id: string;
+    weapon_type: WeaponType;
+    velocity_x: float;
+    velocity_y: float;
+}
+
+table Wall {
+    id: string; // Added ID for walls to reference them, especially for destruction
+    x: float;
+    y: float;
+    width: float;
+    height: float;
+    is_destructible: bool = false;
+    current_health: int = 100;
+    max_health: int = 100;
+}
+
+table Pickup {
+    id: string;
+    x: float;
+    y: float;
+    pickup_type: PickupType;
+    weapon_type: WeaponType; // Only used if pickup_type is WeaponCrate
+    is_active: bool;
+}
+
+// Represents a specific event that occurred in the game, for client effects
+table GameEvent {
+    event_type: GameEventType;
+    position: Vec2;
+    instigator_id: string; // Player or entity that caused the event
+    target_id: string;     // Player or entity affected by the event (e.g., wall_id for WallDestroyed)
+    weapon_type: WeaponType; // Relevant for WeaponFire, BulletImpact
+    value: float;          // E.g., damage amount for floating text, radius for explosion
+}
+
+table KillFeedEntry {
+    killer_name: string; // Changed from 'killer' to 'killer_name' for clarity
+    victim_name: string; // Changed from 'victim' to 'victim_name'
+    weapon: WeaponType;
+    timestamp: float;
+    killer_position: Vec2; // For kill cam context
+    victim_position: Vec2; // For kill cam context
+    is_headshot: bool = false; // Example: if you add headshot mechanics
+}
+
+table PlayerInput {
+    timestamp: ulong;
+    sequence: uint;
+    move_forward: bool;
+    move_backward: bool;
+    move_left: bool;
+    move_right: bool;
+    shooting: bool;
+    reload: bool;
+    rotation: float;
+    melee_attack: bool = false; // Added for melee
+    change_weapon_slot: byte; // If players can switch weapons
+    use_ability_slot: byte; // For future abilities
+}
+
+table ChatMessage {
+    seq: ulong; // ADD THIS: Unique sequence number for the chat message
+    player_id: string;
+    username: string;
+    message: string;
+    timestamp: ulong;
+}
+
+// Information about a specific team's flag in CTF mode
+table FlagState {
+    team_id: byte; // Which team this flag belongs to (e.g., 1 for Red, 2 for Blue)
+    status: FlagStatus;
+    position: Vec2;       // Current position (at base, or where it was dropped)
+    carrier_id: string; // ID of the player carrying this flag
+    respawn_timer: float = 0.0; // If dropped, time until it auto-returns or can be picked up again
+}
+
+// Messages
+table WelcomeMessage {
+    player_id: string;
+    message: string;
+    server_tick_rate: ushort = 30; // Example: inform client about server's tick rate
+}
+
+table InitialStateMessage {
+    player_id: string; // The ID assigned to the connecting client
+    walls: [Wall];
+    players: [PlayerState];
+    projectiles: [ProjectileState];
+    pickups: [Pickup];
+    match_info: MatchInfo;
+    flag_states: [FlagState]; // Initial state of flags for CTF
+    timestamp: ulong;
+    map_name: string;
+}
+
+table DeltaStateMessage {
+    // Full states for entities that are new to AoI or have significant changes
+    players: [PlayerState];
+    projectiles: [ProjectileState];
+    pickups: [Pickup]; // Active pickups in AoI
+
+    // IDs of entities that were removed/destroyed
+    removed_projectiles: [string];
+    destroyed_wall_ids: [string]; // IDs of walls that were destroyed this tick
+    deactivated_pickup_ids: [string]; // Pickups that became inactive
+
+    // Updates for existing entities
+    kill_feed: [KillFeedEntry];
+    match_info: MatchInfo; // Send if changed
+    flag_states: [FlagState]; // Send if changed, for CTF
+    game_events: [GameEvent]; // For client-side effects
+
+    timestamp: ulong;
+    last_processed_input_sequence: uint; // For client reconciliation
+
+    // Delta compression fields
+    changed_player_fields: [ubyte]; // Bitmask of which fields changed per player in the 'players' list.
+    removed_player_ids: [string]; // Players who left the AoI or disconnected
+    updated_walls: [Wall]; // Walls that were updated (e.g., respawned)
+}
+
+// 1. Define the union type separately
+union MessagePayload {
+    WelcomeMessage,
+    InitialStateMessage,
+    DeltaStateMessage,
+    PlayerInput,
+    ChatMessage,
+    MatchInfo
+}
+
+// 2. Define the GameMessage table using the named union
+table GameMessage {
+    msg_type: MessageType;          // This field indicates which type in the union is actually present
+    actual_message: MessagePayload; // Use the named union as the type for this field.
+    // actual_message_type is added automatically by FlatBuffers for union types
+}
+
+// REMOVED the duplicate ServerMessage table - use GameMessage instead
+
+root_type GameMessage;

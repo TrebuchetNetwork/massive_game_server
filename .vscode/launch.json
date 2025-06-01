@@ -1,0 +1,53 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb", // Using "lldb" as per your working example
+            "request": "launch",
+            "name": "Debug Server (Default Profile - LLDB)",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin", "massive_game_server_core",    // The name of your binary
+                    "--package", "massive_game_server_core" // The name of your package in server/Cargo.toml
+                    // This will use the default 'dev' (debug) profile
+                ],
+                "filter": { // This filter helps the debugger find the correct binary
+                    "name": "massive_game_server_core", // Must match the binary name
+                    "kind": "bin"
+                }
+            },
+            "args": [], // Command-line arguments for your server executable
+            "cwd": "${workspaceFolder}", // Set CWD to workspace root for relative paths (e.g., static_client, config)
+            "env": {
+                "RUST_LOG": "massive_game_server_core=debug,signaling=debug,warp=info,webrtc=info,hyper=info"
+            }
+            // "program" is often not needed when "cargo" and "filter" are used, as the debugger infers it.
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug Server (Profile: release-with-debug - LLDB)",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin", "massive_game_server_core",
+                    "--package", "massive_game_server_core",
+                    "--profile", "release-with-debug" // Your custom profile
+                ],
+                "filter": {
+                    "name": "massive_game_server_core",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_LOG": "massive_game_server_core=debug,signaling=debug,warp=info,webrtc=warn,hyper=info"
+            }
+            // If the debugger has trouble finding the executable for a non-default profile,
+            // you might need to explicitly add the program path:
+            // "program": "${workspaceFolder}/target/release-with-debug/massive_game_server_core"
+        }
+    ]
+}
