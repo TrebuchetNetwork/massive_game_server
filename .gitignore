@@ -1,3 +1,2 @@
 target/
 Cargo.lock
-static_client/generated_js
