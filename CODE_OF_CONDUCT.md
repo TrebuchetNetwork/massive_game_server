@@ -38,7 +38,7 @@ This Code of Conduct applies within all community spaces (GitHub, Discord, forum
 
 ## Enforcement (The "Uh Oh" Section)
 
-Instances of abusive, harassing, or otherwise "Dude, not cool" behavior may be reported to the community leaders responsible for enforcement at **[INSERT CONTACT METHOD - e.g., conduct-reports@trebuchet.network or a private channel for the Benevolent Dictators of Decency]**. All complaints will be reviewed and investigated with the promptness of a well-optimized algorithm and the fairness of a balanced binary tree.
+Instances of abusive, harassing, or otherwise "Dude, not cool" behavior may be reported to the community leaders responsible for enforcement at contact@trebuchet.network . All complaints will be reviewed and investigated with the promptness of a well-optimized algorithm and the fairness of a balanced binary tree.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident. We're not about drama; we're about solutions.
 

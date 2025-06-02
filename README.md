@@ -52,14 +52,13 @@ Follow these steps to get the server up and running:
 3.  **Run the Server:**
     After a successful build:
     ```bash
-    cd server 
-    # Ensure you are in the server directory if you navigated away
+     
     cargo run --release
     ```
     The server will start and log its status, typically indicating it's listening on `ws://0.0.0.0:8080/ws` and serving static files from `http://0.0.0.0:8080/`.
 
 4.  **Test with the Static Web Client:**
-    * Open the `static_client/client.html` file (located in the root of the cloned repository, e.g., `massive_game_server/static_client/client.html`) in a modern web browser.
+    * Open the `http://localhost:8080/client.html` file (located in the root of the cloned repository, e.g., `massive_game_server/static_client/client.html`) in a modern web browser.
     * The client should provide an interface to connect to the WebSocket URL logged by the server (default: `ws://localhost:8080/ws`).
 
 ## Client-Side Schema Generation
