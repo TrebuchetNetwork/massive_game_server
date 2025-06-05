@@ -2,8 +2,17 @@
 
 Welcome to the Massive Game Server project! This is a high-performance game server written in Rust, designed from the ground up to handle a massive number of concurrent players and AI-controlled entities. It utilizes WebRTC for real-time client-server communication and FlatBuffers for efficient data serialization. This server is a core component of the Trebuchet Network initiative, aimed at pushing the boundaries of large-scale multiplayer interactions.
 
+## Live demo 20vs20: 
+http://35.192.32.92:8080/client.html
+
+Note: Server is in Iowa USA so this might affect your latency. 
+
+
 ## Gameplay Preview
 ![Gameplay Preview GIF](massive_game_server_demo.gif)
+
+
+
 
 ## Features
 
