@@ -1,0 +1,99 @@
+=== FLAMEGRAPH ANALYSIS REPORT ===
+
+TOP 20 HOTTEST FUNCTIONS:
+----------------------------------------------------------------------------------------------------
+Rank   CPU %  Samples Function Name
+----------------------------------------------------------------------------------------------------
+   1. 100.00%      568 all
+   2.  99.86%      938 tokio-runtime-w
+   3.  99.62%      894 [libc.so.6]
+   4.  99.62%      894 [libc.so.6]
+   5.  99.62%      894 [massive_game_server_core]
+   6.  99.62%      894 [massive_game_server_core]
+   7.  99.62%      894 [massive_game_server_core]
+   8.  99.61%      849 [massive_game_server_core]
+   9.  99.38%      832 [massive_game_server_core]
+  10.  99.22%      130 [massive_game_server_core]
+  11.  99.03%      302 [massive_game_server_core]
+  12.  75.25%      515 [massive_game_server_core]
+  13.  55.01%      361 [massive_game_server_core]
+  14.  12.42%      738 [massive_game_server_core]
+  15.   8.21%      180 cfree
+  16.   4.84%      330 [libc.so.6]
+  17.   4.31%      972 malloc
+  18.   4.01%      676 cfree
+  19.   3.40%      967 cfree
+  20.   2.32%      206 [libc.so.6]
+
+
+CATEGORY BREAKDOWN:
+--------------------------------------------------------------------------------
+
+GAME_LOGIC - Total: 1253.77%
+   0.19% - entry_SYSCALL_64_after_hwframe
+   0.18% - entry_SYSCALL_64_after_hwframe
+   0.17% - entry_SYSCALL_64_after_hwframe
+   0.12% - entry_SYSCALL_64_after_hwframe
+   0.09% - entry_SYSCALL_64_after_hwframe
+
+MEMORY - Total: 25.09%
+   8.21% - cfree
+   4.31% - malloc
+   4.01% - cfree
+   3.40% - cfree
+   2.20% - malloc
+
+NETWORK - Total: 1.33%
+   0.17% - sendto
+   0.17% - __x64_sys_sendto
+   0.17% - __sys_sendto
+   0.15% - inet_sendmsg
+   0.15% - udp_sendmsg
+
+SYNC - Total: 0.60%
+   0.18% - __raw_spin_unlock_irq
+   0.10% - raw_spin_rq_unlock_irq
+   0.06% - _raw_spin_unlock_irqrestore
+   0.05% - _raw_spin_unlock_irqrestore
+   0.05% - _raw_spin_unlock_irqrestore
+
+AI - Total: 0.48%
+   0.16% - epoll_wait
+   0.14% - __libc_start_main
+   0.08% - __x64_sys_epoll_wait
+   0.07% - do_epoll_wait
+   0.01% - __futex_wait
+
+
+PERFORMANCE INSIGHTS:
+--------------------------------------------------------------------------------
+
+📊 INFO: Memory operations at 25.1%
+   Recommendations:
+   - Pre-allocate Vec capacity: Vec::with_capacity()
+   - Use object pools for bullets/effects
+   - Consider arena allocators for frame data
+
+
+FRAME TIME ESTIMATION:
+--------------------------------------------------------------------------------
+Based on your logs (frames taking 40-60ms):
+
+Estimated time per category (assuming 50ms average frame):
+Game_logic   626.9ms █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+Memory        12.5ms ██████
+Network        0.7ms 
+
+
+SPECIFIC OPTIMIZATIONS FOR YOUR GAME SERVER:
+--------------------------------------------------------------------------------
+
+
+🧵 THREAD POOL RECOMMENDATIONS:
+--------------------------------------------------------------------------------
+For your 180-core AMD Genoa system:
+- AI threads: Increase to 0 (currently 30)
+- Physics threads: 30
+- Network threads: 60 (for WebRTC handling)
+- Serialization threads: 30
+- Total: ~210 threads (hyperthreading benefit)
