@@ -16,6 +16,16 @@ codegen-units = 1
 panic = "abort"
 debug = false
 opt-level = 3
+strip=true
+
+
+[profile.release.package."*"]
+opt-level = 3
+codegen-units = 1
+
+
+
+
 
 [profile.release-with-debug]
 inherits = "release"

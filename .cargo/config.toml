@@ -1,0 +1,11 @@
+[build]
+# AMD Genoa (Zen 4) optimizations without lld
+rustflags = [
+    "-C", "target-cpu=native"
+]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "target-cpu=native",
+    "-C", "target-feature=+avx512f,+avx512cd,+avx512bw,+avx512dq,+avx512vl"
+]
