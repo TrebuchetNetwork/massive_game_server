@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>2D Shooter - Optimized Client</title>
     <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
-    
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script type="importmap">
         {
@@ -15,78 +16,368 @@
         }
     </script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #111827; }
-        .log-entry { padding: 8px; margin-bottom: 4px; border-radius: 4px; font-size: 0.875rem; }
-        .log-info { background-color: #e0f2fe; color: #0c4a6e; }
-        .log-success { background-color: #dcfce7; color: #166534; }
-        .log-error { background-color: #fee2e2; color: #991b1b; }
-        .log-send { background-color: #fef3c7; color: #92400e; }
-        .log-receive { background-color: #e0e7ff; color: #3730a3; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827;
+        }
 
-        #gameContainer { width: 100%; height: 100%; position: relative; overflow: hidden; border-radius: 8px; }
-        #pixiContainer canvas { border-radius: 8px; }
+        .log-entry {
+            padding: 8px;
+            margin-bottom: 4px;
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
 
-        .kill-feed { position: absolute; top: 10px; right: 10px; width: 280px; background-color: rgba(31, 41, 55, 0.85); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        .kill-entry { color: #E5E7EB; font-size: 13px; margin-bottom: 5px; animation: fadeIn 0.5s ease-out forwards; }
+        .log-info {
+            background-color: #e0f2fe;
+            color: #0c4a6e;
+        }
 
-        .chat-display { position: absolute; bottom: 10px; left: 10px; width: 350px; background-color: rgba(31, 41, 55, 0.8); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 -2px 5px rgba(0,0,0,0.2); }
-        .chat-entry { color: #D1D5DB; font-size: 12px; margin-bottom: 3px; }
-        .chat-entry .username { font-weight: bold; }
+        .log-success {
+            background-color: #dcfce7;
+            color: #166534;
+        }
 
-        .match-info { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background-color: rgba(31, 41, 55, 0.9); border-radius: 8px; padding: 8px 15px; text-align: center; color: #E5E7EB; box-shadow: 0 2px 4px rgba(0,0,0,0.2); font-size: 14px;}
-        .team-scores { display: flex; gap: 20px; justify-content: center; margin-top: 5px; }
-        .team-score { font-weight: bold; }
-        .team-red { color: #FF6B6B; }
-        .team-blue { color: #4ECDC4; }
-        .team-ffa { color: #60A5FA; }
+        .log-error {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
 
-        .powerup-indicator { display: flex; align-items: center; gap: 5px; font-size: 12px; padding: 3px 6px; background-color: rgba(55, 65, 81, 0.7); border-radius: 4px; margin-bottom: 3px; }
-        .powerup-indicator .icon { font-size: 14px; }
+        .log-send {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
 
-        .scoreboard { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 700px; background-color: rgba(17, 24, 39, 0.95); border: 1px solid #374151; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); z-index: 100; color: #E5E7EB; }
-        .scoreboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #374151;}
-        .scoreboard-header h3 { font-size: 1.5rem; font-weight: bold; color: #93C5FD; }
-        .close-btn { cursor: pointer; font-size: 1.8rem; color: #9CA3AF; transition: color 0.2s; }
-        .close-btn:hover { color: #F9FAFB; }
-        .scoreboard-teams { display: grid; grid-template-columns: 1fr; gap: 20px; } /* Default to 1 column for FFA */
-        .scoreboard-teams.two-columns { grid-template-columns: 1fr 1fr; } /* Class for 2 columns */
-        .team-section h4 { font-size: 1.1rem; margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #4B5563;}
-        .team-section table { width: 100%; border-collapse: collapse; }
-        .team-section th, .team-section td { padding: 6px 8px; text-align: left; font-size: 0.9rem; }
-        .team-section th { background-color: rgba(55, 65, 81, 0.5); color: #D1D5DB; }
-        .team-section tr:nth-child(even) { background-color: rgba(55, 65, 81, 0.2); }
+        .log-receive {
+            background-color: #e0e7ff;
+            color: #3730a3;
+        }
 
-        .settings-menu { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 500px; background-color: rgba(31, 41, 55, 0.97); border: 1px solid #4B5563; border-radius: 12px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); z-index: 101; color: #E5E7EB;}
-        .settings-menu h3 { font-size: 1.6rem; font-weight: bold; margin-bottom: 20px; text-align: center; color: #A5B4FC; }
-        .setting-group { margin-bottom: 20px; }
-        .setting-group h4 { font-size: 1.1rem; color: #D1D5DB; margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #4B5563;}
-        .setting-group label { display: block; margin-bottom: 8px; font-size: 0.95rem; color: #CBD5E1; }
-        .setting-group input[type="checkbox"], .setting-group input[type="range"], .setting-group select { margin-right: 8px; accent-color: #818CF8; background-color: #4B5563; border-radius: 4px; padding: 2px;}
-        .setting-group input[type="range"] { width: calc(100% - 100px); vertical-align: middle; }
-        .settings-menu button { padding: 10px 15px; border-radius: 6px; font-weight: 600; transition: background-color 0.2s; cursor: pointer; margin-right: 10px; border: none;}
-        .settings-menu .save-btn { background-color: #4F46E5; color: white; }
-        .settings-menu .save-btn:hover { background-color: #4338CA; }
-        .settings-menu .cancel-btn { background-color: #4B5563; color: #D1D5DB; }
-        .settings-menu .cancel-btn:hover { background-color: #6B7280; }
-        
-        .fps-counter { position: absolute; top: 10px; right: 10px; background-color: rgba(31, 41, 55, 0.9); padding: 5px 10px; border-radius: 6px; color: #D1D5DB; font-size: 12px; font-family: monospace; }
-        
-        .hidden { display: none !important; }
+        #gameContainer {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            overflow: hidden;
+            border-radius: 8px;
+        }
+
+        #pixiContainer canvas {
+            border-radius: 8px;
+        }
+
+        .kill-feed {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 280px;
+            background-color: rgba(31, 41, 55, 0.85);
+            border-radius: 8px;
+            padding: 10px;
+            max-height: 180px;
+            overflow-y: auto;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .kill-entry {
+            color: #E5E7EB;
+            font-size: 13px;
+            margin-bottom: 5px;
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+
+        .chat-display {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            width: 350px;
+            background-color: rgba(31, 41, 55, 0.8);
+            border-radius: 8px;
+            padding: 10px;
+            max-height: 180px;
+            overflow-y: auto;
+            box-shadow: 0 -2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        .chat-entry {
+            color: #D1D5DB;
+            font-size: 12px;
+            margin-bottom: 3px;
+        }
+
+        .chat-entry .username {
+            font-weight: bold;
+        }
+
+        .match-info {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(31, 41, 55, 0.9);
+            border-radius: 8px;
+            padding: 8px 15px;
+            text-align: center;
+            color: #E5E7EB;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            font-size: 14px;
+        }
+
+        .team-scores {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 5px;
+        }
+
+        .team-score {
+            font-weight: bold;
+        }
+
+        .team-red {
+            color: #FF6B6B;
+        }
+
+        .team-blue {
+            color: #4ECDC4;
+        }
+
+        .team-ffa {
+            color: #60A5FA;
+        }
+
+        .powerup-indicator {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            padding: 3px 6px;
+            background-color: rgba(55, 65, 81, 0.7);
+            border-radius: 4px;
+            margin-bottom: 3px;
+        }
+
+        .powerup-indicator .icon {
+            font-size: 14px;
+        }
+
+        .scoreboard {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 700px;
+            background-color: rgba(17, 24, 39, 0.95);
+            border: 1px solid #374151;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            z-index: 100;
+            color: #E5E7EB;
+        }
+
+        .scoreboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #374151;
+        }
+
+        .scoreboard-header h3 {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #93C5FD;
+        }
+
+        .close-btn {
+            cursor: pointer;
+            font-size: 1.8rem;
+            color: #9CA3AF;
+            transition: color 0.2s;
+        }
+
+        .close-btn:hover {
+            color: #F9FAFB;
+        }
+
+        .scoreboard-teams {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        /* Default to 1 column for FFA */
+        .scoreboard-teams.two-columns {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        /* Class for 2 columns */
+        .team-section h4 {
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #4B5563;
+        }
+
+        .team-section table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .team-section th,
+        .team-section td {
+            padding: 6px 8px;
+            text-align: left;
+            font-size: 0.9rem;
+        }
+
+        .team-section th {
+            background-color: rgba(55, 65, 81, 0.5);
+            color: #D1D5DB;
+        }
+
+        .team-section tr:nth-child(even) {
+            background-color: rgba(55, 65, 81, 0.2);
+        }
+
+        .settings-menu {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 500px;
+            background-color: rgba(31, 41, 55, 0.97);
+            border: 1px solid #4B5563;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+            z-index: 101;
+            color: #E5E7EB;
+        }
+
+        .settings-menu h3 {
+            font-size: 1.6rem;
+            font-weight: bold;
+            margin-bottom: 20px;
+            text-align: center;
+            color: #A5B4FC;
+        }
+
+        .setting-group {
+            margin-bottom: 20px;
+        }
+
+        .setting-group h4 {
+            font-size: 1.1rem;
+            color: #D1D5DB;
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #4B5563;
+        }
+
+        .setting-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+            color: #CBD5E1;
+        }
+
+        .setting-group input[type="checkbox"],
+        .setting-group input[type="range"],
+        .setting-group select {
+            margin-right: 8px;
+            accent-color: #818CF8;
+            background-color: #4B5563;
+            border-radius: 4px;
+            padding: 2px;
+        }
+
+        .setting-group input[type="range"] {
+            width: calc(100% - 100px);
+            vertical-align: middle;
+        }
+
+        .settings-menu button {
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: background-color 0.2s;
+            cursor: pointer;
+            margin-right: 10px;
+            border: none;
+        }
+
+        .settings-menu .save-btn {
+            background-color: #4F46E5;
+            color: white;
+        }
+
+        .settings-menu .save-btn:hover {
+            background-color: #4338CA;
+        }
+
+        .settings-menu .cancel-btn {
+            background-color: #4B5563;
+            color: #D1D5DB;
+        }
+
+        .settings-menu .cancel-btn:hover {
+            background-color: #6B7280;
+        }
+
+        .fps-counter {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(31, 41, 55, 0.9);
+            padding: 5px 10px;
+            border-radius: 6px;
+            color: #D1D5DB;
+            font-size: 12px;
+            font-family: monospace;
+        }
+
+        .hidden {
+            display: none !important;
+        }
 
         /* Custom scrollbar */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #2d3748; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #718096; }
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #2d3748;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #718096;
+        }
     </style>
 </head>
+
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-2 sm:p-4">
 
     <div class="w-full max-w-7xl bg-gray-800 p-4 sm:p-6 rounded-lg shadow-xl">
         <div class="flex justify-between items-center mb-4">
             <h1 class="text-2xl sm:text-3xl font-bold text-indigo-400">2D Shooter - Optimized</h1>
             <button id="settingsButton" class="p-2 bg-gray-700 hover:bg-gray-600 rounded-md text-white">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                    </path>
+                </svg>
             </button>
         </div>
 
@@ -94,18 +385,23 @@
             <div class="w-full lg:w-1/3 xl:w-1/4 space-y-4">
                 <div>
                     <label for="wsUrl" class="block text-sm font-medium text-gray-300 mb-1">WebSocket URL:</label>
-                    <input type="text" id="wsUrl" value="ws://localhost:8080/ws" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
+                    <input type="text" id="wsUrl" value="ws://localhost:8080/ws"
+                        class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
                 </div>
-                <button id="connectButton" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-800">
+                <button id="connectButton"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-800">
                     Connect
                 </button>
 
                 <div id="controls" class="hidden space-y-4">
                     <div>
-                        <label for="chatInput" class="block text-sm font-medium text-gray-300 mb-1">Chat Message:</label>
-                        <input type="text" id="chatInput" placeholder="Type a message..." class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
+                        <label for="chatInput" class="block text-sm font-medium text-gray-300 mb-1">Chat
+                            Message:</label>
+                        <input type="text" id="chatInput" placeholder="Type a message..."
+                            class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
                     </div>
-                    <button id="sendChatButton" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-800">
+                    <button id="sendChatButton"
+                        class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-800">
                         Send Chat
                     </button>
 
@@ -129,10 +425,12 @@
                             <p>Team: <span id="playerTeam" class="text-gray-100">None</span></p>
                             <p>Health: <span id="playerHealth" class="text-green-400">100</span></p>
                             <p>Shield: <span id="playerShield" class="text-blue-400">0</span></p>
-                            <p>Ammo: <span id="playerAmmo" class="text-yellow-400">10</span> <span id="reloadPrompt" class="text-red-500 font-bold"></span></p>
+                            <p>Ammo: <span id="playerAmmo" class="text-yellow-400">10</span> <span id="reloadPrompt"
+                                    class="text-red-500 font-bold"></span></p>
                             <p>Weapon: <span id="playerWeapon" class="text-gray-100">Pistol</span></p>
                             <p>Score: <span id="playerScore" class="text-purple-400">0</span></p>
-                            <p>K/D: <span id="playerKills" class="text-red-400">0</span>/<span id="playerDeaths" class="text-gray-400">0</span></p>
+                            <p>K/D: <span id="playerKills" class="text-red-400">0</span>/<span id="playerDeaths"
+                                    class="text-gray-400">0</span></p>
                             <p>Players: <span id="playerCount" class="text-gray-100">0</span></p>
                             <p>Ping: <span id="pingDisplay" class="text-gray-100">0</span>ms</p>
                         </div>
@@ -143,7 +441,8 @@
 
                 <div class="mt-6">
                     <h2 class="text-xl font-semibold mb-3 text-gray-300">Log:</h2>
-                    <div id="log" class="h-48 lg:h-64 xl:h-80 overflow-y-auto bg-gray-700 p-4 rounded-md border border-gray-600 text-sm">
+                    <div id="log"
+                        class="h-48 lg:h-64 xl:h-80 overflow-y-auto bg-gray-700 p-4 rounded-md border border-gray-600 text-sm">
                     </div>
                 </div>
             </div>
@@ -155,7 +454,9 @@
                     <div id="killFeed" class="kill-feed hidden"></div>
                     <div id="chatDisplay" class="chat-display hidden"></div>
                     <div id="matchInfo" class="match-info hidden"></div>
-                    <div id="minimapContainer" style="position: absolute; bottom: 10px; right: 10px; border: 1px solid #4B5563; border-radius: 6px; background-color: rgba(31, 41, 55, 0.7);"></div>
+                    <div id="minimapContainer"
+                        style="position: absolute; bottom: 10px; right: 10px; border: 1px solid #4B5563; border-radius: 6px; background-color: rgba(31, 41, 55, 0.7);">
+                    </div>
                 </div>
             </div>
         </div>
@@ -170,7 +471,15 @@
             <div id="ffaScoreboardSection" class="team-section hidden">
                 <h4>Free For All</h4>
                 <table id="ffaPlayersTable">
-                    <thead><tr><th>Rank</th><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr></thead>
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Player</th>
+                            <th>Score</th>
+                            <th>Kills</th>
+                            <th>Deaths</th>
+                        </tr>
+                    </thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -178,14 +487,28 @@
                 <div class="team-section team-red">
                     <h4>Red Team: <span id="scoreboardTeamRedScore">0</span></h4>
                     <table id="redTeamPlayers">
-                        <thead><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th>Player</th>
+                                <th>Score</th>
+                                <th>Kills</th>
+                                <th>Deaths</th>
+                            </tr>
+                        </thead>
                         <tbody></tbody>
                     </table>
                 </div>
                 <div class="team-section team-blue">
                     <h4>Blue Team: <span id="scoreboardTeamBlueScore">0</span></h4>
                     <table id="blueTeamPlayers">
-                        <thead><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th>Player</th>
+                                <th>Score</th>
+                                <th>Kills</th>
+                                <th>Deaths</th>
+                            </tr>
+                        </thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -198,9 +521,11 @@
         <div class="setting-group">
             <h4>Audio</h4>
             <label><input type="checkbox" id="soundEnabled" checked> Sound Effects</label>
-            <label>Volume: <input type="range" id="soundVolume" min="0" max="100" value="50"><span id="soundVolumeValue">50</span>%</label>
+            <label>Volume: <input type="range" id="soundVolume" min="0" max="100" value="50"><span
+                    id="soundVolumeValue">50</span>%</label>
             <label><input type="checkbox" id="musicEnabled"> Music</label>
-            <label>Volume: <input type="range" id="musicVolume" min="0" max="100" value="30"><span id="musicVolumeValue">30</span>%</label>
+            <label>Volume: <input type="range" id="musicVolume" min="0" max="100" value="30"><span
+                    id="musicVolumeValue">30</span>%</label>
         </div>
         <div class="setting-group">
             <h4>Graphics</h4>
@@ -217,7 +542,8 @@
         </div>
         <div class="setting-group">
             <h4>Controls</h4>
-            <label>Mouse Sensitivity: <input type="range" id="sensitivity" min="0.1" max="3" step="0.1" value="1.0"><span id="sensitivityValue">1.0</span></label>
+            <label>Mouse Sensitivity: <input type="range" id="sensitivity" min="0.1" max="3" step="0.1"
+                    value="1.0"><span id="sensitivityValue">1.0</span></label>
         </div>
         <div class="flex justify-end mt-6">
             <button id="saveSettingsButton" class="save-btn">Save & Close</button>
@@ -505,11 +831,11 @@
             // Initialize Managers
             minimap = new Minimap(150, 150, 0.05);
             networkIndicator = new NetworkIndicator();
-            
+
             // Add minimap to the minimap container
             const minimapContainerElement = document.getElementById('minimapContainer');
             minimapContainerElement.appendChild(minimap.app.view);
-            
+
             // Add network indicator
             networkQualityIndicatorDiv.appendChild(networkIndicator.app.view);
 
@@ -546,13 +872,13 @@
             const body = new PIXI.Graphics();
             const playerTeamColor = teamColors[player.team_id] || teamColors[0];
             const mainBodyColor = player.alive ? playerTeamColor : 0x6B7280;
-            
+
             // Draw the shape once
             body.lineStyle(2, 0x000000); // Use a neutral line color
             body.beginFill(0xFFFFFF); // Use white so we can tint later
-            const shipPoints = [0, -PLAYER_RADIUS * 1.2, PLAYER_RADIUS * 0.8, PLAYER_RADIUS * 0.8, 
-                               PLAYER_RADIUS * 0.3, PLAYER_RADIUS * 0.4, 0, PLAYER_RADIUS * 0.6, 
-                               -PLAYER_RADIUS * 0.3, PLAYER_RADIUS * 0.4, -PLAYER_RADIUS * 0.8, PLAYER_RADIUS * 0.8];
+            const shipPoints = [0, -PLAYER_RADIUS * 1.2, PLAYER_RADIUS * 0.8, PLAYER_RADIUS * 0.8,
+                PLAYER_RADIUS * 0.3, PLAYER_RADIUS * 0.4, 0, PLAYER_RADIUS * 0.6,
+                -PLAYER_RADIUS * 0.3, PLAYER_RADIUS * 0.4, -PLAYER_RADIUS * 0.8, PLAYER_RADIUS * 0.8];
             body.drawPolygon(shipPoints);
             body.endFill();
             body.tint = mainBodyColor; // Set initial tint
@@ -580,32 +906,34 @@
             // Gun - Create base structure once
             const gun = new PIXI.Container(); // Use container to hold gun graphics
             gun.rotation = -Math.PI / 2;
+            gun.cachedWeapons = new Map(); // Store cached weapon graphics
+            gun.currentWeapon = null; // Track current weapon
             container.addChild(gun);
             container.gun = gun;
 
             // Health Bar Container
             const healthBarContainer = new PIXI.Container();
             healthBarContainer.position.set(0, -PLAYER_RADIUS - 15);
-            
+
             // Health bar background - create once
             const healthBg = new PIXI.Graphics();
             healthBg.beginFill(0x1F2937, 0.9);
             healthBg.drawRoundedRect(-PLAYER_RADIUS - 2, -2, PLAYER_RADIUS * 2 + 4, 10, 5);
             healthBarContainer.addChild(healthBg);
-            
+
             // Health bar border - create once
             const healthBorder = new PIXI.Graphics();
             healthBorder.lineStyle(1, 0x4B5563, 0.8);
             healthBorder.drawRoundedRect(-PLAYER_RADIUS - 2, -2, PLAYER_RADIUS * 2 + 4, 10, 5);
             healthBarContainer.addChild(healthBorder);
-            
+
             // Health fill - create as full bar, we'll scale it
             const healthFg = new PIXI.Graphics();
             healthFg.beginFill(0x22C55E);
             healthFg.drawRoundedRect(-PLAYER_RADIUS, 0, PLAYER_RADIUS * 2, 6, 3);
             healthFg.endFill();
             healthBarContainer.addChild(healthFg);
-            
+
             container.addChild(healthBarContainer);
             container.healthBarContainer = healthBarContainer;
             container.healthFg = healthFg;
@@ -644,7 +972,7 @@
         function updatePlayerSprite(sprite, player) {
             sprite.position.x = player.render_x !== undefined ? player.render_x : player.x;
             sprite.position.y = player.render_y !== undefined ? player.render_y : player.y;
-            
+
             let effectiveRotation = (player.render_rotation !== undefined ? player.render_rotation : player.rotation) + (Math.PI / 2);
             sprite.rotation = effectiveRotation;
 
@@ -694,7 +1022,7 @@
             } else if (sprite.respawnText) {
                 sprite.respawnText.visible = false;
             }
-            
+
             // Speed Boost Effect
             if (player.speed_boost_remaining > 0 && player.alive) {
                 if (!sprite.speedBoostEffect) {
@@ -711,7 +1039,7 @@
                 if (!sprite.carriedFlagSprite) {
                     sprite.carriedFlagSprite = new PIXI.Container();
                     sprite.addChild(sprite.carriedFlagSprite);
-                    
+
                     // Create flag graphic once
                     const flagGraphics = new PIXI.Graphics();
                     flagGraphics.beginFill(0xFFFFFF); // White, will be tinted
@@ -729,23 +1057,17 @@
                 sprite.carriedFlagSprite.visible = false;
             }
         }
-        
+
         // OPTIMIZED: Update gun without redrawing
         function updatePlayerGun(sprite, player) {
-            const gun = sprite.gun;
-            
+            const gunContainer = sprite.gun;
+
             if (!player.alive) {
-                gun.visible = false;
+                gunContainer.visible = false;
                 return;
             }
-            gun.visible = true;
-            
-            // Create or get gun graphics
-            if (!gun.gunGraphics) {
-                gun.gunGraphics = new PIXI.Graphics();
-                gun.addChild(gun.gunGraphics);
-            }
-            
+            gunContainer.visible = true;
+
             const weaponConfigs = {
                 [GP.WeaponType.Pistol]: {
                     barrelLength: PLAYER_RADIUS + 12,
@@ -780,56 +1102,134 @@
                     muzzleSize: 0
                 }
             };
-            
+
             const config = weaponConfigs[player.weapon] || weaponConfigs[GP.WeaponType.Pistol];
-            
-            // Check if we need to recreate the gun (weapon changed)
-            if (gun.currentWeapon !== player.weapon || !gun.gunGraphics.geometry) {
-                gun.gunGraphics.clear();
-                
+
+            // Hide current weapon if it exists and is different
+            if (gunContainer.currentWeapon && gunContainer.currentWeapon !== player.weapon) {
+                const currentGraphic = gunContainer.cachedWeapons.get(gunContainer.currentWeapon);
+                if (currentGraphic) currentGraphic.visible = false;
+            }
+
+            // Get or create the weapon graphic
+            let weaponGraphic = gunContainer.cachedWeapons.get(player.weapon);
+
+            if (!weaponGraphic) {
+                // Create the weapon graphic once and cache it
+                weaponGraphic = new PIXI.Container();
+
+                // Base weapon shape
+                const baseGraphic = new PIXI.Graphics();
+
                 // Draw weapon barrel(s)
                 if (config.barrelCount === 2) {
-                    gun.gunGraphics.lineStyle(config.barrelWidth / 2, config.color);
-                    gun.gunGraphics.moveTo(0, -3);
-                    gun.gunGraphics.lineTo(config.barrelLength, -3);
-                    gun.gunGraphics.moveTo(0, 3);
-                    gun.gunGraphics.lineTo(config.barrelLength, 3);
+                    // Shotgun double barrel
+                    baseGraphic.lineStyle(config.barrelWidth / 2, config.color);
+                    baseGraphic.moveTo(0, -3);
+                    baseGraphic.lineTo(config.barrelLength, -3);
+                    baseGraphic.moveTo(0, 3);
+                    baseGraphic.lineTo(config.barrelLength, 3);
                 } else {
-                    gun.gunGraphics.lineStyle(config.barrelWidth, config.color);
-                    gun.gunGraphics.moveTo(0, 0);
-                    gun.gunGraphics.lineTo(config.barrelLength, 0);
+                    // Single barrel weapons
+                    baseGraphic.lineStyle(config.barrelWidth, config.color);
+                    baseGraphic.moveTo(0, 0);
+                    baseGraphic.lineTo(config.barrelLength, 0);
                 }
-                
+
                 // Add muzzle
                 if (config.muzzleSize > 0) {
-                    gun.gunGraphics.beginFill(mixColors(config.color, 0x000000, 0.2));
-                    gun.gunGraphics.drawCircle(config.barrelLength, 0, config.muzzleSize / 2);
-                    gun.gunGraphics.endFill();
+                    baseGraphic.beginFill(mixColors(config.color, 0x000000, 0.2));
+                    baseGraphic.drawCircle(config.barrelLength, 0, config.muzzleSize / 2);
+                    baseGraphic.endFill();
+
+                    // Muzzle highlight
+                    baseGraphic.beginFill(mixColors(config.color, 0xFFFFFF, 0.3), 0.5);
+                    baseGraphic.drawCircle(config.barrelLength, 0, config.muzzleSize / 3);
+                    baseGraphic.endFill();
                 }
-                
-                gun.currentWeapon = player.weapon;
+
+                // Sniper scope
+                if (config.scope) {
+                    baseGraphic.lineStyle(1, config.color, 0.7);
+                    baseGraphic.drawCircle(config.barrelLength * 0.7, 0, 5);
+                    baseGraphic.moveTo(config.barrelLength * 0.7 - 5, 0);
+                    baseGraphic.lineTo(config.barrelLength * 0.7 + 5, 0);
+                    baseGraphic.moveTo(config.barrelLength * 0.7, -5);
+                    baseGraphic.lineTo(config.barrelLength * 0.7, 5);
+                }
+
+                weaponGraphic.addChild(baseGraphic);
+                weaponGraphic.baseGraphic = baseGraphic;
+
+                // Create damage boost overlay (initially invisible)
+                const damageBoostOverlay = new PIXI.Graphics();
+                damageBoostOverlay.visible = false;
+
+                // Draw glowing overlay
+                damageBoostOverlay.lineStyle(config.barrelWidth + 4, 0xFF6B6B, 0.3);
+                if (config.barrelCount === 2) {
+                    damageBoostOverlay.moveTo(0, -3);
+                    damageBoostOverlay.lineTo(config.barrelLength, -3);
+                    damageBoostOverlay.moveTo(0, 3);
+                    damageBoostOverlay.lineTo(config.barrelLength, 3);
+                } else {
+                    damageBoostOverlay.moveTo(0, 0);
+                    damageBoostOverlay.lineTo(config.barrelLength, 0);
+                }
+
+                // Power effect at muzzle
+                const powerEffect = new PIXI.Graphics();
+                powerEffect.beginFill(0xFF6B6B, 0.6);
+                powerEffect.drawCircle(config.barrelLength, 0, config.muzzleSize * 0.8);
+                powerEffect.endFill();
+                damageBoostOverlay.addChild(powerEffect);
+                damageBoostOverlay.powerEffect = powerEffect;
+
+                weaponGraphic.addChild(damageBoostOverlay);
+                weaponGraphic.damageBoostOverlay = damageBoostOverlay;
+                weaponGraphic.config = config; // Store config for damage boost effect
+
+                // Add to gun container and cache
+                gunContainer.addChild(weaponGraphic);
+                gunContainer.cachedWeapons.set(player.weapon, weaponGraphic);
             }
-            
-            // Apply damage boost effect via tint
+
+            // Show the current weapon
+            weaponGraphic.visible = true;
+            gunContainer.currentWeapon = player.weapon;
+
+            // Handle damage boost effect
             if (player.damage_boost_remaining > 0) {
+                weaponGraphic.damageBoostOverlay.visible = true;
+
+                // Pulsing effect
                 const pulse = Math.sin(Date.now() * 0.01) * 0.3 + 0.7;
-                gun.gunGraphics.tint = PIXI.utils.rgb2hex([1, pulse, pulse]);
+                weaponGraphic.baseGraphic.tint = PIXI.utils.rgb2hex([1, pulse, pulse]);
+
+                // Animate power effect
+                if (weaponGraphic.damageBoostOverlay.powerEffect) {
+                    const powerSize = weaponGraphic.config.muzzleSize * 0.8 + Math.sin(Date.now() * 0.015) * 2;
+                    weaponGraphic.damageBoostOverlay.powerEffect.scale.set(powerSize / (weaponGraphic.config.muzzleSize * 0.8));
+                }
             } else {
-                gun.gunGraphics.tint = 0xFFFFFF;
+                weaponGraphic.damageBoostOverlay.visible = false;
+                weaponGraphic.baseGraphic.tint = 0xFFFFFF;
             }
         }
+
+
 
         // OPTIMIZED: Update health bar using scale instead of redrawing
         function updatePlayerHealthBar(sprite, player) {
             if (!sprite.healthFg || !sprite.healthBarContainer) return;
-            
+
             if (player.alive) {
                 sprite.healthBarContainer.visible = true;
                 const healthPercent = Math.max(0, Math.min(1, player.health / player.max_health));
-                
+
                 // Scale the health bar instead of redrawing
                 sprite.healthFg.scale.x = healthPercent;
-                
+
                 // Update color via tint
                 let healthColor;
                 if (healthPercent > 0.6) {
@@ -840,7 +1240,7 @@
                     healthColor = 0xEF4444;
                 }
                 sprite.healthFg.tint = healthColor;
-                
+
                 // Pulse effect when low health
                 if (healthPercent < 0.3) {
                     const pulse = Math.sin(Date.now() * 0.01) * 0.2 + 0.8;
@@ -866,7 +1266,7 @@
         // Enhanced createSpeedBoostEffect function
         function createSpeedBoostEffect() {
             const effect = new PIXI.Container();
-            
+
             // Multiple trail lines
             for (let i = 0; i < 3; i++) {
                 const trail = new PIXI.Graphics();
@@ -876,33 +1276,33 @@
                 trail.rotation = (i - 1) * 0.2;
                 effect.addChild(trail);
             }
-            
+
             // Speed particles
             const particleContainer = new PIXI.Container();
             effect.addChild(particleContainer);
             effect.particleContainer = particleContainer;
-            
+
             return effect;
         }
 
         function updateShieldVisual(sprite, current, max) {
             if (!sprite.shieldVisual) return;
             sprite.shieldVisual.clear();
-            
+
             if (current > 0 && max > 0) {
                 const shieldPercent = current / max;
                 const shieldRadius = PLAYER_RADIUS + 8;
-                
+
                 // Hexagonal shield pattern
                 const sides = 6;
                 const alpha = 0.2 + shieldPercent * 0.3;
-                
+
                 // Outer shield layer
                 sprite.shieldVisual.lineStyle(Math.max(2, 4 * shieldPercent), 0x00BFFF, alpha);
                 sprite.shieldVisual.beginFill(0x00BFFF, alpha * 0.2);
                 drawRegularPolygon(sprite.shieldVisual, 0, 0, shieldRadius + (5 * shieldPercent), sides);
                 sprite.shieldVisual.endFill();
-                
+
                 // Inner shield segments
                 if (shieldPercent > 0.3) {
                     sprite.shieldVisual.lineStyle(1, 0x00FFFF, alpha * 0.5);
@@ -916,7 +1316,7 @@
                         );
                     }
                 }
-                
+
                 // Add shimmer effect
                 const shimmer = Math.sin(Date.now() * 0.003) * 0.1;
                 sprite.shieldVisual.alpha = 1 + shimmer;
@@ -927,7 +1327,7 @@
         function createProjectileSprite(projectile) {
             const container = new PIXI.Container();
             container.projectileId = projectile.id;
-            
+
             const projectileConfigs = {
                 [GP.WeaponType.Pistol]: {
                     color: 0xFFBF00,
@@ -958,9 +1358,9 @@
                     shape: 'beam'
                 }
             };
-            
+
             const config = projectileConfigs[projectile.weapon_type] || projectileConfigs[GP.WeaponType.Pistol];
-            
+
             // Outer glow effect - more prominent
             const glow = new PIXI.Graphics();
             glow.beginFill(config.glowColor, 0.4);
@@ -968,10 +1368,10 @@
             glow.endFill();
             glow.filters = [new PIXI.BlurFilter(4)];
             container.addChild(glow);
-            
+
             // Core projectile
             const core = new PIXI.Graphics();
-            
+
             switch (config.shape) {
                 case 'pellet':
                     core.beginFill(config.color, 1);
@@ -981,16 +1381,16 @@
                     core.drawCircle(0, 0, config.size * 0.5);
                     core.endFill();
                     break;
-                    
+
                 case 'laser':
                     core.beginFill(config.color, 0.9);
-                    core.drawRoundedRect(-config.size * 1.5, -config.size/3, config.size * 3, config.size * 0.66, config.size/3);
+                    core.drawRoundedRect(-config.size * 1.5, -config.size / 3, config.size * 3, config.size * 0.66, config.size / 3);
                     core.endFill();
                     core.beginFill(0xFFFFFF, 1);
-                    core.drawRoundedRect(-config.size * 1.2, -config.size/6, config.size * 2.4, config.size/3, config.size/6);
+                    core.drawRoundedRect(-config.size * 1.2, -config.size / 6, config.size * 2.4, config.size / 3, config.size / 6);
                     core.endFill();
                     break;
-                    
+
                 case 'beam':
                     core.beginFill(config.color, 0.8);
                     core.drawRect(-config.size * 3, -2, config.size * 6, 4);
@@ -999,28 +1399,28 @@
                     core.drawRect(-config.size * 3, -1, config.size * 6, 2);
                     core.endFill();
                     break;
-                    
+
                 default: // bullet
                     core.beginFill(config.color, 1);
-                    core.drawRoundedRect(-config.size/2, -config.size/3, config.size * 1.5, config.size * 0.66, config.size/3);
+                    core.drawRoundedRect(-config.size / 2, -config.size / 3, config.size * 1.5, config.size * 0.66, config.size / 3);
                     core.endFill();
                     core.beginFill(0xFFFFFF, 1);
-                    core.drawCircle(config.size * 0.5, 0, config.size/3);
+                    core.drawCircle(config.size * 0.5, 0, config.size / 3);
                     core.endFill();
             }
-            
+
             container.addChild(core);
-            
+
             // Add motion trail effect
             const trail = new PIXI.Graphics();
             trail.alpha = 0.5;
             container.addChildAt(trail, 0);
             container.trail = trail;
-            
+
             // Store config for trail updates
             container.trailColor = config.glowColor;
             container.weaponType = projectile.weapon_type;
-            
+
             return container;
         }
 
@@ -1028,23 +1428,23 @@
         function updateProjectileSprite(sprite, projectile) {
             sprite.position.x = projectile.render_x !== undefined ? projectile.render_x : projectile.x;
             sprite.position.y = projectile.render_y !== undefined ? projectile.render_y : projectile.y;
-            
+
             // Update rotation based on velocity if available
             if (projectile.velocity_x !== undefined && projectile.velocity_y !== undefined) {
                 sprite.rotation = Math.atan2(projectile.velocity_y, projectile.velocity_x);
             }
-            
+
             // Update trail effect
             if (sprite.trail && sprite.lastPositions) {
                 sprite.trail.clear();
                 sprite.trail.lineStyle(3, sprite.trailColor, 0.3);
-                
+
                 if (sprite.lastPositions.length > 1) {
                     sprite.trail.moveTo(
                         sprite.lastPositions[0].x - sprite.position.x,
                         sprite.lastPositions[0].y - sprite.position.y
                     );
-                    
+
                     for (let i = 1; i < sprite.lastPositions.length; i++) {
                         const alpha = (1 - i / sprite.lastPositions.length) * 0.3;
                         sprite.trail.lineStyle(3 - i * 0.5, sprite.trailColor, alpha);
@@ -1055,7 +1455,7 @@
                     }
                 }
             }
-            
+
             // Initialize or update position history
             if (!sprite.lastPositions) {
                 sprite.lastPositions = [];
@@ -1069,7 +1469,7 @@
         function createPickupSprite(pickup) {
             const container = new PIXI.Container();
             container.pickupId = pickup.id;
-            
+
             const pickupConfigs = {
                 [GP.PickupType.Health]: {
                     color: 0x10B981,
@@ -1108,9 +1508,9 @@
                     pulseColor: 0x60C5FF
                 }
             };
-            
+
             const config = pickupConfigs[pickup.pickup_type] || pickupConfigs[GP.PickupType.Health];
-            
+
             // Animated outer glow
             const outerGlow = new PIXI.Graphics();
             outerGlow.beginFill(config.pulseColor, 0.15);
@@ -1118,31 +1518,31 @@
             outerGlow.endFill();
             container.addChild(outerGlow);
             container.outerGlow = outerGlow;
-            
+
             // Middle glow layer
             const middleGlow = new PIXI.Graphics();
             middleGlow.beginFill(config.color, 0.25);
             middleGlow.drawCircle(0, 0, 22);
             middleGlow.endFill();
             container.addChild(middleGlow);
-            
+
             // Main pickup shape
             const main = new PIXI.Graphics();
             main.lineStyle(3, config.color, 0.9);
             main.beginFill(config.color, 0.35);
-            
+
             switch (config.shape) {
                 case 'cross':
                     const crossSize = 15;
                     const crossWidth = 6;
-                    main.drawRect(-crossWidth/2, -crossSize, crossWidth, crossSize * 2);
-                    main.drawRect(-crossSize, -crossWidth/2, crossSize * 2, crossWidth);
+                    main.drawRect(-crossWidth / 2, -crossSize, crossWidth, crossSize * 2);
+                    main.drawRect(-crossSize, -crossWidth / 2, crossSize * 2, crossWidth);
                     break;
-                    
+
                 case 'hexagon':
                     drawRegularPolygon(main, 0, 0, 18, 6);
                     break;
-                    
+
                 case 'crate':
                     main.drawRoundedRect(-15, -15, 30, 30, 5);
                     main.lineStyle(1, config.color, 0.5);
@@ -1151,34 +1551,34 @@
                     main.moveTo(0, -15);
                     main.lineTo(0, 15);
                     break;
-                    
+
                 case 'arrow':
                     const arrowPoints = [0, -20, 10, -5, 5, -5, 5, 10, -5, 10, -5, -5, -10, -5];
                     main.drawPolygon(arrowPoints);
                     break;
-                    
+
                 case 'star':
                     drawStar(main, 0, 0, 5, 20, 10);
                     break;
-                    
+
                 case 'shield':
                     const shieldPoints = [0, -20, 15, -10, 15, 5, 0, 20, -15, 5, -15, -10];
                     main.drawPolygon(shieldPoints);
                     break;
-                    
+
                 default:
                     main.drawCircle(0, 0, 18);
             }
-            
+
             main.endFill();
             container.addChild(main);
-            
+
             // Icon or weapon type indicator
             let iconText = config.icon;
             if (pickup.pickup_type === GP.PickupType.WeaponCrate && pickup.weapon_type !== undefined) {
                 iconText = weaponNames[pickup.weapon_type]?.[0] || 'W';
             }
-            
+
             const iconStyle = new PIXI.TextStyle({
                 fontFamily: 'Arial',
                 fontSize: pickup.pickup_type === GP.PickupType.WeaponCrate ? 16 : 18,
@@ -1194,14 +1594,14 @@
             const icon = new PIXI.Text(iconText, iconStyle);
             icon.anchor.set(0.5);
             container.addChild(icon);
-            
+
             // Particle emitter placeholder for ambient particles
             container.particleEmitter = null;
-            
+
             container.baseScale = 1;
             container.pulseTime = Math.random() * Math.PI * 2;
             container.floatOffset = Math.random() * Math.PI * 2;
-            
+
             return container;
         }
 
@@ -1222,7 +1622,7 @@
         function drawStar(graphics, x, y, points, outerRadius, innerRadius) {
             const angle = Math.PI / points;
             const polygon = [];
-            
+
             for (let i = 0; i < points * 2; i++) {
                 const radius = i % 2 === 0 ? outerRadius : innerRadius;
                 polygon.push(
@@ -1230,7 +1630,7 @@
                     y + radius * Math.sin(angle * i - Math.PI / 2)
                 );
             }
-            
+
             graphics.drawPolygon(polygon);
         }
 
@@ -1241,15 +1641,15 @@
                     // Floating animation
                     pickupSprite.floatOffset += delta * 0.002;
                     pickupSprite.y += Math.sin(pickupSprite.floatOffset) * 0.1;
-                    
+
                     // Pulsing animation
                     pickupSprite.pulseTime += delta * 0.003;
                     const pulse = Math.sin(pickupSprite.pulseTime) * 0.1 + 0.95;
                     pickupSprite.scale.set(pickupSprite.baseScale * pulse);
-                    
+
                     // Rotation
                     pickupSprite.rotation += 0.02;
-                    
+
                     // Update outer glow
                     if (pickupSprite.outerGlow) {
                         const glowPulse = Math.sin(pickupSprite.pulseTime * 1.5) * 0.1 + 0.9;
@@ -1268,17 +1668,17 @@
                     const waveSpeed = 0.002;
                     const waveAmount = 0.15;
                     flagSprite.flagGraphic.skew.x = Math.sin(Date.now() * waveSpeed + flagSprite.flagTeamId) * waveAmount;
-                    
+
                     // Slight vertical bob
                     flagSprite.flagGraphic.y = -40 + Math.sin(Date.now() * 0.001) * 2;
-                    
+
                     // Dropped flag effects
                     if (flagSprite.droppedGlow) {
                         const pulse = Math.sin(Date.now() * 0.003) * 0.3 + 0.7;
                         flagSprite.droppedGlow.alpha = pulse;
                         flagSprite.droppedGlow.scale.set(pulse);
                     }
-                    
+
                     // Update timer
                     if (flagSprite.timerText) {
                         const state = flagStates.get(flagSprite.flagTeamId);
@@ -1298,22 +1698,22 @@
         function createHealthVignette(app) {
             const vignette = new PIXI.Graphics();
             const radius = Math.max(app.screen.width, app.screen.height);
-            
+
             // Create radial gradient effect
             const center = new PIXI.Point(app.screen.width / 2, app.screen.height / 2);
-            
+
             for (let i = 0; i < 10; i++) {
                 const alpha = (i / 10) * 0.5;
                 const currentRadius = radius * (1 - i / 10);
-                
+
                 vignette.beginFill(0xFF0000, alpha);
                 vignette.drawCircle(center.x, center.y, currentRadius);
                 vignette.endFill();
             }
-            
+
             vignette.blendMode = PIXI.BLEND_MODES.MULTIPLY;
             vignette.visible = false;
-            
+
             return vignette;
         }
 
@@ -1348,7 +1748,7 @@
                 { count: 50, scrollFactor: 0.3, minRadius: 1, maxRadius: 1.5, color: 0xAAAAFF },
                 { count: 30, scrollFactor: 0.5, minRadius: 1.5, maxRadius: 2, color: 0xFFFFAA }
             ];
-            
+
             // Generate nebula clouds
             const nebulaContainer = new PIXI.Container();
             for (let i = 0; i < 3; i++) {
@@ -1357,7 +1757,7 @@
                 const x = Math.random() * app.screen.width;
                 const y = Math.random() * app.screen.height;
                 const color = [0x4B0082, 0x191970, 0x2F4F4F][i % 3];
-                
+
                 nebula.beginFill(color, 0.1);
                 nebula.drawCircle(0, 0, size);
                 nebula.endFill();
@@ -1366,12 +1766,12 @@
                 nebulaContainer.addChild(nebula);
             }
             starfieldContainer.addChild(nebulaContainer);
-            
+
             // Generate star layers
             starLayers.forEach((layerData, layerIndex) => {
                 const layerContainer = new PIXI.Container();
                 layerContainer.scrollFactor = layerData.scrollFactor;
-                
+
                 // Generate star texture once
                 const starGraphics = new PIXI.Graphics();
                 starGraphics.beginFill(0xFFFFFF);
@@ -1379,36 +1779,36 @@
                 starGraphics.endFill();
                 const starTexture = app.renderer.generateTexture(starGraphics);
                 starGraphics.destroy();
-                
+
                 // Create stars using sprites for better performance
                 for (let i = 0; i < layerData.count; i++) {
                     const star = new PIXI.Sprite(starTexture);
                     star.anchor.set(0.5);
-                    
+
                     const radius = Math.random() * (layerData.maxRadius - layerData.minRadius) + layerData.minRadius;
                     star.scale.set(radius / 2);
                     star.tint = layerData.color;
                     star.alpha = Math.random() * 0.5 + 0.5;
-                    
+
                     star.x = Math.random() * app.screen.width * 2;
                     star.y = Math.random() * app.screen.height * 2;
-                    
+
                     // Store initial position for wrapping
                     star.initialX = star.x;
                     star.initialY = star.y;
-                    
+
                     // Add twinkle effect to some stars
                     if (Math.random() < 0.3) {
                         star.twinkleSpeed = Math.random() * 0.002 + 0.001;
                         star.twinkleOffset = Math.random() * Math.PI * 2;
                     }
-                    
+
                     layerContainer.addChild(star);
                 }
-                
+
                 starfieldContainer.addChild(layerContainer);
             });
-            
+
             return starfieldContainer;
         }
 
@@ -1419,13 +1819,13 @@
                     // Parallax scrolling
                     layer.x = -cameraX * layer.scrollFactor;
                     layer.y = -cameraY * layer.scrollFactor;
-                    
+
                     // Update individual stars for twinkling
                     layer.children.forEach(star => {
                         if (star.twinkleSpeed) {
                             star.alpha = 0.5 + Math.sin(Date.now() * star.twinkleSpeed + star.twinkleOffset) * 0.5;
                         }
-                        
+
                         // Wrap stars around screen edges
                         const screenBuffer = 100;
                         if (star.x + layer.x < -screenBuffer) {
@@ -1433,7 +1833,7 @@
                         } else if (star.x + layer.x > app.screen.width + screenBuffer) {
                             star.x -= app.screen.width + screenBuffer * 2;
                         }
-                        
+
                         if (star.y + layer.y < -screenBuffer) {
                             star.y += app.screen.height + screenBuffer * 2;
                         } else if (star.y + layer.y > app.screen.height + screenBuffer) {
@@ -1446,17 +1846,17 @@
 
         function drawWalls() {
             wallGraphics.clear();
-            
+
             // First pass: Draw wall shadows
             walls.forEach(wall => {
                 if (wall.is_destructible && wall.current_health <= 0) return;
-                
+
                 // Shadow effect
                 wallGraphics.beginFill(0x000000, 0.3);
                 wallGraphics.drawRect(wall.x + 3, wall.y + 3, wall.width, wall.height);
                 wallGraphics.endFill();
             });
-            
+
             // Second pass: Draw walls
             walls.forEach(wall => {
                 if (wall.is_destructible && wall.current_health <= 0) return;
@@ -1467,7 +1867,7 @@
                 if (wall.is_destructible) {
                     const healthPercent = wall.current_health / wall.max_health;
                     wallAlpha = 0.6 + healthPercent * 0.4;
-                    
+
                     if (healthPercent > 0.5) {
                         wallColor = interpolateColor(0x4B5563, 0x374151, (healthPercent - 0.5) * 2);
                     } else {
@@ -1477,18 +1877,18 @@
                     wallGraphics.beginFill(wallColor, wallAlpha * 0.9);
                     wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
                     wallGraphics.endFill();
-                    
+
                     wallGraphics.lineStyle(1, mixColors(wallColor, 0x000000, 0.3), wallAlpha * 0.5);
                     const lineSpacing = 10;
                     for (let i = wall.x + lineSpacing; i < wall.x + wall.width; i += lineSpacing) {
                         wallGraphics.moveTo(i, wall.y);
                         wallGraphics.lineTo(i, wall.y + wall.height);
                     }
-                    
+
                     if (healthPercent < 0.8) {
                         drawEnhancedWallCracks(wall, healthPercent);
                     }
-                    
+
                     if (healthPercent < 0.3) {
                         wallGraphics.lineStyle(2, 0xFF6B6B, (1 - healthPercent) * 0.5);
                         wallGraphics.drawRect(wall.x - 1, wall.y - 1, wall.width + 2, wall.height + 2);
@@ -1497,12 +1897,12 @@
                     wallGraphics.beginFill(wallColor);
                     wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
                     wallGraphics.endFill();
-                    
+
                     wallGraphics.lineStyle(1, mixColors(wallColor, 0xFFFFFF, 0.1), 0.5);
                     wallGraphics.moveTo(wall.x, wall.y + wall.height);
                     wallGraphics.lineTo(wall.x, wall.y);
                     wallGraphics.lineTo(wall.x + wall.width, wall.y);
-                    
+
                     wallGraphics.lineStyle(1, mixColors(wallColor, 0x000000, 0.3), 0.5);
                     wallGraphics.moveTo(wall.x + wall.width, wall.y);
                     wallGraphics.lineTo(wall.x + wall.width, wall.y + wall.height);
@@ -1512,7 +1912,7 @@
                 wallGraphics.lineStyle(2, mixColors(wallColor, 0x000000, 0.4), wallAlpha);
                 wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
             });
-            
+
             if (minimap) minimap.wallsNeedUpdate = true;
         }
 
@@ -1520,7 +1920,7 @@
             let shakeTime = duration;
             const initialX = container.x;
             const initialY = container.y;
-            
+
             const shakeTicker = (delta) => {
                 if (shakeTime > 0) {
                     shakeTime -= delta;
@@ -1562,33 +1962,33 @@
         function drawEnhancedWallCracks(wall, healthPercent) {
             const numCracks = Math.floor((1 - healthPercent) * 12);
             const crackColor = mixColors(0x2E3440, 0x000000, 0.5);
-            
+
             for (let i = 0; i < numCracks; i++) {
                 wallGraphics.lineStyle(Math.max(1, 3 * (1 - healthPercent)), crackColor, 0.7);
-                
+
                 const startX = wall.x + Math.random() * wall.width;
                 const startY = wall.y + Math.random() * wall.height;
-                
+
                 wallGraphics.moveTo(startX, startY);
-                
+
                 let currentX = startX;
                 let currentY = startY;
                 const crackLength = Math.min(wall.width, wall.height) * 0.4 * (1 - healthPercent);
                 const segments = 3 + Math.floor(Math.random() * 3);
-                
+
                 for (let j = 0; j < segments; j++) {
                     const angle = Math.random() * Math.PI * 2;
                     const segmentLength = crackLength / segments;
                     currentX += Math.cos(angle) * segmentLength;
                     currentY += Math.sin(angle) * segmentLength;
-                    
+
                     currentX = Math.max(wall.x, Math.min(wall.x + wall.width, currentX));
                     currentY = Math.max(wall.y, Math.min(wall.y + wall.height, currentY));
-                    
+
                     wallGraphics.lineTo(currentX, currentY);
                 }
             }
-            
+
             if (healthPercent < 0.5) {
                 wallGraphics.beginFill(crackColor, 0.5);
                 for (let i = 0; i < 5; i++) {
@@ -1629,18 +2029,18 @@
             // Flag fabric container
             const flagContainer = new PIXI.Container();
             flagContainer.position.y = -40;
-            
+
             // Flag shadow/depth
             const flagShadow = new PIXI.Graphics();
             const flagColor = teamColors[flagState.team_id] || 0xFFFFFF;
             flagShadow.beginFill(mixColors(flagColor, 0x000000, 0.5), 0.5);
             flagShadow.drawPolygon([2, 2, 32, 7, 32, 22, 2, 17]);
             flagContainer.addChild(flagShadow);
-            
+
             // Main flag
             const flagGraphic = new PIXI.Graphics();
             flagGraphic.beginFill(flagColor);
-            
+
             // More detailed flag shape with notch
             const flagPoints = [
                 0, 0,    // Top left
@@ -1653,7 +2053,7 @@
             ];
             flagGraphic.drawPolygon(flagPoints);
             flagGraphic.endFill();
-            
+
             // Flag emblem/pattern
             flagGraphic.beginFill(mixColors(flagColor, 0xFFFFFF, 0.3), 0.5);
             if (flagState.team_id === 1) {
@@ -1664,17 +2064,17 @@
                 flagGraphic.drawCircle(10, 10, 6);
             }
             flagGraphic.endFill();
-            
+
             // Flag highlights
             flagGraphic.lineStyle(1, mixColors(flagColor, 0xFFFFFF, 0.2), 0.5);
             flagGraphic.moveTo(0, 5);
             flagGraphic.lineTo(25, 8);
             flagGraphic.moveTo(0, 15);
             flagGraphic.lineTo(25, 17);
-            
+
             flagContainer.addChild(flagGraphic);
             container.addChild(flagContainer);
-            
+
             container.flagGraphic = flagContainer;
             container.position.set(flagState.position.x, flagState.position.y);
 
@@ -1685,10 +2085,10 @@
                 droppedGlow.lineStyle(3, flagColor, 0.5);
                 droppedGlow.drawCircle(0, 0, 20);
                 container.addChildAt(droppedGlow, 0);
-                
+
                 // Pulsing effect
                 container.droppedGlow = droppedGlow;
-                
+
                 // Timer text with background
                 if (flagState.respawn_timer > 0) {
                     const timerBg = new PIXI.Graphics();
@@ -1696,7 +2096,7 @@
                     timerBg.drawRoundedRect(-15, -55, 30, 20, 5);
                     timerBg.endFill();
                     container.addChild(timerBg);
-                    
+
                     const timerStyle = new PIXI.TextStyle({
                         fontSize: 14,
                         fill: 0xFFFFFF,
@@ -1709,14 +2109,14 @@
                     container.timerText = timerText;
                 }
             }
-            
+
             // Glow effect for base position
             const baseGlow = new PIXI.Graphics();
             baseGlow.beginFill(flagColor, 0.1);
             baseGlow.drawCircle(0, 5, 25);
             baseGlow.endFill();
             container.addChildAt(baseGlow, 0);
-            
+
             return container;
         }
 
@@ -1748,7 +2148,7 @@
                     flagContainer.addChild(flagSprite);
                 }
             });
-            
+
             if (minimap) minimap.objectivesNeedUpdate = true;
         }
 
@@ -1767,7 +2167,7 @@
         // Calculate viewport bounds for culling
         function getViewportBounds() {
             if (!app || !gameScene) return null;
-            
+
             const screenBounds = app.renderer.screen;
             return new PIXI.Rectangle(
                 -gameScene.x - VIEW_DISTANCE_BUFFER,
@@ -1868,13 +2268,13 @@
 
             let update1 = null, update2 = null;
             for (let i = serverUpdates.length - 1; i >= 1; i--) {
-                if (serverUpdates[i].timestamp >= renderTime && serverUpdates[i-1].timestamp <= renderTime) {
+                if (serverUpdates[i].timestamp >= renderTime && serverUpdates[i - 1].timestamp <= renderTime) {
                     update2 = serverUpdates[i];
-                    update1 = serverUpdates[i-1];
+                    update1 = serverUpdates[i - 1];
                     break;
                 }
             }
-            
+
             if (!update1 && serverUpdates[0].timestamp <= renderTime && serverUpdates.length > 0) {
                 update1 = serverUpdates[0];
                 update2 = serverUpdates[0];
@@ -1922,10 +2322,9 @@
             });
         }
 
-        // OPTIMIZED: Update all sprites with culling
         function updateSprites() {
             const viewportBounds = getViewportBounds();
-            
+
             // Update player sprites
             players.forEach((player, playerId) => {
                 // Check if player is in viewport
@@ -1935,7 +2334,7 @@
                     if (sprite) sprite.visible = false;
                     return;
                 }
-                
+
                 let sprite = playerContainer.children.find(s => s.playerId === playerId);
                 if (!sprite) {
                     sprite = createPlayerSprite(player, playerId === myPlayerId);
@@ -1946,14 +2345,13 @@
                 updatePlayerSprite(sprite, player);
             });
 
-            // Remove sprites for disconnected players
-            playerContainer.children = playerContainer.children.filter(sprite => {
+            // Remove sprites for disconnected players (optimized loop)
+            for (let i = playerContainer.children.length - 1; i >= 0; i--) {
+                const sprite = playerContainer.children[i];
                 if (!players.has(sprite.playerId)) {
                     sprite.destroy({ children: true });
-                    return false;
                 }
-                return true;
-            });
+            }
 
             // Update projectile sprites with culling
             projectiles.forEach((projectile, projectileId) => {
@@ -1961,7 +2359,7 @@
                 if (viewportBounds && !viewportBounds.contains(projectile.x, projectile.y)) {
                     return; // Skip off-screen projectiles
                 }
-                
+
                 let sprite = projectileContainer.children.find(s => s.projectileId === projectileId);
                 if (!sprite) {
                     sprite = createProjectileSprite(projectile);
@@ -1970,14 +2368,13 @@
                 updateProjectileSprite(sprite, projectile);
             });
 
-            // Remove sprites for expired projectiles
-            projectileContainer.children = projectileContainer.children.filter(sprite => {
+            // Remove sprites for expired projectiles (optimized loop)
+            for (let i = projectileContainer.children.length - 1; i >= 0; i--) {
+                const sprite = projectileContainer.children[i];
                 if (!projectiles.has(sprite.projectileId)) {
                     sprite.destroy({ children: true });
-                    return false;
                 }
-                return true;
-            });
+            }
 
             // Update pickup sprites with culling
             pickups.forEach((pickup, pickupId) => {
@@ -1985,7 +2382,7 @@
                 if (viewportBounds && !viewportBounds.contains(pickup.x, pickup.y)) {
                     return; // Skip off-screen pickups
                 }
-                
+
                 let sprite = pickupContainer.children.find(s => s.pickupId === pickupId);
                 if (pickup.is_active) {
                     if (!sprite) {
@@ -1998,14 +2395,24 @@
                     sprite.visible = false;
                 }
             });
-        }
 
+            // Remove sprites for inactive pickups (optimized loop)
+            for (let i = pickupContainer.children.length - 1; i >= 0; i--) {
+    const sprite = pickupContainer.children[i];
+    const pickupData = pickups.get(sprite.pickupId);
+
+    // If pickup doesn't exist or is inactive, destroy sprite
+    if (!pickupData || !pickupData.is_active) {
+        sprite.destroy();
+    }
+}
+        }
         // Process server update
         function processServerUpdate(messageData, isInitial = false) {
             if (!messageData) {
                 log(`[processServerUpdate] Error: messageData is ${messageData}. isInitial: ${isInitial}. Stack: ${new Error().stack}`, 'error');
                 console.error("[processServerUpdate] messageData:", messageData, "isInitial:", isInitial);
-                return; 
+                return;
             }
 
             const serverTime = Number(messageData.timestamp);
@@ -2065,7 +2472,7 @@
                     }
                 });
             }
-            
+
             if (messageData.removed_player_ids && messageData.removed_player_ids.length > 0) {
                 messageData.removed_player_ids.forEach(removedId => {
                     players.delete(removedId);
@@ -2123,7 +2530,7 @@
                 players: new Map(players.entries()),
                 projectiles: new Map(projectiles.entries())
             });
-            serverUpdates = serverUpdates.filter(s => s.timestamp > Date.now() - 2000); 
+            serverUpdates = serverUpdates.filter(s => s.timestamp > Date.now() - 2000);
         }
 
         // Parse FlatBuffer message
@@ -2132,7 +2539,7 @@
                 const buf = new flatbuffers.ByteBuffer(new Uint8Array(data));
                 const gameMsg = GameProtocol.GameMessage.getRootAsGameMessage(buf);
                 const msgType = gameMsg.msgType();
-                
+
                 switch (msgType) {
                     case GameProtocol.MessageType.Welcome:
                         const welcome = gameMsg.actualMessage(new GP.WelcomeMessage());
@@ -2224,7 +2631,7 @@
                                     y: p.y(),
                                     owner_id: p.ownerId(),
                                     weapon_type: p.weaponType(),
-                                    velocity_x: p.velocityX(), 
+                                    velocity_x: p.velocityX(),
                                     velocity_y: p.velocityY()
                                 });
                             }
@@ -2306,7 +2713,7 @@
                             last_processed_input_sequence: delta.lastProcessedInputSequence(),
                             removed_player_ids: []
                         };
-                        
+
                         // Parse removed_player_ids if present
                         if (typeof delta.removedPlayerIdsLength === 'function') {
                             for (let i = 0; i < delta.removedPlayerIdsLength(); i++) {
@@ -2359,7 +2766,7 @@
                                     y: p.y(),
                                     owner_id: p.ownerId(),
                                     weapon_type: p.weaponType(),
-                                    velocity_x: p.velocityX(), 
+                                    velocity_x: p.velocityX(),
                                     velocity_y: p.velocityY()
                                 });
                             }
@@ -2478,7 +2885,7 @@
                         return {
                             type: 'chat',
                             data: {
-                                seq: Number(chat.seq()), 
+                                seq: Number(chat.seq()),
                                 player_id: chat.playerId(),
                                 username: chat.username(),
                                 message: chat.message(),
@@ -2556,7 +2963,7 @@
             const usernameStr = builder.createString(localPlayerState?.username || 'Player');
 
             GP.ChatMessage.startChatMessage(builder);
-            GP.ChatMessage.addSeq(builder, BigInt(0)); 
+            GP.ChatMessage.addSeq(builder, BigInt(0));
             GP.ChatMessage.addPlayerId(builder, playerIdStr);
             GP.ChatMessage.addUsername(builder, usernameStr);
             GP.ChatMessage.addMessage(builder, messageStr);
@@ -2638,9 +3045,9 @@
                     break;
                 case 'KeyR':
                     if (isDown && localPlayerState && localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo < getMaxAmmoForWeaponClient(localPlayerState.weapon) && localPlayerState.reload_progress === -1) {
-                         inputState.reload = true;
-                         if (reloadPromptSpan) reloadPromptSpan.textContent = ' (Reloading...)';
-                         if (audioManager && gameSettings.soundEnabled) audioManager.playSound('reloadStart', null, 0.3);
+                        inputState.reload = true;
+                        if (reloadPromptSpan) reloadPromptSpan.textContent = ' (Reloading...)';
+                        if (audioManager && gameSettings.soundEnabled) audioManager.playSound('reloadStart', null, 0.3);
                     }
                     break;
                 case 'KeyV':
@@ -2712,7 +3119,7 @@
                     const killerColor = teamColors[players.get(entry.killer_id)?.team_id] || teamColors[0];
                     const victimColor = teamColors[players.get(entry.victim_id)?.team_id] || teamColors[0];
 
-                    div.innerHTML = `<span style="color:${'#'+killerColor.toString(16).padStart(6,'0')};">${entry.killer_name}</span> <span style="color: #A0A0A0;">[${weaponNames[entry.weapon] || 'Unknown'}]</span> <span style="color:${'#'+victimColor.toString(16).padStart(6,'0')};">${entry.victim_name}</span> ${weaponIcon}`;
+                    div.innerHTML = `<span style="color:${'#' + killerColor.toString(16).padStart(6, '0')};">${entry.killer_name}</span> <span style="color: #A0A0A0;">[${weaponNames[entry.weapon] || 'Unknown'}]</span> <span style="color:${'#' + victimColor.toString(16).padStart(6, '0')};">${entry.victim_name}</span> ${weaponIcon}`;
                     killFeedDiv.appendChild(div);
                 });
             } else {
@@ -2791,8 +3198,8 @@
                     if (matchInfo.winner_name && matchInfo.winner_name.length > 0 && matchInfo.winner_name !== "null") {
                         winnerText += `Winner: ${matchInfo.winner_name}`;
                     } else if (matchInfo.winner_id && matchInfo.winner_id !== "0" && matchInfo.winner_id !== "null") {
-                         const teamColorClass = matchInfo.winner_id === "1" ? "team-red" : (matchInfo.winner_id === "2" ? "team-blue" : "team-ffa");
-                         winnerText += `Winner: <span class="${teamColorClass}">Team ${matchInfo.winner_id}</span>`;
+                        const teamColorClass = matchInfo.winner_id === "1" ? "team-red" : (matchInfo.winner_id === "2" ? "team-blue" : "team-ffa");
+                        winnerText += `Winner: <span class="${teamColorClass}">Team ${matchInfo.winner_id}</span>`;
                     } else {
                         winnerText += "It's a Draw!";
                     }
@@ -2812,7 +3219,7 @@
                 playerHealthSpan.textContent = localPlayerState.health;
                 playerShieldSpan.textContent = localPlayerState.shield_current;
                 playerAmmoSpan.textContent = localPlayerState.ammo;
-                
+
                 if (localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo === 0 && localPlayerState.reload_progress === -1) {
                     reloadPromptSpan.textContent = ' (Press R to Reload!)';
                 } else if (localPlayerState.reload_progress !== -1 && localPlayerState.reload_progress < 1.0) {
@@ -2848,15 +3255,15 @@
             // Initialize managers with audio support
             const audioManager = new AudioManager();
             const effectsManager = new EffectsManager(app, worldContainer, audioManager);
-            
+
             // Create starfield background
             const starfield = createStarfield(app);
             worldContainer.addChildAt(starfield, 0);
-            
+
             // Create health vignette
             const healthVignette = createHealthVignette(app);
             app.stage.addChild(healthVignette);
-            
+
             return {
                 audioManager,
                 effectsManager,
@@ -3155,7 +3562,7 @@
                 log(`DataChannel "${dcInstance.label}" OPENED.`, 'success');
                 controlsDiv.classList.remove('hidden');
                 setupInputHandlers();
-                pingStartTime = Date.now(); 
+                pingStartTime = Date.now();
 
                 if (window.audioManager && window.audioManager.audioContext && window.audioManager.audioContext.state === 'suspended') {
                     window.audioManager.audioContext.resume().then(() => {
@@ -3252,6 +3659,152 @@
             }
         }
 
+        // Particle Pool class for efficient particle management
+        class ParticlePool {
+            constructor(container, initialSize = 100) {
+                this.container = container;
+                this.available = [];
+                this.active = new Set();
+                this.textureCache = new Map();
+
+                // Pre-allocate initial particles
+                this.expandPool(initialSize);
+            }
+
+            expandPool(count) {
+                for (let i = 0; i < count; i++) {
+                    const particle = new PIXI.Sprite();
+                    particle.anchor.set(0.5);
+                    particle.visible = false;
+                    particle.poolData = {
+                        velocity: { x: 0, y: 0 },
+                        angularVelocity: 0,
+                        lifetime: 0,
+                        age: 0,
+                        onUpdate: null,
+                        onComplete: null
+                    };
+                    this.container.addChild(particle);
+                    this.available.push(particle);
+                }
+            }
+
+            borrow(texture, x, y) {
+                if (this.available.length === 0) {
+                    // Expand pool if needed
+                    this.expandPool(50);
+                }
+
+                const particle = this.available.pop();
+                if (!particle) return null;
+
+                // Reset particle state
+                particle.texture = texture;
+                particle.position.set(x, y);
+                particle.scale.set(1);
+                particle.alpha = 1;
+                particle.rotation = 0;
+                particle.visible = true;
+                particle.tint = 0xFFFFFF;
+
+                // Reset poolData
+                particle.poolData.velocity.x = 0;
+                particle.poolData.velocity.y = 0;
+                particle.poolData.angularVelocity = 0;
+                particle.poolData.lifetime = 0;
+                particle.poolData.age = 0;
+                particle.poolData.onUpdate = null;
+                particle.poolData.onComplete = null;
+
+                this.active.add(particle);
+                return particle;
+            }
+
+            return(particle) {
+                if (!particle || !this.active.has(particle)) return;
+
+                // Remove from any parent container
+                if (particle.parent) {
+                    particle.parent.removeChild(particle);
+                }
+
+                particle.visible = false;
+                this.active.delete(particle);
+
+                // Clear all references to prevent memory leaks
+                particle.poolData.velocity.x = 0;
+                particle.poolData.velocity.y = 0;
+                particle.poolData.angularVelocity = 0;
+                particle.poolData.onUpdate = null;
+                particle.poolData.onComplete = null;
+
+                // Only add back to available if particle still exists
+                if (!particle.destroyed) {
+                    this.available.push(particle);
+                }
+
+                // Call completion callback if exists
+                if (particle.poolData.onComplete) {
+                    try {
+                        particle.poolData.onComplete();
+                    } catch (e) {
+                        console.warn('Particle onComplete error:', e);
+                    }
+                }
+            }
+
+            update(deltaMS) {
+                const toReturn = [];
+
+                this.active.forEach(particle => {
+                    // Safety check - skip if particle is destroyed or has no transform
+                    if (!particle || !particle.transform || particle.destroyed) {
+                        toReturn.push(particle);
+                        return;
+                    }
+
+                    particle.poolData.age += deltaMS;
+                    const progress = Math.min(particle.poolData.age / particle.poolData.lifetime, 1);
+
+                    // Call update function if exists, with try-catch for safety
+                    if (particle.poolData.onUpdate) {
+                        try {
+                            particle.poolData.onUpdate(progress, deltaMS);
+                        } catch (e) {
+                            console.warn('Particle update error:', e);
+                            toReturn.push(particle);
+                            return;
+                        }
+                    }
+
+                    // Return particle to pool if lifetime exceeded
+                    if (progress >= 1) {
+                        toReturn.push(particle);
+                    }
+                });
+
+                // Return completed particles
+                toReturn.forEach(particle => this.return(particle));
+            }
+
+            clear() {
+                this.active.forEach(particle => {
+                    particle.visible = false;
+                    this.available.push(particle);
+                });
+                this.active.clear();
+            }
+
+            getStats() {
+                return {
+                    active: this.active.size,
+                    available: this.available.length,
+                    total: this.active.size + this.available.length
+                };
+            }
+        }
+
+
         // OPTIMIZED: Effects Manager with ParticleContainer
         class EffectsManager {
             constructor(app, container, audioManager = null) {
@@ -3268,44 +3821,87 @@
                 this.activeEffects = [];
                 this.particlesEnabled = true;
                 this.audioManager = audioManager;
-                
+
                 // Pre-generate particle textures
                 this.particleTextures = this.generateParticleTextures();
+
+                // Create particle pool
+                this.particlePool = new ParticlePool(this.effectsContainer, 200);
+
+                // For non-pooled effects (like damage numbers)
+                this.activeEffects = [];
             }
 
             generateParticleTextures() {
-                const textures = {};
-                
-                // Spark particle
+                const textures = {
+                    _tintCache: new Map() // Use Map for better performance
+                };
+
+                // Generate base white textures
                 const sparkGraphics = new PIXI.Graphics();
                 sparkGraphics.beginFill(0xFFFFFF);
                 sparkGraphics.drawCircle(0, 0, 2);
                 sparkGraphics.endFill();
-                textures.spark = this.app.renderer.generateTexture(sparkGraphics);
-                
-                // Smoke particle
+                textures.spark_white = this.app.renderer.generateTexture(sparkGraphics);
+                sparkGraphics.destroy();
+
                 const smokeGraphics = new PIXI.Graphics();
-                smokeGraphics.beginFill(0x888888, 0.5);
+                smokeGraphics.beginFill(0xFFFFFF, 0.5);
                 smokeGraphics.drawCircle(0, 0, 8);
                 smokeGraphics.endFill();
                 smokeGraphics.filters = [new PIXI.BlurFilter(3)];
-                textures.smoke = this.app.renderer.generateTexture(smokeGraphics);
-                
-                // Debris particle
+                textures.smoke_white = this.app.renderer.generateTexture(smokeGraphics);
+                smokeGraphics.destroy();
+
                 const debrisGraphics = new PIXI.Graphics();
-                debrisGraphics.beginFill(0x444444);
+                debrisGraphics.beginFill(0xFFFFFF);
                 debrisGraphics.drawRect(-3, -3, 6, 6);
                 debrisGraphics.endFill();
-                textures.debris = this.app.renderer.generateTexture(debrisGraphics);
-                
-                // Clean up
-                sparkGraphics.destroy();
-                smokeGraphics.destroy();
+                textures.debris_white = this.app.renderer.generateTexture(debrisGraphics);
                 debrisGraphics.destroy();
-                
+
+                // Helper function to get or create a tinted texture
+                textures.getTintedTexture = (baseTextureName, color) => {
+                    const cacheKey = `${baseTextureName}_${color}`;
+
+                    if (!textures._tintCache.has(cacheKey)) {
+                        const baseTexture = textures[baseTextureName];
+                        if (!baseTexture) {
+                            console.warn(`Base texture ${baseTextureName} not found`);
+                            return null;
+                        }
+
+                        // Create a temporary sprite with the tint
+                        const tempSprite = new PIXI.Sprite(baseTexture);
+                        tempSprite.tint = color;
+
+                        // Generate the tinted texture
+                        const tintedTexture = this.app.renderer.generateTexture(tempSprite);
+                        textures._tintCache.set(cacheKey, tintedTexture);
+
+                        // Clean up
+                        tempSprite.destroy();
+                    }
+
+                    return textures._tintCache.get(cacheKey);
+                };
+
+                // Pre-generate commonly used colors to avoid runtime generation
+                const commonColors = [
+                    0xFFFF00, 0xFF6600, 0xFF0000, // Explosion colors
+                    0xFFBF00, 0xFF4444, 0x4444FF, 0xAA44FF, // Weapon colors
+                    0x00FF00, 0x374151, 0x4B5563, 0x6B7280 // Other effects
+                ];
+
+                commonColors.forEach(color => {
+                    textures.getTintedTexture('spark_white', color);
+                    textures.getTintedTexture('debris_white', color);
+                });
+
                 return textures;
             }
-            
+
+
             setParticlesEnabled(enabled) {
                 this.particlesEnabled = enabled;
             }
@@ -3361,11 +3957,35 @@
                         if (this.audioManager) this.audioManager.playSound('flagGrabbed', pos, 0.6);
                         break;
                     case GP.GameEventType.FlagDropped:
-                         if (this.audioManager) this.audioManager.playSound('flagDropped', pos, 0.5);
+                        if (this.audioManager) this.audioManager.playSound('flagDropped', pos, 0.5);
                         break;
                     case GP.GameEventType.FlagReturned:
                         if (this.audioManager) this.audioManager.playSound('flagReturned', pos, 0.7);
                         break;
+                }
+            }
+
+            createEnhancedPowerupCollectEffect(position) {
+                const texture = this.particleTextures.getTintedTexture('spark_white', 0x00FF00);
+                const particleCount = 12;
+
+                for (let i = 0; i < particleCount; i++) {
+                    const particle = this.particlePool.borrow(texture, position.x, position.y);
+                    if (!particle) continue;
+
+                    const angle = (Math.PI * 2 * i) / particleCount;
+                    const distance = 20;
+
+                    particle.poolData.lifetime = 500;
+                    particle.poolData.age = 0;
+
+                    particle.poolData.onUpdate = (progress) => {
+                        const currentDistance = distance * (1 + progress);
+                        particle.x = position.x + Math.cos(angle) * currentDistance;
+                        particle.y = position.y + Math.sin(angle) * currentDistance;
+                        particle.alpha = 1 - progress;
+                        particle.scale.set(1 - progress * 0.5);
+                    };
                 }
             }
 
@@ -3376,74 +3996,78 @@
                     [GP.WeaponType.Rifle]: { size: 5, sparkCount: 4, color: 0x6666FF },
                     [GP.WeaponType.Sniper]: { size: 8, sparkCount: 6, color: 0xFF00FF }
                 };
-                
+
                 const config = impactConfigs[weaponType] || impactConfigs[GP.WeaponType.Pistol];
-                
-                // Sparks using sprites
+                const texture = this.particleTextures.getTintedTexture('spark_white', config.color);
+
                 for (let i = 0; i < config.sparkCount; i++) {
-                    const spark = new PIXI.Sprite(this.particleTextures.spark);
-                    spark.anchor.set(0.5);
-                    spark.position.set(position.x, position.y);
-                    spark.tint = config.color;
-                    spark.scale.set(0.5 + Math.random() * 0.5);
-                    
+                    const particle = this.particlePool.borrow(texture, position.x, position.y);
+                    if (!particle) continue;
+
                     const angle = Math.random() * Math.PI * 2;
                     const speed = 2 + Math.random() * 4;
-                    spark.velocity = {
-                        x: Math.cos(angle) * speed,
-                        y: Math.sin(angle) * speed
+                    particle.poolData.velocity.x = Math.cos(angle) * speed;
+                    particle.poolData.velocity.y = Math.sin(angle) * speed;
+                    particle.poolData.lifetime = 300;
+                    particle.poolData.age = 0;
+
+                    const initialScale = 0.5 + Math.random() * 0.5;
+                    particle.scale.set(initialScale);
+
+                    particle.poolData.onUpdate = (progress) => {
+                        particle.x += particle.poolData.velocity.x * (1 - progress);
+                        particle.y += particle.poolData.velocity.y * (1 - progress);
+                        particle.alpha = 1 - progress;
+                        particle.scale.set(initialScale * (1 - progress * 0.5));
                     };
-                    
-                    this.effectsContainer.addChild(spark);
-                    
-                    this.animateEffect(spark, {
-                        duration: 300,
-                        onUpdate: p => {
-                            spark.x += spark.velocity.x * (1 - p);
-                            spark.y += spark.velocity.y * (1 - p);
-                            spark.alpha = 1 - p;
-                            spark.scale.set(spark.scale.x * 0.98);
-                        },
-                        onComplete: () => spark.destroy()
-                    });
                 }
             }
 
             createEnhancedMuzzleFlash(position, weaponType, instigatorId) {
-                const playerSprite = playerContainer.children.find(s => s.playerId === instigatorId);
-                if (!playerSprite || !playerSprite.gun) return;
+    const playerSprite = playerContainer.children.find(s => s.playerId === instigatorId);
+    if (!playerSprite || !playerSprite.gun) return;
 
-                const flashConfigs = {
-                    [GP.WeaponType.Pistol]: { size: 15, color: 0xFFFF66 },
-                    [GP.WeaponType.Shotgun]: { size: 22, color: 0xFF6600 },
-                    [GP.WeaponType.Rifle]: { size: 18, color: 0x6666FF },
-                    [GP.WeaponType.Sniper]: { size: 25, color: 0xFF66FF }
-                };
-                
-                const config = flashConfigs[weaponType] || flashConfigs[GP.WeaponType.Pistol];
-                
-                // Simple flash sprite
-                const flash = new PIXI.Sprite(this.particleTextures.spark);
-                flash.anchor.set(0.5);
-                flash.scale.set(config.size / 2);
-                flash.tint = config.color;
-                flash.position.set(PLAYER_RADIUS + 15, 0);
-                playerSprite.gun.addChild(flash);
-                
-                this.animateEffect(flash, {
-                    duration: 100,
-                    onUpdate: p => {
-                        flash.scale.set((config.size / 2) * (1 - p * 0.5));
-                        flash.alpha = 1 - p;
-                    },
-                    onComplete: () => flash.destroy()
-                });
-            }
+    const flashConfigs = {
+        [GP.WeaponType.Pistol]: { size: 15, color: 0xFFFF66 },
+        [GP.WeaponType.Shotgun]: { size: 22, color: 0xFF6600 },
+        [GP.WeaponType.Rifle]: { size: 18, color: 0x6666FF },
+        [GP.WeaponType.Sniper]: { size: 25, color: 0xFF66FF }
+    };
+
+    const config = flashConfigs[weaponType] || flashConfigs[GP.WeaponType.Pistol];
+
+    // Create a temporary sprite for the muzzle flash
+    const flash = new PIXI.Sprite(this.particleTextures.spark_white);
+    flash.anchor.set(0, 0.5);
+    flash.scale.set(config.size / 4);
+    flash.tint = config.color;
+    
+    // Position at the tip of the weapon
+    const weaponGraphic = playerSprite.gun.cachedWeapons.get(playerSprite.gun.currentWeapon);
+    if (weaponGraphic && weaponGraphic.config) {
+        flash.position.x = weaponGraphic.config.barrelLength;
+    } else {
+        flash.position.x = PLAYER_RADIUS + 15;
+    }
+
+    // Add directly to gun container
+    playerSprite.gun.addChild(flash);
+
+    // Use non-pooled animation
+    this.animateEffect(flash, {
+        duration: 80,
+        onUpdate: p => {
+            flash.scale.set((config.size / 2) * (1 - p));
+            flash.alpha = 1 - p;
+        },
+        onComplete: () => flash.destroy()
+    });
+}
 
             createEnhancedDamageNumbers(position, damage) {
                 // For damage numbers, we need a regular container since they have text
                 const container = new PIXI.Container();
-                
+
                 const textStyle = new PIXI.TextStyle({
                     fontSize: 20,
                     fontWeight: 'bold',
@@ -3456,14 +4080,14 @@
                     dropShadowBlur: 4,
                     dropShadowDistance: 2
                 });
-                
+
                 const text = new PIXI.Text('-' + Math.round(damage), textStyle);
                 text.anchor.set(0.5);
                 container.addChild(text);
-                
+
                 container.position.set(position.x, position.y - PLAYER_RADIUS);
                 worldContainer.addChild(container); // Add to worldContainer instead
-                
+
                 this.animateEffect(container, {
                     duration: 1000,
                     onUpdate: p => {
@@ -3476,137 +4100,102 @@
             }
 
             createEnhancedExplosion(position, radius = 30) {
-                // Explosion particles
+                const explosionColors = [0xFFFF00, 0xFF6600, 0xFF0000];
                 const particleCount = 20 + Math.floor(radius / 10);
+
                 for (let i = 0; i < particleCount; i++) {
-                    const particle = new PIXI.Sprite(this.particleTextures.spark);
-                    particle.anchor.set(0.5);
-                    particle.position.set(position.x, position.y);
-                    
+                    const color = explosionColors[Math.floor(Math.random() * 3)];
+                    const texture = this.particleTextures.getTintedTexture('spark_white', color);
+
+                    const particle = this.particlePool.borrow(texture, position.x, position.y);
+                    if (!particle) continue;
+
+                    // Set particle properties
                     const angle = (Math.PI * 2 * i) / particleCount + Math.random() * 0.5;
                     const speed = 3 + Math.random() * 5;
-                    particle.velocity = {
-                        x: Math.cos(angle) * speed,
-                        y: Math.sin(angle) * speed - 2
+                    particle.poolData.velocity.x = Math.cos(angle) * speed;
+                    particle.poolData.velocity.y = Math.sin(angle) * speed - 2;
+                    particle.poolData.lifetime = 800 + Math.random() * 400;
+                    particle.poolData.age = 0;
+
+                    const initialScale = 0.5 + Math.random();
+                    particle.scale.set(initialScale);
+
+                    // Set update function
+                    particle.poolData.onUpdate = (progress) => {
+                        particle.x += particle.poolData.velocity.x * (1 - progress * 0.5);
+                        particle.y += particle.poolData.velocity.y + progress * 20;
+                        particle.alpha = 1 - progress;
+                        particle.scale.set(initialScale * (1 - progress * 0.2));
                     };
-                    
-                    particle.tint = [0xFFFF00, 0xFF6600, 0xFF0000][Math.floor(Math.random() * 3)];
-                    particle.scale.set(0.5 + Math.random());
-                    
-                    this.effectsContainer.addChild(particle);
-                    
-                    this.animateEffect(particle, {
-                        duration: 800 + Math.random() * 400,
-                        onUpdate: (progress) => {
-                            particle.x += particle.velocity.x * (1 - progress * 0.5);
-                            particle.y += particle.velocity.y + progress * 20;
-                            particle.alpha = 1 - progress;
-                            particle.scale.set(particle.scale.x * 0.98);
-                        },
-                        onComplete: () => particle.destroy()
-                    });
                 }
             }
+
+
+
+
 
             createEnhancedWallDestructionEffect(position) {
-                // Debris pieces
+                const debrisColors = [0x374151, 0x4B5563, 0x6B7280];
+
                 for (let i = 0; i < 15; i++) {
-                    const debris = new PIXI.Sprite(this.particleTextures.debris);
-                    debris.anchor.set(0.5);
-                    debris.position.set(position.x, position.y);
-                    debris.tint = [0x374151, 0x4B5563, 0x6B7280][Math.floor(Math.random() * 3)];
-                    
+                    const color = debrisColors[Math.floor(Math.random() * 3)];
+                    const texture = this.particleTextures.getTintedTexture('debris_white', color);
+
+                    const particle = this.particlePool.borrow(texture, position.x, position.y);
+                    if (!particle) continue;
+
                     const angle = Math.random() * Math.PI * 2;
                     const speed = Math.random() * 6 + 2;
-                    const velocityX = Math.cos(angle) * speed;
-                    const velocityY = Math.sin(angle) * speed - 5;
-                    const angularVelocity = (Math.random() - 0.5) * 0.4;
-                    
-                    this.effectsContainer.addChild(debris);
-                    
-                    this.animateEffect(debris, {
-                        duration: 1200,
-                        velocityX,
-                        velocityY,
-                        onUpdate: (progress) => {
-                            debris.position.x += velocityX * (1 - progress * 0.5);
-                            debris.position.y += velocityY + progress * 25;
-                            debris.rotation += angularVelocity;
-                            debris.alpha = 1 - progress * 0.7;
-                        },
-                        onComplete: () => debris.destroy()
-                    });
-                }
-            }
+                    particle.poolData.velocity.x = Math.cos(angle) * speed;
+                    particle.poolData.velocity.y = Math.sin(angle) * speed - 5;
+                    particle.poolData.angularVelocity = (Math.random() - 0.5) * 0.4;
+                    particle.poolData.lifetime = 1200;
+                    particle.poolData.age = 0;
 
-            createEnhancedPowerupCollectEffect(position) {
-                // Sparkles
-                for (let i = 0; i < 12; i++) {
-                    const sparkle = new PIXI.Sprite(this.particleTextures.spark);
-                    sparkle.anchor.set(0.5);
-                    sparkle.tint = 0x00FF00;
-                    
-                    const angle = (Math.PI * 2 * i) / 12;
-                    const distance = 20;
-                    sparkle.position.set(
-                        position.x + Math.cos(angle) * distance,
-                        position.y + Math.sin(angle) * distance
-                    );
-                    
-                    this.effectsContainer.addChild(sparkle);
-                    
-                    this.animateEffect(sparkle, {
-                        duration: 500,
-                        onUpdate: (progress) => {
-                            const currentDistance = distance * (1 + progress);
-                            sparkle.position.set(
-                                position.x + Math.cos(angle) * currentDistance,
-                                position.y + Math.sin(angle) * currentDistance
-                            );
-                            sparkle.alpha = 1 - progress;
-                            sparkle.scale.set(1 - progress * 0.5);
-                        },
-                        onComplete: () => sparkle.destroy()
-                    });
+                    particle.poolData.onUpdate = (progress) => {
+                        particle.x += particle.poolData.velocity.x * (1 - progress * 0.5);
+                        particle.y += particle.poolData.velocity.y + progress * 25;
+                        particle.rotation += particle.poolData.angularVelocity;
+                        particle.alpha = 1 - progress * 0.7;
+                    };
                 }
             }
 
             createEnhancedFlagCaptureEffect(position) {
-                // Fireworks effect
-                const colors = [0xFF0000, 0x0000FF, 0xFFFF00, 0x00FF00, 0xFF00FF];
-                
-                for (let burst = 0; burst < 3; burst++) {
-                    setTimeout(() => {
-                        const particleCount = 30;
-                        for (let i = 0; i < particleCount; i++) {
-                            const particle = new PIXI.Sprite(this.particleTextures.spark);
-                            particle.anchor.set(0.5);
-                            const color = colors[Math.floor(Math.random() * colors.length)];
-                            particle.tint = color;
-                            particle.position.set(position.x, position.y);
-                            
-                            const angle = (Math.PI * 2 * i) / particleCount;
-                            const speed = 5 + Math.random() * 5;
-                            const velocityX = Math.cos(angle) * speed;
-                            const velocityY = Math.sin(angle) * speed - 10;
-                            
-                            this.effectsContainer.addChild(particle);
-                            
-                            this.animateEffect(particle, {
-                                duration: 1500,
-                                velocityX,
-                                velocityY,
-                                onUpdate: (progress) => {
-                                    particle.x += velocityX * (1 - progress * 0.5);
-                                    particle.y += velocityY + progress * 30;
-                                    particle.alpha = 1 - progress;
-                                },
-                                onComplete: () => particle.destroy()
-                            });
-                        }
-                    }, burst * 200);
-                }
+    const colors = [0xFF0000, 0x0000FF, 0xFFFF00, 0x00FF00, 0xFF00FF];
+
+    for (let burst = 0; burst < 3; burst++) {
+        setTimeout(() => {
+            const particleCount = 30;
+            for (let i = 0; i < particleCount; i++) {
+                const color = colors[Math.floor(Math.random() * colors.length)];
+                const texture = this.particleTextures.getTintedTexture('spark_white', color);
+
+                const particle = this.particlePool.borrow(texture, position.x, position.y);
+                if (!particle) continue;
+
+                // Set all animation data in poolData
+                const angle = (Math.PI * 2 * i) / particleCount;
+                const speed = 5 + Math.random() * 5;
+                particle.poolData.velocity.x = Math.cos(angle) * speed;
+                particle.poolData.velocity.y = Math.sin(angle) * speed - 10;
+                particle.poolData.lifetime = 1500;
+                particle.poolData.age = 0;
+                const initialScale = particle.scale.x;
+
+                // Pool's update will handle this
+                particle.poolData.onUpdate = (progress) => {
+                    if (!particle || !particle.transform) return;
+                    particle.x += particle.poolData.velocity.x * (1 - progress * 0.5);
+                    particle.y += particle.poolData.velocity.y + progress * 30;
+                    particle.alpha = 1 - progress;
+                    particle.scale.set(initialScale * (1 - progress));
+                };
             }
+        }, burst * 200);
+    }
+}
 
             animateEffect(object, config) {
                 const effect = {
@@ -3619,6 +4208,10 @@
             }
 
             update(deltaMS) {
+                // Update pooled particles
+                this.particlePool.update(deltaMS);
+
+                // Update non-pooled effects (like damage numbers)
                 const now = Date.now();
                 this.activeEffects = this.activeEffects.filter(effect => {
                     if (now < effect.startTime) return true;
@@ -3626,14 +4219,14 @@
                         effect.started = true;
                         effect.actualStartTime = now;
                     }
-                    
+
                     const elapsed = now - effect.actualStartTime;
                     const progress = Math.min(elapsed / effect.duration, 1);
-                    
+
                     if (effect.object && !effect.object.destroyed) {
                         effect.onUpdate(progress);
                     }
-                    
+
                     if (progress >= 1) {
                         if (effect.onComplete && effect.object && !effect.object.destroyed) {
                             effect.onComplete();
@@ -3642,14 +4235,23 @@
                     }
                     return true;
                 });
+
+                // Log pool stats periodically (for debugging)
+                if (Math.random() < 0.001) { // ~once per 1000 frames
+                    const stats = this.particlePool.getStats();
+                    console.log(`Particle Pool: ${stats.active} active, ${stats.available} available, ${stats.total} total`);
+                }
             }
 
             clearAllEffects() {
+                // Clear pooled particles
+                this.particlePool.clear();
+
+                // Clear non-pooled effects
                 this.activeEffects.forEach(effect => {
                     if (effect.object && !effect.object.destroyed) effect.object.destroy();
                 });
                 this.activeEffects = [];
-                this.effectsContainer.removeChildren().forEach(c => c.destroy());
             }
         }
 
@@ -3709,7 +4311,7 @@
 
             playSound(soundName, position = null, volumeMultiplier = 1.0) {
                 if (!this.soundEnabled || !this.audioContext || !this.sounds[soundName]) return;
-                if (this.audioContext.state === 'suspended') { 
+                if (this.audioContext.state === 'suspended') {
                     this.audioContext.resume().catch(e => console.warn("AudioContext resume failed:", e));
                 }
 
@@ -3740,7 +4342,7 @@
                     pannerNode = this.audioContext.createStereoPanner();
                     pannerNode.pan.value = Math.max(-1, Math.min(1, dx / (app.screen.width / 2)));
                 }
-                
+
                 this._playTone(soundProfile, finalVolume, pannerNode);
             }
 
@@ -3748,7 +4350,7 @@
                 const now = this.audioContext.currentTime;
                 const gainNode = this.audioContext.createGain();
                 gainNode.gain.setValueAtTime(volume, now);
-                
+
                 if (Number.isFinite(profile.duration) && profile.duration > 0) {
                     gainNode.gain.exponentialRampToValueAtTime(0.001, now + profile.duration);
                 } else {
@@ -3779,12 +4381,12 @@
 
                     if (Array.isArray(profile.freq)) {
                         if (Number.isFinite(profile.freq[0])) {
-                           oscillator.frequency.setValueAtTime(profile.freq[0], now);
+                            oscillator.frequency.setValueAtTime(profile.freq[0], now);
                         } else {
                             console.warn("Invalid profile.freq[0]", profile);
                             return;
                         }
-                        
+
                         if (profile.freq.length > 1 && Number.isFinite(profile.freq[1]) && Number.isFinite(profile.duration) && profile.duration > 0) {
                             oscillator.frequency.linearRampToValueAtTime(profile.freq[1], now + profile.duration * 0.8);
                         }
@@ -3797,7 +4399,7 @@
                         console.warn("Invalid profile.freq", profile);
                         return;
                     }
-                    
+
                     oscillator.connect(gainNode);
                     oscillator.start(now);
                     oscillator.stop(now + (Number.isFinite(profile.duration) && profile.duration > 0 ? profile.duration : 0.01));
@@ -3846,7 +4448,7 @@
                 this.backgroundGraphics.beginFill(0x0F172A);
                 this.backgroundGraphics.drawRect(0, 0, this.width, this.height);
                 this.backgroundGraphics.endFill();
-                
+
                 const vignette = new PIXI.Graphics();
                 vignette.beginFill(0x000000, 0.3);
                 vignette.drawCircle(this.width / 2, this.height / 2, this.width * 0.7);
@@ -3858,12 +4460,12 @@
             drawGrid() {
                 this.gridGraphics.lineStyle(0.5, 0x1E293B, 0.5);
                 const gridSize = 30;
-                
+
                 for (let x = gridSize; x < this.width; x += gridSize) {
                     this.gridGraphics.moveTo(x, 0);
                     this.gridGraphics.lineTo(x, this.height);
                 }
-                
+
                 for (let y = gridSize; y < this.height; y += gridSize) {
                     this.gridGraphics.moveTo(0, y);
                     this.gridGraphics.lineTo(this.width, y);
@@ -3909,10 +4511,10 @@
                         // Create new dot
                         const dotContainer = new PIXI.Container();
                         const dotGraphics = new PIXI.Graphics();
-                        
+
                         let color = teamColors[player.team_id] || defaultEnemyColor;
                         let shape = 'circle';
-                        
+
                         if (player.id === localPlayerData.id) {
                             color = 0x00FF00;
                             shape = 'triangle';
@@ -3921,17 +4523,17 @@
                         }
 
                         dotGraphics.beginFill(color, 0.9);
-                        
+
                         if (shape === 'triangle') {
-                            const arrowPoints = [ 0, -4, 3, 3, 0, 1, -3, 3 ];
+                            const arrowPoints = [0, -4, 3, 3, 0, 1, -3, 3];
                             dotGraphics.drawPolygon(arrowPoints);
                         } else {
                             dotGraphics.drawCircle(0, 0, 3);
                         }
-                        
+
                         dotGraphics.endFill();
                         dotContainer.addChild(dotGraphics);
-                        
+
                         if (player.id === localPlayerData.id) {
                             const pulse = new PIXI.Graphics();
                             pulse.lineStyle(1, 0x00FF00, 0.5);
@@ -3939,7 +4541,7 @@
                             dotContainer.pulseGraphics = pulse;
                             dotContainer.addChildAt(pulse, 0);
                         }
-                        
+
                         this.playersContainer.addChild(dotContainer);
                         this.playerDots.set(player.id, dotContainer);
                         dot = dotContainer;
@@ -3952,7 +4554,7 @@
                     dot.y = (player.y * this.mapScale) + this.height / 2;
                     dot.x = Math.max(3, Math.min(this.width - 3, dot.x));
                     dot.y = Math.max(3, Math.min(this.height - 3, dot.y));
-                    
+
                     if (dot.isLocal) {
                         dot.rotation = player.rotation + (Math.PI / 2);
                         // Update pulse effect
@@ -3974,7 +4576,7 @@
 
             drawWalls(allWallsArray) {
                 this.wallsGraphics.clear();
-                
+
                 this.wallsGraphics.beginFill(0x000000, 0.2);
                 allWallsArray.forEach(wall => {
                     if (wall.is_destructible && wall.current_health <= 0) return;
@@ -3985,15 +4587,15 @@
                     this.wallsGraphics.drawRect(x, y, w, h);
                 });
                 this.wallsGraphics.endFill();
-                
+
                 allWallsArray.forEach(wall => {
                     if (wall.is_destructible && wall.current_health <= 0) return;
-                    
+
                     const x = (wall.x * this.mapScale) + this.width / 2;
                     const y = (wall.y * this.mapScale) + this.height / 2;
                     const w = wall.width * this.mapScale;
                     const h = wall.height * this.mapScale;
-                    
+
                     if (wall.is_destructible) {
                         const healthPercent = wall.current_health / wall.max_health;
                         const color = interpolateColor(0xBF616A, 0x4A5568, healthPercent);
@@ -4001,7 +4603,7 @@
                     } else {
                         this.wallsGraphics.beginFill(0x4A5568, 0.8);
                     }
-                    
+
                     this.wallsGraphics.drawRect(x, y, w, h);
                 });
                 this.wallsGraphics.endFill();
@@ -4010,27 +4612,27 @@
             drawObjectives(allFlagsArray) {
                 this.objectivesContainer.removeChildren();
                 if (!allFlagsArray) return;
-                
+
                 allFlagsArray.forEach(flag => {
                     if (flag.status === GP.FlagStatus.Carried) return;
-                    
+
                     const flagDot = new PIXI.Graphics();
                     const color = teamColors[flag.team_id] || 0xFFFFFF;
-                    
+
                     const glowSize = 8 + Math.sin(Date.now() * 0.004) * 2;
                     flagDot.beginFill(color, 0.3);
                     flagDot.drawCircle(0, 0, glowSize);
                     flagDot.endFill();
-                    
+
                     flagDot.beginFill(color);
                     flagDot.drawRect(-2, -3, 4, 6);
                     flagDot.endFill();
-                    
+
                     flagDot.x = (flag.position.x * this.mapScale) + this.width / 2;
                     flagDot.y = (flag.position.y * this.mapScale) + this.height / 2;
                     flagDot.x = Math.max(5, Math.min(this.width - 5, flagDot.x));
                     flagDot.y = Math.max(5, Math.min(this.height - 5, flagDot.y));
-                    
+
                     this.objectivesContainer.addChild(flagDot);
                 });
             }
@@ -4044,16 +4646,16 @@
                     height: 20,
                     backgroundAlpha: 0
                 });
-                
+
                 this.container = new PIXI.Container();
                 this.app.stage.addChild(this.container);
-                
+
                 const bg = new PIXI.Graphics();
                 bg.beginFill(0x1F2937, 0.8);
                 bg.drawRoundedRect(0, 0, 80, 20, 5);
                 bg.endFill();
                 this.container.addChild(bg);
-                
+
                 this.pingText = new PIXI.Text('0ms', {
                     fontSize: 11,
                     fill: 0xE5E7EB,
@@ -4062,7 +4664,7 @@
                 this.pingText.anchor.set(0, 0.5);
                 this.pingText.position.set(30, 10);
                 this.container.addChild(this.pingText);
-                
+
                 this.bars = [];
                 for (let i = 0; i < 4; i++) {
                     const bar = new PIXI.Graphics();
@@ -4071,7 +4673,7 @@
                     this.bars.push(bar);
                     this.container.addChild(bar);
                 }
-                
+
                 this.statusDot = new PIXI.Graphics();
                 this.statusDot.position.set(70, 10);
                 this.container.addChild(this.statusDot);
@@ -4079,11 +4681,11 @@
 
             update(currentPing) {
                 this.pingText.text = Math.round(currentPing) + 'ms';
-                
+
                 let quality = 4;
                 let color = 0x00FF00;
                 let statusColor = 0x00FF00;
-                
+
                 if (currentPing < 50) {
                     quality = 4;
                     color = 0x00FF00;
@@ -4107,12 +4709,12 @@
                     bar.clear();
                     const height = (index + 1) * 3 + 3;
                     const active = index < quality;
-                    
+
                     if (active) {
                         bar.beginFill(color, 0.9);
                         bar.drawRect(0, -height, 3, height);
                         bar.endFill();
-                        
+
                         bar.beginFill(0xFFFFFF, 0.3);
                         bar.drawRect(0, -height, 1, height);
                         bar.endFill();
@@ -4122,7 +4724,7 @@
                         bar.endFill();
                     }
                 });
-                
+
                 this.statusDot.clear();
                 const pulse = Math.sin(Date.now() * 0.005) * 0.2 + 0.8;
                 this.statusDot.beginFill(statusColor, pulse);
@@ -4147,4 +4749,5 @@
         });
     </script>
 </body>
+
 </html>

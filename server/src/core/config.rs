@@ -42,7 +42,7 @@ impl Default for ServerConfig {
             num_world_partitions: super::constants::PARTITION_GRID_SIZE * super::constants::PARTITION_GRID_SIZE,
             world_partition_grid_dim: super::constants::PARTITION_GRID_SIZE,
             thread_pools: ThreadPoolConfig::default(),
-            max_players_per_match: 40, // <<< ADD THIS LINE (or your desired default)
+            max_players_per_match: 140, // <<< ADD THIS LINE (or your desired default)
         }
     }
 }

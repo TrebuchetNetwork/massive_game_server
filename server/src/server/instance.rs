@@ -398,7 +398,7 @@ impl MassiveGameServer {
             respawn_manager,
             wall_respawn_manager,
             bot_players: Arc::new(DashMap::new()),
-            target_bot_count: Arc::new(AtomicU64::new(20)), 
+            target_bot_count: Arc::new(AtomicU64::new(80)), 
             bot_name_counter: Arc::new(AtomicU64::new(0)),
             last_broadcast_frame: Arc::new(AtomicU64::new(0)),
             player_last_sync_positions: Arc::new(DashMap::new()),
