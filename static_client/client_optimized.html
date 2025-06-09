@@ -1,0 +1,4150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Shooter - Optimized Client</title>
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+        {
+          "imports": {
+            "flatbuffers": "https://cdn.jsdelivr.net/npm/flatbuffers@25.2.10/mjs/flatbuffers.js"
+          }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #111827; }
+        .log-entry { padding: 8px; margin-bottom: 4px; border-radius: 4px; font-size: 0.875rem; }
+        .log-info { background-color: #e0f2fe; color: #0c4a6e; }
+        .log-success { background-color: #dcfce7; color: #166534; }
+        .log-error { background-color: #fee2e2; color: #991b1b; }
+        .log-send { background-color: #fef3c7; color: #92400e; }
+        .log-receive { background-color: #e0e7ff; color: #3730a3; }
+
+        #gameContainer { width: 100%; height: 100%; position: relative; overflow: hidden; border-radius: 8px; }
+        #pixiContainer canvas { border-radius: 8px; }
+
+        .kill-feed { position: absolute; top: 10px; right: 10px; width: 280px; background-color: rgba(31, 41, 55, 0.85); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .kill-entry { color: #E5E7EB; font-size: 13px; margin-bottom: 5px; animation: fadeIn 0.5s ease-out forwards; }
+
+        .chat-display { position: absolute; bottom: 10px; left: 10px; width: 350px; background-color: rgba(31, 41, 55, 0.8); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 -2px 5px rgba(0,0,0,0.2); }
+        .chat-entry { color: #D1D5DB; font-size: 12px; margin-bottom: 3px; }
+        .chat-entry .username { font-weight: bold; }
+
+        .match-info { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background-color: rgba(31, 41, 55, 0.9); border-radius: 8px; padding: 8px 15px; text-align: center; color: #E5E7EB; box-shadow: 0 2px 4px rgba(0,0,0,0.2); font-size: 14px;}
+        .team-scores { display: flex; gap: 20px; justify-content: center; margin-top: 5px; }
+        .team-score { font-weight: bold; }
+        .team-red { color: #FF6B6B; }
+        .team-blue { color: #4ECDC4; }
+        .team-ffa { color: #60A5FA; }
+
+        .powerup-indicator { display: flex; align-items: center; gap: 5px; font-size: 12px; padding: 3px 6px; background-color: rgba(55, 65, 81, 0.7); border-radius: 4px; margin-bottom: 3px; }
+        .powerup-indicator .icon { font-size: 14px; }
+
+        .scoreboard { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 700px; background-color: rgba(17, 24, 39, 0.95); border: 1px solid #374151; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); z-index: 100; color: #E5E7EB; }
+        .scoreboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #374151;}
+        .scoreboard-header h3 { font-size: 1.5rem; font-weight: bold; color: #93C5FD; }
+        .close-btn { cursor: pointer; font-size: 1.8rem; color: #9CA3AF; transition: color 0.2s; }
+        .close-btn:hover { color: #F9FAFB; }
+        .scoreboard-teams { display: grid; grid-template-columns: 1fr; gap: 20px; } /* Default to 1 column for FFA */
+        .scoreboard-teams.two-columns { grid-template-columns: 1fr 1fr; } /* Class for 2 columns */
+        .team-section h4 { font-size: 1.1rem; margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #4B5563;}
+        .team-section table { width: 100%; border-collapse: collapse; }
+        .team-section th, .team-section td { padding: 6px 8px; text-align: left; font-size: 0.9rem; }
+        .team-section th { background-color: rgba(55, 65, 81, 0.5); color: #D1D5DB; }
+        .team-section tr:nth-child(even) { background-color: rgba(55, 65, 81, 0.2); }
+
+        .settings-menu { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 500px; background-color: rgba(31, 41, 55, 0.97); border: 1px solid #4B5563; border-radius: 12px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); z-index: 101; color: #E5E7EB;}
+        .settings-menu h3 { font-size: 1.6rem; font-weight: bold; margin-bottom: 20px; text-align: center; color: #A5B4FC; }
+        .setting-group { margin-bottom: 20px; }
+        .setting-group h4 { font-size: 1.1rem; color: #D1D5DB; margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #4B5563;}
+        .setting-group label { display: block; margin-bottom: 8px; font-size: 0.95rem; color: #CBD5E1; }
+        .setting-group input[type="checkbox"], .setting-group input[type="range"], .setting-group select { margin-right: 8px; accent-color: #818CF8; background-color: #4B5563; border-radius: 4px; padding: 2px;}
+        .setting-group input[type="range"] { width: calc(100% - 100px); vertical-align: middle; }
+        .settings-menu button { padding: 10px 15px; border-radius: 6px; font-weight: 600; transition: background-color 0.2s; cursor: pointer; margin-right: 10px; border: none;}
+        .settings-menu .save-btn { background-color: #4F46E5; color: white; }
+        .settings-menu .save-btn:hover { background-color: #4338CA; }
+        .settings-menu .cancel-btn { background-color: #4B5563; color: #D1D5DB; }
+        .settings-menu .cancel-btn:hover { background-color: #6B7280; }
+        
+        .fps-counter { position: absolute; top: 10px; right: 10px; background-color: rgba(31, 41, 55, 0.9); padding: 5px 10px; border-radius: 6px; color: #D1D5DB; font-size: 12px; font-family: monospace; }
+        
+        .hidden { display: none !important; }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #2d3748; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #718096; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-2 sm:p-4">
+
+    <div class="w-full max-w-7xl bg-gray-800 p-4 sm:p-6 rounded-lg shadow-xl">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-2xl sm:text-3xl font-bold text-indigo-400">2D Shooter - Optimized</h1>
+            <button id="settingsButton" class="p-2 bg-gray-700 hover:bg-gray-600 rounded-md text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </button>
+        </div>
+
+        <div class="flex flex-col lg:flex-row gap-4 sm:gap-6">
+            <div class="w-full lg:w-1/3 xl:w-1/4 space-y-4">
+                <div>
+                    <label for="wsUrl" class="block text-sm font-medium text-gray-300 mb-1">WebSocket URL:</label>
+                    <input type="text" id="wsUrl" value="ws://localhost:8080/ws" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
+                </div>
+                <button id="connectButton" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-800">
+                    Connect
+                </button>
+
+                <div id="controls" class="hidden space-y-4">
+                    <div>
+                        <label for="chatInput" class="block text-sm font-medium text-gray-300 mb-1">Chat Message:</label>
+                        <input type="text" id="chatInput" placeholder="Type a message..." class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
+                    </div>
+                    <button id="sendChatButton" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-800">
+                        Send Chat
+                    </button>
+
+                    <div class="mt-4">
+                        <h3 class="text-lg font-semibold mb-2 text-gray-300">Controls:</h3>
+                        <ul class="text-sm text-gray-400 space-y-1">
+                            <li>WASD - Move</li>
+                            <li>Mouse - Aim</li>
+                            <li>Left Click - Shoot</li>
+                            <li>R - Reload</li>
+                            <li>V - Melee Attack</li>
+                            <li>Tab - Scoreboard</li>
+                            <li>Esc - Settings</li>
+                        </ul>
+                    </div>
+
+                    <div class="mt-4">
+                        <h3 class="text-lg font-semibold mb-2 text-gray-300">Game Stats:</h3>
+                        <div id="gameStats" class="text-sm text-gray-300 space-y-1">
+                            <p>My ID: <span id="myPlayerIdSpan" class="text-indigo-300">N/A</span></p>
+                            <p>Team: <span id="playerTeam" class="text-gray-100">None</span></p>
+                            <p>Health: <span id="playerHealth" class="text-green-400">100</span></p>
+                            <p>Shield: <span id="playerShield" class="text-blue-400">0</span></p>
+                            <p>Ammo: <span id="playerAmmo" class="text-yellow-400">10</span> <span id="reloadPrompt" class="text-red-500 font-bold"></span></p>
+                            <p>Weapon: <span id="playerWeapon" class="text-gray-100">Pistol</span></p>
+                            <p>Score: <span id="playerScore" class="text-purple-400">0</span></p>
+                            <p>K/D: <span id="playerKills" class="text-red-400">0</span>/<span id="playerDeaths" class="text-gray-400">0</span></p>
+                            <p>Players: <span id="playerCount" class="text-gray-100">0</span></p>
+                            <p>Ping: <span id="pingDisplay" class="text-gray-100">0</span>ms</p>
+                        </div>
+                        <div id="powerupStatus" class="mt-2 space-y-1"></div>
+                        <div id="networkQualityIndicator" class="mt-2"></div>
+                    </div>
+                </div>
+
+                <div class="mt-6">
+                    <h2 class="text-xl font-semibold mb-3 text-gray-300">Log:</h2>
+                    <div id="log" class="h-48 lg:h-64 xl:h-80 overflow-y-auto bg-gray-700 p-4 rounded-md border border-gray-600 text-sm">
+                    </div>
+                </div>
+            </div>
+
+            <div id="gameArea" class="w-full lg:w-2/3 xl:w-3/4 aspect-[4/3] bg-gray-700 rounded-lg shadow-inner">
+                <div id="gameContainer">
+                    <div id="pixiContainer" style="width: 100%; height: 100%;"></div>
+                    <div id="fpsCounter" class="fps-counter hidden">FPS: <span id="fpsValue">0</span></div>
+                    <div id="killFeed" class="kill-feed hidden"></div>
+                    <div id="chatDisplay" class="chat-display hidden"></div>
+                    <div id="matchInfo" class="match-info hidden"></div>
+                    <div id="minimapContainer" style="position: absolute; bottom: 10px; right: 10px; border: 1px solid #4B5563; border-radius: 6px; background-color: rgba(31, 41, 55, 0.7);"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="scoreboard" class="scoreboard hidden">
+        <div class="scoreboard-header">
+            <h3>Match Scoreboard</h3>
+            <div class="close-btn" onclick="toggleScoreboard(false)">×</div>
+        </div>
+        <div id="scoreboardContent" class="scoreboard-teams">
+            <div id="ffaScoreboardSection" class="team-section hidden">
+                <h4>Free For All</h4>
+                <table id="ffaPlayersTable">
+                    <thead><tr><th>Rank</th><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="teamScoreboardSection" class="hidden">
+                <div class="team-section team-red">
+                    <h4>Red Team: <span id="scoreboardTeamRedScore">0</span></h4>
+                    <table id="redTeamPlayers">
+                        <thead><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="team-section team-blue">
+                    <h4>Blue Team: <span id="scoreboardTeamBlueScore">0</span></h4>
+                    <table id="blueTeamPlayers">
+                        <thead><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsMenu" class="settings-menu hidden">
+        <h3>Game Settings</h3>
+        <div class="setting-group">
+            <h4>Audio</h4>
+            <label><input type="checkbox" id="soundEnabled" checked> Sound Effects</label>
+            <label>Volume: <input type="range" id="soundVolume" min="0" max="100" value="50"><span id="soundVolumeValue">50</span>%</label>
+            <label><input type="checkbox" id="musicEnabled"> Music</label>
+            <label>Volume: <input type="range" id="musicVolume" min="0" max="100" value="30"><span id="musicVolumeValue">30</span>%</label>
+        </div>
+        <div class="setting-group">
+            <h4>Graphics</h4>
+            <label>Quality:
+                <select id="graphicsQuality">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                </select>
+            </label>
+            <label><input type="checkbox" id="particleEffects" checked> Particle Effects</label>
+            <label><input type="checkbox" id="screenShake" checked> Screen Shake</label>
+            <label><input type="checkbox" id="showFPS"> Show FPS</label>
+        </div>
+        <div class="setting-group">
+            <h4>Controls</h4>
+            <label>Mouse Sensitivity: <input type="range" id="sensitivity" min="0.1" max="3" step="0.1" value="1.0"><span id="sensitivityValue">1.0</span></label>
+        </div>
+        <div class="flex justify-end mt-6">
+            <button id="saveSettingsButton" class="save-btn">Save & Close</button>
+            <button id="cancelSettingsButton" class="cancel-btn">Cancel</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as flatbuffers from 'flatbuffers';
+        import { GameProtocol } from './generated_js/game.js';
+        const GP = GameProtocol;
+
+        // Game constants
+        const INTERPOLATION_DELAY = 100; // ms
+        const INPUT_SEND_RATE = 60; // Hz
+        const RECONCILIATION_BUFFER_SIZE = 120;
+        const PLAYER_RADIUS = 15;
+        const PICKUP_RADIUS = 20;
+        const MIN_PLAYERS_TO_START = 2;
+        const MAX_CHAT_MESSAGE_LENGTH = 100;
+        const SERVER_TICK_RATE = 60;
+        const VIEW_DISTANCE_BUFFER = 150; // Pixels outside viewport to keep updating
+
+        // Team colors
+        const teamColors = {
+            0: 0xA0A0A0, // Neutral/FFA - A distinct Grey
+            1: 0xFF6B6B, // Team 1 - Red
+            2: 0x4ECDC4, // Team 2 - Teal/Blue
+        };
+        const defaultEnemyColor = 0xF87171; // Less critical if all players get team colors
+
+        // Weapon data
+        const weaponNames = {
+            [GP.WeaponType.Pistol]: 'Pistol',
+            [GP.WeaponType.Shotgun]: 'Shotgun',
+            [GP.WeaponType.Rifle]: 'Rifle',
+            [GP.WeaponType.Sniper]: 'Sniper',
+            [GP.WeaponType.Melee]: 'Melee'
+        };
+
+        const weaponColors = {
+            [GP.WeaponType.Pistol]: 0xFFBF00,
+            [GP.WeaponType.Shotgun]: 0xFF4444,
+            [GP.WeaponType.Rifle]: 0x4444FF,
+            [GP.WeaponType.Sniper]: 0xAA44FF,
+            [GP.WeaponType.Melee]: 0xD1D5DB
+        };
+
+        // Pickup data
+        const pickupTypes = {
+            [GP.PickupType.Health]: 'Health',
+            [GP.PickupType.Ammo]: 'Ammo',
+            [GP.PickupType.WeaponCrate]: 'Weapon',
+            [GP.PickupType.SpeedBoost]: 'Speed',
+            [GP.PickupType.DamageBoost]: 'Damage',
+            [GP.PickupType.Shield]: 'Shield',
+            [GP.PickupType.FlagRed]: 'Red Flag',
+            [GP.PickupType.FlagBlue]: 'Blue Flag'
+        };
+
+        const pickupColors = {
+            [GP.PickupType.Health]: 0x10B981,
+            [GP.PickupType.Ammo]: 0xF59E0B,
+            [GP.PickupType.WeaponCrate]: 0x60A5FA,
+            [GP.PickupType.SpeedBoost]: 0x00FFFF,
+            [GP.PickupType.DamageBoost]: 0xFF6B6B,
+            [GP.PickupType.Shield]: 0x00BFFF,
+            [GP.PickupType.FlagRed]: 0xFF0000,
+            [GP.PickupType.FlagBlue]: 0x0000FF
+        };
+
+        // DOM Elements
+        const wsUrlInput = document.getElementById('wsUrl');
+        const connectButton = document.getElementById('connectButton');
+        const chatInput = document.getElementById('chatInput');
+        const sendChatButton = document.getElementById('sendChatButton');
+        const logOutput = document.getElementById('log');
+        const controlsDiv = document.getElementById('controls');
+        const killFeedDiv = document.getElementById('killFeed');
+        const chatDisplayDiv = document.getElementById('chatDisplay');
+        const matchInfoDiv = document.getElementById('matchInfo');
+        const pingDisplay = document.getElementById('pingDisplay');
+        const networkQualityIndicatorDiv = document.getElementById('networkQualityIndicator');
+        const settingsButton = document.getElementById('settingsButton');
+        const settingsMenuDiv = document.getElementById('settingsMenu');
+        const saveSettingsButton = document.getElementById('saveSettingsButton');
+        const cancelSettingsButton = document.getElementById('cancelSettingsButton');
+        const scoreboardDiv = document.getElementById('scoreboard');
+        const fpsCounterDiv = document.getElementById('fpsCounter');
+        const fpsValueSpan = document.getElementById('fpsValue');
+
+        // Game Stats UI Elements
+        const myPlayerIdSpan = document.getElementById('myPlayerIdSpan');
+        const playerTeamSpan = document.getElementById('playerTeam');
+        const playerHealthSpan = document.getElementById('playerHealth');
+        const playerShieldSpan = document.getElementById('playerShield');
+        const playerAmmoSpan = document.getElementById('playerAmmo');
+        const reloadPromptSpan = document.getElementById('reloadPrompt');
+        const playerWeaponSpan = document.getElementById('playerWeapon');
+        const playerScoreSpan = document.getElementById('playerScore');
+        const playerKillsSpan = document.getElementById('playerKills');
+        const playerDeathsSpan = document.getElementById('playerDeaths');
+        const playerCountSpan = document.getElementById('playerCount');
+        const powerupStatusDiv = document.getElementById('powerupStatus');
+
+        let starfield;
+        let healthVignette;
+
+        // WebRTC & WebSocket Variables
+        let signalingSocket;
+        let peerConnection;
+        let dataChannel;
+
+        // PIXI.js Application
+        let app;
+        let gameScene;
+        let worldContainer;
+        let hudContainer;
+        let wallGraphics;
+        let pickupContainer;
+        let projectileContainer;
+        let playerContainer;
+        let flagContainer;
+        let localPlayerSprite;
+
+        // Game State
+        let myPlayerId = null;
+        let players = new Map();
+        let projectiles = new Map();
+        let walls = new Map();
+        let pickups = new Map();
+        let flagStates = new Map();
+        let killFeed = [];
+        let chatMessages = [];
+        let matchInfo = null;
+        let currentMapName = "Unknown Map";
+
+        // Client-side prediction state
+        let inputSequence = 0;
+        let pendingInputs = [];
+        let lastProcessedInput = 0;
+        let localPlayerState = null;
+
+        // Interpolation state
+        let serverUpdates = [];
+        let renderTimestamp = 0;
+
+        // Input state
+        let inputState = {
+            move_forward: false,
+            move_backward: false,
+            move_left: false,
+            move_right: false,
+            shooting: false,
+            reload: false,
+            rotation: 0,
+            melee_attack: false,
+            change_weapon_slot: 0,
+            use_ability_slot: 0
+        };
+
+        // Timing
+        let lastInputSendTime = 0;
+        let pingStartTime = 0;
+        let ping = 0;
+        let frameCount = 0;
+        let lastFPSUpdate = 0;
+
+        // Managers
+        let effectsManager;
+        let audioManager;
+        let minimap;
+        let networkIndicator;
+
+        // Game Settings
+        let gameSettings = {
+            soundEnabled: true,
+            soundVolume: 0.5,
+            musicEnabled: false,
+            musicVolume: 0.3,
+            graphicsQuality: 'medium',
+            showFPS: false,
+            sensitivity: 1.0,
+            particleEffects: true,
+            screenShake: true
+        };
+
+        const peerConnectionConfig = {
+            'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }]
+        };
+
+        // Utility function to mix colors
+        function mixColors(color1, color2, amount) {
+            const c1 = PIXI.Color.shared.setValue(color1).toRgbArray();
+            const c2 = PIXI.Color.shared.setValue(color2).toRgbArray();
+            const r = c1[0] * (1 - amount) + c2[0] * amount;
+            const g = c1[1] * (1 - amount) + c2[1] * amount;
+            const b = c1[2] * (1 - amount) + c2[2] * amount;
+            return PIXI.Color.shared.setValue([r, g, b]).toNumber();
+        }
+
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            entry.classList.add('log-entry', `log-${type}`);
+            logOutput.appendChild(entry);
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+
+        // Initialize PIXI Application
+        function initPixi() {
+            const pixiContainer = document.getElementById('pixiContainer');
+            if (!pixiContainer) {
+                log('CRITICAL ERROR: pixiContainer DOM element not found!', 'error');
+                return;
+            }
+
+            const containerRect = pixiContainer.getBoundingClientRect();
+            app = new PIXI.Application({
+                width: containerRect.width,
+                height: containerRect.height,
+                backgroundColor: 0x1a202c,
+                antialias: true,
+                resolution: window.devicePixelRatio || 1,
+                autoDensity: true,
+            });
+            pixiContainer.appendChild(app.view);
+
+            app.ticker.maxFPS = 60;
+
+            if (!app || !app.stage) {
+                log('CRITICAL ERROR: PIXI Application failed to initialize!', 'error');
+                return;
+            }
+
+            // Main scene container (moves with camera)
+            gameScene = new PIXI.Container();
+            app.stage.addChild(gameScene);
+
+            // World container (children are in world coordinates)
+            worldContainer = new PIXI.Container();
+            const initializedManagers = initializeEnhancedGraphics(app, worldContainer);
+
+            audioManager = initializedManagers.audioManager;
+            effectsManager = initializedManagers.effectsManager;
+            starfield = initializedManagers.starfield;
+            healthVignette = initializedManagers.healthVignette;
+
+            window.audioManager = audioManager;
+            window.effectsManager = effectsManager;
+            window.starfield = starfield;
+            window.healthVignette = healthVignette;
+
+            // Add this to resume audio context on first user interaction
+            const resumeAudio = () => {
+                if (audioManager && audioManager.audioContext && audioManager.audioContext.state === 'suspended') {
+                    audioManager.audioContext.resume().then(() => {
+                        console.log('Audio context resumed');
+                    });
+                }
+                document.removeEventListener('click', resumeAudio);
+                document.removeEventListener('keydown', resumeAudio);
+            };
+            document.addEventListener('click', resumeAudio);
+            document.addEventListener('keydown', resumeAudio);
+
+            gameScene.addChild(worldContainer);
+
+            wallGraphics = new PIXI.Graphics();
+            pickupContainer = new PIXI.Container();
+            projectileContainer = new PIXI.Container();
+            playerContainer = new PIXI.Container();
+            flagContainer = new PIXI.Container();
+
+            worldContainer.addChild(wallGraphics);
+            worldContainer.addChild(pickupContainer);
+            worldContainer.addChild(projectileContainer);
+            worldContainer.addChild(playerContainer);
+            worldContainer.addChild(flagContainer);
+
+            // HUD container (fixed on screen)
+            hudContainer = new PIXI.Container();
+            app.stage.addChild(hudContainer);
+
+            // Initialize Managers
+            minimap = new Minimap(150, 150, 0.05);
+            networkIndicator = new NetworkIndicator();
+            
+            // Add minimap to the minimap container
+            const minimapContainerElement = document.getElementById('minimapContainer');
+            minimapContainerElement.appendChild(minimap.app.view);
+            
+            // Add network indicator
+            networkQualityIndicatorDiv.appendChild(networkIndicator.app.view);
+
+            // Resize listener
+            window.addEventListener('resize', resizePixiApp);
+            resizePixiApp();
+
+            app.ticker.add(gameLoop);
+            log('PIXI scene graph initialized and ticker started.', 'info');
+        }
+
+        function resizePixiApp() {
+            const pixiContainer = document.getElementById('pixiContainer');
+            if (!app || !pixiContainer) return;
+            const containerRect = pixiContainer.getBoundingClientRect();
+            app.renderer.resize(containerRect.width, containerRect.height);
+            updateCamera();
+        }
+
+        // OPTIMIZED: Create player sprite with one-time graphics creation
+        function createPlayerSprite(player, isLocal = false) {
+            const container = new PIXI.Container();
+            container.playerId = player.id;
+
+            // Shadow
+            const shadow = new PIXI.Graphics();
+            shadow.beginFill(0x000000, 0.3);
+            shadow.drawEllipse(0, 8, PLAYER_RADIUS * 1.1, PLAYER_RADIUS * 0.6);
+            shadow.endFill();
+            shadow.filters = [new PIXI.BlurFilter(2)];
+            container.addChild(shadow);
+
+            // Body - Create once with neutral shape
+            const body = new PIXI.Graphics();
+            const playerTeamColor = teamColors[player.team_id] || teamColors[0];
+            const mainBodyColor = player.alive ? playerTeamColor : 0x6B7280;
+            
+            // Draw the shape once
+            body.lineStyle(2, 0x000000); // Use a neutral line color
+            body.beginFill(0xFFFFFF); // Use white so we can tint later
+            const shipPoints = [0, -PLAYER_RADIUS * 1.2, PLAYER_RADIUS * 0.8, PLAYER_RADIUS * 0.8, 
+                               PLAYER_RADIUS * 0.3, PLAYER_RADIUS * 0.4, 0, PLAYER_RADIUS * 0.6, 
+                               -PLAYER_RADIUS * 0.3, PLAYER_RADIUS * 0.4, -PLAYER_RADIUS * 0.8, PLAYER_RADIUS * 0.8];
+            body.drawPolygon(shipPoints);
+            body.endFill();
+            body.tint = mainBodyColor; // Set initial tint
+            container.addChild(body);
+            container.body = body;
+
+            // Engine Glow
+            const engineGlow = new PIXI.Graphics();
+            engineGlow.beginFill(0x00FFFF, 0.6);
+            engineGlow.drawCircle(0, PLAYER_RADIUS * 0.8, PLAYER_RADIUS * 0.3);
+            engineGlow.endFill();
+            engineGlow.filters = [new PIXI.BlurFilter(4)];
+            body.addChildAt(engineGlow, 0);
+            container.engineGlow = engineGlow;
+
+            // Local Player Indicator
+            if (isLocal) {
+                const localIndicator = new PIXI.Graphics();
+                localIndicator.lineStyle(2, 0xFFD700, 0.7);
+                localIndicator.drawCircle(0, 0, PLAYER_RADIUS + 4);
+                container.addChild(localIndicator);
+                container.localIndicator = localIndicator;
+            }
+
+            // Gun - Create base structure once
+            const gun = new PIXI.Container(); // Use container to hold gun graphics
+            gun.rotation = -Math.PI / 2;
+            container.addChild(gun);
+            container.gun = gun;
+
+            // Health Bar Container
+            const healthBarContainer = new PIXI.Container();
+            healthBarContainer.position.set(0, -PLAYER_RADIUS - 15);
+            
+            // Health bar background - create once
+            const healthBg = new PIXI.Graphics();
+            healthBg.beginFill(0x1F2937, 0.9);
+            healthBg.drawRoundedRect(-PLAYER_RADIUS - 2, -2, PLAYER_RADIUS * 2 + 4, 10, 5);
+            healthBarContainer.addChild(healthBg);
+            
+            // Health bar border - create once
+            const healthBorder = new PIXI.Graphics();
+            healthBorder.lineStyle(1, 0x4B5563, 0.8);
+            healthBorder.drawRoundedRect(-PLAYER_RADIUS - 2, -2, PLAYER_RADIUS * 2 + 4, 10, 5);
+            healthBarContainer.addChild(healthBorder);
+            
+            // Health fill - create as full bar, we'll scale it
+            const healthFg = new PIXI.Graphics();
+            healthFg.beginFill(0x22C55E);
+            healthFg.drawRoundedRect(-PLAYER_RADIUS, 0, PLAYER_RADIUS * 2, 6, 3);
+            healthFg.endFill();
+            healthBarContainer.addChild(healthFg);
+            
+            container.addChild(healthBarContainer);
+            container.healthBarContainer = healthBarContainer;
+            container.healthFg = healthFg;
+
+            // Shield Visual
+            const shieldVisual = new PIXI.Graphics();
+            container.addChildAt(shieldVisual, 1);
+            container.shieldVisual = shieldVisual;
+
+            // Username Text
+            const usernameStyle = new PIXI.TextStyle({
+                fontFamily: 'Arial', fontSize: 12, fill: [0xFFFFFF, 0xE5E7EB],
+                stroke: 0x111827, strokeThickness: 3,
+                dropShadow: true, dropShadowColor: 0x000000, dropShadowBlur: 3, dropShadowDistance: 1,
+                align: 'center'
+            });
+            const usernameText = new PIXI.Text(player.username || 'Player', usernameStyle);
+            usernameText.anchor.set(0.5);
+            usernameText.position.y = -PLAYER_RADIUS - 28;
+            container.addChild(usernameText);
+            container.usernameText = usernameText;
+
+            // Placeholders for effects
+            container.speedBoostEffect = null;
+            container.damageBoostEffect = null;
+
+            // Initial updates
+            updatePlayerGun(container, player);
+            updatePlayerHealthBar(container, player);
+            updateShieldVisual(container, player.shield_current || 0, player.shield_max || 0);
+
+            return container;
+        }
+
+        // OPTIMIZED: Update player sprite without redrawing graphics
+        function updatePlayerSprite(sprite, player) {
+            sprite.position.x = player.render_x !== undefined ? player.render_x : player.x;
+            sprite.position.y = player.render_y !== undefined ? player.render_y : player.y;
+            
+            let effectiveRotation = (player.render_rotation !== undefined ? player.render_rotation : player.rotation) + (Math.PI / 2);
+            sprite.rotation = effectiveRotation;
+
+            // Update body tint instead of redrawing
+            const playerTeamColor = teamColors[player.team_id] || teamColors[0];
+            const mainBodyColor = player.alive ? playerTeamColor : 0x6B7280;
+            sprite.body.tint = mainBodyColor;
+
+            if (sprite.localIndicator) {
+                sprite.localIndicator.visible = (sprite.playerId === myPlayerId && player.alive);
+            }
+
+            if (sprite.engineGlow) {
+                if (player.alive && (player.velocity_x !== 0 || player.velocity_y !== 0)) {
+                    sprite.engineGlow.visible = true;
+                    const speed = Math.sqrt(player.velocity_x * player.velocity_x + player.velocity_y * player.velocity_y);
+                    const intensity = Math.min(1, speed / 150);
+                    sprite.engineGlow.alpha = 0.4 + intensity * 0.4;
+                    sprite.engineGlow.scale.set(0.8 + intensity * 0.4);
+                } else {
+                    sprite.engineGlow.visible = false;
+                }
+            }
+
+            sprite.visible = player.alive || (player.respawn_timer !== undefined && player.respawn_timer > 0);
+            sprite.alpha = player.alive ? 1 : 0.5;
+
+            updatePlayerGun(sprite, player);
+            updatePlayerHealthBar(sprite, player);
+            updateShieldVisual(sprite, player.shield_current || 0, player.shield_max || 0);
+
+            if (sprite.usernameText.text !== (player.username || 'Player')) {
+                sprite.usernameText.text = player.username || 'Player';
+            }
+
+            // Respawn Timer Text
+            if (!player.alive && player.respawn_timer > 0) {
+                if (!sprite.respawnText) {
+                    const respawnStyle = new PIXI.TextStyle({ fontSize: 14, fill: 0xFFFFFF, stroke: 0x000000, strokeThickness: 3, fontWeight: 'bold' });
+                    sprite.respawnText = new PIXI.Text('', respawnStyle);
+                    sprite.respawnText.anchor.set(0.5);
+                    sprite.respawnText.position.y = PLAYER_RADIUS + 10;
+                    sprite.addChild(sprite.respawnText);
+                }
+                sprite.respawnText.text = Math.ceil(player.respawn_timer) + 's';
+                sprite.respawnText.visible = true;
+            } else if (sprite.respawnText) {
+                sprite.respawnText.visible = false;
+            }
+            
+            // Speed Boost Effect
+            if (player.speed_boost_remaining > 0 && player.alive) {
+                if (!sprite.speedBoostEffect) {
+                    sprite.speedBoostEffect = createSpeedBoostEffect();
+                    sprite.addChildAt(sprite.speedBoostEffect, 0);
+                }
+                sprite.speedBoostEffect.visible = true;
+            } else if (sprite.speedBoostEffect) {
+                sprite.speedBoostEffect.visible = false;
+            }
+
+            // Carried Flag Visual
+            if (player.is_carrying_flag_team_id > 0 && player.alive) {
+                if (!sprite.carriedFlagSprite) {
+                    sprite.carriedFlagSprite = new PIXI.Container();
+                    sprite.addChild(sprite.carriedFlagSprite);
+                    
+                    // Create flag graphic once
+                    const flagGraphics = new PIXI.Graphics();
+                    flagGraphics.beginFill(0xFFFFFF); // White, will be tinted
+                    flagGraphics.drawRect(PLAYER_RADIUS * 0.6, -PLAYER_RADIUS * 1.5, 3, PLAYER_RADIUS * 1.5);
+                    flagGraphics.drawRect(PLAYER_RADIUS * 0.6 + 3, -PLAYER_RADIUS * 1.5, 15, 10);
+                    flagGraphics.endFill();
+                    sprite.carriedFlagSprite.addChild(flagGraphics);
+                    sprite.carriedFlagGraphics = flagGraphics;
+                }
+                sprite.carriedFlagSprite.visible = true;
+                // Update flag color via tint
+                const flagColor = teamColors[player.is_carrying_flag_team_id] || 0xFFFFFF;
+                sprite.carriedFlagGraphics.tint = flagColor;
+            } else if (sprite.carriedFlagSprite) {
+                sprite.carriedFlagSprite.visible = false;
+            }
+        }
+        
+        // OPTIMIZED: Update gun without redrawing
+        function updatePlayerGun(sprite, player) {
+            const gun = sprite.gun;
+            
+            if (!player.alive) {
+                gun.visible = false;
+                return;
+            }
+            gun.visible = true;
+            
+            // Create or get gun graphics
+            if (!gun.gunGraphics) {
+                gun.gunGraphics = new PIXI.Graphics();
+                gun.addChild(gun.gunGraphics);
+            }
+            
+            const weaponConfigs = {
+                [GP.WeaponType.Pistol]: {
+                    barrelLength: PLAYER_RADIUS + 12,
+                    barrelWidth: 4,
+                    color: 0xFFBF00,
+                    muzzleSize: 6
+                },
+                [GP.WeaponType.Shotgun]: {
+                    barrelLength: PLAYER_RADIUS + 14,
+                    barrelWidth: 8,
+                    color: 0xFF4444,
+                    muzzleSize: 10,
+                    barrelCount: 2
+                },
+                [GP.WeaponType.Rifle]: {
+                    barrelLength: PLAYER_RADIUS + 18,
+                    barrelWidth: 5,
+                    color: 0x4444FF,
+                    muzzleSize: 7
+                },
+                [GP.WeaponType.Sniper]: {
+                    barrelLength: PLAYER_RADIUS + 22,
+                    barrelWidth: 3,
+                    color: 0xAA44FF,
+                    muzzleSize: 5,
+                    scope: true
+                },
+                [GP.WeaponType.Melee]: {
+                    barrelLength: PLAYER_RADIUS + 8,
+                    barrelWidth: 10,
+                    color: 0xD1D5DB,
+                    muzzleSize: 0
+                }
+            };
+            
+            const config = weaponConfigs[player.weapon] || weaponConfigs[GP.WeaponType.Pistol];
+            
+            // Check if we need to recreate the gun (weapon changed)
+            if (gun.currentWeapon !== player.weapon || !gun.gunGraphics.geometry) {
+                gun.gunGraphics.clear();
+                
+                // Draw weapon barrel(s)
+                if (config.barrelCount === 2) {
+                    gun.gunGraphics.lineStyle(config.barrelWidth / 2, config.color);
+                    gun.gunGraphics.moveTo(0, -3);
+                    gun.gunGraphics.lineTo(config.barrelLength, -3);
+                    gun.gunGraphics.moveTo(0, 3);
+                    gun.gunGraphics.lineTo(config.barrelLength, 3);
+                } else {
+                    gun.gunGraphics.lineStyle(config.barrelWidth, config.color);
+                    gun.gunGraphics.moveTo(0, 0);
+                    gun.gunGraphics.lineTo(config.barrelLength, 0);
+                }
+                
+                // Add muzzle
+                if (config.muzzleSize > 0) {
+                    gun.gunGraphics.beginFill(mixColors(config.color, 0x000000, 0.2));
+                    gun.gunGraphics.drawCircle(config.barrelLength, 0, config.muzzleSize / 2);
+                    gun.gunGraphics.endFill();
+                }
+                
+                gun.currentWeapon = player.weapon;
+            }
+            
+            // Apply damage boost effect via tint
+            if (player.damage_boost_remaining > 0) {
+                const pulse = Math.sin(Date.now() * 0.01) * 0.3 + 0.7;
+                gun.gunGraphics.tint = PIXI.utils.rgb2hex([1, pulse, pulse]);
+            } else {
+                gun.gunGraphics.tint = 0xFFFFFF;
+            }
+        }
+
+        // OPTIMIZED: Update health bar using scale instead of redrawing
+        function updatePlayerHealthBar(sprite, player) {
+            if (!sprite.healthFg || !sprite.healthBarContainer) return;
+            
+            if (player.alive) {
+                sprite.healthBarContainer.visible = true;
+                const healthPercent = Math.max(0, Math.min(1, player.health / player.max_health));
+                
+                // Scale the health bar instead of redrawing
+                sprite.healthFg.scale.x = healthPercent;
+                
+                // Update color via tint
+                let healthColor;
+                if (healthPercent > 0.6) {
+                    healthColor = interpolateColor(0x22C55E, 0xFACC15, (healthPercent - 0.6) / 0.4);
+                } else if (healthPercent > 0.3) {
+                    healthColor = interpolateColor(0xFACC15, 0xEF4444, (healthPercent - 0.3) / 0.3);
+                } else {
+                    healthColor = 0xEF4444;
+                }
+                sprite.healthFg.tint = healthColor;
+                
+                // Pulse effect when low health
+                if (healthPercent < 0.3) {
+                    const pulse = Math.sin(Date.now() * 0.01) * 0.2 + 0.8;
+                    sprite.healthFg.alpha = pulse;
+                } else {
+                    sprite.healthFg.alpha = 1;
+                }
+            } else {
+                sprite.healthBarContainer.visible = false;
+            }
+        }
+
+        // Helper function to interpolate colors
+        function interpolateColor(color1, color2, factor) {
+            const c1 = PIXI.Color.shared.setValue(color1).toRgbArray();
+            const c2 = PIXI.Color.shared.setValue(color2).toRgbArray();
+            const r = Math.floor(c1[0] * 255 * (1 - factor) + c2[0] * 255 * factor);
+            const g = Math.floor(c1[1] * 255 * (1 - factor) + c2[1] * 255 * factor);
+            const b = Math.floor(c1[2] * 255 * (1 - factor) + c2[2] * 255 * factor);
+            return (r << 16) | (g << 8) | b;
+        }
+
+        // Enhanced createSpeedBoostEffect function
+        function createSpeedBoostEffect() {
+            const effect = new PIXI.Container();
+            
+            // Multiple trail lines
+            for (let i = 0; i < 3; i++) {
+                const trail = new PIXI.Graphics();
+                trail.beginFill(0x00FFFF, 0.3);
+                trail.drawRect(-2, -PLAYER_RADIUS * (1.5 + i * 0.3), 4, PLAYER_RADIUS * 0.5);
+                trail.endFill();
+                trail.rotation = (i - 1) * 0.2;
+                effect.addChild(trail);
+            }
+            
+            // Speed particles
+            const particleContainer = new PIXI.Container();
+            effect.addChild(particleContainer);
+            effect.particleContainer = particleContainer;
+            
+            return effect;
+        }
+
+        function updateShieldVisual(sprite, current, max) {
+            if (!sprite.shieldVisual) return;
+            sprite.shieldVisual.clear();
+            
+            if (current > 0 && max > 0) {
+                const shieldPercent = current / max;
+                const shieldRadius = PLAYER_RADIUS + 8;
+                
+                // Hexagonal shield pattern
+                const sides = 6;
+                const alpha = 0.2 + shieldPercent * 0.3;
+                
+                // Outer shield layer
+                sprite.shieldVisual.lineStyle(Math.max(2, 4 * shieldPercent), 0x00BFFF, alpha);
+                sprite.shieldVisual.beginFill(0x00BFFF, alpha * 0.2);
+                drawRegularPolygon(sprite.shieldVisual, 0, 0, shieldRadius + (5 * shieldPercent), sides);
+                sprite.shieldVisual.endFill();
+                
+                // Inner shield segments
+                if (shieldPercent > 0.3) {
+                    sprite.shieldVisual.lineStyle(1, 0x00FFFF, alpha * 0.5);
+                    const segmentAngle = (Math.PI * 2) / sides;
+                    for (let i = 0; i < sides; i++) {
+                        const angle = segmentAngle * i;
+                        sprite.shieldVisual.moveTo(0, 0);
+                        sprite.shieldVisual.lineTo(
+                            Math.cos(angle) * shieldRadius,
+                            Math.sin(angle) * shieldRadius
+                        );
+                    }
+                }
+                
+                // Add shimmer effect
+                const shimmer = Math.sin(Date.now() * 0.003) * 0.1;
+                sprite.shieldVisual.alpha = 1 + shimmer;
+            }
+        }
+
+        // Create projectile sprite
+        function createProjectileSprite(projectile) {
+            const container = new PIXI.Container();
+            container.projectileId = projectile.id;
+            
+            const projectileConfigs = {
+                [GP.WeaponType.Pistol]: {
+                    color: 0xFFBF00,
+                    glowColor: 0xFFFF00,
+                    size: 8,
+                    glowSize: 15,
+                    shape: 'bullet'
+                },
+                [GP.WeaponType.Shotgun]: {
+                    color: 0xFF4444,
+                    glowColor: 0xFF6666,
+                    size: 4,
+                    glowSize: 8,
+                    shape: 'pellet'
+                },
+                [GP.WeaponType.Rifle]: {
+                    color: 0x4444FF,
+                    glowColor: 0x6666FF,
+                    size: 10,
+                    glowSize: 18,
+                    shape: 'laser'
+                },
+                [GP.WeaponType.Sniper]: {
+                    color: 0xAA44FF,
+                    glowColor: 0xFF00FF,
+                    size: 12,
+                    glowSize: 20,
+                    shape: 'beam'
+                }
+            };
+            
+            const config = projectileConfigs[projectile.weapon_type] || projectileConfigs[GP.WeaponType.Pistol];
+            
+            // Outer glow effect - more prominent
+            const glow = new PIXI.Graphics();
+            glow.beginFill(config.glowColor, 0.4);
+            glow.drawCircle(0, 0, config.glowSize);
+            glow.endFill();
+            glow.filters = [new PIXI.BlurFilter(4)];
+            container.addChild(glow);
+            
+            // Core projectile
+            const core = new PIXI.Graphics();
+            
+            switch (config.shape) {
+                case 'pellet':
+                    core.beginFill(config.color, 1);
+                    core.drawCircle(0, 0, config.size);
+                    core.endFill();
+                    core.beginFill(0xFFFFFF, 0.8);
+                    core.drawCircle(0, 0, config.size * 0.5);
+                    core.endFill();
+                    break;
+                    
+                case 'laser':
+                    core.beginFill(config.color, 0.9);
+                    core.drawRoundedRect(-config.size * 1.5, -config.size/3, config.size * 3, config.size * 0.66, config.size/3);
+                    core.endFill();
+                    core.beginFill(0xFFFFFF, 1);
+                    core.drawRoundedRect(-config.size * 1.2, -config.size/6, config.size * 2.4, config.size/3, config.size/6);
+                    core.endFill();
+                    break;
+                    
+                case 'beam':
+                    core.beginFill(config.color, 0.8);
+                    core.drawRect(-config.size * 3, -2, config.size * 6, 4);
+                    core.endFill();
+                    core.beginFill(0xFFFFFF, 1);
+                    core.drawRect(-config.size * 3, -1, config.size * 6, 2);
+                    core.endFill();
+                    break;
+                    
+                default: // bullet
+                    core.beginFill(config.color, 1);
+                    core.drawRoundedRect(-config.size/2, -config.size/3, config.size * 1.5, config.size * 0.66, config.size/3);
+                    core.endFill();
+                    core.beginFill(0xFFFFFF, 1);
+                    core.drawCircle(config.size * 0.5, 0, config.size/3);
+                    core.endFill();
+            }
+            
+            container.addChild(core);
+            
+            // Add motion trail effect
+            const trail = new PIXI.Graphics();
+            trail.alpha = 0.5;
+            container.addChildAt(trail, 0);
+            container.trail = trail;
+            
+            // Store config for trail updates
+            container.trailColor = config.glowColor;
+            container.weaponType = projectile.weapon_type;
+            
+            return container;
+        }
+
+        // Update projectile sprite
+        function updateProjectileSprite(sprite, projectile) {
+            sprite.position.x = projectile.render_x !== undefined ? projectile.render_x : projectile.x;
+            sprite.position.y = projectile.render_y !== undefined ? projectile.render_y : projectile.y;
+            
+            // Update rotation based on velocity if available
+            if (projectile.velocity_x !== undefined && projectile.velocity_y !== undefined) {
+                sprite.rotation = Math.atan2(projectile.velocity_y, projectile.velocity_x);
+            }
+            
+            // Update trail effect
+            if (sprite.trail && sprite.lastPositions) {
+                sprite.trail.clear();
+                sprite.trail.lineStyle(3, sprite.trailColor, 0.3);
+                
+                if (sprite.lastPositions.length > 1) {
+                    sprite.trail.moveTo(
+                        sprite.lastPositions[0].x - sprite.position.x,
+                        sprite.lastPositions[0].y - sprite.position.y
+                    );
+                    
+                    for (let i = 1; i < sprite.lastPositions.length; i++) {
+                        const alpha = (1 - i / sprite.lastPositions.length) * 0.3;
+                        sprite.trail.lineStyle(3 - i * 0.5, sprite.trailColor, alpha);
+                        sprite.trail.lineTo(
+                            sprite.lastPositions[i].x - sprite.position.x,
+                            sprite.lastPositions[i].y - sprite.position.y
+                        );
+                    }
+                }
+            }
+            
+            // Initialize or update position history
+            if (!sprite.lastPositions) {
+                sprite.lastPositions = [];
+            }
+            sprite.lastPositions.unshift({ x: sprite.position.x, y: sprite.position.y });
+            if (sprite.lastPositions.length > 5) {
+                sprite.lastPositions.pop();
+            }
+        }
+
+        function createPickupSprite(pickup) {
+            const container = new PIXI.Container();
+            container.pickupId = pickup.id;
+            
+            const pickupConfigs = {
+                [GP.PickupType.Health]: {
+                    color: 0x10B981,
+                    icon: '➕',
+                    shape: 'cross',
+                    pulseColor: 0x34D399
+                },
+                [GP.PickupType.Ammo]: {
+                    color: 0xF59E0B,
+                    icon: '⦿',
+                    shape: 'hexagon',
+                    pulseColor: 0xFBBF24
+                },
+                [GP.PickupType.WeaponCrate]: {
+                    color: 0x60A5FA,
+                    icon: '🔫',
+                    shape: 'crate',
+                    pulseColor: 0x93C5FD
+                },
+                [GP.PickupType.SpeedBoost]: {
+                    color: 0x00FFFF,
+                    icon: '💨',
+                    shape: 'arrow',
+                    pulseColor: 0x67E8F9
+                },
+                [GP.PickupType.DamageBoost]: {
+                    color: 0xFF6B6B,
+                    icon: '💥',
+                    shape: 'star',
+                    pulseColor: 0xFCA5A5
+                },
+                [GP.PickupType.Shield]: {
+                    color: 0x00BFFF,
+                    icon: '🛡️',
+                    shape: 'shield',
+                    pulseColor: 0x60C5FF
+                }
+            };
+            
+            const config = pickupConfigs[pickup.pickup_type] || pickupConfigs[GP.PickupType.Health];
+            
+            // Animated outer glow
+            const outerGlow = new PIXI.Graphics();
+            outerGlow.beginFill(config.pulseColor, 0.15);
+            outerGlow.drawCircle(0, 0, 28);
+            outerGlow.endFill();
+            container.addChild(outerGlow);
+            container.outerGlow = outerGlow;
+            
+            // Middle glow layer
+            const middleGlow = new PIXI.Graphics();
+            middleGlow.beginFill(config.color, 0.25);
+            middleGlow.drawCircle(0, 0, 22);
+            middleGlow.endFill();
+            container.addChild(middleGlow);
+            
+            // Main pickup shape
+            const main = new PIXI.Graphics();
+            main.lineStyle(3, config.color, 0.9);
+            main.beginFill(config.color, 0.35);
+            
+            switch (config.shape) {
+                case 'cross':
+                    const crossSize = 15;
+                    const crossWidth = 6;
+                    main.drawRect(-crossWidth/2, -crossSize, crossWidth, crossSize * 2);
+                    main.drawRect(-crossSize, -crossWidth/2, crossSize * 2, crossWidth);
+                    break;
+                    
+                case 'hexagon':
+                    drawRegularPolygon(main, 0, 0, 18, 6);
+                    break;
+                    
+                case 'crate':
+                    main.drawRoundedRect(-15, -15, 30, 30, 5);
+                    main.lineStyle(1, config.color, 0.5);
+                    main.moveTo(-15, 0);
+                    main.lineTo(15, 0);
+                    main.moveTo(0, -15);
+                    main.lineTo(0, 15);
+                    break;
+                    
+                case 'arrow':
+                    const arrowPoints = [0, -20, 10, -5, 5, -5, 5, 10, -5, 10, -5, -5, -10, -5];
+                    main.drawPolygon(arrowPoints);
+                    break;
+                    
+                case 'star':
+                    drawStar(main, 0, 0, 5, 20, 10);
+                    break;
+                    
+                case 'shield':
+                    const shieldPoints = [0, -20, 15, -10, 15, 5, 0, 20, -15, 5, -15, -10];
+                    main.drawPolygon(shieldPoints);
+                    break;
+                    
+                default:
+                    main.drawCircle(0, 0, 18);
+            }
+            
+            main.endFill();
+            container.addChild(main);
+            
+            // Icon or weapon type indicator
+            let iconText = config.icon;
+            if (pickup.pickup_type === GP.PickupType.WeaponCrate && pickup.weapon_type !== undefined) {
+                iconText = weaponNames[pickup.weapon_type]?.[0] || 'W';
+            }
+            
+            const iconStyle = new PIXI.TextStyle({
+                fontFamily: 'Arial',
+                fontSize: pickup.pickup_type === GP.PickupType.WeaponCrate ? 16 : 18,
+                fill: 0xFFFFFF,
+                fontWeight: 'bold',
+                stroke: mixColors(config.color, 0x000000, 0.5),
+                strokeThickness: 3,
+                dropShadow: true,
+                dropShadowColor: 0x000000,
+                dropShadowBlur: 2,
+                dropShadowDistance: 1
+            });
+            const icon = new PIXI.Text(iconText, iconStyle);
+            icon.anchor.set(0.5);
+            container.addChild(icon);
+            
+            // Particle emitter placeholder for ambient particles
+            container.particleEmitter = null;
+            
+            container.baseScale = 1;
+            container.pulseTime = Math.random() * Math.PI * 2;
+            container.floatOffset = Math.random() * Math.PI * 2;
+            
+            return container;
+        }
+
+        // Helper function to draw regular polygon
+        function drawRegularPolygon(graphics, x, y, radius, sides) {
+            const angle = (Math.PI * 2) / sides;
+            const points = [];
+            for (let i = 0; i < sides; i++) {
+                points.push(
+                    x + radius * Math.cos(angle * i - Math.PI / 2),
+                    y + radius * Math.sin(angle * i - Math.PI / 2)
+                );
+            }
+            graphics.drawPolygon(points);
+        }
+
+        // Helper function to draw star
+        function drawStar(graphics, x, y, points, outerRadius, innerRadius) {
+            const angle = Math.PI / points;
+            const polygon = [];
+            
+            for (let i = 0; i < points * 2; i++) {
+                const radius = i % 2 === 0 ? outerRadius : innerRadius;
+                polygon.push(
+                    x + radius * Math.cos(angle * i - Math.PI / 2),
+                    y + radius * Math.sin(angle * i - Math.PI / 2)
+                );
+            }
+            
+            graphics.drawPolygon(polygon);
+        }
+
+        // Enhanced pickup animation in game loop
+        function animatePickups(delta) {
+            pickupContainer.children.forEach(pickupSprite => {
+                if (pickupSprite.visible) {
+                    // Floating animation
+                    pickupSprite.floatOffset += delta * 0.002;
+                    pickupSprite.y += Math.sin(pickupSprite.floatOffset) * 0.1;
+                    
+                    // Pulsing animation
+                    pickupSprite.pulseTime += delta * 0.003;
+                    const pulse = Math.sin(pickupSprite.pulseTime) * 0.1 + 0.95;
+                    pickupSprite.scale.set(pickupSprite.baseScale * pulse);
+                    
+                    // Rotation
+                    pickupSprite.rotation += 0.02;
+                    
+                    // Update outer glow
+                    if (pickupSprite.outerGlow) {
+                        const glowPulse = Math.sin(pickupSprite.pulseTime * 1.5) * 0.1 + 0.9;
+                        pickupSprite.outerGlow.scale.set(glowPulse);
+                        pickupSprite.outerGlow.alpha = 0.15 + Math.sin(pickupSprite.pulseTime * 2) * 0.05;
+                    }
+                }
+            });
+        }
+
+        // Enhanced flag animation
+        function animateFlags(delta) {
+            flagContainer.children.forEach(flagSprite => {
+                if (flagSprite.flagGraphic && flagSprite.visible) {
+                    // Waving animation
+                    const waveSpeed = 0.002;
+                    const waveAmount = 0.15;
+                    flagSprite.flagGraphic.skew.x = Math.sin(Date.now() * waveSpeed + flagSprite.flagTeamId) * waveAmount;
+                    
+                    // Slight vertical bob
+                    flagSprite.flagGraphic.y = -40 + Math.sin(Date.now() * 0.001) * 2;
+                    
+                    // Dropped flag effects
+                    if (flagSprite.droppedGlow) {
+                        const pulse = Math.sin(Date.now() * 0.003) * 0.3 + 0.7;
+                        flagSprite.droppedGlow.alpha = pulse;
+                        flagSprite.droppedGlow.scale.set(pulse);
+                    }
+                    
+                    // Update timer
+                    if (flagSprite.timerText) {
+                        const state = flagStates.get(flagSprite.flagTeamId);
+                        if (state && state.status === GP.FlagStatus.Dropped && state.respawn_timer > 0) {
+                            flagSprite.timerText.text = Math.ceil(state.respawn_timer) + 's';
+                            // Flash when time is low
+                            if (state.respawn_timer < 3) {
+                                flagSprite.timerText.alpha = Math.sin(Date.now() * 0.01) * 0.5 + 0.5;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Low health vignette effect
+        function createHealthVignette(app) {
+            const vignette = new PIXI.Graphics();
+            const radius = Math.max(app.screen.width, app.screen.height);
+            
+            // Create radial gradient effect
+            const center = new PIXI.Point(app.screen.width / 2, app.screen.height / 2);
+            
+            for (let i = 0; i < 10; i++) {
+                const alpha = (i / 10) * 0.5;
+                const currentRadius = radius * (1 - i / 10);
+                
+                vignette.beginFill(0xFF0000, alpha);
+                vignette.drawCircle(center.x, center.y, currentRadius);
+                vignette.endFill();
+            }
+            
+            vignette.blendMode = PIXI.BLEND_MODES.MULTIPLY;
+            vignette.visible = false;
+            
+            return vignette;
+        }
+
+        function updateHealthVignette(vignette, healthPercent) {
+            if (healthPercent < 0.3) {
+                vignette.visible = true;
+                vignette.alpha = (0.3 - healthPercent) / 0.3 * 0.5;
+                // Pulse effect
+                vignette.alpha += Math.sin(Date.now() * 0.01) * 0.1;
+            } else {
+                vignette.visible = false;
+            }
+        }
+
+        // Helper function for client-side max ammo logic
+        function getMaxAmmoForWeaponClient(weaponType) {
+            switch (weaponType) {
+                case GP.WeaponType.Pistol: return 10;
+                case GP.WeaponType.Shotgun: return 5;
+                case GP.WeaponType.Rifle: return 30;
+                case GP.WeaponType.Sniper: return 5;
+                case GP.WeaponType.Melee: return 0;
+                default: return 10;
+            }
+        }
+
+        // Create procedural starfield background
+        function createStarfield(app) {
+            const starfieldContainer = new PIXI.Container();
+            const starLayers = [
+                { count: 100, scrollFactor: 0.1, minRadius: 0.5, maxRadius: 1, color: 0xFFFFFF },
+                { count: 50, scrollFactor: 0.3, minRadius: 1, maxRadius: 1.5, color: 0xAAAAFF },
+                { count: 30, scrollFactor: 0.5, minRadius: 1.5, maxRadius: 2, color: 0xFFFFAA }
+            ];
+            
+            // Generate nebula clouds
+            const nebulaContainer = new PIXI.Container();
+            for (let i = 0; i < 3; i++) {
+                const nebula = new PIXI.Graphics();
+                const size = 200 + Math.random() * 300;
+                const x = Math.random() * app.screen.width;
+                const y = Math.random() * app.screen.height;
+                const color = [0x4B0082, 0x191970, 0x2F4F4F][i % 3];
+                
+                nebula.beginFill(color, 0.1);
+                nebula.drawCircle(0, 0, size);
+                nebula.endFill();
+                nebula.position.set(x, y);
+                nebula.filters = [new PIXI.BlurFilter(50)];
+                nebulaContainer.addChild(nebula);
+            }
+            starfieldContainer.addChild(nebulaContainer);
+            
+            // Generate star layers
+            starLayers.forEach((layerData, layerIndex) => {
+                const layerContainer = new PIXI.Container();
+                layerContainer.scrollFactor = layerData.scrollFactor;
+                
+                // Generate star texture once
+                const starGraphics = new PIXI.Graphics();
+                starGraphics.beginFill(0xFFFFFF);
+                starGraphics.drawCircle(0, 0, 2);
+                starGraphics.endFill();
+                const starTexture = app.renderer.generateTexture(starGraphics);
+                starGraphics.destroy();
+                
+                // Create stars using sprites for better performance
+                for (let i = 0; i < layerData.count; i++) {
+                    const star = new PIXI.Sprite(starTexture);
+                    star.anchor.set(0.5);
+                    
+                    const radius = Math.random() * (layerData.maxRadius - layerData.minRadius) + layerData.minRadius;
+                    star.scale.set(radius / 2);
+                    star.tint = layerData.color;
+                    star.alpha = Math.random() * 0.5 + 0.5;
+                    
+                    star.x = Math.random() * app.screen.width * 2;
+                    star.y = Math.random() * app.screen.height * 2;
+                    
+                    // Store initial position for wrapping
+                    star.initialX = star.x;
+                    star.initialY = star.y;
+                    
+                    // Add twinkle effect to some stars
+                    if (Math.random() < 0.3) {
+                        star.twinkleSpeed = Math.random() * 0.002 + 0.001;
+                        star.twinkleOffset = Math.random() * Math.PI * 2;
+                    }
+                    
+                    layerContainer.addChild(star);
+                }
+                
+                starfieldContainer.addChild(layerContainer);
+            });
+            
+            return starfieldContainer;
+        }
+
+        // Update starfield position based on camera movement
+        function updateStarfield(starfieldContainer, cameraX, cameraY, delta) {
+            starfieldContainer.children.forEach((layer, index) => {
+                if (layer.scrollFactor !== undefined) {
+                    // Parallax scrolling
+                    layer.x = -cameraX * layer.scrollFactor;
+                    layer.y = -cameraY * layer.scrollFactor;
+                    
+                    // Update individual stars for twinkling
+                    layer.children.forEach(star => {
+                        if (star.twinkleSpeed) {
+                            star.alpha = 0.5 + Math.sin(Date.now() * star.twinkleSpeed + star.twinkleOffset) * 0.5;
+                        }
+                        
+                        // Wrap stars around screen edges
+                        const screenBuffer = 100;
+                        if (star.x + layer.x < -screenBuffer) {
+                            star.x += app.screen.width + screenBuffer * 2;
+                        } else if (star.x + layer.x > app.screen.width + screenBuffer) {
+                            star.x -= app.screen.width + screenBuffer * 2;
+                        }
+                        
+                        if (star.y + layer.y < -screenBuffer) {
+                            star.y += app.screen.height + screenBuffer * 2;
+                        } else if (star.y + layer.y > app.screen.height + screenBuffer) {
+                            star.y -= app.screen.height + screenBuffer * 2;
+                        }
+                    });
+                }
+            });
+        }
+
+        function drawWalls() {
+            wallGraphics.clear();
+            
+            // First pass: Draw wall shadows
+            walls.forEach(wall => {
+                if (wall.is_destructible && wall.current_health <= 0) return;
+                
+                // Shadow effect
+                wallGraphics.beginFill(0x000000, 0.3);
+                wallGraphics.drawRect(wall.x + 3, wall.y + 3, wall.width, wall.height);
+                wallGraphics.endFill();
+            });
+            
+            // Second pass: Draw walls
+            walls.forEach(wall => {
+                if (wall.is_destructible && wall.current_health <= 0) return;
+
+                let wallColor = 0x374151;
+                let wallAlpha = 1.0;
+
+                if (wall.is_destructible) {
+                    const healthPercent = wall.current_health / wall.max_health;
+                    wallAlpha = 0.6 + healthPercent * 0.4;
+                    
+                    if (healthPercent > 0.5) {
+                        wallColor = interpolateColor(0x4B5563, 0x374151, (healthPercent - 0.5) * 2);
+                    } else {
+                        wallColor = interpolateColor(0xBF616A, 0x4B5563, healthPercent * 2);
+                    }
+
+                    wallGraphics.beginFill(wallColor, wallAlpha * 0.9);
+                    wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+                    wallGraphics.endFill();
+                    
+                    wallGraphics.lineStyle(1, mixColors(wallColor, 0x000000, 0.3), wallAlpha * 0.5);
+                    const lineSpacing = 10;
+                    for (let i = wall.x + lineSpacing; i < wall.x + wall.width; i += lineSpacing) {
+                        wallGraphics.moveTo(i, wall.y);
+                        wallGraphics.lineTo(i, wall.y + wall.height);
+                    }
+                    
+                    if (healthPercent < 0.8) {
+                        drawEnhancedWallCracks(wall, healthPercent);
+                    }
+                    
+                    if (healthPercent < 0.3) {
+                        wallGraphics.lineStyle(2, 0xFF6B6B, (1 - healthPercent) * 0.5);
+                        wallGraphics.drawRect(wall.x - 1, wall.y - 1, wall.width + 2, wall.height + 2);
+                    }
+                } else {
+                    wallGraphics.beginFill(wallColor);
+                    wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+                    wallGraphics.endFill();
+                    
+                    wallGraphics.lineStyle(1, mixColors(wallColor, 0xFFFFFF, 0.1), 0.5);
+                    wallGraphics.moveTo(wall.x, wall.y + wall.height);
+                    wallGraphics.lineTo(wall.x, wall.y);
+                    wallGraphics.lineTo(wall.x + wall.width, wall.y);
+                    
+                    wallGraphics.lineStyle(1, mixColors(wallColor, 0x000000, 0.3), 0.5);
+                    wallGraphics.moveTo(wall.x + wall.width, wall.y);
+                    wallGraphics.lineTo(wall.x + wall.width, wall.y + wall.height);
+                    wallGraphics.lineTo(wall.x, wall.y + wall.height);
+                }
+
+                wallGraphics.lineStyle(2, mixColors(wallColor, 0x000000, 0.4), wallAlpha);
+                wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+            });
+            
+            if (minimap) minimap.wallsNeedUpdate = true;
+        }
+
+        function applyScreenShake(container, duration, magnitude) {
+            let shakeTime = duration;
+            const initialX = container.x;
+            const initialY = container.y;
+            
+            const shakeTicker = (delta) => {
+                if (shakeTime > 0) {
+                    shakeTime -= delta;
+                    const offsetX = (Math.random() - 0.5) * 2 * magnitude * (shakeTime / duration);
+                    const offsetY = (Math.random() - 0.5) * 2 * magnitude * (shakeTime / duration);
+                    container.x = initialX + offsetX;
+                    container.y = initialY + offsetY;
+                } else {
+                    container.x = initialX;
+                    container.y = initialY;
+                    app.ticker.remove(shakeTicker);
+                }
+            };
+            app.ticker.add(shakeTicker);
+        }
+
+        // Screen effects for game feel
+        function createScreenFlash(app, color = 0xFFFFFF, duration = 15, maxAlpha = 0.7) {
+            const flashOverlay = new PIXI.Graphics();
+            flashOverlay.beginFill(color, 1);
+            flashOverlay.drawRect(0, 0, app.screen.width, app.screen.height);
+            flashOverlay.endFill();
+            flashOverlay.alpha = maxAlpha;
+            app.stage.addChild(flashOverlay);
+
+            let framesPassed = 0;
+            const flashTicker = (delta) => {
+                framesPassed += delta;
+                flashOverlay.alpha = maxAlpha * (1 - (framesPassed / duration));
+                if (framesPassed >= duration) {
+                    app.ticker.remove(flashTicker);
+                    app.stage.removeChild(flashOverlay);
+                    flashOverlay.destroy();
+                }
+            };
+            app.ticker.add(flashTicker);
+        }
+
+        function drawEnhancedWallCracks(wall, healthPercent) {
+            const numCracks = Math.floor((1 - healthPercent) * 12);
+            const crackColor = mixColors(0x2E3440, 0x000000, 0.5);
+            
+            for (let i = 0; i < numCracks; i++) {
+                wallGraphics.lineStyle(Math.max(1, 3 * (1 - healthPercent)), crackColor, 0.7);
+                
+                const startX = wall.x + Math.random() * wall.width;
+                const startY = wall.y + Math.random() * wall.height;
+                
+                wallGraphics.moveTo(startX, startY);
+                
+                let currentX = startX;
+                let currentY = startY;
+                const crackLength = Math.min(wall.width, wall.height) * 0.4 * (1 - healthPercent);
+                const segments = 3 + Math.floor(Math.random() * 3);
+                
+                for (let j = 0; j < segments; j++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const segmentLength = crackLength / segments;
+                    currentX += Math.cos(angle) * segmentLength;
+                    currentY += Math.sin(angle) * segmentLength;
+                    
+                    currentX = Math.max(wall.x, Math.min(wall.x + wall.width, currentX));
+                    currentY = Math.max(wall.y, Math.min(wall.y + wall.height, currentY));
+                    
+                    wallGraphics.lineTo(currentX, currentY);
+                }
+            }
+            
+            if (healthPercent < 0.5) {
+                wallGraphics.beginFill(crackColor, 0.5);
+                for (let i = 0; i < 5; i++) {
+                    const debrisX = wall.x + Math.random() * wall.width;
+                    const debrisY = wall.y + Math.random() * wall.height;
+                    const debrisSize = Math.random() * 3 + 1;
+                    wallGraphics.drawRect(debrisX, debrisY, debrisSize, debrisSize);
+                }
+                wallGraphics.endFill();
+            }
+        }
+
+        // Create flag sprite
+        function createFlagSprite(flagState) {
+            const container = new PIXI.Container();
+            container.flagTeamId = flagState.team_id;
+
+            // Flag base/stand
+            const base = new PIXI.Graphics();
+            base.beginFill(0x4B4B4B);
+            base.drawCircle(0, 5, 8);
+            base.endFill();
+            base.beginFill(0x2B2B2B);
+            base.drawEllipse(0, 5, 10, 4);
+            base.endFill();
+            container.addChild(base);
+
+            // Enhanced pole with metallic effect
+            const pole = new PIXI.Graphics();
+            pole.lineStyle(4, 0x8B4513);
+            pole.moveTo(0, 5);
+            pole.lineTo(0, -40);
+            pole.lineStyle(2, 0xCD853F);
+            pole.moveTo(-1, 5);
+            pole.lineTo(-1, -40);
+            container.addChild(pole);
+
+            // Flag fabric container
+            const flagContainer = new PIXI.Container();
+            flagContainer.position.y = -40;
+            
+            // Flag shadow/depth
+            const flagShadow = new PIXI.Graphics();
+            const flagColor = teamColors[flagState.team_id] || 0xFFFFFF;
+            flagShadow.beginFill(mixColors(flagColor, 0x000000, 0.5), 0.5);
+            flagShadow.drawPolygon([2, 2, 32, 7, 32, 22, 2, 17]);
+            flagContainer.addChild(flagShadow);
+            
+            // Main flag
+            const flagGraphic = new PIXI.Graphics();
+            flagGraphic.beginFill(flagColor);
+            
+            // More detailed flag shape with notch
+            const flagPoints = [
+                0, 0,    // Top left
+                30, 5,   // Top right
+                28, 7.5, // Notch top
+                32, 10,  // Notch point
+                28, 12.5,// Notch bottom
+                30, 15,  // Bottom right
+                0, 20    // Bottom left
+            ];
+            flagGraphic.drawPolygon(flagPoints);
+            flagGraphic.endFill();
+            
+            // Flag emblem/pattern
+            flagGraphic.beginFill(mixColors(flagColor, 0xFFFFFF, 0.3), 0.5);
+            if (flagState.team_id === 1) {
+                // Red team - star emblem
+                drawStar(flagGraphic, 10, 10, 5, 6, 3);
+            } else if (flagState.team_id === 2) {
+                // Blue team - circle emblem
+                flagGraphic.drawCircle(10, 10, 6);
+            }
+            flagGraphic.endFill();
+            
+            // Flag highlights
+            flagGraphic.lineStyle(1, mixColors(flagColor, 0xFFFFFF, 0.2), 0.5);
+            flagGraphic.moveTo(0, 5);
+            flagGraphic.lineTo(25, 8);
+            flagGraphic.moveTo(0, 15);
+            flagGraphic.lineTo(25, 17);
+            
+            flagContainer.addChild(flagGraphic);
+            container.addChild(flagContainer);
+            
+            container.flagGraphic = flagContainer;
+            container.position.set(flagState.position.x, flagState.position.y);
+
+            // Status effects
+            if (flagState.status === GP.FlagStatus.Dropped) {
+                // Add dropped indicator
+                const droppedGlow = new PIXI.Graphics();
+                droppedGlow.lineStyle(3, flagColor, 0.5);
+                droppedGlow.drawCircle(0, 0, 20);
+                container.addChildAt(droppedGlow, 0);
+                
+                // Pulsing effect
+                container.droppedGlow = droppedGlow;
+                
+                // Timer text with background
+                if (flagState.respawn_timer > 0) {
+                    const timerBg = new PIXI.Graphics();
+                    timerBg.beginFill(0x000000, 0.7);
+                    timerBg.drawRoundedRect(-15, -55, 30, 20, 5);
+                    timerBg.endFill();
+                    container.addChild(timerBg);
+                    
+                    const timerStyle = new PIXI.TextStyle({
+                        fontSize: 14,
+                        fill: 0xFFFFFF,
+                        fontWeight: 'bold'
+                    });
+                    const timerText = new PIXI.Text(Math.ceil(flagState.respawn_timer) + 's', timerStyle);
+                    timerText.anchor.set(0.5);
+                    timerText.position.y = -45;
+                    container.addChild(timerText);
+                    container.timerText = timerText;
+                }
+            }
+            
+            // Glow effect for base position
+            const baseGlow = new PIXI.Graphics();
+            baseGlow.beginFill(flagColor, 0.1);
+            baseGlow.drawCircle(0, 5, 25);
+            baseGlow.endFill();
+            container.addChildAt(baseGlow, 0);
+            
+            return container;
+        }
+
+        function updateFlags(newFlagStates) {
+            newFlagStates.forEach(fs => flagStates.set(fs.team_id, fs));
+
+            flagContainer.children.forEach(sprite => {
+                const state = flagStates.get(sprite.flagTeamId);
+                if (state) {
+                    sprite.position.set(state.position.x, state.position.y);
+                    sprite.visible = state.status !== GP.FlagStatus.Carried;
+
+                    if (sprite.timerText) {
+                        if (state.status === GP.FlagStatus.Dropped && state.respawn_timer > 0) {
+                            sprite.timerText.text = Math.ceil(state.respawn_timer) + 's';
+                            sprite.timerText.visible = true;
+                        } else {
+                            sprite.timerText.visible = false;
+                        }
+                    }
+                } else {
+                    sprite.visible = false;
+                }
+            });
+
+            flagStates.forEach(state => {
+                if (!flagContainer.children.find(s => s.flagTeamId === state.team_id)) {
+                    const flagSprite = createFlagSprite(state);
+                    flagContainer.addChild(flagSprite);
+                }
+            });
+            
+            if (minimap) minimap.objectivesNeedUpdate = true;
+        }
+
+        // Update camera
+        function updateCamera() {
+            if (localPlayerState && app && gameScene) {
+                const targetX = app.screen.width / 2 - (localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x);
+                const targetY = app.screen.height / 2 - (localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y);
+
+                const smoothing = 0.1;
+                gameScene.position.x += (targetX - gameScene.position.x) * smoothing;
+                gameScene.position.y += (targetY - gameScene.position.y) * smoothing;
+            }
+        }
+
+        // Calculate viewport bounds for culling
+        function getViewportBounds() {
+            if (!app || !gameScene) return null;
+            
+            const screenBounds = app.renderer.screen;
+            return new PIXI.Rectangle(
+                -gameScene.x - VIEW_DISTANCE_BUFFER,
+                -gameScene.y - VIEW_DISTANCE_BUFFER,
+                screenBounds.width + VIEW_DISTANCE_BUFFER * 2,
+                screenBounds.height + VIEW_DISTANCE_BUFFER * 2
+            );
+        }
+
+        // Main game loop
+        function gameLoop(delta) {
+            const currentTime = Date.now();
+            renderTimestamp = currentTime - INTERPOLATION_DELAY;
+
+            // Update FPS
+            frameCount++;
+            if (currentTime - lastFPSUpdate >= 1000) {
+                fpsValueSpan.textContent = frameCount;
+                frameCount = 0;
+                lastFPSUpdate = currentTime;
+            }
+
+            if (localPlayerState && localPlayerState.alive) {
+                updateLocalPlayerPrediction(app.ticker.deltaMS / 1000);
+            }
+
+            interpolateEntities();
+
+            const clientDeltaTime = app.ticker.deltaMS / 1000;
+
+            // Client-side prediction for projectiles
+            projectiles.forEach(proj => {
+                if (proj.velocity_x !== undefined && proj.velocity_y !== undefined) {
+                    proj.x += proj.velocity_x * clientDeltaTime;
+                    proj.y += proj.velocity_y * clientDeltaTime;
+                }
+
+                if (proj.render_x === undefined) {
+                    proj.render_x = proj.x;
+                }
+                if (proj.render_y === undefined) {
+                    proj.render_y = proj.y;
+                }
+            });
+
+            updateSprites();
+            updateCamera();
+
+            if (starfield) {
+                updateStarfield(starfield, gameScene.position.x, gameScene.position.y, delta);
+            }
+
+            animatePickups(delta);
+            animateFlags(delta);
+
+            if (effectsManager) effectsManager.update(app.ticker.deltaMS);
+            if (minimap && localPlayerState) {
+                minimap.update(localPlayerState, players, Array.from(walls.values()), Array.from(flagStates.values()));
+            }
+
+            sendInputsToServer();
+            updateGameStatsUI();
+        }
+
+        // Client-side prediction
+        function updateLocalPlayerPrediction(deltaTime) {
+            if (!localPlayerState || !localPlayerState.alive) return;
+
+            let moveXIntent = 0;
+            let moveYIntent = 0;
+            if (inputState.move_forward) moveYIntent -= 1;
+            if (inputState.move_backward) moveYIntent += 1;
+            if (inputState.move_left) moveXIntent -= 1;
+            if (inputState.move_right) moveXIntent += 1;
+
+            const effectiveSpeed = localPlayerState.speed_boost_remaining > 0 ? 225 : 150;
+
+            if (moveXIntent !== 0 || moveYIntent !== 0) {
+                const magnitude = Math.sqrt(moveXIntent * moveXIntent + moveYIntent * moveYIntent);
+                localPlayerState.x += (moveXIntent / magnitude) * effectiveSpeed * deltaTime;
+                localPlayerState.y += (moveYIntent / magnitude) * effectiveSpeed * deltaTime;
+            }
+
+            localPlayerState.rotation = inputState.rotation;
+            localPlayerState.render_x = localPlayerState.x;
+            localPlayerState.render_y = localPlayerState.y;
+            localPlayerState.render_rotation = localPlayerState.rotation;
+        }
+
+        // Interpolate entities
+        function interpolateEntities() {
+            const now = Date.now();
+            const renderTime = now - INTERPOLATION_DELAY;
+
+            serverUpdates = serverUpdates.filter(update => update.timestamp > renderTime - 500);
+
+            if (serverUpdates.length < 2) return;
+
+            let update1 = null, update2 = null;
+            for (let i = serverUpdates.length - 1; i >= 1; i--) {
+                if (serverUpdates[i].timestamp >= renderTime && serverUpdates[i-1].timestamp <= renderTime) {
+                    update2 = serverUpdates[i];
+                    update1 = serverUpdates[i-1];
+                    break;
+                }
+            }
+            
+            if (!update1 && serverUpdates[0].timestamp <= renderTime && serverUpdates.length > 0) {
+                update1 = serverUpdates[0];
+                update2 = serverUpdates[0];
+            } else if (!update1 || !update2) {
+                return;
+            }
+
+            const t = (update1.timestamp === update2.timestamp) ? 1 : (renderTime - update1.timestamp) / (update2.timestamp - update1.timestamp);
+            const clampedT = Math.max(0, Math.min(1, t));
+
+            // Interpolate players
+            players.forEach((currentPlayerState, playerId) => {
+                if (playerId === myPlayerId) return;
+
+                const state1 = update1.players.get(playerId);
+                const state2 = update2.players.get(playerId);
+
+                if (state1 && state2) {
+                    currentPlayerState.render_x = state1.x + (state2.x - state1.x) * clampedT;
+                    currentPlayerState.render_y = state1.y + (state2.y - state1.y) * clampedT;
+
+                    let rotDiff = state2.rotation - state1.rotation;
+                    while (rotDiff > Math.PI) rotDiff -= 2 * Math.PI;
+                    while (rotDiff < -Math.PI) rotDiff += 2 * Math.PI;
+                    currentPlayerState.render_rotation = state1.rotation + rotDiff * clampedT;
+                } else if (state2) {
+                    currentPlayerState.render_x = state2.x;
+                    currentPlayerState.render_y = state2.y;
+                    currentPlayerState.render_rotation = state2.rotation;
+                }
+            });
+
+            // Interpolate projectiles
+            projectiles.forEach((currentProjState, projId) => {
+                const state1 = update1.projectiles.get(projId);
+                const state2 = update2.projectiles.get(projId);
+
+                if (state1 && state2) {
+                    currentProjState.render_x = state1.x + (state2.x - state1.x) * clampedT;
+                    currentProjState.render_y = state1.y + (state2.y - state1.y) * clampedT;
+                } else if (state2) {
+                    currentProjState.render_x = state2.x;
+                    currentProjState.render_y = state2.y;
+                }
+            });
+        }
+
+        // OPTIMIZED: Update all sprites with culling
+        function updateSprites() {
+            const viewportBounds = getViewportBounds();
+            
+            // Update player sprites
+            players.forEach((player, playerId) => {
+                // Check if player is in viewport
+                if (viewportBounds && !viewportBounds.contains(player.x, player.y)) {
+                    // Hide off-screen players
+                    let sprite = playerContainer.children.find(s => s.playerId === playerId);
+                    if (sprite) sprite.visible = false;
+                    return;
+                }
+                
+                let sprite = playerContainer.children.find(s => s.playerId === playerId);
+                if (!sprite) {
+                    sprite = createPlayerSprite(player, playerId === myPlayerId);
+                    playerContainer.addChild(sprite);
+                    if (playerId === myPlayerId) localPlayerSprite = sprite;
+                }
+                sprite.visible = true;
+                updatePlayerSprite(sprite, player);
+            });
+
+            // Remove sprites for disconnected players
+            playerContainer.children = playerContainer.children.filter(sprite => {
+                if (!players.has(sprite.playerId)) {
+                    sprite.destroy({ children: true });
+                    return false;
+                }
+                return true;
+            });
+
+            // Update projectile sprites with culling
+            projectiles.forEach((projectile, projectileId) => {
+                // Check if projectile is in viewport
+                if (viewportBounds && !viewportBounds.contains(projectile.x, projectile.y)) {
+                    return; // Skip off-screen projectiles
+                }
+                
+                let sprite = projectileContainer.children.find(s => s.projectileId === projectileId);
+                if (!sprite) {
+                    sprite = createProjectileSprite(projectile);
+                    projectileContainer.addChild(sprite);
+                }
+                updateProjectileSprite(sprite, projectile);
+            });
+
+            // Remove sprites for expired projectiles
+            projectileContainer.children = projectileContainer.children.filter(sprite => {
+                if (!projectiles.has(sprite.projectileId)) {
+                    sprite.destroy({ children: true });
+                    return false;
+                }
+                return true;
+            });
+
+            // Update pickup sprites with culling
+            pickups.forEach((pickup, pickupId) => {
+                // Check if pickup is in viewport
+                if (viewportBounds && !viewportBounds.contains(pickup.x, pickup.y)) {
+                    return; // Skip off-screen pickups
+                }
+                
+                let sprite = pickupContainer.children.find(s => s.pickupId === pickupId);
+                if (pickup.is_active) {
+                    if (!sprite) {
+                        sprite = createPickupSprite(pickup);
+                        pickupContainer.addChild(sprite);
+                    }
+                    sprite.position.set(pickup.x, pickup.y);
+                    sprite.visible = true;
+                } else if (sprite) {
+                    sprite.visible = false;
+                }
+            });
+        }
+
+        // Process server update
+        function processServerUpdate(messageData, isInitial = false) {
+            if (!messageData) {
+                log(`[processServerUpdate] Error: messageData is ${messageData}. isInitial: ${isInitial}. Stack: ${new Error().stack}`, 'error');
+                console.error("[processServerUpdate] messageData:", messageData, "isInitial:", isInitial);
+                return; 
+            }
+
+            const serverTime = Number(messageData.timestamp);
+
+            if (isInitial) {
+                walls.clear();
+                if (messageData.walls) {
+                    messageData.walls.forEach(wallData => walls.set(wallData.id, wallData));
+                }
+                drawWalls();
+                if (messageData.map_name) currentMapName = messageData.map_name;
+                if (minimap) minimap.wallsNeedUpdate = true;
+            } else {
+                let wallsChanged = false;
+                if (messageData.destroyed_wall_ids && messageData.destroyed_wall_ids.length > 0) {
+                    messageData.destroyed_wall_ids.forEach(wallId => {
+                        const wall = walls.get(wallId);
+                        if (wall) {
+                            wall.current_health = 0;
+                            wallsChanged = true;
+                        }
+                    });
+                }
+
+                if (messageData.updated_walls && messageData.updated_walls.length > 0) {
+                    messageData.updated_walls.forEach(wallData => {
+                        walls.set(wallData.id, wallData);
+                        wallsChanged = true;
+                    });
+                }
+
+                if (wallsChanged) {
+                    drawWalls();
+                }
+            }
+
+            // Update players
+            if (messageData.players) {
+                messageData.players.forEach(pData => {
+                    players.set(pData.id, pData);
+
+                    if (pData.id === myPlayerId) {
+                        if (!localPlayerState) {
+                            localPlayerState = { ...pData };
+                        } else {
+                            Object.assign(localPlayerState, pData);
+                        }
+                        if (messageData.last_processed_input_sequence !== undefined && messageData.last_processed_input_sequence !== null) {
+                            lastProcessedInput = Number(messageData.last_processed_input_sequence);
+                            if (!isNaN(lastProcessedInput)) {
+                                pendingInputs = pendingInputs.filter(inp => inp.sequence > lastProcessedInput);
+                            }
+                        }
+                        localPlayerState.render_x = localPlayerState.x;
+                        localPlayerState.render_y = localPlayerState.y;
+                        localPlayerState.render_rotation = localPlayerState.rotation;
+                    }
+                });
+            }
+            
+            if (messageData.removed_player_ids && messageData.removed_player_ids.length > 0) {
+                messageData.removed_player_ids.forEach(removedId => {
+                    players.delete(removedId);
+                    log(`Player ${removedId} removed.`, 'info');
+                });
+            }
+
+            // Update projectiles
+            if (messageData.projectiles) {
+                messageData.projectiles.forEach(pData => projectiles.set(pData.id, pData));
+            }
+            if (messageData.removed_projectiles) {
+                messageData.removed_projectiles.forEach(id => projectiles.delete(id));
+            }
+
+            // Update pickups
+            if (messageData.pickups) {
+                messageData.pickups.forEach(pData => pickups.set(pData.id, pData));
+            }
+            if (messageData.deactivated_pickup_ids) {
+                messageData.deactivated_pickup_ids.forEach(id => {
+                    const pickup = pickups.get(id);
+                    if (pickup) pickup.is_active = false;
+                });
+            }
+
+            // Update kill feed
+            if (messageData.kill_feed) {
+                killFeed = messageData.kill_feed;
+                updateKillFeed();
+            }
+
+            // Update match info
+            if (messageData.match_info) {
+                matchInfo = messageData.match_info;
+                updateMatchInfo();
+                updateScoreboard();
+            } else if (isInitial) {
+                log("Initial state received without match_info.", "warn");
+            }
+
+            // Update flag states
+            if (messageData.flag_states) {
+                updateFlags(messageData.flag_states);
+            }
+
+            // Process game events
+            if (messageData.game_events && effectsManager) {
+                messageData.game_events.forEach(eventData => effectsManager.processGameEvent(eventData));
+            }
+
+            // Store for interpolation
+            serverUpdates.push({
+                timestamp: serverTime,
+                players: new Map(players.entries()),
+                projectiles: new Map(projectiles.entries())
+            });
+            serverUpdates = serverUpdates.filter(s => s.timestamp > Date.now() - 2000); 
+        }
+
+        // Parse FlatBuffer message
+        function parseFlatBufferMessage(data) {
+            try {
+                const buf = new flatbuffers.ByteBuffer(new Uint8Array(data));
+                const gameMsg = GameProtocol.GameMessage.getRootAsGameMessage(buf);
+                const msgType = gameMsg.msgType();
+                
+                switch (msgType) {
+                    case GameProtocol.MessageType.Welcome:
+                        const welcome = gameMsg.actualMessage(new GP.WelcomeMessage());
+                        if (!welcome) {
+                            log('Failed to get WelcomeMessage from union', 'error');
+                            return null;
+                        }
+                        return {
+                            type: 'welcome',
+                            playerId: welcome.playerId(),
+                            message: welcome.message(),
+                            serverTickRate: welcome.serverTickRate()
+                        };
+
+                    case GP.MessageType.InitialState:
+                        const initial = gameMsg.actualMessage(new GP.InitialStateMessage());
+                        if (!initial) {
+                            log(`No InitialState payload for type ${msgType}`, 'error');
+                            return null;
+                        }
+                        const initialStateData = {
+                            player_id: initial.playerId(),
+                            walls: [],
+                            players: [],
+                            projectiles: [],
+                            pickups: [],
+                            flag_states: [],
+                            match_info: null,
+                            timestamp: Number(initial.timestamp()),
+                            map_name: initial.mapName()
+                        };
+
+                        // Parse walls
+                        for (let i = 0; i < initial.wallsLength(); i++) {
+                            const wall = initial.walls(i);
+                            if (wall) {
+                                initialStateData.walls.push({
+                                    id: wall.id(),
+                                    x: wall.x(),
+                                    y: wall.y(),
+                                    width: wall.width(),
+                                    height: wall.height(),
+                                    is_destructible: wall.isDestructible(),
+                                    current_health: wall.currentHealth(),
+                                    max_health: wall.maxHealth()
+                                });
+                            }
+                        }
+
+                        // Parse players
+                        for (let i = 0; i < initial.playersLength(); i++) {
+                            const p = initial.players(i);
+                            if (p) {
+                                initialStateData.players.push({
+                                    id: p.id(),
+                                    username: p.username(),
+                                    x: p.x(),
+                                    y: p.y(),
+                                    rotation: p.rotation(),
+                                    velocity_x: p.velocityX(),
+                                    velocity_y: p.velocityY(),
+                                    health: p.health(),
+                                    max_health: p.maxHealth(),
+                                    alive: p.alive(),
+                                    respawn_timer: p.respawnTimer(),
+                                    weapon: p.weapon(),
+                                    ammo: p.ammo(),
+                                    reload_progress: p.reloadProgress(),
+                                    score: p.score(),
+                                    kills: p.kills(),
+                                    deaths: p.deaths(),
+                                    team_id: p.teamId(),
+                                    speed_boost_remaining: p.speedBoostRemaining(),
+                                    damage_boost_remaining: p.damageBoostRemaining(),
+                                    shield_current: p.shieldCurrent(),
+                                    shield_max: p.shieldMax(),
+                                    is_carrying_flag_team_id: p.isCarryingFlagTeamId()
+                                });
+                            }
+                        }
+
+                        // Parse projectiles
+                        for (let i = 0; i < initial.projectilesLength(); i++) {
+                            const p = initial.projectiles(i);
+                            if (p) {
+                                initialStateData.projectiles.push({
+                                    id: p.id(),
+                                    x: p.x(),
+                                    y: p.y(),
+                                    owner_id: p.ownerId(),
+                                    weapon_type: p.weaponType(),
+                                    velocity_x: p.velocityX(), 
+                                    velocity_y: p.velocityY()
+                                });
+                            }
+                        }
+
+                        // Parse pickups
+                        for (let i = 0; i < initial.pickupsLength(); i++) {
+                            const p = initial.pickups(i);
+                            if (p) {
+                                initialStateData.pickups.push({
+                                    id: p.id(),
+                                    x: p.x(),
+                                    y: p.y(),
+                                    pickup_type: p.pickupType(),
+                                    weapon_type: p.weaponType(),
+                                    is_active: p.isActive()
+                                });
+                            }
+                        }
+
+                        // Parse match info
+                        const mi = initial.matchInfo();
+                        if (mi) {
+                            const teamScores = [];
+                            for (let i = 0; i < mi.teamScoresLength(); i++) {
+                                const ts = mi.teamScores(i);
+                                if (ts) {
+                                    teamScores.push({
+                                        team_id: ts.teamId(),
+                                        score: ts.score()
+                                    });
+                                }
+                            }
+                            initialStateData.match_info = {
+                                time_remaining: mi.timeRemaining(),
+                                match_state: mi.matchState(),
+                                winner_id: mi.winnerId(),
+                                winner_name: mi.winnerName(),
+                                game_mode: mi.gameMode(),
+                                team_scores: teamScores
+                            };
+                        }
+
+                        // Parse flag states
+                        for (let i = 0; i < initial.flagStatesLength(); i++) {
+                            const fs = initial.flagStates(i);
+                            if (fs) {
+                                const pos = fs.position();
+                                initialStateData.flag_states.push({
+                                    team_id: fs.teamId(),
+                                    status: fs.status(),
+                                    position: pos ? { x: pos.x(), y: pos.y() } : { x: 0, y: 0 },
+                                    carrier_id: fs.carrierId(),
+                                    respawn_timer: fs.respawnTimer()
+                                });
+                            }
+                        }
+
+                        return { type: 'initial', data: initialStateData };
+
+                    case GP.MessageType.DeltaState:
+                        const delta = gameMsg.actualMessage(new GP.DeltaStateMessage());
+                        if (!delta) {
+                            log(`No DeltaState payload for type ${msgType}`, 'error');
+                            return null;
+                        }
+                        const deltaStateData = {
+                            players: [],
+                            projectiles: [],
+                            removed_projectiles: [],
+                            pickups: [],
+                            destroyed_wall_ids: [],
+                            deactivated_pickup_ids: [],
+                            kill_feed: [],
+                            match_info: null,
+                            flag_states: [],
+                            game_events: [],
+                            timestamp: Number(delta.timestamp()),
+                            last_processed_input_sequence: delta.lastProcessedInputSequence(),
+                            removed_player_ids: []
+                        };
+                        
+                        // Parse removed_player_ids if present
+                        if (typeof delta.removedPlayerIdsLength === 'function') {
+                            for (let i = 0; i < delta.removedPlayerIdsLength(); i++) {
+                                const removedId = delta.removedPlayerIds(i);
+                                if (removedId) {
+                                    deltaStateData.removed_player_ids.push(removedId);
+                                }
+                            }
+                        }
+
+                        // Parse players
+                        for (let i = 0; i < delta.playersLength(); i++) {
+                            const p = delta.players(i);
+                            if (p) {
+                                deltaStateData.players.push({
+                                    id: p.id(),
+                                    username: p.username(),
+                                    x: p.x(),
+                                    y: p.y(),
+                                    rotation: p.rotation(),
+                                    velocity_x: p.velocityX(),
+                                    velocity_y: p.velocityY(),
+                                    health: p.health(),
+                                    max_health: p.maxHealth(),
+                                    alive: p.alive(),
+                                    respawn_timer: p.respawnTimer(),
+                                    weapon: p.weapon(),
+                                    ammo: p.ammo(),
+                                    reload_progress: p.reloadProgress(),
+                                    score: p.score(),
+                                    kills: p.kills(),
+                                    deaths: p.deaths(),
+                                    team_id: p.teamId(),
+                                    speed_boost_remaining: p.speedBoostRemaining(),
+                                    damage_boost_remaining: p.damageBoostRemaining(),
+                                    shield_current: p.shieldCurrent(),
+                                    shield_max: p.shieldMax(),
+                                    is_carrying_flag_team_id: p.isCarryingFlagTeamId()
+                                });
+                            }
+                        }
+
+                        // Parse projectiles
+                        for (let i = 0; i < delta.projectilesLength(); i++) {
+                            const p = delta.projectiles(i);
+                            if (p) {
+                                deltaStateData.projectiles.push({
+                                    id: p.id(),
+                                    x: p.x(),
+                                    y: p.y(),
+                                    owner_id: p.ownerId(),
+                                    weapon_type: p.weaponType(),
+                                    velocity_x: p.velocityX(), 
+                                    velocity_y: p.velocityY()
+                                });
+                            }
+                        }
+
+                        // Parse removed projectiles
+                        for (let i = 0; i < delta.removedProjectilesLength(); i++) {
+                            deltaStateData.removed_projectiles.push(delta.removedProjectiles(i));
+                        }
+
+                        // Parse pickups
+                        for (let i = 0; i < delta.pickupsLength(); i++) {
+                            const p = delta.pickups(i);
+                            if (p) {
+                                deltaStateData.pickups.push({
+                                    id: p.id(),
+                                    x: p.x(),
+                                    y: p.y(),
+                                    pickup_type: p.pickupType(),
+                                    weapon_type: p.weaponType(),
+                                    is_active: p.isActive()
+                                });
+                            }
+                        }
+
+                        // Parse destroyed walls
+                        for (let i = 0; i < delta.destroyedWallIdsLength(); i++) {
+                            deltaStateData.destroyed_wall_ids.push(delta.destroyedWallIds(i));
+                        }
+
+                        // Parse deactivated pickups
+                        for (let i = 0; i < delta.deactivatedPickupIdsLength(); i++) {
+                            deltaStateData.deactivated_pickup_ids.push(delta.deactivatedPickupIds(i));
+                        }
+
+                        // Parse kill feed
+                        for (let i = 0; i < delta.killFeedLength(); i++) {
+                            const kf = delta.killFeed(i);
+                            if (kf) {
+                                const killerPos = kf.killerPosition();
+                                const victimPos = kf.victimPosition();
+                                deltaStateData.kill_feed.push({
+                                    killer_name: kf.killerName(),
+                                    victim_name: kf.victimName(),
+                                    weapon: kf.weapon(),
+                                    timestamp: kf.timestamp(),
+                                    killer_position: killerPos ? { x: killerPos.x(), y: killerPos.y() } : null,
+                                    victim_position: victimPos ? { x: victimPos.x(), y: victimPos.y() } : null,
+                                    is_headshot: kf.isHeadshot()
+                                });
+                            }
+                        }
+
+                        // Parse match info
+                        const dmi = delta.matchInfo();
+                        if (dmi) {
+                            const teamScores = [];
+                            for (let i = 0; i < dmi.teamScoresLength(); i++) {
+                                const ts = dmi.teamScores(i);
+                                if (ts) {
+                                    teamScores.push({
+                                        team_id: ts.teamId(),
+                                        score: ts.score()
+                                    });
+                                }
+                            }
+                            deltaStateData.match_info = {
+                                time_remaining: dmi.timeRemaining(),
+                                match_state: dmi.matchState(),
+                                winner_id: dmi.winnerId(),
+                                winner_name: dmi.winnerName(),
+                                game_mode: dmi.gameMode(),
+                                team_scores: teamScores
+                            };
+                        }
+
+                        // Parse flag states
+                        for (let i = 0; i < delta.flagStatesLength(); i++) {
+                            const fs = delta.flagStates(i);
+                            if (fs) {
+                                const pos = fs.position();
+                                deltaStateData.flag_states.push({
+                                    team_id: fs.teamId(),
+                                    status: fs.status(),
+                                    position: pos ? { x: pos.x(), y: pos.y() } : { x: 0, y: 0 },
+                                    carrier_id: fs.carrierId(),
+                                    respawn_timer: fs.respawnTimer()
+                                });
+                            }
+                        }
+
+                        // Parse game events
+                        for (let i = 0; i < delta.gameEventsLength(); i++) {
+                            const ge = delta.gameEvents(i);
+                            if (ge) {
+                                const pos = ge.position();
+                                deltaStateData.game_events.push({
+                                    event_type: ge.eventType(),
+                                    position: pos ? { x: pos.x(), y: pos.y() } : { x: 0, y: 0 },
+                                    instigator_id: ge.instigatorId(),
+                                    target_id: ge.targetId(),
+                                    weapon_type: ge.weaponType(),
+                                    value: ge.value()
+                                });
+                            }
+                        }
+
+                        return { type: 'delta', data: deltaStateData };
+
+                    case GP.MessageType.Chat:
+                        const chat = gameMsg.actualMessage(new GP.ChatMessage());
+                        if (!chat) {
+                            log(`No Chat payload for type ${msgType}`, 'error');
+                            return null;
+                        }
+                        return {
+                            type: 'chat',
+                            data: {
+                                seq: Number(chat.seq()), 
+                                player_id: chat.playerId(),
+                                username: chat.username(),
+                                message: chat.message(),
+                                timestamp: Number(chat.timestamp())
+                            }
+                        };
+
+                    case GP.MessageType.MatchUpdate:
+                        const matchUpdateMsg = gameMsg.actualMessage(new GP.MatchInfo());
+                        if (!matchUpdateMsg) {
+                            log(`No MatchInfo payload for type MatchUpdate`, 'error');
+                            return null;
+                        }
+                        const teamScoresMU = [];
+                        for (let i = 0; i < matchUpdateMsg.teamScoresLength(); i++) {
+                            const ts = matchUpdateMsg.teamScores(i);
+                            if (ts) {
+                                teamScoresMU.push({ team_id: ts.teamId(), score: ts.score() });
+                            }
+                        }
+                        return {
+                            type: 'match_update',
+                            data: {
+                                time_remaining: matchUpdateMsg.timeRemaining(),
+                                match_state: matchUpdateMsg.matchState(),
+                                winner_id: matchUpdateMsg.winnerId(),
+                                winner_name: matchUpdateMsg.winnerName(),
+                                game_mode: matchUpdateMsg.gameMode(),
+                                team_scores: teamScoresMU
+                            }
+                        };
+
+                    default:
+                        log(`Received unknown or unhandled message type: ${msgType}`, 'error');
+                        return null;
+                }
+            } catch (e) {
+                console.error('Error parsing FlatBuffer:', e, data);
+                log(`Error parsing FlatBuffer: ${e.message}`, 'error');
+                return null;
+            }
+        }
+
+        // Create FlatBuffer messages
+        function createInputMessage(currentInputState) {
+            const builder = new flatbuffers.Builder(128);
+            GP.PlayerInput.startPlayerInput(builder);
+            GP.PlayerInput.addTimestamp(builder, BigInt(Date.now()));
+            GP.PlayerInput.addSequence(builder, currentInputState.sequence);
+            GP.PlayerInput.addMoveForward(builder, currentInputState.move_forward);
+            GP.PlayerInput.addMoveBackward(builder, currentInputState.move_backward);
+            GP.PlayerInput.addMoveLeft(builder, currentInputState.move_left);
+            GP.PlayerInput.addMoveRight(builder, currentInputState.move_right);
+            GP.PlayerInput.addShooting(builder, currentInputState.shooting);
+            GP.PlayerInput.addReload(builder, currentInputState.reload);
+            GP.PlayerInput.addRotation(builder, currentInputState.rotation);
+            GP.PlayerInput.addMeleeAttack(builder, currentInputState.melee_attack);
+            GP.PlayerInput.addChangeWeaponSlot(builder, currentInputState.change_weapon_slot);
+            GP.PlayerInput.addUseAbilitySlot(builder, currentInputState.use_ability_slot);
+            const playerInputOffset = GP.PlayerInput.endPlayerInput(builder);
+
+            GP.GameMessage.startGameMessage(builder);
+            GP.GameMessage.addMsgType(builder, GP.MessageType.Input);
+            GP.GameMessage.addActualMessageType(builder, GP.MessagePayload.PlayerInput);
+            GP.GameMessage.addActualMessage(builder, playerInputOffset);
+            const gameMessageOffset = GP.GameMessage.endGameMessage(builder);
+            builder.finish(gameMessageOffset);
+            return builder.asUint8Array();
+        }
+
+        function createChatMessage(text) {
+            const builder = new flatbuffers.Builder(256);
+            const messageStr = builder.createString(text);
+            const playerIdStr = builder.createString(myPlayerId || 'unknown');
+            const usernameStr = builder.createString(localPlayerState?.username || 'Player');
+
+            GP.ChatMessage.startChatMessage(builder);
+            GP.ChatMessage.addSeq(builder, BigInt(0)); 
+            GP.ChatMessage.addPlayerId(builder, playerIdStr);
+            GP.ChatMessage.addUsername(builder, usernameStr);
+            GP.ChatMessage.addMessage(builder, messageStr);
+            GP.ChatMessage.addTimestamp(builder, BigInt(Date.now()));
+            const chatMessageOffset = GP.ChatMessage.endChatMessage(builder);
+
+            GP.GameMessage.startGameMessage(builder);
+            GP.GameMessage.addMsgType(builder, GP.MessageType.Chat);
+            GP.GameMessage.addActualMessageType(builder, GP.MessagePayload.ChatMessage);
+            GP.GameMessage.addActualMessage(builder, chatMessageOffset);
+            const gameMessageOffset = GP.GameMessage.endGameMessage(builder);
+            builder.finish(gameMessageOffset);
+            return builder.asUint8Array();
+        }
+
+        // Input handling
+        function setupInputHandlers() {
+            document.addEventListener('keydown', (e) => handleKeyInput(e, true));
+            document.addEventListener('keyup', (e) => handleKeyInput(e, false));
+            app.view.addEventListener('mousemove', handleMouseMove);
+            app.view.addEventListener('mousedown', (e) => {
+                if (e.button === 0) {
+                    if (localPlayerState && localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo === 0) {
+                        if (audioManager && gameSettings.soundEnabled && !window.playedOutOfAmmoSoundRecently) {
+                            audioManager.playSound('outOfAmmo', null, 0.4);
+                            window.playedOutOfAmmoSoundRecently = true;
+                            setTimeout(() => { window.playedOutOfAmmoSoundRecently = false; }, 1000);
+                        }
+                        if (reloadPromptSpan && localPlayerState.reload_progress === -1) {
+                            reloadPromptSpan.textContent = ' (Press R to Reload!)';
+                            if (audioManager && gameSettings.soundEnabled && !window.playedReloadNeededSoundRecently) {
+                                audioManager.playSound('reloadNeeded', null, 0.5);
+                                window.playedReloadNeededSoundRecently = true;
+                                setTimeout(() => { window.playedReloadNeededSoundRecently = false; }, 2000);
+                            }
+                        }
+                    } else {
+                        inputState.shooting = true;
+                    }
+                }
+            });
+            app.view.addEventListener('mouseup', (e) => {
+                if (e.button === 0) inputState.shooting = false;
+            });
+            app.view.oncontextmenu = (e) => e.preventDefault();
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Tab') {
+                    e.preventDefault();
+                    toggleScoreboard();
+                }
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    toggleSettings();
+                }
+            });
+        }
+
+        function handleKeyInput(event, isDown) {
+            if (document.activeElement === chatInput || !settingsMenuDiv.classList.contains('hidden')) return;
+
+            let gameKeyProcessed = true;
+            switch (event.code) {
+                case 'KeyW':
+                case 'ArrowUp':
+                    inputState.move_forward = isDown;
+                    break;
+                case 'KeyS':
+                case 'ArrowDown':
+                    inputState.move_backward = isDown;
+                    break;
+                case 'KeyA':
+                case 'ArrowLeft':
+                    inputState.move_left = isDown;
+                    break;
+                case 'KeyD':
+                case 'ArrowRight':
+                    inputState.move_right = isDown;
+                    break;
+                case 'KeyR':
+                    if (isDown && localPlayerState && localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo < getMaxAmmoForWeaponClient(localPlayerState.weapon) && localPlayerState.reload_progress === -1) {
+                         inputState.reload = true;
+                         if (reloadPromptSpan) reloadPromptSpan.textContent = ' (Reloading...)';
+                         if (audioManager && gameSettings.soundEnabled) audioManager.playSound('reloadStart', null, 0.3);
+                    }
+                    break;
+                case 'KeyV':
+                    if (isDown) inputState.melee_attack = true;
+                    break;
+                default:
+                    gameKeyProcessed = false;
+                    break;
+            }
+            if (gameKeyProcessed) event.preventDefault();
+        }
+
+        function handleMouseMove(event) {
+            if (!app || !app.view || !localPlayerSprite || !localPlayerState) return;
+            const rect = app.view.getBoundingClientRect();
+            const mouseGlobal = new PIXI.Point(event.clientX - rect.left, event.clientY - rect.top);
+            const mouseLocalToGameScene = gameScene.toLocal(mouseGlobal);
+
+            const dx = mouseLocalToGameScene.x - (localPlayerState.render_x || localPlayerState.x);
+            const dy = mouseLocalToGameScene.y - (localPlayerState.render_y || localPlayerState.y);
+            inputState.rotation = Math.atan2(dy, dx) * gameSettings.sensitivity;
+        }
+
+        // Send inputs to server
+        function sendInputsToServer() {
+            if (!dataChannel || dataChannel.readyState !== 'open' || !localPlayerState || !localPlayerState.alive) return;
+
+            const now = Date.now();
+            if (now - lastInputSendTime < 1000 / INPUT_SEND_RATE) return;
+            lastInputSendTime = now;
+
+            const currentFrameInput = {
+                timestamp: now,
+                sequence: ++inputSequence,
+                move_forward: inputState.move_forward,
+                move_backward: inputState.move_backward,
+                move_left: inputState.move_left,
+                move_right: inputState.move_right,
+                shooting: inputState.shooting,
+                reload: inputState.reload,
+                rotation: inputState.rotation,
+                melee_attack: inputState.melee_attack,
+                change_weapon_slot: inputState.change_weapon_slot,
+                use_ability_slot: inputState.use_ability_slot,
+            };
+
+            pendingInputs.push(currentFrameInput);
+            if (pendingInputs.length > RECONCILIATION_BUFFER_SIZE) pendingInputs.shift();
+
+            const bytes = createInputMessage(currentFrameInput);
+            dataChannel.send(bytes);
+
+            // Reset one-time inputs
+            if (inputState.reload) inputState.reload = false;
+            if (inputState.melee_attack) inputState.melee_attack = false;
+            if (inputState.change_weapon_slot !== 0) inputState.change_weapon_slot = 0;
+            if (inputState.use_ability_slot !== 0) inputState.use_ability_slot = 0;
+        }
+
+        // UI Update functions
+        function updateKillFeed() {
+            killFeedDiv.innerHTML = '';
+            if (killFeed.length > 0) {
+                killFeedDiv.classList.remove('hidden');
+                killFeed.slice(-5).reverse().forEach(entry => {
+                    const div = document.createElement('div');
+                    div.className = 'kill-entry';
+                    const weaponIcon = entry.is_headshot ? '🎯' : '';
+                    const killerColor = teamColors[players.get(entry.killer_id)?.team_id] || teamColors[0];
+                    const victimColor = teamColors[players.get(entry.victim_id)?.team_id] || teamColors[0];
+
+                    div.innerHTML = `<span style="color:${'#'+killerColor.toString(16).padStart(6,'0')};">${entry.killer_name}</span> <span style="color: #A0A0A0;">[${weaponNames[entry.weapon] || 'Unknown'}]</span> <span style="color:${'#'+victimColor.toString(16).padStart(6,'0')};">${entry.victim_name}</span> ${weaponIcon}`;
+                    killFeedDiv.appendChild(div);
+                });
+            } else {
+                killFeedDiv.classList.add('hidden');
+            }
+        }
+
+        function updateChatDisplay() {
+            chatDisplayDiv.innerHTML = '';
+            if (chatMessages.length > 0) {
+                chatDisplayDiv.classList.remove('hidden');
+                chatMessages.slice(-10).forEach(msg => {
+                    const div = document.createElement('div');
+                    div.className = 'chat-entry';
+                    const player = players.get(msg.player_id);
+                    const nameColor = player ? (teamColors[player.team_id] || teamColors[0]) : teamColors[0];
+                    const hexColor = '#' + nameColor.toString(16).padStart(6, '0');
+                    div.innerHTML = `<span class="username" style="color:${hexColor};">${msg.username || 'System'}:</span> ${escapeHtml(msg.message)}`;
+                    chatDisplayDiv.appendChild(div);
+                });
+                chatDisplayDiv.scrollTop = chatDisplayDiv.scrollHeight;
+            } else {
+                chatDisplayDiv.classList.add('hidden');
+            }
+        }
+
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function updateMatchInfo() {
+            if (!matchInfo) {
+                matchInfoDiv.classList.add('hidden');
+                return;
+            }
+            matchInfoDiv.classList.remove('hidden');
+            let content = '';
+            const gameModeName = {
+                [GP.GameModeType.FreeForAll]: "FFA",
+                [GP.GameModeType.TeamDeathmatch]: "TDM",
+                [GP.GameModeType.CaptureTheFlag]: "CTF"
+            }[matchInfo.game_mode] || "Unknown Mode";
+
+            content += `<div class="font-semibold">${gameModeName}</div>`;
+
+            switch (matchInfo.match_state) {
+                case GP.MatchStateType.Waiting:
+                    content += `<div class="text-yellow-400">Waiting for players... (${players.size}/${MIN_PLAYERS_TO_START})</div>`;
+                    break;
+                case GP.MatchStateType.Active:
+                    const minutes = Math.floor(matchInfo.time_remaining / 60);
+                    const seconds = Math.floor(matchInfo.time_remaining % 60);
+                    content += `<div class="text-white">Time: ${minutes}:${seconds.toString().padStart(2, '0')}</div>`;
+                    if (matchInfo.game_mode === GP.GameModeType.TeamDeathmatch || matchInfo.game_mode === GP.GameModeType.CaptureTheFlag) {
+                        content += '<div class="team-scores">';
+                        let redScore = 0;
+                        let blueScore = 0;
+                        if (matchInfo.team_scores) {
+                            matchInfo.team_scores.forEach(ts => {
+                                if (ts.team_id === 1) redScore = ts.score;
+                                if (ts.team_id === 2) blueScore = ts.score;
+                            });
+                        }
+                        content += `<span class="team-score team-red">Red: ${redScore}</span>`;
+                        content += `<span class="team-score team-blue">Blue: ${blueScore}</span>`;
+                        content += '</div>';
+                    }
+                    break;
+                case GP.MatchStateType.Ended:
+                    let winnerText = "Match Ended! ";
+                    if (matchInfo.winner_name && matchInfo.winner_name.length > 0 && matchInfo.winner_name !== "null") {
+                        winnerText += `Winner: ${matchInfo.winner_name}`;
+                    } else if (matchInfo.winner_id && matchInfo.winner_id !== "0" && matchInfo.winner_id !== "null") {
+                         const teamColorClass = matchInfo.winner_id === "1" ? "team-red" : (matchInfo.winner_id === "2" ? "team-blue" : "team-ffa");
+                         winnerText += `Winner: <span class="${teamColorClass}">Team ${matchInfo.winner_id}</span>`;
+                    } else {
+                        winnerText += "It's a Draw!";
+                    }
+                    content += `<div class="text-green-400">${winnerText}</div>`;
+                    break;
+            }
+            matchInfoDiv.innerHTML = content;
+        }
+
+        function updateGameStatsUI() {
+            if (myPlayerId && localPlayerState) {
+                myPlayerIdSpan.textContent = myPlayerId.substring(0, 8);
+                playerTeamSpan.textContent = localPlayerState.team_id === 1 ? 'Red' :
+                    localPlayerState.team_id === 2 ? 'Blue' : (localPlayerState.team_id === 0 ? 'FFA' : 'None');
+                playerTeamSpan.className = localPlayerState.team_id === 1 ? 'team-red' :
+                    localPlayerState.team_id === 2 ? 'team-blue' : (localPlayerState.team_id === 0 ? 'team-ffa' : '');
+                playerHealthSpan.textContent = localPlayerState.health;
+                playerShieldSpan.textContent = localPlayerState.shield_current;
+                playerAmmoSpan.textContent = localPlayerState.ammo;
+                
+                if (localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo === 0 && localPlayerState.reload_progress === -1) {
+                    reloadPromptSpan.textContent = ' (Press R to Reload!)';
+                } else if (localPlayerState.reload_progress !== -1 && localPlayerState.reload_progress < 1.0) {
+                    reloadPromptSpan.textContent = ` (Reloading ${Math.round(localPlayerState.reload_progress * 100)}%)`;
+                } else {
+                    reloadPromptSpan.textContent = '';
+                }
+
+                playerWeaponSpan.textContent = weaponNames[localPlayerState.weapon] || 'Unknown';
+                playerScoreSpan.textContent = localPlayerState.score;
+                playerKillsSpan.textContent = localPlayerState.kills;
+                playerDeathsSpan.textContent = localPlayerState.deaths;
+
+                powerupStatusDiv.innerHTML = '';
+                if (localPlayerState.speed_boost_remaining > 0) {
+                    powerupStatusDiv.innerHTML += `<div class="powerup-indicator"><span class="icon">🏃</span> Speed: ${Math.ceil(localPlayerState.speed_boost_remaining)}s</div>`;
+                }
+                if (localPlayerState.damage_boost_remaining > 0) {
+                    powerupStatusDiv.innerHTML += `<div class="powerup-indicator"><span class="icon">💪</span> Damage: ${Math.ceil(localPlayerState.damage_boost_remaining)}s</div>`;
+                }
+            }
+            playerCountSpan.textContent = players.size;
+            pingDisplay.textContent = Math.round(ping);
+            if (networkIndicator) networkIndicator.update(ping);
+
+            if (healthVignette && localPlayerState) {
+                const healthPercent = localPlayerState.health / localPlayerState.max_health;
+                updateHealthVignette(healthVignette, healthPercent);
+            }
+        }
+
+        function initializeEnhancedGraphics(app, worldContainer) {
+            // Initialize managers with audio support
+            const audioManager = new AudioManager();
+            const effectsManager = new EffectsManager(app, worldContainer, audioManager);
+            
+            // Create starfield background
+            const starfield = createStarfield(app);
+            worldContainer.addChildAt(starfield, 0);
+            
+            // Create health vignette
+            const healthVignette = createHealthVignette(app);
+            app.stage.addChild(healthVignette);
+            
+            return {
+                audioManager,
+                effectsManager,
+                starfield,
+                healthVignette
+            };
+        }
+
+        // Scoreboard functions
+        function toggleScoreboard(forceShow = null) {
+            if (forceShow === true) {
+                scoreboardDiv.classList.remove('hidden');
+            } else if (forceShow === false) {
+                scoreboardDiv.classList.add('hidden');
+            } else {
+                scoreboardDiv.classList.toggle('hidden');
+            }
+            if (!scoreboardDiv.classList.contains('hidden')) {
+                updateScoreboard();
+            }
+        }
+
+        window.toggleScoreboard = toggleScoreboard;
+
+        function updateScoreboard() {
+            if (!matchInfo || scoreboardDiv.classList.contains('hidden')) return;
+
+            const sortedPlayers = Array.from(players.values()).sort((a, b) => b.score - a.score);
+            const scoreboardContentDiv = document.getElementById('scoreboardContent');
+
+            const ffaScoreboardSection = document.getElementById('ffaScoreboardSection');
+            const teamScoreboardSection = document.getElementById('teamScoreboardSection');
+            const ffaPlayersTableBody = document.getElementById('ffaPlayersTable').getElementsByTagName('tbody')[0];
+            const redTeamPlayersTableBody = document.getElementById('redTeamPlayers').getElementsByTagName('tbody')[0];
+            const blueTeamPlayersTableBody = document.getElementById('blueTeamPlayers').getElementsByTagName('tbody')[0];
+
+            if (matchInfo.game_mode === GP.GameModeType.FreeForAll) {
+                ffaScoreboardSection.classList.remove('hidden');
+                teamScoreboardSection.classList.add('hidden');
+                scoreboardContentDiv.classList.remove('two-columns');
+                ffaPlayersTableBody.innerHTML = '';
+                sortedPlayers.forEach((p, index) => {
+                    const row = ffaPlayersTableBody.insertRow();
+                    row.insertCell().textContent = index + 1;
+                    row.insertCell().textContent = p.username;
+                    row.insertCell().textContent = p.score;
+                    row.insertCell().textContent = p.kills;
+                    row.insertCell().textContent = p.deaths;
+                });
+            } else {
+                ffaScoreboardSection.classList.add('hidden');
+                teamScoreboardSection.classList.remove('hidden');
+                scoreboardContentDiv.classList.add('two-columns');
+                redTeamPlayersTableBody.innerHTML = '';
+                blueTeamPlayersTableBody.innerHTML = '';
+
+                let redScore = 0, blueScore = 0;
+                if (matchInfo.team_scores) {
+                    matchInfo.team_scores.forEach(ts => {
+                        if (ts.team_id === 1) redScore = ts.score;
+                        if (ts.team_id === 2) blueScore = ts.score;
+                    });
+                }
+                document.getElementById('scoreboardTeamRedScore').textContent = redScore;
+                document.getElementById('scoreboardTeamBlueScore').textContent = blueScore;
+
+                sortedPlayers.forEach(p => {
+                    const tableBody = p.team_id === 1 ? redTeamPlayersTableBody : (p.team_id === 2 ? blueTeamPlayersTableBody : null);
+                    if (tableBody) {
+                        const row = tableBody.insertRow();
+                        row.insertCell().textContent = p.username;
+                        row.insertCell().textContent = p.score;
+                        row.insertCell().textContent = p.kills;
+                        row.insertCell().textContent = p.deaths;
+                    }
+                });
+            }
+        }
+
+        // Settings functions
+        function toggleSettings() {
+            settingsMenuDiv.classList.toggle('hidden');
+        }
+
+        function saveAndApplySettings() {
+            gameSettings.soundEnabled = document.getElementById('soundEnabled').checked;
+            gameSettings.soundVolume = document.getElementById('soundVolume').value / 100;
+            gameSettings.musicEnabled = document.getElementById('musicEnabled').checked;
+            gameSettings.musicVolume = document.getElementById('musicVolume').value / 100;
+            gameSettings.graphicsQuality = document.getElementById('graphicsQuality').value;
+            gameSettings.particleEffects = document.getElementById('particleEffects').checked;
+            gameSettings.screenShake = document.getElementById('screenShake').checked;
+            gameSettings.showFPS = document.getElementById('showFPS').checked;
+            gameSettings.sensitivity = parseFloat(document.getElementById('sensitivity').value);
+
+            if (audioManager) {
+                audioManager.setGlobalVolume(gameSettings.soundVolume);
+                audioManager.setMuted(!gameSettings.soundEnabled);
+            }
+            if (effectsManager) {
+                effectsManager.setParticlesEnabled(gameSettings.particleEffects);
+            }
+
+            fpsCounterDiv.classList.toggle('hidden', !gameSettings.showFPS);
+
+            localStorage.setItem('gameSettings', JSON.stringify(gameSettings));
+            log('Settings saved.', 'success');
+            settingsMenuDiv.classList.add('hidden');
+        }
+
+        function loadSettings() {
+            const storedSettings = localStorage.getItem('gameSettings');
+            if (storedSettings) {
+                gameSettings = { ...gameSettings, ...JSON.parse(storedSettings) };
+                log('Settings loaded from localStorage.', 'info');
+            }
+            // Apply loaded settings
+            document.getElementById('soundEnabled').checked = gameSettings.soundEnabled;
+            document.getElementById('soundVolume').value = gameSettings.soundVolume * 100;
+            document.getElementById('soundVolumeValue').textContent = gameSettings.soundVolume * 100 + '%';
+            document.getElementById('musicEnabled').checked = gameSettings.musicEnabled;
+            document.getElementById('musicVolume').value = gameSettings.musicVolume * 100;
+            document.getElementById('musicVolumeValue').textContent = gameSettings.musicVolume * 100 + '%';
+            document.getElementById('graphicsQuality').value = gameSettings.graphicsQuality;
+            document.getElementById('particleEffects').checked = gameSettings.particleEffects;
+            document.getElementById('screenShake').checked = gameSettings.screenShake;
+            document.getElementById('showFPS').checked = gameSettings.showFPS;
+            document.getElementById('sensitivity').value = gameSettings.sensitivity;
+            document.getElementById('sensitivityValue').textContent = gameSettings.sensitivity.toFixed(1);
+
+            if (audioManager) {
+                audioManager.setGlobalVolume(gameSettings.soundVolume);
+                audioManager.setMuted(!gameSettings.soundEnabled);
+            }
+            if (effectsManager) {
+                effectsManager.setParticlesEnabled(gameSettings.particleEffects);
+            }
+            fpsCounterDiv.classList.toggle('hidden', !gameSettings.showFPS);
+        }
+
+        // Settings event listeners
+        settingsButton.addEventListener('click', toggleSettings);
+        saveSettingsButton.addEventListener('click', saveAndApplySettings);
+        cancelSettingsButton.addEventListener('click', () => {
+            loadSettings();
+            settingsMenuDiv.classList.add('hidden');
+        });
+        document.getElementById('soundVolume').addEventListener('input', (e) => {
+            document.getElementById('soundVolumeValue').textContent = e.target.value + '%';
+            if (audioManager) audioManager.setGlobalVolume(e.target.value / 100);
+        });
+        document.getElementById('musicVolume').addEventListener('input', (e) => {
+            document.getElementById('musicVolumeValue').textContent = e.target.value + '%';
+        });
+        document.getElementById('sensitivity').addEventListener('input', (e) => {
+            document.getElementById('sensitivityValue').textContent = parseFloat(e.target.value).toFixed(1);
+        });
+        document.getElementById('showFPS').addEventListener('change', (e) => {
+            fpsCounterDiv.classList.toggle('hidden', !e.target.checked);
+        });
+
+        // WebRTC Connection
+        connectButton.addEventListener('click', () => {
+            const url = wsUrlInput.value;
+            log(`Connecting to signaling server: ${url}`);
+            signalingSocket = new WebSocket(url);
+
+            signalingSocket.onopen = () => {
+                log('Connected to signaling server.', 'success');
+                connectButton.disabled = true;
+                connectButton.textContent = 'Connected';
+                connectButton.classList.replace('bg-indigo-600', 'bg-gray-500');
+                connectButton.classList.replace('hover:bg-indigo-700', 'cursor-not-allowed');
+                initializePeerConnection();
+                createOffer();
+            };
+
+            signalingSocket.onmessage = async (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg.sdp) {
+                    try {
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                        if (msg.sdp.type === 'offer') {
+                            log('Server sent offer, creating answer...', 'info');
+                            const answer = await peerConnection.createAnswer();
+                            await peerConnection.setLocalDescription(answer);
+                            signalingSocket.send(JSON.stringify({ 'sdp': peerConnection.localDescription }));
+                        }
+                    } catch (e) {
+                        log(`Error setting remote desc: ${e}`, 'error');
+                    }
+                } else if (msg.ice) {
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(msg.ice));
+                    } catch (e) {
+                        // Benign errors often happen with ICE candidates
+                    }
+                }
+            };
+
+            signalingSocket.onerror = (e) => {
+                log(`Signaling error: ${e}`, 'error');
+                resetConnectionUI();
+            };
+
+            signalingSocket.onclose = () => {
+                log('Disconnected from signaling server.');
+                resetConnectionUI();
+            };
+        });
+
+        function resetConnectionUI() {
+            connectButton.disabled = false;
+            connectButton.textContent = 'Connect';
+            connectButton.classList.replace('bg-gray-500', 'bg-indigo-600');
+            connectButton.classList.replace('cursor-not-allowed', 'hover:bg-indigo-700');
+            controlsDiv.classList.add('hidden');
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+
+            // Clear game state
+            myPlayerId = null;
+            localPlayerState = null;
+            players.clear();
+            projectiles.clear();
+            pickups.clear();
+            walls.clear();
+            flagStates.clear();
+            killFeed = [];
+            chatMessages = [];
+            matchInfo = null;
+            pendingInputs = [];
+            serverUpdates = [];
+            inputSequence = 0;
+
+            // Clear PIXI containers
+            if (playerContainer) playerContainer.removeChildren();
+            if (projectileContainer) projectileContainer.removeChildren();
+            if (pickupContainer) pickupContainer.removeChildren();
+            if (flagContainer) flagContainer.removeChildren();
+            if (wallGraphics) wallGraphics.clear();
+            if (effectsManager) effectsManager.clearAllEffects();
+            if (minimap) minimap.clear();
+
+            log('Connection reset, game state cleared.', 'info');
+        }
+
+        function initializePeerConnection() {
+            log('Initializing RTCPeerConnection...');
+            peerConnection = new RTCPeerConnection(peerConnectionConfig);
+
+            peerConnection.onicecandidate = e => {
+                if (e.candidate) {
+                    signalingSocket.send(JSON.stringify({ 'ice': e.candidate }));
+                }
+            };
+
+            dataChannel = peerConnection.createDataChannel('gameDataChannel', {
+                ordered: false,
+                maxRetransmits: 0
+            });
+
+            log('DataChannel "gameDataChannel" created by client.', 'info');
+            setupDataChannelEvents(dataChannel);
+
+            peerConnection.oniceconnectionstatechange = () => {
+                log(`ICE state: ${peerConnection.iceConnectionState}`);
+                if (['failed', 'disconnected', 'closed'].includes(peerConnection.iceConnectionState)) {
+                    log('WebRTC disconnected.', 'error');
+                    resetConnectionUI();
+                }
+            };
+
+            peerConnection.ondatachannel = (event) => {
+                log(`DataChannel "${event.channel.label}" received from server.`, 'info');
+                dataChannel = event.channel;
+                setupDataChannelEvents(dataChannel);
+            };
+        }
+
+        async function createOffer() {
+            try {
+                log('Creating offer...');
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                signalingSocket.send(JSON.stringify({ 'sdp': peerConnection.localDescription }));
+            } catch (e) {
+                log(`Error creating offer: ${e}`, 'error');
+            }
+        }
+
+        function setupDataChannelEvents(dcInstance) {
+            dcInstance.onopen = () => {
+                log(`DataChannel "${dcInstance.label}" OPENED.`, 'success');
+                controlsDiv.classList.remove('hidden');
+                setupInputHandlers();
+                pingStartTime = Date.now(); 
+
+                if (window.audioManager && window.audioManager.audioContext && window.audioManager.audioContext.state === 'suspended') {
+                    window.audioManager.audioContext.resume().then(() => {
+                        log('AudioContext resumed successfully.', 'info');
+                    }).catch(e => log(`AudioContext resume failed: ${e}`, 'warn'));
+                }
+            };
+
+            dcInstance.onclose = () => {
+                log(`DataChannel "${dcInstance.label}" CLOSED.`, 'error');
+                resetConnectionUI();
+            };
+
+            dcInstance.onmessage = (event) => {
+                try {
+                    if (pingStartTime > 10) {
+                        ping = Date.now() - pingStartTime;
+                        pingStartTime = Date.now();
+                    }
+
+                    if (event.data instanceof ArrayBuffer) {
+                        const parsed = parseFlatBufferMessage(event.data);
+
+                        if (parsed) {
+                            switch (parsed.type) {
+                                case 'welcome':
+                                    myPlayerId = parsed.playerId;
+                                    log(`Welcome! Your ID: ${myPlayerId}. Server Tick: ${parsed.serverTickRate}Hz`, 'success');
+                                    break;
+                                case 'initial':
+                                    processServerUpdate(parsed.data, true);
+                                    log(`Initial game state received. Map: ${parsed.data.map_name}`, 'info');
+                                    break;
+                                case 'delta':
+                                    processServerUpdate(parsed.data, false);
+                                    break;
+                                case 'chat':
+                                    if (parsed.data) {
+                                        chatMessages.push({
+                                            seq: parsed.data.seq,
+                                            player_id: parsed.data.player_id,
+                                            username: parsed.data.username,
+                                            message: parsed.data.message,
+                                            timestamp: parsed.data.timestamp
+                                        });
+                                        if (chatMessages.length > 50) chatMessages.shift();
+                                        updateChatDisplay();
+                                        if (audioManager && gameSettings.soundEnabled) {
+                                            audioManager.playSound('chatMessage', null, 0.3);
+                                        }
+                                    }
+                                    break;
+                                case 'match_update':
+                                    if (parsed.data) {
+                                        matchInfo = parsed.data;
+                                        updateMatchInfo();
+                                        updateScoreboard();
+                                    }
+                                    break;
+                            }
+                        }
+                    } else {
+                        log('Received non-binary message on DataChannel.', 'error');
+                    }
+                } catch (e) {
+                    console.error("DC Message Error:", e);
+                    log(`Error processing DC message: ${e}`, 'error');
+                }
+            };
+
+            dcInstance.onerror = (e) => {
+                log(`DataChannel "${dcInstance.label}" error: ${JSON.stringify(e)}`, 'error');
+            };
+        }
+
+        // Chat functionality
+        sendChatButton.addEventListener('click', sendChatMessage);
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendChatMessage();
+        });
+
+        function sendChatMessage() {
+            if (dataChannel && dataChannel.readyState === 'open') {
+                const text = chatInput.value.trim();
+                if (text && text.length <= MAX_CHAT_MESSAGE_LENGTH) {
+                    const bytes = createChatMessage(text);
+                    dataChannel.send(bytes);
+                    chatInput.value = '';
+                } else if (text.length > MAX_CHAT_MESSAGE_LENGTH) {
+                    log(`Chat message too long (max ${MAX_CHAT_MESSAGE_LENGTH} chars).`, 'error');
+                }
+            } else {
+                log('DataChannel not open for chat.', 'error');
+            }
+        }
+
+        // OPTIMIZED: Effects Manager with ParticleContainer
+        class EffectsManager {
+            constructor(app, container, audioManager = null) {
+                this.app = app;
+                // Use ParticleContainer for better performance
+                this.effectsContainer = new PIXI.ParticleContainer(1500, {
+                    scale: true,
+                    position: true,
+                    rotation: true,
+                    uvs: true,
+                    alpha: true
+                });
+                container.addChild(this.effectsContainer);
+                this.activeEffects = [];
+                this.particlesEnabled = true;
+                this.audioManager = audioManager;
+                
+                // Pre-generate particle textures
+                this.particleTextures = this.generateParticleTextures();
+            }
+
+            generateParticleTextures() {
+                const textures = {};
+                
+                // Spark particle
+                const sparkGraphics = new PIXI.Graphics();
+                sparkGraphics.beginFill(0xFFFFFF);
+                sparkGraphics.drawCircle(0, 0, 2);
+                sparkGraphics.endFill();
+                textures.spark = this.app.renderer.generateTexture(sparkGraphics);
+                
+                // Smoke particle
+                const smokeGraphics = new PIXI.Graphics();
+                smokeGraphics.beginFill(0x888888, 0.5);
+                smokeGraphics.drawCircle(0, 0, 8);
+                smokeGraphics.endFill();
+                smokeGraphics.filters = [new PIXI.BlurFilter(3)];
+                textures.smoke = this.app.renderer.generateTexture(smokeGraphics);
+                
+                // Debris particle
+                const debrisGraphics = new PIXI.Graphics();
+                debrisGraphics.beginFill(0x444444);
+                debrisGraphics.drawRect(-3, -3, 6, 6);
+                debrisGraphics.endFill();
+                textures.debris = this.app.renderer.generateTexture(debrisGraphics);
+                
+                // Clean up
+                sparkGraphics.destroy();
+                smokeGraphics.destroy();
+                debrisGraphics.destroy();
+                
+                return textures;
+            }
+            
+            setParticlesEnabled(enabled) {
+                this.particlesEnabled = enabled;
+            }
+
+            processGameEvent(event) {
+                if (!this.particlesEnabled && (event.event_type !== GP.GameEventType.PlayerDamageEffect)) return;
+
+                const pos = { x: event.position.x, y: event.position.y };
+                switch (event.event_type) {
+                    case GP.GameEventType.BulletImpact:
+                        this.createEnhancedBulletImpact(pos, event.weapon_type);
+                        if (this.audioManager) {
+                            this.audioManager.playSound('bulletImpact', pos, 0.5);
+                        }
+                        break;
+                    case GP.GameEventType.Explosion:
+                        this.createEnhancedExplosion(pos, event.value);
+                        if (this.audioManager) {
+                            this.audioManager.playSound('explosion', pos);
+                        }
+                        break;
+                    case GP.GameEventType.WeaponFire:
+                        this.createEnhancedMuzzleFlash(pos, event.weapon_type, event.instigator_id);
+                        if (this.audioManager) {
+                            this.audioManager.playWeaponSound(event.weapon_type, pos, event.instigator_id === myPlayerId);
+                        }
+                        break;
+                    case GP.GameEventType.PlayerDamageEffect:
+                        this.createEnhancedDamageNumbers(pos, event.value);
+                        if (this.audioManager) {
+                            this.audioManager.playSound('playerHit', pos);
+                        }
+                        break;
+                    case GP.GameEventType.WallDestroyed:
+                        this.createEnhancedWallDestructionEffect(pos);
+                        if (this.audioManager) {
+                            this.audioManager.playSound('explosion', pos, 0.7);
+                        }
+                        break;
+                    case GP.GameEventType.PowerupActivated:
+                        this.createEnhancedPowerupCollectEffect(pos);
+                        if (this.audioManager) {
+                            this.audioManager.playSound('powerupCollect', pos);
+                        }
+                        break;
+                    case GP.GameEventType.FlagCaptured:
+                        this.createEnhancedFlagCaptureEffect(pos);
+                        if (this.audioManager) {
+                            this.audioManager.playSound('flagCapture', pos);
+                        }
+                        break;
+                    case GP.GameEventType.FlagGrabbed:
+                        if (this.audioManager) this.audioManager.playSound('flagGrabbed', pos, 0.6);
+                        break;
+                    case GP.GameEventType.FlagDropped:
+                         if (this.audioManager) this.audioManager.playSound('flagDropped', pos, 0.5);
+                        break;
+                    case GP.GameEventType.FlagReturned:
+                        if (this.audioManager) this.audioManager.playSound('flagReturned', pos, 0.7);
+                        break;
+                }
+            }
+
+            createEnhancedBulletImpact(position, weaponType) {
+                const impactConfigs = {
+                    [GP.WeaponType.Pistol]: { size: 4, sparkCount: 3, color: 0xFFFF00 },
+                    [GP.WeaponType.Shotgun]: { size: 3, sparkCount: 2, color: 0xFF6600 },
+                    [GP.WeaponType.Rifle]: { size: 5, sparkCount: 4, color: 0x6666FF },
+                    [GP.WeaponType.Sniper]: { size: 8, sparkCount: 6, color: 0xFF00FF }
+                };
+                
+                const config = impactConfigs[weaponType] || impactConfigs[GP.WeaponType.Pistol];
+                
+                // Sparks using sprites
+                for (let i = 0; i < config.sparkCount; i++) {
+                    const spark = new PIXI.Sprite(this.particleTextures.spark);
+                    spark.anchor.set(0.5);
+                    spark.position.set(position.x, position.y);
+                    spark.tint = config.color;
+                    spark.scale.set(0.5 + Math.random() * 0.5);
+                    
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 2 + Math.random() * 4;
+                    spark.velocity = {
+                        x: Math.cos(angle) * speed,
+                        y: Math.sin(angle) * speed
+                    };
+                    
+                    this.effectsContainer.addChild(spark);
+                    
+                    this.animateEffect(spark, {
+                        duration: 300,
+                        onUpdate: p => {
+                            spark.x += spark.velocity.x * (1 - p);
+                            spark.y += spark.velocity.y * (1 - p);
+                            spark.alpha = 1 - p;
+                            spark.scale.set(spark.scale.x * 0.98);
+                        },
+                        onComplete: () => spark.destroy()
+                    });
+                }
+            }
+
+            createEnhancedMuzzleFlash(position, weaponType, instigatorId) {
+                const playerSprite = playerContainer.children.find(s => s.playerId === instigatorId);
+                if (!playerSprite || !playerSprite.gun) return;
+
+                const flashConfigs = {
+                    [GP.WeaponType.Pistol]: { size: 15, color: 0xFFFF66 },
+                    [GP.WeaponType.Shotgun]: { size: 22, color: 0xFF6600 },
+                    [GP.WeaponType.Rifle]: { size: 18, color: 0x6666FF },
+                    [GP.WeaponType.Sniper]: { size: 25, color: 0xFF66FF }
+                };
+                
+                const config = flashConfigs[weaponType] || flashConfigs[GP.WeaponType.Pistol];
+                
+                // Simple flash sprite
+                const flash = new PIXI.Sprite(this.particleTextures.spark);
+                flash.anchor.set(0.5);
+                flash.scale.set(config.size / 2);
+                flash.tint = config.color;
+                flash.position.set(PLAYER_RADIUS + 15, 0);
+                playerSprite.gun.addChild(flash);
+                
+                this.animateEffect(flash, {
+                    duration: 100,
+                    onUpdate: p => {
+                        flash.scale.set((config.size / 2) * (1 - p * 0.5));
+                        flash.alpha = 1 - p;
+                    },
+                    onComplete: () => flash.destroy()
+                });
+            }
+
+            createEnhancedDamageNumbers(position, damage) {
+                // For damage numbers, we need a regular container since they have text
+                const container = new PIXI.Container();
+                
+                const textStyle = new PIXI.TextStyle({
+                    fontSize: 20,
+                    fontWeight: 'bold',
+                    fill: [0xFFFFFF, 0xFF4444],
+                    fillGradientType: PIXI.TEXT_GRADIENT.LINEAR_VERTICAL,
+                    stroke: 0x660000,
+                    strokeThickness: 4,
+                    dropShadow: true,
+                    dropShadowColor: 0x000000,
+                    dropShadowBlur: 4,
+                    dropShadowDistance: 2
+                });
+                
+                const text = new PIXI.Text('-' + Math.round(damage), textStyle);
+                text.anchor.set(0.5);
+                container.addChild(text);
+                
+                container.position.set(position.x, position.y - PLAYER_RADIUS);
+                worldContainer.addChild(container); // Add to worldContainer instead
+                
+                this.animateEffect(container, {
+                    duration: 1000,
+                    onUpdate: p => {
+                        container.y = position.y - PLAYER_RADIUS - p * 50;
+                        container.alpha = 1 - p * 0.7;
+                        container.scale.set(1 + p * 0.3);
+                    },
+                    onComplete: () => container.destroy()
+                });
+            }
+
+            createEnhancedExplosion(position, radius = 30) {
+                // Explosion particles
+                const particleCount = 20 + Math.floor(radius / 10);
+                for (let i = 0; i < particleCount; i++) {
+                    const particle = new PIXI.Sprite(this.particleTextures.spark);
+                    particle.anchor.set(0.5);
+                    particle.position.set(position.x, position.y);
+                    
+                    const angle = (Math.PI * 2 * i) / particleCount + Math.random() * 0.5;
+                    const speed = 3 + Math.random() * 5;
+                    particle.velocity = {
+                        x: Math.cos(angle) * speed,
+                        y: Math.sin(angle) * speed - 2
+                    };
+                    
+                    particle.tint = [0xFFFF00, 0xFF6600, 0xFF0000][Math.floor(Math.random() * 3)];
+                    particle.scale.set(0.5 + Math.random());
+                    
+                    this.effectsContainer.addChild(particle);
+                    
+                    this.animateEffect(particle, {
+                        duration: 800 + Math.random() * 400,
+                        onUpdate: (progress) => {
+                            particle.x += particle.velocity.x * (1 - progress * 0.5);
+                            particle.y += particle.velocity.y + progress * 20;
+                            particle.alpha = 1 - progress;
+                            particle.scale.set(particle.scale.x * 0.98);
+                        },
+                        onComplete: () => particle.destroy()
+                    });
+                }
+            }
+
+            createEnhancedWallDestructionEffect(position) {
+                // Debris pieces
+                for (let i = 0; i < 15; i++) {
+                    const debris = new PIXI.Sprite(this.particleTextures.debris);
+                    debris.anchor.set(0.5);
+                    debris.position.set(position.x, position.y);
+                    debris.tint = [0x374151, 0x4B5563, 0x6B7280][Math.floor(Math.random() * 3)];
+                    
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 6 + 2;
+                    const velocityX = Math.cos(angle) * speed;
+                    const velocityY = Math.sin(angle) * speed - 5;
+                    const angularVelocity = (Math.random() - 0.5) * 0.4;
+                    
+                    this.effectsContainer.addChild(debris);
+                    
+                    this.animateEffect(debris, {
+                        duration: 1200,
+                        velocityX,
+                        velocityY,
+                        onUpdate: (progress) => {
+                            debris.position.x += velocityX * (1 - progress * 0.5);
+                            debris.position.y += velocityY + progress * 25;
+                            debris.rotation += angularVelocity;
+                            debris.alpha = 1 - progress * 0.7;
+                        },
+                        onComplete: () => debris.destroy()
+                    });
+                }
+            }
+
+            createEnhancedPowerupCollectEffect(position) {
+                // Sparkles
+                for (let i = 0; i < 12; i++) {
+                    const sparkle = new PIXI.Sprite(this.particleTextures.spark);
+                    sparkle.anchor.set(0.5);
+                    sparkle.tint = 0x00FF00;
+                    
+                    const angle = (Math.PI * 2 * i) / 12;
+                    const distance = 20;
+                    sparkle.position.set(
+                        position.x + Math.cos(angle) * distance,
+                        position.y + Math.sin(angle) * distance
+                    );
+                    
+                    this.effectsContainer.addChild(sparkle);
+                    
+                    this.animateEffect(sparkle, {
+                        duration: 500,
+                        onUpdate: (progress) => {
+                            const currentDistance = distance * (1 + progress);
+                            sparkle.position.set(
+                                position.x + Math.cos(angle) * currentDistance,
+                                position.y + Math.sin(angle) * currentDistance
+                            );
+                            sparkle.alpha = 1 - progress;
+                            sparkle.scale.set(1 - progress * 0.5);
+                        },
+                        onComplete: () => sparkle.destroy()
+                    });
+                }
+            }
+
+            createEnhancedFlagCaptureEffect(position) {
+                // Fireworks effect
+                const colors = [0xFF0000, 0x0000FF, 0xFFFF00, 0x00FF00, 0xFF00FF];
+                
+                for (let burst = 0; burst < 3; burst++) {
+                    setTimeout(() => {
+                        const particleCount = 30;
+                        for (let i = 0; i < particleCount; i++) {
+                            const particle = new PIXI.Sprite(this.particleTextures.spark);
+                            particle.anchor.set(0.5);
+                            const color = colors[Math.floor(Math.random() * colors.length)];
+                            particle.tint = color;
+                            particle.position.set(position.x, position.y);
+                            
+                            const angle = (Math.PI * 2 * i) / particleCount;
+                            const speed = 5 + Math.random() * 5;
+                            const velocityX = Math.cos(angle) * speed;
+                            const velocityY = Math.sin(angle) * speed - 10;
+                            
+                            this.effectsContainer.addChild(particle);
+                            
+                            this.animateEffect(particle, {
+                                duration: 1500,
+                                velocityX,
+                                velocityY,
+                                onUpdate: (progress) => {
+                                    particle.x += velocityX * (1 - progress * 0.5);
+                                    particle.y += velocityY + progress * 30;
+                                    particle.alpha = 1 - progress;
+                                },
+                                onComplete: () => particle.destroy()
+                            });
+                        }
+                    }, burst * 200);
+                }
+            }
+
+            animateEffect(object, config) {
+                const effect = {
+                    object,
+                    startTime: Date.now() + (config.delay || 0),
+                    started: false,
+                    ...config
+                };
+                this.activeEffects.push(effect);
+            }
+
+            update(deltaMS) {
+                const now = Date.now();
+                this.activeEffects = this.activeEffects.filter(effect => {
+                    if (now < effect.startTime) return true;
+                    if (!effect.started) {
+                        effect.started = true;
+                        effect.actualStartTime = now;
+                    }
+                    
+                    const elapsed = now - effect.actualStartTime;
+                    const progress = Math.min(elapsed / effect.duration, 1);
+                    
+                    if (effect.object && !effect.object.destroyed) {
+                        effect.onUpdate(progress);
+                    }
+                    
+                    if (progress >= 1) {
+                        if (effect.onComplete && effect.object && !effect.object.destroyed) {
+                            effect.onComplete();
+                        }
+                        return false;
+                    }
+                    return true;
+                });
+            }
+
+            clearAllEffects() {
+                this.activeEffects.forEach(effect => {
+                    if (effect.object && !effect.object.destroyed) effect.object.destroy();
+                });
+                this.activeEffects = [];
+                this.effectsContainer.removeChildren().forEach(c => c.destroy());
+            }
+        }
+
+        // Audio Manager
+        class AudioManager {
+            constructor() {
+                this.soundEnabled = true;
+                this.globalVolume = 0.5;
+                this.audioContext = null;
+                try {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                } catch (e) {
+                    console.warn("Web Audio API not supported.");
+                }
+
+                this.sounds = {
+                    pistolFire: { freq: [800, 600], duration: 0.05, type: 'triangle', vol: 0.3 },
+                    shotgunFire: { freq: [400, 200], duration: 0.15, type: 'sawtooth', vol: 0.5 },
+                    rifleFire: { freq: [700, 500], duration: 0.07, type: 'square', vol: 0.35 },
+                    sniperFire: { freq: [1000, 300], duration: 0.2, type: 'sine', vol: 0.6 },
+                    meleeSwing: { freq: [300, 500], duration: 0.1, type: 'sine', vol: 0.2 },
+                    bulletImpact: { freq: [200, 100], duration: 0.08, type: 'noise', vol: 0.25 },
+                    explosion: { freq: [300, 50], duration: 0.5, type: 'noise', vol: 0.7 },
+                    powerupCollect: { freq: [600, 1200], duration: 0.2, type: 'sine', vol: 0.4 },
+                    playerHit: { freq: [250, 150], duration: 0.1, type: 'sawtooth', vol: 0.3 },
+                    flagCapture: { freq: [800, 1000, 1200], duration: 0.4, type: 'square', vol: 0.5 },
+                    chatMessage: { freq: [1000, 1200], duration: 0.1, type: 'sine', vol: 0.2 },
+                    outOfAmmo: { freq: [150, 100], duration: 0.15, type: 'square', vol: 0.3 },
+                    reloadStart: { freq: [400, 300], duration: 0.1, type: 'sawtooth', vol: 0.25 },
+                    reloadNeeded: { freq: [200], duration: 0.1, type: 'sine', vol: 0.35 },
+                    flagGrabbed: { freq: [700, 900], duration: 0.2, type: 'triangle', vol: 0.45 },
+                    flagDropped: { freq: [600, 400], duration: 0.25, type: 'sawtooth', vol: 0.4 },
+                    flagReturned: { freq: [500, 800, 600], duration: 0.3, type: 'sine', vol: 0.5 },
+                };
+            }
+
+            setGlobalVolume(volume) {
+                this.globalVolume = Math.max(0, Math.min(1, volume));
+            }
+
+            setMuted(muted) {
+                this.soundEnabled = !muted;
+            }
+
+            playWeaponSound(weaponType, position, isLocalPlayer) {
+                let soundName;
+                switch (weaponType) {
+                    case GP.WeaponType.Pistol: soundName = 'pistolFire'; break;
+                    case GP.WeaponType.Shotgun: soundName = 'shotgunFire'; break;
+                    case GP.WeaponType.Rifle: soundName = 'rifleFire'; break;
+                    case GP.WeaponType.Sniper: soundName = 'sniperFire'; break;
+                    case GP.WeaponType.Melee: soundName = 'meleeSwing'; break;
+                    default: return;
+                }
+                this.playSound(soundName, position, isLocalPlayer ? 1.0 : 0.7);
+            }
+
+            playSound(soundName, position = null, volumeMultiplier = 1.0) {
+                if (!this.soundEnabled || !this.audioContext || !this.sounds[soundName]) return;
+                if (this.audioContext.state === 'suspended') { 
+                    this.audioContext.resume().catch(e => console.warn("AudioContext resume failed:", e));
+                }
+
+                const soundProfile = this.sounds[soundName];
+                if (!Number.isFinite(soundProfile.duration) || soundProfile.duration <= 0) {
+                    console.warn(`Invalid duration for sound: ${soundName}`, soundProfile.duration);
+                    return;
+                }
+
+                const baseVolume = (soundProfile.vol !== undefined ? soundProfile.vol : 0.5) * this.globalVolume * volumeMultiplier;
+                if (baseVolume <= 0.001) return;
+
+                let finalVolume = baseVolume;
+                let pannerNode = null;
+
+                if (position && localPlayerState && app && gameScene) {
+                    const viewCenter = { x: app.screen.width / 2, y: app.screen.height / 2 };
+                    const soundWorldPos = gameScene.toGlobal(position);
+                    const dx = soundWorldPos.x - viewCenter.x;
+                    const dy = soundWorldPos.y - viewCenter.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    const maxAudibleDistance = 800;
+
+                    if (distance > maxAudibleDistance) return;
+                    finalVolume *= Math.max(0, 1 - (distance / maxAudibleDistance));
+                    if (finalVolume <= 0.001) return;
+
+                    pannerNode = this.audioContext.createStereoPanner();
+                    pannerNode.pan.value = Math.max(-1, Math.min(1, dx / (app.screen.width / 2)));
+                }
+                
+                this._playTone(soundProfile, finalVolume, pannerNode);
+            }
+
+            _playTone(profile, volume, pannerNode) {
+                const now = this.audioContext.currentTime;
+                const gainNode = this.audioContext.createGain();
+                gainNode.gain.setValueAtTime(volume, now);
+                
+                if (Number.isFinite(profile.duration) && profile.duration > 0) {
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, now + profile.duration);
+                } else {
+                    gainNode.gain.setValueAtTime(0.001, now + 0.01);
+                }
+
+                if (pannerNode) {
+                    gainNode.connect(pannerNode);
+                    pannerNode.connect(this.audioContext.destination);
+                } else {
+                    gainNode.connect(this.audioContext.destination);
+                }
+
+                if (profile.type === 'noise') {
+                    const bufferSize = this.audioContext.sampleRate * profile.duration;
+                    const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
+                    const output = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+
+                    const source = this.audioContext.createBufferSource();
+                    source.buffer = buffer;
+                    source.connect(gainNode);
+                    source.start(now);
+                    source.stop(now + profile.duration);
+                } else {
+                    const oscillator = this.audioContext.createOscillator();
+                    oscillator.type = profile.type || 'sine';
+
+                    if (Array.isArray(profile.freq)) {
+                        if (Number.isFinite(profile.freq[0])) {
+                           oscillator.frequency.setValueAtTime(profile.freq[0], now);
+                        } else {
+                            console.warn("Invalid profile.freq[0]", profile);
+                            return;
+                        }
+                        
+                        if (profile.freq.length > 1 && Number.isFinite(profile.freq[1]) && Number.isFinite(profile.duration) && profile.duration > 0) {
+                            oscillator.frequency.linearRampToValueAtTime(profile.freq[1], now + profile.duration * 0.8);
+                        }
+                        if (profile.freq.length > 2 && Number.isFinite(profile.freq[2]) && Number.isFinite(profile.duration) && profile.duration > 0) {
+                            oscillator.frequency.linearRampToValueAtTime(profile.freq[2], now + profile.duration);
+                        }
+                    } else if (Number.isFinite(profile.freq)) {
+                        oscillator.frequency.setValueAtTime(profile.freq, now);
+                    } else {
+                        console.warn("Invalid profile.freq", profile);
+                        return;
+                    }
+                    
+                    oscillator.connect(gainNode);
+                    oscillator.start(now);
+                    oscillator.stop(now + (Number.isFinite(profile.duration) && profile.duration > 0 ? profile.duration : 0.01));
+                }
+            }
+        }
+
+        // OPTIMIZED: Minimap with player dot reuse
+        class Minimap {
+            constructor(width = 150, height = 150, mapScale = 0.05) {
+                this.app = new PIXI.Application({
+                    width,
+                    height,
+                    backgroundColor: 0x0F172A,
+                    antialias: true,
+                    resolution: 1
+                });
+                this.width = width;
+                this.height = height;
+                this.mapScale = mapScale;
+                this.wallsNeedUpdate = true;
+                this.objectivesNeedUpdate = true;
+                this.playerDots = new Map(); // Store player dots for reuse
+
+                // Create layered structure
+                this.backgroundGraphics = new PIXI.Graphics();
+                this.gridGraphics = new PIXI.Graphics();
+                this.wallsGraphics = new PIXI.Graphics();
+                this.objectivesContainer = new PIXI.Container();
+                this.playersContainer = new PIXI.Container();
+                this.overlayGraphics = new PIXI.Graphics();
+
+                this.app.stage.addChild(this.backgroundGraphics);
+                this.app.stage.addChild(this.gridGraphics);
+                this.app.stage.addChild(this.wallsGraphics);
+                this.app.stage.addChild(this.objectivesContainer);
+                this.app.stage.addChild(this.playersContainer);
+                this.app.stage.addChild(this.overlayGraphics);
+
+                this.drawBackground();
+                this.drawGrid();
+                this.drawBorder();
+            }
+
+            drawBackground() {
+                this.backgroundGraphics.beginFill(0x0F172A);
+                this.backgroundGraphics.drawRect(0, 0, this.width, this.height);
+                this.backgroundGraphics.endFill();
+                
+                const vignette = new PIXI.Graphics();
+                vignette.beginFill(0x000000, 0.3);
+                vignette.drawCircle(this.width / 2, this.height / 2, this.width * 0.7);
+                vignette.endFill();
+                vignette.filters = [new PIXI.BlurFilter(20)];
+                this.backgroundGraphics.addChild(vignette);
+            }
+
+            drawGrid() {
+                this.gridGraphics.lineStyle(0.5, 0x1E293B, 0.5);
+                const gridSize = 30;
+                
+                for (let x = gridSize; x < this.width; x += gridSize) {
+                    this.gridGraphics.moveTo(x, 0);
+                    this.gridGraphics.lineTo(x, this.height);
+                }
+                
+                for (let y = gridSize; y < this.height; y += gridSize) {
+                    this.gridGraphics.moveTo(0, y);
+                    this.gridGraphics.lineTo(this.width, y);
+                }
+            }
+
+            drawBorder() {
+                this.overlayGraphics.lineStyle(2, 0x334155, 0.8);
+                this.overlayGraphics.drawRoundedRect(1, 1, this.width - 2, this.height - 2, 5);
+            }
+
+            clear() {
+                this.wallsGraphics.clear();
+                this.playersContainer.removeChildren();
+                this.objectivesContainer.removeChildren();
+                this.playerDots.clear();
+                this.wallsNeedUpdate = true;
+                this.objectivesNeedUpdate = true;
+            }
+
+            update(localPlayerData, allPlayersMap, allWallsArray, allFlagsArray) {
+                if (!localPlayerData) return;
+
+                if (this.wallsNeedUpdate && allWallsArray.length > 0) {
+                    this.drawWalls(allWallsArray);
+                    this.wallsNeedUpdate = false;
+                }
+                if (this.objectivesNeedUpdate && allFlagsArray && allFlagsArray.length > 0) {
+                    this.drawObjectives(allFlagsArray);
+                    this.objectivesNeedUpdate = false;
+                }
+
+                const visiblePlayerIds = new Set();
+
+                // Update existing dots and create new ones
+                allPlayersMap.forEach(player => {
+                    if (!player.alive) return;
+                    visiblePlayerIds.add(player.id);
+
+                    let dot = this.playerDots.get(player.id);
+
+                    if (!dot) {
+                        // Create new dot
+                        const dotContainer = new PIXI.Container();
+                        const dotGraphics = new PIXI.Graphics();
+                        
+                        let color = teamColors[player.team_id] || defaultEnemyColor;
+                        let shape = 'circle';
+                        
+                        if (player.id === localPlayerData.id) {
+                            color = 0x00FF00;
+                            shape = 'triangle';
+                        } else if (localPlayerData.team_id !== 0 && player.team_id === localPlayerData.team_id) {
+                            color = teamColors[player.team_id] || 0x60A5FA;
+                        }
+
+                        dotGraphics.beginFill(color, 0.9);
+                        
+                        if (shape === 'triangle') {
+                            const arrowPoints = [ 0, -4, 3, 3, 0, 1, -3, 3 ];
+                            dotGraphics.drawPolygon(arrowPoints);
+                        } else {
+                            dotGraphics.drawCircle(0, 0, 3);
+                        }
+                        
+                        dotGraphics.endFill();
+                        dotContainer.addChild(dotGraphics);
+                        
+                        if (player.id === localPlayerData.id) {
+                            const pulse = new PIXI.Graphics();
+                            pulse.lineStyle(1, 0x00FF00, 0.5);
+                            pulse.drawCircle(0, 0, 8);
+                            dotContainer.pulseGraphics = pulse;
+                            dotContainer.addChildAt(pulse, 0);
+                        }
+                        
+                        this.playersContainer.addChild(dotContainer);
+                        this.playerDots.set(player.id, dotContainer);
+                        dot = dotContainer;
+                        dot.dotGraphics = dotGraphics;
+                        dot.isLocal = player.id === localPlayerData.id;
+                    }
+
+                    // Update position and rotation
+                    dot.x = (player.x * this.mapScale) + this.width / 2;
+                    dot.y = (player.y * this.mapScale) + this.height / 2;
+                    dot.x = Math.max(3, Math.min(this.width - 3, dot.x));
+                    dot.y = Math.max(3, Math.min(this.height - 3, dot.y));
+                    
+                    if (dot.isLocal) {
+                        dot.rotation = player.rotation + (Math.PI / 2);
+                        // Update pulse effect
+                        if (dot.pulseGraphics) {
+                            const pulseScale = 1 + Math.sin(Date.now() * 0.003) * 0.25;
+                            dot.pulseGraphics.scale.set(pulseScale);
+                        }
+                    }
+                });
+
+                // Remove dots for players that are no longer visible
+                this.playerDots.forEach((dot, playerId) => {
+                    if (!visiblePlayerIds.has(playerId)) {
+                        dot.destroy();
+                        this.playerDots.delete(playerId);
+                    }
+                });
+            }
+
+            drawWalls(allWallsArray) {
+                this.wallsGraphics.clear();
+                
+                this.wallsGraphics.beginFill(0x000000, 0.2);
+                allWallsArray.forEach(wall => {
+                    if (wall.is_destructible && wall.current_health <= 0) return;
+                    const x = (wall.x * this.mapScale) + this.width / 2 + 1;
+                    const y = (wall.y * this.mapScale) + this.height / 2 + 1;
+                    const w = wall.width * this.mapScale;
+                    const h = wall.height * this.mapScale;
+                    this.wallsGraphics.drawRect(x, y, w, h);
+                });
+                this.wallsGraphics.endFill();
+                
+                allWallsArray.forEach(wall => {
+                    if (wall.is_destructible && wall.current_health <= 0) return;
+                    
+                    const x = (wall.x * this.mapScale) + this.width / 2;
+                    const y = (wall.y * this.mapScale) + this.height / 2;
+                    const w = wall.width * this.mapScale;
+                    const h = wall.height * this.mapScale;
+                    
+                    if (wall.is_destructible) {
+                        const healthPercent = wall.current_health / wall.max_health;
+                        const color = interpolateColor(0xBF616A, 0x4A5568, healthPercent);
+                        this.wallsGraphics.beginFill(color, 0.7);
+                    } else {
+                        this.wallsGraphics.beginFill(0x4A5568, 0.8);
+                    }
+                    
+                    this.wallsGraphics.drawRect(x, y, w, h);
+                });
+                this.wallsGraphics.endFill();
+            }
+
+            drawObjectives(allFlagsArray) {
+                this.objectivesContainer.removeChildren();
+                if (!allFlagsArray) return;
+                
+                allFlagsArray.forEach(flag => {
+                    if (flag.status === GP.FlagStatus.Carried) return;
+                    
+                    const flagDot = new PIXI.Graphics();
+                    const color = teamColors[flag.team_id] || 0xFFFFFF;
+                    
+                    const glowSize = 8 + Math.sin(Date.now() * 0.004) * 2;
+                    flagDot.beginFill(color, 0.3);
+                    flagDot.drawCircle(0, 0, glowSize);
+                    flagDot.endFill();
+                    
+                    flagDot.beginFill(color);
+                    flagDot.drawRect(-2, -3, 4, 6);
+                    flagDot.endFill();
+                    
+                    flagDot.x = (flag.position.x * this.mapScale) + this.width / 2;
+                    flagDot.y = (flag.position.y * this.mapScale) + this.height / 2;
+                    flagDot.x = Math.max(5, Math.min(this.width - 5, flagDot.x));
+                    flagDot.y = Math.max(5, Math.min(this.height - 5, flagDot.y));
+                    
+                    this.objectivesContainer.addChild(flagDot);
+                });
+            }
+        }
+
+        // Network Indicator
+        class NetworkIndicator {
+            constructor() {
+                this.app = new PIXI.Application({
+                    width: 80,
+                    height: 20,
+                    backgroundAlpha: 0
+                });
+                
+                this.container = new PIXI.Container();
+                this.app.stage.addChild(this.container);
+                
+                const bg = new PIXI.Graphics();
+                bg.beginFill(0x1F2937, 0.8);
+                bg.drawRoundedRect(0, 0, 80, 20, 5);
+                bg.endFill();
+                this.container.addChild(bg);
+                
+                this.pingText = new PIXI.Text('0ms', {
+                    fontSize: 11,
+                    fill: 0xE5E7EB,
+                    fontFamily: 'monospace'
+                });
+                this.pingText.anchor.set(0, 0.5);
+                this.pingText.position.set(30, 10);
+                this.container.addChild(this.pingText);
+                
+                this.bars = [];
+                for (let i = 0; i < 4; i++) {
+                    const bar = new PIXI.Graphics();
+                    bar.x = 5 + i * 5;
+                    bar.y = 15;
+                    this.bars.push(bar);
+                    this.container.addChild(bar);
+                }
+                
+                this.statusDot = new PIXI.Graphics();
+                this.statusDot.position.set(70, 10);
+                this.container.addChild(this.statusDot);
+            }
+
+            update(currentPing) {
+                this.pingText.text = Math.round(currentPing) + 'ms';
+                
+                let quality = 4;
+                let color = 0x00FF00;
+                let statusColor = 0x00FF00;
+                
+                if (currentPing < 50) {
+                    quality = 4;
+                    color = 0x00FF00;
+                    this.pingText.style.fill = 0x00FF00;
+                } else if (currentPing < 100) {
+                    quality = 3;
+                    color = 0xFFFF00;
+                    this.pingText.style.fill = 0xFFFF00;
+                } else if (currentPing < 150) {
+                    quality = 2;
+                    color = 0xFF6600;
+                    this.pingText.style.fill = 0xFF6600;
+                } else {
+                    quality = 1;
+                    color = 0xFF0000;
+                    this.pingText.style.fill = 0xFF0000;
+                    statusColor = 0xFF0000;
+                }
+
+                this.bars.forEach((bar, index) => {
+                    bar.clear();
+                    const height = (index + 1) * 3 + 3;
+                    const active = index < quality;
+                    
+                    if (active) {
+                        bar.beginFill(color, 0.9);
+                        bar.drawRect(0, -height, 3, height);
+                        bar.endFill();
+                        
+                        bar.beginFill(0xFFFFFF, 0.3);
+                        bar.drawRect(0, -height, 1, height);
+                        bar.endFill();
+                    } else {
+                        bar.beginFill(0x374151, 0.5);
+                        bar.drawRect(0, -height, 3, height);
+                        bar.endFill();
+                    }
+                });
+                
+                this.statusDot.clear();
+                const pulse = Math.sin(Date.now() * 0.005) * 0.2 + 0.8;
+                this.statusDot.beginFill(statusColor, pulse);
+                this.statusDot.drawCircle(0, 0, 3);
+                this.statusDot.endFill();
+            }
+        }
+
+        // Initialize everything when page loads
+        window.addEventListener('load', () => {
+            if (typeof GameProtocol === 'undefined' || typeof GP === 'undefined') {
+                log('Error: GameProtocol not loaded! Make sure to generate and include game.js', 'error');
+                console.error("GameProtocol or GP is undefined. Check FlatBuffers generation and import.");
+                return;
+            }
+
+            loadSettings();
+            initPixi();
+
+            log('Optimized client initialized with performance improvements!', 'info');
+            log('Features: Graphics optimization, culling, minimap optimization, ParticleContainer', 'info');
+        });
+    </script>
+</body>
+</html>
