@@ -78,6 +78,56 @@
         ::-webkit-scrollbar-track { background: #2d3748; border-radius: 4px; }
         ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #718096; }
+
+        /* Music Player Styles */
+        #musicPlayer {
+            transition: transform 0.3s ease-in-out;
+            backdrop-filter: blur(10px);
+            background-color: rgba(31, 41, 55, 0.95);
+        }
+        
+        #musicPlayer:hover {
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+        }
+        
+        #volumeSlider {
+            background: linear-gradient(to right, #6366F1 0%, #6366F1 30%, #374151 30%, #374151 100%);
+        }
+        
+        #volumeSlider::-webkit-slider-thumb {
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #818CF8;
+            cursor: pointer;
+            border-radius: 50%;
+            box-shadow: 0 0 8px rgba(129, 140, 248, 0.5);
+        }
+        
+        #volumeSlider::-moz-range-thumb {
+            width: 12px;
+            height: 12px;
+            background: #818CF8;
+            cursor: pointer;
+            border-radius: 50%;
+            border: none;
+            box-shadow: 0 0 8px rgba(129, 140, 248, 0.5);
+        }
+        
+        #progressBar {
+            background: linear-gradient(90deg, #6366F1 0%, #818CF8 100%);
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+        }
+        
+        #nowPlaying {
+            animation: slideText 15s linear infinite;
+            white-space: nowrap;
+        }
+        
+        @keyframes slideText {
+            0%, 20% { transform: translateX(0); }
+            80%, 100% { transform: translateX(-50%); }
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-2 sm:p-4">
@@ -4568,6 +4618,190 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             log('Unified Advanced WebGL client initialized with all features!', 'info');
             log('Features: Teams, Powerups, Destructible Walls, CTF, Audio, Effects, Minimap, Settings', 'info');
         });
+    </script>
+
+    <!-- Music Player -->
+    <div id="musicPlayer" class="fixed bottom-4 right-4 bg-gray-800 rounded-lg shadow-lg p-4 w-80 border border-gray-700">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-indigo-400">Background Music</h3>
+            <button id="toggleMusicPlayer" class="text-gray-400 hover:text-white text-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+            </button>
+        </div>
+        <div id="nowPlaying" class="text-xs text-gray-300 mb-2 truncate">Loading...</div>
+        <div class="flex items-center gap-2 mb-3">
+            <button id="prevTrack" class="p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/>
+                </svg>
+            </button>
+            <button id="playPause" class="p-1.5 bg-indigo-600 hover:bg-indigo-700 rounded text-white">
+                <svg id="playIcon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z"/>
+                </svg>
+                <svg id="pauseIcon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" class="hidden">
+                    <path d="M6 4h4v16H6zM14 4h4v16h-4z"/>
+                </svg>
+            </button>
+            <button id="nextTrack" class="p-1.5 bg-gray-700 hover:bg-gray-600 rounded text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
+                </svg>
+            </button>
+            <input type="range" id="volumeSlider" min="0" max="100" value="30" class="flex-1 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+        </div>
+        <div class="bg-gray-700 rounded h-1 overflow-hidden">
+            <div id="progressBar" class="h-full bg-indigo-500 transition-all duration-200" style="width: 0%"></div>
+        </div>
+    </div>
+
+    <script>
+        // Music Player Logic
+        (function() {
+            const musicFiles = [
+                'Untitled.mp3', 'Untitled (1).mp3', 'Untitled (2).mp3', 'Untitled (3).mp3',
+                'Untitled (4).mp3', 'Untitled (5).mp3', 'Untitled (6).mp3', 'Untitled (7).mp3',
+                'Untitled (8).mp3', 'Untitled (9).mp3', 'Untitled (10).mp3', 'Untitled (11).mp3',
+                'Untitled (12).mp3', 'Untitled (13).mp3', 'cassete.mp3', 'cassete (1).mp3'
+            ];
+
+            // 100 words for random song name generation
+            const words = [
+                'Thunder', 'Neon', 'Shadow', 'Crystal', 'Phoenix', 'Laser', 'Cosmic', 'Digital', 'Cyber', 'Echo',
+                'Storm', 'Galaxy', 'Quantum', 'Pulse', 'Vapor', 'Matrix', 'Chrome', 'Plasma', 'Binary', 'Hologram',
+                'Nebula', 'Synth', 'Pixel', 'Glitch', 'Aurora', 'Vector', 'Prism', 'Flux', 'Circuit', 'Photon',
+                'Stellar', 'Void', 'Radiant', 'Sonic', 'Turbo', 'Alpha', 'Beta', 'Gamma', 'Delta', 'Omega',
+                'Fire', 'Ice', 'Lightning', 'Wave', 'Dream', 'Night', 'Dawn', 'Dusk', 'Star', 'Moon',
+                'Solar', 'Lunar', 'Comet', 'Meteor', 'Astro', 'Space', 'Time', 'Rift', 'Portal', 'Warp',
+                'Neon', 'Retro', 'Future', 'Past', 'Present', 'Eternal', 'Infinite', 'Zero', 'One', 'Binary',
+                'Code', 'Data', 'Stream', 'Flow', 'Surge', 'Spark', 'Bolt', 'Blaze', 'Frost', 'Chill',
+                'Heat', 'Cool', 'Warm', 'Cold', 'Light', 'Dark', 'Bright', 'Dim', 'Glow', 'Shine',
+                'Rush', 'Speed', 'Fast', 'Slow', 'Quick', 'Swift', 'Rapid', 'Blast', 'Boom', 'Bang'
+            ];
+
+            let audio = new Audio();
+            let currentTrackIndex = 0;
+            let isPlaying = false;
+            let playlist = [];
+
+            // Generate random song names
+            function generateRandomSongName() {
+                const numWords = Math.floor(Math.random() * 3) + 2; // 2-4 words
+                const selectedWords = [];
+                for (let i = 0; i < numWords; i++) {
+                    const randomIndex = Math.floor(Math.random() * words.length);
+                    selectedWords.push(words[randomIndex]);
+                }
+                return selectedWords.join(' ');
+            }
+
+            // Create playlist with random names
+            function createPlaylist() {
+                playlist = musicFiles.map(file => ({
+                    file: file,
+                    name: generateRandomSongName()
+                }));
+                // Shuffle playlist
+                for (let i = playlist.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [playlist[i], playlist[j]] = [playlist[j], playlist[i]];
+                }
+            }
+
+            // Initialize player
+            function initMusicPlayer() {
+                createPlaylist();
+                audio.volume = 0.3;
+                audio.addEventListener('ended', nextTrack);
+                audio.addEventListener('timeupdate', updateProgress);
+                loadTrack(0);
+            }
+
+            // Load track
+            function loadTrack(index) {
+                currentTrackIndex = index;
+                const track = playlist[currentTrackIndex];
+                audio.src = `music/${track.file}`;
+                document.getElementById('nowPlaying').textContent = `Now Playing: ${track.name}`;
+            }
+
+            // Play/Pause
+            function togglePlayPause() {
+                if (isPlaying) {
+                    audio.pause();
+                    document.getElementById('playIcon').classList.remove('hidden');
+                    document.getElementById('pauseIcon').classList.add('hidden');
+                } else {
+                    audio.play();
+                    document.getElementById('playIcon').classList.add('hidden');
+                    document.getElementById('pauseIcon').classList.remove('hidden');
+                }
+                isPlaying = !isPlaying;
+            }
+
+            // Next track
+            function nextTrack() {
+                currentTrackIndex = (currentTrackIndex + 1) % playlist.length;
+                loadTrack(currentTrackIndex);
+                if (isPlaying) audio.play();
+            }
+
+            // Previous track
+            function prevTrack() {
+                currentTrackIndex = (currentTrackIndex - 1 + playlist.length) % playlist.length;
+                loadTrack(currentTrackIndex);
+                if (isPlaying) audio.play();
+            }
+
+            // Update progress
+            function updateProgress() {
+                if (audio.duration) {
+                    const progress = (audio.currentTime / audio.duration) * 100;
+                    document.getElementById('progressBar').style.width = progress + '%';
+                }
+            }
+
+            // Event listeners
+            document.getElementById('playPause').addEventListener('click', togglePlayPause);
+            document.getElementById('nextTrack').addEventListener('click', nextTrack);
+            document.getElementById('prevTrack').addEventListener('click', prevTrack);
+            document.getElementById('volumeSlider').addEventListener('input', (e) => {
+                const value = e.target.value;
+                audio.volume = value / 100;
+                e.target.style.background = `linear-gradient(to right, #6366F1 0%, #6366F1 ${value}%, #374151 ${value}%, #374151 100%)`;
+            });
+
+            // Toggle music player visibility
+            let playerVisible = true;
+            document.getElementById('toggleMusicPlayer').addEventListener('click', () => {
+                playerVisible = !playerVisible;
+                const player = document.getElementById('musicPlayer');
+                if (playerVisible) {
+                    player.style.transform = 'translateY(0)';
+                } else {
+                    player.style.transform = 'translateY(calc(100% - 40px))';
+                }
+            });
+
+            // Regenerate names on refresh
+            window.addEventListener('beforeunload', () => {
+                localStorage.setItem('musicPlayerTime', audio.currentTime);
+                localStorage.setItem('musicPlayerTrack', currentTrackIndex);
+            });
+
+            // Initialize
+            initMusicPlayer();
+
+            // Auto-play after user interaction
+            document.addEventListener('click', () => {
+                if (!isPlaying && audio.paused) {
+                    togglePlayPause();
+                }
+            }, { once: true });
+        })();
     </script>
 </body>
 </html>
