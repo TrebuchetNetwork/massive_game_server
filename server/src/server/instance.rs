@@ -6,6 +6,7 @@ use crate::core::error::ServerError;
 use crate::concurrent::thread_pools::ThreadPoolSystem;
 use crate::concurrent::spatial_index::ImprovedSpatialIndex;
 use crate::concurrent::event_queue::PriorityEventQueue;
+use crate::concurrent::wall_spatial_index::WallSpatialIndex;
 use crate::world::partition::{WorldPartitionManager}; // Removed unused ImprovedWorldPartition
 use crate::entities::player::{ImprovedPlayerManager};
 use crate::flatbuffers_generated::game_protocol as fb;
@@ -13,6 +14,7 @@ use crate::network::signaling::{DataChannelsMap, ClientStatesMap, ChatMessagesQu
 use crate::world::map_generator::MapGenerator;
 use crate::systems::respawn::{RespawnManager, WallRespawnManager};
 use crate::systems::ai::bot_ai::BotAISystem;
+use crate::systems::ai::optimized_bot_ai::OptimizedBotAI;
 use crate::network::signaling::ChatMessage;
 use tokio::task::JoinError;
 use futures::executor;
@@ -68,7 +70,7 @@ impl Default for ServerMatchInfo {
         ServerMatchInfo {
             time_remaining: 300.0, // 5 minutes
             match_state: fb::MatchStateType::Waiting,
-            game_mode: fb::GameModeType::TeamDeathmatch, // Default game mode
+            game_mode: fb::GameModeType::CaptureTheFlag, // Changed to CTF mode
             team_scores: HashMap::new(),
             flag_states: HashMap::new(),
         }
@@ -257,6 +259,7 @@ pub struct MassiveGameServer {
     pub player_manager: Arc<ImprovedPlayerManager>,
     pub world_partition_manager: Arc<WorldPartitionManager>,
     pub spatial_index: Arc<ImprovedSpatialIndex>,
+    pub wall_spatial_index: Arc<WallSpatialIndex>,
 
     pub projectiles_to_add: Arc<SegQueue<Projectile>>,
     pub global_game_events: Arc<PriorityEventQueue>,
@@ -373,12 +376,26 @@ impl MassiveGameServer {
         let initial_pickups = Self::generate_initial_pickups(&all_map_walls);
         info!("Generated {} initial pickups.", initial_pickups.len());
 
+        // Initialize wall spatial index
+        let wall_spatial_index = Arc::new(WallSpatialIndex::new());
+        
+        // Build initial wall spatial index from all walls
+        let mut all_walls_for_index = Vec::new();
+        for partition in world_partition_manager.get_partitions_for_processing() {
+            for wall_entry in partition.all_walls_in_partition.iter() {
+                all_walls_for_index.push(wall_entry.value().clone());
+            }
+        }
+        wall_spatial_index.rebuild(&all_walls_for_index, 0);
+        info!("Wall spatial index initialized with {} walls.", wall_spatial_index.size());
+
         let server = MassiveGameServer {
             config,
             thread_pools,
             player_manager,
             world_partition_manager,
             spatial_index,
+            wall_spatial_index,
             projectiles_to_add: Arc::new(SegQueue::new()),
             global_game_events: Arc::new(PriorityEventQueue::new()),
             active_connections: Arc::new(DashMap::new()),
@@ -398,14 +415,11 @@ impl MassiveGameServer {
             respawn_manager,
             wall_respawn_manager,
             bot_players: Arc::new(DashMap::new()),
-            target_bot_count: Arc::new(AtomicU64::new(80)), 
+            target_bot_count: Arc::new(AtomicU64::new(20)), // Increased to 20 bots for active gameplay
             bot_name_counter: Arc::new(AtomicU64::new(0)),
             last_broadcast_frame: Arc::new(AtomicU64::new(0)),
             player_last_sync_positions: Arc::new(DashMap::new()),
         };
-
-        let initial_bot_count = server.target_bot_count.load(AtomicOrdering::Relaxed);
-        server.spawn_initial_bots(initial_bot_count as usize);
 
         info!("MassiveGameServer initialized successfully.");
         server
@@ -462,13 +476,13 @@ impl MassiveGameServer {
         pickups
     }
 
-    fn spawn_initial_bots(&self, count: usize) {
+    pub fn spawn_initial_bots(&self, count: usize) {
         info!("Spawning {} initial bots...", count);
-        let reduced_count = count.min(20);
+        // No longer reducing count here - use what's passed in
         let team_spawn_areas = MapGenerator::get_team_spawn_areas();
         let mut rng = rand::thread_rng();
 
-        for i in 0..reduced_count {
+        for i in 0..count {
             let bot_name_num = self.bot_name_counter.fetch_add(1, AtomicOrdering::SeqCst);
             let bot_names = ["Alpha", "Beta", "Gamma", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa", "Quebec", "Romeo", "Sierra", "Tango", "Uniform", "Victor", "Whiskey", "Xray", "Yankee", "Zulu"];
             let bot_name = format!("Bot {}", bot_names.get(bot_name_num as usize % bot_names.len()).unwrap_or(&"X"));
@@ -663,9 +677,8 @@ impl MassiveGameServer {
 
     pub async fn run_ai_update(&self) {
         let delta_time = TICK_DURATION.as_secs_f32();
-        if true { // Temporary disable
-            BotAISystem::update_bots(self, delta_time);
-        }
+        // Use the optimized bot AI that processes bots in batches
+        OptimizedBotAI::update_bots_batch(self, delta_time);
     }
 
     
@@ -673,16 +686,27 @@ impl MassiveGameServer {
         let physics_start_time = Instant::now();
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
     
-        // Stage 1: Wall Respawns (example)
-        let respawn_stage_start = Instant::now();
-        let _respawned_walls = if frame % 30 == 0 { // 
-            let templates = self.wall_respawn_manager.as_ref().check_respawns(); // 
-            if !templates.is_empty() {
-                // CHANGED to debug!
-                debug!("[Frame {}]: Respawning {} walls (took {:?})", frame, templates.len(), respawn_stage_start.elapsed());
-                self.process_wall_respawns(templates).await // 
-            } else { Vec::new() }
-        } else { Vec::new() };
+    // Stage 1: Wall Respawns (example)
+    let respawn_stage_start = Instant::now();
+    let respawned_walls = if frame % 30 == 0 { // 
+        let templates = self.wall_respawn_manager.as_ref().check_respawns(); // 
+        if !templates.is_empty() {
+            // CHANGED to debug!
+            debug!("[Frame {}]: Respawning {} walls (took {:?})", frame, templates.len(), respawn_stage_start.elapsed());
+            self.process_wall_respawns(templates).await // 
+        } else { Vec::new() }
+    } else { Vec::new() };
+    
+    // Update wall spatial index if walls were respawned or if it needs periodic rebuild
+    let needs_wall_index_rebuild = !respawned_walls.is_empty() || 
+                                   self.wall_spatial_index.needs_rebuild(frame, 150); // Rebuild every 150 frames
+    
+    if needs_wall_index_rebuild {
+        let index_rebuild_start = Instant::now();
+        let active_walls = self.collect_active_walls_optimized();
+        self.wall_spatial_index.rebuild(&active_walls, frame);
+        debug!("[Frame {}] Wall spatial index rebuilt in {:?}", frame, index_rebuild_start.elapsed());
+    }
         
         // Stage 2: Collect Active Walls
         let collect_walls_start = Instant::now();
@@ -1069,7 +1093,7 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
         }
     }
     
-    fn process_player_movement_optimized(&self, player_state: &mut PlayerState, walls: &[Wall], delta_time: f32) {
+    fn process_player_movement_optimized(&self, player_state: &mut PlayerState, _walls: &[Wall], delta_time: f32) {
         let old_x = player_state.x;
         let old_y = player_state.y;
         
@@ -1092,22 +1116,12 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
             return;
         }
         
-        // Spatial query for nearby walls only
-        let check_radius = PLAYER_RADIUS + 50.0;
-        let player_bounds = (
-            player_state.x - check_radius,
-            player_state.y - check_radius,
-            player_state.x + check_radius,
-            player_state.y + check_radius
-        );
+        // Use spatial index to query nearby walls
+        let check_radius = PLAYER_RADIUS + 10.0; // Reduced from 50.0 since spatial index is efficient
+        let nearby_walls = self.wall_spatial_index.query_radius(player_state.x, player_state.y, check_radius);
         
-        // Check collision with walls using spatial bounds
-        for wall in walls.iter().filter(|w| 
-            w.x < player_bounds.2 && 
-            w.x + w.width > player_bounds.0 &&
-            w.y < player_bounds.3 && 
-            w.y + w.height > player_bounds.1
-        ) {
+        // Check collision with nearby walls only
+        for wall in nearby_walls.iter() {
             let closest_x = player_state.x.clamp(wall.x, wall.x + wall.width);
             let closest_y = player_state.y.clamp(wall.y, wall.y + wall.height);
             
@@ -1518,10 +1532,50 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                     if died {
                         // Handle death (existing logic from run_physics_update)
                         if attacker_id != target_id {
+                            // Get team information for friendly fire check
+                            let attacker_team = self.player_manager.get_player_state(&attacker_id)
+                                .map(|p| p.team_id)
+                                .unwrap_or(0);
+                            let victim_team = target_state_entry.team_id;
+                            
                             if let Some(mut attacker_state_entry) = self.player_manager.get_player_state_mut(&attacker_id) {
                                 attacker_state_entry.kills += 1;
-                                attacker_state_entry.score += 100;
+                                
+                                // Check for friendly fire
+                                if attacker_team != 0 && victim_team != 0 && attacker_team == victim_team {
+                                    // Friendly fire: double negative score
+                                    attacker_state_entry.score -= 200;
+                                    info!("Friendly fire penalty: {} killed teammate {}, -200 score", 
+                                          attacker_state_entry.username, target_state_entry.username);
+                                } else {
+                                    // Normal kill: positive score
+                                    attacker_state_entry.score += 100;
+                                }
+                                
                                 attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
+                            }
+                        }
+                        
+                        // Update team scores for TeamDeathmatch
+                        {
+                            let match_info_guard = self.match_info.read();
+                            if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch {
+                                drop(match_info_guard);
+                                
+                                // Get attacker and victim team IDs
+                                let attacker_team = self.player_manager.get_player_state(&attacker_id)
+                                    .map(|p| p.team_id)
+                                    .unwrap_or(0);
+                                let victim_team = target_state_entry.team_id;
+                                
+                                // Award point to attacker's team if it's a valid team kill
+                                if attacker_team != 0 && victim_team != 0 && attacker_team != victim_team {
+                                    let mut match_info_write = self.match_info.write();
+                                    let team_score = match_info_write.team_scores.entry(attacker_team).or_insert(0);
+                                    *team_score += 1;
+                                    info!("Team {} scored! New score: {} (kill by player on victim from team {})", 
+                                          attacker_team, *team_score, victim_team);
+                                }
                             }
                         }
                         
@@ -2069,10 +2123,26 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                         if died {
                             // Update attacker stats
                             if attacker_id != target_id_arc_nearby {
+                                // Get victim team for friendly fire check
+                                let victim_team = self.player_manager.get_player_state(&target_id_arc_nearby)
+                                    .map(|p| p.team_id)
+                                    .unwrap_or(0);
+                                
                                 if let Some(mut attacker_mut_state_entry) = self.player_manager.get_player_state_mut(&attacker_id) {
                                     let attacker_mut_state = &mut *attacker_mut_state_entry;
                                     attacker_mut_state.kills += 1;
-                                    attacker_mut_state.score += 100;
+                                    
+                                    // Check for friendly fire
+                                    if attacker_team_id != 0 && victim_team != 0 && attacker_team_id == victim_team {
+                                        // Friendly fire: double negative score
+                                        attacker_mut_state.score -= 200;
+                                        info!("Friendly fire penalty (melee): {} killed teammate {}, -200 score", 
+                                              attacker_username, target_username);
+                                    } else {
+                                        // Normal kill: positive score
+                                        attacker_mut_state.score += 100;
+                                    }
+                                    
                                     attacker_mut_state.mark_field_changed(FIELD_SCORE_STATS);
                                 }
                             }
@@ -3145,11 +3215,19 @@ fn build_events_fb<'a>(
         
         let connected_clients = self.data_channels_map.len();
         if connected_clients == 0 {
-            trace!("[Frame {}] Skipping broadcast (no connected clients).", current_frame);
+            if current_frame % 30 == 0 {  // Log every 30 frames
+                // Debug: List all keys in the map to see if there's a mismatch
+                info!("[Frame {}] No connected clients in data_channels_map. Checking map contents...", current_frame);
+                info!("[Frame {}] Map ptr in broadcast: {:p}", current_frame, Arc::as_ptr(&self.data_channels_map));
+                for entry in self.data_channels_map.iter() {
+                    info!("[Frame {}] Found entry in map: key={}", current_frame, entry.key());
+                }
+                info!("[Frame {}] Total entries found: {}", current_frame, self.data_channels_map.len());
+            }
             return;
         }
     
-        debug!("[Frame {}] Starting broadcast to {} clients. Last broadcast frame: {}", current_frame, connected_clients, last_broadcast);
+        info!("[Frame {}] Starting broadcast to {} clients. Last broadcast frame: {}", current_frame, connected_clients, last_broadcast);
         self.last_broadcast_frame.store(current_frame, AtomicOrdering::Relaxed);
     
         let shared_broadcast_data = self.prepare_shared_broadcast_data().await;
@@ -3190,12 +3268,12 @@ fn build_events_fb<'a>(
         shared_data: &SharedBroadcastData, // Used for timestamp, match_info, kill_feed
     ) -> Result<Bytes, Box<dyn std::error::Error + Send + Sync>> {
         const MAX_INITIAL_PLAYERS: usize = 50;
-        const MAX_INITIAL_WALLS: usize = 250; // Increased slightly, adjust as needed
-        const MAX_INITIAL_PROJECTILES: usize = 50;
+        const MAX_INITIAL_WALLS: usize = 350; // Increased slightly, adjust as needed
+        const MAX_INITIAL_PROJECTILES: usize = 500;
         const MAX_INITIAL_PICKUPS: usize = 50;
         const MAX_INITIAL_EVENTS: usize = 30;
         const MAX_INITIAL_KILL_FEED: usize = 10;
-        const MAX_MESSAGE_SIZE_BYTES: usize = 60000; // Slightly less than 64KB
+        const MAX_MESSAGE_SIZE_BYTES: usize = 160000; // Slightly less than 64KB
 
         thread_local! {
             static BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
@@ -3927,189 +4005,6 @@ fn build_events_fb<'a>(
         }
     }
 
-    // REMOVED duplicate run_game_loop from here, it's now in src/server/game_loop.rs
-
-
-    /*pub async fn process_game_tick(self: Arc<Self>, dt: f32) -> Result<(), ServerError> {
-        let tick_started = Instant::now();
-        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-    
-        // Stage 1: Fast, mostly-read-only or IO-bound work in parallel
-        let mut set = JoinSet::new();
-        {
-            let srv = Arc::clone(&self);
-            set.spawn(async move {
-                timeout(Duration::from_millis(NET_IO_TIMEOUT_MS), async {
-                    srv.process_network_input().await;
-                })
-                .await
-                .map_err(|_| {
-                    if frame % 300 == 0 { // Only log every 5 seconds
-                        warn!("network input timed-out after {} ms", NET_IO_TIMEOUT_MS);
-                    }
-                })
-                .ok();
-            });
-        }
-    
-        if frame % AI_UPDATE_STRIDE == 0 {
-            let srv = Arc::clone(&self);
-            set.spawn(async move {
-                timeout(Duration::from_millis(AI_TIMEOUT_MS), async {
-                    srv.run_ai_update().await;
-                })
-                .await
-                .map_err(|_| {
-                    if frame % 300 == 0 { // Only log every 5 seconds
-                        warn!("AI update timed-out after {} ms", AI_TIMEOUT_MS);
-                    }
-                })
-                .ok();
-            });
-        }
-    
-        while let Some(res) = set.join_next().await {
-            if let Err(join_err) = res {
-                error!(?join_err, "sub-task panicked during tick");
-            }
-        }
-    
-        // Stage 2: Mutation-heavy phases
-        let heavy_started = Instant::now();
-        self.run_physics_update(dt).await;
-        self.run_game_logic_update(dt).await;
-        let heavy_elapsed = heavy_started.elapsed();
-    
-        if heavy_elapsed > Duration::from_millis(SLOW_TICK_LOG_MS) && frame % 60 == 0 {
-            warn!(
-                ?frame,
-                ms = heavy_elapsed.as_micros() as f64 / 1000.0,
-                "physics + logic stage exceeded soft budget {}ms", SLOW_TICK_LOG_MS
-            );
-        }
-    
-        // Stage 3: Fan-out (state serialization + broadcast)
-        let fanout_started = Instant::now();
-        let fanout = async {
-            tokio::join!(
-                self.synchronize_state(),
-                self.broadcast_world_updates_optimized()
-            );
-        };
-    
-        if timeout(Duration::from_millis(FAN_OUT_TIMEOUT_MS), fanout).await.is_err() {
-            if frame % 60 == 0 {
-                warn!(?frame, "fan-out stage timed-out after {} ms", FAN_OUT_TIMEOUT_MS);
-            }
-        }
-        let fanout_elapsed = fanout_started.elapsed();
-    
-        // Stage 4: Tick-local cleanup
-        self.destroyed_wall_ids_this_tick.write().clear();
-        self.updated_walls_this_tick.write().clear();
-    
-        // Stage 5: Profiling + throttling diagnostics (only log warnings)
-        let total_elapsed = tick_started.elapsed();
-        
-        if total_elapsed > Duration::from_millis(TARGET_TICK_MS) {
-            // Only log every second for performance warnings
-            if frame % 60 == 0 {
-                warn!(
-                    ?frame,
-                    ms = total_elapsed.as_micros() as f64 / 1000.0,
-                    target = TARGET_TICK_MS,
-                    "tick exceeded hard budget"
-                );
-            }
-        }
-    
-        Ok(())
-    }*/
-
-    /*pub async fn process_game_tick(self: Arc<Self>, dt: f32) -> Result<(), ServerError> {
-        let tick_started = Instant::now();
-        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-    
-        // Stage 1: Input & AI
-        let stage1_start = Instant::now();
-        let mut set = JoinSet::new();
-        
-        set.spawn({
-            let server = Arc::clone(&self);
-            async move { server.process_network_input().await }
-        });
-        
-        if frame % AI_UPDATE_STRIDE == 0 {
-            set.spawn({
-                let server = Arc::clone(&self);
-                async move { server.run_ai_update().await }
-            });
-        }
-        
-        while let Some(res) = set.join_next().await {
-            if let Err(e) = res {
-                // Use a generic error variant or log and continue
-                error!("Task join error: {}", e);
-                // Don't propagate the error, just log it
-            }
-        }
-        let stage1_elapsed = stage1_start.elapsed();
-    
-        // Rest of the method remains the same...
-        // Stage 2: Physics & Game Logic
-        let physics_start = Instant::now();
-        self.run_physics_update(dt).await;
-        let physics_elapsed = physics_start.elapsed();
-    
-        let game_logic_start = Instant::now();
-        self.run_game_logic_update(dt).await;
-        let game_logic_elapsed = game_logic_start.elapsed();
-    
-        // Stage 3: State Sync & Broadcast
-        let sync_start = Instant::now();
-        self.synchronize_state().await;
-        let sync_elapsed = sync_start.elapsed();
-    
-        let broadcast_start = Instant::now();
-        let broadcast_result = tokio::time::timeout(
-            Duration::from_millis(10), // Very tight timeout to catch hangs
-            self.broadcast_world_updates_optimized()
-        ).await;
-        let broadcast_elapsed = broadcast_start.elapsed();
-    
-        if broadcast_result.is_err() {
-            error!("Frame {}: Broadcast timeout after {:?}", frame, broadcast_elapsed);
-        }
-    
-        // Stage 4: Cleanup
-        self.destroyed_wall_ids_this_tick.write().clear();
-        self.updated_walls_this_tick.write().clear();
-    
-        let total_elapsed = tick_started.elapsed();
-    
-        // Log detailed timing for slow frames
-        if total_elapsed > Duration::from_millis(20) {
-            warn!(
-                "Frame {} timing breakdown:\n\
-                 Total: {:.2}ms\n\
-                 - Input/AI: {:.2}ms\n\
-                 - Physics: {:.2}ms\n\
-                 - Game Logic: {:.2}ms\n\
-                 - State Sync: {:.2}ms\n\
-                 - Broadcast: {:.2}ms (timeout: {})",
-                frame,
-                total_elapsed.as_secs_f32() * 1000.0,
-                stage1_elapsed.as_secs_f32() * 1000.0,
-                physics_elapsed.as_secs_f32() * 1000.0,
-                game_logic_elapsed.as_secs_f32() * 1000.0,
-                sync_elapsed.as_secs_f32() * 1000.0,
-                broadcast_elapsed.as_secs_f32() * 1000.0,
-                broadcast_result.is_err()
-            );
-        }
-    
-        Ok(())
-    }*/
 
     pub async fn process_game_tick(self: Arc<Self>, dt: f32) -> Result<(), ServerError> {
         let tick_started = Instant::now();

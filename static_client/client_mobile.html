@@ -1,0 +1,1564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>2D Shooter - Mobile</title>
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+        {
+          "imports": {
+            "flatbuffers": "https://cdn.jsdelivr.net/npm/flatbuffers@25.2.10/mjs/flatbuffers.js"
+          }
+        }
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            touch-action: none;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #111827;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+        }
+
+        #gameContainer {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #pixiContainer {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Tutorial Overlay */
+        .tutorial-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            color: white;
+            padding: 20px;
+        }
+
+        .tutorial-content {
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .tutorial-title {
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #60A5FA;
+        }
+
+        .tutorial-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        .tutorial-icon {
+            font-size: 40px;
+            margin-bottom: 10px;
+        }
+
+        .tutorial-text {
+            font-size: 16px;
+            line-height: 1.5;
+        }
+
+        .start-button {
+            margin-top: 30px;
+            padding: 15px 40px;
+            font-size: 20px;
+            font-weight: bold;
+            background: #4F46E5;
+            color: white;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+        }
+
+        /* HUD Elements */
+        .hud-top {
+            position: absolute;
+            top: env(safe-area-inset-top, 10px);
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .health-bar-container {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 20px;
+            padding: 5px;
+            width: 150px;
+            height: 25px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .health-bar {
+            background: linear-gradient(to right, #EF4444, #10B981);
+            height: 100%;
+            border-radius: 15px;
+            transition: width 0.3s ease;
+        }
+
+        .ammo-display {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 20px;
+            padding: 5px 15px;
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .score-display {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 20px;
+            padding: 5px 15px;
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        /* Touch Controls */
+        .touch-controls {
+            position: absolute;
+            bottom: env(safe-area-inset-bottom, 20px);
+            left: 0;
+            right: 0;
+            height: 200px;
+            pointer-events: auto;
+            z-index: 200;
+        }
+
+        .joystick-area {
+            position: absolute;
+            left: 20px;
+            bottom: 20px;
+            width: 150px;
+            height: 150px;
+        }
+
+        .joystick-base {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+        }
+
+        .joystick-knob {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            background: rgba(255, 255, 255, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.6);
+            border-radius: 50%;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .action-buttons {
+            position: absolute;
+            right: 20px;
+            bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .action-button {
+            width: 80px;
+            height: 80px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 30px;
+            color: white;
+            font-weight: bold;
+        }
+
+        .action-button.fire {
+            background: rgba(255, 107, 107, 0.3);
+            border-color: rgba(255, 107, 107, 0.6);
+        }
+
+        .action-button.reload {
+            background: rgba(96, 165, 250, 0.3);
+            border-color: rgba(96, 165, 250, 0.6);
+            font-size: 20px;
+        }
+
+        .action-button:active {
+            transform: scale(0.95);
+            opacity: 0.8;
+        }
+
+        /* Kill Feed */
+        .kill-feed {
+            position: absolute;
+            top: env(safe-area-inset-top, 60px);
+            right: 10px;
+            width: 250px;
+            max-height: 100px;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .kill-entry {
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 5px 10px;
+            margin-bottom: 3px;
+            border-radius: 5px;
+            font-size: 12px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Connection UI */
+        .connection-ui {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(31, 41, 55, 0.95);
+            padding: 30px;
+            border-radius: 20px;
+            text-align: center;
+            z-index: 500;
+        }
+
+        .connection-input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: white;
+            font-size: 16px;
+        }
+
+        .connect-button {
+            padding: 12px 30px;
+            background: #4F46E5;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Minimap */
+        .minimap {
+            position: absolute;
+            top: env(safe-area-inset-top, 10px);
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 100px;
+            background: rgba(0, 0, 0, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        /* Respawn Timer */
+        .respawn-timer {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px 40px;
+            border-radius: 20px;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+            z-index: 300;
+        }
+
+        .respawn-number {
+            font-size: 48px;
+            color: #EF4444;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Tutorial Overlay -->
+    <div id="tutorialOverlay" class="tutorial-overlay">
+        <div class="tutorial-content">
+            <h1 class="tutorial-title">How to Play</h1>
+            
+            <div class="tutorial-section">
+                <div class="tutorial-icon">🎮</div>
+                <div class="tutorial-text">
+                    <strong>Move:</strong> Use the left joystick to move your character in any direction
+                </div>
+            </div>
+            
+            <div class="tutorial-section">
+                <div class="tutorial-icon">🎯</div>
+                <div class="tutorial-text">
+                    <strong>Aim & Shoot:</strong> Drag anywhere on the screen to aim. Tap the fire button or double-tap to shoot
+                </div>
+            </div>
+            
+            <div class="tutorial-section">
+                <div class="tutorial-icon">🔄</div>
+                <div class="tutorial-text">
+                    <strong>Reload:</strong> Tap the reload button when you're out of ammo
+                </div>
+            </div>
+            
+            <div class="tutorial-section">
+                <div class="tutorial-icon">💀</div>
+                <div class="tutorial-text">
+                    <strong>Survive:</strong> Eliminate enemies, collect power-ups, and stay alive!
+                </div>
+            </div>
+            
+            <button class="start-button" onclick="startGame()">Start Playing</button>
+        </div>
+    </div>
+
+    <!-- Connection UI -->
+    <div id="connectionUI" class="connection-ui hidden">
+        <h2 style="color: white; font-size: 24px; margin-bottom: 20px;">Connect to Server</h2>
+        <input type="text" id="wsUrl" class="connection-input" value="ws://localhost:8080/ws" placeholder="WebSocket URL">
+        <button id="connectButton" class="connect-button">Connect</button>
+    </div>
+
+    <!-- Game Container -->
+    <div id="gameContainer" class="hidden">
+        <div id="pixiContainer"></div>
+        
+        <!-- HUD -->
+        <div class="hud-top">
+            <div class="health-bar-container">
+                <div id="healthBar" class="health-bar" style="width: 100%"></div>
+            </div>
+            <div id="ammoDisplay" class="ammo-display">10/10</div>
+            <div id="scoreDisplay" class="score-display">0</div>
+        </div>
+        
+        <!-- Minimap -->
+        <div id="minimapContainer" class="minimap"></div>
+        
+        <!-- Kill Feed -->
+        <div id="killFeed" class="kill-feed"></div>
+        
+        <!-- Touch Controls -->
+        <div class="touch-controls">
+            <div class="joystick-area" id="joystickArea">
+                <div class="joystick-base"></div>
+                <div class="joystick-knob" id="joystickKnob"></div>
+            </div>
+            
+            <div class="action-buttons">
+                <button class="action-button fire" id="fireButton">🔥</button>
+                <button class="action-button reload" id="reloadButton">R</button>
+            </div>
+        </div>
+        
+        <!-- Respawn Timer -->
+        <div id="respawnTimer" class="respawn-timer hidden">
+            <div>Respawning in</div>
+            <div id="respawnNumber" class="respawn-number">5</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as flatbuffers from 'flatbuffers';
+        import { GameProtocol } from './generated_js/game.js';
+        const GP = GameProtocol;
+
+        // Mobile specific constants
+        const JOYSTICK_MAX_DISTANCE = 50;
+        const AIM_SENSITIVITY = 1.5;
+        const DOUBLE_TAP_THRESHOLD = 300; // ms
+        
+        // Game constants
+        const INTERPOLATION_DELAY = 100;
+        const INPUT_SEND_RATE = 30; // Lower for mobile
+        const PLAYER_RADIUS = 15;
+        const SERVER_TICK_RATE = 60;
+
+        // Team colors
+        const teamColors = {
+            0: 0xA0A0A0, // Neutral/FFA
+            1: 0xFF6B6B, // Red
+            2: 0x4ECDC4, // Blue
+        };
+
+        // Weapon data
+        const weaponNames = {
+            [GP.WeaponType.Pistol]: 'Pistol',
+            [GP.WeaponType.Shotgun]: 'Shotgun',
+            [GP.WeaponType.Rifle]: 'Rifle',
+            [GP.WeaponType.Sniper]: 'Sniper',
+            [GP.WeaponType.Melee]: 'Melee'
+        };
+
+        // Global variables
+        let app, gameScene, worldContainer;
+        let wallGraphics, pickupContainer, projectileContainer, playerContainer;
+        let localPlayerSprite;
+        
+        // Touch control variables
+        let joystickActive = false;
+        let joystickStartPos = { x: 0, y: 0 };
+        let aimTouchId = null;
+        let aimStartPos = { x: 0, y: 0 };
+        let lastTapTime = 0;
+        
+        // Game state
+        let myPlayerId = null;
+        let players = new Map();
+        let projectiles = new Map();
+        let walls = new Map();
+        let pickups = new Map();
+        let killFeed = [];
+        let localPlayerState = null;
+        
+        // Network
+        let signalingSocket;
+        let peerConnection;
+        let dataChannel;
+        
+        // Client prediction
+        let inputSequence = 0;
+        let pendingInputs = [];
+        let lastProcessedInput = 0;
+        let serverUpdates = [];
+        let renderTimestamp = 0;
+        
+        // Input state
+        let inputState = {
+            move_forward: false,
+            move_backward: false,
+            move_left: false,
+            move_right: false,
+            shooting: false,
+            reload: false,
+            rotation: 0,
+            melee_attack: false,
+            change_weapon_slot: 0,
+            use_ability_slot: 0
+        };
+        
+        // Timing
+        let lastInputSendTime = 0;
+        let pingStartTime = 0;
+        let ping = 0;
+
+        // Initialize function
+        window.startGame = function() {
+            document.getElementById('tutorialOverlay').classList.add('hidden');
+            document.getElementById('connectionUI').classList.remove('hidden');
+            
+            // Prevent default touch behaviors
+            document.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+            document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+            
+            initializeGame();
+        };
+
+        function initializeGame() {
+            // Initialize PIXI
+            initPixi();
+            
+            // Setup connection button
+            document.getElementById('connectButton').addEventListener('click', connect);
+            document.getElementById('wsUrl').addEventListener('keydown', e => {
+                if (e.key === 'Enter') connect();
+            });
+            
+            // Setup touch controls
+            setupTouchControls();
+        }
+
+        function initPixi() {
+            const pixiContainer = document.getElementById('pixiContainer');
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            
+            app = new PIXI.Application({
+                width: width,
+                height: height,
+                backgroundColor: 0x1a202c,
+                antialias: true,
+                resolution: window.devicePixelRatio || 1,
+                autoDensity: true,
+            });
+            
+            pixiContainer.appendChild(app.view);
+            app.ticker.maxFPS = 60;
+            
+            // Setup scene hierarchy
+            gameScene = new PIXI.Container();
+            app.stage.addChild(gameScene);
+            
+            worldContainer = new PIXI.Container();
+            gameScene.addChild(worldContainer);
+            
+            // Create containers
+            wallGraphics = new PIXI.Graphics();
+            pickupContainer = new PIXI.Container();
+            projectileContainer = new PIXI.Container();
+            playerContainer = new PIXI.Container();
+            
+            worldContainer.addChild(wallGraphics);
+            worldContainer.addChild(pickupContainer);
+            worldContainer.addChild(projectileContainer);
+            worldContainer.addChild(playerContainer);
+            
+            // Start game loop
+            app.ticker.add(gameLoop);
+            
+            // Handle resize
+            window.addEventListener('resize', resizeGame);
+        }
+
+        function resizeGame() {
+            if (!app) return;
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            app.renderer.resize(width, height);
+        }
+
+        function setupTouchControls() {
+            const joystickArea = document.getElementById('joystickArea');
+            const joystickKnob = document.getElementById('joystickKnob');
+            const fireButton = document.getElementById('fireButton');
+            const reloadButton = document.getElementById('reloadButton');
+            
+            // Joystick controls
+            joystickArea.addEventListener('touchstart', handleJoystickStart);
+            joystickArea.addEventListener('touchmove', handleJoystickMove);
+            joystickArea.addEventListener('touchend', handleJoystickEnd);
+            
+            // Fire button
+            fireButton.addEventListener('touchstart', e => {
+                e.preventDefault();
+                inputState.shooting = true;
+            });
+            
+            fireButton.addEventListener('touchend', e => {
+                e.preventDefault();
+                inputState.shooting = false;
+            });
+            
+            // Reload button
+            reloadButton.addEventListener('touchstart', e => {
+                e.preventDefault();
+                inputState.reload = true;
+            });
+            
+            // Aim controls (anywhere on screen)
+            const gameContainer = document.getElementById('gameContainer');
+            gameContainer.addEventListener('touchstart', handleAimStart);
+            gameContainer.addEventListener('touchmove', handleAimMove);
+            gameContainer.addEventListener('touchend', handleAimEnd);
+        }
+
+        function handleJoystickStart(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = e.currentTarget.getBoundingClientRect();
+            joystickActive = true;
+            joystickStartPos = {
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2
+            };
+        }
+
+        function handleJoystickMove(e) {
+            if (!joystickActive) return;
+            e.preventDefault();
+            
+            const touch = e.touches[0];
+            const dx = touch.clientX - joystickStartPos.x;
+            const dy = touch.clientY - joystickStartPos.y;
+            
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const angle = Math.atan2(dy, dx);
+            
+            const limitedDistance = Math.min(distance, JOYSTICK_MAX_DISTANCE);
+            const knobX = Math.cos(angle) * limitedDistance;
+            const knobY = Math.sin(angle) * limitedDistance;
+            
+            const joystickKnob = document.getElementById('joystickKnob');
+            joystickKnob.style.transform = `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
+            
+            // Update movement input
+            const normalizedX = knobX / JOYSTICK_MAX_DISTANCE;
+            const normalizedY = knobY / JOYSTICK_MAX_DISTANCE;
+            
+            inputState.move_right = normalizedX > 0.3;
+            inputState.move_left = normalizedX < -0.3;
+            inputState.move_forward = normalizedY < -0.3;
+            inputState.move_backward = normalizedY > 0.3;
+        }
+
+        function handleJoystickEnd(e) {
+            e.preventDefault();
+            joystickActive = false;
+            
+            const joystickKnob = document.getElementById('joystickKnob');
+            joystickKnob.style.transform = 'translate(-50%, -50%)';
+            
+            inputState.move_forward = false;
+            inputState.move_backward = false;
+            inputState.move_left = false;
+            inputState.move_right = false;
+        }
+
+        function handleAimStart(e) {
+            // Don't interfere with joystick or buttons
+            if (e.target.closest('.touch-controls')) return;
+            
+            e.preventDefault();
+            const touch = e.touches[0];
+            
+            // Check for double tap
+            const currentTime = Date.now();
+            if (currentTime - lastTapTime < DOUBLE_TAP_THRESHOLD) {
+                inputState.shooting = true;
+                setTimeout(() => { inputState.shooting = false; }, 100);
+            }
+            lastTapTime = currentTime;
+            
+            // Start aiming
+            if (aimTouchId === null) {
+                aimTouchId = touch.identifier;
+                aimStartPos = { x: touch.clientX, y: touch.clientY };
+            }
+        }
+
+        function handleAimMove(e) {
+            if (aimTouchId === null) return;
+            
+            for (let touch of e.touches) {
+                if (touch.identifier === aimTouchId) {
+                    const dx = touch.clientX - aimStartPos.x;
+                    const dy = touch.clientY - aimStartPos.y;
+                    
+                    // Update rotation based on drag
+                    if (localPlayerState && Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                        inputState.rotation = Math.atan2(dy, dx) + (Math.PI / 2); // Adjust for sprite orientation
+                    }
+                    break;
+                }
+            }
+        }
+
+        function handleAimEnd(e) {
+            for (let touch of e.changedTouches) {
+                if (touch.identifier === aimTouchId) {
+                    aimTouchId = null;
+                    break;
+                }
+            }
+        }
+
+        // Create simplified player sprite
+        function createPlayerSprite(player, isLocal = false) {
+            const container = new PIXI.Container();
+            container.playerId = player.id;
+            
+            // Shadow
+            const shadow = new PIXI.Graphics();
+            shadow.beginFill(0x000000, 0.3);
+            shadow.drawEllipse(0, 8, PLAYER_RADIUS * 1.1, PLAYER_RADIUS * 0.6);
+            shadow.endFill();
+            shadow.filters = [new PIXI.BlurFilter(2)];
+            container.addChild(shadow);
+            
+            // Body
+            const body = new PIXI.Graphics();
+            const teamColor = teamColors[player.team_id] || teamColors[0];
+            body.beginFill(player.alive ? teamColor : 0x6B7280);
+            body.drawCircle(0, 0, PLAYER_RADIUS);
+            body.endFill();
+            container.addChild(body);
+            container.body = body;
+            
+            // Direction indicator
+            const direction = new PIXI.Graphics();
+            direction.beginFill(0xFFFFFF, 0.8);
+            direction.drawPolygon([0, -PLAYER_RADIUS - 5, 5, -PLAYER_RADIUS, -5, -PLAYER_RADIUS]);
+            direction.endFill();
+            container.addChild(direction);
+            
+            // Username (simplified)
+            const usernameStyle = new PIXI.TextStyle({
+                fontFamily: 'Arial',
+                fontSize: 12,
+                fill: 0xFFFFFF,
+                stroke: 0x000000,
+                strokeThickness: 3,
+            });
+            const usernameText = new PIXI.Text(player.username || 'Player', usernameStyle);
+            usernameText.anchor.set(0.5);
+            usernameText.position.y = -PLAYER_RADIUS - 20;
+            container.addChild(usernameText);
+            container.usernameText = usernameText;
+            
+            return container;
+        }
+
+        function updatePlayerSprite(sprite, player) {
+            sprite.position.x = player.render_x !== undefined ? player.render_x : player.x;
+            sprite.position.y = player.render_y !== undefined ? player.render_y : player.y;
+            sprite.rotation = (player.render_rotation !== undefined ? player.render_rotation : player.rotation) + (Math.PI / 2);
+            
+            // Update body color
+            const teamColor = teamColors[player.team_id] || teamColors[0];
+            sprite.body.clear();
+            sprite.body.beginFill(player.alive ? teamColor : 0x6B7280);
+            sprite.body.drawCircle(0, 0, PLAYER_RADIUS);
+            sprite.body.endFill();
+            
+            sprite.visible = player.alive || (player.respawn_timer !== undefined && player.respawn_timer > 0);
+            sprite.alpha = player.alive ? 1 : 0.5;
+        }
+
+        // Simplified projectile sprite
+        function createProjectileSprite(projectile) {
+            const container = new PIXI.Container();
+            container.projectileId = projectile.id;
+            
+            const colors = {
+                [GP.WeaponType.Pistol]: 0xFFBF00,
+                [GP.WeaponType.Shotgun]: 0xFF4444,
+                [GP.WeaponType.Rifle]: 0x4444FF,
+                [GP.WeaponType.Sniper]: 0xAA44FF
+            };
+            
+            const color = colors[projectile.weapon_type] || 0xFFFFFF;
+            
+            // Glow
+            const glow = new PIXI.Graphics();
+            glow.beginFill(color, 0.3);
+            glow.drawCircle(0, 0, 10);
+            glow.endFill();
+            glow.filters = [new PIXI.BlurFilter(3)];
+            container.addChild(glow);
+            
+            // Core
+            const core = new PIXI.Graphics();
+            core.beginFill(color);
+            core.drawCircle(0, 0, 4);
+            core.endFill();
+            container.addChild(core);
+            
+            return container;
+        }
+
+        function updateProjectileSprite(sprite, projectile) {
+            sprite.position.x = projectile.render_x !== undefined ? projectile.render_x : projectile.x;
+            sprite.position.y = projectile.render_y !== undefined ? projectile.render_y : projectile.y;
+        }
+
+        // Simplified pickup sprite
+        function createPickupSprite(pickup) {
+            const container = new PIXI.Container();
+            container.pickupId = pickup.id;
+            
+            const icons = {
+                [GP.PickupType.Health]: '❤️',
+                [GP.PickupType.Ammo]: '📦',
+                [GP.PickupType.Shield]: '🛡️',
+                [GP.PickupType.SpeedBoost]: '💨',
+                [GP.PickupType.DamageBoost]: '💪'
+            };
+            
+            // Background circle
+            const bg = new PIXI.Graphics();
+            bg.beginFill(0x000000, 0.5);
+            bg.drawCircle(0, 0, 20);
+            bg.endFill();
+            container.addChild(bg);
+            
+            // Icon
+            const iconStyle = new PIXI.TextStyle({
+                fontFamily: 'Arial',
+                fontSize: 24,
+            });
+            const icon = new PIXI.Text(icons[pickup.pickup_type] || '?', iconStyle);
+            icon.anchor.set(0.5);
+            container.addChild(icon);
+            
+            return container;
+        }
+
+        // Draw walls
+        function drawWalls() {
+            wallGraphics.clear();
+            
+            walls.forEach(wall => {
+                if (wall.is_destructible && wall.current_health <= 0) return;
+                
+                // Shadow
+                wallGraphics.beginFill(0x000000, 0.3);
+                wallGraphics.drawRect(wall.x + 3, wall.y + 3, wall.width, wall.height);
+                wallGraphics.endFill();
+                
+                // Wall
+                let wallColor = wall.is_destructible ? 0x4B5563 : 0x374151;
+                wallGraphics.beginFill(wallColor);
+                wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+                wallGraphics.endFill();
+            });
+        }
+
+        // Update camera
+        function updateCamera() {
+            if (localPlayerState && app && gameScene) {
+                const targetX = app.screen.width / 2 - localPlayerState.x;
+                const targetY = app.screen.height / 2 - localPlayerState.y;
+                
+                const smoothing = 0.1;
+                gameScene.position.x += (targetX - gameScene.position.x) * smoothing;
+                gameScene.position.y += (targetY - gameScene.position.y) * smoothing;
+            }
+        }
+
+        // Game loop
+        function gameLoop(delta) {
+            const currentTime = Date.now();
+            renderTimestamp = currentTime - INTERPOLATION_DELAY;
+            
+            if (localPlayerState && localPlayerState.alive) {
+                updateLocalPlayerPrediction(app.ticker.deltaMS / 1000);
+            }
+            
+            interpolateEntities();
+            updateSprites();
+            updateCamera();
+            updateHUD();
+            sendInputsToServer();
+        }
+
+        // Update local player prediction
+        function updateLocalPlayerPrediction(deltaTime) {
+            if (!localPlayerState || !localPlayerState.alive) return;
+            
+            let moveXIntent = 0;
+            let moveYIntent = 0;
+            if (inputState.move_forward) moveYIntent -= 1;
+            if (inputState.move_backward) moveYIntent += 1;
+            if (inputState.move_left) moveXIntent -= 1;
+            if (inputState.move_right) moveXIntent += 1;
+            
+            const speed = 150;
+            if (moveXIntent !== 0 || moveYIntent !== 0) {
+                const magnitude = Math.sqrt(moveXIntent * moveXIntent + moveYIntent * moveYIntent);
+                localPlayerState.x += (moveXIntent / magnitude) * speed * deltaTime;
+                localPlayerState.y += (moveYIntent / magnitude) * speed * deltaTime;
+            }
+            
+            localPlayerState.rotation = inputState.rotation;
+            localPlayerState.render_x = localPlayerState.x;
+            localPlayerState.render_y = localPlayerState.y;
+            localPlayerState.render_rotation = localPlayerState.rotation;
+        }
+
+        // Interpolate entities
+        function interpolateEntities() {
+            const now = Date.now();
+            const renderTime = now - INTERPOLATION_DELAY;
+            
+            serverUpdates = serverUpdates.filter(update => update.timestamp > renderTime - 500);
+            
+            if (serverUpdates.length < 2) return;
+            
+            let update1 = null, update2 = null;
+            for (let i = serverUpdates.length - 1; i >= 1; i--) {
+                if (serverUpdates[i].timestamp >= renderTime && serverUpdates[i - 1].timestamp <= renderTime) {
+                    update2 = serverUpdates[i];
+                    update1 = serverUpdates[i - 1];
+                    break;
+                }
+            }
+            
+            if (!update1 || !update2) return;
+            
+            const t = (renderTime - update1.timestamp) / (update2.timestamp - update1.timestamp);
+            const clampedT = Math.max(0, Math.min(1, t));
+            
+            // Interpolate players
+            players.forEach((currentPlayerState, playerId) => {
+                if (playerId === myPlayerId) return;
+                
+                const state1 = update1.players.get(playerId);
+                const state2 = update2.players.get(playerId);
+                
+                if (state1 && state2) {
+                    currentPlayerState.render_x = state1.x + (state2.x - state1.x) * clampedT;
+                    currentPlayerState.render_y = state1.y + (state2.y - state1.y) * clampedT;
+                    currentPlayerState.render_rotation = state1.rotation + (state2.rotation - state1.rotation) * clampedT;
+                }
+            });
+            
+            // Interpolate projectiles
+            projectiles.forEach((currentProjState, projId) => {
+                const state1 = update1.projectiles.get(projId);
+                const state2 = update2.projectiles.get(projId);
+                
+                if (state1 && state2) {
+                    currentProjState.render_x = state1.x + (state2.x - state1.x) * clampedT;
+                    currentProjState.render_y = state1.y + (state2.y - state1.y) * clampedT;
+                }
+            });
+        }
+
+        // Update sprites
+        function updateSprites() {
+            // Update players
+            players.forEach((player, playerId) => {
+                let sprite = playerContainer.children.find(s => s.playerId === playerId);
+                if (!sprite) {
+                    sprite = createPlayerSprite(player, playerId === myPlayerId);
+                    playerContainer.addChild(sprite);
+                    if (playerId === myPlayerId) localPlayerSprite = sprite;
+                }
+                updatePlayerSprite(sprite, player);
+            });
+            
+            // Remove disconnected players
+            for (let i = playerContainer.children.length - 1; i >= 0; i--) {
+                const sprite = playerContainer.children[i];
+                if (!players.has(sprite.playerId)) {
+                    sprite.destroy({ children: true });
+                }
+            }
+            
+            // Update projectiles
+            projectiles.forEach((projectile, projectileId) => {
+                let sprite = projectileContainer.children.find(s => s.projectileId === projectileId);
+                if (!sprite) {
+                    sprite = createProjectileSprite(projectile);
+                    projectileContainer.addChild(sprite);
+                }
+                updateProjectileSprite(sprite, projectile);
+            });
+            
+            // Remove expired projectiles
+            for (let i = projectileContainer.children.length - 1; i >= 0; i--) {
+                const sprite = projectileContainer.children[i];
+                if (!projectiles.has(sprite.projectileId)) {
+                    sprite.destroy({ children: true });
+                }
+            }
+            
+            // Update pickups
+            pickups.forEach((pickup, pickupId) => {
+                let sprite = pickupContainer.children.find(s => s.pickupId === pickupId);
+                if (pickup.is_active) {
+                    if (!sprite) {
+                        sprite = createPickupSprite(pickup);
+                        pickupContainer.addChild(sprite);
+                    }
+                    sprite.position.set(pickup.x, pickup.y);
+                    sprite.visible = true;
+                } else if (sprite) {
+                    sprite.visible = false;
+                }
+            });
+        }
+
+        // Update HUD
+        function updateHUD() {
+            if (localPlayerState) {
+                // Health bar
+                const healthPercent = Math.max(0, Math.min(1, localPlayerState.health / localPlayerState.max_health));
+                document.getElementById('healthBar').style.width = (healthPercent * 100) + '%';
+                
+                // Ammo
+                const maxAmmo = getMaxAmmoForWeapon(localPlayerState.weapon);
+                document.getElementById('ammoDisplay').textContent = `${localPlayerState.ammo}/${maxAmmo}`;
+                
+                // Score
+                document.getElementById('scoreDisplay').textContent = localPlayerState.score.toString();
+                
+                // Respawn timer
+                if (!localPlayerState.alive && localPlayerState.respawn_timer > 0) {
+                    document.getElementById('respawnTimer').classList.remove('hidden');
+                    document.getElementById('respawnNumber').textContent = Math.ceil(localPlayerState.respawn_timer).toString();
+                } else {
+                    document.getElementById('respawnTimer').classList.add('hidden');
+                }
+            }
+        }
+
+        function getMaxAmmoForWeapon(weaponType) {
+            switch (weaponType) {
+                case GP.WeaponType.Pistol: return 10;
+                case GP.WeaponType.Shotgun: return 5;
+                case GP.WeaponType.Rifle: return 30;
+                case GP.WeaponType.Sniper: return 5;
+                case GP.WeaponType.Melee: return 0;
+                default: return 10;
+            }
+        }
+
+        // Update kill feed
+        function updateKillFeed() {
+            const killFeedDiv = document.getElementById('killFeed');
+            killFeedDiv.innerHTML = '';
+            
+            killFeed.slice(-3).reverse().forEach(entry => {
+                const div = document.createElement('div');
+                div.className = 'kill-entry';
+                div.textContent = `${entry.killer_name} [${weaponNames[entry.weapon]}] ${entry.victim_name}`;
+                killFeedDiv.appendChild(div);
+            });
+        }
+
+        // Send inputs to server
+        function sendInputsToServer() {
+            if (!dataChannel || dataChannel.readyState !== 'open' || !localPlayerState || !localPlayerState.alive) return;
+            
+            const now = Date.now();
+            if (now - lastInputSendTime < 1000 / INPUT_SEND_RATE) return;
+            lastInputSendTime = now;
+            
+            const currentFrameInput = {
+                timestamp: now,
+                sequence: ++inputSequence,
+                move_forward: inputState.move_forward,
+                move_backward: inputState.move_backward,
+                move_left: inputState.move_left,
+                move_right: inputState.move_right,
+                shooting: inputState.shooting,
+                reload: inputState.reload,
+                rotation: inputState.rotation,
+                melee_attack: inputState.melee_attack,
+                change_weapon_slot: inputState.change_weapon_slot,
+                use_ability_slot: inputState.use_ability_slot,
+            };
+            
+            pendingInputs.push(currentFrameInput);
+            if (pendingInputs.length > 120) pendingInputs.shift();
+            
+            const bytes = createInputMessage(currentFrameInput);
+            dataChannel.send(bytes);
+            
+            // Reset one-time inputs
+            if (inputState.reload) inputState.reload = false;
+            if (inputState.melee_attack) inputState.melee_attack = false;
+        }
+
+        // Create FlatBuffer messages
+        function createInputMessage(currentInputState) {
+            const builder = new flatbuffers.Builder(128);
+            GP.PlayerInput.startPlayerInput(builder);
+            GP.PlayerInput.addTimestamp(builder, BigInt(Date.now()));
+            GP.PlayerInput.addSequence(builder, currentInputState.sequence);
+            GP.PlayerInput.addMoveForward(builder, currentInputState.move_forward);
+            GP.PlayerInput.addMoveBackward(builder, currentInputState.move_backward);
+            GP.PlayerInput.addMoveLeft(builder, currentInputState.move_left);
+            GP.PlayerInput.addMoveRight(builder, currentInputState.move_right);
+            GP.PlayerInput.addShooting(builder, currentInputState.shooting);
+            GP.PlayerInput.addReload(builder, currentInputState.reload);
+            GP.PlayerInput.addRotation(builder, currentInputState.rotation);
+            GP.PlayerInput.addMeleeAttack(builder, currentInputState.melee_attack);
+            GP.PlayerInput.addChangeWeaponSlot(builder, currentInputState.change_weapon_slot);
+            GP.PlayerInput.addUseAbilitySlot(builder, currentInputState.use_ability_slot);
+            const playerInputOffset = GP.PlayerInput.endPlayerInput(builder);
+
+            GP.GameMessage.startGameMessage(builder);
+            GP.GameMessage.addMsgType(builder, GP.MessageType.Input);
+            GP.GameMessage.addActualMessageType(builder, GP.MessagePayload.PlayerInput);
+            GP.GameMessage.addActualMessage(builder, playerInputOffset);
+            const gameMessageOffset = GP.GameMessage.endGameMessage(builder);
+            builder.finish(gameMessageOffset);
+            return builder.asUint8Array();
+        }
+
+        // Process server update
+        function processServerUpdate(messageData, isInitial = false) {
+            if (!messageData) return;
+            
+            const serverTime = Number(messageData.timestamp);
+            
+            if (isInitial) {
+                // Process walls
+                walls.clear();
+                if (messageData.walls) {
+                    messageData.walls.forEach(wallData => walls.set(wallData.id, wallData));
+                }
+                drawWalls();
+            }
+            
+            // Update players
+            if (messageData.players) {
+                messageData.players.forEach(pData => {
+                    players.set(pData.id, pData);
+                    
+                    if (pData.id === myPlayerId) {
+                        if (!localPlayerState) {
+                            localPlayerState = { ...pData };
+                        } else {
+                            Object.assign(localPlayerState, pData);
+                        }
+                        if (messageData.last_processed_input_sequence !== undefined) {
+                            lastProcessedInput = Number(messageData.last_processed_input_sequence);
+                            pendingInputs = pendingInputs.filter(inp => inp.sequence > lastProcessedInput);
+                        }
+                        localPlayerState.render_x = localPlayerState.x;
+                        localPlayerState.render_y = localPlayerState.y;
+                        localPlayerState.render_rotation = localPlayerState.rotation;
+                    }
+                });
+            }
+            
+            // Update projectiles
+            if (messageData.projectiles) {
+                messageData.projectiles.forEach(pData => projectiles.set(pData.id, pData));
+            }
+            if (messageData.removed_projectiles) {
+                messageData.removed_projectiles.forEach(id => projectiles.delete(id));
+            }
+            
+            // Update pickups
+            if (messageData.pickups) {
+                messageData.pickups.forEach(pData => pickups.set(pData.id, pData));
+            }
+            if (messageData.deactivated_pickup_ids) {
+                messageData.deactivated_pickup_ids.forEach(id => {
+                    const pickup = pickups.get(id);
+                    if (pickup) pickup.is_active = false;
+                });
+            }
+            
+            // Update kill feed
+            if (messageData.kill_feed) {
+                killFeed = messageData.kill_feed;
+                updateKillFeed();
+            }
+            
+            // Store for interpolation
+            serverUpdates.push({
+                timestamp: serverTime,
+                players: new Map(players.entries()),
+                projectiles: new Map(projectiles.entries())
+            });
+            serverUpdates = serverUpdates.filter(s => s.timestamp > Date.now() - 2000);
+        }
+
+        // Parse FlatBuffer message
+        function parseFlatBufferMessage(data) {
+            try {
+                const buf = new flatbuffers.ByteBuffer(new Uint8Array(data));
+                const gameMsg = GameProtocol.GameMessage.getRootAsGameMessage(buf);
+                const msgType = gameMsg.msgType();
+                
+                switch (msgType) {
+                    case GameProtocol.MessageType.Welcome:
+                        const welcome = gameMsg.actualMessage(new GP.WelcomeMessage());
+                        return {
+                            type: 'welcome',
+                            playerId: welcome.playerId(),
+                            message: welcome.message(),
+                            serverTickRate: welcome.serverTickRate()
+                        };
+                        
+                    case GP.MessageType.InitialState:
+                        const initial = gameMsg.actualMessage(new GP.InitialStateMessage());
+                        const initialStateData = {
+                            player_id: initial.playerId(),
+                            walls: [],
+                            players: [],
+                            projectiles: [],
+                            pickups: [],
+                            timestamp: Number(initial.timestamp())
+                        };
+                        
+                        // Parse walls
+                        for (let i = 0; i < initial.wallsLength(); i++) {
+                            const wall = initial.walls(i);
+                            initialStateData.walls.push({
+                                id: wall.id(),
+                                x: wall.x(),
+                                y: wall.y(),
+                                width: wall.width(),
+                                height: wall.height(),
+                                is_destructible: wall.isDestructible(),
+                                current_health: wall.currentHealth(),
+                                max_health: wall.maxHealth()
+                            });
+                        }
+                        
+                        // Parse players
+                        for (let i = 0; i < initial.playersLength(); i++) {
+                            const p = initial.players(i);
+                            initialStateData.players.push({
+                                id: p.id(),
+                                username: p.username(),
+                                x: p.x(),
+                                y: p.y(),
+                                rotation: p.rotation(),
+                                health: p.health(),
+                                max_health: p.maxHealth(),
+                                alive: p.alive(),
+                                respawn_timer: p.respawnTimer(),
+                                weapon: p.weapon(),
+                                ammo: p.ammo(),
+                                score: p.score(),
+                                kills: p.kills(),
+                                deaths: p.deaths(),
+                                team_id: p.teamId()
+                            });
+                        }
+                        
+                        // Parse projectiles
+                        for (let i = 0; i < initial.projectilesLength(); i++) {
+                            const p = initial.projectiles(i);
+                            initialStateData.projectiles.push({
+                                id: p.id(),
+                                x: p.x(),
+                                y: p.y(),
+                                owner_id: p.ownerId(),
+                                weapon_type: p.weaponType()
+                            });
+                        }
+                        
+                        // Parse pickups
+                        for (let i = 0; i < initial.pickupsLength(); i++) {
+                            const p = initial.pickups(i);
+                            initialStateData.pickups.push({
+                                id: p.id(),
+                                x: p.x(),
+                                y: p.y(),
+                                pickup_type: p.pickupType(),
+                                is_active: p.isActive()
+                            });
+                        }
+                        
+                        return { type: 'initial', data: initialStateData };
+                        
+                    case GP.MessageType.DeltaState:
+                        const delta = gameMsg.actualMessage(new GP.DeltaStateMessage());
+                        const deltaStateData = {
+                            players: [],
+                            projectiles: [],
+                            removed_projectiles: [],
+                            pickups: [],
+                            deactivated_pickup_ids: [],
+                            kill_feed: [],
+                            timestamp: Number(delta.timestamp()),
+                            last_processed_input_sequence: delta.lastProcessedInputSequence()
+                        };
+                        
+                        // Parse players
+                        for (let i = 0; i < delta.playersLength(); i++) {
+                            const p = delta.players(i);
+                            deltaStateData.players.push({
+                                id: p.id(),
+                                username: p.username(),
+                                x: p.x(),
+                                y: p.y(),
+                                rotation: p.rotation(),
+                                health: p.health(),
+                                max_health: p.maxHealth(),
+                                alive: p.alive(),
+                                respawn_timer: p.respawnTimer(),
+                                weapon: p.weapon(),
+                                ammo: p.ammo(),
+                                score: p.score(),
+                                kills: p.kills(),
+                                deaths: p.deaths(),
+                                team_id: p.teamId()
+                            });
+                        }
+                        
+                        // Parse projectiles
+                        for (let i = 0; i < delta.projectilesLength(); i++) {
+                            const p = delta.projectiles(i);
+                            deltaStateData.projectiles.push({
+                                id: p.id(),
+                                x: p.x(),
+                                y: p.y(),
+                                owner_id: p.ownerId(),
+                                weapon_type: p.weaponType()
+                            });
+                        }
+                        
+                        // Parse removed projectiles
+                        for (let i = 0; i < delta.removedProjectilesLength(); i++) {
+                            deltaStateData.removed_projectiles.push(delta.removedProjectiles(i));
+                        }
+                        
+                        // Parse pickups
+                        for (let i = 0; i < delta.pickupsLength(); i++) {
+                            const p = delta.pickups(i);
+                            deltaStateData.pickups.push({
+                                id: p.id(),
+                                x: p.x(),
+                                y: p.y(),
+                                pickup_type: p.pickupType(),
+                                is_active: p.isActive()
+                            });
+                        }
+                        
+                        // Parse deactivated pickups
+                        for (let i = 0; i < delta.deactivatedPickupIdsLength(); i++) {
+                            deltaStateData.deactivated_pickup_ids.push(delta.deactivatedPickupIds(i));
+                        }
+                        
+                        // Parse kill feed
+                        for (let i = 0; i < delta.killFeedLength(); i++) {
+                            const kf = delta.killFeed(i);
+                            deltaStateData.kill_feed.push({
+                                killer_name: kf.killerName(),
+                                victim_name: kf.victimName(),
+                                weapon: kf.weapon(),
+                                timestamp: kf.timestamp()
+                            });
+                        }
+                        
+                        return { type: 'delta', data: deltaStateData };
+                        
+                    default:
+                        return null;
+                }
+            } catch (e) {
+                console.error('Error parsing FlatBuffer:', e);
+                return null;
+            }
+        }
+
+        // Connection functions
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            document.getElementById('connectionUI').classList.add('hidden');
+            document.getElementById('gameContainer').classList.remove('hidden');
+            
+            signalingSocket = new WebSocket(url);
+            
+            signalingSocket.onopen = () => {
+                console.log('Connected to signaling server');
+                initializePeerConnection();
+                createOffer();
+            };
+            
+            signalingSocket.onmessage = async (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg.sdp) {
+                    try {
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                        if (msg.sdp.type === 'offer') {
+                            const answer = await peerConnection.createAnswer();
+                            await peerConnection.setLocalDescription(answer);
+                            signalingSocket.send(JSON.stringify({ 'sdp': peerConnection.localDescription }));
+                        }
+                    } catch (e) {
+                        console.error('Error setting remote description:', e);
+                    }
+                } else if (msg.ice) {
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(msg.ice));
+                    } catch (e) {
+                        // Benign errors often happen with ICE candidates
+                    }
+                }
+            };
+            
+            signalingSocket.onerror = (e) => {
+                console.error('Signaling error:', e);
+                resetConnection();
+            };
+            
+            signalingSocket.onclose = () => {
+                console.log('Disconnected from signaling server');
+                resetConnection();
+            };
+        }
+
+        function initializePeerConnection() {
+            const config = {
+                'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }]
+            };
+            
+            peerConnection = new RTCPeerConnection(config);
+            
+            peerConnection.onicecandidate = e => {
+                if (e.candidate) {
+                    signalingSocket.send(JSON.stringify({ 'ice': e.candidate }));
+                }
+            };
+            
+            dataChannel = peerConnection.createDataChannel('gameDataChannel', {
+                ordered: false,
+                maxRetransmits: 0
+            });
+            
+            setupDataChannelEvents(dataChannel);
+            
+            peerConnection.oniceconnectionstatechange = () => {
+                console.log('ICE state:', peerConnection.iceConnectionState);
+                if (['failed', 'disconnected', 'closed'].includes(peerConnection.iceConnectionState)) {
+                    resetConnection();
+                }
+            };
+            
+            peerConnection.ondatachannel = (event) => {
+                dataChannel = event.channel;
+                setupDataChannelEvents(dataChannel);
+            };
+        }
+
+        async function createOffer() {
+            try {
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                signalingSocket.send(JSON.stringify({ 'sdp': peerConnection.localDescription }));
+            } catch (e) {
+                console.error('Error creating offer:', e);
+            }
+        }
+
+        function setupDataChannelEvents(dcInstance) {
+            dcInstance.onopen = () => {
+                console.log('DataChannel opened');
+                pingStartTime = Date.now();
+            };
+            
+            dcInstance.onclose = () => {
+                console.log('DataChannel closed');
+                resetConnection();
+            };
+            
+            dcInstance.onmessage = (event) => {
+                try {
+                    if (pingStartTime > 10) {
+                        ping = Date.now() - pingStartTime;
+                        pingStartTime = Date.now();
+                    }
+                    
+                    if (event.data instanceof ArrayBuffer) {
+                        const parsed = parseFlatBufferMessage(event.data);
+                        
+                        if (parsed) {
+                            switch (parsed.type) {
+                                case 'welcome':
+                                    myPlayerId = parsed.playerId;
+                                    console.log('Welcome! Your ID:', myPlayerId);
+                                    break;
+                                case 'initial':
+                                    processServerUpdate(parsed.data, true);
+                                    break;
+                                case 'delta':
+                                    processServerUpdate(parsed.data, false);
+                                    break;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error processing message:', e);
+                }
+            };
+            
+            dcInstance.onerror = (e) => {
+                console.error('DataChannel error:', e);
+            };
+        }
+
+        function resetConnection() {
+            document.getElementById('connectionUI').classList.remove('hidden');
+            document.getElementById('gameContainer').classList.add('hidden');
+            
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            
+            // Clear game state
+            myPlayerId = null;
+            localPlayerState = null;
+            players.clear();
+            projectiles.clear();
+            pickups.clear();
+            walls.clear();
+            killFeed = [];
+            pendingInputs = [];
+            serverUpdates = [];
+            inputSequence = 0;
+            
+            // Clear PIXI containers
+            if (playerContainer) playerContainer.removeChildren();
+            if (projectileContainer) projectileContainer.removeChildren();
+            if (pickupContainer) pickupContainer.removeChildren();
+            if (wallGraphics) wallGraphics.clear();
+        }
+
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            console.log('Mobile client loaded');
+        });
+    </script>

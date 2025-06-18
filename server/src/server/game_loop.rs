@@ -14,8 +14,7 @@ use futures::executor::block_on;
 // Removed unused: use crate::core::types::{PlayerID, PlayerAoI, Vec2, GameEvent, CorePickupType, EventPriority};
 // Removed unused: use crate::core::types::EntityId; 
 // Removed unused: use std::collections::HashSet; 
-use crate::core::types::PlayerID;
-use crate::core::types::PlayerAoI;
+use crate::core::types::{PlayerID, PlayerAoI, Vec2};
 use tokio::time::sleep; // Add this import
 use std::collections::HashSet; // If not already imported for PlayerAoI
 use crate::core::constants::{AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS}; // Assuming these are in constants
@@ -61,6 +60,7 @@ impl MassiveGameServer {
         let delta_time_fixed = 1.0 / self.config.tick_rate as f32;
         let mut tick_timer = interval(TICK_DURATION);
         let mut last_tick_time = Instant::now();
+        let mut bots_spawned = false;
     
         info!("Game loop started. Tick rate: {}ms, Delta time: {}s", TICK_DURATION.as_millis(), delta_time_fixed);
     
@@ -69,6 +69,14 @@ impl MassiveGameServer {
             tick_timer.tick().await;
             
             let current_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+            
+            // Spawn bots after 10 frames to let server stabilize
+            if !bots_spawned && current_frame == 10 {
+                let initial_bot_count = self.target_bot_count.load(AtomicOrdering::Relaxed) as usize;
+                info!("Spawning {} bots after server stabilization (frame {})", initial_bot_count, current_frame);
+                self.spawn_initial_bots(initial_bot_count);
+                bots_spawned = true;
+            }
             
             // Log every 60 frames (1 second at 60 FPS)
             if current_frame % 60 == 0 {
@@ -179,13 +187,13 @@ impl MassiveGameServer {
             }
         }
         
-        // Update boundary snapshots less frequently
-        if frame % 10 == 0 {
-            let boundary_update_start = Instant::now();
-            self.world_partition_manager.update_all_boundary_snapshots();
-            trace!("[Frame {}] Boundary snapshots updated in {:?}", 
-                frame, boundary_update_start.elapsed());
-        }
+            // Update boundary snapshots less frequently (every 30 frames)
+            if frame % 30 == 0 {
+                let boundary_update_start = Instant::now();
+                self.world_partition_manager.update_all_boundary_snapshots();
+                trace!("[Frame {}] Boundary snapshots updated in {:?}", 
+                    frame, boundary_update_start.elapsed());
+            }
         
         trace!("[Frame {}] Finished synchronize_state in {:?}", 
             frame, sync_loop_start.elapsed());

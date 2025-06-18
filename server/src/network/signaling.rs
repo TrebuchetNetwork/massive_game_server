@@ -298,7 +298,12 @@ pub async fn handle_signaling_connection(
             let dc_for_async_block = Arc::clone(&dc_for_closure);
 
             let core_dc = Arc::new(crate::core::types::RTCDataChannel::new(Arc::clone(&dc_for_async_block)));
-            data_channels_map_on_open.insert(current_peer_id_on_open_cb.clone(), core_dc);
+            data_channels_map_on_open.insert(current_peer_id_on_open_cb.clone(), core_dc.clone());
+            info!("[{}]: Added data channel to map. Map size: {}, Map ptr: {:p}", 
+                current_peer_id_on_open_cb, 
+                data_channels_map_on_open.len(),
+                Arc::as_ptr(&data_channels_map_on_open)
+            );
 
             let initial_client_state = ClientState {
                 known_walls_sent: false,
@@ -306,6 +311,7 @@ pub async fn handle_signaling_connection(
                 ..Default::default()
             };
             client_states_map_on_open.write().insert(current_peer_id_on_open_cb.clone(), initial_client_state);
+            info!("[{}]: Added client state. Client states map size: {}", current_peer_id_on_open_cb, client_states_map_on_open.read().len());
 
             let username = format!("Player_{}", &current_peer_id_on_open_cb[..4.min(current_peer_id_on_open_cb.len())]);
             

@@ -22,7 +22,7 @@ pub const SPATIAL_INDEX_CELL_SIZE: f32 = 400.0;
 pub const PLAYER_SHARDS_COUNT: usize = 96; // Default, overridden by dev config
 pub const PLAYER_RADIUS: f32 = 15.0; // Player hitbox radius
 pub const PLAYER_BASE_SPEED: f32 = 150.0; // Base movement speed for players
-pub const MIN_PLAYERS_TO_START: usize = 2; // Added constant
+pub const MIN_PLAYERS_TO_START: usize = 1; // Reduced to 1 so single player can start with bots
 
 // Projectile constants
 // (Add if needed, e.g., default projectile speed, lifetime)
@@ -52,9 +52,9 @@ pub const SAFE_SPAWN_RADIUS_FROM_ENEMY: f32 = 300.0; // Example value, adjust as
 // Performance 
 pub const TARGET_TICK_MS: u64      = 16;   // 60 Hz
 pub const SLOW_TICK_LOG_MS: u64    = 12;   // warn if physics+logic exceed this
-pub const NET_IO_TIMEOUT_MS: u64   = 4;    // drop network read if it blocks
-pub const AI_TIMEOUT_MS: u64       = 5;    // fail-safe for runaway AI
-pub const FAN_OUT_TIMEOUT_MS: u64  = 4;    // serialization + broadcast
+pub const NET_IO_TIMEOUT_MS: u64   = 10;   // drop network read if it blocks
+pub const AI_TIMEOUT_MS: u64       = 10;   // fail-safe for runaway AI
+pub const FAN_OUT_TIMEOUT_MS: u64  = 50;   // serialization + broadcast (increased for initial state)
 pub const AI_UPDATE_STRIDE: u64    = 6;    // run AI every N frames (≈ 10 Hz)
 
 
@@ -67,4 +67,4 @@ pub const SNIPER_PROJECTILE_SPEED: f32 = 800.0;
 
 
 pub const AOI_RADIUS: f32 = 600.0; 
-pub const AOI_UPDATE_INTERVAL_SECS: f32 = 0.1; 
+pub const AOI_UPDATE_INTERVAL_SECS: f32 = 0.1;

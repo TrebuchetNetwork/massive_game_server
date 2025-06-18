@@ -16,17 +16,17 @@ use rand::Rng;
 use tracing::{debug, info, trace, warn};
 
 // Constants for Bot AI
-const BOT_UPDATE_RATE: u64 = 1; // Update every game frame
-const BOT_DECISION_INTERVAL: Duration = Duration::from_millis(1); // Much faster decisions
-const BOT_PATH_RECALCULATION_INTERVAL: Duration = Duration::from_millis(500); // More frequent path updates
-const BOT_MELEE_RANGE: f32 = 45.0;
-const BOT_MAX_NAVIGATION_TARGET_DISTANCE: f32 = 3000.0;
+const BOT_UPDATE_RATE: u64 = 2; // Update every 2 frames for more responsive AI
+const BOT_DECISION_INTERVAL: Duration = Duration::from_millis(25); // Very fast decision making
+const BOT_PATH_RECALCULATION_INTERVAL: Duration = Duration::from_millis(200); // More frequent path updates
+const BOT_MELEE_RANGE: f32 = 50.0;
+const BOT_MAX_NAVIGATION_TARGET_DISTANCE: f32 = 5000.0;
 
-// Dynamic Movement Constants
-const BOT_SPREAD_DISTANCE: f32 = 300.0; // Min distance bots try to maintain from allies
-const BOT_FLANK_DISTANCE: f32 = 400.0; // Distance to attempt flanking
-const BOT_RETREAT_HEALTH: i32 = 30; // Health threshold to retreat
-const BOT_AGGRESSION_RANGE: f32 = 800.0; // Range to aggressively pursue enemies
+// Dynamic Movement Constants - Ultra Aggressive
+const BOT_SPREAD_DISTANCE: f32 = 100.0; // Very close combat formations
+const BOT_FLANK_DISTANCE: f32 = 200.0; // Tighter flanking maneuvers
+const BOT_RETREAT_HEALTH: i32 = 5; // Fight until almost dead
+const BOT_AGGRESSION_RANGE: f32 = 5000.0; // Extreme aggression range
 
 // Tactical positions around the map
 const TACTICAL_POSITIONS: [(f32, f32); 12] = [
@@ -161,7 +161,101 @@ impl BotAISystem {
         let bot_id_str = bot_state.id.as_str();
         let bot_pos = Vec2::new(bot_state.x, bot_state.y);
         
-        // Check if we need health
+        // Check game mode for CTF logic
+        let match_info = server.match_info.read();
+        let is_ctf = match_info.game_mode == fb::GameModeType::CaptureTheFlag;
+        let ctf_flag_states = match_info.flag_states.clone();
+        drop(match_info);
+        
+        // CTF Priority Logic
+        if is_ctf && bot_state.team_id != 0 {
+            // If carrying enemy flag, rush to base!
+            if bot_state.is_carrying_flag_team_id != 0 && bot_state.is_carrying_flag_team_id != bot_state.team_id {
+                let home_base = MassiveGameServer::get_flag_base_position(bot_state.team_id);
+                bot_controller.behavior_state = BotBehaviorState::MovingToObjective;
+                bot_controller.target_position = Some(home_base);
+                bot_controller.target_enemy_id = None;
+                bot_controller.current_path.clear();
+                debug!("[Bot {} ({})]: Carrying enemy flag! Rushing to base at ({:.1}, {:.1})",
+                    bot_state.username, bot_id_str, home_base.x, home_base.y);
+                return;
+            }
+            
+            // Count bots on our team going for the flag
+            let mut team_bots_going_for_flag = 0;
+            let mut total_team_bots = 0;
+            let enemy_team = if bot_state.team_id == 1 { 2 } else { 1 };
+            let enemy_flag_pos = if let Some(enemy_flag_state) = ctf_flag_states.get(&enemy_team) {
+                Some(enemy_flag_state.position)
+            } else {
+                None
+            };
+            
+            // Count how many bots are going for the flag
+            for entry in server.bot_players.iter() {
+                let bot_id = entry.key();
+                let bot_ctrl = entry.value();
+                
+                if let Some(bot_player_state) = all_player_entities.get(bot_id) {
+                    if bot_player_state.team_id == bot_state.team_id && bot_player_state.alive {
+                        total_team_bots += 1;
+                        
+                        // Check if this bot is going for the enemy flag
+                        if let (Some(target_pos), Some(flag_pos)) = (bot_ctrl.target_position, enemy_flag_pos) {
+                            let dist_to_flag = ((target_pos.x - flag_pos.x).powi(2) + (target_pos.y - flag_pos.y).powi(2)).sqrt();
+                            if dist_to_flag < 100.0 && bot_ctrl.behavior_state == BotBehaviorState::MovingToObjective {
+                                team_bots_going_for_flag += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Calculate percentage of bots going for flag
+            let flag_capture_percentage = if total_team_bots > 0 {
+                team_bots_going_for_flag as f32 / total_team_bots as f32
+            } else {
+                0.0
+            };
+            
+            // More aggressive flag capture - at least 40% of bots go for the flag
+            let should_go_for_flag = flag_capture_percentage < 0.4 || rng.gen_bool(0.5);
+            
+            // Check if we should go for enemy flag
+            if let Some(enemy_flag_state) = ctf_flag_states.get(&enemy_team) {
+                if (enemy_flag_state.status == fb::FlagStatus::AtBase || enemy_flag_state.status == fb::FlagStatus::Dropped) 
+                   && should_go_for_flag {
+                    bot_controller.behavior_state = BotBehaviorState::MovingToObjective;
+                    bot_controller.target_position = Some(enemy_flag_state.position);
+                    bot_controller.target_enemy_id = None;
+                    bot_controller.current_path.clear();
+                    debug!("[Bot {} ({})]: Going for enemy flag at ({:.1}, {:.1}) (team flag capture rate: {:.1}%)",
+                        bot_state.username, bot_id_str, enemy_flag_state.position.x, enemy_flag_state.position.y, 
+                        flag_capture_percentage * 100.0);
+                    return;
+                }
+            }
+            
+            // Check if we should defend our flag
+            if let Some(our_flag_state) = ctf_flag_states.get(&bot_state.team_id) {
+                if our_flag_state.status == fb::FlagStatus::Carried && rng.gen_bool(0.6) { // 60% chance to hunt flag carrier
+                    // Find the enemy carrying our flag
+                    for (player_id, player_state) in all_player_entities {
+                        if player_state.is_carrying_flag_team_id == bot_state.team_id {
+                            bot_controller.behavior_state = BotBehaviorState::Engaging;
+                            bot_controller.target_enemy_id = Some(player_id.clone());
+                            bot_controller.target_position = Some(Vec2::new(player_state.x, player_state.y));
+                            bot_controller.current_path.clear();
+                            debug!("[Bot {} ({})]: Hunting enemy flag carrier {} at ({:.1}, {:.1})",
+                                bot_state.username, bot_id_str, player_state.username, player_state.x, player_state.y);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Check if we need health - but only if extremely low in aggressive mode
         let needs_health = bot_state.health < BOT_RETREAT_HEALTH;
         if needs_health {
             // Look for health pickups
@@ -177,8 +271,8 @@ impl BotAISystem {
             }
         }
         
-        // Find enemies and allies
-        let scan_radius = 1500.0;
+        // Find enemies and allies - increased scan radius
+        let scan_radius = 2500.0;
         let nearby_player_ids = server.spatial_index.query_nearby_players(
             bot_state.x, bot_state.y, scan_radius,
         );
@@ -480,16 +574,14 @@ impl BotAISystem {
                     2.0 * std::f32::consts::PI - (input.rotation - bot_state.rotation).abs() % (2.0 * std::f32::consts::PI)
                 );
                 
-                // If roughly facing target, add strafe for diagonal speed boost
-                if angle_diff < 0.5 {
-                    if rng.gen_bool(0.7) { // High chance for speed
-                        if dx > 0.0 {
-                            input.move_right = rng.gen_bool(0.5);
-                            input.move_left = !input.move_right;
-                        } else {
-                            input.move_left = rng.gen_bool(0.5);
-                            input.move_right = !input.move_left;
-                        }
+                // Constant strafing movement
+                if rng.gen_bool(0.8) { // Very high chance to strafe
+                    if dx > 0.0 {
+                        input.move_right = true;
+                        input.move_left = false;
+                    } else {
+                        input.move_left = true;
+                        input.move_right = false;
                     }
                 }
                 
@@ -531,9 +623,14 @@ impl BotAISystem {
                     }
                 }
             } else {
-                // Don't stop completely - keep some movement
-                if dist_sq > (20.0_f32).powi(2) {
-                    input.move_forward = true;
+                // Constant strafing movement around target
+                input.move_forward = true;
+                if dx > 0.0 {
+                    input.move_right = true;
+                    input.move_left = false;
+                } else {
+                    input.move_left = true;
+                    input.move_right = false;
                 }
                 
                 if !bot_controller.current_path.is_empty() {
@@ -577,18 +674,15 @@ impl BotAISystem {
                                 }
                             } else {
                                 // Aggressive shooting
-                                if rng.gen_bool(0.85) {
+                                if rng.gen_bool(0.95) {  // More aggressive shooting
                                     input.shooting = true;
                                 }
                             }
                             
-                            // ALWAYS strafe during combat for speed
-                            if rng.gen_bool(0.8) {
-                                if rng.gen_bool(0.5) {
-                                    input.move_left = true;
-                                } else {
-                                    input.move_right = true;
-                                }
+                            // More aggressive and direct movement during combat
+                            if rng.gen_bool(0.9) {  // Higher chance to strafe
+                                input.move_left = rng.gen_bool(0.5);
+                                input.move_right = !input.move_left;
                             }
                             
                             // Keep moving forward if not too close
