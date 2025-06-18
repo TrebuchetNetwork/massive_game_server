@@ -84,10 +84,9 @@ The static web client (`static_client/`) uses JavaScript code generated from the
 * The pre-generated JavaScript files are located in `static_client/generated_js/`.
 * If you modify the FlatBuffers schema (`server/schemas/game.fbs`), you need to regenerate these client-side files. Run the script:
     ```bash
-    cd scripts
-    ./generate_flatbuffers.sh
+    npm run generate:flatbuffers
     ```
-    This script uses `flatc` to generate TypeScript files and then (optionally, if `tsc` is installed) compiles them to JavaScript.
+    This script runs `scripts/generate_flatbuffers.sh`, which uses `flatc` to generate TypeScript files and then (optionally, if `tsc` is installed) compiles them to JavaScript.
 
 ## Configuration
 

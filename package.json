@@ -1,0 +1,7 @@
+{
+  "name": "massive-game-server-client-tools",
+  "version": "0.1.0",
+  "scripts": {
+    "generate:flatbuffers": "bash scripts/generate_flatbuffers.sh"
+  }
+}
