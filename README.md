@@ -42,8 +42,15 @@ Before you begin, ensure you have the following installed:
 * **Cargo:** `cargo 1.86.0` or newer (comes with Rust).
 * **FlatBuffers Compiler (`flatc`):** `flatc version 25.2.10` or newer.
     * macOS: `brew install flatbuffers`
-    * Ubuntu/Debian: `sudo apt-get install flatbuffers-compiler`
-    * Other: Visit the [FlatBuffers Website](https://google.github.io/flatbuffers/).
+    * Ubuntu/Debian: Package repositories often ship an outdated `flatc`.
+      Download the prebuilt binary instead:
+      ```bash
+      curl -L -o flatc.zip \
+        https://github.com/google/flatbuffers/releases/download/v25.2.10/Linux.flatc.binary.g%2B%2B-13.zip
+      unzip flatc.zip -d $HOME/.local/bin
+      export PATH="$HOME/.local/bin:$PATH"
+      ```
+    * Other platforms: Visit the [FlatBuffers Website](https://google.github.io/flatbuffers/) for download links.
 * **(Optional) Node.js & npm:** Required if you plan to modify client-side TypeScript and recompile.
 * **(Optional) TypeScript Compiler (`tsc`):** `Version 5.8.3` or newer (`npm install -g typescript`). Needed for `scripts/generate_flatbuffers.sh` if you modify the schema and want to recompile the client-side TypeScript.
 
