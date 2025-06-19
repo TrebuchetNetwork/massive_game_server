@@ -55,7 +55,7 @@ pub const SLOW_TICK_LOG_MS: u64    = 12;   // warn if physics+logic exceed this
 pub const NET_IO_TIMEOUT_MS: u64   = 10;   // drop network read if it blocks
 pub const AI_TIMEOUT_MS: u64       = 10;   // fail-safe for runaway AI
 pub const FAN_OUT_TIMEOUT_MS: u64  = 50;   // serialization + broadcast (increased for initial state)
-pub const AI_UPDATE_STRIDE: u64    = 6;    // run AI every N frames (≈ 10 Hz)
+pub const AI_UPDATE_STRIDE: u64    = 2;    // run AI every N frames (≈ 30 Hz) - more responsive bots
 
 
 

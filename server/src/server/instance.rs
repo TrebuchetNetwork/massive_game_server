@@ -106,6 +106,10 @@ pub struct BotController {
     pub behavior_state: BotBehaviorState,
     pub current_path: VecDeque<Vec2>,
     pub path_recalculation_timer: Instant,
+    // Stuck detection fields
+    pub last_position: Vec2,
+    pub stuck_timer: f32,
+    pub stuck_check_position: Vec2,
 }
 
 
@@ -495,24 +499,20 @@ impl MassiveGameServer {
                 .map(|(pos, _)| *pos)
                 .collect();
 
-            /*let spawn_pos = if !potential_spawns_for_team.is_empty() {
-                potential_spawns_for_team[rng.gen_range(0..potential_spawns_for_team.len())]
-            } else {
-                warn!("No spawn points found for team {} for bot {}. Using default random spawn.", team_id, bot_name);
-                // Use RespawnManager for a safer random spawn if no team spawns are available
-                self.respawn_manager.get_respawn_position(self, &Arc::new(bot_player_id_str.clone()), Some(team_id as u8), &[])
-            };*/
-
-            let spawn_pos = {
-                let center_x = 0.0; // Middle of the map
-                let center_y = 0.0;
-                let spread_radius = 500.0; // Adjust this for more spread
+            let spawn_pos = if !potential_spawns_for_team.is_empty() {
+                // Use team spawn point with some random offset
+                let base_spawn = potential_spawns_for_team[rng.gen_range(0..potential_spawns_for_team.len())];
+                let offset_radius = 50.0; // Small offset to prevent stacking
                 let angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
-                let distance = rng.gen_range(0.0..spread_radius);
+                let offset_x = offset_radius * angle.cos();
+                let offset_y = offset_radius * angle.sin();
                 Vec2::new(
-                    center_x + distance * angle.cos(),
-                    center_y + distance * angle.sin()
+                    (base_spawn.x + offset_x).clamp(WORLD_MIN_X + PLAYER_RADIUS, WORLD_MAX_X - PLAYER_RADIUS),
+                    (base_spawn.y + offset_y).clamp(WORLD_MIN_Y + PLAYER_RADIUS, WORLD_MAX_Y - PLAYER_RADIUS)
                 )
+            } else {
+                // Fallback: use respawn manager
+                self.respawn_manager.get_respawn_position(self, &Arc::new(bot_player_id_str.clone()), Some(team_id as u8), &[])
             };
 
             if let Some(player_id_arc) = self.player_manager.add_player(bot_player_id_str.clone(), bot_name.clone(), spawn_pos.x, spawn_pos.y) {
@@ -520,15 +520,18 @@ impl MassiveGameServer {
                     p_state.team_id = team_id as u8;
                 }
 
-                let bot_controller = BotController {
-                    player_id: player_id_arc.clone(),
-                    target_position: None,
-                    target_enemy_id: None,
-                    last_decision_time: Instant::now(),
-                    behavior_state: BotBehaviorState::Idle,
-                    current_path: VecDeque::new(),
-                    path_recalculation_timer: Instant::now(),
-                };
+            let bot_controller = BotController {
+                player_id: player_id_arc.clone(),
+                target_position: None,
+                target_enemy_id: None,
+                last_decision_time: Instant::now(),
+                behavior_state: BotBehaviorState::Idle,
+                current_path: VecDeque::new(),
+                path_recalculation_timer: Instant::now(),
+                last_position: Vec2::new(spawn_pos.x, spawn_pos.y),
+                stuck_timer: 0.0,
+                stuck_check_position: Vec2::new(spawn_pos.x, spawn_pos.y),
+            };
                 self.bot_players.insert(player_id_arc, bot_controller);
                 debug!("Spawned bot: {} (ID: {}) on team {} at ({:.1}, {:.1})", bot_name, bot_player_id_str, team_id, spawn_pos.x, spawn_pos.y);
             } else {
@@ -551,20 +554,44 @@ impl MassiveGameServer {
         player_state.last_processed_input_sequence = input.sequence;
         player_state.mark_field_changed(FIELD_POSITION_ROTATION);
 
-        let mut move_x_intent = 0.0_f32;
-        let mut move_y_intent = 0.0_f32;
+        // Calculate movement relative to player rotation
+        let mut forward_intent = 0.0_f32;
+        let mut strafe_intent = 0.0_f32;
 
-        if input.move_forward { move_y_intent -= 1.0; }
-        if input.move_backward { move_y_intent += 1.0; }
-        if input.move_left { move_x_intent -= 1.0; }
-        if input.move_right { move_x_intent += 1.0; }
+        if input.move_forward { forward_intent += 1.0; }
+        if input.move_backward { forward_intent -= 1.0; }
+        if input.move_left { strafe_intent -= 1.0; }
+        if input.move_right { strafe_intent += 1.0; }
 
         let effective_speed = if player_state.speed_boost_remaining > 0.0 { PLAYER_BASE_SPEED * MAX_PLAYER_SPEED_MULTIPLIER } else { PLAYER_BASE_SPEED };
 
-        if move_x_intent != 0.0 || move_y_intent != 0.0 {
-            let move_magnitude = (move_x_intent * move_x_intent + move_y_intent * move_y_intent).sqrt();
-            player_state.velocity_x = (move_x_intent / move_magnitude) * effective_speed;
-            player_state.velocity_y = (move_y_intent / move_magnitude) * effective_speed;
+        if forward_intent != 0.0 || strafe_intent != 0.0 {
+            // Normalize movement vector
+            let move_magnitude = (forward_intent * forward_intent + strafe_intent * strafe_intent).sqrt();
+            forward_intent /= move_magnitude;
+            strafe_intent /= move_magnitude;
+            
+            // Apply rotation to movement direction
+            let cos_rot = player_state.rotation.cos();
+            let sin_rot = player_state.rotation.sin();
+            
+            // Forward movement in the direction of rotation
+            let forward_x = cos_rot * forward_intent;
+            let forward_y = sin_rot * forward_intent;
+            
+            // Strafe movement perpendicular to rotation (90 degrees)
+            let strafe_x = -sin_rot * strafe_intent;
+            let strafe_y = cos_rot * strafe_intent;
+            
+            // Combine forward and strafe movement
+            player_state.velocity_x = (forward_x + strafe_x) * effective_speed;
+            player_state.velocity_y = (forward_y + strafe_y) * effective_speed;
+            
+            // Debug logging for bot movement
+            if player_state.username.starts_with("Bot") {
+                trace!("Bot {} velocity set to ({:.1}, {:.1}) from input forward={:.1} strafe={:.1} rot={:.2}", 
+                    player_state.username, player_state.velocity_x, player_state.velocity_y, forward_intent, strafe_intent, player_state.rotation);
+            }
         } else {
             player_state.velocity_x = 0.0;
             player_state.velocity_y = 0.0;
@@ -666,13 +693,25 @@ impl MassiveGameServer {
 
     pub async fn process_network_input(&self) {
         let current_server_time = Instant::now();
-        self.player_manager.for_each_player_mut(|_player_id, player_state| {
+        
+        // First, collect all player inputs with their IDs
+        let mut all_inputs = Vec::new();
+        self.player_manager.for_each_player_mut(|player_id, player_state| {
             player_state.clear_changed_fields();
-            let inputs_to_process: Vec<PlayerInputData> = player_state.input_queue.drain(..).collect();
-            for input in inputs_to_process {
-                self.apply_input_to_player_state(player_state, &input, current_server_time);
+            let inputs: Vec<PlayerInputData> = player_state.input_queue.drain(..).collect();
+            if !inputs.is_empty() {
+                all_inputs.push((player_id.clone(), inputs));
             }
         });
+        
+        // Then process each player's inputs
+        for (player_id, inputs) in all_inputs {
+            if let Some(mut player_state_entry) = self.player_manager.get_player_state_mut(&player_id) {
+                for input in inputs {
+                    self.apply_input_to_player_state(&mut *player_state_entry, &input, current_server_time);
+                }
+            }
+        }
     }
 
     pub async fn run_ai_update(&self) {
@@ -1097,9 +1136,20 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
         let old_x = player_state.x;
         let old_y = player_state.y;
         
+        // Debug logging for bot movement
+        if player_state.username.starts_with("Bot") && (player_state.velocity_x != 0.0 || player_state.velocity_y != 0.0) {
+            trace!("Bot {} physics: pos({:.1},{:.1}) vel({:.1},{:.1}) dt={:.3}", 
+                player_state.username, old_x, old_y, player_state.velocity_x, player_state.velocity_y, delta_time);
+        }
+        
         // Apply velocity
         player_state.x += player_state.velocity_x * delta_time;
         player_state.y += player_state.velocity_y * delta_time;
+        
+        // Log position after velocity application
+        if player_state.username.starts_with("Bot") && (old_x != player_state.x || old_y != player_state.y) {
+            trace!("Bot {} moved to ({:.1},{:.1})", player_state.username, player_state.x, player_state.y);
+        }
         
         // Quick bounds check first
         let half_radius = PLAYER_RADIUS;
@@ -2249,12 +2299,14 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
 
     fn reset_match_state(&self, match_info: &mut ServerMatchInfo) {
         match_info.time_remaining = 300.0;
-        match_info.team_scores.clear();
+        // Don't clear team scores - preserve them between rounds
+        // match_info.team_scores.clear();
         match_info.flag_states.clear();
         if match_info.match_state == fb::MatchStateType::Waiting && match_info.game_mode == fb::GameModeType::CaptureTheFlag {
             self.initialize_ctf_flags(match_info);
         }
         self.player_manager.for_each_player_mut(|_id, pstate| {
+            // Reset individual player stats but keep their contribution to team score
             pstate.score = 0;
             pstate.kills = 0;
             pstate.deaths = 0;
@@ -2501,25 +2553,26 @@ fn spawn_additional_bots(&self, count_to_add: usize) {
 
         let team_id = if team1_player_count <= team2_player_count { 1 } else { 2 };
 
-        // Use RespawnManager for bot spawning
-        let bot_player_id_for_respawn = Arc::new(bot_player_id_str.clone());
-        /*let spawn_pos = self.respawn_manager.get_respawn_position(
-            self, // Pass server instance
-            &bot_player_id_for_respawn,
-            Some(team_id as u8),
-            &[] // No specific enemy positions needed for initial bot spawn balancing
-        );*/
+        // Get spawn points for the selected team
+        let potential_spawns_for_team: Vec<Vec2> = team_spawn_areas.iter()
+            .filter(|(_, sp_team_id)| *sp_team_id == team_id as u8)
+            .map(|(pos, _)| *pos)
+            .collect();
 
-        let spawn_pos = {
-            let center_x = 0.0; // Middle of the map
-            let center_y = 0.0;
-            let spread_radius = 500.0; // Adjust this for more spread
+        let spawn_pos = if !potential_spawns_for_team.is_empty() {
+            // Use team spawn point with some random offset
+            let base_spawn = potential_spawns_for_team[rng.gen_range(0..potential_spawns_for_team.len())];
+            let offset_radius = 50.0; // Small offset to prevent stacking
             let angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
-            let distance = rng.gen_range(0.0..spread_radius);
+            let offset_x = offset_radius * angle.cos();
+            let offset_y = offset_radius * angle.sin();
             Vec2::new(
-                center_x + distance * angle.cos(),
-                center_y + distance * angle.sin()
+                (base_spawn.x + offset_x).clamp(WORLD_MIN_X + PLAYER_RADIUS, WORLD_MAX_X - PLAYER_RADIUS),
+                (base_spawn.y + offset_y).clamp(WORLD_MIN_Y + PLAYER_RADIUS, WORLD_MAX_Y - PLAYER_RADIUS)
             )
+        } else {
+            // Fallback: use respawn manager
+            self.respawn_manager.get_respawn_position(self, &Arc::new(bot_player_id_str.clone()), Some(team_id as u8), &[])
         };
 
 
@@ -2538,6 +2591,9 @@ fn spawn_additional_bots(&self, count_to_add: usize) {
                 behavior_state: BotBehaviorState::Idle,
                 current_path: VecDeque::new(),
                 path_recalculation_timer: Instant::now(),
+                last_position: Vec2::new(spawn_pos.x, spawn_pos.y),
+                stuck_timer: 0.0,
+                stuck_check_position: Vec2::new(spawn_pos.x, spawn_pos.y),
             };
             self.bot_players.insert(player_id_arc, bot_controller);
             debug!("[Bot Management] Spawned additional bot: {} (ID: {}) on team {} at ({:.1}, {:.1}). Total players: {}", bot_name, bot_player_id_str, team_id, spawn_pos.x, spawn_pos.y, self.player_manager.player_count());
@@ -3802,8 +3858,12 @@ fn build_events_fb<'a>(
                     } else if t2_score > t1_score {
                         winner_id_fb = Some(builder.create_string("2"));
                         winner_name_fb = Some(builder.create_string("Blue Team"));
-                    } else if t1_score != 0 || t2_score != 0 {
+                    } else if t1_score == t2_score && t1_score > 0 {
+                        // Only a draw if both teams have equal non-zero scores
                         winner_name_fb = Some(builder.create_string("Draw"));
+                    } else {
+                        // 0-0 is not a draw, it's just no winner yet
+                        winner_name_fb = None;
                     }
                 }
             }
