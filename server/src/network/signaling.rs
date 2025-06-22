@@ -75,9 +75,10 @@ pub struct ClientState {
     pub known_destroyed_wall_ids: HashSet<EntityId>,
     pub last_kill_feed_count_sent: usize,
     pub last_chat_message_seq_sent: u64,
-    pub last_broadcast_frame: u64,  // Add this
-    pub last_known_players: HashSet<Arc<String>>,  // Add this
-    pub last_known_wall_ids: Option<HashSet<EntityId>>,  // Add this
+    pub last_broadcast_frame: u64,
+    pub last_known_players: HashSet<Arc<String>>,
+    pub last_known_wall_ids: Option<HashSet<EntityId>>,
+    pub last_known_wall_states: HashMap<EntityId, (i32, i32)>,  // wall_id -> (current_health, max_health)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +103,7 @@ impl Default for ClientState {
             last_broadcast_frame: 0,
             last_known_players: HashSet::new(),
             last_known_wall_ids: None,
+            last_known_wall_states: HashMap::new(),
         }
     }
 }

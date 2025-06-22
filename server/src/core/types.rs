@@ -283,11 +283,12 @@ impl PlayerState {
         self.x = new_x; self.y = new_y;
         self.last_valid_position = (new_x, new_y);
         self.velocity_x = 0.0; self.velocity_y = 0.0;
-        self.weapon = ServerWeaponType::Pistol; // <-- ADD THIS LINE TO RESET TO PISTOL
+        self.weapon = ServerWeaponType::Pistol;
         self.ammo = Self::get_max_ammo_for_weapon(self.weapon);
         self.reload_progress = None;
         self.shield_current = 0; 
-        self.mark_field_changed(FIELD_HEALTH_ALIVE | FIELD_POSITION_ROTATION | FIELD_WEAPON_AMMO | FIELD_SHIELD);
+        self.is_carrying_flag_team_id = 0; // Reset flag carrying state on respawn
+        self.mark_field_changed(FIELD_HEALTH_ALIVE | FIELD_POSITION_ROTATION | FIELD_WEAPON_AMMO | FIELD_SHIELD | FIELD_FLAG);
     }
 
     pub fn update_timers(&mut self, delta_time: f32) {

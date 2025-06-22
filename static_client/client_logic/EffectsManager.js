@@ -54,60 +54,157 @@ export class EffectsManager {
     }
 
     processGameEvent(event, GameProtocol) {
-        if (!this.particlesEnabled && (event.event_type !== GameProtocol.GameEventType.PlayerDamageEffect)) return;
+        // Use window.GP if GameProtocol is not provided
+        const GP = GameProtocol || window.GP;
+        if (!GP) {
+            console.error('GameProtocol not available in processGameEvent');
+            return;
+        }
+        
+        // Check if GameEventType exists
+        if (!GP.GameEventType) {
+            console.warn('GP.GameEventType not available, trying numeric event types');
+            // If GameEventType enum is not available, use numeric values directly
+            // This allows the system to work even if the enum hasn't loaded yet
+            const eventTypes = {
+                BulletImpact: 0,
+                Explosion: 1,
+                WeaponFire: 2,
+                PlayerDamageEffect: 3,
+                WallDestroyed: 4,
+                PowerupActivated: 5,
+                FlagCaptured: 6,
+                FlagGrabbed: 7,
+                FlagDropped: 8,
+                FlagReturned: 9,
+                MeleeAttack: 10
+            };
+            
+            if (!this.particlesEnabled && event.event_type !== eventTypes.PlayerDamageEffect) return;
+            
+            const pos = { x: event.position?.x || 0, y: event.position?.y || 0 };
+            switch (event.event_type) {
+                case eventTypes.BulletImpact:
+                    this.createEnhancedBulletImpact(pos, event.weapon_type);
+                    if (this.audioManager) {
+                        this.audioManager.playSound('bulletImpact', pos, 0.5);
+                    }
+                    break;
+                case eventTypes.Explosion:
+                    this.createEnhancedExplosion(pos, event.value);
+                    if (this.audioManager) {
+                        this.audioManager.playSound('explosion', pos);
+                    }
+                    break;
+                case eventTypes.WeaponFire:
+                    this.createEnhancedMuzzleFlash(pos, event.weapon_type, event.instigator_id);
+                    if (this.audioManager) {
+                        this.audioManager.playWeaponSound(event.weapon_type, pos, event.instigator_id === window.myPlayerId);
+                    }
+                    break;
+                case eventTypes.PlayerDamageEffect:
+                    this.createEnhancedDamageNumbers(pos, event.value);
+                    if (this.audioManager) {
+                        this.audioManager.playSound('playerHit', pos);
+                    }
+                    break;
+                case eventTypes.WallDestroyed:
+                    this.createEnhancedWallDestructionEffect(pos);
+                    if (this.audioManager) {
+                        this.audioManager.playSound('explosion', pos, 0.7);
+                    }
+                    break;
+                case eventTypes.PowerupActivated:
+                    this.createEnhancedPowerupCollectEffect(pos);
+                    if (this.audioManager) {
+                        this.audioManager.playSound('powerupCollect', pos);
+                    }
+                    break;
+                case eventTypes.FlagCaptured:
+                    this.createEnhancedFlagCaptureEffect(pos);
+                    if (this.audioManager) {
+                        this.audioManager.playSound('flagCapture', pos);
+                    }
+                    break;
+                case eventTypes.FlagGrabbed:
+                    if (this.audioManager) this.audioManager.playSound('flagGrabbed', pos, 0.6);
+                    break;
+                case eventTypes.FlagDropped:
+                    if (this.audioManager) this.audioManager.playSound('flagDropped', pos, 0.5);
+                    break;
+                case eventTypes.FlagReturned:
+                    if (this.audioManager) this.audioManager.playSound('flagReturned', pos, 0.7);
+                    break;
+                case eventTypes.MeleeAttack:
+                    this.createMeleeEffect(pos, event.instigator_id);
+                    if (this.audioManager) {
+                        this.audioManager.playSound('meleeSwing', pos, 0.7);
+                    }
+                    break;
+            }
+            return;
+        }
+        
+        if (!this.particlesEnabled && (event.event_type !== GP.GameEventType.PlayerDamageEffect)) return;
 
-        const pos = { x: event.position.x, y: event.position.y };
+        const pos = { x: event.position?.x || 0, y: event.position?.y || 0 };
         switch (event.event_type) {
-            case GameProtocol.GameEventType.BulletImpact:
+            case GP.GameEventType.BulletImpact:
                 this.createEnhancedBulletImpact(pos, event.weapon_type);
                 if (this.audioManager) {
                     this.audioManager.playSound('bulletImpact', pos, 0.5);
                 }
                 break;
-            case GameProtocol.GameEventType.Explosion:
+            case GP.GameEventType.Explosion:
                 this.createEnhancedExplosion(pos, event.value);
                 if (this.audioManager) {
                     this.audioManager.playSound('explosion', pos);
                 }
                 break;
-            case GameProtocol.GameEventType.WeaponFire:
+            case GP.GameEventType.WeaponFire:
                 this.createEnhancedMuzzleFlash(pos, event.weapon_type, event.instigator_id);
                 if (this.audioManager) {
                     this.audioManager.playWeaponSound(event.weapon_type, pos, event.instigator_id === window.myPlayerId);
                 }
                 break;
-            case GameProtocol.GameEventType.PlayerDamageEffect:
+            case GP.GameEventType.PlayerDamageEffect:
                 this.createEnhancedDamageNumbers(pos, event.value);
                 if (this.audioManager) {
                     this.audioManager.playSound('playerHit', pos);
                 }
                 break;
-            case GameProtocol.GameEventType.WallDestroyed:
+            case GP.GameEventType.WallDestroyed:
                 this.createEnhancedWallDestructionEffect(pos);
                 if (this.audioManager) {
                     this.audioManager.playSound('explosion', pos, 0.7);
                 }
                 break;
-            case GameProtocol.GameEventType.PowerupActivated:
+            case GP.GameEventType.PowerupActivated:
                 this.createEnhancedPowerupCollectEffect(pos);
                 if (this.audioManager) {
                     this.audioManager.playSound('powerupCollect', pos);
                 }
                 break;
-            case GameProtocol.GameEventType.FlagCaptured:
+            case GP.GameEventType.FlagCaptured:
                 this.createEnhancedFlagCaptureEffect(pos);
                 if (this.audioManager) {
                     this.audioManager.playSound('flagCapture', pos);
                 }
                 break;
-            case GameProtocol.GameEventType.FlagGrabbed:
+            case GP.GameEventType.FlagGrabbed:
                 if (this.audioManager) this.audioManager.playSound('flagGrabbed', pos, 0.6);
                 break;
-            case GameProtocol.GameEventType.FlagDropped:
+            case GP.GameEventType.FlagDropped:
                  if (this.audioManager) this.audioManager.playSound('flagDropped', pos, 0.5);
                 break;
-            case GameProtocol.GameEventType.FlagReturned:
+            case GP.GameEventType.FlagReturned:
                 if (this.audioManager) this.audioManager.playSound('flagReturned', pos, 0.7);
+                break;
+            case GP.GameEventType.MeleeAttack:
+                this.createMeleeEffect(pos, event.instigator_id);
+                if (this.audioManager) {
+                    this.audioManager.playSound('meleeSwing', pos, 0.7);
+                }
                 break;
         }
     }
@@ -505,6 +602,132 @@ export class EffectsManager {
                 burst.destroy();
                 if (container.children.length === 0) {
                     container.destroy();
+                }
+            }
+        });
+    }
+
+    createMeleeEffect(position, instigatorId) {
+        const playerSprite = window.playerContainer?.children.find(s => s.playerId === instigatorId);
+        if (!playerSprite) return;
+
+        // Generate a random color for each melee attack
+        const meleeColors = [
+            0xFF0066, // Hot Pink
+            0x00FFFF, // Cyan
+            0xFF6600, // Orange
+            0x66FF00, // Lime
+            0xFF00FF, // Magenta
+            0x0066FF, // Blue
+            0xFFFF00, // Yellow
+            0x00FF66  // Spring Green
+        ];
+        const color = meleeColors[Math.floor(Math.random() * meleeColors.length)];
+
+        // Create melee slash effect
+        const slashContainer = new PIXI.Container();
+        slashContainer.position.set(position.x, position.y);
+        this.effectsContainer.addChild(slashContainer);
+
+        // Arc slash
+        const slash = new PIXI.Graphics();
+        slash.lineStyle(4, color, 0.9);
+        
+        // Draw arc based on player rotation
+        const playerRotation = playerSprite.rotation - Math.PI / 2;
+        const startAngle = playerRotation - Math.PI / 3;
+        const endAngle = playerRotation + Math.PI / 3;
+        const radius = 25;
+        
+        // Draw arc
+        for (let i = 0; i <= 20; i++) {
+            const angle = startAngle + (endAngle - startAngle) * (i / 20);
+            const x = Math.cos(angle) * radius;
+            const y = Math.sin(angle) * radius;
+            if (i === 0) {
+                slash.moveTo(x, y);
+            } else {
+                slash.lineTo(x, y);
+            }
+        }
+        
+        slashContainer.addChild(slash);
+
+        // Energy trails
+        for (let i = 0; i < 5; i++) {
+            const trail = new PIXI.Graphics();
+            trail.lineStyle(2, color, 0.5);
+            
+            const trailRadius = radius + i * 3;
+            const trailDelay = i * 30;
+            
+            this.animateEffect(trail, {
+                duration: 200,
+                delay: trailDelay,
+                onUpdate: (progress) => {
+                    trail.clear();
+                    trail.lineStyle(2, color, 0.5 * (1 - progress));
+                    
+                    const arcProgress = progress;
+                    const currentStart = startAngle + (endAngle - startAngle) * arcProgress * 0.3;
+                    const currentEnd = startAngle + (endAngle - startAngle) * (arcProgress * 0.7 + 0.3);
+                    
+                    for (let j = 0; j <= 10; j++) {
+                        const angle = currentStart + (currentEnd - currentStart) * (j / 10);
+                        const x = Math.cos(angle) * trailRadius;
+                        const y = Math.sin(angle) * trailRadius;
+                        if (j === 0) {
+                            trail.moveTo(x, y);
+                        } else {
+                            trail.lineTo(x, y);
+                        }
+                    }
+                },
+                onComplete: () => trail.destroy()
+            });
+            
+            slashContainer.addChild(trail);
+        }
+
+        // Impact particles
+        const particleCount = 8;
+        for (let i = 0; i < particleCount; i++) {
+            const particle = new PIXI.Graphics();
+            particle.beginFill(color, 0.8);
+            particle.drawCircle(0, 0, 2);
+            particle.endFill();
+            
+            const angle = startAngle + (endAngle - startAngle) * (i / (particleCount - 1));
+            const speed = 2 + Math.random() * 3;
+            const particleX = Math.cos(angle) * radius;
+            const particleY = Math.sin(angle) * radius;
+            particle.position.set(particleX, particleY);
+            
+            slashContainer.addChild(particle);
+            
+            this.animateEffect(particle, {
+                duration: 400,
+                onUpdate: (progress) => {
+                    particle.x = particleX + Math.cos(angle) * speed * progress * 20;
+                    particle.y = particleY + Math.sin(angle) * speed * progress * 20;
+                    particle.alpha = 0.8 * (1 - progress);
+                    particle.scale.set(1 - progress * 0.5);
+                },
+                onComplete: () => particle.destroy()
+            });
+        }
+
+        // Main slash animation
+        this.animateEffect(slash, {
+            duration: 150,
+            onUpdate: (progress) => {
+                slash.alpha = 1 - progress * 0.3;
+                slash.scale.set(1 + progress * 0.2);
+            },
+            onComplete: () => {
+                slash.destroy();
+                if (slashContainer.children.length === 0) {
+                    slashContainer.destroy();
                 }
             }
         });

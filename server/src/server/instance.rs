@@ -241,6 +241,7 @@ struct SharedBroadcastData {
     timestamp_ms: u64,
     events: Vec<GameEvent>,
     destroyed_wall_ids: Vec<EntityId>,
+    updated_walls: HashMap<EntityId, Wall>,
     chat_messages: Vec<ChatMessage>,
     match_info_snapshot: MatchInfoSnapshot,
     kill_feed_snapshot: Vec<ServerKillFeedEntry>,
@@ -383,15 +384,19 @@ impl MassiveGameServer {
         // Initialize wall spatial index
         let wall_spatial_index = Arc::new(WallSpatialIndex::new());
         
-        // Build initial wall spatial index from all walls
-        let mut all_walls_for_index = Vec::new();
+        // Build initial wall spatial index from ACTIVE walls only
+        let mut active_walls_for_index = Vec::new();
         for partition in world_partition_manager.get_partitions_for_processing() {
             for wall_entry in partition.all_walls_in_partition.iter() {
-                all_walls_for_index.push(wall_entry.value().clone());
+                let wall = wall_entry.value();
+                // Only include non-destructible walls and active destructible walls
+                if !wall.is_destructible || (wall.is_destructible && wall.current_health > 0) {
+                    active_walls_for_index.push(wall.clone());
+                }
             }
         }
-        wall_spatial_index.rebuild(&all_walls_for_index, 0);
-        info!("Wall spatial index initialized with {} walls.", wall_spatial_index.size());
+        wall_spatial_index.rebuild(&active_walls_for_index, 0);
+        info!("Wall spatial index initialized with {} active walls.", wall_spatial_index.size());
 
         let server = MassiveGameServer {
             config,
@@ -736,15 +741,18 @@ impl MassiveGameServer {
         } else { Vec::new() }
     } else { Vec::new() };
     
-    // Update wall spatial index if walls were respawned or if it needs periodic rebuild
+    // Update wall spatial index if walls were respawned, destroyed, or if it needs periodic rebuild
+    let destroyed_walls_count = self.destroyed_wall_ids_this_tick.read().len();
     let needs_wall_index_rebuild = !respawned_walls.is_empty() || 
+                                   destroyed_walls_count > 0 ||
                                    self.wall_spatial_index.needs_rebuild(frame, 150); // Rebuild every 150 frames
     
     if needs_wall_index_rebuild {
         let index_rebuild_start = Instant::now();
         let active_walls = self.collect_active_walls_optimized();
         self.wall_spatial_index.rebuild(&active_walls, frame);
-        debug!("[Frame {}] Wall spatial index rebuilt in {:?}", frame, index_rebuild_start.elapsed());
+        debug!("[Frame {}] Wall spatial index rebuilt in {:?} (respawned: {}, destroyed: {})", 
+            frame, index_rebuild_start.elapsed(), respawned_walls.len(), destroyed_walls_count);
     }
         
         // Stage 2: Collect Active Walls
@@ -818,6 +826,21 @@ impl MassiveGameServer {
                 }
             }
         }
+        
+        // After respawning walls, update all player AOIs
+        if !respawned_ids.is_empty() {
+            info!("[Wall Respawn] Updating player AOIs for {} respawned walls", respawned_ids.len());
+            for mut aoi_entry in self.player_aois.iter_mut() {
+                let aoi = aoi_entry.value_mut();
+                for wall_id in &respawned_ids {
+                    if !aoi.visible_walls.contains(wall_id) {
+                        aoi.visible_walls.insert(*wall_id);
+                        debug!("[Wall Respawn] Added respawned wall {} to player's AOI", wall_id);
+                    }
+                }
+            }
+        }
+        
         respawned_ids
     }
     
@@ -889,9 +912,35 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
     };
 
     // Now filter these structural walls for "activeness"
-    let active_walls = structural_walls_from_cache.into_iter()
-    .filter(|wall| !wall.is_destructible || (wall.is_destructible && wall.current_health > 0))
-    .collect::<Vec<Wall>>();
+    // IMPORTANT: For destructible walls, we need to check their CURRENT health from partitions, not cached health
+    let mut active_walls = Vec::new();
+    
+    for cached_wall in structural_walls_from_cache {
+        if !cached_wall.is_destructible {
+            // Non-destructible walls are always active
+            active_walls.push(cached_wall);
+        } else {
+            // For destructible walls, check current health from the partition
+            let mut wall_is_active = false;
+            let wall_center_x = cached_wall.x + cached_wall.width / 2.0;
+            let wall_center_y = cached_wall.y + cached_wall.height / 2.0;
+            let partition_idx = self.world_partition_manager.get_partition_index_for_point(wall_center_x, wall_center_y);
+            
+            if let Some(partition) = self.world_partition_manager.get_partition(partition_idx) {
+                if let Some(current_wall) = partition.get_wall(cached_wall.id) {
+                    if current_wall.current_health > 0 {
+                        // Use the current wall state, not the cached one
+                        active_walls.push(current_wall);
+                        wall_is_active = true;
+                    }
+                }
+            }
+            
+            if !wall_is_active {
+                debug!("[Frame {}] Filtering out destroyed wall {} (health: 0)", frame, cached_wall.id);
+            }
+        }
+    }
 
     // This log will show the count of *active* walls
     debug!("[Frame {}] Collected {} active walls.", frame, active_walls.len());
@@ -1564,6 +1613,9 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
 
     
     async fn apply_projectile_results(&self, results: ProjectileResults) {
+        // Track if we need to rebuild spatial index
+        let mut walls_destroyed = false;
+        
         // Process hits - reuse existing game logic
         for (attacker_id, target_id, damage, weapon) in results.hits {
             if let Some(mut target_state_entry) = self.player_manager.get_player_state_mut(&target_id) {
@@ -1580,6 +1632,16 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                     }, EventPriority::Normal);
                     
                     if died {
+                        // Store flag carry state before clearing it
+                        let victim_was_carrying_flag_id = target_state_entry.is_carrying_flag_team_id;
+                        let victim_username = target_state_entry.username.clone();
+                        
+                        // Clear flag carry state on the victim
+                        if victim_was_carrying_flag_id != 0 {
+                            target_state_entry.is_carrying_flag_team_id = 0;
+                            target_state_entry.mark_field_changed(FIELD_FLAG);
+                        }
+                        
                         // Handle death (existing logic from run_physics_update)
                         if attacker_id != target_id {
                             // Get team information for friendly fire check
@@ -1596,7 +1658,7 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                                     // Friendly fire: double negative score
                                     attacker_state_entry.score -= 200;
                                     info!("Friendly fire penalty: {} killed teammate {}, -200 score", 
-                                          attacker_state_entry.username, target_state_entry.username);
+                                          attacker_state_entry.username, victim_username);
                                 } else {
                                     // Normal kill: positive score
                                     attacker_state_entry.score += 100;
@@ -1637,16 +1699,44 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                         }, EventPriority::High);
                         
                         // Update kill feed
+                        let killer_username = self.player_manager.get_player_state(&attacker_id)
+                            .map_or_else(|| "World".to_string(), |p| p.username.clone());
+                        
                         let mut kill_feed_guard = self.kill_feed.write();
                         kill_feed_guard.push_back(ServerKillFeedEntry {
-                            killer_name: self.player_manager.get_player_state(&attacker_id)
-                                .map_or_else(|| "World".to_string(), |p| p.username.clone()),
-                            victim_name: target_state_entry.username.clone(),
+                            killer_name: killer_username.clone(),
+                            victim_name: victim_username.clone(),
                             weapon,
                             timestamp: self.frame_counter.load(AtomicOrdering::Relaxed),
                         });
                         if kill_feed_guard.len() > MAX_KILL_FEED_HISTORY {
                             kill_feed_guard.pop_front();
+                        }
+                        drop(kill_feed_guard);
+                        
+                        // Handle flag dropping if victim was carrying a flag
+                        if victim_was_carrying_flag_id != 0 {
+                            let mut match_info_guard = self.match_info.write();
+                            
+                            // Drop the flag
+                            if let Some(flag_state) = match_info_guard.flag_states.get_mut(&victim_was_carrying_flag_id) {
+                                flag_state.status = fb::FlagStatus::Dropped;
+                                flag_state.position = target_pos;
+                                flag_state.carrier_id = None;
+                                flag_state.respawn_timer = 30.0;
+                                
+                                // Push flag dropped event after releasing match_info lock
+                                drop(match_info_guard);
+                                
+                                self.global_game_events.push(GameEvent::FlagDropped {
+                                    player_id: target_id.clone(), 
+                                    flag_team_id: victim_was_carrying_flag_id, 
+                                    position: target_pos
+                                }, EventPriority::High);
+                                
+                                info!("(Projectile Kill) Flag of team {} dropped at ({:.1}, {:.1}) by {} killing {}", 
+                                      victim_was_carrying_flag_id, target_pos.x, target_pos.y, killer_username, victim_username);
+                            }
                         }
                     }
                 }
@@ -1688,7 +1778,7 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
         for partition_arc in self.world_partition_manager.get_partitions_for_processing() {
             partition_arc.all_walls_in_partition.iter().for_each(|wall_entry| {
                 let wall = wall_entry.value();
-                // We send all walls, client will filter rendering based on health for destructible ones
+                // Send ALL walls including destroyed ones - client needs to render them as rubble/obstacles
                 all_walls.push(wall.clone());
             });
         }
@@ -1732,9 +1822,19 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                         match_info_guard.match_state = fb::MatchStateType::Ended;
                         info!("Match ended! (Time up)");
                         if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch || match_info_guard.game_mode == fb::GameModeType::CaptureTheFlag {
-                            let _team1_score = match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
-                            let _team2_score = match_info_guard.team_scores.get(&2).cloned().unwrap_or(0);
-                            // Winner determination logic would go here
+                            let team1_score = match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
+                            let team2_score = match_info_guard.team_scores.get(&2).cloned().unwrap_or(0);
+                            
+                            // Determine and announce the winner
+                            if team1_score > team2_score {
+                                info!("Team 1 wins with {} points vs Team 2's {} points!", team1_score, team2_score);
+                            } else if team2_score > team1_score {
+                                info!("Team 2 wins with {} points vs Team 1's {} points!", team2_score, team1_score);
+                            } else if team1_score == team2_score && team1_score > 0 {
+                                info!("Match ended in a draw! Both teams scored {} points.", team1_score);
+                            } else {
+                                info!("Match ended with no winner (0-0).");
+                            }
                         }
                     }
                 }
@@ -1853,11 +1953,26 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
 
                 if player_state_snapshot.is_carrying_flag_team_id == 0 {
                     for flag_state in match_info_write_guard.flag_states.values_mut() {
-                        if flag_state.status == fb::FlagStatus::AtBase || (flag_state.status == fb::FlagStatus::Dropped && flag_state.respawn_timer <= 0.0) {
+                        // Check if flag can be interacted with
+                        let can_interact = match flag_state.status {
+                            fb::FlagStatus::AtBase => true,
+                            fb::FlagStatus::Dropped => {
+                                // Enemy can pick up after timer expires, own team can return immediately
+                                if flag_state.team_id == player_state_snapshot.team_id {
+                                    true // Own team can always return their dropped flag
+                                } else {
+                                    flag_state.respawn_timer <= 0.0 // Enemy must wait for timer
+                                }
+                            },
+                            _ => false
+                        };
+                        
+                        if can_interact {
                             let dx = player_state_snapshot.x - flag_state.position.x;
                             let dy = player_state_snapshot.y - flag_state.position.y;
                             if (dx * dx + dy * dy) < (PICKUP_COLLECTION_RADIUS * PICKUP_COLLECTION_RADIUS) {
                                 if flag_state.team_id != player_state_snapshot.team_id {
+                                    // Enemy picking up flag
                                     flag_state.status = fb::FlagStatus::Carried;
                                     flag_state.carrier_id = Some(player_id_arc.clone());
                                     if let Some(mut p_state_mut_entry) = self.player_manager.get_player_state_mut(player_id_arc) {
@@ -1869,6 +1984,7 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                                     info!("Player {} grabbed flag of team {}", player_state_snapshot.username, flag_state.team_id);
                                     break;
                                 } else if flag_state.status == fb::FlagStatus::Dropped && flag_state.team_id == player_state_snapshot.team_id {
+                                    // Own team returning flag
                                     flag_state.status = fb::FlagStatus::AtBase;
                                     flag_state.position = Self::get_flag_base_position(flag_state.team_id);
                                     flag_state.carrier_id = None;
@@ -2337,6 +2453,11 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
             .cloned()
             .collect();
         
+        // Snapshot updated walls
+        let updated_walls = self.updated_walls_this_tick
+            .read()
+            .clone();
+        
         // Snapshot chat messages
         let chat_messages = self.chat_messages_queue
             .read()
@@ -2367,6 +2488,7 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
             timestamp_ms: current_timestamp_ms,
             events,
             destroyed_wall_ids,
+            updated_walls,
             chat_messages,
             match_info_snapshot,
             kill_feed_snapshot,
@@ -2810,6 +2932,35 @@ pub async fn build_delta_state_optimized(
             None
         };
         
+        // Build updated walls (respawned walls)
+        let mut updated_walls_vec = Vec::new();
+        
+        // Get updated walls from shared data (not from instance to avoid race condition)
+        for (wall_id, wall_data) in shared_data.updated_walls.iter() {
+            // Check if this wall is visible to the player
+            if player_aoi.visible_walls.contains(wall_id) {
+                info!("[{}] Sending updated wall {} to client (health: {}/{})", peer_id_str, wall_id, wall_data.current_health, wall_data.max_health);
+                let id_fb = builder.create_string(&wall_data.id.to_string());
+                let wall_fb = fb::Wall::create(&mut builder, &fb::WallArgs {
+                    id: Some(id_fb),
+                    x: wall_data.x,
+                    y: wall_data.y,
+                    width: wall_data.width,
+                    height: wall_data.height,
+                    is_destructible: wall_data.is_destructible,
+                    current_health: wall_data.current_health,
+                    max_health: wall_data.max_health,
+                });
+                updated_walls_vec.push(wall_fb);
+            }
+        }
+        
+        let updated_walls_fb = if !updated_walls_vec.is_empty() {
+            Some(builder.create_vector(&updated_walls_vec))
+        } else {
+            None
+        };
+        
         // Build delta state message with correct field names
         let delta_state_args = fb::DeltaStateMessageArgs {
             players: Some(players_fb),
@@ -2826,7 +2977,7 @@ pub async fn build_delta_state_optimized(
             destroyed_wall_ids: destroyed_wall_ids_fb,
             flag_states: None,
             removed_player_ids: Some(removed_players_fb),
-            updated_walls: None,
+            updated_walls: updated_walls_fb,
         };
         
         let delta_state = fb::DeltaStateMessage::create(&mut builder, &delta_state_args);
@@ -3344,22 +3495,30 @@ fn build_events_fb<'a>(
 
             let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
 
-            // 1. Walls: Get all structural walls from the cache
-            let all_structural_walls: Vec<Wall> = match CACHED_WALLS.get() {
-                Some(cache_entry_arc) => {
-                    let guard = cache_entry_arc.read();
-                    info!("[Frame {} Client {}] InitialState: Getting all {} structural walls from cache (cache frame {}).",
-                          frame, peer_id_str, guard.1.len(), guard.0);
-                    guard.1.clone()
+            // 1. Walls: Get CURRENT wall states from partitions, not cached initial states
+            // IMPORTANT: We need to get the CURRENT state of walls, not the cached initial state
+            let mut active_walls_to_send = Vec::new();
+            
+            // Iterate through all partitions to get current wall states
+            for partition in self.world_partition_manager.get_partitions_for_processing() {
+                for wall_entry in partition.all_walls_in_partition.iter() {
+                    let wall = wall_entry.value();
+                    
+                    // Only send non-destructible walls and active destructible walls
+                    if !wall.is_destructible || (wall.is_destructible && wall.current_health > 0) {
+                        active_walls_to_send.push(wall.clone());
+                    } else {
+                        debug!("[Frame {} Client {}] InitialState: Filtering out destroyed wall {} (health: {}/{})", 
+                              frame, peer_id_str, wall.id, wall.current_health, wall.max_health);
+                    }
                 }
-                None => {
-                    error!("[Frame {} Client {}] InitialState: CRITICAL - Wall cache not initialized! Sending empty wall list.", frame, peer_id_str);
-                    Vec::new()
-                }
-            };
+            }
+            
+            info!("[Frame {} Client {}] InitialState: Collected {} active walls (filtered from all partitions).", 
+                  frame, peer_id_str, active_walls_to_send.len());
 
-            let mut walls_fb_vec = Vec::with_capacity(all_structural_walls.len().min(MAX_INITIAL_WALLS));
-            for wall_data in all_structural_walls.iter().take(MAX_INITIAL_WALLS) {
+            let mut walls_fb_vec = Vec::with_capacity(active_walls_to_send.len().min(MAX_INITIAL_WALLS));
+            for wall_data in active_walls_to_send.iter().take(MAX_INITIAL_WALLS) {
                 let id_fb = fb_safe_str(&mut builder, &wall_data.id.to_string());
                 walls_fb_vec.push(fb::Wall::create(&mut builder, &fb::WallArgs{
                     id: Some(id_fb), x: wall_data.x, y: wall_data.y, width: wall_data.width, height: wall_data.height,
@@ -3861,10 +4020,8 @@ fn build_events_fb<'a>(
                     } else if t1_score == t2_score && t1_score > 0 {
                         // Only a draw if both teams have equal non-zero scores
                         winner_name_fb = Some(builder.create_string("Draw"));
-                    } else {
-                        // 0-0 is not a draw, it's just no winner yet
-                        winner_name_fb = None;
                     }
+                    // If 0-0, leave winner_name_fb as None (no winner)
                 }
             }
             Some(fb::MatchInfo::create(&mut builder, &fb::MatchInfoArgs{
@@ -3921,11 +4078,13 @@ fn build_events_fb<'a>(
         }
         let destroyed_walls_fb = if !new_destroyed_wall_ids_fb_vec.is_empty() { Some(builder.create_vector(&new_destroyed_wall_ids_fb_vec)) } else { None };
 
-        // Updated Walls (Respawned walls)
-        let updated_walls_read_guard = self.updated_walls_this_tick.read();
+        // Updated Walls (Respawned walls and walls newly in AoI)
         let mut updated_walls_fb_vec = Vec::new();
         if let Some(aoi_entry) = self.player_aois.get(peer_id_str) {
             let p_aoi = aoi_entry.value();
+            
+            // First, check walls from updated_walls_this_tick
+            let updated_walls_read_guard = self.updated_walls_this_tick.read();
             for (wall_id, wall_data) in updated_walls_read_guard.iter() {
                 if p_aoi.visible_walls.contains(wall_id) {
                     let id_fb = builder.create_string(&wall_data.id.to_string());
@@ -3937,16 +4096,73 @@ fn build_events_fb<'a>(
                         current_health: wall_data.current_health,
                         max_health: wall_data.max_health,
                     }));
-                    client_state.known_destroyed_wall_ids.remove(wall_id); // Fix 3.1
+                    client_state.known_destroyed_wall_ids.remove(wall_id);
+                    // Update client's known wall state
+                    client_state.last_known_wall_states.insert(*wall_id, (wall_data.current_health, wall_data.max_health));
                 }
             }
+            drop(updated_walls_read_guard);
+            
+            // Second, check for walls that are newly visible or have changed state
+            for visible_wall_id in &p_aoi.visible_walls {
+                // Skip if already added from updated_walls_this_tick
+                if updated_walls_fb_vec.iter().any(|_| false) { // This check is placeholder, would need wall ID in fb::Wall
+                    continue;
+                }
+                
+                // Get current wall state from partitions
+                let mut wall_found = false;
+                for partition in self.world_partition_manager.get_partitions_for_processing() {
+                    if let Some(wall) = partition.get_wall(*visible_wall_id) {
+                        wall_found = true;
+                        
+                        // Check if client knows about this wall's current state
+                        let should_send = if let Some(&(known_health, known_max_health)) = client_state.last_known_wall_states.get(visible_wall_id) {
+                            // Send if health changed or wall was destroyed/respawned
+                            known_health != wall.current_health || known_max_health != wall.max_health
+                        } else {
+                            // Client doesn't know about this wall yet
+                            true
+                        };
+                        
+                        if should_send {
+                            let id_fb = builder.create_string(&wall.id.to_string());
+                            updated_walls_fb_vec.push(fb::Wall::create(&mut builder, &fb::WallArgs{
+                                id: Some(id_fb),
+                                x: wall.x, y: wall.y,
+                                width: wall.width, height: wall.height,
+                                is_destructible: wall.is_destructible,
+                                current_health: wall.current_health,
+                                max_health: wall.max_health,
+                            }));
+                            
+                            // Update client's known state
+                            client_state.last_known_wall_states.insert(*visible_wall_id, (wall.current_health, wall.max_health));
+                            
+                            // Remove from destroyed list if it was there
+                            if wall.current_health > 0 {
+                                client_state.known_destroyed_wall_ids.remove(visible_wall_id);
+                            }
+                        }
+                        break;
+                    }
+                }
+                
+                // If wall not found in partitions, it might have been removed
+                if !wall_found {
+                    client_state.last_known_wall_states.remove(visible_wall_id);
+                }
+            }
+            
+            // Clean up walls that are no longer visible
+            client_state.last_known_wall_states.retain(|wall_id, _| p_aoi.visible_walls.contains(wall_id));
         }
+        
         let updated_walls_fb = if !updated_walls_fb_vec.is_empty() {
             Some(builder.create_vector(&updated_walls_fb_vec))
         } else {
             None
         };
-        drop(updated_walls_read_guard);
 
 
         // Removed Player IDs

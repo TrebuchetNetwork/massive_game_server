@@ -23,13 +23,52 @@
         .log-send { background-color: #fef3c7; color: #92400e; }
         .log-receive { background-color: #e0e7ff; color: #3730a3; }
 
-        #gameContainer { width: 100%; height: 100%; position: relative; overflow: hidden; border-radius: 8px; }
-        #pixiContainer canvas { border-radius: 8px; }
+        /* Fullscreen game container */
+        #gameContainer { 
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            z-index: 1;
+        }
+        #pixiContainer { 
+            width: 100%;
+            height: 100%;
+        }
+        #pixiContainer canvas { 
+            display: block;
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        /* UI Overlay */
+        .ui-overlay {
+            position: fixed;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .ui-overlay > * {
+            pointer-events: auto;
+        }
+
+        /* Controls Panel */
+        .controls-panel {
+            position: fixed;
+            left: 20px;
+            top: 20px;
+            background-color: rgba(31, 41, 55, 0.9);
+            border-radius: 8px;
+            padding: 15px;
+            max-width: 300px;
+            backdrop-filter: blur(10px);
+        }
 
         .kill-feed { position: absolute; top: 10px; right: 10px; width: 280px; background-color: rgba(31, 41, 55, 0.85); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         .kill-entry { color: #E5E7EB; font-size: 13px; margin-bottom: 5px; animation: fadeIn 0.5s ease-out forwards; }
 
-        .chat-display { position: absolute; bottom: 10px; left: 10px; width: 350px; background-color: rgba(31, 41, 55, 0.8); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 -2px 5px rgba(0,0,0,0.2); }
+        .chat-display { position: absolute; bottom: 10px; left: 10px; width: 350px; background-color: rgba(31, 41, 55, 0.8); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 -2px 5px rgba(0,0,0,0.2); z-index: 30; }
         .chat-entry { color: #D1D5DB; font-size: 12px; margin-bottom: 3px; }
         .chat-entry .username { font-weight: bold; }
 
@@ -80,18 +119,30 @@
         ::-webkit-scrollbar-thumb:hover { background: #718096; }
     </style>
 </head>
-<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-2 sm:p-4">
+<body class="bg-gray-900 text-white min-h-screen overflow-hidden">
 
-    <div class="w-full max-w-7xl bg-gray-800 p-4 sm:p-6 rounded-lg shadow-xl">
-        <div class="flex justify-between items-center mb-4">
-            <h1 class="text-2xl sm:text-3xl font-bold text-indigo-400">2D Shooter - Unified Advanced</h1>
-            <button id="settingsButton" class="p-2 bg-gray-700 hover:bg-gray-600 rounded-md text-white">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-            </button>
-        </div>
+    <!-- Game Container (Fullscreen) -->
+    <div id="gameContainer">
+        <div id="pixiContainer"></div>
+        <div id="fpsCounter" class="fps-counter hidden">FPS: <span id="fpsValue">0</span></div>
+        <div id="killFeed" class="kill-feed hidden"></div>
+        <div id="chatDisplay" class="chat-display hidden"></div>
+        <div id="matchInfo" class="match-info hidden"></div>
+        <div id="minimapContainer" style="position: absolute; bottom: 10px; right: 10px; border: 1px solid #4B5563; border-radius: 6px; background-color: rgba(31, 41, 55, 0.7);"></div>
+    </div>
 
-        <div class="flex flex-col lg:flex-row gap-4 sm:gap-6">
-            <div class="w-full lg:w-1/3 xl:w-1/4 space-y-4">
+    <!-- UI Overlay -->
+    <div class="ui-overlay">
+        <!-- Controls Panel -->
+        <div class="controls-panel">
+            <div class="flex justify-between items-center mb-3">
+                <h1 class="text-lg font-bold text-indigo-400">2D Shooter</h1>
+                <button id="settingsButton" class="p-1 bg-gray-700 hover:bg-gray-600 rounded-md text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                </button>
+            </div>
+
+            <div class="space-y-3">
                 <div>
                     <label for="wsUrl" class="block text-sm font-medium text-gray-300 mb-1">WebSocket URL:</label>
                     <input type="text" id="wsUrl" value="ws://localhost:8080/ws" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
@@ -141,23 +192,11 @@
                     </div>
                 </div>
 
-                <div class="mt-6">
-                    <h2 class="text-xl font-semibold mb-3 text-gray-300">Log:</h2>
-                    <div id="log" class="h-48 lg:h-64 xl:h-80 overflow-y-auto bg-gray-700 p-4 rounded-md border border-gray-600 text-sm">
+                <details class="mt-4">
+                    <summary class="cursor-pointer text-sm text-gray-400 hover:text-gray-300">Debug Log</summary>
+                    <div id="log" class="h-48 overflow-y-auto bg-gray-700 p-4 rounded-md border border-gray-600 text-xs mt-2">
                     </div>
-                </div>
-            </div>
-
-            <div id="gameArea" class="w-full lg:w-2/3 xl:w-3/4 aspect-[4/3] bg-gray-700 rounded-lg shadow-inner">
-                <div id="gameContainer">
-                    <div id="pixiContainer" style="width: 100%; height: 100%;"></div>
-                    <div id="fpsCounter" class="fps-counter hidden">FPS: <span id="fpsValue">0</span></div>
-                    <div id="killFeed" class="kill-feed hidden"></div>
-                    <div id="chatDisplay" class="chat-display hidden"></div>
-                    <div id="matchInfo" class="match-info hidden"></div>
-                    <div id="minimapContainer" style="position: absolute; bottom: 10px; right: 10px; border: 1px solid #4B5563; border-radius: 6px; background-color: rgba(31, 41, 55, 0.7);"></div>
-                </div>
-            </div>
+                </details>
         </div>
     </div>
 
@@ -265,6 +304,15 @@
             [GP.WeaponType.Melee]: 0xD1D5DB
         };
 
+        // Weapon velocity data (pixels per second)
+        const weaponVelocities = {
+            [GP.WeaponType.Pistol]: 800,
+            [GP.WeaponType.Shotgun]: 600,
+            [GP.WeaponType.Rifle]: 1200,
+            [GP.WeaponType.Sniper]: 1600,
+            [GP.WeaponType.Melee]: 0
+        };
+
         // Pickup data
         const pickupTypes = {
             [GP.PickupType.Health]: 'Health',
@@ -324,7 +372,10 @@
 
         let starfield;
         let healthVignette;
-       
+        let fogOfWarContainer;
+        let fogOfWarMask;
+        const FOG_OF_WAR_RADIUS = 600; // Visibility radius
+        const FOG_OF_WAR_FADE_DISTANCE = 150; // Fade distance at edge
 
 
         // WebRTC & WebSocket Variables
@@ -343,6 +394,10 @@
         let playerContainer;
         let flagContainer;
         let localPlayerSprite;
+        let aimingGraphics;
+        let trajectoryGraphics;
+        let mouseWorldPos = { x: 0, y: 0 };
+        let showAiming = true;
 
         // Game State
         let myPlayerId = null;
@@ -380,6 +435,11 @@
             use_ability_slot: 0
         };
 
+        // Tab overview mode
+        let overviewMode = false;
+        let savedCameraState = null;
+        let overviewScale = 0.2; // Zoom out scale for overview
+
         // Timing
         let lastInputSendTime = 0;
         let pingStartTime = 0;
@@ -403,7 +463,8 @@
             showFPS: false,
             sensitivity: 1.0,
             particleEffects: true,
-            screenShake: true
+            screenShake: true,
+            showDestroyedWallDebug: false // Debug mode for destroyed walls
         };
 
         const peerConnectionConfig = {
@@ -466,11 +527,15 @@
                 effectsManager = initializedManagers.effectsManager; // Assign to global effectsManager
                 starfield = initializedManagers.starfield; // Assuming starfield is also a global 'let'
                 healthVignette = initializedManagers.healthVignette; // Assuming healthVignette is a global 'let'
+                fogOfWarContainer = initializedManagers.fogOfWarContainer;
+                fogOfWarMask = initializedManagers.fogOfWarMask;
 
                 window.audioManager = audioManager;
                 window.effectsManager = effectsManager;
                 window.starfield = starfield;
                 window.healthVignette = healthVignette;
+                window.fogOfWarContainer = fogOfWarContainer;
+                window.fogOfWarMask = fogOfWarMask;
 
                 // Add this to resume audio context on first user interaction
                 const resumeAudio = () => {
@@ -499,6 +564,13 @@
                 worldContainer.addChild(projectileContainer);
                 worldContainer.addChild(playerContainer);
                 worldContainer.addChild(flagContainer);
+
+                // Create aiming and trajectory graphics
+                aimingGraphics = new PIXI.Graphics();
+                worldContainer.addChild(aimingGraphics);
+                
+                trajectoryGraphics = new PIXI.Graphics();
+                worldContainer.addChild(trajectoryGraphics);
 
                 // HUD container (fixed on screen)
                 hudContainer = new PIXI.Container();
@@ -1553,22 +1625,50 @@ function updateStarfield(starfieldContainer, cameraX, cameraY, delta) {
     });
 }
 
-function drawWalls() {
-    wallGraphics.clear();
-    
-    // First pass: Draw wall shadows
-    walls.forEach(wall => {
-        if (wall.is_destructible && wall.current_health <= 0) return;
+    function drawWalls() {
+        wallGraphics.clear();
         
-        // Shadow effect
-        wallGraphics.beginFill(0x000000, 0.3);
-        wallGraphics.drawRect(wall.x + 3, wall.y + 3, wall.width, wall.height);
-        wallGraphics.endFill();
-    });
-    
-    // Second pass: Draw walls
-    walls.forEach(wall => {
-        if (wall.is_destructible && wall.current_health <= 0) return;
+        // Debug mode: Show destroyed wall boundaries
+        const showDestroyedWallDebug = gameSettings.showDestroyedWallDebug;
+        
+        if (showDestroyedWallDebug) {
+            // Draw destroyed walls with red outline
+            walls.forEach(wall => {
+                if (wall.is_destructible && wall.current_health <= 0) {
+                    // Draw collision boundary in red
+                    wallGraphics.lineStyle(2, 0xFF0000, 0.5);
+                    wallGraphics.beginFill(0xFF0000, 0.1);
+                    wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+                    wallGraphics.endFill();
+                    
+                    // Add "DESTROYED" text
+                    const text = new PIXI.Text('DESTROYED', {
+                        fontSize: 10,
+                        fill: 0xFF0000,
+                        stroke: 0x000000,
+                        strokeThickness: 2
+                    });
+                    text.x = wall.x + wall.width / 2 - text.width / 2;
+                    text.y = wall.y + wall.height / 2 - text.height / 2;
+                    wallGraphics.addChild(text);
+                }
+            });
+        }
+        
+        // First pass: Draw wall shadows
+        walls.forEach(wall => {
+            if (wall.is_destructible && wall.current_health <= 0) return;
+            
+            // Shadow effect
+            wallGraphics.beginFill(0x000000, 0.3);
+            wallGraphics.drawRect(wall.x + 3, wall.y + 3, wall.width, wall.height);
+            wallGraphics.endFill();
+        });
+        
+        // Second pass: Draw walls
+        walls.forEach(wall => {
+            // Skip destroyed walls (health = 0) unless in debug mode
+            if (wall.is_destructible && wall.current_health <= 0 && !gameSettings.showDestroyedWallDebug) return;
 
         let wallColor = 0x374151;
         let wallAlpha = 1.0;
@@ -1879,14 +1979,91 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
         // Update camera
         function updateCamera() {
-            if (localPlayerState && app && gameScene) {
-                const targetX = app.screen.width / 2 - (localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x);
-                const targetY = app.screen.height / 2 - (localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y);
+            if (overviewMode) {
+                // In overview mode, show the entire map
+                const targetScale = overviewScale;
+                const currentScale = gameScene.scale.x;
+                const scaleSmoothing = 0.15;
+                const newScale = currentScale + (targetScale - currentScale) * scaleSmoothing;
+                gameScene.scale.set(newScale);
+                
+                // Center the view on the map
+                const centerX = app.screen.width / 2;
+                const centerY = app.screen.height / 2;
+                const targetX = centerX;
+                const targetY = centerY;
+                
+                const posSmoothing = 0.15;
+                gameScene.position.x += (targetX - gameScene.position.x) * posSmoothing;
+                gameScene.position.y += (targetY - gameScene.position.y) * posSmoothing;
+            } else if (localPlayerState && app && gameScene) {
+                // Normal camera following player
+                const targetScale = 1;
+                const currentScale = gameScene.scale.x;
+                const scaleSmoothing = 0.15;
+                const newScale = currentScale + (targetScale - currentScale) * scaleSmoothing;
+                gameScene.scale.set(newScale);
+                
+                const targetX = app.screen.width / 2 - (localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x) * newScale;
+                const targetY = app.screen.height / 2 - (localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y) * newScale;
 
                 const smoothing = 0.1;
                 gameScene.position.x += (targetX - gameScene.position.x) * smoothing;
                 gameScene.position.y += (targetY - gameScene.position.y) * smoothing;
             }
+        }
+
+        // Tab overview mode functions
+        function enterOverviewMode() {
+            if (overviewMode) return;
+            
+            overviewMode = true;
+            savedCameraState = {
+                x: gameScene.position.x,
+                y: gameScene.position.y,
+                scale: gameScene.scale.x
+            };
+            
+            // Hide UI elements that shouldn't be visible in overview
+            killFeedDiv.style.opacity = '0.3';
+            chatDisplayDiv.style.opacity = '0.3';
+            document.querySelector('.controls-panel').style.opacity = '0.3';
+            
+            // Show all players' names more prominently
+            playerContainer.children.forEach(sprite => {
+                if (sprite.usernameText) {
+                    sprite.usernameText.style.fontSize = 16;
+                    sprite.usernameText.style.strokeThickness = 4;
+                }
+            });
+            
+            // Update scoreboard to show alongside overview
+            updateScoreboard();
+            scoreboardDiv.classList.remove('hidden');
+            scoreboardDiv.style.opacity = '0.9';
+        }
+        
+        function exitOverviewMode() {
+            if (!overviewMode) return;
+            
+            overviewMode = false;
+            
+            // Restore UI opacity
+            killFeedDiv.style.opacity = '1';
+            chatDisplayDiv.style.opacity = '1';
+            document.querySelector('.controls-panel').style.opacity = '1';
+            
+            // Restore normal text size
+            playerContainer.children.forEach(sprite => {
+                if (sprite.usernameText) {
+                    sprite.usernameText.style.fontSize = 12;
+                    sprite.usernameText.style.strokeThickness = 3;
+                }
+            });
+            
+            // Hide scoreboard
+            scoreboardDiv.classList.add('hidden');
+            scoreboardDiv.style.opacity = '1';
         }
 
         // Main game loop
@@ -1933,6 +2110,14 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             updateSprites();
             updateCamera();
+            
+            // Update aiming system
+            if (showAiming && localPlayerState && localPlayerState.alive) {
+                drawAimingSystem();
+            } else {
+                aimingGraphics.clear();
+                trajectoryGraphics.clear();
+            }
 
             if (starfield) {
             updateStarfield(starfield, gameScene.position.x, gameScene.position.y, delta);
@@ -1954,9 +2139,55 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             if (minimap && localPlayerState) {
                 minimap.update(localPlayerState, players, Array.from(walls.values()), Array.from(flagStates.values()));
             }
+            
+            // Update fog of war
+            if (fogOfWarMask && localPlayerState && localPlayerState.alive) {
+                updateFogOfWar(fogOfWarMask, localPlayerState.x, localPlayerState.y, app);
+            } else if (fogOfWarMask) {
+                // Clear fog when dead
+                fogOfWarMask.clear();
+            }
 
             sendInputsToServer();
             updateGameStatsUI();
+            
+            // Debug: Check wall states periodically
+            if (frameCount % 300 === 0) { // Every 5 seconds at 60fps
+                const destroyedWalls = Array.from(walls.values()).filter(w => w.is_destructible && w.current_health <= 0);
+                if (destroyedWalls.length > 0) {
+                    log(`[WALL STATUS] ${destroyedWalls.length} destroyed walls in client state`, 'warn');
+                    destroyedWalls.slice(0, 3).forEach(w => {
+                        console.log('[WALL STATUS] Destroyed wall:', w);
+                    });
+                    
+                    // Check if these walls are actually rendered
+                    destroyedWalls.forEach(wall => {
+                        // Check if wall exists in the graphics
+                        const wallBounds = new PIXI.Rectangle(wall.x, wall.y, wall.width, wall.height);
+                        const isInView = localPlayerState && 
+                            Math.abs(wall.x + wall.width/2 - localPlayerState.x) < 1000 &&
+                            Math.abs(wall.y + wall.height/2 - localPlayerState.y) < 1000;
+                        
+                        if (isInView) {
+                            console.log(`[WALL COLLISION CHECK] Destroyed wall ${wall.id} at (${wall.x}, ${wall.y}) - In view but should be invisible`, wall);
+                        }
+                    });
+                }
+                
+                // Check for any walls that might be in an inconsistent state
+                const inconsistentWalls = Array.from(walls.values()).filter(w => {
+                    return w.is_destructible && w.current_health > 0 && w.current_health !== w.max_health;
+                });
+                if (inconsistentWalls.length > 0) {
+                    log(`[WALL STATUS] ${inconsistentWalls.length} walls with partial health`, 'info');
+                }
+                
+                // Force redraw if we have destroyed walls that might be causing issues
+                if (destroyedWalls.length > 0) {
+                    log(`[WALL STATUS] Force redrawing walls due to destroyed walls present`, 'warn');
+                    drawWalls();
+                }
+            }
         }
 
         // Client-side prediction
@@ -2121,7 +2352,14 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             if (isInitial) {
                 walls.clear();
                 if (messageData.walls) {
-                    messageData.walls.forEach(wallData => walls.set(wallData.id, wallData));
+                    messageData.walls.forEach(wallData => {
+                        // CRITICAL: Only store non-destroyed walls for collision detection
+                        if (!wallData.is_destructible || wallData.current_health > 0) {
+                            walls.set(wallData.id, wallData);
+                        } else {
+                            log(`[INITIAL STATE] Filtering out destroyed wall ${wallData.id} with health ${wallData.current_health}`, 'warn');
+                        }
+                    });
                 }
                 drawWalls();
                 if (messageData.map_name) currentMapName = messageData.map_name;
@@ -2129,26 +2367,133 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             } else { // Delta update
                 let wallsChanged = false; // Flag to see if we need to redraw walls
                 if (messageData.destroyed_wall_ids && messageData.destroyed_wall_ids.length > 0) {
+                    log(`[WALL DEBUG] Destroying ${messageData.destroyed_wall_ids.length} walls`, 'info');
                     messageData.destroyed_wall_ids.forEach(wallId => {
                         const wall = walls.get(wallId);
                         if (wall) {
                             wall.current_health = 0; // Mark as destroyed client-side
                             wallsChanged = true;
+                            log(`[WALL DESTROYED] Wall ${wallId} destroyed at (${wall.x}, ${wall.y})`, 'warn');
                         }
                     });
                 }
 
-                // Handle newly added 'updated_walls' field from DeltaStateMessage
+                // Fix 1: Handle respawned walls in delta updates
                 if (messageData.updated_walls && messageData.updated_walls.length > 0) {
+                    log(`[WALL DEBUG] Received ${messageData.updated_walls.length} updated walls in delta`, 'info');
                     messageData.updated_walls.forEach(wallData => {
-                        walls.set(wallData.id, wallData); // Update or add the wall
+                        const prevWall = walls.get(wallData.id);
+                        walls.set(wallData.id, wallData); // Update or add the wall (respawned walls)
                         wallsChanged = true;
+                        
+                        // Enhanced logging for debugging
+                        if (prevWall && prevWall.current_health === 0 && wallData.current_health > 0) {
+                            log(`[WALL RESPAWN] Wall ${wallData.id} respawned at (${wallData.x}, ${wallData.y}) with health ${wallData.current_health}/${wallData.max_health}`, 'success');
+                            console.log('[WALL RESPAWN] Previous wall state:', prevWall);
+                            console.log('[WALL RESPAWN] New wall state:', wallData);
+                            
+                            // Immediately update the wall data
+                            walls.set(wallData.id, wallData);
+                            
+                            // Force immediate synchronous redraw
+                            drawWalls();
+                            if (minimap) minimap.wallsNeedUpdate = true;
+                            
+                            // Mark that walls changed for the deferred redraw as well
+                            wallsChanged = true;
+                            
+                            // Create respawn animation if wall health was restored
+                            if (effectsManager && localPlayerState) {
+                                // Only show animation if wall is within reasonable view distance
+                                const dx = wallData.x + wallData.width/2 - localPlayerState.x;
+                                const dy = wallData.y + wallData.height/2 - localPlayerState.y;
+                                const distance = Math.sqrt(dx * dx + dy * dy);
+                                
+                                if (distance < 1000) { // Only animate if reasonably close
+                                    effectsManager.createWallRespawnEffect({
+                                        x: wallData.x + wallData.width / 2,
+                                        y: wallData.y + wallData.height / 2
+                                    }, wallData);
+                                }
+                            }
+                        } else if (!prevWall) {
+                            // This is a new wall we didn't know about (possibly respawned outside AOI)
+                            log(`[WALL NEW] New wall ${wallData.id} discovered at (${wallData.x}, ${wallData.y}) with health ${wallData.current_health}/${wallData.max_health}`, 'warn');
+                            console.log('[WALL NEW] Wall data:', wallData);
+                            
+                            // Check if this might be a respawned wall
+                            if (wallData.is_destructible && wallData.current_health === wallData.max_health) {
+                                log(`[WALL RESPAWN?] This new wall has full health - might be a respawn`, 'warn');
+                            }
+                            
+                            // Also force redraw for newly discovered walls
+                            wallsChanged = true;
+                        } else if (prevWall && prevWall.current_health !== wallData.current_health) {
+                            // Wall health changed but not respawned
+                            log(`[WALL HEALTH] Wall ${wallData.id} health changed from ${prevWall.current_health} to ${wallData.current_health}`, 'info');
+                        }
                     });
+                } else {
+                    // Log when no updated_walls received
+                    if (messageData.destroyed_wall_ids && messageData.destroyed_wall_ids.length > 0) {
+                        log(`[WALL DEBUG] ${messageData.destroyed_wall_ids.length} walls destroyed but no updated_walls in this delta`, 'warn');
+                    }
                 }
 
                 if (wallsChanged) {
                     drawWalls(); // Redraw walls if any were destroyed or updated (respawned)
                 }
+            }
+
+            // Fix 2: Handle full walls list in delta updates (server might send all walls in AOI)
+            if (messageData.walls && messageData.walls.length > 0 && !isInitial) {
+                // This is a full walls list in a delta update (when entering new AOI)
+                log(`Received ${messageData.walls.length} walls in delta update - possible AOI change`, 'info');
+                
+                        // Track which walls we had before
+                        const previousWallIds = new Set(walls.keys());
+                        
+                        // IMPORTANT: Server-side requirement
+                        // When walls are destroyed (health = 0), the server MUST:
+                        // 1. Call structural cache rebuild immediately
+                        // 2. Remove destroyed walls from collision detection
+                        // 3. Update physics/spatial index
+                        // Without this, players will collide with invisible walls
+                
+                // Update all walls
+                messageData.walls.forEach(wallData => {
+                    const existingWall = walls.get(wallData.id);
+                    walls.set(wallData.id, wallData);
+                    
+                    // Check if this is a wall we didn't know about
+                    if (!previousWallIds.has(wallData.id)) {
+                        wallsChanged = true;
+                        log(`New wall ${wallData.id} discovered in AOI at (${wallData.x}, ${wallData.y})`, 'info');
+                        
+                        // If it's a respawned wall with health, show respawn effect
+                        if (wallData.current_health > 0 && wallData.is_destructible && effectsManager && localPlayerState) {
+                            const dx = wallData.x + wallData.width/2 - localPlayerState.x;
+                            const dy = wallData.y + wallData.height/2 - localPlayerState.y;
+                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            
+                            if (distance < 1000) {
+                                effectsManager.createWallRespawnEffect({
+                                    x: wallData.x + wallData.width / 2,
+                                    y: wallData.y + wallData.height / 2
+                                }, wallData);
+                            }
+                        }
+                    }
+                });
+                
+                // Remove walls that are no longer in AOI
+                previousWallIds.forEach(wallId => {
+                    if (!messageData.walls.find(w => w.id === wallId)) {
+                        walls.delete(wallId);
+                        wallsChanged = true;
+                        log(`Wall ${wallId} removed - left AOI`, 'info');
+                    }
+                });
             }
 
             // Update players
@@ -2618,6 +2963,67 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             }
                         }
 
+                        // Parse updated_walls if present in schema
+                        if (typeof delta.updatedWallsLength === 'function') {
+                            log(`[DELTA DEBUG] updatedWallsLength function exists, length: ${delta.updatedWallsLength()}`, 'info');
+                            deltaStateData.updated_walls = [];
+                            for (let i = 0; i < delta.updatedWallsLength(); i++) {
+                                const wall = delta.updatedWalls(i);
+                                if (wall) {
+                                    deltaStateData.updated_walls.push({
+                                        id: wall.id(),
+                                        x: wall.x(),
+                                        y: wall.y(),
+                                        width: wall.width(),
+                                        height: wall.height(),
+                                        is_destructible: wall.isDestructible(),
+                                        current_health: wall.currentHealth(),
+                                        max_health: wall.maxHealth()
+                                    });
+                                }
+                            }
+                        } else {
+                            log(`[DELTA DEBUG] updatedWallsLength function NOT found in delta message schema!`, 'warn');
+                            console.log('[DELTA DEBUG] Available delta methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(delta)).filter(m => m.includes('wall') || m.includes('Wall')));
+                        }
+
+                        // Parse walls (full list) if present in delta
+                        if (typeof delta.wallsLength === 'function') {
+                            log(`[DELTA DEBUG] wallsLength function exists, length: ${delta.wallsLength()}`, 'info');
+                            deltaStateData.walls = [];
+                            for (let i = 0; i < delta.wallsLength(); i++) {
+                                const wall = delta.walls(i);
+                                if (wall) {
+                                    deltaStateData.walls.push({
+                                        id: wall.id(),
+                                        x: wall.x(),
+                                        y: wall.y(),
+                                        width: wall.width(),
+                                        height: wall.height(),
+                                        is_destructible: wall.isDestructible(),
+                                        current_health: wall.currentHealth(),
+                                        max_health: wall.maxHealth()
+                                    });
+                                }
+                            }
+                        }
+
+                        // Debug log to see what fields we actually got
+                        const debugInfo = {
+                            hasPlayers: deltaStateData.players.length > 0,
+                            playerCount: deltaStateData.players.length,
+                            hasDestroyedWalls: deltaStateData.destroyed_wall_ids.length > 0,
+                            destroyedWallCount: deltaStateData.destroyed_wall_ids.length,
+                            hasUpdatedWalls: deltaStateData.updated_walls && deltaStateData.updated_walls.length > 0,
+                            updatedWallCount: deltaStateData.updated_walls ? deltaStateData.updated_walls.length : 0,
+                            hasFullWallsList: deltaStateData.walls && deltaStateData.walls.length > 0,
+                            fullWallsCount: deltaStateData.walls ? deltaStateData.walls.length : 0
+                        };
+                        
+                        if (debugInfo.hasDestroyedWalls || debugInfo.hasUpdatedWalls || debugInfo.hasFullWallsList) {
+                            log(`[DELTA DEBUG] Wall data summary: ${JSON.stringify(debugInfo)}`, 'info');
+                        }
+
                         return { type: 'delta', data: deltaStateData };
 
                     case GP.MessageType.Chat:
@@ -2758,11 +3164,22 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Tab') {
                     e.preventDefault();
-                    toggleScoreboard();
+                    if (!overviewMode) {
+                        enterOverviewMode();
+                    }
                 }
                 if (e.key === 'Escape') {
                     e.preventDefault();
                     toggleSettings();
+                }
+            });
+            
+            document.addEventListener('keyup', (e) => {
+                if (e.key === 'Tab') {
+                    e.preventDefault();
+                    if (overviewMode) {
+                        exitOverviewMode();
+                    }
                 }
             });
         }
@@ -2810,6 +3227,10 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             const rect = app.view.getBoundingClientRect();
             const mouseGlobal = new PIXI.Point(event.clientX - rect.left, event.clientY - rect.top);
             const mouseLocalToGameScene = gameScene.toLocal(mouseGlobal);
+            
+            // Update mouse world position for aiming
+            mouseWorldPos.x = mouseLocalToGameScene.x;
+            mouseWorldPos.y = mouseLocalToGameScene.y;
 
             const dx = mouseLocalToGameScene.x - (localPlayerState.render_x || localPlayerState.x);
             const dy = mouseLocalToGameScene.y - (localPlayerState.render_y || localPlayerState.y);
@@ -3010,12 +3431,96 @@ function drawEnhancedWallCracks(wall, healthPercent) {
     const healthVignette = createHealthVignette(app);
     app.stage.addChild(healthVignette);  // Add to main stage, not worldContainer
     
+    // Create fog of war system
+    const { fogOfWarContainer, fogOfWarMask } = createFogOfWar(app, worldContainer);
+    
     return {
         audioManager,
         effectsManager,
         starfield,
-        healthVignette
+        healthVignette,
+        fogOfWarContainer,
+        fogOfWarMask
     };
+}
+
+// Create fog of war system
+function createFogOfWar(app, worldContainer) {
+    const fogContainer = new PIXI.Container();
+    const fogMask = new PIXI.Graphics();
+    
+    // Create dark overlay that covers the entire visible area
+    const fogOverlay = new PIXI.Graphics();
+    fogOverlay.beginFill(0x000000, 0.85); // Dark fog
+    fogOverlay.drawRect(-10000, -10000, 20000, 20000);
+    fogOverlay.endFill();
+    
+    // Add subtle texture to fog
+    const fogTexture = new PIXI.Graphics();
+    for (let i = 0; i < 50; i++) {
+        const x = (Math.random() - 0.5) * 2000;
+        const y = (Math.random() - 0.5) * 2000;
+        const size = Math.random() * 100 + 50;
+        fogTexture.beginFill(0x111111, Math.random() * 0.1);
+        fogTexture.drawCircle(x, y, size);
+        fogTexture.endFill();
+    }
+    fogTexture.filters = [new PIXI.BlurFilter(20)];
+    fogContainer.addChild(fogTexture);
+    
+    fogContainer.addChild(fogOverlay);
+    
+    // Apply mask to create visibility area
+    fogContainer.mask = fogMask;
+    
+    // Add fog container after all game elements but before HUD
+    worldContainer.addChild(fogContainer);
+    
+    return { fogContainer, fogMask };
+}
+
+// Update fog of war based on player position
+function updateFogOfWar(fogMask, playerX, playerY, app) {
+    if (!fogMask) return;
+    
+    fogMask.clear();
+    
+    // Create gradient visibility circle
+    const gradientSteps = 10;
+    for (let i = gradientSteps; i > 0; i--) {
+        const factor = i / gradientSteps;
+        const radius = FOG_OF_WAR_RADIUS * factor + (FOG_OF_WAR_FADE_DISTANCE * (1 - factor));
+        
+        // Use different alpha values for smooth gradient
+        const alpha = Math.pow(factor, 0.5); // Non-linear falloff for smoother edge
+        
+        fogMask.beginFill(0xFFFFFF, alpha);
+        fogMask.drawCircle(playerX, playerY, radius);
+        fogMask.endFill();
+    }
+    
+    // Add slight pulsing effect to fog edge
+    const pulseAmount = Math.sin(Date.now() * 0.001) * 10;
+    fogMask.beginFill(0xFFFFFF, 0.1);
+    fogMask.drawCircle(playerX, playerY, FOG_OF_WAR_RADIUS + FOG_OF_WAR_FADE_DISTANCE + pulseAmount);
+    fogMask.endFill();
+    
+    // Add vision cones for teammates if in team mode
+    if (localPlayerState && localPlayerState.team_id !== 0) {
+        players.forEach(player => {
+            if (player.id !== myPlayerId && player.team_id === localPlayerState.team_id && player.alive) {
+                // Smaller visibility for teammates
+                const teammateRadius = FOG_OF_WAR_RADIUS * 0.6;
+                for (let i = 5; i > 0; i--) {
+                    const factor = i / 5;
+                    const radius = teammateRadius * factor;
+                    fogMask.beginFill(0xFFFFFF, factor * 0.5);
+                    fogMask.drawCircle(player.x, player.y, radius);
+                    fogMask.endFill();
+                }
+            }
+        });
+    }
 }
         // Scoreboard functions
         function toggleScoreboard(forceShow = null) {
@@ -3103,12 +3608,13 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             gameSettings.screenShake = document.getElementById('screenShake').checked;
             gameSettings.showFPS = document.getElementById('showFPS').checked;
             gameSettings.sensitivity = parseFloat(document.getElementById('sensitivity').value);
+            gameSettings.showDestroyedWallDebug = false;  // Always keep debug mode off in production
 
             if (audioManager) {
                 audioManager.setGlobalVolume(gameSettings.soundVolume);
                 audioManager.setMuted(!gameSettings.soundEnabled);
             }
-            if (effectsManager) {
+            if (effectsManager) {M
                 effectsManager.setParticlesEnabled(gameSettings.particleEffects);
             }
 
@@ -3479,13 +3985,38 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 }
                 break;
             case GP.GameEventType.WeaponFire:
-                this.createEnhancedMuzzleFlash(pos, event.weapon_type, event.instigator_id);
+                if (event.weapon_type === GP.WeaponType.Melee) {
+                    this.createMeleeSwingEffect(pos, event.instigator_id);
+                } else {
+                    this.createEnhancedMuzzleFlash(pos, event.weapon_type, event.instigator_id);
+                }
                 if (this.audioManager) {
                     this.audioManager.playWeaponSound(event.weapon_type, pos, event.instigator_id === myPlayerId);
                 }
                 break;
             case GP.GameEventType.PlayerDamageEffect:
-                this.createEnhancedDamageNumbers(pos, event.value);
+                // Determine damage type based on event context
+                let damageType = 'enemy'; // default
+                if (event.instigator_id && event.target_id) {
+                    const instigator = players.get(event.instigator_id);
+                    const target = players.get(event.target_id);
+                    if (instigator && target && localPlayerState) {
+                        if (target.id === myPlayerId) {
+                            // Damage received by local player
+                            damageType = (instigator.team_id === target.team_id && instigator.team_id !== 0) ? 'friendlyFireReceived' : 'enemyReceived';
+                        } else if (instigator.id === myPlayerId) {
+                            // Damage dealt by local player
+                            damageType = (instigator.team_id === target.team_id && instigator.team_id !== 0) ? 'friendlyFireDealt' : 'enemyDealt';
+                        } else if (localPlayerState.team_id !== 0 && instigator.team_id === localPlayerState.team_id && target.team_id !== localPlayerState.team_id) {
+                            // Teammate damaging enemy - also green (beneficial for our team)
+                            damageType = 'enemyDealt';
+                        } else if (instigator.team_id === target.team_id && instigator.team_id !== 0 && instigator.team_id !== localPlayerState.team_id) {
+                            // Enemy team friendly fire (their team damaging their own teammates)
+                            damageType = 'enemyFriendlyFire';
+                        }
+                    }
+                }
+                this.createEnhancedDamageNumbers(pos, event.value, damageType);
                 if (this.audioManager) {
                     this.audioManager.playSound('playerHit', pos);
                 }
@@ -3630,12 +4161,58 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         });
     }
 
-    createEnhancedDamageNumbers(position, damage) {
+    createEnhancedDamageNumbers(position, damage, damageType = 'enemy') {
         const container = new PIXI.Container();
+        
+        // Damage type configurations
+        const damageConfigs = {
+            enemyReceived: {
+                glowColor: 0xFF0000,    // Red - damage received from enemies
+                textColor: [0xFFFFFF, 0xFF4444],
+                strokeColor: 0x660000,
+                prefix: '-',
+                offsetY: -PLAYER_RADIUS,
+                scale: 1.1
+            },
+            friendlyFireReceived: {
+                glowColor: 0xFF8C00,    // Orange - friendly fire received
+                textColor: [0xFFFFFF, 0xFFA500],
+                strokeColor: 0x994400,
+                prefix: '-',
+                offsetY: -PLAYER_RADIUS,
+                scale: 1.0
+            },
+            enemyDealt: {
+                glowColor: 0x90EE90,    // Light Green - damage dealt to enemies (beneficial)
+                textColor: [0xFFFFFF, 0x90EE90],
+                strokeColor: 0x228B22,
+                prefix: '+',
+                offsetY: -PLAYER_RADIUS - 10,
+                scale: 1.2
+            },
+            friendlyFireDealt: {
+                glowColor: 0xFFFF00,    // Yellow - friendly fire dealt (warning)
+                textColor: [0xFFFFFF, 0xFFFF44],
+                strokeColor: 0x666600,
+                prefix: '!',
+                offsetY: -PLAYER_RADIUS - 5,
+                scale: 0.9
+            },
+            enemyFriendlyFire: {
+                glowColor: 0x9370DB,    // Purple - enemy team friendly fire
+                textColor: [0xFFFFFF, 0xDDA0DD],
+                strokeColor: 0x4B0082,
+                prefix: '~',
+                offsetY: -PLAYER_RADIUS - 3,
+                scale: 0.95
+            }
+        };
+        
+        const config = damageConfigs[damageType] || damageConfigs.enemyReceived;
         
         // Background glow
         const glow = new PIXI.Graphics();
-        glow.beginFill(0xFF0000, 0.3);
+        glow.beginFill(config.glowColor, 0.3);
         glow.drawCircle(0, 0, 20);
         glow.endFill();
         glow.filters = [new PIXI.BlurFilter(5)];
@@ -3643,11 +4220,11 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         
         // Damage text with gradient
         const textStyle = new PIXI.TextStyle({
-            fontSize: 20,
+            fontSize: 20 * config.scale,
             fontWeight: 'bold',
-            fill: [0xFFFFFF, 0xFF4444],
+            fill: config.textColor,
             fillGradientType: PIXI.TEXT_GRADIENT.LINEAR_VERTICAL,
-            stroke: 0x660000,
+            stroke: config.strokeColor,
             strokeThickness: 4,
             dropShadow: true,
             dropShadowColor: 0x000000,
@@ -3655,28 +4232,52 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             dropShadowDistance: 2
         });
         
-        const text = new PIXI.Text('-' + Math.round(damage), textStyle);
+        const text = new PIXI.Text(config.prefix + Math.round(damage), textStyle);
         text.anchor.set(0.5);
         container.addChild(text);
         
-        container.position.set(position.x, position.y - PLAYER_RADIUS);
+        // Add directional indicator for damage source
+        if (damageType === 'enemyReceived' || damageType === 'friendlyFireReceived') {
+            const arrow = new PIXI.Graphics();
+            arrow.beginFill(config.glowColor, 0.6);
+            arrow.drawPolygon([-5, -25, 5, -25, 0, -30]);
+            arrow.endFill();
+            container.addChild(arrow);
+        }
+        
+        container.position.set(position.x, position.y + config.offsetY);
         this.effectsContainer.addChild(container);
         
         // Critical hit effect for high damage
         if (damage > 50) {
-            text.style.fontSize = 24;
+            text.style.fontSize = 24 * config.scale;
             const criticalBurst = new PIXI.Graphics();
             criticalBurst.lineStyle(2, 0xFFFF00, 0.8);
             drawStar(criticalBurst, 0, 0, 8, 25, 15);
             container.addChildAt(criticalBurst, 1);
         }
         
+        // Different animations based on damage type
+        const isDealt = damageType === 'enemyDealt' || damageType === 'friendlyFireDealt';
+        const moveDirection = isDealt ? 1 : -1; // Dealt damage moves up, received damage moves down
+        
         this.animateEffect(container, {
             duration: 1000,
             onUpdate: p => {
-                container.y = position.y - PLAYER_RADIUS - p * 50;
+                container.y = position.y + config.offsetY + (moveDirection * p * 50);
                 container.alpha = 1 - p * 0.7;
-                container.scale.set(1 + p * 0.3);
+                
+                // Scale effect based on damage type
+                if (isDealt) {
+                    container.scale.set((1 + p * 0.3) * config.scale);
+                } else {
+                    container.scale.set((1 - p * 0.1) * config.scale);
+                }
+                
+                // Rotation for friendly fire
+                if (damageType === 'friendlyFireDealt' || damageType === 'friendlyFireReceived') {
+                    container.rotation = Math.sin(p * Math.PI * 4) * 0.1;
+                }
             },
             onComplete: () => container.destroy()
         });
@@ -4044,6 +4645,699 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             }
             return true;
         });
+    }
+
+    createMeleeSwingEffect(position, instigatorId) {
+        const playerSprite = playerContainer.children.find(s => s.playerId === instigatorId);
+        if (!playerSprite) return;
+        
+        const player = players.get(instigatorId);
+        if (!player) return;
+        
+        const container = new PIXI.Container();
+        container.position.set(position.x, position.y);
+        this.effectsContainer.addChild(container);
+        
+        // Enhanced melee parameters
+        const arcRadius = PLAYER_RADIUS + 40;
+        const arcAngle = Math.PI * 0.75; // 135 degree arc for wider swing
+        const startAngle = player.rotation - arcAngle / 2;
+        
+        // Create energy charge effect before swing
+        const chargeEffect = new PIXI.Graphics();
+        chargeEffect.lineStyle(2, 0x00FFFF, 0.6);
+        for (let i = 0; i < 8; i++) {
+            const angle = (Math.PI * 2 * i) / 8;
+            chargeEffect.moveTo(
+                Math.cos(angle) * PLAYER_RADIUS,
+                Math.sin(angle) * PLAYER_RADIUS
+            );
+            chargeEffect.lineTo(
+                Math.cos(angle) * (PLAYER_RADIUS + 15),
+                Math.sin(angle) * (PLAYER_RADIUS + 15)
+            );
+        }
+        container.addChild(chargeEffect);
+        
+        // Animate charge effect
+        this.animateEffect(chargeEffect, {
+            duration: 150,
+            onUpdate: (progress) => {
+                chargeEffect.scale.set(1 + progress * 0.5);
+                chargeEffect.alpha = 0.6 * (1 - progress);
+                chargeEffect.rotation = progress * Math.PI / 4;
+            },
+            onComplete: () => chargeEffect.destroy()
+        });
+        
+        // Motion blur container
+        const blurContainer = new PIXI.Container();
+        container.addChild(blurContainer);
+        
+        // Create enhanced motion blur layers
+        for (let b = 0; b < 8; b++) {
+            const blurArc = new PIXI.Graphics();
+            const blurAlpha = 0.2 - b * 0.025;
+            const blurOffset = b * 0.1;
+            
+            // Create gradient blur effect
+            const gradient = [0xFFFFFF, 0xE0E0E0, 0xC0C0C0][b % 3];
+            blurArc.beginFill(gradient, blurAlpha);
+            blurArc.moveTo(0, 0);
+            blurArc.arc(0, 0, arcRadius + b * 2, startAngle - blurOffset, startAngle + arcAngle - blurOffset, false);
+            blurArc.closePath();
+            blurArc.endFill();
+            
+            blurContainer.addChild(blurArc);
+        }
+        
+        // Main swing arc with multi-layer gradient
+        const arcContainer = new PIXI.Container();
+        
+        // Energy field layer
+        const energyField = new PIXI.Graphics();
+        energyField.beginFill(0x00FFFF, 0.2);
+        energyField.moveTo(0, 0);
+        energyField.arc(0, 0, arcRadius + 10, startAngle - 0.1, startAngle + arcAngle + 0.1, false);
+        energyField.closePath();
+        energyField.endFill();
+        energyField.filters = [new PIXI.BlurFilter(5)];
+        arcContainer.addChild(energyField);
+        
+        // Main arc layers
+        const arcLayers = [
+            { radius: arcRadius, color: 0xB0B0B0, alpha: 0.3 },
+            { radius: arcRadius * 0.9, color: 0xD0D0D0, alpha: 0.5 },
+            { radius: arcRadius * 0.8, color: 0xE0E0E0, alpha: 0.7 },
+            { radius: arcRadius * 0.7, color: 0xFFFFFF, alpha: 0.9 }
+        ];
+        
+        arcLayers.forEach(layer => {
+            const arc = new PIXI.Graphics();
+            arc.beginFill(layer.color, layer.alpha);
+            arc.moveTo(0, 0);
+            arc.arc(0, 0, layer.radius, startAngle, startAngle + arcAngle, false);
+            arc.closePath();
+            arc.endFill();
+            arcContainer.addChild(arc);
+        });
+        
+        container.addChild(arcContainer);
+        
+        // Enhanced energy trail particles
+        const trailCount = 20;
+        for (let i = 0; i < trailCount; i++) {
+            const trailAngle = startAngle + (arcAngle * i / trailCount);
+            const trailRadius = arcRadius - 5 + Math.random() * 10;
+            
+            // Create trail with glow
+            const trailContainer = new PIXI.Container();
+            
+            const trailGlow = new PIXI.Graphics();
+            trailGlow.beginFill(0x00FFFF, 0.3);
+            trailGlow.drawCircle(0, 0, 8);
+            trailGlow.endFill();
+            trailGlow.filters = [new PIXI.BlurFilter(3)];
+            trailContainer.addChild(trailGlow);
+            
+            const trail = new PIXI.Graphics();
+            trail.beginFill(0xFFFFFF, 0.9);
+            trail.drawCircle(0, 0, 3);
+            trail.endFill();
+            trailContainer.addChild(trail);
+            
+            trailContainer.position.set(
+                Math.cos(trailAngle) * trailRadius,
+                Math.sin(trailAngle) * trailRadius
+            );
+            
+            container.addChild(trailContainer);
+            
+            // Animate trail with spiral motion
+            this.animateEffect(trailContainer, {
+                duration: 400,
+                delay: i * 10,
+                onUpdate: (progress) => {
+                    const spiralFactor = 1 + progress * 0.5;
+                    const currentRadius = trailRadius + progress * 30;
+                    const currentAngle = trailAngle + progress * 0.5;
+                    
+                    trailContainer.position.set(
+                        Math.cos(currentAngle) * currentRadius * spiralFactor,
+                        Math.sin(currentAngle) * currentRadius * spiralFactor
+                    );
+                    trailContainer.alpha = 0.9 * (1 - progress);
+                    trailContainer.scale.set(1 + progress * 3);
+                },
+                onComplete: () => trailContainer.destroy()
+            });
+        }
+        
+        // Create cutting edge effect
+        const cuttingEdge = new PIXI.Graphics();
+        cuttingEdge.lineStyle(2, 0xFFFFFF, 1);
+        const edgePoints = [];
+        for (let i = 0; i <= 10; i++) {
+            const angle = startAngle + (arcAngle * i / 10);
+            edgePoints.push(
+                Math.cos(angle) * arcRadius,
+                Math.sin(angle) * arcRadius
+            );
+        }
+        cuttingEdge.drawPolygon(edgePoints);
+        container.addChild(cuttingEdge);
+        
+        // Animate cutting edge
+        this.animateEffect(cuttingEdge, {
+            duration: 200,
+            onUpdate: (progress) => {
+                cuttingEdge.alpha = 1 - progress;
+                cuttingEdge.scale.set(1 + progress * 0.2);
+            },
+            onComplete: () => cuttingEdge.destroy()
+        });
+        
+        // Enhanced slash lines with energy effect
+        for (let i = 0; i < 8; i++) {
+            const slashContainer = new PIXI.Container();
+            const slashAngle = startAngle + (arcAngle * i / 8) + arcAngle / 16;
+            const innerRadius = PLAYER_RADIUS + 10;
+            
+            // Slash glow
+            const slashGlow = new PIXI.Graphics();
+            slashGlow.lineStyle(8, 0x00FFFF, 0.3);
+            slashGlow.moveTo(
+                Math.cos(slashAngle) * innerRadius,
+                Math.sin(slashAngle) * innerRadius
+            );
+            slashGlow.lineTo(
+                Math.cos(slashAngle) * arcRadius,
+                Math.sin(slashAngle) * arcRadius
+            );
+            slashGlow.filters = [new PIXI.BlurFilter(2)];
+            slashContainer.addChild(slashGlow);
+            
+            // Main slash
+            const slash = new PIXI.Graphics();
+            slash.lineStyle(3 - i * 0.3, 0xFFFFFF, 1 - i * 0.1);
+            slash.moveTo(
+                Math.cos(slashAngle) * innerRadius,
+                Math.sin(slashAngle) * innerRadius
+            );
+            slash.lineTo(
+                Math.cos(slashAngle) * arcRadius,
+                Math.sin(slashAngle) * arcRadius
+            );
+            slashContainer.addChild(slash);
+            
+            container.addChild(slashContainer);
+            
+            // Animate slash with delay
+            slashContainer.alpha = 0;
+            this.animateEffect(slashContainer, {
+                duration: 250,
+                delay: i * 15,
+                onUpdate: (progress) => {
+                    slashContainer.alpha = (1 - progress) * (1 - i * 0.1);
+                    slashContainer.scale.set(1 + progress * 0.3);
+                },
+                onComplete: () => slashContainer.destroy()
+            });
+        }
+        
+        // Multiple impact shockwaves
+        for (let w = 0; w < 3; w++) {
+            setTimeout(() => {
+                const shockwave = new PIXI.Graphics();
+                shockwave.lineStyle(4 - w, 0xFFFFFF, 0.8 - w * 0.2);
+                shockwave.drawCircle(0, 0, arcRadius * (0.7 + w * 0.1));
+                container.addChild(shockwave);
+                
+                this.animateEffect(shockwave, {
+                    duration: 400,
+                    onUpdate: (progress) => {
+                        shockwave.scale.set(0.8 + progress * (0.8 + w * 0.2));
+                        shockwave.alpha = (0.8 - w * 0.2) * (1 - progress);
+                    },
+                    onComplete: () => shockwave.destroy()
+                });
+            }, w * 50);
+        }
+        
+        // Enhanced impact sparks with physics
+        const sparkCount = 25;
+        for (let i = 0; i < sparkCount; i++) {
+            const sparkContainer = new PIXI.Container();
+            
+            // Spark glow
+            const sparkGlow = new PIXI.Graphics();
+            const sparkColor = [0xFFFF88, 0xFFFFFF, 0x88DDFF, 0xFF88FF][i % 4];
+            sparkGlow.beginFill(sparkColor, 0.5);
+            sparkGlow.drawCircle(0, 0, 6);
+            sparkGlow.endFill();
+            sparkGlow.filters = [new PIXI.BlurFilter(2)];
+            sparkContainer.addChild(sparkGlow);
+            
+            // Spark core
+            const spark = new PIXI.Graphics();
+            spark.beginFill(0xFFFFFF, 1);
+            spark.drawCircle(0, 0, 2);
+            spark.endFill();
+            sparkContainer.addChild(spark);
+            
+            const sparkAngle = startAngle + Math.random() * arcAngle;
+            const sparkRadius = arcRadius - 10 + Math.random() * 20;
+            sparkContainer.position.set(
+                Math.cos(sparkAngle) * sparkRadius,
+                Math.sin(sparkAngle) * sparkRadius
+            );
+            
+            container.addChild(sparkContainer);
+            
+            const velocity = {
+                x: Math.cos(sparkAngle) * (6 + Math.random() * 8),
+                y: Math.sin(sparkAngle) * (6 + Math.random() * 8) - 3
+            };
+            
+            this.animateEffect(sparkContainer, {
+                duration: 600 + Math.random() * 300,
+                onUpdate: (progress) => {
+                    // Physics-based motion
+                    sparkContainer.x += velocity.x * (1 - progress * 0.8);
+                    sparkContainer.y += velocity.y * (1 - progress * 0.8) + progress * 15; // Gravity
+                    sparkContainer.alpha = 1 * (1 - progress);
+                    sparkContainer.scale.set((1 - progress * 0.5) * (1 + Math.sin(progress * Math.PI * 6) * 0.3));
+                    sparkContainer.rotation += 0.2;
+                },
+                onComplete: () => sparkContainer.destroy()
+            });
+        }
+        
+        // Animate the main arc
+        this.animateEffect(arcContainer, {
+            duration: 300,
+            onUpdate: (progress) => {
+                arcContainer.scale.set(0.6 + progress * 0.6);
+                arcContainer.alpha = 1 * (1 - progress * 0.8);
+                arcContainer.rotation = progress * 0.4;
+            },
+            onComplete: () => {
+                arcContainer.destroy();
+            }
+        });
+        
+        // Animate motion blur
+        this.animateEffect(blurContainer, {
+            duration: 350,
+            onUpdate: (progress) => {
+                blurContainer.alpha = 1 - progress;
+                blurContainer.scale.set(1 + progress * 0.3);
+                blurContainer.rotation = progress * 0.2;
+            },
+            onComplete: () => {
+                blurContainer.destroy();
+                if (container.children.length === 0) {
+                    container.destroy();
+                }
+            }
+        });
+        
+        // Enhanced screen effects for local player
+        if (instigatorId === myPlayerId) {
+            if (gameSettings.screenShake) {
+                applyScreenShake(gameScene, 200, 8);
+            }
+            // Multiple screen flashes
+            createScreenFlash(app, 0xFFFFFF, 8, 0.5);
+            setTimeout(() => createScreenFlash(app, 0x88DDFF, 15, 0.3), 50);
+        }
+    }
+
+    createWallRespawnEffect(position, wallData) {
+        const container = new PIXI.Container();
+        container.position.set(position.x, position.y);
+        this.effectsContainer.addChild(container);
+        
+        const wallWidth = wallData.width;
+        const wallHeight = wallData.height;
+        
+        // Enhanced Phase 0: Energy gathering announcement
+        // Create energy vortex effect
+        const vortex = new PIXI.Graphics();
+        vortex.lineStyle(3, 0x00FFFF, 0.3);
+        vortex.drawCircle(0, 0, Math.max(wallWidth, wallHeight) * 0.8);
+        container.addChild(vortex);
+        
+        this.animateEffect(vortex, {
+            duration: 800,
+            onUpdate: (progress) => {
+                vortex.scale.set(2 - progress * 1.5);
+                vortex.alpha = 0.3 * (1 - progress);
+                vortex.rotation = progress * Math.PI * 2;
+            },
+            onComplete: () => vortex.destroy()
+        });
+        
+        // Phase 1: Enhanced energy particles converging with trails
+        const particleCount = 30;
+        const particles = [];
+        const energyColors = [0x00FFFF, 0x00DDFF, 0x66FFFF, 0x00AAFF];
+        
+        for (let i = 0; i < particleCount; i++) {
+            const particleContainer = new PIXI.Container();
+            
+            // Main particle
+            const particle = new PIXI.Graphics();
+            const color = energyColors[i % energyColors.length];
+            particle.beginFill(color, 0.9);
+            particle.drawCircle(0, 0, 2 + Math.random() * 2);
+            particle.endFill();
+            
+            // Particle glow
+            const glow = new PIXI.Graphics();
+            glow.beginFill(color, 0.3);
+            glow.drawCircle(0, 0, 8);
+            glow.endFill();
+            glow.filters = [new PIXI.BlurFilter(3)];
+            
+            particleContainer.addChild(glow);
+            particleContainer.addChild(particle);
+            
+            // Start from random positions in a wider area
+            const angle = (Math.PI * 2 * i) / particleCount + Math.random() * 0.5;
+            const distance = 80 + Math.random() * 80;
+            particleContainer.position.set(
+                Math.cos(angle) * distance,
+                Math.sin(angle) * distance
+            );
+            
+            container.addChild(particleContainer);
+            particles.push(particleContainer);
+            
+            // Create trailing effect
+            const trail = new PIXI.Graphics();
+            container.addChildAt(trail, 0);
+            
+            let lastPositions = [{x: particleContainer.x, y: particleContainer.y}];
+            
+            // Animate particles with spiral converging motion
+            this.animateEffect(particleContainer, {
+                duration: 800,
+                delay: i * 20,
+                onUpdate: (progress) => {
+                    const easeProgress = 1 - Math.pow(1 - progress, 3);
+                    const spiralAngle = angle + progress * Math.PI * 2;
+                    const currentDistance = distance * (1 - easeProgress);
+                    
+                    particleContainer.x = Math.cos(spiralAngle) * currentDistance;
+                    particleContainer.y = Math.sin(spiralAngle) * currentDistance;
+                    particleContainer.alpha = 0.9 + Math.sin(progress * Math.PI * 6) * 0.1;
+                    
+                    // Update trail
+                    lastPositions.push({x: particleContainer.x, y: particleContainer.y});
+                    if (lastPositions.length > 10) lastPositions.shift();
+                    
+                    trail.clear();
+                    if (lastPositions.length > 1) {
+                        for (let j = 0; j < lastPositions.length - 1; j++) {
+                            const alpha = (j / lastPositions.length) * 0.3 * (1 - progress);
+                            trail.lineStyle(2, color, alpha);
+                            if (j === 0) {
+                                trail.moveTo(lastPositions[j].x, lastPositions[j].y);
+                            }
+                            trail.lineTo(lastPositions[j + 1].x, lastPositions[j + 1].y);
+                        }
+                    }
+                },
+                onComplete: () => {
+                    particleContainer.destroy();
+                    trail.destroy();
+                }
+            });
+        }
+        
+        // Phase 2: Enhanced wireframe with scanning effect
+        setTimeout(() => {
+            const wireframeContainer = new PIXI.Container();
+            container.addChild(wireframeContainer);
+            
+            // Main wireframe
+            const wireframe = new PIXI.Graphics();
+            wireframe.lineStyle(3, 0x00FFFF, 0.9);
+            wireframe.drawRect(-wallWidth/2, -wallHeight/2, wallWidth, wallHeight);
+            
+            // Grid lines with animation
+            const gridSize = Math.min(20, Math.min(wallWidth, wallHeight) / 4);
+            const gridLines = new PIXI.Graphics();
+            
+            wireframeContainer.addChild(wireframe);
+            wireframeContainer.addChild(gridLines);
+            
+            // Corner highlights
+            const corners = new PIXI.Graphics();
+            corners.lineStyle(4, 0x00FFFF, 1);
+            const cornerSize = 10;
+            // Top-left
+            corners.moveTo(-wallWidth/2, -wallHeight/2 + cornerSize);
+            corners.lineTo(-wallWidth/2, -wallHeight/2);
+            corners.lineTo(-wallWidth/2 + cornerSize, -wallHeight/2);
+            // Top-right
+            corners.moveTo(wallWidth/2 - cornerSize, -wallHeight/2);
+            corners.lineTo(wallWidth/2, -wallHeight/2);
+            corners.lineTo(wallWidth/2, -wallHeight/2 + cornerSize);
+            // Bottom-left
+            corners.moveTo(-wallWidth/2, wallHeight/2 - cornerSize);
+            corners.lineTo(-wallWidth/2, wallHeight/2);
+            corners.lineTo(-wallWidth/2 + cornerSize, wallHeight/2);
+            // Bottom-right
+            corners.moveTo(wallWidth/2 - cornerSize, wallHeight/2);
+            corners.lineTo(wallWidth/2, wallHeight/2);
+            corners.lineTo(wallWidth/2, wallHeight/2 - cornerSize);
+            
+            wireframeContainer.addChild(corners);
+            
+            // Scanning line effect
+            const scanLine = new PIXI.Graphics();
+            scanLine.lineStyle(2, 0x00FFFF, 0.8);
+            scanLine.moveTo(-wallWidth/2, 0);
+            scanLine.lineTo(wallWidth/2, 0);
+            scanLine.position.y = -wallHeight/2;
+            wireframeContainer.addChild(scanLine);
+            
+            this.animateEffect(wireframeContainer, {
+                duration: 600,
+                onUpdate: (progress) => {
+                    wireframeContainer.alpha = Math.min(1, progress * 2);
+                    wireframeContainer.scale.set(1.1 - progress * 0.1);
+                    
+                    // Animate scan line
+                    scanLine.position.y = -wallHeight/2 + wallHeight * progress;
+                    
+                    // Animate grid appearance
+                    gridLines.clear();
+                    gridLines.lineStyle(1, 0x00FFFF, 0.4 * progress);
+                    const visibleGridLines = Math.floor(progress * (wallWidth / gridSize));
+                    for (let i = 1; i <= visibleGridLines; i++) {
+                        const x = -wallWidth/2 + i * gridSize;
+                        if (x < wallWidth/2) {
+                            gridLines.moveTo(x, -wallHeight/2);
+                            gridLines.lineTo(x, wallHeight/2);
+                        }
+                    }
+                    const visibleHGridLines = Math.floor(progress * (wallHeight / gridSize));
+                    for (let i = 1; i <= visibleHGridLines; i++) {
+                        const y = -wallHeight/2 + i * gridSize;
+                        if (y < wallHeight/2) {
+                            gridLines.moveTo(-wallWidth/2, y);
+                            gridLines.lineTo(wallWidth/2, y);
+                        }
+                    }
+                },
+                onComplete: () => wireframeContainer.destroy()
+            });
+        }, 500);
+        
+        // Phase 3: Enhanced fill effect with energy waves
+        setTimeout(() => {
+            const fillContainer = new PIXI.Container();
+            container.addChild(fillContainer);
+            
+            // Create multiple fill layers for depth
+            const fillLayers = [];
+            for (let i = 0; i < 3; i++) {
+                const fill = new PIXI.Graphics();
+                fillLayers.push(fill);
+                fillContainer.addChild(fill);
+            }
+            
+            // Energy wave rings
+            const waveCount = 3;
+            for (let i = 0; i < waveCount; i++) {
+                setTimeout(() => {
+                    const wave = new PIXI.Graphics();
+                    wave.lineStyle(2, 0x00FFFF, 0.6);
+                    wave.drawRect(-wallWidth/2 - 5, -wallHeight/2 - 5, wallWidth + 10, wallHeight + 10);
+                    fillContainer.addChild(wave);
+                    
+                    this.animateEffect(wave, {
+                        duration: 400,
+                        onUpdate: (progress) => {
+                            wave.scale.set(1 + progress * 0.2);
+                            wave.alpha = 0.6 * (1 - progress);
+                        },
+                        onComplete: () => wave.destroy()
+                    });
+                }, i * 100);
+            }
+            
+            this.animateEffect(fillContainer, {
+                duration: 700,
+                onUpdate: (progress) => {
+                    // Multi-layer fill effect
+                    fillLayers.forEach((fill, index) => {
+                        fill.clear();
+                        const layerProgress = Math.min(1, progress * (1 + index * 0.2));
+                        const alpha = 0.3 + index * 0.2;
+                        const color = interpolateColor(0x00FFFF, 0x374151, layerProgress);
+                        
+                        fill.beginFill(color, alpha * layerProgress);
+                        
+                        // Different fill patterns for each layer
+                        if (index === 0) {
+                            // Edge to center fill
+                            const inset = (1 - layerProgress) * Math.min(wallWidth, wallHeight) / 2;
+                            fill.drawRect(
+                                -wallWidth/2 + inset,
+                                -wallHeight/2 + inset,
+                                wallWidth - inset * 2,
+                                wallHeight - inset * 2
+                            );
+                        } else if (index === 1) {
+                            // Horizontal sweep
+                            fill.drawRect(
+                                -wallWidth/2,
+                                -wallHeight/2,
+                                wallWidth * layerProgress,
+                                wallHeight
+                            );
+                        } else {
+                            // Vertical sweep
+                            fill.drawRect(
+                                -wallWidth/2,
+                                -wallHeight/2,
+                                wallWidth,
+                                wallHeight * layerProgress
+                            );
+                        }
+                        fill.endFill();
+                    });
+                },
+                onComplete: () => fillContainer.destroy()
+            });
+        }, 900);
+        
+        // Phase 4: Enhanced final materialization
+        setTimeout(() => {
+            // Pre-flash energy burst
+            const burst = new PIXI.Graphics();
+            burst.lineStyle(3, 0x00FFFF, 0.8);
+            for (let i = 0; i < 8; i++) {
+                const angle = (Math.PI * 2 * i) / 8;
+                burst.moveTo(0, 0);
+                burst.lineTo(
+                    Math.cos(angle) * Math.max(wallWidth, wallHeight) * 0.7,
+                    Math.sin(angle) * Math.max(wallWidth, wallHeight) * 0.7
+                );
+            }
+            container.addChild(burst);
+            
+            // Multiple flash layers
+            const flashLayers = [];
+            for (let i = 0; i < 3; i++) {
+                const flash = new PIXI.Graphics();
+                flash.beginFill(0x00FFFF, 0.6 - i * 0.15);
+                flash.drawRect(
+                    -wallWidth/2 - 15 - i * 5,
+                    -wallHeight/2 - 15 - i * 5,
+                    wallWidth + 30 + i * 10,
+                    wallHeight + 30 + i * 10
+                );
+                flash.endFill();
+                flash.filters = [new PIXI.BlurFilter(3 + i * 2)];
+                container.addChild(flash);
+                flashLayers.push(flash);
+            }
+            
+            // Final solidification particles
+            for (let i = 0; i < 20; i++) {
+                const particle = new PIXI.Graphics();
+                particle.beginFill(0x374151, 0.8);
+                particle.drawCircle(0, 0, 2);
+                particle.endFill();
+                
+                const startX = (Math.random() - 0.5) * wallWidth;
+                const startY = (Math.random() - 0.5) * wallHeight;
+                particle.position.set(startX, startY);
+                container.addChild(particle);
+                
+                this.animateEffect(particle, {
+                    duration: 300,
+                    delay: Math.random() * 100,
+                    onUpdate: (progress) => {
+                        particle.alpha = 0.8 * (1 - progress);
+                        particle.y = startY - progress * 20;
+                    },
+                    onComplete: () => particle.destroy()
+                });
+            }
+            
+            // Animate burst
+            this.animateEffect(burst, {
+                duration: 200,
+                onUpdate: (progress) => {
+                    burst.scale.set(1 + progress * 0.5);
+                    burst.alpha = 0.8 * (1 - progress);
+                    burst.rotation = progress * 0.2;
+                },
+                onComplete: () => burst.destroy()
+            });
+            
+            // Animate flash layers
+            flashLayers.forEach((flash, index) => {
+                this.animateEffect(flash, {
+                    duration: 250 + index * 50,
+                    onUpdate: (progress) => {
+                        flash.scale.set(1 + progress * (0.3 + index * 0.1));
+                        flash.alpha = (0.6 - index * 0.15) * (1 - progress);
+                    },
+                    onComplete: () => {
+                        flash.destroy();
+                        if (index === flashLayers.length - 1) {
+                            container.destroy();
+                        }
+                    }
+                });
+            });
+            
+            // Enhanced sound effect
+            if (this.audioManager) {
+                this.audioManager.playSound('powerupCollect', position, 0.8);
+                // Additional materialization sound
+                setTimeout(() => {
+                    this.audioManager.playSound('powerupCollect', position, 0.4);
+                }, 100);
+            }
+            
+            // Screen effect for nearby walls
+            if (localPlayerState) {
+                const dx = position.x - localPlayerState.x;
+                const dy = position.y - localPlayerState.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < 300 && gameSettings.screenShake) {
+                    applyScreenShake(gameScene, 50, 2);
+                }
+            }
+        }, 1200);
     }
 
     clearAllEffects() {
@@ -4550,6 +5844,219 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         this.statusDot.endFill();
     }
 }
+        // Advanced Aiming System with Trajectory Prediction
+        function drawAimingSystem() {
+            if (!localPlayerState || !localPlayerState.alive || !mouseWorldPos) return;
+            
+            aimingGraphics.clear();
+            trajectoryGraphics.clear();
+            
+            const playerX = localPlayerState.render_x || localPlayerState.x;
+            const playerY = localPlayerState.render_y || localPlayerState.y;
+            const currentWeapon = localPlayerState.weapon;
+            
+            // Skip for melee weapons
+            if (currentWeapon === GP.WeaponType.Melee) return;
+            
+            // Get weapon velocity
+            const weaponVel = weaponVelocities[currentWeapon] || 800;
+            
+            // Calculate player velocity effect on projectile
+            const playerVelX = localPlayerState.velocity_x || 0;
+            const playerVelY = localPlayerState.velocity_y || 0;
+            
+            // Calculate aim direction
+            const dx = mouseWorldPos.x - playerX;
+            const dy = mouseWorldPos.y - playerY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const aimAngle = Math.atan2(dy, dx);
+            
+            // Draw crosshair at mouse position
+            const crosshairSize = 15;
+            const crosshairThickness = 2;
+            const crosshairGap = 5;
+            
+            // Crosshair color based on weapon
+            const crosshairColor = weaponColors[currentWeapon] || 0xFFFFFF;
+            
+            // Outer circle
+            aimingGraphics.lineStyle(crosshairThickness, crosshairColor, 0.8);
+            aimingGraphics.drawCircle(mouseWorldPos.x, mouseWorldPos.y, crosshairSize);
+            
+            // Crosshair lines with gap
+            aimingGraphics.lineStyle(crosshairThickness, crosshairColor, 1);
+            // Top line
+            aimingGraphics.moveTo(mouseWorldPos.x, mouseWorldPos.y - crosshairSize);
+            aimingGraphics.lineTo(mouseWorldPos.x, mouseWorldPos.y - crosshairGap);
+            // Bottom line
+            aimingGraphics.moveTo(mouseWorldPos.x, mouseWorldPos.y + crosshairGap);
+            aimingGraphics.lineTo(mouseWorldPos.x, mouseWorldPos.y + crosshairSize);
+            // Left line
+            aimingGraphics.moveTo(mouseWorldPos.x - crosshairSize, mouseWorldPos.y);
+            aimingGraphics.lineTo(mouseWorldPos.x - crosshairGap, mouseWorldPos.y);
+            // Right line
+            aimingGraphics.moveTo(mouseWorldPos.x + crosshairGap, mouseWorldPos.y);
+            aimingGraphics.lineTo(mouseWorldPos.x + crosshairSize, mouseWorldPos.y);
+            
+            // Draw weapon-specific aim indicators
+            if (currentWeapon === GP.WeaponType.Shotgun) {
+                // Shotgun spread cone
+                const spreadAngle = Math.PI / 8; // 22.5 degrees spread
+                const coneLength = Math.min(200, distance);
+                
+                trajectoryGraphics.lineStyle(1, crosshairColor, 0.3);
+                trajectoryGraphics.moveTo(playerX, playerY);
+                trajectoryGraphics.lineTo(
+                    playerX + Math.cos(aimAngle - spreadAngle/2) * coneLength,
+                    playerY + Math.sin(aimAngle - spreadAngle/2) * coneLength
+                );
+                trajectoryGraphics.moveTo(playerX, playerY);
+                trajectoryGraphics.lineTo(
+                    playerX + Math.cos(aimAngle + spreadAngle/2) * coneLength,
+                    playerY + Math.sin(aimAngle + spreadAngle/2) * coneLength
+                );
+                
+                // Arc at the end of cone
+                trajectoryGraphics.arc(
+                    playerX, playerY,
+                    coneLength,
+                    aimAngle - spreadAngle/2,
+                    aimAngle + spreadAngle/2,
+                    false
+                );
+            }
+            
+            // Calculate trajectory with player movement compensation
+            const projectileVelX = Math.cos(aimAngle) * weaponVel + playerVelX * 0.5; // Player velocity affects projectile
+            const projectileVelY = Math.sin(aimAngle) * weaponVel + playerVelY * 0.5;
+            
+            // Draw trajectory prediction line
+            const trajectorySteps = 20;
+            const timeStep = 0.05; // 50ms per step
+            let prevX = playerX;
+            let prevY = playerY;
+            
+            trajectoryGraphics.lineStyle(2, crosshairColor, 0.5);
+            
+            for (let i = 1; i <= trajectorySteps; i++) {
+                const t = i * timeStep;
+                const trajX = playerX + projectileVelX * t;
+                const trajY = playerY + projectileVelY * t;
+                
+                // Draw trajectory segment
+                if (i === 1) {
+                    trajectoryGraphics.moveTo(prevX, prevY);
+                }
+                
+                // Fade out trajectory over distance
+                const alpha = 0.5 * (1 - (i / trajectorySteps));
+                trajectoryGraphics.lineStyle(2 - (i / trajectorySteps), crosshairColor, alpha);
+                trajectoryGraphics.lineTo(trajX, trajY);
+                
+                // Draw dots along trajectory for better visibility
+                if (i % 2 === 0) {
+                    trajectoryGraphics.beginFill(crosshairColor, alpha);
+                    trajectoryGraphics.drawCircle(trajX, trajY, 2);
+                    trajectoryGraphics.endFill();
+                }
+                
+                prevX = trajX;
+                prevY = trajY;
+                
+                // Stop if trajectory goes too far
+                const trajDistance = Math.sqrt(
+                    (trajX - playerX) * (trajX - playerX) + 
+                    (trajY - playerY) * (trajY - playerY)
+                );
+                if (trajDistance > 800) break;
+            }
+            
+            // Calculate and show predicted impact point
+            const projectileTime = distance / weaponVel;
+            const impactX = playerX + projectileVelX * projectileTime;
+            const impactY = playerY + projectileVelY * projectileTime;
+            
+            // Draw impact prediction marker
+            trajectoryGraphics.lineStyle(3, crosshairColor, 0.8);
+            trajectoryGraphics.drawCircle(impactX, impactY, 8);
+            trajectoryGraphics.beginFill(crosshairColor, 0.4);
+            trajectoryGraphics.drawCircle(impactX, impactY, 5);
+            trajectoryGraphics.endFill();
+            
+            // Draw movement compensation indicator if player is moving
+            const playerSpeed = Math.sqrt(playerVelX * playerVelX + playerVelY * playerVelY);
+            if (playerSpeed > 10) {
+                // Show how movement affects aim
+                const moveCompX = playerVelX * projectileTime * 0.5;
+                const moveCompY = playerVelY * projectileTime * 0.5;
+                
+                trajectoryGraphics.lineStyle(1, 0x00FF00, 0.5);
+                trajectoryGraphics.moveTo(mouseWorldPos.x, mouseWorldPos.y);
+                trajectoryGraphics.lineTo(mouseWorldPos.x + moveCompX, mouseWorldPos.y + moveCompY);
+                
+                // Arrow head
+                const arrowAngle = Math.atan2(moveCompY, moveCompX);
+                const arrowSize = 5;
+                trajectoryGraphics.beginFill(0x00FF00, 0.5);
+                trajectoryGraphics.moveTo(
+                    mouseWorldPos.x + moveCompX + Math.cos(arrowAngle) * arrowSize,
+                    mouseWorldPos.y + moveCompY + Math.sin(arrowAngle) * arrowSize
+                );
+                trajectoryGraphics.lineTo(
+                    mouseWorldPos.x + moveCompX + Math.cos(arrowAngle - 2.5) * arrowSize,
+                    mouseWorldPos.y + moveCompY + Math.sin(arrowAngle - 2.5) * arrowSize
+                );
+                trajectoryGraphics.lineTo(
+                    mouseWorldPos.x + moveCompX + Math.cos(arrowAngle + 2.5) * arrowSize,
+                    mouseWorldPos.y + moveCompY + Math.sin(arrowAngle + 2.5) * arrowSize
+                );
+                trajectoryGraphics.closePath();
+                trajectoryGraphics.endFill();
+            }
+            
+            // Weapon-specific indicators
+            if (currentWeapon === GP.WeaponType.Sniper) {
+                // Sniper scope lines
+                const scopeSize = 30;
+                aimingGraphics.lineStyle(1, crosshairColor, 0.6);
+                // Horizontal line
+                aimingGraphics.moveTo(mouseWorldPos.x - scopeSize, mouseWorldPos.y);
+                aimingGraphics.lineTo(mouseWorldPos.x - crosshairGap, mouseWorldPos.y);
+                aimingGraphics.moveTo(mouseWorldPos.x + crosshairGap, mouseWorldPos.y);
+                aimingGraphics.lineTo(mouseWorldPos.x + scopeSize, mouseWorldPos.y);
+                // Vertical line
+                aimingGraphics.moveTo(mouseWorldPos.x, mouseWorldPos.y - scopeSize);
+                aimingGraphics.lineTo(mouseWorldPos.x, mouseWorldPos.y - crosshairGap);
+                aimingGraphics.moveTo(mouseWorldPos.x, mouseWorldPos.y + crosshairGap);
+                aimingGraphics.lineTo(mouseWorldPos.x, mouseWorldPos.y + scopeSize);
+                
+                // Range finder
+                const rangeText = Math.round(distance) + 'm';
+                const textStyle = new PIXI.TextStyle({
+                    fontSize: 10,
+                    fill: crosshairColor,
+                    stroke: 0x000000,
+                    strokeThickness: 2
+                });
+                const range = new PIXI.Text(rangeText, textStyle);
+                range.anchor.set(0.5);
+                range.position.set(mouseWorldPos.x + 25, mouseWorldPos.y - 25);
+                aimingGraphics.addChild(range);
+            }
+            
+            // Draw aim line from player to crosshair
+            trajectoryGraphics.lineStyle(1, crosshairColor, 0.2);
+            trajectoryGraphics.moveTo(playerX, playerY);
+            trajectoryGraphics.lineTo(mouseWorldPos.x, mouseWorldPos.y);
+            
+            // Add breathing effect for sniper
+            if (currentWeapon === GP.WeaponType.Sniper) {
+                const breathAmount = Math.sin(Date.now() * 0.003) * 2;
+                aimingGraphics.position.x = breathAmount;
+                aimingGraphics.position.y = Math.cos(Date.now() * 0.003) * 1;
+            }
+        }
+
         // Initialize everything when page loads
         window.addEventListener('load', () => {
             // Check if GameProtocol is loaded
@@ -4566,7 +6073,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             initPixi();
 
             log('Unified Advanced WebGL client initialized with all features!', 'info');
-            log('Features: Teams, Powerups, Destructible Walls, CTF, Audio, Effects, Minimap, Settings', 'info');
+            log('Features: Teams, Powerups, Destructible Walls, CTF, Audio, Effects, Minimap, Settings, Advanced Aiming', 'info');
         });
     </script>
 </body>

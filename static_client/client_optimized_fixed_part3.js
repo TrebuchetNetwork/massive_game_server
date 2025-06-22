@@ -109,9 +109,7 @@ function drawWalls() {
 
     // First pass: Draw wall shadows
     walls.forEach(wall => {
-        if (wall.is_destructible && wall.current_health <= 0) return;
-
-        // Shadow effect
+        // Draw shadows for all walls, including destroyed ones
         wallGraphics.beginFill(0x000000, 0.3);
         wallGraphics.drawRect(wall.x + 3, wall.y + 3, wall.width, wall.height);
         wallGraphics.endFill();
@@ -119,7 +117,12 @@ function drawWalls() {
 
     // Second pass: Draw walls
     walls.forEach(wall => {
-        if (wall.is_destructible && wall.current_health <= 0) return;
+        // Render destroyed walls as rubble instead of skipping them
+        if (wall.is_destructible && wall.current_health <= 0) {
+            // Draw destroyed wall as rubble/debris
+            drawDestroyedWall(wall);
+            return;
+        }
 
         let wallColor = 0x374151;
         let wallAlpha = 1.0;
@@ -259,6 +262,71 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         }
         wallGraphics.endFill();
     }
+}
+
+// Draw destroyed wall as rubble/debris
+function drawDestroyedWall(wall) {
+    const rubbleColor = 0x5B5B5B;
+    const debrisColor = 0x7B7B7B;
+    
+    // Draw base rubble area with higher alpha for visibility
+    wallGraphics.beginFill(rubbleColor, 0.6);
+    wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+    wallGraphics.endFill();
+    
+    // Draw scattered debris pieces
+    const numDebris = Math.floor(Math.min(wall.width, wall.height) / 8);
+    for (let i = 0; i < numDebris; i++) {
+        const debrisX = wall.x + Math.random() * wall.width;
+        const debrisY = wall.y + Math.random() * wall.height;
+        const debrisSize = Math.random() * 10 + 5;
+        const debrisRotation = Math.random() * Math.PI;
+        
+        wallGraphics.beginFill(debrisColor, 0.7 + Math.random() * 0.3);
+        
+        // Draw rotated rectangular debris
+        const halfSize = debrisSize / 2;
+        const cos = Math.cos(debrisRotation);
+        const sin = Math.sin(debrisRotation);
+        
+        wallGraphics.moveTo(
+            debrisX + cos * halfSize - sin * halfSize,
+            debrisY + sin * halfSize + cos * halfSize
+        );
+        wallGraphics.lineTo(
+            debrisX - cos * halfSize - sin * halfSize,
+            debrisY - sin * halfSize + cos * halfSize
+        );
+        wallGraphics.lineTo(
+            debrisX - cos * halfSize + sin * halfSize,
+            debrisY - sin * halfSize - cos * halfSize
+        );
+        wallGraphics.lineTo(
+            debrisX + cos * halfSize + sin * halfSize,
+            debrisY + sin * halfSize - cos * halfSize
+        );
+        wallGraphics.closePath();
+        wallGraphics.endFill();
+    }
+    
+    // Draw prominent outline to clearly show it's still an obstacle
+    wallGraphics.lineStyle(2, 0xAAAAAA, 0.8);
+    wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+    
+    // Add warning stripes pattern with higher visibility
+    wallGraphics.lineStyle(3, 0xFF8800, 0.5);
+    const stripeSpacing = 15;
+    for (let i = -wall.height; i < wall.width; i += stripeSpacing) {
+        wallGraphics.moveTo(wall.x + i, wall.y);
+        wallGraphics.lineTo(wall.x + i + wall.height, wall.y + wall.height);
+    }
+    
+    // Add a red X pattern to make it even more visible
+    wallGraphics.lineStyle(2, 0xFF4444, 0.6);
+    wallGraphics.moveTo(wall.x, wall.y);
+    wallGraphics.lineTo(wall.x + wall.width, wall.y + wall.height);
+    wallGraphics.moveTo(wall.x + wall.width, wall.y);
+    wallGraphics.lineTo(wall.x, wall.y + wall.height);
 }
 
 // Create flag sprite
