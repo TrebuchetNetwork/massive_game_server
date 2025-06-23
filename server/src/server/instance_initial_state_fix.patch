@@ -1,0 +1,20 @@
+--- a/server/src/server/instance.rs
++++ b/server/src/server/instance.rs
+@@ -3776,11 +3776,14 @@ async fn build_initial_state_optimized(
+                     
+                     // Only send non-destructible walls and active destructible walls
+                     if !wall.is_destructible || (wall.is_destructible && wall.current_health > 0) {
+                         active_walls_to_send.push(wall.clone());
+                     } else {
+-                        debug!("[Frame {} Client {}] InitialState: Filtering out destroyed wall {} (health: {}/{})", 
++                        // CRITICAL: Log at info level to ensure visibility
++                        info!("[Frame {} Client {}] InitialState: FILTERING OUT destroyed wall {} (health: {}/{})", 
+                               frame, peer_id_str, wall.id, wall.current_health, wall.max_health);
+                     }
+                 }
+             }
++            
++            info!("[Frame {} Client {}] InitialState: Sending {} active walls out of {} total walls", 
++                  frame, peer_id_str, active_walls_to_send.len(), 
++                  self.world_partition_manager.get_partitions_for_processing().iter()
++                      .flat_map(|p| p.all_walls_in_partition.iter()).count());

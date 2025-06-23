@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Polyfill Diagnostic Test</title>
+</head>
+<body>
+    <h1>Polyfill Diagnostic Test</h1>
+    <div id="results"></div>
+    
+    <script>
+        const results = document.getElementById('results');
+        let testResults = [];
+        
+        function log(message, success) {
+            const p = document.createElement('p');
+            p.textContent = message;
+            p.style.color = success ? 'green' : 'red';
+            results.appendChild(p);
+            testResults.push({message, success});
+        }
+        
+        function testPolyfills() {
+            log('=== Testing Polyfills Before PIXI ===', true);
+            
+            // Test Array.from
+            try {
+                const arr = Array.from([1, 2, 3]);
+                log('Array.from: ' + (arr.length === 3 ? 'PASS' : 'FAIL'), arr.length === 3);
+            } catch (e) {
+                log('Array.from: FAIL - ' + e.message, false);
+            }
+            
+            // Test Array.isArray
+            try {
+                const isArr = Array.isArray([1, 2, 3]);
+                log('Array.isArray: ' + (isArr ? 'PASS' : 'FAIL'), isArr);
+            } catch (e) {
+                log('Array.isArray: FAIL - ' + e.message, false);
+            }
+            
+            // Test Object.assign
+            try {
+                const obj = Object.assign({}, {a: 1}, {b: 2});
+                log('Object.assign: ' + (obj.a === 1 && obj.b === 2 ? 'PASS' : 'FAIL'), obj.a === 1 && obj.b === 2);
+            } catch (e) {
+                log('Object.assign: FAIL - ' + e.message, false);
+            }
+            
+            // Check if methods are frozen
+            try {
+                const originalArrayFrom = Array.from;
+                Array.from = null;
+                const canOverwrite = Array.from === null;
+                Array.from = originalArrayFrom; // Restore
+                log('Array.from is ' + (canOverwrite ? 'NOT frozen (BAD)' : 'frozen (GOOD)'), !canOverwrite);
+            } catch (e) {
+                log('Array.from freeze test: ' + e.message, true);
+            }
+        }
+        
+        // Test before loading anything
+        testPolyfills();
+        
+        // Load polyfills
+        const script1 = document.createElement('script');
+        script1.src = 'polyfills-frozen.js';
+        script1.onload = function() {
+            log('=== After Loading polyfills-frozen.js ===', true);
+            testPolyfills();
+            
+            // Now load PIXI
+            const script2 = document.createElement('script');
+            script2.src = 'https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js';
+            script2.onload = function() {
+                log('=== After Loading PIXI ===', true);
+                testPolyfills();
+                
+                // Test in PIXI context
+                try {
+                    const app = new PIXI.Application();
+                    log('PIXI Application created successfully', true);
+                    
+                    // Test if PIXI itself can use the polyfills
+                    const testContainer = new PIXI.Container();
+                    const children = Array.from(testContainer.children);
+                    log('Array.from works with PIXI objects: ' + (Array.isArray(children) ? 'PASS' : 'FAIL'), Array.isArray(children));
+                } catch (e) {
+                    log('PIXI test failed: ' + e.message, false);
+                }
+                
+                // Final summary
+                const passed = testResults.filter(r => r.success).length;
+                const total = testResults.length;
+                log(`\n=== SUMMARY: ${passed}/${total} tests passed ===`, passed === total);
+            };
+            script2.onerror = function() {
+                log('Failed to load PIXI', false);
+            };
+            document.head.appendChild(script2);
+        };
+        script1.onerror = function() {
+            log('Failed to load polyfills-frozen.js', false);
+        };
+        document.head.appendChild(script1);
+    </script>
+</body>
+</html>

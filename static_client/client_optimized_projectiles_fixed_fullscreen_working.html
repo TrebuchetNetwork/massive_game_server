@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Shooter - Fixed Projectiles (Fullscreen)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://pixijs.download/release/pixi.js"></script>
+    
+    <!-- Preload flatbuffers globally before any modules load -->
+    <script type="module">
+        import * as flatbuffers from 'https://cdn.jsdelivr.net/npm/flatbuffers@23.5.26/+esm';
+        window.flatbuffers = flatbuffers;
+        
+        // Wait for flatbuffers to be available, then load the main script
+        import('./client_optimized_projectiles_fixed.js').then(() => {
+            console.log('Game script loaded successfully');
+        }).catch(err => {
+            console.error('Failed to load game script:', err);
+        });
+    </script>
+    
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            background-color: #0B0E1A;
+        }
+        
+        #pixiContainer {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        
+        /* Overlay UI positioned absolutely */
+        #uiOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        #uiOverlay > * {
+            pointer-events: auto;
+        }
+        
+        /* Connection overlay */
+        #connectionOverlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(30, 41, 59, 0.95);
+            padding: 2rem;
+            border-radius: 0.5rem;
+            z-index: 100;
+        }
+        
+        /* Hide connection overlay when connected */
+        #connectionOverlay.hidden {
+            display: none;
+        }
+        
+        /* Settings button */
+        #settingsButton {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+        }
+        
+        /* Game stats */
+        #gameStats {
+            position: absolute;
+            top: 60px;
+            left: 1rem;
+            background-color: rgba(30, 41, 59, 0.8);
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            max-width: 200px;
+        }
+        
+        /* Kill feed */
+        #killFeed {
+            position: absolute;
+            top: 60px;
+            right: 1rem;
+            width: 300px;
+            max-height: 150px;
+            overflow: hidden;
+        }
+        
+        .kill-entry {
+            background-color: rgba(30, 41, 59, 0.8);
+            padding: 0.5rem;
+            margin-bottom: 0.25rem;
+            border-radius: 0.25rem;
+            animation: slideIn 0.3s ease-out;
+            transition: opacity 0.3s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        .kill-entry.fade-out {
+            opacity: 0;
+        }
+        
+        /* Chat */
+        #chatDisplay {
+            position: absolute;
+            bottom: 70px;
+            left: 1rem;
+            width: 400px;
+            max-height: 150px;
+            overflow-y: auto;
+            background-color: rgba(30, 41, 59, 0.6);
+            padding: 0.5rem;
+            border-radius: 0.25rem;
+        }
+        
+        #chatInputArea {
+            position: absolute;
+            bottom: 20px;
+            left: 1rem;
+            width: 400px;
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        /* Match info */
+        #matchInfo {
+            position: absolute;
+            top: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            background-color: rgba(30, 41, 59, 0.8);
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+        }
+        
+        /* Minimap */
+        #minimapContainer {
+            position: absolute;
+            bottom: 1rem;
+            right: 1rem;
+            width: 150px;
+            height: 150px;
+            border: 2px solid rgba(99, 102, 241, 0.5);
+            border-radius: 0.5rem;
+            overflow: hidden;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        
+        /* Network indicator */
+        #networkQualityIndicator {
+            position: absolute;
+            top: 1rem;
+            right: 80px;
+            width: 60px;
+            height: 40px;
+        }
+        
+        /* FPS counter */
+        #fpsCounter {
+            position: absolute;
+            bottom: 1rem;
+            left: 1rem;
+            background-color: rgba(0, 0, 0, 0.6);
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.875rem;
+        }
+        
+        /* Ping display */
+        #pingDisplay {
+            color: #10B981;
+        }
+        
+        /* Scoreboard and settings */
+        #scoreboard, #settingsMenu {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(30, 41, 59, 0.95);
+            border-radius: 0.5rem;
+            padding: 2rem;
+            max-width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            z-index: 50;
+        }
+        
+        /* Hide scrollbars but keep functionality */
+        #chatDisplay::-webkit-scrollbar {
+            width: 4px;
+        }
+        
+        #chatDisplay::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        #chatDisplay::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.5);
+            border-radius: 2px;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        /* Team colors */
+        .team-red { color: #FF6B6B; }
+        .team-blue { color: #4ECDC4; }
+        .team-ffa { color: #A0A0A0; }
+        
+        /* Ensure no margins or padding on body */
+        * {
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+    <div id="gameContainer">
+        <!-- PIXI Canvas Container -->
+        <div id="pixiContainer"></div>
+        
+        <!-- UI Overlay -->
+        <div id="uiOverlay">
+            <!-- Connection Overlay -->
+            <div id="connectionOverlay">
+                <h2 class="text-2xl font-bold mb-4">Connect to Server</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">WebSocket URL:</label>
+                        <input type="text" id="wsUrl" value="ws://localhost:8080/ws" 
+                               class="w-full px-3 py-2 bg-gray-700 rounded text-white">
+                    </div>
+                    <button id="connectButton" 
+                            class="w-full px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded font-medium">
+                        Connect
+                    </button>
+                    <div id="log" class="mt-4 p-2 bg-gray-800 rounded text-sm font-mono h-48 overflow-y-auto hidden"></div>
+                </div>
+            </div>
+            
+            <!-- Settings Button (initially hidden) -->
+            <button id="settingsButton" class="hidden p-2 bg-gray-700 hover:bg-gray-600 rounded">
+                ⚙️
+            </button>
+            
+            <!-- Network Indicator -->
+            <div id="networkQualityIndicator" class="hidden"></div>
+            
+            <!-- Match Info -->
+            <div id="matchInfo" class="hidden"></div>
+            
+            <!-- Game Stats -->
+            <div id="gameStats" class="hidden text-sm space-y-1">
+                <div class="font-semibold mb-2">Game Stats:</div>
+                <div>My ID: <span id="myPlayerIdSpan" class="text-indigo-400">-</span></div>
+                <div>Team: <span id="playerTeam">-</span></div>
+                <div>Health: <span id="playerHealth" class="text-green-400">100</span></div>
+                <div>Shield: <span id="playerShield" class="text-blue-400">0</span></div>
+                <div>Ammo: <span id="playerAmmo" class="text-yellow-400">7</span><span id="reloadPrompt" class="text-red-400"></span></div>
+                <div>Weapon: <span id="playerWeapon">Unknown</span></div>
+                <div>Score: <span id="playerScore">0</span></div>
+                <div>K/D: <span id="playerKills">0</span>/<span id="playerDeaths">0</span></div>
+                <div>Players: <span id="playerCount">1</span></div>
+                <div>Ping: <span id="pingDisplay">0</span>ms</div>
+                <div id="powerupStatus" class="mt-2 space-y-1"></div>
+            </div>
+            
+            <!-- Kill Feed -->
+            <div id="killFeed" class="hidden"></div>
+            
+            <!-- Chat -->
+            <div id="chatDisplay" class="hidden text-sm"></div>
+            <div id="chatInputArea" class="hidden">
+                <input type="text" id="chatInput" placeholder="Type a message..." 
+                       class="flex-1 px-3 py-1 bg-gray-700 rounded text-sm">
+                <button id="sendChatButton" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 rounded text-sm">
+                    Send
+                </button>
+            </div>
+            
+            <!-- Minimap Container -->
+            <div id="minimapContainer" class="hidden"></div>
+            
+            <!-- FPS Counter -->
+            <div id="fpsCounter" class="hidden">
+                FPS: <span id="fpsValue">0</span>
+            </div>
+            
+            <!-- Controls -->
+            <div id="controls" class="hidden"></div>
+        </div>
+        
+        <!-- Scoreboard (hidden by default) -->
+        <div id="scoreboard" class="hidden">
+            <h2 class="text-2xl font-bold mb-4">Scoreboard</h2>
+            <div id="scoreboardContent">
+                <!-- FFA Section -->
+                <div id="ffaScoreboardSection" class="hidden">
+                    <table class="w-full">
+                        <thead>
+                            <tr class="border-b">
+                                <th class="text-left p-2">Rank</th>
+                                <th class="text-left p-2">Player</th>
+                                <th class="text-left p-2">Score</th>
+                                <th class="text-left p-2">K</th>
+                                <th class="text-left p-2">D</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ffaPlayersTable"></tbody>
+                    </table>
+                </div>
+                
+                <!-- Team Section -->
+                <div id="teamScoreboardSection" class="hidden">
+                    <div class="two-columns">
+                        <div id="redTeamPlayers">
+                            <h3 class="team-red font-bold">Red Team - <span id="scoreboardTeamRedScore">0</span></h3>
+                            <table class="w-full">
+                                <thead>
+                                    <tr class="border-b">
+                                        <th class="text-left p-2">Player</th>
+                                        <th class="text-left p-2">Score</th>
+                                        <th class="text-left p-2">K</th>
+                                        <th class="text-left p-2">D</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div id="blueTeamPlayers">
+                            <h3 class="team-blue font-bold">Blue Team - <span id="scoreboardTeamBlueScore">0</span></h3>
+                            <table class="w-full">
+                                <thead>
+                                    <tr class="border-b">
+                                        <th class="text-left p-2">Player</th>
+                                        <th class="text-left p-2">Score</th>
+                                        <th class="text-left p-2">K</th>
+                                        <th class="text-left p-2">D</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-4 text-sm text-gray-400">Press Tab to close</div>
+        </div>
+        
+        <!-- Settings Menu (hidden by default) -->
+        <div id="settingsMenu" class="hidden">
+            <h2 class="text-2xl font-bold mb-4">Settings</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="flex items-center">
+                        <input type="checkbox" id="soundEnabled" checked class="mr-2">
+                        <span class="text-sm">Sound Enabled</span>
+                    </label>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Sound Volume: <span id="soundVolumeValue">50</span>%</label>
+                    <input type="range" id="soundVolume" min="0" max="100" value="50" class="w-full">
+                </div>
+                <div>
+                    <label class="flex items-center">
+                        <input type="checkbox" id="musicEnabled" class="mr-2">
+                        <span class="text-sm">Music Enabled</span>
+                    </label>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Music Volume: <span id="musicVolumeValue">30</span>%</label>
+                    <input type="range" id="musicVolume" min="0" max="100" value="30" class="w-full">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Graphics Quality</label>
+                    <select id="graphicsQuality" class="w-full px-3 py-2 bg-gray-700 rounded">
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="flex items-center">
+                        <input type="checkbox" id="particleEffects" checked class="mr-2">
+                        <span class="text-sm">Particle Effects</span>
+                    </label>
+                </div>
+                <div>
+                    <label class="flex items-center">
+                        <input type="checkbox" id="screenShake" checked class="mr-2">
+                        <span class="text-sm">Screen Shake</span>
+                    </label>
+                </div>
+                <div>
+                    <label class="flex items-center">
+                        <input type="checkbox" id="showFPS" class="mr-2">
+                        <span class="text-sm">Show FPS</span>
+                    </label>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Mouse Sensitivity: <span id="sensitivityValue">1.0</span></label>
+                    <input type="range" id="sensitivity" min="0.1" max="2" step="0.1" value="1" class="w-full">
+                </div>
+            </div>
+            <div class="mt-6 flex gap-2">
+                <button id="saveSettingsButton" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded">
+                    Save
+                </button>
+                <button id="cancelSettingsButton" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Event listener for connection -->
+    <script>
+        // Hide connection overlay when game connects
+        window.addEventListener('gameConnected', () => {
+            document.getElementById('connectionOverlay').classList.add('hidden');
+            document.getElementById('settingsButton').classList.remove('hidden');
+            document.getElementById('networkQualityIndicator').classList.remove('hidden');
+            document.getElementById('minimapContainer').classList.remove('hidden');
+        });
+    </script>
+</body>
+</html>

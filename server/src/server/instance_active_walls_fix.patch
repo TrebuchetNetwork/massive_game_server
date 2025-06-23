@@ -1,0 +1,15 @@
+--- a/server/src/server/instance.rs
++++ b/server/src/server/instance.rs
+@@ -1324,6 +1324,11 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
+                     if current_wall.current_health > 0 {
+                         // Use the current wall state, not the cached one
+                         active_walls.push(current_wall);
+                         wall_is_active = true;
++                    } else {
++                        // IMPORTANT: Wall is destroyed - ensure it's NOT in any player AOIs
++                        // This prevents the client from thinking the wall still exists
++                        debug!("[Frame {}] Wall {} is destroyed (health: 0), ensuring it's not in AOIs", frame, cached_wall.id);
++                        // The wall should be filtered out here
+                     }
+                 }
+             }

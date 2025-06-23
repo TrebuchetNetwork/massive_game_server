@@ -1,0 +1,32 @@
+--- a/server/src/server/instance.rs
++++ b/server/src/server/instance.rs
+@@ -1234,6 +1234,28 @@ impl MassiveGameServer {
+                 }
+             }
+         }
++        
++        // CRITICAL FIX: Update player AOIs to include respawned walls
++        if !respawned_ids.is_empty() {
++            info!("[Wall Respawn] Updating player AOIs for {} respawned walls", respawned_ids.len());
++            
++            // For each player's AOI, check if respawned walls should be visible
++            for mut aoi_entry in self.player_aois.iter_mut() {
++                let player_id = aoi_entry.key();
++                let aoi = aoi_entry.value_mut();
++                
++                // Get player position
++                if let Some(player_state) = self.player_manager.get_player_state(&self.player_manager.id_pool.get_or_create(player_id)) {
++                    for wall_id in &respawned_ids {
++                        // Add respawned wall to AOI if it's within visibility range
++                        // This ensures the wall update will be sent in the next delta
++                        if !aoi.visible_walls.contains(wall_id) {
++                            aoi.visible_walls.insert(*wall_id);
++                            debug!("[Wall Respawn] Added respawned wall {} to player {}'s AOI", wall_id, player_id);
++                        }
++                    }
++                }
++            }
++        }
++        
+         respawned_ids
+     }

@@ -4,6 +4,694 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>2D Shooter - Unified Advanced Client</title>
+    
+    <!-- ULTRA-ROBUST INLINE POLYFILL SYSTEM -->
+    <script>
+    // CRITICAL: All-in-one inline polyfill system with maximum protection
+    (function(global) {
+        'use strict';
+        
+        console.log('[ULTRA POLYFILL SYSTEM] Initializing maximum protection...');
+        
+        // ==================== POLYFILL IMPLEMENTATIONS ====================
+        const POLYFILLS = {
+            ArrayFrom: (function() {
+                var toStr = Object.prototype.toString;
+                var isCallable = function(fn) {
+                    return typeof fn === 'function' || toStr.call(fn) === '[object Function]';
+                };
+                var toInteger = function(value) {
+                    var number = Number(value);
+                    if (isNaN(number)) { return 0; }
+                    if (number === 0 || !isFinite(number)) { return number; }
+                    return (number > 0 ? 1 : -1) * Math.floor(Math.abs(number));
+                };
+                var maxSafeInteger = Math.pow(2, 53) - 1;
+                var toLength = function(value) {
+                    var len = toInteger(value);
+                    return Math.min(Math.max(len, 0), maxSafeInteger);
+                };
+                
+                return function from(arrayLike/*, mapFn, thisArg */) {
+                    var C = this;
+                    var items = Object(arrayLike);
+                    if (arrayLike == null) {
+                        throw new TypeError('Array.from requires an array-like object - not null or undefined');
+                    }
+                    var mapFn = arguments.length > 1 ? arguments[1] : void undefined;
+                    var T;
+                    if (typeof mapFn !== 'undefined') {
+                        if (!isCallable(mapFn)) {
+                            throw new TypeError('Array.from: when provided, the second argument must be a function');
+                        }
+                        if (arguments.length > 2) {
+                            T = arguments[2];
+                        }
+                    }
+                    var len = toLength(items.length);
+                    var A = isCallable(C) ? Object(new C(len)) : new Array(len);
+                    var k = 0;
+                    var kValue;
+                    while (k < len) {
+                        kValue = items[k];
+                        if (mapFn) {
+                            A[k] = typeof T === 'undefined' ? mapFn(kValue, k) : mapFn.call(T, kValue, k);
+                        } else {
+                            A[k] = kValue;
+                        }
+                        k += 1;
+                    }
+                    A.length = len;
+                    return A;
+                };
+            }()),
+            
+            ArrayIsArray: function(arg) {
+                return Object.prototype.toString.call(arg) === '[object Array]';
+            },
+            
+            ObjectAssign: function(target, firstSource) {
+                'use strict';
+                if (target === undefined || target === null) {
+                    throw new TypeError('Cannot convert first argument to object');
+                }
+                var to = Object(target);
+                for (var i = 1; i < arguments.length; i++) {
+                    var nextSource = arguments[i];
+                    if (nextSource === undefined || nextSource === null) {
+                        continue;
+                    }
+                    var keysArray = Object.keys(Object(nextSource));
+                    for (var nextIndex = 0, len = keysArray.length; nextIndex < len; nextIndex++) {
+                        var nextKey = keysArray[nextIndex];
+                        var desc = Object.getOwnPropertyDescriptor(nextSource, nextKey);
+                        if (desc !== undefined && desc.enumerable) {
+                            to[nextKey] = nextSource[nextKey];
+                        }
+                    }
+                }
+                return to;
+            }
+        };
+        
+        // ==================== SAFE UTILITIES ====================
+        global.safeUtils = {
+            arrayFrom: function(arrayLike, mapFn, thisArg) {
+                try {
+                    if (Array.from && typeof Array.from === 'function') {
+                        return Array.from(arrayLike, mapFn, thisArg);
+                    }
+                } catch (e) {}
+                return POLYFILLS.ArrayFrom.call(Array, arrayLike, mapFn, thisArg);
+            },
+            
+            isArray: function(arg) {
+                try {
+                    if (Array.isArray && typeof Array.isArray === 'function') {
+                        return Array.isArray(arg);
+                    }
+                } catch (e) {}
+                return POLYFILLS.ArrayIsArray(arg);
+            },
+            
+            objectAssign: function(target) {
+                try {
+                    if (Object.assign && typeof Object.assign === 'function') {
+                        return Object.assign.apply(Object, arguments);
+                    }
+                } catch (e) {}
+                var args = [target];
+                for (var i = 1; i < arguments.length; i++) {
+                    args.push(arguments[i]);
+                }
+                return POLYFILLS.ObjectAssign.apply(null, args);
+            }
+        };
+        
+        // ==================== INSTALLATION & PROTECTION ====================
+        let installCount = 0;
+        let lastInstallTime = 0;
+        
+        function installPolyfills(force) {
+            const now = Date.now();
+            installCount++;
+            
+            // Log if frequent installations
+            if (now - lastInstallTime < 100) {
+                console.warn('[ULTRA POLYFILL] Rapid reinstallation detected! Count:', installCount);
+            }
+            lastInstallTime = now;
+            
+            // Array.from
+            if (force || !Array.from || typeof Array.from !== 'function') {
+                console.log('[ULTRA POLYFILL] Installing Array.from');
+                Array.from = POLYFILLS.ArrayFrom;
+                
+                // Double-check
+                if (typeof Array.from !== 'function') {
+                    console.error('[ULTRA POLYFILL] Array.from installation failed! Using defineProperty...');
+                    try {
+                        Object.defineProperty(Array, 'from', {
+                            value: POLYFILLS.ArrayFrom,
+                            writable: true,
+                            configurable: true
+                        });
+                    } catch (e) {
+                        console.error('[ULTRA POLYFILL] defineProperty failed:', e);
+                    }
+                }
+            }
+            
+            // Array.isArray
+            if (force || !Array.isArray || typeof Array.isArray !== 'function') {
+                console.log('[ULTRA POLYFILL] Installing Array.isArray');
+                Array.isArray = POLYFILLS.ArrayIsArray;
+                
+                if (typeof Array.isArray !== 'function') {
+                    console.error('[ULTRA POLYFILL] Array.isArray installation failed! Using defineProperty...');
+                    try {
+                        Object.defineProperty(Array, 'isArray', {
+                            value: POLYFILLS.ArrayIsArray,
+                            writable: true,
+                            configurable: true
+                        });
+                    } catch (e) {
+                        console.error('[ULTRA POLYFILL] defineProperty failed:', e);
+                    }
+                }
+            }
+            
+            // Object.assign
+            if (force || !Object.assign || typeof Object.assign !== 'function') {
+                console.log('[ULTRA POLYFILL] Installing Object.assign');
+                try {
+                    Object.defineProperty(Object, 'assign', {
+                        enumerable: false,
+                        configurable: true,
+                        writable: true,
+                        value: POLYFILLS.ObjectAssign
+                    });
+                } catch (e) {
+                    console.error('[ULTRA POLYFILL] Object.assign defineProperty failed:', e);
+                    Object.assign = POLYFILLS.ObjectAssign;
+                }
+            }
+        }
+        
+        // ==================== MONITORING & RECOVERY ====================
+        let monitoringActive = false;
+        const intervals = [];
+        
+        function startMonitoring() {
+            if (monitoringActive) return;
+            monitoringActive = true;
+            
+            console.log('[ULTRA POLYFILL] Starting aggressive monitoring...');
+            
+            // Ultra-fast initial monitoring (every 5ms for 2 seconds)
+            const ultraFastInterval = setInterval(() => {
+                if (typeof Array.from !== 'function' || 
+                    typeof Array.isArray !== 'function' || 
+                    typeof Object.assign !== 'function') {
+                    console.warn('[ULTRA POLYFILL] Emergency restoration triggered!');
+                    installPolyfills(true);
+                }
+            }, 5);
+            intervals.push(ultraFastInterval);
+            
+            setTimeout(() => {
+                clearInterval(ultraFastInterval);
+                
+                // Fast monitoring (every 20ms for next 10 seconds)
+                const fastInterval = setInterval(() => {
+                    if (typeof Array.from !== 'function' || 
+                        typeof Array.isArray !== 'function' || 
+                        typeof Object.assign !== 'function') {
+                        console.warn('[ULTRA POLYFILL] Fast restoration triggered!');
+                        installPolyfills(true);
+                    }
+                }, 20);
+                intervals.push(fastInterval);
+                
+                setTimeout(() => {
+                    clearInterval(fastInterval);
+                    
+                    // Normal monitoring (every 100ms)
+                    const normalInterval = setInterval(() => {
+                        if (typeof Array.from !== 'function' || 
+                            typeof Array.isArray !== 'function' || 
+                            typeof Object.assign !== 'function') {
+                            console.warn('[ULTRA POLYFILL] Normal restoration triggered!');
+                            installPolyfills(true);
+                        }
+                    }, 100);
+                    intervals.push(normalInterval);
+                }, 10000);
+            }, 2000);
+        }
+        
+        // ==================== DEFENSIVE WRAPPERS ====================
+        function createDefensiveWrapper(obj, methodName, implementation) {
+            const original = obj[methodName];
+            return function() {
+                try {
+                    if (original && typeof original === 'function') {
+                        return original.apply(this, arguments);
+                    }
+                } catch (e) {
+                    console.warn('[ULTRA POLYFILL] Native method failed, using polyfill:', methodName, e);
+                }
+                return implementation.apply(this, arguments);
+            };
+        }
+        
+        // ==================== SCRIPT MONITORING ====================
+        let scriptObserver = null;
+        
+        function monitorScriptLoading() {
+            if (scriptObserver) return;
+            
+            scriptObserver = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    mutation.addedNodes.forEach(function(node) {
+                        if (node.tagName === 'SCRIPT') {
+                            console.log('[ULTRA POLYFILL] Script detected:', node.src || 'inline');
+                            
+                            // Pre-emptive restoration
+                            installPolyfills(false);
+                            
+                            // Monitor script load
+                            node.addEventListener('load', function() {
+                                console.log('[ULTRA POLYFILL] Script loaded:', node.src || 'inline');
+                                setTimeout(() => installPolyfills(false), 0);
+                                setTimeout(() => installPolyfills(false), 10);
+                                setTimeout(() => installPolyfills(false), 100);
+                            });
+                            
+                            // Special handling for PIXI
+                            if (node.src && node.src.includes('pixi')) {
+                                console.warn('[ULTRA POLYFILL] PIXI.js detected! Enabling maximum protection...');
+                                
+                                // Extra aggressive monitoring for PIXI
+                                const pixiInterval = setInterval(() => {
+                                    installPolyfills(false);
+                                }, 1);
+                                
+                                setTimeout(() => {
+                                    clearInterval(pixiInterval);
+                                    console.log('[ULTRA POLYFILL] PIXI protection phase complete');
+                                }, 1000);
+                            }
+                        }
+                    });
+                });
+            });
+            
+            scriptObserver.observe(document.documentElement, {
+                childList: true,
+                subtree: true
+            });
+        }
+        
+        // ==================== GLOBAL API ====================
+        global.__ultraPolyfill = {
+            install: () => installPolyfills(true),
+            verify: function() {
+                const results = {
+                    'Array.from': typeof Array.from === 'function',
+                    'Array.isArray': typeof Array.isArray === 'function',
+                    'Object.assign': typeof Object.assign === 'function'
+                };
+                console.log('[ULTRA POLYFILL] Verification:', results);
+                return results;
+            },
+            forceRestore: () => installPolyfills(true),
+            safeUtils: global.safeUtils,
+            installCount: () => installCount
+        };
+        
+        // Backwards compatibility
+        global.__polyfillGuardian = global.__ultraPolyfill;
+        global.__reinstallPolyfills = () => installPolyfills(true);
+        global.__forceRestorePolyfills = () => installPolyfills(true);
+        
+        // ==================== INITIALIZATION ====================
+        
+        // Install immediately
+        installPolyfills(true);
+        
+        // Start monitoring
+        startMonitoring();
+        monitorScriptLoading();
+        
+        // Verify installation
+        setTimeout(() => {
+            const results = global.__ultraPolyfill.verify();
+            const allGood = Object.values(results).every(v => v === true);
+            
+            if (!allGood) {
+                console.error('[ULTRA POLYFILL] Initial verification failed!', results);
+                installPolyfills(true);
+            } else {
+                console.log('[ULTRA POLYFILL] System ready. All polyfills active.');
+            }
+        }, 10);
+        
+        // Emergency recovery on error
+        global.addEventListener('error', function(e) {
+            if (e.message && (
+                e.message.includes('Array.from is not a function') ||
+                e.message.includes('Array.isArray is not a function') ||
+                e.message.includes('Object.assign is not a function')
+            )) {
+                console.error('[ULTRA POLYFILL] Emergency recovery triggered by error:', e.message);
+                installPolyfills(true);
+                
+                // Try to prevent error propagation
+                if (e.preventDefault) e.preventDefault();
+                if (e.stopPropagation) e.stopPropagation();
+            }
+        }, true);
+        
+    })(window);
+    </script>
+    
+    <!-- Verify polyfills are protected before any other scripts -->
+    <script>
+    // Final verification before PIXI loads
+    (function() {
+        console.log('[Pre-PIXI Final Check] Verifying all polyfills...');
+        
+        const polyfillChecks = {
+            'Array.from': typeof Array.from === 'function',
+            'Array.isArray': typeof Array.isArray === 'function',
+            'Object.assign': typeof Object.assign === 'function'
+        };
+        
+        let allGood = true;
+        for (const [name, isPresent] of Object.entries(polyfillChecks)) {
+            console.log(`[Pre-PIXI Final Check] ${name}: ${isPresent ? 'OK' : 'MISSING'}`);
+            if (!isPresent) allGood = false;
+        }
+        
+        if (!allGood) {
+            console.error('[Pre-PIXI Final Check] Some polyfills are missing! Attempting emergency restore...');
+            if (window.__forceRestorePolyfills) window.__forceRestorePolyfills();
+            if (window.__reinstallPolyfills) window.__reinstallPolyfills();
+            if (window.__polyfillGuardian) window.__polyfillGuardian.forceRestore();
+            if (window.__runtimePolyfillProtector) window.__runtimePolyfillProtector.forceRestoreAll();
+        } else {
+            console.log('[Pre-PIXI Final Check] All polyfills present and ready');
+        }
+    })();
+    </script>
+    
+    <!-- Additional inline polyfills as absolute fallback -->
+    <script>
+    // Execute polyfills immediately before any other code
+    (function(window) {
+        'use strict';
+        
+        console.log('Starting inline polyfill backup...');
+        
+        // Backup polyfill for Array.from
+        if (!Array.from) {
+            Array.from = (function() {
+                var toStr = Object.prototype.toString;
+                var isCallable = function(fn) {
+                    return typeof fn === 'function' || toStr.call(fn) === '[object Function]';
+                };
+                var toInteger = function(value) {
+                    var number = Number(value);
+                    if (isNaN(number)) { return 0; }
+                    if (number === 0 || !isFinite(number)) { return number; }
+                    return (number > 0 ? 1 : -1) * Math.floor(Math.abs(number));
+                };
+                var maxSafeInteger = Math.pow(2, 53) - 1;
+                var toLength = function(value) {
+                    var len = toInteger(value);
+                    return Math.min(Math.max(len, 0), maxSafeInteger);
+                };
+                
+                return function from(arrayLike/*, mapFn, thisArg */) {
+                    var C = this;
+                    var items = Object(arrayLike);
+                    if (arrayLike == null) {
+                        throw new TypeError('Array.from requires an array-like object - not null or undefined');
+                    }
+                    var mapFn = arguments.length > 1 ? arguments[1] : void undefined;
+                    var T;
+                    if (typeof mapFn !== 'undefined') {
+                        if (!isCallable(mapFn)) {
+                            throw new TypeError('Array.from: when provided, the second argument must be a function');
+                        }
+                        if (arguments.length > 2) {
+                            T = arguments[2];
+                        }
+                    }
+                    var len = toLength(items.length);
+                    var A = isCallable(C) ? Object(new C(len)) : new Array(len);
+                    var k = 0;
+                    var kValue;
+                    while (k < len) {
+                        kValue = items[k];
+                        if (mapFn) {
+                            A[k] = typeof T === 'undefined' ? mapFn(kValue, k) : mapFn.call(T, kValue, k);
+                        } else {
+                            A[k] = kValue;
+                        }
+                        k += 1;
+                    }
+                    A.length = len;
+                    return A;
+                };
+            }());
+        }
+        
+        // Polyfill for Array.isArray
+        if (!Array.isArray) {
+            Array.isArray = function(arg) {
+                return Object.prototype.toString.call(arg) === '[object Array]';
+            };
+        }
+        
+        // Polyfill for Object.assign
+        if (!Object.assign) {
+            Object.defineProperty(Object, 'assign', {
+                enumerable: false,
+                configurable: true,
+                writable: true,
+                value: function(target, firstSource) {
+                    'use strict';
+                    if (target === undefined || target === null) {
+                        throw new TypeError('Cannot convert first argument to object');
+                    }
+                    var to = Object(target);
+                    for (var i = 1; i < arguments.length; i++) {
+                        var nextSource = arguments[i];
+                        if (nextSource === undefined || nextSource === null) {
+                            continue;
+                        }
+                        var keysArray = Object.keys(Object(nextSource));
+                        for (var nextIndex = 0, len = keysArray.length; nextIndex < len; nextIndex++) {
+                            var nextKey = keysArray[nextIndex];
+                            var desc = Object.getOwnPropertyDescriptor(nextSource, nextKey);
+                            if (desc !== undefined && desc.enumerable) {
+                                to[nextKey] = nextSource[nextKey];
+                            }
+                        }
+                    }
+                    return to;
+                }
+            });
+        }
+        
+        // Additional ES6 polyfills that might be needed
+        
+        // String.prototype.includes
+        if (!String.prototype.includes) {
+            String.prototype.includes = function(search, start) {
+                'use strict';
+                if (typeof start !== 'number') {
+                    start = 0;
+                }
+                if (start + search.length > this.length) {
+                    return false;
+                } else {
+                    return this.indexOf(search, start) !== -1;
+                }
+            };
+        }
+        
+        // Array.prototype.includes
+        if (!Array.prototype.includes) {
+            Array.prototype.includes = function(searchElement, fromIndex) {
+                var O = Object(this);
+                var len = parseInt(O.length) || 0;
+                if (len === 0) {
+                    return false;
+                }
+                var n = parseInt(fromIndex) || 0;
+                var k;
+                if (n >= 0) {
+                    k = n;
+                } else {
+                    k = len + n;
+                    if (k < 0) {k = 0;}
+                }
+                var currentElement;
+                while (k < len) {
+                    currentElement = O[k];
+                    if (searchElement === currentElement) {
+                        return true;
+                    }
+                    k++;
+                }
+                return false;
+            };
+        }
+        
+        // Array.prototype.find
+        if (!Array.prototype.find) {
+            Array.prototype.find = function(predicate) {
+                if (this == null) {
+                    throw new TypeError('Array.prototype.find called on null or undefined');
+                }
+                if (typeof predicate !== 'function') {
+                    throw new TypeError('predicate must be a function');
+                }
+                var list = Object(this);
+                var length = list.length >>> 0;
+                var thisArg = arguments[1];
+                var value;
+                for (var i = 0; i < length; i++) {
+                    value = list[i];
+                    if (predicate.call(thisArg, value, i, list)) {
+                        return value;
+                    }
+                }
+                return undefined;
+            };
+        }
+        
+        // Number.isFinite
+        if (!Number.isFinite) {
+            Number.isFinite = function(value) {
+                return typeof value === 'number' && isFinite(value);
+            };
+        }
+        
+        // Math.sign
+        if (!Math.sign) {
+            Math.sign = function(x) {
+                x = +x;
+                if (x === 0 || isNaN(x)) {
+                    return x;
+                }
+                return x > 0 ? 1 : -1;
+            };
+        }
+        
+        // Additional critical polyfills for older browsers
+        
+        // Object.keys polyfill
+        if (!Object.keys) {
+            Object.keys = function(obj) {
+                var keys = [];
+                for (var key in obj) {
+                    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                        keys.push(key);
+                    }
+                }
+                return keys;
+            };
+        }
+        
+        // Object.getOwnPropertyDescriptor polyfill (basic)
+        if (!Object.getOwnPropertyDescriptor) {
+            Object.getOwnPropertyDescriptor = function(obj, prop) {
+                if (obj.hasOwnProperty(prop)) {
+                    return {
+                        value: obj[prop],
+                        writable: true,
+                        enumerable: true,
+                        configurable: true
+                    };
+                }
+                return undefined;
+            };
+        }
+        
+        // Object.defineProperty polyfill (basic fallback)
+        if (!Object.defineProperty) {
+            Object.defineProperty = function(obj, prop, descriptor) {
+                if (descriptor && descriptor.value !== undefined) {
+                    obj[prop] = descriptor.value;
+                }
+                return obj;
+            };
+        }
+        
+        // Force polyfills onto all possible contexts
+        if (typeof window !== 'undefined') {
+            // Ensure global constructors have the methods
+            if (!window.Array.from && Array.from) window.Array.from = Array.from;
+            if (!window.Array.isArray && Array.isArray) window.Array.isArray = Array.isArray;
+            if (!window.Object.assign && Object.assign) window.Object.assign = Object.assign;
+            
+            // Also make sure they're on the global scope
+            window.Array.from = Array.from;
+            window.Array.isArray = Array.isArray;
+            window.Object.assign = Object.assign;
+            
+            // Force assignment to the constructor objects
+            Array.from = Array.from || window.Array.from;
+            Array.isArray = Array.isArray || window.Array.isArray;
+            Object.assign = Object.assign || window.Object.assign;
+        }
+        
+        console.log('Polyfills loaded and applied successfully');
+        console.log('Array.from:', typeof Array.from);
+        console.log('Array.isArray:', typeof Array.isArray);
+        console.log('Object.assign:', typeof Object.assign);
+        
+        // Final verification
+        if (typeof Array.from !== 'function') {
+            console.error('CRITICAL: Array.from polyfill failed to apply!');
+            throw new Error('Array.from polyfill not working');
+        }
+        if (typeof Array.isArray !== 'function') {
+            console.error('CRITICAL: Array.isArray polyfill failed to apply!');
+            throw new Error('Array.isArray polyfill not working');
+        }
+        if (typeof Object.assign !== 'function') {
+            console.error('CRITICAL: Object.assign polyfill failed to apply!');
+            throw new Error('Object.assign polyfill not working');
+        }
+    })(window);
+    </script>
+    
+    <!-- Verify polyfills before loading other scripts -->
+    <script>
+    (function() {
+        // Verify polyfills are applied
+        console.log('Verifying polyfills before PIXI load:');
+        console.log('Array.from available:', typeof Array.from === 'function');
+        console.log('Array.isArray available:', typeof Array.isArray === 'function');
+        console.log('Object.assign available:', typeof Object.assign === 'function');
+        
+        // Re-apply if missing (defensive programming)
+        if (typeof Array.from !== 'function') {
+            console.error('Array.from polyfill failed to apply! Reapplying...');
+            // Re-apply the polyfill here if needed
+        }
+        
+        // Create global references as fallback
+        if (!window.Array) window.Array = Array;
+        if (!window.Object) window.Object = Object;
+    })();
+    </script>
+    
     <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
     
     <script src="https://cdn.tailwindcss.com"></script>
@@ -265,9 +953,50 @@
     </div>
 
     <script type="module">
-        import * as flatbuffers from 'flatbuffers';
-        import { GameProtocol } from './generated_js/game.js';
-        const GP = GameProtocol;
+        // Handle both file:// and http:// protocols
+        let flatbuffers, GameProtocol, GP;
+        
+        try {
+            // Try ES module imports (works with http://)
+            const fbModule = await import('flatbuffers');
+            flatbuffers = fbModule;
+            
+            const gpModule = await import('./generated_js/game.js');
+            GameProtocol = gpModule.GameProtocol;
+            GP = GameProtocol;
+        } catch (e) {
+            console.warn('ES module import failed (likely due to file:// protocol), falling back to script tags');
+            
+            // For file:// protocol, we'll need to load via script tags
+            // This requires the files to be available as UMD/global builds
+            // For now, we'll show an error message
+            const errorDiv = document.createElement('div');
+            errorDiv.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: #EF4444;
+                color: white;
+                padding: 20px;
+                border-radius: 8px;
+                text-align: center;
+                z-index: 10000;
+                max-width: 600px;
+            `;
+            errorDiv.innerHTML = `
+                <h2>Module Loading Error</h2>
+                <p>The game modules couldn't be loaded due to CORS restrictions when using file:// protocol.</p>
+                <p>Please either:</p>
+                <ol style="text-align: left;">
+                    <li>Run a local web server (e.g., <code>python -m http.server 8000</code>)</li>
+                    <li>Or open the file through a local server (http://localhost:8000/client.html)</li>
+                </ol>
+                <p>This is a browser security restriction for ES modules.</p>
+            `;
+            document.body.appendChild(errorDiv);
+            throw e;
+        }
 
         // Game constants
         const INTERPOLATION_DELAY = 100; // ms
@@ -398,6 +1127,7 @@
         let trajectoryGraphics;
         let mouseWorldPos = { x: 0, y: 0 };
         let showAiming = true;
+        let pixiInitialized = false;
 
         // Game State
         let myPlayerId = null;
@@ -452,6 +1182,7 @@
         let audioManager;
         let minimap;
         let networkIndicator;
+        let performanceMonitor;
 
         // Game Settings
         let gameSettings = {
@@ -473,12 +1204,27 @@
 
         // Utility function to mix colors
         function mixColors(color1, color2, amount) {
-            const c1 = PIXI.Color.shared.setValue(color1).toRgbArray();
-            const c2 = PIXI.Color.shared.setValue(color2).toRgbArray();
+            let c1, c2;
+            try {
+                c1 = PIXI.Color.shared.setValue(color1).toRgbArray();
+                c2 = PIXI.Color.shared.setValue(color2).toRgbArray();
+            } catch (e) {
+                // Fallback if PIXI has issues
+                console.warn('PIXI Color error, using fallback:', e);
+                // Simple color to RGB conversion fallback
+                c1 = [(color1 >> 16) & 0xFF, (color1 >> 8) & 0xFF, color1 & 0xFF];
+                c2 = [(color2 >> 16) & 0xFF, (color2 >> 8) & 0xFF, color2 & 0xFF];
+            }
             const r = c1[0] * (1 - amount) + c2[0] * amount;
             const g = c1[1] * (1 - amount) + c2[1] * amount;
             const b = c1[2] * (1 - amount) + c2[2] * amount;
-            return PIXI.Color.shared.setValue([r, g, b]).toNumber();
+            
+            try {
+                return PIXI.Color.shared.setValue([r, g, b]).toNumber();
+            } catch (e) {
+                // Fallback color calculation
+                return ((Math.round(r) & 0xFF) << 16) | ((Math.round(g) & 0xFF) << 8) | (Math.round(b) & 0xFF);
+            }
         }
 
         function log(message, type = 'info') {
@@ -491,6 +1237,14 @@
 
         // Initialize PIXI Application
             function initPixi() {
+                // Verify polyfills are still working before PIXI initialization
+                if (typeof Array.from !== 'function' || typeof Array.isArray !== 'function' || typeof Object.assign !== 'function') {
+                    log('CRITICAL: Polyfills lost before PIXI init! Attempting to restore...', 'error');
+                    if (window.__reinstallPolyfills) {
+                        window.__reinstallPolyfills();
+                    }
+                }
+                
                 const pixiContainer = document.getElementById('pixiContainer');
                 if (!pixiContainer) {
                     log('CRITICAL ERROR: pixiContainer DOM element not found!', 'error');
@@ -498,14 +1252,28 @@
                 }
 
                 const containerRect = pixiContainer.getBoundingClientRect();
-                app = new PIXI.Application({
-                    width: containerRect.width,
-                    height: containerRect.height,
-                    backgroundColor: 0x1a202c,
-                    antialias: true,
-                    resolution: window.devicePixelRatio || 1,
-                    autoDensity: true,
-                });
+                
+                try {
+                    app = new PIXI.Application({
+                        width: containerRect.width,
+                        height: containerRect.height,
+                        backgroundColor: 0x1a202c,
+                        antialias: true,
+                        resolution: window.devicePixelRatio || 1,
+                        autoDensity: true,
+                    });
+                } catch (e) {
+                    log('CRITICAL ERROR during PIXI initialization: ' + e.message, 'error');
+                    console.error('PIXI initialization error:', e);
+                    
+                    // Try to restore polyfills and retry
+                    if (window.__reinstallPolyfills) {
+                        window.__reinstallPolyfills();
+                        setTimeout(() => initPixi(), 100);
+                    }
+                    return;
+                }
+                
                 pixiContainer.appendChild(app.view);
 
                 app.ticker.maxFPS = 60;
@@ -513,6 +1281,14 @@
                 if (!app || !app.stage) {
                     log('CRITICAL ERROR: PIXI Application failed to initialize!', 'error');
                     return;
+                }
+                
+                // Verify polyfills are still working after PIXI initialization
+                if (typeof Array.from !== 'function' || typeof Array.isArray !== 'function' || typeof Object.assign !== 'function') {
+                    log('WARNING: Polyfills were overwritten by PIXI! Restoring...', 'warn');
+                    if (window.__reinstallPolyfills) {
+                        window.__reinstallPolyfills();
+                    }
                 }
 
                 // Main scene container (moves with camera)
@@ -593,6 +1369,9 @@
                 window.addEventListener('resize', resizePixiApp);
                 resizePixiApp();
 
+                // Mark PIXI as initialized only after everything is ready
+                pixiInitialized = true;
+                
                 app.ticker.add(gameLoop);
                 log('PIXI scene graph initialized and ticker started.', 'info');
             }
@@ -2345,6 +3124,22 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 console.error("[processServerUpdate] messageData:", messageData, "isInitial:", isInitial);
                 return; 
             }
+            
+            // Verify polyfills before processing
+            if (typeof Object.assign !== 'function') {
+                log('CRITICAL: Object.assign missing in processServerUpdate! Restoring...', 'error');
+                if (window.__polyfillGuardian) {
+                    window.__polyfillGuardian.forceRestore();
+                }
+            }
+
+            // Check if PIXI is initialized before processing
+            if (!pixiInitialized) {
+                log(`[processServerUpdate] Warning: PIXI not initialized yet, deferring update`, 'warn');
+                // Defer the update until PIXI is ready
+                setTimeout(() => processServerUpdate(messageData, isInitial), 100);
+                return;
+            }
 
             const serverTime = Number(messageData.timestamp);
             // const parsed = messageData; // This alias is confusing, messageData is already the parsed data payload.
@@ -2507,7 +3302,18 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         if (!localPlayerState) {
                             localPlayerState = { ...pData };
                         } else {
-                            Object.assign(localPlayerState, pData); // Merge updates into localPlayerState
+                            // Use safe assign to merge updates
+                            const safeUtils = window.safeUtils || window;
+                            if (safeUtils && safeUtils.objectAssign) {
+                                localPlayerState = safeUtils.objectAssign(localPlayerState, pData);
+                            } else {
+                                // Fallback manual copy
+                                for (var key in pData) {
+                                    if (Object.prototype.hasOwnProperty.call(pData, key)) {
+                                        localPlayerState[key] = pData[key];
+                                    }
+                                }
+                            }
                         }
                         // Client-side prediction reconciliation (if applicable)
                         if (messageData.last_processed_input_sequence !== undefined && messageData.last_processed_input_sequence !== null) {
@@ -3131,6 +3937,11 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
         // Input handling
         function setupInputHandlers() {
+            if (!app || !app.view) {
+                log('PIXI app not ready for input handlers', 'error');
+                return;
+            }
+            
             document.addEventListener('keydown', (e) => handleKeyInput(e, true));
             document.addEventListener('keyup', (e) => handleKeyInput(e, false));
             app.view.addEventListener('mousemove', handleMouseMove);
@@ -3614,7 +4425,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 audioManager.setGlobalVolume(gameSettings.soundVolume);
                 audioManager.setMuted(!gameSettings.soundEnabled);
             }
-            if (effectsManager) {M
+            if (effectsManager) {
                 effectsManager.setParticlesEnabled(gameSettings.particleEffects);
             }
 
@@ -5844,6 +6655,795 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         this.statusDot.endFill();
     }
 }
+
+        // Performance Monitor Class
+        class PerformanceMonitor {
+            constructor() {
+                // Use safe utilities from the start
+                this.safeUtils = window.safeUtils || {
+                    arrayFrom: function(arrayLike) {
+                        const result = [];
+                        for (let i = 0; i < arrayLike.length; i++) {
+                            result.push(arrayLike[i]);
+                        }
+                        return result;
+                    },
+                    isArray: function(arg) {
+                        return Object.prototype.toString.call(arg) === '[object Array]';
+                    },
+                    objectAssign: function(target) {
+                        if (target == null) {
+                            throw new TypeError('Cannot convert undefined or null to object');
+                        }
+                        const to = Object(target);
+                        for (let index = 1; index < arguments.length; index++) {
+                            const nextSource = arguments[index];
+                            if (nextSource != null) {
+                                for (const nextKey in nextSource) {
+                                    if (Object.prototype.hasOwnProperty.call(nextSource, nextKey)) {
+                                        to[nextKey] = nextSource[nextKey];
+                                    }
+                                }
+                            }
+                        }
+                        return to;
+                    }
+                };
+                
+                // Verify polyfills before starting
+                this.verifyPolyfills();
+                
+                this.enabled = false;
+                this.metrics = new Map();
+                this.frameMetrics = {
+                    frameTimes: new Float32Array(300), // 5 seconds at 60fps
+                    frameIndex: 0,
+                    lastFrameTime: performance.now(),
+                    targetFPS: 60,
+                    targetFrameTime: 1000 / 60
+                };
+                
+                // Store original polyfills as instance backup
+                this._polyfillBackups = {
+                    ArrayFrom: Array.from,
+                    ArrayIsArray: Array.isArray,
+                    ObjectAssign: Object.assign
+                };
+                
+                // UI elements
+                this.overlay = null;
+                this.chartCanvas = null;
+                this.chartCtx = null;
+                this.histogramCanvas = null;
+                this.histogramCtx = null;
+                
+                // Function wrapping
+                this.wrappedFunctions = new Set();
+                this.functionCallCounts = new Map();
+                
+                // Bottleneck detection
+                this.bottlenecks = new Map();
+                this.webWorkerCandidates = new Set();
+                
+                // Auto-discovery mode
+                this.autoDiscoveryEnabled = false;
+                this.discoveredFunctions = new Map();
+                
+                // Create UI
+                this.createUI();
+            }
+            
+            createUI() {
+                // Main overlay container
+                this.overlay = document.createElement('div');
+                this.overlay.id = 'performanceOverlay';
+                this.overlay.style.cssText = `
+                    position: fixed;
+                    top: 60px;
+                    right: 10px;
+                    width: 350px;
+                    background: rgba(17, 24, 39, 0.95);
+                    border: 1px solid #374151;
+                    border-radius: 8px;
+                    padding: 15px;
+                    color: #E5E7EB;
+                    font-family: monospace;
+                    font-size: 12px;
+                    z-index: 10000;
+                    display: none;
+                    backdrop-filter: blur(10px);
+                `;
+                
+                // Header
+                const header = document.createElement('div');
+                header.style.cssText = 'font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #60A5FA;';
+                header.textContent = 'Performance Monitor';
+                this.overlay.appendChild(header);
+                
+                // Frame time chart
+                this.chartCanvas = document.createElement('canvas');
+                this.chartCanvas.width = 320;
+                this.chartCanvas.height = 80;
+                this.chartCanvas.style.cssText = 'border: 1px solid #4B5563; border-radius: 4px; margin-bottom: 10px;';
+                this.chartCtx = this.chartCanvas.getContext('2d');
+                this.overlay.appendChild(this.chartCanvas);
+                
+                // Metrics container
+                this.metricsContainer = document.createElement('div');
+                this.metricsContainer.style.cssText = 'margin-bottom: 10px;';
+                this.overlay.appendChild(this.metricsContainer);
+                
+                // Function histograms
+                this.histogramContainer = document.createElement('div');
+                this.histogramContainer.style.cssText = 'max-height: 300px; overflow-y: auto;';
+                this.overlay.appendChild(this.histogramContainer);
+                
+                // Bottleneck analysis section
+                this.bottleneckContainer = document.createElement('div');
+                this.bottleneckContainer.style.cssText = 'margin-top: 10px; padding-top: 10px; border-top: 1px solid #374151;';
+                this.overlay.appendChild(this.bottleneckContainer);
+                
+                // Web Worker recommendations
+                this.workerRecommendations = document.createElement('div');
+                this.workerRecommendations.style.cssText = 'margin-top: 10px; padding-top: 10px; border-top: 1px solid #374151;';
+                this.overlay.appendChild(this.workerRecommendations);
+                
+                // Export button
+                const exportButton = document.createElement('button');
+                exportButton.textContent = 'Export Performance Data';
+                exportButton.style.cssText = `
+                    margin-top: 10px;
+                    padding: 5px 10px;
+                    background: #4F46E5;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 12px;
+                `;
+                exportButton.onclick = () => this.exportPerformanceData();
+                this.overlay.appendChild(exportButton);
+                
+                // Add to body
+                document.body.appendChild(this.overlay);
+            }
+            
+            verifyPolyfills() {
+                // Check if polyfills are available
+                if (typeof Array.from !== 'function' || typeof Array.isArray !== 'function' || typeof Object.assign !== 'function') {
+                    console.warn('[PerformanceMonitor] Polyfills missing, attempting to restore...');
+                    
+                    // Try to restore using the guardian
+                    if (window.__polyfillGuardian) {
+                        window.__polyfillGuardian.forceRestore();
+                        
+                        // Verify restoration
+                        if (typeof Array.from !== 'function' || typeof Array.isArray !== 'function' || typeof Object.assign !== 'function') {
+                            console.error('[PerformanceMonitor] Failed to restore polyfills!');
+                            // Attempt direct restoration
+                            if (window.__reinstallPolyfills) {
+                                window.__reinstallPolyfills();
+                            }
+                        }
+                    }
+                    
+                    // If still missing, apply emergency polyfills directly
+                    if (typeof Array.from !== 'function') {
+                        Array.from = window.__polyfillBackups?.ArrayFrom || function(arrayLike) {
+                            var result = [];
+                            for (var i = 0; i < arrayLike.length; i++) {
+                                result.push(arrayLike[i]);
+                            }
+                            return result;
+                        };
+                    }
+                    
+                    if (typeof Array.isArray !== 'function') {
+                        Array.isArray = window.__polyfillBackups?.ArrayIsArray || function(arg) {
+                            return Object.prototype.toString.call(arg) === '[object Array]';
+                        };
+                    }
+                    
+                    if (typeof Object.assign !== 'function') {
+                        Object.assign = window.__polyfillBackups?.ObjectAssign || function(target) {
+                            'use strict';
+                            if (target == null) {
+                                throw new TypeError('Cannot convert undefined or null to object');
+                            }
+                            var to = Object(target);
+                            for (var index = 1; index < arguments.length; index++) {
+                                var nextSource = arguments[index];
+                                if (nextSource != null) {
+                                    for (var nextKey in nextSource) {
+                                        if (Object.prototype.hasOwnProperty.call(nextSource, nextKey)) {
+                                            to[nextKey] = nextSource[nextKey];
+                                        }
+                                    }
+                                }
+                            }
+                            return to;
+                        };
+                    }
+                }
+            }
+            
+            toggle() {
+                this.enabled = !this.enabled;
+                this.overlay.style.display = this.enabled ? 'block' : 'none';
+                
+                if (this.enabled) {
+                    this.startMonitoring();
+                } else {
+                    this.stopMonitoring();
+                }
+            }
+            
+            startMonitoring() {
+                // Core game loop functions
+                this.wrapFunction(window, 'gameLoop', 'Game Loop');
+                this.wrapFunction(window, 'interpolateEntities', 'Entity Interpolation');
+                this.wrapFunction(window, 'updateLocalPlayerPrediction', 'Client Prediction');
+                
+                // Rendering functions
+                this.wrapFunction(window, 'updateSprites', 'Sprite Updates');
+                this.wrapFunction(window, 'updateCamera', 'Camera Update');
+                this.wrapFunction(window, 'drawWalls', 'Wall Rendering');
+                this.wrapFunction(window, 'drawAimingSystem', 'Aiming System');
+                this.wrapFunction(window, 'updateStarfield', 'Starfield Update');
+                this.wrapFunction(window, 'updateFogOfWar', 'Fog of War');
+                this.wrapFunction(window, 'animatePickups', 'Pickup Animation');
+                this.wrapFunction(window, 'animateFlags', 'Flag Animation');
+                
+                // Sprite management
+                this.wrapFunction(window, 'createPlayerSprite', 'Player Sprite Creation');
+                this.wrapFunction(window, 'updatePlayerSprite', 'Player Sprite Update');
+                this.wrapFunction(window, 'createProjectileSprite', 'Projectile Creation');
+                this.wrapFunction(window, 'updateProjectileSprite', 'Projectile Update');
+                this.wrapFunction(window, 'createPickupSprite', 'Pickup Creation');
+                this.wrapFunction(window, 'createFlagSprite', 'Flag Creation');
+                
+                // Network functions
+                this.wrapFunction(window, 'processServerUpdate', 'Server Update Processing');
+                this.wrapFunction(window, 'parseFlatBufferMessage', 'FlatBuffer Parsing');
+                this.wrapFunction(window, 'sendInputsToServer', 'Input Sending');
+                this.wrapFunction(window, 'createInputMessage', 'Input Message Creation');
+                this.wrapFunction(window, 'createChatMessage', 'Chat Message Creation');
+                
+                // UI updates
+                this.wrapFunction(window, 'updateGameStatsUI', 'Game Stats UI');
+                this.wrapFunction(window, 'updateKillFeed', 'Kill Feed Update');
+                this.wrapFunction(window, 'updateChatDisplay', 'Chat Display Update');
+                this.wrapFunction(window, 'updateMatchInfo', 'Match Info Update');
+                this.wrapFunction(window, 'updateScoreboard', 'Scoreboard Update');
+                
+                // Wrap effects manager methods if available
+                if (window.effectsManager) {
+                    this.wrapFunction(effectsManager, 'update', 'Effects Update');
+                    this.wrapFunction(effectsManager, 'processGameEvent', 'Game Event Processing');
+                    this.wrapFunction(effectsManager, 'createEnhancedBulletImpact', 'Bullet Impact Effect');
+                    this.wrapFunction(effectsManager, 'createEnhancedMuzzleFlash', 'Muzzle Flash Effect');
+                    this.wrapFunction(effectsManager, 'createEnhancedExplosion', 'Explosion Effect');
+                    this.wrapFunction(effectsManager, 'createEnhancedDamageNumbers', 'Damage Numbers');
+                    this.wrapFunction(effectsManager, 'animateEffect', 'Effect Animation');
+                }
+                
+                // Wrap audio manager methods
+                if (window.audioManager) {
+                    this.wrapFunction(audioManager, 'playSound', 'Audio Playback');
+                    this.wrapFunction(audioManager, 'playWeaponSound', 'Weapon Audio');
+                }
+                
+                // Wrap minimap methods
+                if (window.minimap) {
+                    this.wrapFunction(minimap, 'update', 'Minimap Update');
+                    this.wrapFunction(minimap, 'drawWalls', 'Minimap Walls');
+                    this.wrapFunction(minimap, 'drawObjectives', 'Minimap Objectives');
+                }
+                
+                // Enable auto-discovery for a complete picture
+                this.enableAutoDiscovery();
+                
+                // Start update loop
+                this.updateInterval = setInterval(() => this.update(), 100);
+                
+                // Start frame time recording
+                this.frameRecorder = () => {
+                    this.recordFrameTime();
+                    if (this.enabled) {
+                        requestAnimationFrame(this.frameRecorder);
+                    }
+                };
+                requestAnimationFrame(this.frameRecorder);
+            }
+            
+            stopMonitoring() {
+                // Unwrap functions
+                this.wrappedFunctions.forEach(info => {
+                    info.obj[info.name] = info.original;
+                });
+                this.wrappedFunctions.clear();
+                
+                // Clear update loop
+                if (this.updateInterval) {
+                    clearInterval(this.updateInterval);
+                    this.updateInterval = null;
+                }
+                
+                // Disable auto-discovery
+                this.autoDiscoveryEnabled = false;
+            }
+            
+            enableAutoDiscovery() {
+                this.autoDiscoveryEnabled = true;
+                
+                // Discover all global functions
+                const globalFunctions = this.discoverFunctions(window);
+                globalFunctions.forEach(funcName => {
+                    if (!this.isWrapped(window, funcName) && 
+                        !funcName.startsWith('_') && 
+                        !['constructor', 'toString', 'valueOf'].includes(funcName)) {
+                        this.wrapFunction(window, funcName, `Global.${funcName}`);
+                    }
+                });
+                
+                // Discover PIXI functions
+                if (window.PIXI) {
+                    this.discoverPIXIFunctions();
+                }
+            }
+            
+            discoverFunctions(obj) {
+                // Verify polyfills before using Array methods
+                this.verifyPolyfills();
+                
+                const functions = [];
+                const proto = Object.getPrototypeOf(obj);
+                
+                // Get own properties
+                Object.getOwnPropertyNames(obj).forEach(name => {
+                    try {
+                        if (typeof obj[name] === 'function') {
+                            functions.push(name);
+                        }
+                    } catch (e) {
+                        // Some properties might throw on access
+                    }
+                });
+                
+                // Get prototype methods if applicable
+                if (proto && proto !== Object.prototype) {
+                    Object.getOwnPropertyNames(proto).forEach(name => {
+                        try {
+                            if (typeof proto[name] === 'function') {
+                                functions.push(name);
+                            }
+                        } catch (e) {
+                            // Some properties might throw on access
+                        }
+                    });
+                }
+                
+                return functions;
+            }
+            
+            discoverPIXIFunctions() {
+                // Monitor key PIXI rendering functions
+                if (app && app.renderer) {
+                    this.wrapFunction(app.renderer, 'render', 'PIXI.Renderer.render');
+                }
+                
+                // Monitor container updates
+                const containers = [worldContainer, playerContainer, projectileContainer, pickupContainer, flagContainer];
+                containers.forEach((container, index) => {
+                    if (container) {
+                        const containerName = ['World', 'Player', 'Projectile', 'Pickup', 'Flag'][index];
+                        if (container.updateTransform) {
+                            this.wrapFunction(container, 'updateTransform', `${containerName}.updateTransform`);
+                        }
+                    }
+                });
+            }
+            
+            isWrapped(obj, functionName) {
+                // Use safe iteration without Array.from
+                const iterator = this.wrappedFunctions.values();
+                let result = iterator.next();
+                while (!result.done) {
+                    const info = result.value;
+                    if (info.obj === obj && info.name === functionName) {
+                        return true;
+                    }
+                    result = iterator.next();
+                }
+                return false;
+            }
+            
+            detectBottlenecks() {
+                const frameTime = this.calculateAverageFrameTime();
+                const frameBudget = this.frameMetrics.targetFrameTime;
+                
+                this.bottlenecks.clear();
+                this.webWorkerCandidates.clear();
+                
+                // Analyze each metric
+                this.metrics.forEach((metric, name) => {
+                    if (metric.count === 0) return;
+                    
+                    const avg = metric.sum / metric.count;
+                    const p95 = this.calculatePercentile(metric.samples, 95);
+                    
+                    // Bottleneck detection criteria
+                    if (avg > frameBudget * 0.1) { // Function takes more than 10% of frame budget
+                        this.bottlenecks.set(name, {
+                            avg,
+                            p95,
+                            impact: (avg / frameTime) * 100,
+                            severity: avg > frameBudget * 0.3 ? 'critical' : avg > frameBudget * 0.15 ? 'high' : 'medium'
+                        });
+                    }
+                    
+                    // Web Worker candidate detection
+                    if (this.isWebWorkerCandidate(name, metric)) {
+                        this.webWorkerCandidates.add(name);
+                    }
+                });
+                
+                return this.bottlenecks;
+            }
+            
+            isWebWorkerCandidate(name, metric) {
+                const avg = metric.sum / metric.count;
+                
+                // Good candidates for web workers:
+                // 1. CPU-intensive calculations
+                // 2. Data processing/parsing
+                // 3. Not directly tied to DOM/rendering
+                const workerCandidates = [
+                    'FlatBuffer Parsing',
+                    'Server Update Processing',
+                    'Entity Interpolation',
+                    'Client Prediction',
+                    'Minimap Update',
+                    'Path Finding',
+                    'AI Calculations',
+                    'Physics Calculations'
+                ];
+                
+                return workerCandidates.some(candidate => name.includes(candidate)) && avg > 2;
+            }
+            
+            wrapFunction(obj, functionName, displayName) {
+                if (!obj || !obj[functionName] || typeof obj[functionName] !== 'function') return;
+                
+                const original = obj[functionName];
+                const monitor = this;
+                
+                // Create metrics entry
+                if (!this.metrics.has(displayName)) {
+                    this.metrics.set(displayName, {
+                        samples: new Float32Array(100),
+                        sampleIndex: 0,
+                        min: Infinity,
+                        max: 0,
+                        sum: 0,
+                        count: 0,
+                        histogram: new Map()
+                    });
+                }
+                
+                // Wrapped function
+                obj[functionName] = function(...args) {
+                    const start = performance.now();
+                    const result = original.apply(this, args);
+                    const duration = performance.now() - start;
+                    
+                    monitor.recordMetric(displayName, duration);
+                    
+                    return result;
+                };
+                
+                // Store for unwrapping
+                this.wrappedFunctions.add({
+                    obj,
+                    name: functionName,
+                    original
+                });
+            }
+            
+            recordMetric(name, duration) {
+                const metric = this.metrics.get(name);
+                if (!metric) return;
+                
+                // Update samples
+                metric.samples[metric.sampleIndex] = duration;
+                metric.sampleIndex = (metric.sampleIndex + 1) % metric.samples.length;
+                
+                // Update stats
+                metric.min = Math.min(metric.min, duration);
+                metric.max = Math.max(metric.max, duration);
+                metric.sum += duration;
+                metric.count++;
+                
+                // Update histogram
+                const bucket = Math.floor(duration / 0.5) * 0.5; // 0.5ms buckets
+                metric.histogram.set(bucket, (metric.histogram.get(bucket) || 0) + 1);
+            }
+            
+            recordFrameTime() {
+                const now = performance.now();
+                const frameTime = now - this.frameMetrics.lastFrameTime;
+                this.frameMetrics.lastFrameTime = now;
+                
+                this.frameMetrics.frameTimes[this.frameMetrics.frameIndex] = frameTime;
+                this.frameMetrics.frameIndex = (this.frameMetrics.frameIndex + 1) % this.frameMetrics.frameTimes.length;
+            }
+            
+            update() {
+                if (!this.enabled) return;
+                
+                // Update frame time chart
+                this.drawFrameTimeChart();
+                
+                // Update metrics display
+                this.updateMetricsDisplay();
+                
+                // Update histograms
+                this.updateHistograms();
+            }
+            
+            drawFrameTimeChart() {
+                const ctx = this.chartCtx;
+                const width = this.chartCanvas.width;
+                const height = this.chartCanvas.height;
+                
+                // Clear
+                ctx.fillStyle = '#0F172A';
+                ctx.fillRect(0, 0, width, height);
+                
+                // Grid lines
+                ctx.strokeStyle = '#1E293B';
+                ctx.lineWidth = 1;
+                
+                // 16.67ms line (60 FPS)
+                const target60Y = height - (16.67 / 50) * height;
+                ctx.beginPath();
+                ctx.moveTo(0, target60Y);
+                ctx.lineTo(width, target60Y);
+                ctx.stroke();
+                
+                // 33.33ms line (30 FPS)
+                const target30Y = height - (33.33 / 50) * height;
+                ctx.beginPath();
+                ctx.moveTo(0, target30Y);
+                ctx.lineTo(width, target30Y);
+                ctx.stroke();
+                
+                // Draw frame times
+                ctx.strokeStyle = '#60A5FA';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                
+                const samples = this.frameMetrics.frameTimes.length;
+                for (let i = 0; i < samples; i++) {
+                    const index = (this.frameMetrics.frameIndex + i) % samples;
+                    const frameTime = this.frameMetrics.frameTimes[index];
+                    const x = (i / samples) * width;
+                    const y = height - (frameTime / 50) * height; // 50ms scale
+                    
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                ctx.stroke();
+                
+                // Labels
+                ctx.fillStyle = '#E5E7EB';
+                ctx.font = '10px monospace';
+                ctx.fillText('60 FPS', 5, target60Y - 2);
+                ctx.fillText('30 FPS', 5, target30Y - 2);
+                
+                // Current FPS
+                const avgFrameTime = this.calculateAverageFrameTime();
+                const currentFPS = Math.round(1000 / avgFrameTime);
+                ctx.font = '14px monospace';
+                ctx.fillStyle = currentFPS >= 55 ? '#10B981' : currentFPS >= 30 ? '#F59E0B' : '#EF4444';
+                ctx.fillText(`${currentFPS} FPS`, width - 50, 20);
+            }
+            
+            calculateAverageFrameTime() {
+                let sum = 0;
+                let count = 0;
+                for (let i = 0; i < this.frameMetrics.frameTimes.length; i++) {
+                    if (this.frameMetrics.frameTimes[i] > 0) {
+                        sum += this.frameMetrics.frameTimes[i];
+                        count++;
+                    }
+                }
+                return count > 0 ? sum / count : 16.67;
+            }
+            
+            updateMetricsDisplay() {
+                let html = '<div style="margin-bottom: 10px;">';
+                html += '<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">';
+                
+                // Memory usage
+                if (performance.memory) {
+                    const used = (performance.memory.usedJSHeapSize / 1048576).toFixed(1);
+                    const total = (performance.memory.totalJSHeapSize / 1048576).toFixed(1);
+                    html += `
+                        <div style="background: #1F2937; padding: 8px; border-radius: 4px;">
+                            <div style="color: #9CA3AF;">Memory</div>
+                            <div style="color: #60A5FA; font-size: 16px;">${used}/${total} MB</div>
+                        </div>
+                    `;
+                }
+                
+                // Frame budget
+                const avgFrameTime = this.calculateAverageFrameTime();
+                const frameBudgetUsed = (avgFrameTime / this.frameMetrics.targetFrameTime) * 100;
+                const budgetColor = frameBudgetUsed <= 100 ? '#10B981' : frameBudgetUsed <= 150 ? '#F59E0B' : '#EF4444';
+                html += `
+                    <div style="background: #1F2937; padding: 8px; border-radius: 4px;">
+                        <div style="color: #9CA3AF;">Frame Budget</div>
+                        <div style="color: ${budgetColor}; font-size: 16px;">${frameBudgetUsed.toFixed(0)}%</div>
+                    </div>
+                `;
+                
+                html += '</div></div>';
+                
+                this.metricsContainer.innerHTML = html;
+            }
+            
+            updateHistograms() {
+                let html = '<div style="font-size: 11px; color: #9CA3AF; margin-bottom: 5px;">Function Performance (ms)</div>';
+                
+                // Sort metrics by average time
+                const sortedMetrics = Array.from(this.metrics.entries())
+                    .map(([name, metric]) => ({
+                        name,
+                        avg: metric.count > 0 ? metric.sum / metric.count : 0,
+                        metric
+                    }))
+                    .sort((a, b) => b.avg - a.avg);
+                
+                sortedMetrics.forEach(({ name, avg, metric }) => {
+                    if (metric.count === 0) return;
+                    
+                    const p50 = this.calculatePercentile(metric.samples, 50);
+                    const p95 = this.calculatePercentile(metric.samples, 95);
+                    const p99 = this.calculatePercentile(metric.samples, 99);
+                    
+                    const barColor = avg < 1 ? '#10B981' : avg < 5 ? '#F59E0B' : '#EF4444';
+                    
+                    html += `
+                        <div style="margin-bottom: 10px; background: #1F2937; padding: 8px; border-radius: 4px;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                                <span style="color: #E5E7EB;">${name}</span>
+                                <span style="color: ${barColor};">${avg.toFixed(2)}ms</span>
+                            </div>
+                            <div style="display: flex; gap: 10px; font-size: 10px; color: #6B7280;">
+                                <span>p50: ${p50.toFixed(2)}</span>
+                                <span>p95: ${p95.toFixed(2)}</span>
+                                <span>p99: ${p99.toFixed(2)}</span>
+                                <span>calls: ${metric.count}</span>
+                            </div>
+                            <div style="margin-top: 4px; height: 20px; background: #0F172A; border-radius: 2px; overflow: hidden;">
+                                ${this.renderMiniHistogram(metric.histogram, metric.max)}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                this.histogramContainer.innerHTML = html;
+            }
+            
+            calculatePercentile(samples, percentile) {
+                const validSamples = Array.from(samples).filter(s => s > 0).sort((a, b) => a - b);
+                if (validSamples.length === 0) return 0;
+                
+                const index = Math.ceil((percentile / 100) * validSamples.length) - 1;
+                return validSamples[Math.max(0, Math.min(index, validSamples.length - 1))];
+            }
+            
+            renderMiniHistogram(histogram, max) {
+                if (histogram.size === 0) return '';
+                
+                const buckets = Array.from(histogram.entries()).sort((a, b) => a[0] - b[0]);
+                const maxCount = Math.max(...buckets.map(b => b[1]));
+                
+                return buckets.map(([bucket, count]) => {
+                    const height = (count / maxCount) * 100;
+                    const color = bucket < 1 ? '#10B981' : bucket < 5 ? '#F59E0B' : '#EF4444';
+                    const width = 100 / buckets.length;
+                    
+                    return `<div style="display: inline-block; width: ${width}%; height: 100%; background: ${color}; opacity: ${0.3 + (height / 100) * 0.7};"></div>`;
+                }).join('');
+            }
+            
+            exportPerformanceData() {
+                // Use safe utilities for array conversion
+                const safeUtils = this.safeUtils || window.safeUtils || {};
+                const arrayFrom = safeUtils.arrayFrom || function(arrayLike) {
+                    const result = [];
+                    if (arrayLike && arrayLike.length !== undefined) {
+                        for (let i = 0; i < arrayLike.length; i++) {
+                            result.push(arrayLike[i]);
+                        }
+                    } else if (arrayLike && typeof arrayLike[Symbol.iterator] === 'function') {
+                        // Handle iterables
+                        for (const item of arrayLike) {
+                            result.push(item);
+                        }
+                    }
+                    return result;
+                };
+                
+                // Convert Map.entries() and Set to arrays safely
+                const bottlenecksArray = [];
+                const bottlenecksIterator = this.bottlenecks.entries();
+                let bottleneckResult = bottlenecksIterator.next();
+                while (!bottleneckResult.done) {
+                    bottlenecksArray.push(bottleneckResult.value);
+                    bottleneckResult = bottlenecksIterator.next();
+                }
+                
+                const candidatesArray = [];
+                const candidatesIterator = this.webWorkerCandidates.values();
+                let candidateResult = candidatesIterator.next();
+                while (!candidateResult.done) {
+                    candidatesArray.push(candidateResult.value);
+                    candidateResult = candidatesIterator.next();
+                }
+                
+                const data = {
+                    timestamp: new Date().toISOString(),
+                    frameMetrics: {
+                        averageFPS: Math.round(1000 / this.calculateAverageFrameTime()),
+                        averageFrameTime: this.calculateAverageFrameTime(),
+                        frameTimes: arrayFrom(this.frameMetrics.frameTimes)
+                    },
+                    functionMetrics: {},
+                    bottlenecks: bottlenecksArray,
+                    webWorkerCandidates: candidatesArray,
+                    memory: performance.memory ? {
+                        usedJSHeapSize: performance.memory.usedJSHeapSize,
+                        totalJSHeapSize: performance.memory.totalJSHeapSize,
+                        jsHeapSizeLimit: performance.memory.jsHeapSizeLimit
+                    } : null
+                };
+                
+                // Export function metrics
+                this.metrics.forEach((metric, name) => {
+                    if (metric.count > 0) {
+                        data.functionMetrics[name] = {
+                            avg: metric.sum / metric.count,
+                            min: metric.min,
+                            max: metric.max,
+                            count: metric.count,
+                            p50: this.calculatePercentile(metric.samples, 50),
+                            p95: this.calculatePercentile(metric.samples, 95),
+                            p99: this.calculatePercentile(metric.samples, 99)
+                        };
+                    }
+                });
+                
+                // Create downloadable JSON file
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `performance-data-${Date.now()}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                console.log('Performance data exported:', data);
+            }
+        }
+
         // Advanced Aiming System with Trajectory Prediction
         function drawAimingSystem() {
             if (!localPlayerState || !localPlayerState.alive || !mouseWorldPos) return;
@@ -6057,8 +7657,58 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             }
         }
 
+        // Deferred initialization queue
+        let initializationQueue = [];
+        let fullyInitialized = false;
+        
+        function addToInitQueue(fn, name = 'Unknown') {
+            if (fullyInitialized) {
+                // If already initialized, run immediately
+                try {
+                    fn();
+                } catch (e) {
+                    console.error(`Error running ${name}:`, e);
+                }
+            } else {
+                initializationQueue.push({ fn, name });
+            }
+        }
+        
+        function processInitQueue() {
+            log('Processing initialization queue...', 'info');
+            const queue = initializationQueue;
+            initializationQueue = [];
+            
+            queue.forEach(({ fn, name }) => {
+                try {
+                    fn();
+                    log(`Initialized: ${name}`, 'success');
+                } catch (e) {
+                    console.error(`Failed to initialize ${name}:`, e);
+                    log(`Failed to initialize ${name}: ${e.message}`, 'error');
+                }
+            });
+            
+            fullyInitialized = true;
+        }
+
         // Initialize everything when page loads
         window.addEventListener('load', () => {
+            // Verify polyfills are working
+            if (typeof Array.from !== 'function' || typeof Array.isArray !== 'function' || typeof Object.assign !== 'function') {
+                log('CRITICAL: Polyfills not working! Attempting emergency restore...', 'error');
+                if (window.__reinstallPolyfills) {
+                    window.__reinstallPolyfills();
+                }
+                
+                // Final check
+                if (typeof Array.from !== 'function') {
+                    log('FATAL: Cannot proceed without Array.from polyfill', 'error');
+                    alert('Your browser is not compatible. Please use a modern browser.');
+                    return;
+                }
+            }
+            
             // Check if GameProtocol is loaded
             if (typeof GameProtocol === 'undefined' || typeof GP === 'undefined') {
                 log('Error: GameProtocol not loaded! Make sure to generate and include game.js (or game_generated.js)', 'error');
@@ -6069,12 +7719,144 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             // Load settings
             loadSettings();
 
-            // Initialize PIXI
-            initPixi();
-
-            log('Unified Advanced WebGL client initialized with all features!', 'info');
-            log('Features: Teams, Powerups, Destructible Walls, CTF, Audio, Effects, Minimap, Settings, Advanced Aiming', 'info');
+            // Initialize PIXI with callback
+            try {
+                initPixi();
+                
+                // Wait for PIXI to be fully ready
+                const checkPixiReady = setInterval(() => {
+                    if (pixiInitialized && app && app.stage && worldContainer) {
+                        clearInterval(checkPixiReady);
+                        
+                        // Initialize managers that depend on PIXI
+                        addToInitQueue(() => {
+                            // Initialize Performance Monitor
+                            performanceMonitor = new PerformanceMonitor();
+                            
+                            // Add keyboard shortcut for performance monitor (Ctrl+Shift+P)
+                            document.addEventListener('keydown', (e) => {
+                                if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+                                    e.preventDefault();
+                                    if (performanceMonitor) performanceMonitor.toggle();
+                                }
+                            });
+                        }, 'Performance Monitor');
+                        
+                        // Process all queued initializations
+                        processInitQueue();
+                        
+                        log('Unified Advanced WebGL client initialized with all features!', 'info');
+                        log('Features: Teams, Powerups, Destructible Walls, CTF, Audio, Effects, Minimap, Settings, Advanced Aiming', 'info');
+                        log('Press Ctrl+Shift+P to toggle performance monitor', 'info');
+                    }
+                }, 50);
+                
+                // Timeout after 5 seconds
+                setTimeout(() => {
+                    if (!pixiInitialized) {
+                        clearInterval(checkPixiReady);
+                        log('CRITICAL: PIXI failed to initialize within 5 seconds', 'error');
+                        
+                        // Try one more time with polyfills restored
+                        if (window.__reinstallPolyfills) {
+                            window.__reinstallPolyfills();
+                            setTimeout(() => initPixi(), 100);
+                        }
+                    }
+                }, 5000);
+                
+            } catch (e) {
+                log('CRITICAL ERROR during initialization: ' + e.message, 'error');
+                console.error('Initialization error:', e);
+                
+                // Try to restore polyfills and retry
+                if (window.__reinstallPolyfills) {
+                    window.__reinstallPolyfills();
+                    setTimeout(() => {
+                        try {
+                            initPixi();
+                        } catch (e2) {
+                            log('FATAL: Cannot initialize even after polyfill restore', 'error');
+                            alert('Failed to initialize the game. Please refresh and try again.');
+                        }
+                    }, 500);
+                }
+            }
         });
+    </script>
+    
+    <!-- Include Enhanced Performance Monitor -->
+    <script src="performance_enhanced.js"></script>
+    
+    <script>
+    // Initialize enhanced performance monitor when available
+    window.addEventListener('load', () => {
+        // Wait a bit for the enhanced performance monitor to initialize
+        setTimeout(() => {
+            if (window.EnhancedPerformanceMonitor) {
+                // Replace the basic performance monitor with the enhanced one
+                window.enhancedPerfMonitor = new window.EnhancedPerformanceMonitor();
+                
+                // Override the basic performance monitor if it exists
+                if (window.performanceMonitor) {
+                    window.performanceMonitor = window.enhancedPerfMonitor;
+                }
+                
+                console.log('Enhanced Performance Monitor initialized. Press Ctrl+Shift+P to toggle.');
+                
+                // Auto-enable monitoring in development mode
+                const isDevelopment = window.location.hostname === 'localhost' || 
+                                    window.location.hostname === '127.0.0.1';
+                
+                if (isDevelopment) {
+                    // Show performance monitor by default in dev
+                    setTimeout(() => {
+                        window.enhancedPerfMonitor.toggle();
+                        console.log('Performance Monitor auto-enabled for development');
+                    }, 1000);
+                }
+                
+                // Add visual indicator that performance monitor is available
+                const indicator = document.createElement('div');
+                indicator.style.cssText = `
+                    position: fixed;
+                    bottom: 10px;
+                    left: 10px;
+                    padding: 5px 10px;
+                    background: rgba(79, 70, 229, 0.8);
+                    color: white;
+                    font-size: 11px;
+                    border-radius: 4px;
+                    z-index: 10000;
+                    cursor: pointer;
+                    transition: opacity 0.3s;
+                `;
+                indicator.textContent = 'Perf Monitor (Ctrl+Shift+P)';
+                indicator.onclick = () => window.enhancedPerfMonitor.toggle();
+                document.body.appendChild(indicator);
+                
+                // Hide indicator after 5 seconds
+                setTimeout(() => {
+                    indicator.style.opacity = '0';
+                    setTimeout(() => indicator.remove(), 300);
+                }, 5000);
+                
+                // Override the Ctrl+Shift+P shortcut to use enhanced monitor
+                document.removeEventListener('keydown', window.performanceMonitorShortcut);
+                window.performanceMonitorShortcut = (e) => {
+                    if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+                        e.preventDefault();
+                        if (window.enhancedPerfMonitor) {
+                            window.enhancedPerfMonitor.toggle();
+                        }
+                    }
+                };
+                document.addEventListener('keydown', window.performanceMonitorShortcut);
+            } else {
+                console.warn('Enhanced Performance Monitor not found. Using basic performance monitor.');
+            }
+        }, 500); // Reduced wait time
+    });
     </script>
 </body>
 </html>

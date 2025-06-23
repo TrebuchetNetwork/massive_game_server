@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Polyfill Test</title>
+    <script src="polyfills-protection.js"></script>
+</head>
+<body>
+    <h1>Polyfill Test</h1>
+    <div id="results"></div>
+    
+    <script>
+        function testPolyfills() {
+            const results = document.getElementById('results');
+            const tests = [];
+            
+            // Test Array.from
+            try {
+                const arr = Array.from([1, 2, 3]);
+                tests.push(`✅ Array.from: ${JSON.stringify(arr)}`);
+            } catch (e) {
+                tests.push(`❌ Array.from: ${e.message}`);
+            }
+            
+            // Test Array.isArray
+            try {
+                const isArr = Array.isArray([1, 2, 3]);
+                tests.push(`✅ Array.isArray: ${isArr}`);
+            } catch (e) {
+                tests.push(`❌ Array.isArray: ${e.message}`);
+            }
+            
+            // Test Object.assign
+            try {
+                const obj = Object.assign({}, {a: 1}, {b: 2});
+                tests.push(`✅ Object.assign: ${JSON.stringify(obj)}`);
+            } catch (e) {
+                tests.push(`❌ Object.assign: ${e.message}`);
+            }
+            
+            // Test after loading PIXI
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js';
+            script.onload = () => {
+                tests.push('<br><strong>After PIXI.js loaded:</strong>');
+                
+                // Re-test
+                try {
+                    const arr = Array.from([4, 5, 6]);
+                    tests.push(`✅ Array.from: ${JSON.stringify(arr)}`);
+                } catch (e) {
+                    tests.push(`❌ Array.from: ${e.message}`);
+                }
+                
+                try {
+                    const isArr = Array.isArray([4, 5, 6]);
+                    tests.push(`✅ Array.isArray: ${isArr}`);
+                } catch (e) {
+                    tests.push(`❌ Array.isArray: ${e.message}`);
+                }
+                
+                try {
+                    const obj = Object.assign({}, {c: 3}, {d: 4});
+                    tests.push(`✅ Object.assign: ${JSON.stringify(obj)}`);
+                } catch (e) {
+                    tests.push(`❌ Object.assign: ${e.message}`);
+                }
+                
+                results.innerHTML = tests.join('<br>');
+            };
+            document.head.appendChild(script);
+            
+            results.innerHTML = tests.join('<br>') + '<br><em>Loading PIXI.js...</em>';
+        }
+        
+        // Run tests after a short delay
+        setTimeout(testPolyfills, 100);
+    </script>
+</body>
+</html>

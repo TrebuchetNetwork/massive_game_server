@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ultra Polyfill Test</title>
+    <script src="polyfills-ultra-robust.js"></script>
+</head>
+<body>
+    <h1>Ultra Polyfill System Test</h1>
+    <div id="results"></div>
+    
+    <script>
+    // Wait for polyfills to settle
+    setTimeout(function() {
+        const results = [];
+        
+        // Test 1: Array.from
+        try {
+            const testArray = Array.from([1, 2, 3]);
+            results.push('✅ Array.from: ' + JSON.stringify(testArray));
+        } catch (e) {
+            results.push('❌ Array.from: ' + e.message);
+        }
+        
+        // Test 2: Array.isArray
+        try {
+            const isArray = Array.isArray([1, 2, 3]);
+            results.push('✅ Array.isArray: ' + isArray);
+        } catch (e) {
+            results.push('❌ Array.isArray: ' + e.message);
+        }
+        
+        // Test 3: Object.assign
+        try {
+            const merged = Object.assign({}, {a: 1}, {b: 2});
+            results.push('✅ Object.assign: ' + JSON.stringify(merged));
+        } catch (e) {
+            results.push('❌ Object.assign: ' + e.message);
+        }
+        
+        // Test 4: Check global polyfills object
+        if (window.__ultraPolyfills) {
+            results.push('✅ Ultra polyfills object exists');
+            const verification = window.__ultraPolyfills.verify();
+            results.push('Verification: ' + JSON.stringify(verification, null, 2));
+        } else {
+            results.push('❌ Ultra polyfills object missing');
+        }
+        
+        // Test 5: Try to break and restore
+        results.push('\n--- Breaking and restoring test ---');
+        
+        // Break Array.from
+        Array.from = null;
+        results.push('Broke Array.from (set to null)');
+        
+        // Wait for self-healing
+        setTimeout(function() {
+            try {
+                const testArray2 = Array.from([4, 5, 6]);
+                results.push('✅ Array.from after breaking: ' + JSON.stringify(testArray2));
+            } catch (e) {
+                results.push('❌ Array.from after breaking: ' + e.message);
+            }
+            
+            // Manual reinstall
+            if (window.__ultraPolyfills) {
+                window.__ultraPolyfills.reinstall();
+                results.push('Manual reinstall triggered');
+                
+                try {
+                    const testArray3 = Array.from([7, 8, 9]);
+                    results.push('✅ Array.from after reinstall: ' + JSON.stringify(testArray3));
+                } catch (e) {
+                    results.push('❌ Array.from after reinstall: ' + e.message);
+                }
+            }
+            
+            // Display all results
+            document.getElementById('results').innerHTML = '<pre>' + results.join('\n') + '</pre>';
+        }, 500);
+        
+    }, 1000);
+    </script>
+</body>
+</html>
