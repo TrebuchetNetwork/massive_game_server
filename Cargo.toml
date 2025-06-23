@@ -14,7 +14,7 @@ members = [
 lto = "fat"
 codegen-units = 1
 panic = "abort"
-debug = false
+debug = true
 opt-level = 3
 strip=true
 
