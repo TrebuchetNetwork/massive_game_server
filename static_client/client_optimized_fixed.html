@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Shooter - Optimized Client (Fixed)</title>
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+        {
+          "imports": {
+            "flatbuffers": "https://cdn.jsdelivr.net/npm/flatbuffers@25.2.10/mjs/flatbuffers.js"
+          }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827;
+        }
+
+        .log-entry {
+            padding: 8px;
+            margin-bottom: 4px;
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
+
+        .log-info {
+            background-color: #e0f2fe;
+            color: #0c4a6e;
+        }
+
+        .log-success {
+            background-color: #dcfce7;
+            color: #166534;
+        }
+
+        .log-error {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+
+        .log-send {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+
+        .log-receive {
+            background-color: #e0e7ff;
+            color: #3730a3;
+        }
+
+        #gameContainer {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            overflow: hidden;
+            border-radius: 8px;
+        }
+
+        #pixiContainer canvas {
+            border-radius: 8px;
+        }
+
+        .kill-feed {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 280px;
+            background-color: rgba(31, 41, 55, 0.85);
+            border-radius: 8px;
+            padding: 10px;
+            max-height: 180px;
+            overflow-y: auto;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .kill-entry {
+            color: #E5E7EB;
+            font-size: 13px;
+            margin-bottom: 5px;
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+
+        .chat-display {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            width: 350px;
+            background-color: rgba(31, 41, 55, 0.95);
+            border-radius: 8px;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            box-shadow: 0 -2px 5px rgba(0, 0, 0, 0.2);
+            z-index: 10;
+        }
+
+        .chat-entry {
+            color: #D1D5DB;
+            font-size: 12px;
+            margin-bottom: 3px;
+        }
+
+        .chat-entry .username {
+            font-weight: bold;
+        }
+
+        .match-info {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(31, 41, 55, 0.9);
+            border-radius: 8px;
+            padding: 8px 15px;
+            text-align: center;
+            color: #E5E7EB;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            font-size: 14px;
+        }
+
+        .team-scores {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 5px;
+        }
+
+        .team-score {
+            font-weight: bold;
+        }
+
+        .team-red {
+            color: #FF6B6B;
+        }
+
+        .team-blue {
+            color: #4ECDC4;
+        }
+
+        .team-ffa {
+            color: #60A5FA;
+        }
+
+        .powerup-indicator {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            padding: 3px 6px;
+            background-color: rgba(55, 65, 81, 0.7);
+            border-radius: 4px;
+            margin-bottom: 3px;
+        }
+
+        .powerup-indicator .icon {
+            font-size: 14px;
+        }
+
+        .scoreboard {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 700px;
+            background-color: rgba(17, 24, 39, 0.95);
+            border: 1px solid #374151;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            z-index: 100;
+            color: #E5E7EB;
+        }
+
+        .scoreboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #374151;
+        }
+
+        .scoreboard-header h3 {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #93C5FD;
+        }
+
+        .close-btn {
+            cursor: pointer;
+            font-size: 1.8rem;
+            color: #9CA3AF;
+            transition: color 0.2s;
+        }
+
+        .close-btn:hover {
+            color: #F9FAFB;
+        }
+
+        .scoreboard-teams {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        /* Default to 1 column for FFA */
+        .scoreboard-teams.two-columns {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        /* Class for 2 columns */
+        .team-section h4 {
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #4B5563;
+        }
+
+        .team-section table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .team-section th,
+        .team-section td {
+            padding: 6px 8px;
+            text-align: left;
+            font-size: 0.9rem;
+        }
+
+        .team-section th {
+            background-color: rgba(55, 65, 81, 0.5);
+            color: #D1D5DB;
+        }
+
+        .team-section tr:nth-child(even) {
+            background-color: rgba(55, 65, 81, 0.2);
+        }
+
+        .settings-menu {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 500px;
+            background-color: rgba(31, 41, 55, 0.97);
+            border: 1px solid #4B5563;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+            z-index: 101;
+            color: #E5E7EB;
+        }
+
+        .settings-menu h3 {
+            font-size: 1.6rem;
+            font-weight: bold;
+            margin-bottom: 20px;
+            text-align: center;
+            color: #A5B4FC;
+        }
+
+        .setting-group {
+            margin-bottom: 20px;
+        }
+
+        .setting-group h4 {
+            font-size: 1.1rem;
+            color: #D1D5DB;
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #4B5563;
+        }
+
+        .setting-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+            color: #CBD5E1;
+        }
+
+        .setting-group input[type="checkbox"],
+        .setting-group input[type="range"],
+        .setting-group select {
+            margin-right: 8px;
+            accent-color: #818CF8;
+            background-color: #4B5563;
+            border-radius: 4px;
+            padding: 2px;
+        }
+
+        .setting-group input[type="range"] {
+            width: calc(100% - 100px);
+            vertical-align: middle;
+        }
+
+        .settings-menu button {
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: background-color 0.2s;
+            cursor: pointer;
+            margin-right: 10px;
+            border: none;
+        }
+
+        .settings-menu .save-btn {
+            background-color: #4F46E5;
+            color: white;
+        }
+
+        .settings-menu .save-btn:hover {
+            background-color: #4338CA;
+        }
+
+        .settings-menu .cancel-btn {
+            background-color: #4B5563;
+            color: #D1D5DB;
+        }
+
+        .settings-menu .cancel-btn:hover {
+            background-color: #6B7280;
+        }
+
+        .fps-counter {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(31, 41, 55, 0.9);
+            padding: 5px 10px;
+            border-radius: 6px;
+            color: #D1D5DB;
+            font-size: 12px;
+            font-family: monospace;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #2d3748;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #4a5568;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #718096;
+        }
+
+        /* Fixed chat input area */
+        .chat-input-area {
+            position: fixed;
+            bottom: 220px;
+            left: 10px;
+            width: 350px;
+            display: flex;
+            gap: 5px;
+            z-index: 11;
+        }
+
+        .chat-input-area input {
+            flex: 1;
+            padding: 8px 12px;
+            background-color: rgba(31, 41, 55, 0.95);
+            border: 1px solid #4B5563;
+            border-radius: 6px;
+            color: #E5E7EB;
+            font-size: 13px;
+        }
+
+        .chat-input-area input:focus {
+            outline: none;
+            border-color: #6366F1;
+        }
+
+        .chat-input-area button {
+            padding: 8px 16px;
+            background-color: #4F46E5;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .chat-input-area button:hover {
+            background-color: #4338CA;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-2 sm:p-4">
+
+    <div class="w-full max-w-7xl bg-gray-800 p-4 sm:p-6 rounded-lg shadow-xl">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-2xl sm:text-3xl font-bold text-indigo-400">2D Shooter - Optimized (Fixed)</h1>
+            <button id="settingsButton" class="p-2 bg-gray-700 hover:bg-gray-600 rounded-md text-white">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                    </path>
+                </svg>
+            </button>
+        </div>
+
+        <div class="flex flex-col lg:flex-row gap-4 sm:gap-6">
+            <div class="w-full lg:w-1/3 xl:w-1/4 space-y-4">
+                <div>
+                    <label for="wsUrl" class="block text-sm font-medium text-gray-300 mb-1">WebSocket URL:</label>
+                    <input type="text" id="wsUrl" value="ws://localhost:8080/ws"
+                        class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
+                </div>
+                <button id="connectButton"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-800">
+                    Connect
+                </button>
+
+                <div id="controls" class="hidden space-y-4">
+                    <div class="mt-4">
+                        <h3 class="text-lg font-semibold mb-2 text-gray-300">Controls:</h3>
+                        <ul class="text-sm text-gray-400 space-y-1">
+                            <li>WASD - Move</li>
+                            <li>Mouse - Aim</li>
+                            <li>Left Click - Shoot</li>
+                            <li>R - Reload</li>
+                            <li>V - Melee Attack</li>
+                            <li>Tab - Scoreboard</li>
+                            <li>Esc - Settings</li>
+                            <li>Enter - Focus Chat</li>
+                        </ul>
+                    </div>
+
+                    <div class="mt-4">
+                        <h3 class="text-lg font-semibold mb-2 text-gray-300">Game Stats:</h3>
+                        <div id="gameStats" class="text-sm text-gray-300 space-y-1">
+                            <p>My ID: <span id="myPlayerIdSpan" class="text-indigo-300">N/A</span></p>
+                            <p>Team: <span id="playerTeam" class="text-gray-100">None</span></p>
+                            <p>Health: <span id="playerHealth" class="text-green-400">100</span></p>
+                            <p>Shield: <span id="playerShield" class="text-blue-400">0</span></p>
+                            <p>Ammo: <span id="playerAmmo" class="text-yellow-400">10</span> <span id="reloadPrompt"
+                                    class="text-red-500 font-bold"></span></p>
+                            <p>Weapon: <span id="playerWeapon" class="text-gray-100">Pistol</span></p>
+                            <p>Score: <span id="playerScore" class="text-purple-400">0</span></p>
+                            <p>K/D: <span id="playerKills" class="text-red-400">0</span>/<span id="playerDeaths"
+                                    class="text-gray-400">0</span></p>
+                            <p>Players: <span id="playerCount" class="text-gray-100">0</span></p>
+                            <p>Ping: <span id="pingDisplay" class="text-gray-100">0</span>ms</p>
+                        </div>
+                        <div id="powerupStatus" class="mt-2 space-y-1"></div>
+                        <div id="networkQualityIndicator" class="mt-2"></div>
+                    </div>
+                </div>
+
+                <div class="mt-6">
+                    <h2 class="text-xl font-semibold mb-3 text-gray-300">Log:</h2>
+                    <div id="log"
+                        class="h-48 lg:h-64 xl:h-80 overflow-y-auto bg-gray-700 p-4 rounded-md border border-gray-600 text-sm">
+                    </div>
+                </div>
+            </div>
+
+            <div id="gameArea" class="w-full lg:w-2/3 xl:w-3/4 aspect-[4/3] bg-gray-700 rounded-lg shadow-inner">
+                <div id="gameContainer">
+                    <div id="pixiContainer" style="width: 100%; height: 100%;"></div>
+                    <div id="fpsCounter" class="fps-counter hidden">FPS: <span id="fpsValue">0</span></div>
+                    <div id="killFeed" class="kill-feed hidden"></div>
+                    <div id="matchInfo" class="match-info hidden"></div>
+                    <div id="minimapContainer"
+                        style="position: absolute; bottom: 10px; right: 10px; border: 1px solid #4B5563; border-radius: 6px; background-color: rgba(31, 41, 55, 0.7);">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chat display and input are now fixed position -->
+    <div id="chatDisplay" class="chat-display hidden"></div>
+    <div id="chatInputArea" class="chat-input-area hidden">
+        <input type="text" id="chatInput" placeholder="Type a message..." maxlength="100">
+        <button id="sendChatButton">Send</button>
+    </div>
+
+    <div id="scoreboard" class="scoreboard hidden">
+        <div class="scoreboard-header">
+            <h3>Match Scoreboard</h3>
+            <div class="close-btn" onclick="toggleScoreboard(false)">×</div>
+        </div>
+        <div id="scoreboardContent" class="scoreboard-teams">
+            <div id="ffaScoreboardSection" class="team-section hidden">
+                <h4>Free For All</h4>
+                <table id="ffaPlayersTable">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Player</th>
+                            <th>Score</th>
+                            <th>Kills</th>
+                            <th>Deaths</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="teamScoreboardSection" class="hidden">
+                <div class="team-section team-red">
+                    <h4>Red Team: <span id="scoreboardTeamRedScore">0</span></h4>
+                    <table id="redTeamPlayers">
+                        <thead>
+                            <tr>
+                                <th>Player</th>
+                                <th>Score</th>
+                                <th>Kills</th>
+                                <th>Deaths</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="team-section team-blue">
+                    <h4>Blue Team: <span id="scoreboardTeamBlueScore">0</span></h4>
+                    <table id="blueTeamPlayers">
+                        <thead>
+                            <tr>
+                                <th>Player</th>
+                                <th>Score</th>
+                                <th>Kills</th>
+                                <th>Deaths</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsMenu" class="settings-menu hidden">
+        <h3>Game Settings</h3>
+        <div class="setting-group">
+            <h4>Audio</h4>
+            <label><input type="checkbox" id="soundEnabled" checked> Sound Effects</label>
+            <label>Volume: <input type="range" id="soundVolume" min="0" max="100" value="50"><span
+                    id="soundVolumeValue">50</span>%</label>
+            <label><input type="checkbox" id="musicEnabled"> Music</label>
+            <label>Volume: <input type="range" id="musicVolume" min="0" max="100" value="30"><span
+                    id="musicVolumeValue">30</span>%</label>
+        </div>
+        <div class="setting-group">
+            <h4>Graphics</h4>
+            <label>Quality:
+                <select id="graphicsQuality">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                </select>
+            </label>
+            <label><input type="checkbox" id="particleEffects" checked> Particle Effects</label>
+            <label><input type="checkbox" id="screenShake" checked> Screen Shake</label>
+            <label><input type="checkbox" id="showFPS"> Show FPS</label>
+        </div>
+        <div class="setting-group">
+            <h4>Controls</h4>
+            <label>Mouse Sensitivity: <input type="range" id="sensitivity" min="0.1" max="3" step="0.1"
+                    value="1.0"><span id="sensitivityValue">1.0</span></label>
+        </div>
+        <div class="flex justify-end mt-6">
+            <button id="saveSettingsButton" class="save-btn">Save & Close</button>
+            <button id="cancelSettingsButton" class="cancel-btn">Cancel</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as flatbuffers from 'flatbuffers';
+        import { GameProtocol } from './generated_js/game.js';
+        const GP = GameProtocol;
+
+        // Game constants
+        const INTERPOLATION_DELAY = 100; // ms
+        const INPUT_SEND_RATE = 60; // Hz
+        const RECONCILIATION_BUFFER_SIZE = 120;
+        const PLAYER_RADIUS = 15;
+        const PICKUP_RADIUS = 20;
+        const MIN_PLAYERS_TO_START = 2;
+        const MAX_CHAT_MESSAGE_LENGTH = 100;
+        const SERVER_TICK_RATE = 60;
+        const VIEW_DISTANCE_BUFFER = 150; // Pixels outside viewport to keep updating
+
+        // Team colors
+        const teamColors = {
+            0: 0xA0A0A0, // Neutral/FFA - A distinct Grey
+            1: 0xFF6B6B, // Team 1 - Red
+            2: 0x4ECDC4, // Team 2 - Teal/Blue
+        };
+        const defaultEnemyColor = 0xF87171; // Less critical if all players get team colors
+
+        // Weapon data
+        const weaponNames = {
+            [GP.WeaponType.Pistol]: 'Pistol',
+            [GP.WeaponType.Shotgun]: 'Shotgun',
+            [GP.WeaponType.Rifle]: 'Rifle',
+            [GP.WeaponType.Sniper]: 'Sniper',
+            [GP.WeaponType.Melee]: 'Melee'
+        };
+
+        const weaponColors = {
+            [GP.WeaponType.Pistol]: 0xFFBF00,
+            [GP.WeaponType.Shotgun]: 0xFF4444,
+            [GP.WeaponType.Rifle]: 0x4444FF,
+            [GP.WeaponType.Sniper]: 0xAA44FF,
+            [GP.WeaponType.Melee]: 0xD1D5DB
+        };
+
+        // Pickup data
+        const pickupTypes = {
+            [GP.PickupType.Health]: 'Health',
+            [GP.PickupType.Ammo]: 'Ammo',
+            [GP.PickupType.WeaponCrate]: 'Weapon',
+            [GP.PickupType.SpeedBoost]: 'Speed',
+            [GP.PickupType.DamageBoost]: 'Damage',
+            [GP.PickupType.Shield]: 'Shield',
+            [GP.PickupType.FlagRed]: 'Red Flag',
+            [GP.PickupType.FlagBlue]: 'Blue Flag'
+        };
+
+        const pickupColors = {
+            [GP.PickupType.Health]: 0x10B981,
+            [GP.PickupType.Ammo]: 0xF59E0B,
+            [GP.PickupType.WeaponCrate]: 0x60A5FA,
+            [GP.PickupType.SpeedBoost]: 0x00FFFF,
+            [GP.PickupType

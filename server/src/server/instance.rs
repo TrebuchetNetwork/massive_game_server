@@ -6,6 +6,7 @@ use crate::core::error::ServerError;
 use crate::concurrent::thread_pools::ThreadPoolSystem;
 use crate::concurrent::spatial_index::ImprovedSpatialIndex;
 use crate::concurrent::event_queue::PriorityEventQueue;
+use crate::concurrent::wall_spatial_index::WallSpatialIndex;
 use crate::world::partition::{WorldPartitionManager}; // Removed unused ImprovedWorldPartition
 use crate::entities::player::{ImprovedPlayerManager};
 use crate::flatbuffers_generated::game_protocol as fb;
@@ -13,6 +14,7 @@ use crate::network::signaling::{DataChannelsMap, ClientStatesMap, ChatMessagesQu
 use crate::world::map_generator::MapGenerator;
 use crate::systems::respawn::{RespawnManager, WallRespawnManager};
 use crate::systems::ai::bot_ai::BotAISystem;
+use crate::systems::ai::optimized_bot_ai::OptimizedBotAI;
 use crate::network::signaling::ChatMessage;
 use tokio::task::JoinError;
 use futures::executor;
@@ -68,7 +70,7 @@ impl Default for ServerMatchInfo {
         ServerMatchInfo {
             time_remaining: 300.0, // 5 minutes
             match_state: fb::MatchStateType::Waiting,
-            game_mode: fb::GameModeType::TeamDeathmatch, // Default game mode
+            game_mode: fb::GameModeType::CaptureTheFlag, // Changed to CTF mode
             team_scores: HashMap::new(),
             flag_states: HashMap::new(),
         }
@@ -104,6 +106,10 @@ pub struct BotController {
     pub behavior_state: BotBehaviorState,
     pub current_path: VecDeque<Vec2>,
     pub path_recalculation_timer: Instant,
+    // Stuck detection fields
+    pub last_position: Vec2,
+    pub stuck_timer: f32,
+    pub stuck_check_position: Vec2,
 }
 
 
@@ -235,6 +241,7 @@ struct SharedBroadcastData {
     timestamp_ms: u64,
     events: Vec<GameEvent>,
     destroyed_wall_ids: Vec<EntityId>,
+    updated_walls: HashMap<EntityId, Wall>,
     chat_messages: Vec<ChatMessage>,
     match_info_snapshot: MatchInfoSnapshot,
     kill_feed_snapshot: Vec<ServerKillFeedEntry>,
@@ -257,6 +264,7 @@ pub struct MassiveGameServer {
     pub player_manager: Arc<ImprovedPlayerManager>,
     pub world_partition_manager: Arc<WorldPartitionManager>,
     pub spatial_index: Arc<ImprovedSpatialIndex>,
+    pub wall_spatial_index: Arc<WallSpatialIndex>,
 
     pub projectiles_to_add: Arc<SegQueue<Projectile>>,
     pub global_game_events: Arc<PriorityEventQueue>,
@@ -373,12 +381,30 @@ impl MassiveGameServer {
         let initial_pickups = Self::generate_initial_pickups(&all_map_walls);
         info!("Generated {} initial pickups.", initial_pickups.len());
 
+        // Initialize wall spatial index
+        let wall_spatial_index = Arc::new(WallSpatialIndex::new());
+        
+        // Build initial wall spatial index from ACTIVE walls only
+        let mut active_walls_for_index = Vec::new();
+        for partition in world_partition_manager.get_partitions_for_processing() {
+            for wall_entry in partition.all_walls_in_partition.iter() {
+                let wall = wall_entry.value();
+                // Only include non-destructible walls and active destructible walls
+                if !wall.is_destructible || (wall.is_destructible && wall.current_health > 0) {
+                    active_walls_for_index.push(wall.clone());
+                }
+            }
+        }
+        wall_spatial_index.rebuild(&active_walls_for_index, 0);
+        info!("Wall spatial index initialized with {} active walls.", wall_spatial_index.size());
+
         let server = MassiveGameServer {
             config,
             thread_pools,
             player_manager,
             world_partition_manager,
             spatial_index,
+            wall_spatial_index,
             projectiles_to_add: Arc::new(SegQueue::new()),
             global_game_events: Arc::new(PriorityEventQueue::new()),
             active_connections: Arc::new(DashMap::new()),
@@ -398,14 +424,11 @@ impl MassiveGameServer {
             respawn_manager,
             wall_respawn_manager,
             bot_players: Arc::new(DashMap::new()),
-            target_bot_count: Arc::new(AtomicU64::new(80)), 
+            target_bot_count: Arc::new(AtomicU64::new(20)), // Increased to 20 bots for active gameplay
             bot_name_counter: Arc::new(AtomicU64::new(0)),
             last_broadcast_frame: Arc::new(AtomicU64::new(0)),
             player_last_sync_positions: Arc::new(DashMap::new()),
         };
-
-        let initial_bot_count = server.target_bot_count.load(AtomicOrdering::Relaxed);
-        server.spawn_initial_bots(initial_bot_count as usize);
 
         info!("MassiveGameServer initialized successfully.");
         server
@@ -462,13 +485,13 @@ impl MassiveGameServer {
         pickups
     }
 
-    fn spawn_initial_bots(&self, count: usize) {
+    pub fn spawn_initial_bots(&self, count: usize) {
         info!("Spawning {} initial bots...", count);
-        let reduced_count = count.min(20);
+        // No longer reducing count here - use what's passed in
         let team_spawn_areas = MapGenerator::get_team_spawn_areas();
         let mut rng = rand::thread_rng();
 
-        for i in 0..reduced_count {
+        for i in 0..count {
             let bot_name_num = self.bot_name_counter.fetch_add(1, AtomicOrdering::SeqCst);
             let bot_names = ["Alpha", "Beta", "Gamma", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa", "Quebec", "Romeo", "Sierra", "Tango", "Uniform", "Victor", "Whiskey", "Xray", "Yankee", "Zulu"];
             let bot_name = format!("Bot {}", bot_names.get(bot_name_num as usize % bot_names.len()).unwrap_or(&"X"));
@@ -481,24 +504,20 @@ impl MassiveGameServer {
                 .map(|(pos, _)| *pos)
                 .collect();
 
-            /*let spawn_pos = if !potential_spawns_for_team.is_empty() {
-                potential_spawns_for_team[rng.gen_range(0..potential_spawns_for_team.len())]
-            } else {
-                warn!("No spawn points found for team {} for bot {}. Using default random spawn.", team_id, bot_name);
-                // Use RespawnManager for a safer random spawn if no team spawns are available
-                self.respawn_manager.get_respawn_position(self, &Arc::new(bot_player_id_str.clone()), Some(team_id as u8), &[])
-            };*/
-
-            let spawn_pos = {
-                let center_x = 0.0; // Middle of the map
-                let center_y = 0.0;
-                let spread_radius = 500.0; // Adjust this for more spread
+            let spawn_pos = if !potential_spawns_for_team.is_empty() {
+                // Use team spawn point with some random offset
+                let base_spawn = potential_spawns_for_team[rng.gen_range(0..potential_spawns_for_team.len())];
+                let offset_radius = 50.0; // Small offset to prevent stacking
                 let angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
-                let distance = rng.gen_range(0.0..spread_radius);
+                let offset_x = offset_radius * angle.cos();
+                let offset_y = offset_radius * angle.sin();
                 Vec2::new(
-                    center_x + distance * angle.cos(),
-                    center_y + distance * angle.sin()
+                    (base_spawn.x + offset_x).clamp(WORLD_MIN_X + PLAYER_RADIUS, WORLD_MAX_X - PLAYER_RADIUS),
+                    (base_spawn.y + offset_y).clamp(WORLD_MIN_Y + PLAYER_RADIUS, WORLD_MAX_Y - PLAYER_RADIUS)
                 )
+            } else {
+                // Fallback: use respawn manager
+                self.respawn_manager.get_respawn_position(self, &Arc::new(bot_player_id_str.clone()), Some(team_id as u8), &[])
             };
 
             if let Some(player_id_arc) = self.player_manager.add_player(bot_player_id_str.clone(), bot_name.clone(), spawn_pos.x, spawn_pos.y) {
@@ -506,15 +525,18 @@ impl MassiveGameServer {
                     p_state.team_id = team_id as u8;
                 }
 
-                let bot_controller = BotController {
-                    player_id: player_id_arc.clone(),
-                    target_position: None,
-                    target_enemy_id: None,
-                    last_decision_time: Instant::now(),
-                    behavior_state: BotBehaviorState::Idle,
-                    current_path: VecDeque::new(),
-                    path_recalculation_timer: Instant::now(),
-                };
+            let bot_controller = BotController {
+                player_id: player_id_arc.clone(),
+                target_position: None,
+                target_enemy_id: None,
+                last_decision_time: Instant::now(),
+                behavior_state: BotBehaviorState::Idle,
+                current_path: VecDeque::new(),
+                path_recalculation_timer: Instant::now(),
+                last_position: Vec2::new(spawn_pos.x, spawn_pos.y),
+                stuck_timer: 0.0,
+                stuck_check_position: Vec2::new(spawn_pos.x, spawn_pos.y),
+            };
                 self.bot_players.insert(player_id_arc, bot_controller);
                 debug!("Spawned bot: {} (ID: {}) on team {} at ({:.1}, {:.1})", bot_name, bot_player_id_str, team_id, spawn_pos.x, spawn_pos.y);
             } else {
@@ -537,20 +559,44 @@ impl MassiveGameServer {
         player_state.last_processed_input_sequence = input.sequence;
         player_state.mark_field_changed(FIELD_POSITION_ROTATION);
 
-        let mut move_x_intent = 0.0_f32;
-        let mut move_y_intent = 0.0_f32;
+        // Calculate movement relative to player rotation
+        let mut forward_intent = 0.0_f32;
+        let mut strafe_intent = 0.0_f32;
 
-        if input.move_forward { move_y_intent -= 1.0; }
-        if input.move_backward { move_y_intent += 1.0; }
-        if input.move_left { move_x_intent -= 1.0; }
-        if input.move_right { move_x_intent += 1.0; }
+        if input.move_forward { forward_intent += 1.0; }
+        if input.move_backward { forward_intent -= 1.0; }
+        if input.move_left { strafe_intent -= 1.0; }
+        if input.move_right { strafe_intent += 1.0; }
 
         let effective_speed = if player_state.speed_boost_remaining > 0.0 { PLAYER_BASE_SPEED * MAX_PLAYER_SPEED_MULTIPLIER } else { PLAYER_BASE_SPEED };
 
-        if move_x_intent != 0.0 || move_y_intent != 0.0 {
-            let move_magnitude = (move_x_intent * move_x_intent + move_y_intent * move_y_intent).sqrt();
-            player_state.velocity_x = (move_x_intent / move_magnitude) * effective_speed;
-            player_state.velocity_y = (move_y_intent / move_magnitude) * effective_speed;
+        if forward_intent != 0.0 || strafe_intent != 0.0 {
+            // Normalize movement vector
+            let move_magnitude = (forward_intent * forward_intent + strafe_intent * strafe_intent).sqrt();
+            forward_intent /= move_magnitude;
+            strafe_intent /= move_magnitude;
+            
+            // Apply rotation to movement direction
+            let cos_rot = player_state.rotation.cos();
+            let sin_rot = player_state.rotation.sin();
+            
+            // Forward movement in the direction of rotation
+            let forward_x = cos_rot * forward_intent;
+            let forward_y = sin_rot * forward_intent;
+            
+            // Strafe movement perpendicular to rotation (90 degrees)
+            let strafe_x = -sin_rot * strafe_intent;
+            let strafe_y = cos_rot * strafe_intent;
+            
+            // Combine forward and strafe movement
+            player_state.velocity_x = (forward_x + strafe_x) * effective_speed;
+            player_state.velocity_y = (forward_y + strafe_y) * effective_speed;
+            
+            // Debug logging for bot movement
+            if player_state.username.starts_with("Bot") {
+                trace!("Bot {} velocity set to ({:.1}, {:.1}) from input forward={:.1} strafe={:.1} rot={:.2}", 
+                    player_state.username, player_state.velocity_x, player_state.velocity_y, forward_intent, strafe_intent, player_state.rotation);
+            }
         } else {
             player_state.velocity_x = 0.0;
             player_state.velocity_y = 0.0;
@@ -652,20 +698,31 @@ impl MassiveGameServer {
 
     pub async fn process_network_input(&self) {
         let current_server_time = Instant::now();
-        self.player_manager.for_each_player_mut(|_player_id, player_state| {
+        
+        // First, collect all player inputs with their IDs
+        let mut all_inputs = Vec::new();
+        self.player_manager.for_each_player_mut(|player_id, player_state| {
             player_state.clear_changed_fields();
-            let inputs_to_process: Vec<PlayerInputData> = player_state.input_queue.drain(..).collect();
-            for input in inputs_to_process {
-                self.apply_input_to_player_state(player_state, &input, current_server_time);
+            let inputs: Vec<PlayerInputData> = player_state.input_queue.drain(..).collect();
+            if !inputs.is_empty() {
+                all_inputs.push((player_id.clone(), inputs));
             }
         });
+        
+        // Then process each player's inputs
+        for (player_id, inputs) in all_inputs {
+            if let Some(mut player_state_entry) = self.player_manager.get_player_state_mut(&player_id) {
+                for input in inputs {
+                    self.apply_input_to_player_state(&mut *player_state_entry, &input, current_server_time);
+                }
+            }
+        }
     }
 
     pub async fn run_ai_update(&self) {
         let delta_time = TICK_DURATION.as_secs_f32();
-        if true { // Temporary disable
-            BotAISystem::update_bots(self, delta_time);
-        }
+        // Use the optimized bot AI that processes bots in batches
+        OptimizedBotAI::update_bots_batch(self, delta_time);
     }
 
     
@@ -673,16 +730,30 @@ impl MassiveGameServer {
         let physics_start_time = Instant::now();
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
     
-        // Stage 1: Wall Respawns (example)
-        let respawn_stage_start = Instant::now();
-        let _respawned_walls = if frame % 30 == 0 { // 
-            let templates = self.wall_respawn_manager.as_ref().check_respawns(); // 
-            if !templates.is_empty() {
-                // CHANGED to debug!
-                debug!("[Frame {}]: Respawning {} walls (took {:?})", frame, templates.len(), respawn_stage_start.elapsed());
-                self.process_wall_respawns(templates).await // 
-            } else { Vec::new() }
-        } else { Vec::new() };
+    // Stage 1: Wall Respawns (example)
+    let respawn_stage_start = Instant::now();
+    let respawned_walls = if frame % 30 == 0 { // 
+        let templates = self.wall_respawn_manager.as_ref().check_respawns(); // 
+        if !templates.is_empty() {
+            // CHANGED to debug!
+            debug!("[Frame {}]: Respawning {} walls (took {:?})", frame, templates.len(), respawn_stage_start.elapsed());
+            self.process_wall_respawns(templates).await // 
+        } else { Vec::new() }
+    } else { Vec::new() };
+    
+    // Update wall spatial index if walls were respawned, destroyed, or if it needs periodic rebuild
+    let destroyed_walls_count = self.destroyed_wall_ids_this_tick.read().len();
+    let needs_wall_index_rebuild = !respawned_walls.is_empty() || 
+                                   destroyed_walls_count > 0 ||
+                                   self.wall_spatial_index.needs_rebuild(frame, 150); // Rebuild every 150 frames
+    
+    if needs_wall_index_rebuild {
+        let index_rebuild_start = Instant::now();
+        let active_walls = self.collect_active_walls_optimized();
+        self.wall_spatial_index.rebuild(&active_walls, frame);
+        debug!("[Frame {}] Wall spatial index rebuilt in {:?} (respawned: {}, destroyed: {})", 
+            frame, index_rebuild_start.elapsed(), respawned_walls.len(), destroyed_walls_count);
+    }
         
         // Stage 2: Collect Active Walls
         let collect_walls_start = Instant::now();
@@ -755,6 +826,21 @@ impl MassiveGameServer {
                 }
             }
         }
+        
+        // After respawning walls, update all player AOIs
+        if !respawned_ids.is_empty() {
+            info!("[Wall Respawn] Updating player AOIs for {} respawned walls", respawned_ids.len());
+            for mut aoi_entry in self.player_aois.iter_mut() {
+                let aoi = aoi_entry.value_mut();
+                for wall_id in &respawned_ids {
+                    if !aoi.visible_walls.contains(wall_id) {
+                        aoi.visible_walls.insert(*wall_id);
+                        debug!("[Wall Respawn] Added respawned wall {} to player's AOI", wall_id);
+                    }
+                }
+            }
+        }
+        
         respawned_ids
     }
     
@@ -826,9 +912,35 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
     };
 
     // Now filter these structural walls for "activeness"
-    let active_walls = structural_walls_from_cache.into_iter()
-    .filter(|wall| !wall.is_destructible || (wall.is_destructible && wall.current_health > 0))
-    .collect::<Vec<Wall>>();
+    // IMPORTANT: For destructible walls, we need to check their CURRENT health from partitions, not cached health
+    let mut active_walls = Vec::new();
+    
+    for cached_wall in structural_walls_from_cache {
+        if !cached_wall.is_destructible {
+            // Non-destructible walls are always active
+            active_walls.push(cached_wall);
+        } else {
+            // For destructible walls, check current health from the partition
+            let mut wall_is_active = false;
+            let wall_center_x = cached_wall.x + cached_wall.width / 2.0;
+            let wall_center_y = cached_wall.y + cached_wall.height / 2.0;
+            let partition_idx = self.world_partition_manager.get_partition_index_for_point(wall_center_x, wall_center_y);
+            
+            if let Some(partition) = self.world_partition_manager.get_partition(partition_idx) {
+                if let Some(current_wall) = partition.get_wall(cached_wall.id) {
+                    if current_wall.current_health > 0 {
+                        // Use the current wall state, not the cached one
+                        active_walls.push(current_wall);
+                        wall_is_active = true;
+                    }
+                }
+            }
+            
+            if !wall_is_active {
+                debug!("[Frame {}] Filtering out destroyed wall {} (health: 0)", frame, cached_wall.id);
+            }
+        }
+    }
 
     // This log will show the count of *active* walls
     debug!("[Frame {}] Collected {} active walls.", frame, active_walls.len());
@@ -1069,13 +1181,24 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
         }
     }
     
-    fn process_player_movement_optimized(&self, player_state: &mut PlayerState, walls: &[Wall], delta_time: f32) {
+    fn process_player_movement_optimized(&self, player_state: &mut PlayerState, _walls: &[Wall], delta_time: f32) {
         let old_x = player_state.x;
         let old_y = player_state.y;
+        
+        // Debug logging for bot movement
+        if player_state.username.starts_with("Bot") && (player_state.velocity_x != 0.0 || player_state.velocity_y != 0.0) {
+            trace!("Bot {} physics: pos({:.1},{:.1}) vel({:.1},{:.1}) dt={:.3}", 
+                player_state.username, old_x, old_y, player_state.velocity_x, player_state.velocity_y, delta_time);
+        }
         
         // Apply velocity
         player_state.x += player_state.velocity_x * delta_time;
         player_state.y += player_state.velocity_y * delta_time;
+        
+        // Log position after velocity application
+        if player_state.username.starts_with("Bot") && (old_x != player_state.x || old_y != player_state.y) {
+            trace!("Bot {} moved to ({:.1},{:.1})", player_state.username, player_state.x, player_state.y);
+        }
         
         // Quick bounds check first
         let half_radius = PLAYER_RADIUS;
@@ -1092,22 +1215,12 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
             return;
         }
         
-        // Spatial query for nearby walls only
-        let check_radius = PLAYER_RADIUS + 50.0;
-        let player_bounds = (
-            player_state.x - check_radius,
-            player_state.y - check_radius,
-            player_state.x + check_radius,
-            player_state.y + check_radius
-        );
+        // Use spatial index to query nearby walls
+        let check_radius = PLAYER_RADIUS + 10.0; // Reduced from 50.0 since spatial index is efficient
+        let nearby_walls = self.wall_spatial_index.query_radius(player_state.x, player_state.y, check_radius);
         
-        // Check collision with walls using spatial bounds
-        for wall in walls.iter().filter(|w| 
-            w.x < player_bounds.2 && 
-            w.x + w.width > player_bounds.0 &&
-            w.y < player_bounds.3 && 
-            w.y + w.height > player_bounds.1
-        ) {
+        // Check collision with nearby walls only
+        for wall in nearby_walls.iter() {
             let closest_x = player_state.x.clamp(wall.x, wall.x + wall.width);
             let closest_y = player_state.y.clamp(wall.y, wall.y + wall.height);
             
@@ -1500,6 +1613,9 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
 
     
     async fn apply_projectile_results(&self, results: ProjectileResults) {
+        // Track if we need to rebuild spatial index
+        let mut walls_destroyed = false;
+        
         // Process hits - reuse existing game logic
         for (attacker_id, target_id, damage, weapon) in results.hits {
             if let Some(mut target_state_entry) = self.player_manager.get_player_state_mut(&target_id) {
@@ -1516,12 +1632,62 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                     }, EventPriority::Normal);
                     
                     if died {
+                        // Store flag carry state before clearing it
+                        let victim_was_carrying_flag_id = target_state_entry.is_carrying_flag_team_id;
+                        let victim_username = target_state_entry.username.clone();
+                        
+                        // Clear flag carry state on the victim
+                        if victim_was_carrying_flag_id != 0 {
+                            target_state_entry.is_carrying_flag_team_id = 0;
+                            target_state_entry.mark_field_changed(FIELD_FLAG);
+                        }
+                        
                         // Handle death (existing logic from run_physics_update)
                         if attacker_id != target_id {
+                            // Get team information for friendly fire check
+                            let attacker_team = self.player_manager.get_player_state(&attacker_id)
+                                .map(|p| p.team_id)
+                                .unwrap_or(0);
+                            let victim_team = target_state_entry.team_id;
+                            
                             if let Some(mut attacker_state_entry) = self.player_manager.get_player_state_mut(&attacker_id) {
                                 attacker_state_entry.kills += 1;
-                                attacker_state_entry.score += 100;
+                                
+                                // Check for friendly fire
+                                if attacker_team != 0 && victim_team != 0 && attacker_team == victim_team {
+                                    // Friendly fire: double negative score
+                                    attacker_state_entry.score -= 200;
+                                    info!("Friendly fire penalty: {} killed teammate {}, -200 score", 
+                                          attacker_state_entry.username, victim_username);
+                                } else {
+                                    // Normal kill: positive score
+                                    attacker_state_entry.score += 100;
+                                }
+                                
                                 attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
+                            }
+                        }
+                        
+                        // Update team scores for TeamDeathmatch
+                        {
+                            let match_info_guard = self.match_info.read();
+                            if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch {
+                                drop(match_info_guard);
+                                
+                                // Get attacker and victim team IDs
+                                let attacker_team = self.player_manager.get_player_state(&attacker_id)
+                                    .map(|p| p.team_id)
+                                    .unwrap_or(0);
+                                let victim_team = target_state_entry.team_id;
+                                
+                                // Award point to attacker's team if it's a valid team kill
+                                if attacker_team != 0 && victim_team != 0 && attacker_team != victim_team {
+                                    let mut match_info_write = self.match_info.write();
+                                    let team_score = match_info_write.team_scores.entry(attacker_team).or_insert(0);
+                                    *team_score += 1;
+                                    info!("Team {} scored! New score: {} (kill by player on victim from team {})", 
+                                          attacker_team, *team_score, victim_team);
+                                }
                             }
                         }
                         
@@ -1533,16 +1699,44 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                         }, EventPriority::High);
                         
                         // Update kill feed
+                        let killer_username = self.player_manager.get_player_state(&attacker_id)
+                            .map_or_else(|| "World".to_string(), |p| p.username.clone());
+                        
                         let mut kill_feed_guard = self.kill_feed.write();
                         kill_feed_guard.push_back(ServerKillFeedEntry {
-                            killer_name: self.player_manager.get_player_state(&attacker_id)
-                                .map_or_else(|| "World".to_string(), |p| p.username.clone()),
-                            victim_name: target_state_entry.username.clone(),
+                            killer_name: killer_username.clone(),
+                            victim_name: victim_username.clone(),
                             weapon,
                             timestamp: self.frame_counter.load(AtomicOrdering::Relaxed),
                         });
                         if kill_feed_guard.len() > MAX_KILL_FEED_HISTORY {
                             kill_feed_guard.pop_front();
+                        }
+                        drop(kill_feed_guard);
+                        
+                        // Handle flag dropping if victim was carrying a flag
+                        if victim_was_carrying_flag_id != 0 {
+                            let mut match_info_guard = self.match_info.write();
+                            
+                            // Drop the flag
+                            if let Some(flag_state) = match_info_guard.flag_states.get_mut(&victim_was_carrying_flag_id) {
+                                flag_state.status = fb::FlagStatus::Dropped;
+                                flag_state.position = target_pos;
+                                flag_state.carrier_id = None;
+                                flag_state.respawn_timer = 30.0;
+                                
+                                // Push flag dropped event after releasing match_info lock
+                                drop(match_info_guard);
+                                
+                                self.global_game_events.push(GameEvent::FlagDropped {
+                                    player_id: target_id.clone(), 
+                                    flag_team_id: victim_was_carrying_flag_id, 
+                                    position: target_pos
+                                }, EventPriority::High);
+                                
+                                info!("(Projectile Kill) Flag of team {} dropped at ({:.1}, {:.1}) by {} killing {}", 
+                                      victim_was_carrying_flag_id, target_pos.x, target_pos.y, killer_username, victim_username);
+                            }
                         }
                     }
                 }
@@ -1584,7 +1778,7 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
         for partition_arc in self.world_partition_manager.get_partitions_for_processing() {
             partition_arc.all_walls_in_partition.iter().for_each(|wall_entry| {
                 let wall = wall_entry.value();
-                // We send all walls, client will filter rendering based on health for destructible ones
+                // Send ALL walls including destroyed ones - client needs to render them as rubble/obstacles
                 all_walls.push(wall.clone());
             });
         }
@@ -1628,9 +1822,19 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                         match_info_guard.match_state = fb::MatchStateType::Ended;
                         info!("Match ended! (Time up)");
                         if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch || match_info_guard.game_mode == fb::GameModeType::CaptureTheFlag {
-                            let _team1_score = match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
-                            let _team2_score = match_info_guard.team_scores.get(&2).cloned().unwrap_or(0);
-                            // Winner determination logic would go here
+                            let team1_score = match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
+                            let team2_score = match_info_guard.team_scores.get(&2).cloned().unwrap_or(0);
+                            
+                            // Determine and announce the winner
+                            if team1_score > team2_score {
+                                info!("Team 1 wins with {} points vs Team 2's {} points!", team1_score, team2_score);
+                            } else if team2_score > team1_score {
+                                info!("Team 2 wins with {} points vs Team 1's {} points!", team2_score, team1_score);
+                            } else if team1_score == team2_score && team1_score > 0 {
+                                info!("Match ended in a draw! Both teams scored {} points.", team1_score);
+                            } else {
+                                info!("Match ended with no winner (0-0).");
+                            }
                         }
                     }
                 }
@@ -1749,11 +1953,26 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
 
                 if player_state_snapshot.is_carrying_flag_team_id == 0 {
                     for flag_state in match_info_write_guard.flag_states.values_mut() {
-                        if flag_state.status == fb::FlagStatus::AtBase || (flag_state.status == fb::FlagStatus::Dropped && flag_state.respawn_timer <= 0.0) {
+                        // Check if flag can be interacted with
+                        let can_interact = match flag_state.status {
+                            fb::FlagStatus::AtBase => true,
+                            fb::FlagStatus::Dropped => {
+                                // Enemy can pick up after timer expires, own team can return immediately
+                                if flag_state.team_id == player_state_snapshot.team_id {
+                                    true // Own team can always return their dropped flag
+                                } else {
+                                    flag_state.respawn_timer <= 0.0 // Enemy must wait for timer
+                                }
+                            },
+                            _ => false
+                        };
+                        
+                        if can_interact {
                             let dx = player_state_snapshot.x - flag_state.position.x;
                             let dy = player_state_snapshot.y - flag_state.position.y;
                             if (dx * dx + dy * dy) < (PICKUP_COLLECTION_RADIUS * PICKUP_COLLECTION_RADIUS) {
                                 if flag_state.team_id != player_state_snapshot.team_id {
+                                    // Enemy picking up flag
                                     flag_state.status = fb::FlagStatus::Carried;
                                     flag_state.carrier_id = Some(player_id_arc.clone());
                                     if let Some(mut p_state_mut_entry) = self.player_manager.get_player_state_mut(player_id_arc) {
@@ -1765,6 +1984,7 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                                     info!("Player {} grabbed flag of team {}", player_state_snapshot.username, flag_state.team_id);
                                     break;
                                 } else if flag_state.status == fb::FlagStatus::Dropped && flag_state.team_id == player_state_snapshot.team_id {
+                                    // Own team returning flag
                                     flag_state.status = fb::FlagStatus::AtBase;
                                     flag_state.position = Self::get_flag_base_position(flag_state.team_id);
                                     flag_state.carrier_id = None;
@@ -2069,10 +2289,26 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
                         if died {
                             // Update attacker stats
                             if attacker_id != target_id_arc_nearby {
+                                // Get victim team for friendly fire check
+                                let victim_team = self.player_manager.get_player_state(&target_id_arc_nearby)
+                                    .map(|p| p.team_id)
+                                    .unwrap_or(0);
+                                
                                 if let Some(mut attacker_mut_state_entry) = self.player_manager.get_player_state_mut(&attacker_id) {
                                     let attacker_mut_state = &mut *attacker_mut_state_entry;
                                     attacker_mut_state.kills += 1;
-                                    attacker_mut_state.score += 100;
+                                    
+                                    // Check for friendly fire
+                                    if attacker_team_id != 0 && victim_team != 0 && attacker_team_id == victim_team {
+                                        // Friendly fire: double negative score
+                                        attacker_mut_state.score -= 200;
+                                        info!("Friendly fire penalty (melee): {} killed teammate {}, -200 score", 
+                                              attacker_username, target_username);
+                                    } else {
+                                        // Normal kill: positive score
+                                        attacker_mut_state.score += 100;
+                                    }
+                                    
                                     attacker_mut_state.mark_field_changed(FIELD_SCORE_STATS);
                                 }
                             }
@@ -2179,12 +2415,14 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
 
     fn reset_match_state(&self, match_info: &mut ServerMatchInfo) {
         match_info.time_remaining = 300.0;
-        match_info.team_scores.clear();
+        // Don't clear team scores - preserve them between rounds
+        // match_info.team_scores.clear();
         match_info.flag_states.clear();
         if match_info.match_state == fb::MatchStateType::Waiting && match_info.game_mode == fb::GameModeType::CaptureTheFlag {
             self.initialize_ctf_flags(match_info);
         }
         self.player_manager.for_each_player_mut(|_id, pstate| {
+            // Reset individual player stats but keep their contribution to team score
             pstate.score = 0;
             pstate.kills = 0;
             pstate.deaths = 0;
@@ -2214,6 +2452,11 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
             .iter()
             .cloned()
             .collect();
+        
+        // Snapshot updated walls
+        let updated_walls = self.updated_walls_this_tick
+            .read()
+            .clone();
         
         // Snapshot chat messages
         let chat_messages = self.chat_messages_queue
@@ -2245,6 +2488,7 @@ fn collect_active_walls_optimized(&self) -> Vec<Wall> {
             timestamp_ms: current_timestamp_ms,
             events,
             destroyed_wall_ids,
+            updated_walls,
             chat_messages,
             match_info_snapshot,
             kill_feed_snapshot,
@@ -2431,25 +2675,26 @@ fn spawn_additional_bots(&self, count_to_add: usize) {
 
         let team_id = if team1_player_count <= team2_player_count { 1 } else { 2 };
 
-        // Use RespawnManager for bot spawning
-        let bot_player_id_for_respawn = Arc::new(bot_player_id_str.clone());
-        /*let spawn_pos = self.respawn_manager.get_respawn_position(
-            self, // Pass server instance
-            &bot_player_id_for_respawn,
-            Some(team_id as u8),
-            &[] // No specific enemy positions needed for initial bot spawn balancing
-        );*/
+        // Get spawn points for the selected team
+        let potential_spawns_for_team: Vec<Vec2> = team_spawn_areas.iter()
+            .filter(|(_, sp_team_id)| *sp_team_id == team_id as u8)
+            .map(|(pos, _)| *pos)
+            .collect();
 
-        let spawn_pos = {
-            let center_x = 0.0; // Middle of the map
-            let center_y = 0.0;
-            let spread_radius = 500.0; // Adjust this for more spread
+        let spawn_pos = if !potential_spawns_for_team.is_empty() {
+            // Use team spawn point with some random offset
+            let base_spawn = potential_spawns_for_team[rng.gen_range(0..potential_spawns_for_team.len())];
+            let offset_radius = 50.0; // Small offset to prevent stacking
             let angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
-            let distance = rng.gen_range(0.0..spread_radius);
+            let offset_x = offset_radius * angle.cos();
+            let offset_y = offset_radius * angle.sin();
             Vec2::new(
-                center_x + distance * angle.cos(),
-                center_y + distance * angle.sin()
+                (base_spawn.x + offset_x).clamp(WORLD_MIN_X + PLAYER_RADIUS, WORLD_MAX_X - PLAYER_RADIUS),
+                (base_spawn.y + offset_y).clamp(WORLD_MIN_Y + PLAYER_RADIUS, WORLD_MAX_Y - PLAYER_RADIUS)
             )
+        } else {
+            // Fallback: use respawn manager
+            self.respawn_manager.get_respawn_position(self, &Arc::new(bot_player_id_str.clone()), Some(team_id as u8), &[])
         };
 
 
@@ -2468,6 +2713,9 @@ fn spawn_additional_bots(&self, count_to_add: usize) {
                 behavior_state: BotBehaviorState::Idle,
                 current_path: VecDeque::new(),
                 path_recalculation_timer: Instant::now(),
+                last_position: Vec2::new(spawn_pos.x, spawn_pos.y),
+                stuck_timer: 0.0,
+                stuck_check_position: Vec2::new(spawn_pos.x, spawn_pos.y),
             };
             self.bot_players.insert(player_id_arc, bot_controller);
             debug!("[Bot Management] Spawned additional bot: {} (ID: {}) on team {} at ({:.1}, {:.1}). Total players: {}", bot_name, bot_player_id_str, team_id, spawn_pos.x, spawn_pos.y, self.player_manager.player_count());
@@ -2684,6 +2932,35 @@ pub async fn build_delta_state_optimized(
             None
         };
         
+        // Build updated walls (respawned walls)
+        let mut updated_walls_vec = Vec::new();
+        
+        // Get updated walls from shared data (not from instance to avoid race condition)
+        for (wall_id, wall_data) in shared_data.updated_walls.iter() {
+            // Check if this wall is visible to the player
+            if player_aoi.visible_walls.contains(wall_id) {
+                info!("[{}] Sending updated wall {} to client (health: {}/{})", peer_id_str, wall_id, wall_data.current_health, wall_data.max_health);
+                let id_fb = builder.create_string(&wall_data.id.to_string());
+                let wall_fb = fb::Wall::create(&mut builder, &fb::WallArgs {
+                    id: Some(id_fb),
+                    x: wall_data.x,
+                    y: wall_data.y,
+                    width: wall_data.width,
+                    height: wall_data.height,
+                    is_destructible: wall_data.is_destructible,
+                    current_health: wall_data.current_health,
+                    max_health: wall_data.max_health,
+                });
+                updated_walls_vec.push(wall_fb);
+            }
+        }
+        
+        let updated_walls_fb = if !updated_walls_vec.is_empty() {
+            Some(builder.create_vector(&updated_walls_vec))
+        } else {
+            None
+        };
+        
         // Build delta state message with correct field names
         let delta_state_args = fb::DeltaStateMessageArgs {
             players: Some(players_fb),
@@ -2700,7 +2977,7 @@ pub async fn build_delta_state_optimized(
             destroyed_wall_ids: destroyed_wall_ids_fb,
             flag_states: None,
             removed_player_ids: Some(removed_players_fb),
-            updated_walls: None,
+            updated_walls: updated_walls_fb,
         };
         
         let delta_state = fb::DeltaStateMessage::create(&mut builder, &delta_state_args);
@@ -3145,11 +3422,19 @@ fn build_events_fb<'a>(
         
         let connected_clients = self.data_channels_map.len();
         if connected_clients == 0 {
-            trace!("[Frame {}] Skipping broadcast (no connected clients).", current_frame);
+            if current_frame % 30 == 0 {  // Log every 30 frames
+                // Debug: List all keys in the map to see if there's a mismatch
+                info!("[Frame {}] No connected clients in data_channels_map. Checking map contents...", current_frame);
+                info!("[Frame {}] Map ptr in broadcast: {:p}", current_frame, Arc::as_ptr(&self.data_channels_map));
+                for entry in self.data_channels_map.iter() {
+                    info!("[Frame {}] Found entry in map: key={}", current_frame, entry.key());
+                }
+                info!("[Frame {}] Total entries found: {}", current_frame, self.data_channels_map.len());
+            }
             return;
         }
     
-        debug!("[Frame {}] Starting broadcast to {} clients. Last broadcast frame: {}", current_frame, connected_clients, last_broadcast);
+        info!("[Frame {}] Starting broadcast to {} clients. Last broadcast frame: {}", current_frame, connected_clients, last_broadcast);
         self.last_broadcast_frame.store(current_frame, AtomicOrdering::Relaxed);
     
         let shared_broadcast_data = self.prepare_shared_broadcast_data().await;
@@ -3190,12 +3475,12 @@ fn build_events_fb<'a>(
         shared_data: &SharedBroadcastData, // Used for timestamp, match_info, kill_feed
     ) -> Result<Bytes, Box<dyn std::error::Error + Send + Sync>> {
         const MAX_INITIAL_PLAYERS: usize = 50;
-        const MAX_INITIAL_WALLS: usize = 250; // Increased slightly, adjust as needed
-        const MAX_INITIAL_PROJECTILES: usize = 50;
+        const MAX_INITIAL_WALLS: usize = 350; // Increased slightly, adjust as needed
+        const MAX_INITIAL_PROJECTILES: usize = 500;
         const MAX_INITIAL_PICKUPS: usize = 50;
         const MAX_INITIAL_EVENTS: usize = 30;
         const MAX_INITIAL_KILL_FEED: usize = 10;
-        const MAX_MESSAGE_SIZE_BYTES: usize = 60000; // Slightly less than 64KB
+        const MAX_MESSAGE_SIZE_BYTES: usize = 160000; // Slightly less than 64KB
 
         thread_local! {
             static BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
@@ -3210,22 +3495,30 @@ fn build_events_fb<'a>(
 
             let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
 
-            // 1. Walls: Get all structural walls from the cache
-            let all_structural_walls: Vec<Wall> = match CACHED_WALLS.get() {
-                Some(cache_entry_arc) => {
-                    let guard = cache_entry_arc.read();
-                    info!("[Frame {} Client {}] InitialState: Getting all {} structural walls from cache (cache frame {}).",
-                          frame, peer_id_str, guard.1.len(), guard.0);
-                    guard.1.clone()
+            // 1. Walls: Get CURRENT wall states from partitions, not cached initial states
+            // IMPORTANT: We need to get the CURRENT state of walls, not the cached initial state
+            let mut active_walls_to_send = Vec::new();
+            
+            // Iterate through all partitions to get current wall states
+            for partition in self.world_partition_manager.get_partitions_for_processing() {
+                for wall_entry in partition.all_walls_in_partition.iter() {
+                    let wall = wall_entry.value();
+                    
+                    // Only send non-destructible walls and active destructible walls
+                    if !wall.is_destructible || (wall.is_destructible && wall.current_health > 0) {
+                        active_walls_to_send.push(wall.clone());
+                    } else {
+                        debug!("[Frame {} Client {}] InitialState: Filtering out destroyed wall {} (health: {}/{})", 
+                              frame, peer_id_str, wall.id, wall.current_health, wall.max_health);
+                    }
                 }
-                None => {
-                    error!("[Frame {} Client {}] InitialState: CRITICAL - Wall cache not initialized! Sending empty wall list.", frame, peer_id_str);
-                    Vec::new()
-                }
-            };
+            }
+            
+            info!("[Frame {} Client {}] InitialState: Collected {} active walls (filtered from all partitions).", 
+                  frame, peer_id_str, active_walls_to_send.len());
 
-            let mut walls_fb_vec = Vec::with_capacity(all_structural_walls.len().min(MAX_INITIAL_WALLS));
-            for wall_data in all_structural_walls.iter().take(MAX_INITIAL_WALLS) {
+            let mut walls_fb_vec = Vec::with_capacity(active_walls_to_send.len().min(MAX_INITIAL_WALLS));
+            for wall_data in active_walls_to_send.iter().take(MAX_INITIAL_WALLS) {
                 let id_fb = fb_safe_str(&mut builder, &wall_data.id.to_string());
                 walls_fb_vec.push(fb::Wall::create(&mut builder, &fb::WallArgs{
                     id: Some(id_fb), x: wall_data.x, y: wall_data.y, width: wall_data.width, height: wall_data.height,
@@ -3724,9 +4017,11 @@ fn build_events_fb<'a>(
                     } else if t2_score > t1_score {
                         winner_id_fb = Some(builder.create_string("2"));
                         winner_name_fb = Some(builder.create_string("Blue Team"));
-                    } else if t1_score != 0 || t2_score != 0 {
+                    } else if t1_score == t2_score && t1_score > 0 {
+                        // Only a draw if both teams have equal non-zero scores
                         winner_name_fb = Some(builder.create_string("Draw"));
                     }
+                    // If 0-0, leave winner_name_fb as None (no winner)
                 }
             }
             Some(fb::MatchInfo::create(&mut builder, &fb::MatchInfoArgs{
@@ -3783,11 +4078,13 @@ fn build_events_fb<'a>(
         }
         let destroyed_walls_fb = if !new_destroyed_wall_ids_fb_vec.is_empty() { Some(builder.create_vector(&new_destroyed_wall_ids_fb_vec)) } else { None };
 
-        // Updated Walls (Respawned walls)
-        let updated_walls_read_guard = self.updated_walls_this_tick.read();
+        // Updated Walls (Respawned walls and walls newly in AoI)
         let mut updated_walls_fb_vec = Vec::new();
         if let Some(aoi_entry) = self.player_aois.get(peer_id_str) {
             let p_aoi = aoi_entry.value();
+            
+            // First, check walls from updated_walls_this_tick
+            let updated_walls_read_guard = self.updated_walls_this_tick.read();
             for (wall_id, wall_data) in updated_walls_read_guard.iter() {
                 if p_aoi.visible_walls.contains(wall_id) {
                     let id_fb = builder.create_string(&wall_data.id.to_string());
@@ -3799,16 +4096,73 @@ fn build_events_fb<'a>(
                         current_health: wall_data.current_health,
                         max_health: wall_data.max_health,
                     }));
-                    client_state.known_destroyed_wall_ids.remove(wall_id); // Fix 3.1
+                    client_state.known_destroyed_wall_ids.remove(wall_id);
+                    // Update client's known wall state
+                    client_state.last_known_wall_states.insert(*wall_id, (wall_data.current_health, wall_data.max_health));
                 }
             }
+            drop(updated_walls_read_guard);
+            
+            // Second, check for walls that are newly visible or have changed state
+            for visible_wall_id in &p_aoi.visible_walls {
+                // Skip if already added from updated_walls_this_tick
+                if updated_walls_fb_vec.iter().any(|_| false) { // This check is placeholder, would need wall ID in fb::Wall
+                    continue;
+                }
+                
+                // Get current wall state from partitions
+                let mut wall_found = false;
+                for partition in self.world_partition_manager.get_partitions_for_processing() {
+                    if let Some(wall) = partition.get_wall(*visible_wall_id) {
+                        wall_found = true;
+                        
+                        // Check if client knows about this wall's current state
+                        let should_send = if let Some(&(known_health, known_max_health)) = client_state.last_known_wall_states.get(visible_wall_id) {
+                            // Send if health changed or wall was destroyed/respawned
+                            known_health != wall.current_health || known_max_health != wall.max_health
+                        } else {
+                            // Client doesn't know about this wall yet
+                            true
+                        };
+                        
+                        if should_send {
+                            let id_fb = builder.create_string(&wall.id.to_string());
+                            updated_walls_fb_vec.push(fb::Wall::create(&mut builder, &fb::WallArgs{
+                                id: Some(id_fb),
+                                x: wall.x, y: wall.y,
+                                width: wall.width, height: wall.height,
+                                is_destructible: wall.is_destructible,
+                                current_health: wall.current_health,
+                                max_health: wall.max_health,
+                            }));
+                            
+                            // Update client's known state
+                            client_state.last_known_wall_states.insert(*visible_wall_id, (wall.current_health, wall.max_health));
+                            
+                            // Remove from destroyed list if it was there
+                            if wall.current_health > 0 {
+                                client_state.known_destroyed_wall_ids.remove(visible_wall_id);
+                            }
+                        }
+                        break;
+                    }
+                }
+                
+                // If wall not found in partitions, it might have been removed
+                if !wall_found {
+                    client_state.last_known_wall_states.remove(visible_wall_id);
+                }
+            }
+            
+            // Clean up walls that are no longer visible
+            client_state.last_known_wall_states.retain(|wall_id, _| p_aoi.visible_walls.contains(wall_id));
         }
+        
         let updated_walls_fb = if !updated_walls_fb_vec.is_empty() {
             Some(builder.create_vector(&updated_walls_fb_vec))
         } else {
             None
         };
-        drop(updated_walls_read_guard);
 
 
         // Removed Player IDs
@@ -3927,189 +4281,6 @@ fn build_events_fb<'a>(
         }
     }
 
-    // REMOVED duplicate run_game_loop from here, it's now in src/server/game_loop.rs
-
-
-    /*pub async fn process_game_tick(self: Arc<Self>, dt: f32) -> Result<(), ServerError> {
-        let tick_started = Instant::now();
-        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-    
-        // Stage 1: Fast, mostly-read-only or IO-bound work in parallel
-        let mut set = JoinSet::new();
-        {
-            let srv = Arc::clone(&self);
-            set.spawn(async move {
-                timeout(Duration::from_millis(NET_IO_TIMEOUT_MS), async {
-                    srv.process_network_input().await;
-                })
-                .await
-                .map_err(|_| {
-                    if frame % 300 == 0 { // Only log every 5 seconds
-                        warn!("network input timed-out after {} ms", NET_IO_TIMEOUT_MS);
-                    }
-                })
-                .ok();
-            });
-        }
-    
-        if frame % AI_UPDATE_STRIDE == 0 {
-            let srv = Arc::clone(&self);
-            set.spawn(async move {
-                timeout(Duration::from_millis(AI_TIMEOUT_MS), async {
-                    srv.run_ai_update().await;
-                })
-                .await
-                .map_err(|_| {
-                    if frame % 300 == 0 { // Only log every 5 seconds
-                        warn!("AI update timed-out after {} ms", AI_TIMEOUT_MS);
-                    }
-                })
-                .ok();
-            });
-        }
-    
-        while let Some(res) = set.join_next().await {
-            if let Err(join_err) = res {
-                error!(?join_err, "sub-task panicked during tick");
-            }
-        }
-    
-        // Stage 2: Mutation-heavy phases
-        let heavy_started = Instant::now();
-        self.run_physics_update(dt).await;
-        self.run_game_logic_update(dt).await;
-        let heavy_elapsed = heavy_started.elapsed();
-    
-        if heavy_elapsed > Duration::from_millis(SLOW_TICK_LOG_MS) && frame % 60 == 0 {
-            warn!(
-                ?frame,
-                ms = heavy_elapsed.as_micros() as f64 / 1000.0,
-                "physics + logic stage exceeded soft budget {}ms", SLOW_TICK_LOG_MS
-            );
-        }
-    
-        // Stage 3: Fan-out (state serialization + broadcast)
-        let fanout_started = Instant::now();
-        let fanout = async {
-            tokio::join!(
-                self.synchronize_state(),
-                self.broadcast_world_updates_optimized()
-            );
-        };
-    
-        if timeout(Duration::from_millis(FAN_OUT_TIMEOUT_MS), fanout).await.is_err() {
-            if frame % 60 == 0 {
-                warn!(?frame, "fan-out stage timed-out after {} ms", FAN_OUT_TIMEOUT_MS);
-            }
-        }
-        let fanout_elapsed = fanout_started.elapsed();
-    
-        // Stage 4: Tick-local cleanup
-        self.destroyed_wall_ids_this_tick.write().clear();
-        self.updated_walls_this_tick.write().clear();
-    
-        // Stage 5: Profiling + throttling diagnostics (only log warnings)
-        let total_elapsed = tick_started.elapsed();
-        
-        if total_elapsed > Duration::from_millis(TARGET_TICK_MS) {
-            // Only log every second for performance warnings
-            if frame % 60 == 0 {
-                warn!(
-                    ?frame,
-                    ms = total_elapsed.as_micros() as f64 / 1000.0,
-                    target = TARGET_TICK_MS,
-                    "tick exceeded hard budget"
-                );
-            }
-        }
-    
-        Ok(())
-    }*/
-
-    /*pub async fn process_game_tick(self: Arc<Self>, dt: f32) -> Result<(), ServerError> {
-        let tick_started = Instant::now();
-        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-    
-        // Stage 1: Input & AI
-        let stage1_start = Instant::now();
-        let mut set = JoinSet::new();
-        
-        set.spawn({
-            let server = Arc::clone(&self);
-            async move { server.process_network_input().await }
-        });
-        
-        if frame % AI_UPDATE_STRIDE == 0 {
-            set.spawn({
-                let server = Arc::clone(&self);
-                async move { server.run_ai_update().await }
-            });
-        }
-        
-        while let Some(res) = set.join_next().await {
-            if let Err(e) = res {
-                // Use a generic error variant or log and continue
-                error!("Task join error: {}", e);
-                // Don't propagate the error, just log it
-            }
-        }
-        let stage1_elapsed = stage1_start.elapsed();
-    
-        // Rest of the method remains the same...
-        // Stage 2: Physics & Game Logic
-        let physics_start = Instant::now();
-        self.run_physics_update(dt).await;
-        let physics_elapsed = physics_start.elapsed();
-    
-        let game_logic_start = Instant::now();
-        self.run_game_logic_update(dt).await;
-        let game_logic_elapsed = game_logic_start.elapsed();
-    
-        // Stage 3: State Sync & Broadcast
-        let sync_start = Instant::now();
-        self.synchronize_state().await;
-        let sync_elapsed = sync_start.elapsed();
-    
-        let broadcast_start = Instant::now();
-        let broadcast_result = tokio::time::timeout(
-            Duration::from_millis(10), // Very tight timeout to catch hangs
-            self.broadcast_world_updates_optimized()
-        ).await;
-        let broadcast_elapsed = broadcast_start.elapsed();
-    
-        if broadcast_result.is_err() {
-            error!("Frame {}: Broadcast timeout after {:?}", frame, broadcast_elapsed);
-        }
-    
-        // Stage 4: Cleanup
-        self.destroyed_wall_ids_this_tick.write().clear();
-        self.updated_walls_this_tick.write().clear();
-    
-        let total_elapsed = tick_started.elapsed();
-    
-        // Log detailed timing for slow frames
-        if total_elapsed > Duration::from_millis(20) {
-            warn!(
-                "Frame {} timing breakdown:\n\
-                 Total: {:.2}ms\n\
-                 - Input/AI: {:.2}ms\n\
-                 - Physics: {:.2}ms\n\
-                 - Game Logic: {:.2}ms\n\
-                 - State Sync: {:.2}ms\n\
-                 - Broadcast: {:.2}ms (timeout: {})",
-                frame,
-                total_elapsed.as_secs_f32() * 1000.0,
-                stage1_elapsed.as_secs_f32() * 1000.0,
-                physics_elapsed.as_secs_f32() * 1000.0,
-                game_logic_elapsed.as_secs_f32() * 1000.0,
-                sync_elapsed.as_secs_f32() * 1000.0,
-                broadcast_elapsed.as_secs_f32() * 1000.0,
-                broadcast_result.is_err()
-            );
-        }
-    
-        Ok(())
-    }*/
 
     pub async fn process_game_tick(self: Arc<Self>, dt: f32) -> Result<(), ServerError> {
         let tick_started = Instant::now();

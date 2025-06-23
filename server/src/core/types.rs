@@ -283,11 +283,12 @@ impl PlayerState {
         self.x = new_x; self.y = new_y;
         self.last_valid_position = (new_x, new_y);
         self.velocity_x = 0.0; self.velocity_y = 0.0;
-        self.weapon = ServerWeaponType::Pistol; // <-- ADD THIS LINE TO RESET TO PISTOL
+        self.weapon = ServerWeaponType::Pistol;
         self.ammo = Self::get_max_ammo_for_weapon(self.weapon);
         self.reload_progress = None;
         self.shield_current = 0; 
-        self.mark_field_changed(FIELD_HEALTH_ALIVE | FIELD_POSITION_ROTATION | FIELD_WEAPON_AMMO | FIELD_SHIELD);
+        self.is_carrying_flag_team_id = 0; // Reset flag carrying state on respawn
+        self.mark_field_changed(FIELD_HEALTH_ALIVE | FIELD_POSITION_ROTATION | FIELD_WEAPON_AMMO | FIELD_SHIELD | FIELD_FLAG);
     }
 
     pub fn update_timers(&mut self, delta_time: f32) {
@@ -350,13 +351,19 @@ impl Projectile {
         damage_multiplier: f32,
     ) -> Self {
         let id = Uuid::new_v4().as_u128() as u64; 
-        let (speed, base_damage, lifetime) = match weapon_type {
-            ServerWeaponType::Pistol => (450.0, 15, 2.0),
-            ServerWeaponType::Shotgun => (400.0, 7, 1.2), 
-            ServerWeaponType::Rifle => (550.0, 10, 2.5),
-            ServerWeaponType::Sniper => (700.0, 50, 4.0),
-            ServerWeaponType::Melee => (0.0, 0, 0.0), 
+        
+        // Get speed and lifetime for weapon
+        let (speed, lifetime) = match weapon_type {
+            ServerWeaponType::Pistol => (450.0, 2.0),
+            ServerWeaponType::Shotgun => (400.0, 1.2), 
+            ServerWeaponType::Rifle => (550.0, 2.5),
+            ServerWeaponType::Sniper => (700.0, 4.0),
+            ServerWeaponType::Melee => (0.0, 0.0), 
         };
+        
+        // Use PlayerState::get_weapon_damage for consistent damage calculation
+        let has_damage_boost = damage_multiplier > 1.0;
+        let damage = PlayerState::get_weapon_damage(weapon_type, has_damage_boost);
 
         Projectile {
             id,
@@ -366,7 +373,7 @@ impl Projectile {
             y: start_y,
             velocity_x: direction_x * speed,
             velocity_y: direction_y * speed,
-            damage: (base_damage as f32 * damage_multiplier) as i32,
+            damage,
             creation_time: Instant::now(),
             max_lifetime_secs: lifetime,
         }

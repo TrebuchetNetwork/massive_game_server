@@ -75,9 +75,10 @@ pub struct ClientState {
     pub known_destroyed_wall_ids: HashSet<EntityId>,
     pub last_kill_feed_count_sent: usize,
     pub last_chat_message_seq_sent: u64,
-    pub last_broadcast_frame: u64,  // Add this
-    pub last_known_players: HashSet<Arc<String>>,  // Add this
-    pub last_known_wall_ids: Option<HashSet<EntityId>>,  // Add this
+    pub last_broadcast_frame: u64,
+    pub last_known_players: HashSet<Arc<String>>,
+    pub last_known_wall_ids: Option<HashSet<EntityId>>,
+    pub last_known_wall_states: HashMap<EntityId, (i32, i32)>,  // wall_id -> (current_health, max_health)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +103,7 @@ impl Default for ClientState {
             last_broadcast_frame: 0,
             last_known_players: HashSet::new(),
             last_known_wall_ids: None,
+            last_known_wall_states: HashMap::new(),
         }
     }
 }
@@ -298,7 +300,12 @@ pub async fn handle_signaling_connection(
             let dc_for_async_block = Arc::clone(&dc_for_closure);
 
             let core_dc = Arc::new(crate::core::types::RTCDataChannel::new(Arc::clone(&dc_for_async_block)));
-            data_channels_map_on_open.insert(current_peer_id_on_open_cb.clone(), core_dc);
+            data_channels_map_on_open.insert(current_peer_id_on_open_cb.clone(), core_dc.clone());
+            info!("[{}]: Added data channel to map. Map size: {}, Map ptr: {:p}", 
+                current_peer_id_on_open_cb, 
+                data_channels_map_on_open.len(),
+                Arc::as_ptr(&data_channels_map_on_open)
+            );
 
             let initial_client_state = ClientState {
                 known_walls_sent: false,
@@ -306,6 +313,7 @@ pub async fn handle_signaling_connection(
                 ..Default::default()
             };
             client_states_map_on_open.write().insert(current_peer_id_on_open_cb.clone(), initial_client_state);
+            info!("[{}]: Added client state. Client states map size: {}", current_peer_id_on_open_cb, client_states_map_on_open.read().len());
 
             let username = format!("Player_{}", &current_peer_id_on_open_cb[..4.min(current_peer_id_on_open_cb.len())]);
             
