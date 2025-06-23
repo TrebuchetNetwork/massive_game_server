@@ -14,11 +14,11 @@ pub struct ThreadPoolConfig {
 impl Default for ThreadPoolConfig {
     fn default() -> Self {
         ThreadPoolConfig {
-            physics_threads: 32,
-            networking_threads: 48,
-            game_logic_threads: 16,
-            ai_threads: 24,
-            io_threads: 28,
+            physics_threads: 8,
+            networking_threads: 10,
+            game_logic_threads: 12,
+            ai_threads: 8,
+            io_threads: 8,
         }
     }
 }
@@ -38,7 +38,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         ServerConfig {
             tick_rate: super::constants::SERVER_TICK_RATE,
-            num_player_shards: 128,// Match core count for better distribution super::constants::PLAYER_SHARDS_COUNT,
+            num_player_shards: 12,// Match core count for better distribution super::constants::PLAYER_SHARDS_COUNT,
             num_world_partitions: super::constants::PARTITION_GRID_SIZE * super::constants::PARTITION_GRID_SIZE,
             world_partition_grid_dim: super::constants::PARTITION_GRID_SIZE,
             thread_pools: ThreadPoolConfig::default(),

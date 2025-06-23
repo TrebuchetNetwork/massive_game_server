@@ -1,0 +1,2 @@
+PANIC at 1750270037: panicked at C:\Users\WhiteCyberPunk\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\warp-0.3.7\src\server.rs:217:27:
+error binding to 0.0.0.0:8080: error creating server listener: Only one usage of each socket address (protocol/network address/port) is normally permitted. (os error 10048)
