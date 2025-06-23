@@ -117,6 +117,56 @@
         ::-webkit-scrollbar-track { background: #2d3748; border-radius: 4px; }
         ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #718096; }
+
+        /* Music Player Styles */
+        #musicPlayer {
+            transition: transform 0.3s ease-in-out;
+            backdrop-filter: blur(10px);
+            background-color: rgba(31, 41, 55, 0.95);
+        }
+        
+        #musicPlayer:hover {
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+        }
+        
+        #volumeSlider {
+            background: linear-gradient(to right, #6366F1 0%, #6366F1 30%, #374151 30%, #374151 100%);
+        }
+        
+        #volumeSlider::-webkit-slider-thumb {
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #818CF8;
+            cursor: pointer;
+            border-radius: 50%;
+            box-shadow: 0 0 8px rgba(129, 140, 248, 0.5);
+        }
+        
+        #volumeSlider::-moz-range-thumb {
+            width: 12px;
+            height: 12px;
+            background: #818CF8;
+            cursor: pointer;
+            border-radius: 50%;
+            border: none;
+            box-shadow: 0 0 8px rgba(129, 140, 248, 0.5);
+        }
+        
+        #progressBar {
+            background: linear-gradient(90deg, #6366F1 0%, #818CF8 100%);
+            box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+        }
+        
+        #nowPlaying {
+            animation: slideText 15s linear infinite;
+            white-space: nowrap;
+        }
+        
+        @keyframes slideText {
+            0%, 20% { transform: translateX(0); }
+            80%, 100% { transform: translateX(-50%); }
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen overflow-hidden">
@@ -261,6 +311,54 @@
         <div class="flex justify-end mt-6">
             <button id="saveSettingsButton" class="save-btn">Save & Close</button>
             <button id="cancelSettingsButton" class="cancel-btn">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Music Player -->
+    <div id="musicPlayer" class="fixed bottom-5 right-5 bg-gray-800 rounded-lg p-4 shadow-xl border border-gray-700 transition-all duration-300 hidden" style="min-width: 300px;">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-bold text-gray-300">Music Player</h3>
+            <button id="closeMusicPlayer" class="text-gray-400 hover:text-gray-200">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        
+        <div class="mb-3">
+            <div id="nowPlaying" class="text-xs text-gray-400 mb-1 truncate">No track playing</div>
+            <div class="bg-gray-700 rounded-full h-2 relative">
+                <div id="progressBar" class="h-full rounded-full transition-all duration-100" style="width: 0%"></div>
+            </div>
+        </div>
+        
+        <div class="flex items-center justify-center gap-4 mb-3">
+            <button id="prevTrack" class="text-gray-400 hover:text-white transition-colors">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+                </svg>
+            </button>
+            <button id="playPauseBtn" class="bg-indigo-600 hover:bg-indigo-700 rounded-full p-2 transition-colors">
+                <svg id="playIcon" width="24" height="24" viewBox="0 0 24 24" fill="white">
+                    <path d="M8 5v14l11-7z"/>
+                </svg>
+                <svg id="pauseIcon" width="24" height="24" viewBox="0 0 24 24" fill="white" class="hidden">
+                    <path d="M6 4h4v16H6zM14 4h4v16h-4z"/>
+                </svg>
+            </button>
+            <button id="nextTrack" class="text-gray-400 hover:text-white transition-colors">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M16 18h2V6h-2zM6 18l8.5-6L6 6z"/>
+                </svg>
+            </button>
+        </div>
+        
+        <div class="flex items-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400">
+                <path d="M11 5L6 9H2v6h4l5 4zM15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14"/>
+            </svg>
+            <input type="range" id="volumeSlider" min="0" max="100" value="30" class="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+            <span id="volumeValue" class="text-xs text-gray-400 w-8">30%</span>
         </div>
     </div>
 
@@ -3669,7 +3767,16 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         });
         document.getElementById('musicVolume').addEventListener('input', (e) => {
             document.getElementById('musicVolumeValue').textContent = e.target.value + '%';
-            // Add music volume update if music is implemented
+            if (musicPlayer) musicPlayer.setVolume(e.target.value / 100); // Live update
+        });
+        document.getElementById('musicEnabled').addEventListener('change', (e) => {
+            if (musicPlayer) {
+                musicPlayer.setEnabled(e.target.checked);
+                if (e.target.checked && musicPlayer.playerDiv.classList.contains('hidden')) {
+                    // Show music player when enabling music
+                    musicPlayer.show();
+                }
+            }
         });
         document.getElementById('sensitivity').addEventListener('input', (e) => {
             document.getElementById('sensitivityValue').textContent = parseFloat(e.target.value).toFixed(1);
@@ -6057,6 +6164,184 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             }
         }
 
+        // Music Player Implementation
+        class MusicPlayer {
+            constructor() {
+                this.audio = new Audio();
+                this.playlist = [
+                    'music/Untitled.mp3',
+                    'music/Untitled (1).mp3',
+                    'music/Untitled (2).mp3',
+                    'music/Untitled (3).mp3',
+                    'music/Untitled (4).mp3',
+                    'music/Untitled (5).mp3',
+                    'music/Untitled (6).mp3',
+                    'music/Untitled (7).mp3',
+                    'music/Untitled (8).mp3',
+                    'music/Untitled (9).mp3',
+                    'music/Untitled (10).mp3',
+                    'music/Untitled (11).mp3',
+                    'music/Untitled (12).mp3',
+                    'music/Untitled (13).mp3',
+                    'music/cassete.mp3',
+                    'music/cassete (1).mp3'
+                ];
+                this.currentTrackIndex = 0;
+                this.isPlaying = false;
+                
+                // DOM elements
+                this.playerDiv = document.getElementById('musicPlayer');
+                this.playPauseBtn = document.getElementById('playPauseBtn');
+                this.playIcon = document.getElementById('playIcon');
+                this.pauseIcon = document.getElementById('pauseIcon');
+                this.prevBtn = document.getElementById('prevTrack');
+                this.nextBtn = document.getElementById('nextTrack');
+                this.volumeSlider = document.getElementById('volumeSlider');
+                this.volumeValue = document.getElementById('volumeValue');
+                this.progressBar = document.getElementById('progressBar');
+                this.nowPlaying = document.getElementById('nowPlaying');
+                this.closeBtn = document.getElementById('closeMusicPlayer');
+                
+                this.setupEventListeners();
+                this.audio.volume = 0.3;
+                this.volumeSlider.value = 30;
+                
+                // Load first track
+                this.loadTrack(0);
+                
+                // Update progress bar
+                setInterval(() => this.updateProgress(), 100);
+            }
+            
+            setupEventListeners() {
+                this.playPauseBtn.addEventListener('click', () => this.togglePlayPause());
+                this.prevBtn.addEventListener('click', () => this.previousTrack());
+                this.nextBtn.addEventListener('click', () => this.nextTrack());
+                this.volumeSlider.addEventListener('input', (e) => this.updateVolume(e.target.value));
+                this.closeBtn.addEventListener('click', () => this.hide());
+                
+                // Auto play next track when current ends
+                this.audio.addEventListener('ended', () => this.nextTrack());
+                
+                // Update progress bar click
+                const progressContainer = this.progressBar.parentElement;
+                progressContainer.addEventListener('click', (e) => {
+                    const rect = progressContainer.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const percentage = x / rect.width;
+                    if (this.audio.duration) {
+                        this.audio.currentTime = percentage * this.audio.duration;
+                    }
+                });
+            }
+            
+            loadTrack(index) {
+                this.currentTrackIndex = index;
+                this.audio.src = this.playlist[index];
+                
+                // Extract track name from filename
+                const trackName = this.playlist[index].split('/').pop().replace('.mp3', '');
+                this.nowPlaying.textContent = `Track: ${trackName}`;
+                
+                // If was playing, continue playing new track
+                if (this.isPlaying) {
+                    this.play();
+                }
+            }
+            
+            play() {
+                this.audio.play().then(() => {
+                    this.isPlaying = true;
+                    this.playIcon.classList.add('hidden');
+                    this.pauseIcon.classList.remove('hidden');
+                }).catch(e => {
+                    console.log('Audio play failed:', e);
+                });
+            }
+            
+            pause() {
+                this.audio.pause();
+                this.isPlaying = false;
+                this.playIcon.classList.remove('hidden');
+                this.pauseIcon.classList.add('hidden');
+            }
+            
+            togglePlayPause() {
+                if (this.isPlaying) {
+                    this.pause();
+                } else {
+                    this.play();
+                }
+            }
+            
+            previousTrack() {
+                this.currentTrackIndex = (this.currentTrackIndex - 1 + this.playlist.length) % this.playlist.length;
+                this.loadTrack(this.currentTrackIndex);
+            }
+            
+            nextTrack() {
+                this.currentTrackIndex = (this.currentTrackIndex + 1) % this.playlist.length;
+                this.loadTrack(this.currentTrackIndex);
+            }
+            
+            updateVolume(value) {
+                this.audio.volume = value / 100;
+                this.volumeValue.textContent = value + '%';
+                
+                // Update volume slider gradient
+                this.volumeSlider.style.background = `linear-gradient(to right, #6366F1 0%, #6366F1 ${value}%, #374151 ${value}%, #374151 100%)`;
+            }
+            
+            updateProgress() {
+                if (this.audio.duration) {
+                    const percentage = (this.audio.currentTime / this.audio.duration) * 100;
+                    this.progressBar.style.width = percentage + '%';
+                }
+            }
+            
+            show() {
+                this.playerDiv.classList.remove('hidden');
+                
+                // Apply music settings
+                if (gameSettings.musicEnabled) {
+                    this.updateVolume(gameSettings.musicVolume * 100);
+                    this.volumeSlider.value = gameSettings.musicVolume * 100;
+                    if (!this.isPlaying) {
+                        this.play();
+                    }
+                } else {
+                    this.pause();
+                }
+            }
+            
+            hide() {
+                this.playerDiv.classList.add('hidden');
+            }
+            
+            setEnabled(enabled) {
+                if (enabled && this.playerDiv.classList.contains('hidden')) {
+                    // Don't auto-show when enabling
+                    return;
+                }
+                
+                if (enabled) {
+                    if (!this.isPlaying) {
+                        this.play();
+                    }
+                } else {
+                    this.pause();
+                }
+            }
+            
+            setVolume(volume) {
+                this.updateVolume(volume * 100);
+                this.volumeSlider.value = volume * 100;
+            }
+        }
+        
+        // Initialize music player
+        let musicPlayer;
+
         // Initialize everything when page loads
         window.addEventListener('load', () => {
             // Check if GameProtocol is loaded
@@ -6071,9 +6356,12 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
 
             // Initialize PIXI
             initPixi();
+            
+            // Initialize music player
+            musicPlayer = new MusicPlayer();
 
             log('Unified Advanced WebGL client initialized with all features!', 'info');
-            log('Features: Teams, Powerups, Destructible Walls, CTF, Audio, Effects, Minimap, Settings, Advanced Aiming', 'info');
+            log('Features: Teams, Powerups, Destructible Walls, CTF, Audio, Effects, Minimap, Settings, Advanced Aiming, Music Player', 'info');
         });
     </script>
 </body>
