@@ -1,7 +1,7 @@
 // massive_game_server/server/src/core/constants.rs
 use std::time::Duration;
 
-pub const SERVER_TICK_RATE: u64 = 30;
+pub const SERVER_TICK_RATE: u64 = 60;
 pub const TICK_DURATION_MS: u64 = 1000 / SERVER_TICK_RATE;
 pub const TICK_DURATION: Duration = Duration::from_millis(TICK_DURATION_MS);
 
@@ -19,7 +19,7 @@ pub const BOUNDARY_ZONE_WIDTH: f32 = 100.0;
 pub const SPATIAL_INDEX_CELL_SIZE: f32 = 400.0;
 
 // Player constants
-pub const PLAYER_SHARDS_COUNT: usize = 96; // Default, overridden by dev config
+pub const PLAYER_SHARDS_COUNT: usize = 32; // Default, overridden by dev config
 pub const PLAYER_RADIUS: f32 = 15.0; // Player hitbox radius
 pub const PLAYER_BASE_SPEED: f32 = 150.0; // Base movement speed for players
 pub const MIN_PLAYERS_TO_START: usize = 1; // Reduced to 1 so single player can start with bots

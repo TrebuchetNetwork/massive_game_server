@@ -606,7 +606,7 @@
                 });
                 pixiContainer.appendChild(app.view);
 
-                app.ticker.maxFPS = 60;
+                app.ticker.maxFPS = 240;
 
                 if (!app || !app.stage) {
                     log('CRITICAL ERROR: PIXI Application failed to initialize!', 'error');
@@ -3712,7 +3712,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 audioManager.setGlobalVolume(gameSettings.soundVolume);
                 audioManager.setMuted(!gameSettings.soundEnabled);
             }
-            if (effectsManager) {M
+            if (effectsManager) {
                 effectsManager.setParticlesEnabled(gameSettings.particleEffects);
             }
 

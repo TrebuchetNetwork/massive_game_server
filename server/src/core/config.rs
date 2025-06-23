@@ -14,8 +14,8 @@ pub struct ThreadPoolConfig {
 impl Default for ThreadPoolConfig {
     fn default() -> Self {
         ThreadPoolConfig {
-            physics_threads: 4,
-            networking_threads: 6,
+            physics_threads: 8,
+            networking_threads: 10,
             game_logic_threads: 12,
             ai_threads: 8,
             io_threads: 8,
@@ -42,7 +42,7 @@ impl Default for ServerConfig {
             num_world_partitions: super::constants::PARTITION_GRID_SIZE * super::constants::PARTITION_GRID_SIZE,
             world_partition_grid_dim: super::constants::PARTITION_GRID_SIZE,
             thread_pools: ThreadPoolConfig::default(),
-            max_players_per_match: 140, // <<< ADD THIS LINE (or your desired default)
+            max_players_per_match: 400, // <<< ADD THIS LINE (or your desired default)
         }
     }
 }
