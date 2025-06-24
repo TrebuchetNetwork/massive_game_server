@@ -10,6 +10,8 @@ use parking_lot::RwLock;
 use rand::Rng;
 use uuid::Uuid;
 
+mod open_ai_bot;
+
 #[derive(Clone, Debug)]
 pub struct BotBehavior {
     pub id: String,
@@ -26,6 +28,7 @@ pub enum BotType {
     Aggressive,
     Defensive,
     Balanced,
+    OpenAI,
 }
 
 pub struct BotManager {
@@ -86,10 +89,11 @@ impl BotManager {
                     target_position: None,
                     target_player: None,
                     last_decision_time: Instant::now(),
-                    behavior_type: match rng.gen_range(0..3) {
+                    behavior_type: match rng.gen_range(0..4) {
                         0 => BotType::Aggressive,
                         1 => BotType::Defensive,
-                        _ => BotType::Balanced,
+                        2 => BotType::Balanced,
+                        _ => BotType::OpenAI,
                     },
                     skill_level: rng.gen_range(0.4..0.9),
                     team_id,
@@ -232,6 +236,15 @@ impl BotManager {
                                 ));
                             }
                         }
+                    }
+                    BotType::OpenAI => {
+                        open_ai_bot::decide_action(
+                            bot,
+                            bot_pos,
+                            bot_health,
+                            closest_enemy,
+                            &mut rng,
+                        );
                     }
                 }
             }
