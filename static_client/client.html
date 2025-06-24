@@ -236,6 +236,10 @@
                             <p>K/D: <span id="playerKills" class="text-red-400">0</span>/<span id="playerDeaths" class="text-gray-400">0</span></p>
                             <p>Players: <span id="playerCount" class="text-gray-100">0</span></p>
                             <p>Ping: <span id="pingDisplay" class="text-gray-100">0</span>ms</p>
+                            <p>Tick: <span id="serverTickDisplay" class="text-gray-100">0</span>Hz</p>
+                            <p>Down: <span id="downloadRateDisplay" class="text-gray-100">0</span> KB/s</p>
+                            <p>Up: <span id="uploadRateDisplay" class="text-gray-100">0</span> KB/s</p>
+                            <p>FPS: <span id="fpsHudDisplay" class="text-gray-100">0</span></p>
                         </div>
                         <div id="powerupStatus" class="mt-2 space-y-1"></div>
                         <div id="networkQualityIndicator" class="mt-2"></div>
@@ -467,6 +471,10 @@
         const playerDeathsSpan = document.getElementById('playerDeaths');
         const playerCountSpan = document.getElementById('playerCount');
         const powerupStatusDiv = document.getElementById('powerupStatus');
+        const serverTickDisplay = document.getElementById('serverTickDisplay');
+        const downloadRateDisplay = document.getElementById('downloadRateDisplay');
+        const uploadRateDisplay = document.getElementById('uploadRateDisplay');
+        const fpsHudDisplay = document.getElementById('fpsHudDisplay');
 
         let starfield;
         let healthVignette;
@@ -544,6 +552,12 @@
         let ping = 0;
         let frameCount = 0;
         let lastFPSUpdate = 0;
+        let downloadBytes = 0;
+        let uploadBytes = 0;
+        let lastNetworkStatTime = 0;
+        let downloadRate = 0;
+        let uploadRate = 0;
+        let serverTickRate = SERVER_TICK_RATE;
 
         // Managers
         let effectsManager;
@@ -2177,6 +2191,14 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 lastFPSUpdate = currentTime;
             }
 
+            if (currentTime - lastNetworkStatTime >= 1000) {
+                downloadRate = downloadBytes / 1024;
+                uploadRate = uploadBytes / 1024;
+                downloadBytes = 0;
+                uploadBytes = 0;
+                lastNetworkStatTime = currentTime;
+            }
+
             if (localPlayerState && localPlayerState.alive) {
                 updateLocalPlayerPrediction(app.ticker.deltaMS / 1000);
             }
@@ -3363,6 +3385,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             const bytes = createInputMessage(currentFrameInput);
             dataChannel.send(bytes);
+            uploadBytes += bytes.byteLength || bytes.length;
 
             // Reset one-time inputs
             if (inputState.reload) inputState.reload = false;
@@ -3507,7 +3530,11 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             }
             playerCountSpan.textContent = players.size;
             pingDisplay.textContent = Math.round(ping);
-            if (networkIndicator) networkIndicator.update(ping);
+            if (serverTickDisplay) serverTickDisplay.textContent = serverTickRate;
+            if (downloadRateDisplay) downloadRateDisplay.textContent = downloadRate.toFixed(1);
+            if (uploadRateDisplay) uploadRateDisplay.textContent = uploadRate.toFixed(1);
+            if (fpsHudDisplay) fpsHudDisplay.textContent = fpsValueSpan.textContent;
+            if (networkIndicator) networkIndicator.update(ping, parseInt(fpsValueSpan.textContent, 10), serverTickRate, downloadRate, uploadRate);
 
             if (healthVignette && localPlayerState) {
                 const healthPercent = localPlayerState.health / localPlayerState.max_health;
@@ -3940,6 +3967,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
 
             dcInstance.onmessage = (event) => {
                 try {
+                    if (event.data && event.data.byteLength) {
+                        downloadBytes += event.data.byteLength;
+                    }
                     if (pingStartTime > 10) { // Calculate ping on message receipt
                         ping = Date.now() - pingStartTime;
                         pingStartTime = Date.now(); // Reset for next measurement
@@ -3952,6 +3982,8 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                             switch (parsed.type) {
                                 case 'welcome':
                                     myPlayerId = parsed.playerId;
+                                    serverTickRate = parsed.serverTickRate;
+                                    if (serverTickDisplay) serverTickDisplay.textContent = serverTickRate;
                                     log(`Welcome! Your ID: ${myPlayerId}. Server Tick: ${parsed.serverTickRate}Hz`, 'success');
                                     break;
                                 case 'initial':
@@ -4012,6 +4044,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 if (text && text.length <= MAX_CHAT_MESSAGE_LENGTH) {
                     const bytes = createChatMessage(text);
                     dataChannel.send(bytes);
+                    uploadBytes += bytes.byteLength || bytes.length;
                     chatInput.value = '';
                 } else if (text.length > MAX_CHAT_MESSAGE_LENGTH) {
                     log(`Chat message too long (max ${MAX_CHAT_MESSAGE_LENGTH} chars).`, 'error');
@@ -5850,8 +5883,8 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         class NetworkIndicator {
     constructor() {
         this.app = new PIXI.Application({
-            width: 80,
-            height: 20,
+            width: 110,
+            height: 40,
             backgroundAlpha: 0
         });
         
@@ -5861,7 +5894,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         // Background
         const bg = new PIXI.Graphics();
         bg.beginFill(0x1F2937, 0.8);
-        bg.drawRoundedRect(0, 0, 80, 20, 5);
+        bg.drawRoundedRect(0, 0, 110, 40, 5);
         bg.endFill();
         this.container.addChild(bg);
         
@@ -5872,8 +5905,35 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             fontFamily: 'monospace'
         });
         this.pingText.anchor.set(0, 0.5);
-        this.pingText.position.set(30, 10);
+        this.pingText.position.set(30, 8);
         this.container.addChild(this.pingText);
+
+        this.fpsText = new PIXI.Text('0fps', {
+            fontSize: 10,
+            fill: 0xE5E7EB,
+            fontFamily: 'monospace'
+        });
+        this.fpsText.anchor.set(0, 0.5);
+        this.fpsText.position.set(30, 18);
+        this.container.addChild(this.fpsText);
+
+        this.tickText = new PIXI.Text('0Hz', {
+            fontSize: 10,
+            fill: 0xE5E7EB,
+            fontFamily: 'monospace'
+        });
+        this.tickText.anchor.set(0, 0.5);
+        this.tickText.position.set(30, 28);
+        this.container.addChild(this.tickText);
+
+        this.rateText = new PIXI.Text('0/0', {
+            fontSize: 10,
+            fill: 0xE5E7EB,
+            fontFamily: 'monospace'
+        });
+        this.rateText.anchor.set(0, 0.5);
+        this.rateText.position.set(30, 36);
+        this.container.addChild(this.rateText);
         
         // Connection bars
         this.bars = [];
@@ -5887,13 +5947,16 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         
         // Status dot
         this.statusDot = new PIXI.Graphics();
-        this.statusDot.position.set(70, 10);
+        this.statusDot.position.set(95, 10);
         this.container.addChild(this.statusDot);
     }
 
-    update(currentPing) {
+    update(currentPing, fps, tickRate, down, up) {
         // Update ping text
         this.pingText.text = Math.round(currentPing) + 'ms';
+        this.fpsText.text = fps + 'fps';
+        this.tickText.text = tickRate + 'Hz';
+        this.rateText.text = `${down.toFixed(1)}↓ ${up.toFixed(1)}↑`;
         
         // Determine connection quality
         let quality = 4;
