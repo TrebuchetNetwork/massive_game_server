@@ -1,18 +1,18 @@
 // massive_game_server/server/src/network/signaling.rs
 use crate::core::config::ServerConfig;
 use crate::core::types::{
-    PlayerState as MassivePlayerState, PlayerID, Vec2, Wall as CoreWall, Pickup as CorePickup,
-    CorePickupType, PlayerInputData, ServerWeaponType, EntityId, RTCDataChannel as CoreRTCDataChannel,
-    FIELD_POSITION_ROTATION, FIELD_HEALTH_ALIVE, FIELD_WEAPON_AMMO, FIELD_SCORE_STATS,
-    FIELD_POWERUPS, FIELD_SHIELD, FIELD_FLAG, PlayerAoI, PlayerAoIs,
+    CorePickupType, EntityId, Pickup as CorePickup, PlayerAoI, PlayerAoIs, PlayerID,
+    PlayerInputData, PlayerState as MassivePlayerState, RTCDataChannel as CoreRTCDataChannel,
+    ServerWeaponType, Vec2, Wall as CoreWall, FIELD_FLAG, FIELD_HEALTH_ALIVE,
+    FIELD_POSITION_ROTATION, FIELD_POWERUPS, FIELD_SCORE_STATS, FIELD_SHIELD, FIELD_WEAPON_AMMO,
 };
 
 use crate::core::constants::*;
 use crate::core::types::PlayerState;
 use crate::entities::player::ImprovedPlayerManager;
 use crate::flatbuffers_generated::game_protocol as fb;
-use crate::world::partition::WorldPartitionManager;
 use crate::server::instance::MassiveGameServer; // Added for server access for initial spawn
+use crate::world::partition::WorldPartitionManager;
 use parking_lot::RwLock as ParkingLotRwLock;
 
 use bytes::Bytes;
@@ -25,7 +25,8 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::{mpsc, RwLock};
-use tracing::{error, info, warn, debug};
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 use warp::ws::{Message, WebSocket};
 use webrtc::{
     api::{media_engine::MediaEngine, APIBuilder},
@@ -39,7 +40,6 @@ use webrtc::{
         sdp::session_description::RTCSessionDescription,
     },
 };
-use uuid::Uuid;
 // Removed: use rand::Rng; // Not directly used here after spawn logic change
 
 // Type Aliases
@@ -59,8 +59,7 @@ pub struct ChatMessage {
     pub timestamp: u64,
 }
 pub type ChatMessagesQueue = Arc<RwLock<VecDeque<ChatMessage>>>;
-static NEXT_CHAT_MESSAGE_SEQ: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1);
+static NEXT_CHAT_MESSAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 #[derive(Clone, Debug)]
 pub struct ClientState {
@@ -78,7 +77,8 @@ pub struct ClientState {
     pub last_broadcast_frame: u64,
     pub last_known_players: HashSet<Arc<String>>,
     pub last_known_wall_ids: Option<HashSet<EntityId>>,
-    pub last_known_wall_states: HashMap<EntityId, (i32, i32)>,  // wall_id -> (current_health, max_health)
+    pub last_known_wall_states: HashMap<EntityId, (i32, i32)>, // wall_id -> (current_health, max_health)
+    pub match_info_pending: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,6 +104,7 @@ impl Default for ClientState {
             last_known_players: HashSet::new(),
             last_known_wall_ids: None,
             last_known_wall_states: HashMap::new(),
+            match_info_pending: true,
         }
     }
 }
@@ -168,12 +169,18 @@ pub async fn handle_signaling_connection(
             match message_result {
                 Ok(msg) => {
                     if ws_tx.send(msg).await.is_err() {
-                        warn!("[{}]: WebSocket send error, terminating forwarder.", peer_id_fwd);
+                        warn!(
+                            "[{}]: WebSocket send error, terminating forwarder.",
+                            peer_id_fwd
+                        );
                         break;
                     }
                 }
                 Err(e) => {
-                    error!("[{}]: Error in message to send via WebSocket: {:?}", peer_id_fwd, e);
+                    error!(
+                        "[{}]: Error in message to send via WebSocket: {:?}",
+                        peer_id_fwd, e
+                    );
                     break;
                 }
             }
@@ -183,17 +190,39 @@ pub async fn handle_signaling_connection(
 
     let mut m = MediaEngine::default();
     if let Err(e) = m.register_default_codecs() {
-        error!("[{}]: Failed to register default codecs: {}", peer_id_str, e);
-        cleanup_connection(&peer_id_str, &signaling_peers, &player_manager, &data_channels_map, &client_states_map, &player_aois);
+        error!(
+            "[{}]: Failed to register default codecs: {}",
+            peer_id_str, e
+        );
+        cleanup_connection(
+            &peer_id_str,
+            &signaling_peers,
+            &player_manager,
+            &data_channels_map,
+            &client_states_map,
+            &player_aois,
+        );
         return;
     }
 
     let api = APIBuilder::new().with_media_engine(m).build();
-    let rtc_config = RTCConfiguration {
-        ice_servers: vec![RTCIceServer {
+    let disable_stun = std::env::var("MGS_DISABLE_STUN")
+        .ok()
+        .map(|raw| {
+            let normalized = raw.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        })
+        .unwrap_or(false);
+    let ice_servers = if disable_stun {
+        Vec::new()
+    } else {
+        vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
             ..Default::default()
-        }],
+        }]
+    };
+    let rtc_config = RTCConfiguration {
+        ice_servers,
         ..Default::default()
     };
 
@@ -201,7 +230,14 @@ pub async fn handle_signaling_connection(
         Ok(pc) => Arc::new(pc),
         Err(e) => {
             error!("[{}]: Failed to create PeerConnection: {}", peer_id_str, e);
-            cleanup_connection(&peer_id_str, &signaling_peers, &player_manager, &data_channels_map, &client_states_map, &player_aois);
+            cleanup_connection(
+                &peer_id_str,
+                &signaling_peers,
+                &player_manager,
+                &data_channels_map,
+                &client_states_map,
+                &player_aois,
+            );
             return;
         }
     };
@@ -209,39 +245,45 @@ pub async fn handle_signaling_connection(
     let pc_for_ice = Arc::clone(&peer_connection);
     let ice_sender_clone = client_signaling_tx.clone();
     let peer_id_for_ice = peer_id_str.clone();
-    pc_for_ice.on_ice_candidate(Box::new(
-        move |candidate: Option<RTCIceCandidate>| {
-            let ice_sender = ice_sender_clone.clone();
-            let pid_ice = peer_id_for_ice.clone();
-            Box::pin(async move {
-                if let Some(c) = candidate {
-                    match c.to_json() {
-                        Ok(ice_init_struct) => {
-                            let ice_serde = RTCIceCandidateInitSerde {
-                                candidate: ice_init_struct.candidate,
-                                sdp_mid: ice_init_struct.sdp_mid,
-                                sdp_m_line_index: ice_init_struct.sdp_mline_index,
-                                username_fragment: ice_init_struct.username_fragment,
-                            };
-                            let sig_msg = SignalingMessageJson {
-                                sdp: None,
-                                ice: Some(ice_serde),
-                            };
-                            match serde_json::to_string(&sig_msg) {
-                                Ok(json_msg) => {
-                                    if ice_sender.send(Ok(Message::text(json_msg))).is_err() {
-                                        warn!("[{}]: Failed to send ICE candidate via channel.", pid_ice);
-                                    }
+    pc_for_ice.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
+        let ice_sender = ice_sender_clone.clone();
+        let pid_ice = peer_id_for_ice.clone();
+        Box::pin(async move {
+            if let Some(c) = candidate {
+                match c.to_json() {
+                    Ok(ice_init_struct) => {
+                        let ice_serde = RTCIceCandidateInitSerde {
+                            candidate: ice_init_struct.candidate,
+                            sdp_mid: ice_init_struct.sdp_mid,
+                            sdp_m_line_index: ice_init_struct.sdp_mline_index,
+                            username_fragment: ice_init_struct.username_fragment,
+                        };
+                        let sig_msg = SignalingMessageJson {
+                            sdp: None,
+                            ice: Some(ice_serde),
+                        };
+                        match serde_json::to_string(&sig_msg) {
+                            Ok(json_msg) => {
+                                if ice_sender.send(Ok(Message::text(json_msg))).is_err() {
+                                    warn!(
+                                        "[{}]: Failed to send ICE candidate via channel.",
+                                        pid_ice
+                                    );
                                 }
-                                Err(e) => error!("[{}]: Error serializing ICE candidate: {}", pid_ice, e),
+                            }
+                            Err(e) => {
+                                error!("[{}]: Error serializing ICE candidate: {}", pid_ice, e)
                             }
                         }
-                        Err(e) => error!("[{}]: Error converting ICE candidate to JSON: {}", pid_ice, e),
                     }
+                    Err(e) => error!(
+                        "[{}]: Error converting ICE candidate to JSON: {}",
+                        pid_ice, e
+                    ),
                 }
-            })
-        },
-    ));
+            }
+        })
+    }));
 
     let pc_for_state_change = Arc::clone(&peer_connection);
     let peer_id_for_state_change = peer_id_str.clone();
@@ -251,21 +293,35 @@ pub async fn handle_signaling_connection(
     let cs_map_clone_sc = client_states_map.clone();
     let pa_map_clone_sc = player_aois.clone();
 
-
-    pc_for_state_change.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-        let current_peer_id = peer_id_for_state_change.clone();
-        info!("[{}]: Peer Connection State changed: {}", current_peer_id, s);
-        if matches!(
-            s,
-            RTCPeerConnectionState::Failed
-                | RTCPeerConnectionState::Closed
-                | RTCPeerConnectionState::Disconnected
-        ) {
-            info!("[{}]: Peer disconnected/closed. Initiating cleanup.", current_peer_id);
-            cleanup_connection(&current_peer_id, &sp_clone_sc, &pm_clone_sc, &dc_map_clone_sc, &cs_map_clone_sc, &pa_map_clone_sc);
-        }
-        Box::pin(async {})
-    }));
+    pc_for_state_change.on_peer_connection_state_change(Box::new(
+        move |s: RTCPeerConnectionState| {
+            let current_peer_id = peer_id_for_state_change.clone();
+            info!(
+                "[{}]: Peer Connection State changed: {}",
+                current_peer_id, s
+            );
+            if matches!(
+                s,
+                RTCPeerConnectionState::Failed
+                    | RTCPeerConnectionState::Closed
+                    | RTCPeerConnectionState::Disconnected
+            ) {
+                info!(
+                    "[{}]: Peer disconnected/closed. Initiating cleanup.",
+                    current_peer_id
+                );
+                cleanup_connection(
+                    &current_peer_id,
+                    &sp_clone_sc,
+                    &pm_clone_sc,
+                    &dc_map_clone_sc,
+                    &cs_map_clone_sc,
+                    &pa_map_clone_sc,
+                );
+            }
+            Box::pin(async {})
+        },
+    ));
 
     let pc_for_datachannel_event = Arc::clone(&peer_connection);
     let peer_id_for_dc_event = peer_id_str.clone();
@@ -276,11 +332,13 @@ pub async fn handle_signaling_connection(
     let config_for_dc_event = config.clone();
     let server_instance_for_dc_event = server_instance.clone(); // Clone server instance for DC event
 
-
     pc_for_datachannel_event.on_data_channel(Box::new(move |dc: Arc<RTCDataChannel>| {
         let dc_label_owned = dc.label().to_owned();
         let current_peer_id_on_dc = peer_id_for_dc_event.clone();
-        info!("[{}]: DataChannel '{}' received from client.", current_peer_id_on_dc, dc_label_owned);
+        info!(
+            "[{}]: DataChannel '{}' received from client.",
+            current_peer_id_on_dc, dc_label_owned
+        );
 
         let dc_on_open_arc = Arc::clone(&dc);
         let dc_for_closure = Arc::clone(&dc);
@@ -292,17 +350,22 @@ pub async fn handle_signaling_connection(
         let dc_label_for_on_open = dc_label_owned.clone();
         let server_instance_on_open = server_instance_for_dc_event.clone(); // Clone server instance for on_open
 
-
         dc_on_open_arc.on_open(Box::new(move || {
             let current_peer_id_on_open_cb = peer_id_on_open.clone();
             let current_dc_label_on_open_cb = dc_label_for_on_open.clone();
-            info!("[{}]: DataChannel '{}' OPENED (on_open callback).", current_peer_id_on_open_cb, current_dc_label_on_open_cb);
+            info!(
+                "[{}]: DataChannel '{}' OPENED (on_open callback).",
+                current_peer_id_on_open_cb, current_dc_label_on_open_cb
+            );
             let dc_for_async_block = Arc::clone(&dc_for_closure);
 
-            let core_dc = Arc::new(crate::core::types::RTCDataChannel::new(Arc::clone(&dc_for_async_block)));
+            let core_dc = Arc::new(crate::core::types::RTCDataChannel::new(Arc::clone(
+                &dc_for_async_block,
+            )));
             data_channels_map_on_open.insert(current_peer_id_on_open_cb.clone(), core_dc.clone());
-            info!("[{}]: Added data channel to map. Map size: {}, Map ptr: {:p}", 
-                current_peer_id_on_open_cb, 
+            info!(
+                "[{}]: Added data channel to map. Map size: {}, Map ptr: {:p}",
+                current_peer_id_on_open_cb,
                 data_channels_map_on_open.len(),
                 Arc::as_ptr(&data_channels_map_on_open)
             );
@@ -312,95 +375,163 @@ pub async fn handle_signaling_connection(
                 last_update_sent_time: Instant::now(),
                 ..Default::default()
             };
-            client_states_map_on_open.write().insert(current_peer_id_on_open_cb.clone(), initial_client_state);
-            info!("[{}]: Added client state. Client states map size: {}", current_peer_id_on_open_cb, client_states_map_on_open.read().len());
-
-            let username = format!("Player_{}", &current_peer_id_on_open_cb[..4.min(current_peer_id_on_open_cb.len())]);
-            
-
-            
-            // Fix 2.2: Use RespawnManager for initial spawn
-            let player_id_arc_for_spawn = player_manager_on_open.id_pool.get_or_create(&current_peer_id_on_open_cb);
-            let team_to_assign = player_manager_on_open.assign_team_to_new_player();
-            let initial_spawn_pos = server_instance_on_open.respawn_manager.get_respawn_position(
-                &server_instance_on_open, // Pass the server instance
-                &player_id_arc_for_spawn,
-                Some(team_to_assign),
-                &[] // No specific enemy positions for initial spawn balancing here
+            client_states_map_on_open
+                .write()
+                .insert(current_peer_id_on_open_cb.clone(), initial_client_state);
+            info!(
+                "[{}]: Added client state. Client states map size: {}",
+                current_peer_id_on_open_cb,
+                client_states_map_on_open.read().len()
             );
 
-            info!("[{}] Player spawned at ({}, {})", current_peer_id_on_open_cb, initial_spawn_pos.x, initial_spawn_pos.y);
-
-
-            let _player_id_arc = player_manager_on_open.add_player(
-                current_peer_id_on_open_cb.clone(),
-                username.clone(),
-                initial_spawn_pos.x, // Use determined spawn position
-                initial_spawn_pos.y  // Use determined spawn position
-            ).unwrap_or_else(|| {
-                warn!("[{}]: add_player returned None, attempting to get existing PlayerID Arc.", current_peer_id_on_open_cb);
-                player_manager_on_open.id_pool.get_or_create(&current_peer_id_on_open_cb)
+            // Kick a match_info-only delta immediately so the client UI doesn't wait.
+            let server_clone_for_match_info = server_instance_on_open.clone();
+            let peer_id_for_match_info = current_peer_id_on_open_cb.clone();
+            let dc_for_match_info = core_dc.clone();
+            tokio::spawn(async move {
+                server_clone_for_match_info
+                    .send_match_info_only(&peer_id_for_match_info, &dc_for_match_info)
+                    .await;
             });
 
-            let new_player_id_arc_for_team = player_manager_on_open.id_pool.get_or_create(&current_peer_id_on_open_cb);
+            let username = format!(
+                "Player_{}",
+                &current_peer_id_on_open_cb[..4.min(current_peer_id_on_open_cb.len())]
+            );
+
+            // Fix 2.2: Use RespawnManager for initial spawn
+            let player_id_arc_for_spawn = player_manager_on_open
+                .id_pool
+                .get_or_create(&current_peer_id_on_open_cb);
+            let team_to_assign = player_manager_on_open.assign_team_to_new_player();
+            let initial_spawn_pos = server_instance_on_open
+                .respawn_manager
+                .get_respawn_position(
+                    &server_instance_on_open, // Pass the server instance
+                    &player_id_arc_for_spawn,
+                    Some(team_to_assign),
+                    &[], // No specific enemy positions for initial spawn balancing here
+                );
+
+            info!(
+                "[{}] Player spawned at ({}, {})",
+                current_peer_id_on_open_cb, initial_spawn_pos.x, initial_spawn_pos.y
+            );
+
+            let _player_id_arc = player_manager_on_open
+                .add_player(
+                    current_peer_id_on_open_cb.clone(),
+                    username.clone(),
+                    initial_spawn_pos.x, // Use determined spawn position
+                    initial_spawn_pos.y, // Use determined spawn position
+                )
+                .unwrap_or_else(|| {
+                    warn!(
+                        "[{}]: add_player returned None, attempting to get existing PlayerID Arc.",
+                        current_peer_id_on_open_cb
+                    );
+                    player_manager_on_open
+                        .id_pool
+                        .get_or_create(&current_peer_id_on_open_cb)
+                });
+
+            let new_player_id_arc_for_team = player_manager_on_open
+                .id_pool
+                .get_or_create(&current_peer_id_on_open_cb);
             // let team_to_assign = player_manager_on_open.assign_team_to_new_player(); // Moved up
 
-            if let Some(mut p_state_entry) = player_manager_on_open.get_player_state_mut(&new_player_id_arc_for_team) {
+            if let Some(mut p_state_entry) =
+                player_manager_on_open.get_player_state_mut(&new_player_id_arc_for_team)
+            {
                 let p_state: &mut PlayerState = &mut *p_state_entry;
                 p_state.team_id = team_to_assign;
                 p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
-                info!("[{}] assigned to team {}. Player state marked as changed.", current_peer_id_on_open_cb, team_to_assign);
+                info!(
+                    "[{}] assigned to team {}. Player state marked as changed.",
+                    current_peer_id_on_open_cb, team_to_assign
+                );
             }
 
-            if let Some(player_state) = player_manager_on_open.get_player_state(&new_player_id_arc_for_team) {
+            if let Some(player_state) =
+                player_manager_on_open.get_player_state(&new_player_id_arc_for_team)
+            {
                 // Update spatial index with player's position
-                server_instance_on_open.spatial_index.update_player_position(
-                    new_player_id_arc_for_team.clone(), 
-                    player_state.x, 
-                    player_state.y
-                );
-                
+                server_instance_on_open
+                    .spatial_index
+                    .update_player_position(
+                        new_player_id_arc_for_team.clone(),
+                        player_state.x,
+                        player_state.y,
+                    );
+
                 // Update player's AoI
                 server_instance_on_open.update_player_aoi(
-                    &new_player_id_arc_for_team, 
-                    player_state.x, 
-                    player_state.y
+                    &new_player_id_arc_for_team,
+                    player_state.x,
+                    player_state.y,
                 );
-                
-                info!("[{}] Player AoI initialized at position ({}, {})", 
-                    current_peer_id_on_open_cb, player_state.x, player_state.y);
+
+                info!(
+                    "[{}] Player AoI initialized at position ({}, {})",
+                    current_peer_id_on_open_cb, player_state.x, player_state.y
+                );
             }
 
+            // Send initial state now that the player exists and AoI is initialized.
             let config_for_welcome = config_on_open.clone();
+            let server_for_initial = server_instance_on_open.clone();
+            let peer_id_for_initial = current_peer_id_on_open_cb.clone();
+            let dc_for_initial = core_dc.clone();
+            let client_states_for_initial = client_states_map_on_open.clone();
 
             Box::pin(async move {
                 let mut builder_welcome = flatbuffers::FlatBufferBuilder::with_capacity(256);
-                let player_id_fb_welcome = builder_welcome.create_string(&current_peer_id_on_open_cb);
-                let welcome_text_fb = builder_welcome.create_string("Welcome to MassiveGameServer!");
+                let player_id_fb_welcome =
+                    builder_welcome.create_string(&current_peer_id_on_open_cb);
+                let welcome_text_fb =
+                    builder_welcome.create_string("Welcome to MassiveGameServer!");
                 let welcome_msg_args = fb::WelcomeMessageArgs {
                     player_id: Some(player_id_fb_welcome),
                     message: Some(welcome_text_fb),
                     server_tick_rate: config_for_welcome.tick_rate as u16,
                 };
-                let welcome_msg = fb::WelcomeMessage::create(&mut builder_welcome, &welcome_msg_args);
+                let welcome_msg =
+                    fb::WelcomeMessage::create(&mut builder_welcome, &welcome_msg_args);
                 let game_msg_welcome_args = fb::GameMessageArgs {
                     msg_type: fb::MessageType::Welcome,
                     actual_message_type: fb::MessagePayload::WelcomeMessage,
                     actual_message: Some(welcome_msg.as_union_value()),
                 };
-                let game_msg_welcome = fb::GameMessage::create(&mut builder_welcome, &game_msg_welcome_args);
+                let game_msg_welcome =
+                    fb::GameMessage::create(&mut builder_welcome, &game_msg_welcome_args);
                 builder_welcome.finish(game_msg_welcome, None);
 
-                if let Err(e) = dc_for_async_block.send(&Bytes::from(builder_welcome.finished_data().to_vec())).await {
-                    handle_dc_send_error(&e.to_string(), &current_peer_id_on_open_cb, "welcome message");
+                if let Err(e) = dc_for_async_block
+                    .send(&Bytes::from(builder_welcome.finished_data().to_vec()))
+                    .await
+                {
+                    handle_dc_send_error(
+                        &e.to_string(),
+                        &current_peer_id_on_open_cb,
+                        "welcome message",
+                    );
                 } else {
-                    info!("[{}]: Sent WelcomeMessage. Initial state will be sent by game loop.", current_peer_id_on_open_cb);
+                    info!(
+                        "[{}]: Sent WelcomeMessage. Sending initial state now.",
+                        current_peer_id_on_open_cb
+                    );
+                }
+
+                let mut client_states_guard = client_states_for_initial.write();
+                if let Some(client_state) = client_states_guard.get_mut(&peer_id_for_initial) {
+                    server_for_initial.send_initial_state_to_client(
+                        &peer_id_for_initial,
+                        &dc_for_initial,
+                        client_state,
+                    );
                 }
             })
-        
-        
         }));
-
 
         let dc_on_message_arc = Arc::clone(&dc);
         let peer_id_on_message = current_peer_id_on_dc.clone();
@@ -416,8 +547,12 @@ pub async fn handle_signaling_connection(
                 if let Ok(game_msg_root) = fb::root_as_game_message(&msg.data) {
                     match game_msg_root.msg_type() {
                         fb::MessageType::Input => {
-                            if game_msg_root.actual_message_type() == fb::MessagePayload::PlayerInput {
-                                if let Some(input_fb) = game_msg_root.actual_message_as_player_input() {
+                            if game_msg_root.actual_message_type()
+                                == fb::MessagePayload::PlayerInput
+                            {
+                                if let Some(input_fb) =
+                                    game_msg_root.actual_message_as_player_input()
+                                {
                                     let p_input_data = PlayerInputData {
                                         timestamp: input_fb.timestamp(),
                                         sequence: input_fb.sequence(),
@@ -433,25 +568,45 @@ pub async fn handle_signaling_connection(
                                         use_ability_slot: input_fb.use_ability_slot() as u8,
                                     };
 
-                                    let player_id_arc: PlayerID = players_map_on_msg.id_pool.get_or_create(&pid_msg_inner_str);
-                                    if let Some(mut player_entry) = players_map_on_msg.get_player_state_mut(&player_id_arc) {
-                                        debug!("[{}]: Received player input (seq: {})", pid_msg_inner_str, p_input_data.sequence);
+                                    let player_id_arc: PlayerID = players_map_on_msg
+                                        .id_pool
+                                        .get_or_create(&pid_msg_inner_str);
+                                    if let Some(mut player_entry) =
+                                        players_map_on_msg.get_player_state_mut(&player_id_arc)
+                                    {
+                                        debug!(
+                                            "[{}]: Received player input (seq: {})",
+                                            pid_msg_inner_str, p_input_data.sequence
+                                        );
                                         player_entry.queue_input(p_input_data);
                                     } else {
-                                         warn!("[{}]: Player state not found for input processing.", pid_msg_inner_str);
+                                        warn!(
+                                            "[{}]: Player state not found for input processing.",
+                                            pid_msg_inner_str
+                                        );
                                     }
                                 }
                             }
                         }
                         fb::MessageType::Chat => {
-                            if game_msg_root.actual_message_type() == fb::MessagePayload::ChatMessage {
-                                if let Some(chat_fb) = game_msg_root.actual_message_as_chat_message() {
-                                    if let (Some(message_text_fb), Some(username_text_fb)) = (chat_fb.message(), chat_fb.username()) {
+                            if game_msg_root.actual_message_type()
+                                == fb::MessagePayload::ChatMessage
+                            {
+                                if let Some(chat_fb) =
+                                    game_msg_root.actual_message_as_chat_message()
+                                {
+                                    if let (Some(message_text_fb), Some(username_text_fb)) =
+                                        (chat_fb.message(), chat_fb.username())
+                                    {
                                         let player_id_from_connection = pid_msg_inner_str.clone();
-                                        let player_id_arc_for_chat = players_map_on_msg.id_pool.get_or_create(&player_id_from_connection);
+                                        let player_id_arc_for_chat = players_map_on_msg
+                                            .id_pool
+                                            .get_or_create(&player_id_from_connection);
 
-                                        let trimmed_msg: String = message_text_fb.chars().take(100).collect();
-                                        let current_seq = NEXT_CHAT_MESSAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        let trimmed_msg: String =
+                                            message_text_fb.chars().take(100).collect();
+                                        let current_seq = NEXT_CHAT_MESSAGE_SEQ
+                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                                         let chat_entry = ChatMessage {
                                             seq: current_seq,
                                             player_id: player_id_arc_for_chat,
@@ -459,7 +614,12 @@ pub async fn handle_signaling_connection(
                                             message: trimmed_msg,
                                             timestamp: chat_fb.timestamp(),
                                         };
-                                        info!("[CHAT] {} ({}): {}", chat_entry.username, *chat_entry.player_id, chat_entry.message);
+                                        info!(
+                                            "[CHAT] {} ({}): {}",
+                                            chat_entry.username,
+                                            *chat_entry.player_id,
+                                            chat_entry.message
+                                        );
                                         let mut chat_q_guard = chat_q_on_msg.write().await;
                                         chat_q_guard.push_back(chat_entry);
                                         if chat_q_guard.len() > 50 {
@@ -469,10 +629,17 @@ pub async fn handle_signaling_connection(
                                 }
                             }
                         }
-                        _ => warn!("[{}]: Received unhandled FB message type: {:?}", pid_msg_inner_str, game_msg_root.msg_type()),
+                        _ => warn!(
+                            "[{}]: Received unhandled FB message type: {:?}",
+                            pid_msg_inner_str,
+                            game_msg_root.msg_type()
+                        ),
                     }
                 } else {
-                    error!("[{}]: Failed to parse FlatBuffer message from client.", pid_msg_inner_str);
+                    error!(
+                        "[{}]: Failed to parse FlatBuffer message from client.",
+                        pid_msg_inner_str
+                    );
                 }
             })
         }));
@@ -482,7 +649,10 @@ pub async fn handle_signaling_connection(
         let dc_label_for_on_close = dc_label_owned.clone();
 
         dc_on_close_arc.on_close(Box::new(move || {
-            info!("[{}]: DataChannel '{}' CLOSED.", peer_id_on_close, dc_label_for_on_close);
+            info!(
+                "[{}]: DataChannel '{}' CLOSED.",
+                peer_id_on_close, dc_label_for_on_close
+            );
             Box::pin(async {})
         }));
 
@@ -491,7 +661,10 @@ pub async fn handle_signaling_connection(
         let dc_label_for_on_error = dc_label_owned.clone();
 
         dc_on_error_arc.on_error(Box::new(move |err| {
-            error!("[{}]: DataChannel '{}' ERROR: {}", peer_id_on_error, dc_label_for_on_error, err);
+            error!(
+                "[{}]: DataChannel '{}' ERROR: {}",
+                peer_id_on_error, dc_label_for_on_error, err
+            );
             Box::pin(async {})
         }));
 
@@ -510,8 +683,13 @@ pub async fn handle_signaling_connection(
                         match serde_json::from_str::<SignalingMessageJson>(text_content) {
                             Ok(sig_data) => {
                                 if let Some(sdp) = sig_data.sdp {
-                                    if let Err(e) = pc_signal_receiver.set_remote_description(sdp.clone()).await {
-                                        error!("[{}]: Error setting remote description: {}", current_peer_id_ws, e);
+                                    if let Err(e) =
+                                        pc_signal_receiver.set_remote_description(sdp.clone()).await
+                                    {
+                                        error!(
+                                            "[{}]: Error setting remote description: {}",
+                                            current_peer_id_ws, e
+                                        );
                                         continue;
                                     }
                                     if pc_signal_receiver.remote_description().await.map_or(false, |rd| rd.sdp_type == webrtc::peer_connection::sdp::sdp_type::RTCSdpType::Offer) {
@@ -540,13 +718,21 @@ pub async fn handle_signaling_connection(
                                         sdp_mline_index: ice.sdp_m_line_index,
                                         username_fragment: ice.username_fragment,
                                     };
-                                    if let Err(e) = pc_signal_receiver.add_ice_candidate(ice_init).await {
-                                        warn!("[{}]: Error adding ICE candidate: {}", current_peer_id_ws, e);
+                                    if let Err(e) =
+                                        pc_signal_receiver.add_ice_candidate(ice_init).await
+                                    {
+                                        warn!(
+                                            "[{}]: Error adding ICE candidate: {}",
+                                            current_peer_id_ws, e
+                                        );
                                     }
                                 }
                             }
                             Err(e) => {
-                                error!("[{}]: Failed to parse signaling message: {}. Content: '{}'", current_peer_id_ws, e, text_content);
+                                error!(
+                                    "[{}]: Failed to parse signaling message: {}. Content: '{}'",
+                                    current_peer_id_ws, e, text_content
+                                );
                             }
                         }
                     }
@@ -562,8 +748,18 @@ pub async fn handle_signaling_connection(
         }
     }
 
-    info!("[{}]: WebSocket connection handler for signaling ending.", peer_id_str);
-    cleanup_connection(&peer_id_str, &signaling_peers, &player_manager, &data_channels_map, &client_states_map, &player_aois);
+    info!(
+        "[{}]: WebSocket connection handler for signaling ending.",
+        peer_id_str
+    );
+    cleanup_connection(
+        &peer_id_str,
+        &signaling_peers,
+        &player_manager,
+        &data_channels_map,
+        &client_states_map,
+        &player_aois,
+    );
     if let Err(e) = peer_connection.close().await {
         error!("[{}]: Error closing PeerConnection: {}", peer_id_str, e);
     }
@@ -579,7 +775,12 @@ pub fn cleanup_connection(
 ) {
     info!("[{}]: Cleaning up resources.", peer_id_str);
     // Check if peer_id was already removed from signaling_peers to prevent double cleanup issues.
-    if signaling_peers.lock().unwrap().remove(peer_id_str).is_some() {
+    if signaling_peers
+        .lock()
+        .unwrap()
+        .remove(peer_id_str)
+        .is_some()
+    {
         // Only proceed with other removals if this was the first successful removal from signaling_peers
         player_manager.remove_player(peer_id_str); // This is where the warn originates
         data_channels_map.remove(peer_id_str);
@@ -587,7 +788,10 @@ pub fn cleanup_connection(
         player_aois.remove(peer_id_str);
         info!("[{}]: Player AoI data removed.", peer_id_str);
     } else {
-        debug!("[{}]: Resources already cleaned up or peer not in signaling_peers.", peer_id_str);
+        debug!(
+            "[{}]: Resources already cleaned up or peer not in signaling_peers.",
+            peer_id_str
+        );
     }
 }
 
@@ -598,6 +802,9 @@ pub fn handle_dc_send_error(error_string: &str, peer_id_str: &str, message_type:
         || error_string.contains("Channel closed");
 
     if !is_stream_closed_error {
-        error!("[{}]: Error sending {} on data channel: {}", peer_id_str, message_type, error_string);
+        error!(
+            "[{}]: Error sending {} on data channel: {}",
+            peer_id_str, message_type, error_string
+        );
     }
 }

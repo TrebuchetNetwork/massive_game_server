@@ -1,0 +1,14 @@
+{
+  "name": "massive-game-server-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.50.1"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "install-browsers": "playwright install --with-deps",
+    "ui-audit": "node ui_surface_audit.js"
+  }
+}

@@ -1,6 +1,6 @@
 // massive_game_server/server/src/entities/player.rs
-use crate::core::types::{PlayerID, PlayerState};
 use crate::concurrent::spatial_index::ImprovedSpatialIndex;
+use crate::core::types::{PlayerID, PlayerState};
 use dashmap::DashMap;
 use seahash;
 use std::sync::Arc;
@@ -23,12 +23,15 @@ impl PlayerIdPool {
             return existing_arc.value().clone();
         }
         let new_arc_id = Arc::new(id_str.to_string());
-        self.allocated_ids.insert(id_str.to_string(), new_arc_id.clone());
+        self.allocated_ids
+            .insert(id_str.to_string(), new_arc_id.clone());
         new_arc_id
     }
 
     pub fn remove(&self, id_str: &str) -> Option<PlayerID> {
-        self.allocated_ids.remove(id_str).map(|(_key, arc_id)| arc_id)
+        self.allocated_ids
+            .remove(id_str)
+            .map(|(_key, arc_id)| arc_id)
     }
 }
 
@@ -85,29 +88,47 @@ impl ImprovedPlayerManager {
         }
     }
 
-    pub fn add_player(&self, id_str: String, username: String, initial_x: f32, initial_y: f32) -> Option<PlayerID> {
+    pub fn add_player(
+        &self,
+        id_str: String,
+        username: String,
+        initial_x: f32,
+        initial_y: f32,
+    ) -> Option<PlayerID> {
         let player_arc_id = self.id_pool.get_or_create(&id_str);
 
         let shard_idx = self.get_shard_index(&id_str);
         if shard_idx >= self.shards.len() {
-            warn!("Calculated shard index {} is out of bounds for {} shards.", shard_idx, self.shards.len());
+            warn!(
+                "Calculated shard index {} is out of bounds for {} shards.",
+                shard_idx,
+                self.shards.len()
+            );
             return None;
         }
 
         let player_state = PlayerState::new(id_str.clone(), username, initial_x, initial_y);
 
         if self.shards[shard_idx].get(&player_arc_id).is_some() {
-            warn!("Player with ID {} already exists. Not adding again.", id_str);
+            warn!(
+                "Player with ID {} already exists. Not adding again.",
+                id_str
+            );
             return None;
         }
 
         self.shards[shard_idx].insert(player_arc_id.clone(), player_state);
-        self.spatial_index.update_player_position(player_arc_id.clone(), initial_x, initial_y);
+        self.spatial_index
+            .update_player_position(player_arc_id.clone(), initial_x, initial_y);
         Some(player_arc_id)
     }
 
     pub fn remove_player(&self, player_id_str: &str) {
-        let player_arc_id_opt = self.id_pool.allocated_ids.get(player_id_str).map(|entry| entry.value().clone());
+        let player_arc_id_opt = self
+            .id_pool
+            .allocated_ids
+            .get(player_id_str)
+            .map(|entry| entry.value().clone());
 
         if let Some(player_arc_id) = player_arc_id_opt {
             let shard_idx = self.get_shard_index(player_id_str);
@@ -116,13 +137,22 @@ impl ImprovedPlayerManager {
                     self.spatial_index.remove_player(&player_arc_id);
                     self.id_pool.remove(player_id_str);
                 } else {
-                     warn!("Attempted to remove player {} from shard {} but they were not found.", player_id_str, shard_idx);
+                    warn!(
+                        "Attempted to remove player {} from shard {} but they were not found.",
+                        player_id_str, shard_idx
+                    );
                 }
             } else {
-                 warn!("Attempted to remove player {}: shard index {} out of bounds.", player_id_str, shard_idx);
+                warn!(
+                    "Attempted to remove player {}: shard index {} out of bounds.",
+                    player_id_str, shard_idx
+                );
             }
         } else {
-            warn!("Attempted to remove player {}: ID not found in pool.", player_id_str);
+            warn!(
+                "Attempted to remove player {}: ID not found in pool.",
+                player_id_str
+            );
         }
     }
 
@@ -133,11 +163,15 @@ impl ImprovedPlayerManager {
                 player_state_entry.x = new_x;
                 player_state_entry.y = new_y;
             }
-            self.spatial_index.update_player_position(player_id.clone(), new_x, new_y);
+            self.spatial_index
+                .update_player_position(player_id.clone(), new_x, new_y);
         }
     }
 
-    pub fn get_player_state(&self, player_id: &PlayerID) -> Option<impl std::ops::Deref<Target = PlayerState> + '_> {
+    pub fn get_player_state(
+        &self,
+        player_id: &PlayerID,
+    ) -> Option<impl std::ops::Deref<Target = PlayerState> + '_> {
         let shard_idx = self.get_shard_index(player_id.as_str());
         if shard_idx < self.shards.len() {
             self.shards[shard_idx].get(player_id)
@@ -146,8 +180,11 @@ impl ImprovedPlayerManager {
         }
     }
 
-    pub fn get_player_state_mut(&self, player_id: &PlayerID) -> Option<impl std::ops::DerefMut<Target = PlayerState> + '_> {
-         let shard_idx = self.get_shard_index(player_id.as_str());
+    pub fn get_player_state_mut(
+        &self,
+        player_id: &PlayerID,
+    ) -> Option<impl std::ops::DerefMut<Target = PlayerState> + '_> {
+        let shard_idx = self.get_shard_index(player_id.as_str());
         if shard_idx < self.shards.len() {
             self.shards[shard_idx].get_mut(player_id)
         } else {

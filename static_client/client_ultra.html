@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ultra Client</title>
+  <script>
+    (function redirectToUltraClient() {
+      const params = new URLSearchParams(window.location.search);
+      if (!params.has('mode')) params.set('mode', 'ultra');
+      if (!params.has('hud')) params.set('hud', 'compact');
+      if (!params.has('ui')) params.set('ui', 'focus');
+      const target = `/client.html?${params.toString()}`;
+      window.location.replace(target);
+    })();
+  </script>
+</head>
+<body>
+  <p>Redirecting to ultra client profile at <a href="/client.html?mode=ultra&hud=compact&ui=focus">/client.html?mode=ultra&hud=compact&ui=focus</a>...</p>
+</body>
+</html>

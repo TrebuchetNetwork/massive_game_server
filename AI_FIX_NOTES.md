@@ -45,4 +45,4 @@ cd massive_game_server/server
 cargo run --release
 ```
 
-Then connect with a browser to `http://localhost:8080/client_optimized.html`
+Then connect with a browser to `http://localhost:8080/client.html`

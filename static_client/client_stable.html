@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stable Client</title>
+  <script>
+    (function redirectToStableClient() {
+      const params = new URLSearchParams(window.location.search);
+      if (!params.has('mode')) params.set('mode', 'stable');
+      const target = `/client.html?${params.toString()}`;
+      window.location.replace(target);
+    })();
+  </script>
+</head>
+<body>
+  <p>Redirecting to stable browser profile at <a href="/client.html?mode=stable">/client.html?mode=stable</a>...</p>
+</body>
+</html>

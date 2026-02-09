@@ -1,0 +1,15 @@
+{
+  "name": "ui-bench",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "bench": "node run.js",
+    "multi-client": "node multi_client.js",
+    "profile": "node live_ui_profile.js",
+    "full-fx-battle": "node full_fx_battle.js",
+    "webgpu-probe": "node webgpu_probe.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.42.1"
+  }
+}

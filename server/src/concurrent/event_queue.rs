@@ -1,5 +1,5 @@
 // massive_game_server/server/src/concurrent/event_queue.rs
-use crate::core::types::{GameEvent, EventPriority}; // Assuming GameEvent and EventPriority are defined
+use crate::core::types::{EventPriority, GameEvent}; // Assuming GameEvent and EventPriority are defined
 use crossbeam_queue::SegQueue;
 use std::sync::Arc;
 
@@ -49,7 +49,9 @@ impl PriorityEventQueue {
             if let Some(event) = self.high_priority.pop() {
                 batch.push(event);
                 count += 1;
-                if count >= max_count { break; }
+                if count >= max_count {
+                    break;
+                }
             } else {
                 break; // No more high priority
             }
@@ -58,7 +60,9 @@ impl PriorityEventQueue {
             if let Some(event) = self.normal_priority.pop() {
                 batch.push(event);
                 count += 1;
-                if count >= max_count { break; }
+                if count >= max_count {
+                    break;
+                }
             } else {
                 break; // No more normal priority
             }
@@ -67,7 +71,9 @@ impl PriorityEventQueue {
             if let Some(event) = self.low_priority.pop() {
                 batch.push(event);
                 count += 1;
-                if count >= max_count { break; }
+                if count >= max_count {
+                    break;
+                }
             } else {
                 break; // No more low priority
             }
@@ -76,7 +82,9 @@ impl PriorityEventQueue {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.high_priority.is_empty() && self.normal_priority.is_empty() && self.low_priority.is_empty()
+        self.high_priority.is_empty()
+            && self.normal_priority.is_empty()
+            && self.low_priority.is_empty()
     }
 
     pub fn len(&self) -> usize {

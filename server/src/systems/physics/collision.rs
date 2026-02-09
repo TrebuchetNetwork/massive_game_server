@@ -1,9 +1,9 @@
 // massive_game_server/server/src/systems/physics/collision.rs
 // This file might be new or you might integrate this function into an existing collision system.
 
-use crate::core::types::{Projectile, Wall, GameEvent, Vec2, EntityId}; // Assuming GameEvent and Vec2 are in types
-use crate::systems::respawn::WallRespawnManager; // To call wall_destroyed
 use crate::core::constants::PLAYER_RADIUS; // Example, if needed for other collisions
+use crate::core::types::{EntityId, GameEvent, Projectile, Vec2, Wall}; // Assuming GameEvent and Vec2 are in types
+use crate::systems::respawn::WallRespawnManager; // To call wall_destroyed
 use tracing::{debug, warn}; // For logging
 
 // Placeholder for other collision functions you might have or add
@@ -40,24 +40,28 @@ pub fn handle_projectile_wall_collision(
     // Check if the wall is destructible and still has health.
     // The `wall_mut_ref.id` should match `wall_id` passed in.
     if wall_id != wall_mut_ref.id {
-        warn!("Wall ID mismatch in collision: projectile hit wall_id {}, but got ref to wall_id {}", wall_id, wall_mut_ref.id);
+        warn!(
+            "Wall ID mismatch in collision: projectile hit wall_id {}, but got ref to wall_id {}",
+            wall_id, wall_mut_ref.id
+        );
         return None; // ID mismatch, something is wrong.
     }
 
     if wall_mut_ref.is_destructible && wall_mut_ref.current_health > 0 {
         let damage_to_apply = projectile.damage; // Assuming projectile has a damage field
-        
+
         // Apply damage, ensuring health doesn't go below zero.
         let old_health = wall_mut_ref.current_health;
         wall_mut_ref.current_health = (wall_mut_ref.current_health - damage_to_apply).max(0);
-        
+
         debug!(
             "Wall ID {} hit by projectile ID {}. Health: {} -> {}.",
             wall_mut_ref.id, projectile.id, old_health, wall_mut_ref.current_health
         );
 
         // If wall health reaches zero, mark it as destroyed.
-        if wall_mut_ref.current_health == 0 && old_health > 0 { // Ensure it was just destroyed
+        if wall_mut_ref.current_health == 0 && old_health > 0 {
+            // Ensure it was just destroyed
             respawn_manager.wall_destroyed(wall_mut_ref.id);
             // Return a WallDestroyed event
             return Some(GameEvent::WallDestroyed {
@@ -85,7 +89,8 @@ pub fn handle_projectile_wall_collision(
         // You might still want an event for visual/audio feedback.
         return Some(GameEvent::WallImpact {
             wall_id: wall_mut_ref.id,
-            position: Vec2::new( // Or projectile impact position
+            position: Vec2::new(
+                // Or projectile impact position
                 wall_mut_ref.x + wall_mut_ref.width / 2.0,
                 wall_mut_ref.y + wall_mut_ref.height / 2.0,
             ),
@@ -139,7 +144,7 @@ pub fn process_all_collisions(
                     // Basic AABB check for projectile center vs wall bounds
                     if projectile.x >= wall.x && projectile.x <= wall.x + wall.width &&
                        projectile.y >= wall.y && projectile.y <= wall.y + wall.height {
-                        
+
                         if let Some(event) = handle_projectile_wall_collision(projectile, wall.id, wall, respawn_manager) {
                             game_events_queue.push(event, crate::core::types::EventPriority::Normal);
                         }

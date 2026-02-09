@@ -23,13 +23,12 @@ impl Default for ThreadPoolConfig {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub tick_rate: u64,
     pub num_player_shards: usize,
-    pub num_world_partitions: usize, 
-    pub world_partition_grid_dim: usize, 
+    pub num_world_partitions: usize,
+    pub world_partition_grid_dim: usize,
     pub thread_pools: ThreadPoolConfig,
     pub max_players_per_match: usize, // <<< ADD THIS LINE
 }
@@ -38,8 +37,9 @@ impl Default for ServerConfig {
     fn default() -> Self {
         ServerConfig {
             tick_rate: super::constants::SERVER_TICK_RATE,
-            num_player_shards: 12,// Match core count for better distribution super::constants::PLAYER_SHARDS_COUNT,
-            num_world_partitions: super::constants::PARTITION_GRID_SIZE * super::constants::PARTITION_GRID_SIZE,
+            num_player_shards: 12, // Match core count for better distribution super::constants::PLAYER_SHARDS_COUNT,
+            num_world_partitions: super::constants::PARTITION_GRID_SIZE
+                * super::constants::PARTITION_GRID_SIZE,
             world_partition_grid_dim: super::constants::PARTITION_GRID_SIZE,
             thread_pools: ThreadPoolConfig::default(),
             max_players_per_match: 400, // <<< ADD THIS LINE (or your desired default)
@@ -49,30 +49,45 @@ impl Default for ServerConfig {
 
 #[derive(Debug, Clone)]
 pub struct CoreAllocation {
-    pub physics_cores_indices: Vec<usize>,    
-    pub networking_cores_indices: Vec<usize>, 
-    pub game_logic_cores_indices: Vec<usize>, 
-    pub ai_cores_indices: Vec<usize>,         
-    pub io_cores_indices: Vec<usize>,         
+    pub physics_cores_indices: Vec<usize>,
+    pub networking_cores_indices: Vec<usize>,
+    pub game_logic_cores_indices: Vec<usize>,
+    pub ai_cores_indices: Vec<usize>,
+    pub io_cores_indices: Vec<usize>,
 }
 
 impl CoreAllocation {
     pub fn new(config: &ThreadPoolConfig) -> Self {
         let mut current_core = 0;
         let mut physics_cores_indices = Vec::new();
-        for _ in 0..config.physics_threads { physics_cores_indices.push(current_core); current_core += 1; }
+        for _ in 0..config.physics_threads {
+            physics_cores_indices.push(current_core);
+            current_core += 1;
+        }
 
         let mut networking_cores_indices = Vec::new();
-        for _ in 0..config.networking_threads { networking_cores_indices.push(current_core); current_core += 1; }
+        for _ in 0..config.networking_threads {
+            networking_cores_indices.push(current_core);
+            current_core += 1;
+        }
 
         let mut game_logic_cores_indices = Vec::new();
-        for _ in 0..config.game_logic_threads { game_logic_cores_indices.push(current_core); current_core += 1; }
+        for _ in 0..config.game_logic_threads {
+            game_logic_cores_indices.push(current_core);
+            current_core += 1;
+        }
 
         let mut ai_cores_indices = Vec::new();
-        for _ in 0..config.ai_threads { ai_cores_indices.push(current_core); current_core += 1; }
+        for _ in 0..config.ai_threads {
+            ai_cores_indices.push(current_core);
+            current_core += 1;
+        }
 
         let mut io_cores_indices = Vec::new();
-        for _ in 0..config.io_threads { io_cores_indices.push(current_core); current_core += 1; }
+        for _ in 0..config.io_threads {
+            io_cores_indices.push(current_core);
+            current_core += 1;
+        }
 
         CoreAllocation {
             physics_cores_indices,

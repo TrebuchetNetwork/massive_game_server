@@ -10,7 +10,7 @@ pub enum ServerError {
     NetworkError(String),
 
     #[error("Join error: {0}")]
-    JoinError(String), 
+    JoinError(String),
 
     #[error("Game logic error: {0}")]
     LogicError(String),

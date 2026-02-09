@@ -1,13 +1,13 @@
 // massive_game_server/server/src/systems/respawn.rs
 
-use crate::core::types::{PlayerID, Wall, EntityId, Vec2};
 use crate::core::constants::*;
+use crate::core::types::{EntityId, PlayerID, Vec2, Wall};
 use crate::server::instance::MassiveGameServer; // Added for server access
 use dashmap::DashMap;
-use std::sync::Arc;
 use parking_lot::RwLock;
-use std::time::{Instant, Duration};
 use rand::Rng;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
 #[derive(Clone, Debug)]
@@ -33,7 +33,8 @@ pub struct RespawnManager {
 }
 
 impl RespawnManager {
-    pub fn new() -> Self { // Removed server parameter for now, will be passed to get_respawn_position
+    pub fn new() -> Self {
+        // Removed server parameter for now, will be passed to get_respawn_position
         let initial_spawn_points = Self::generate_initial_spawn_points();
         Self {
             spawn_points: Arc::new(RwLock::new(initial_spawn_points)),
@@ -100,8 +101,10 @@ impl RespawnManager {
     }
 
     pub fn record_death(&self, player_id: PlayerID, position: Vec2) {
-        self.recent_deaths.insert(player_id, (position, Instant::now()));
-        self.recent_deaths.retain(|_, (_, time)| time.elapsed() < Duration::from_secs(60));
+        self.recent_deaths
+            .insert(player_id, (position, Instant::now()));
+        self.recent_deaths
+            .retain(|_, (_, time)| time.elapsed() < Duration::from_secs(60));
     }
 
     fn is_spawn_point_obstructed(
@@ -112,7 +115,8 @@ impl RespawnManager {
     ) -> bool {
         let player_check_radius = PLAYER_RADIUS + 5.0;
 
-        for wall in all_current_walls { // Iterate over combined list
+        for wall in all_current_walls {
+            // Iterate over combined list
             if wall.is_destructible && wall.current_health <= 0 {
                 continue;
             }
@@ -149,10 +153,9 @@ impl RespawnManager {
             team_id,
             enemy_positions,
             &all_current_walls, // Pass the fetched walls
-            // &dynamic_walls // If you separate them, pass both
+                                // &dynamic_walls // If you separate them, pass both
         )
     }
-
 
     // Modified to take a single all_current_walls slice
     pub fn get_respawn_position_with_walls(
@@ -164,7 +167,10 @@ impl RespawnManager {
     ) -> Vec2 {
         let mut rng = rand::thread_rng();
         let now = Instant::now();
-        let death_location_opt = self.recent_deaths.get(player_id).map(|entry| entry.value().0);
+        let death_location_opt = self
+            .recent_deaths
+            .get(player_id)
+            .map(|entry| entry.value().0);
         let mut spawn_points_guard = self.spawn_points.write();
 
         let mut scored_spawns: Vec<(usize, f32)> = spawn_points_guard
@@ -177,7 +183,9 @@ impl RespawnManager {
                     (None, None) => true,
                     (None, Some(_sp_team)) => false,
                 };
-                if !team_compatible { return None; }
+                if !team_compatible {
+                    return None;
+                }
                 // Pass the combined wall list to is_spawn_point_obstructed
                 if self.is_spawn_point_obstructed(sp.position, all_current_walls) {
                     return None;
@@ -186,15 +194,21 @@ impl RespawnManager {
                 let mut score = 100.0;
                 let time_since_last_use = now.duration_since(sp.last_used).as_secs_f32();
                 if time_since_last_use < self.spawn_protection_duration.as_secs_f32() * 2.0 {
-                    score -= (self.spawn_protection_duration.as_secs_f32() * 2.0 - time_since_last_use) * 15.0;
+                    score -= (self.spawn_protection_duration.as_secs_f32() * 2.0
+                        - time_since_last_use)
+                        * 15.0;
                 }
                 if let Some(death_loc) = death_location_opt {
-                    let dist_from_death = ((sp.position.x - death_loc.x).powi(2) + (sp.position.y - death_loc.y).powi(2)).sqrt();
+                    let dist_from_death = ((sp.position.x - death_loc.x).powi(2)
+                        + (sp.position.y - death_loc.y).powi(2))
+                    .sqrt();
                     score += dist_from_death * 0.1;
                 }
                 let mut min_dist_to_enemy = f32::MAX;
                 for (enemy_pos, _) in enemy_positions {
-                    let dist = ((sp.position.x - enemy_pos.x).powi(2) + (sp.position.y - enemy_pos.y).powi(2)).sqrt();
+                    let dist = ((sp.position.x - enemy_pos.x).powi(2)
+                        + (sp.position.y - enemy_pos.y).powi(2))
+                    .sqrt();
                     if dist < min_dist_to_enemy {
                         min_dist_to_enemy = dist;
                     }
@@ -216,12 +230,13 @@ impl RespawnManager {
             .collect();
 
         if scored_spawns.is_empty() {
-             for (idx, sp) in spawn_points_guard.iter().enumerate() {
-                 if !self.is_spawn_point_obstructed(sp.position, all_current_walls) { // Check with combined walls
+            for (idx, sp) in spawn_points_guard.iter().enumerate() {
+                if !self.is_spawn_point_obstructed(sp.position, all_current_walls) {
+                    // Check with combined walls
                     spawn_points_guard[idx].last_used = now;
                     return spawn_points_guard[idx].position;
-                 }
-             }
+                }
+            }
             warn!("[RESPAWN_WARN] All spawn points are obstructed or unsuitable! Returning default (0,0). Player: {:?}", player_id);
             return Vec2::new(0.0, 0.0);
         }
@@ -232,10 +247,10 @@ impl RespawnManager {
         if top_n.is_empty() {
             warn!("[RESPAWN_WARN] No top N spawns found, though scored_spawns was not empty. Player: {:?}", player_id);
             if let Some(&(best_idx, _)) = scored_spawns.first() {
-                 if best_idx < spawn_points_guard.len() {
+                if best_idx < spawn_points_guard.len() {
                     spawn_points_guard[best_idx].last_used = now;
                     return spawn_points_guard[best_idx].position;
-                 }
+                }
             }
             warn!("[RESPAWN_WARN] Critical fallback in respawn logic (top_n empty). Returning (0,0). Player: {:?}", player_id);
             return Vec2::new(0.0, 0.0);
@@ -248,18 +263,25 @@ impl RespawnManager {
             spawn_points_guard[spawn_idx].last_used = now;
             return spawn_points_guard[spawn_idx].position;
         } else {
-             warn!("[RESPAWN_WARN] Chosen spawn_idx {} is out of bounds (len: {}). Player: {:?}", spawn_idx, spawn_points_guard.len(), player_id);
+            warn!(
+                "[RESPAWN_WARN] Chosen spawn_idx {} is out of bounds (len: {}). Player: {:?}",
+                spawn_idx,
+                spawn_points_guard.len(),
+                player_id
+            );
             if let Some(&(first_valid_idx, _)) = scored_spawns.first() {
-                 if first_valid_idx < spawn_points_guard.len() {
+                if first_valid_idx < spawn_points_guard.len() {
                     spawn_points_guard[first_valid_idx].last_used = now;
                     return spawn_points_guard[first_valid_idx].position;
-                 }
+                }
             }
-            warn!("[RESPAWN_WARN] Critical fallback in respawn logic. Returning (0,0). Player: {:?}", player_id);
+            warn!(
+                "[RESPAWN_WARN] Critical fallback in respawn logic. Returning (0,0). Player: {:?}",
+                player_id
+            );
             return Vec2::new(0.0, 0.0);
         }
     }
-
 }
 
 // --- WallRespawnManager ---
@@ -314,7 +336,10 @@ impl WallRespawnManager {
 
     pub fn wall_destroyed(&self, wall_id: EntityId) {
         if self.destroyed_walls.contains_key(&wall_id) {
-            debug!("Wall ID {} already destroyed and scheduled for respawn, skipping.", wall_id);
+            debug!(
+                "Wall ID {} already destroyed and scheduled for respawn, skipping.",
+                wall_id
+            );
             return;
         }
 
@@ -337,9 +362,16 @@ impl WallRespawnManager {
             let mut queue_guard = self.respawn_queue.write();
             queue_guard.push((wall_id, scheduled_time));
             queue_guard.sort_by_key(|k| k.1);
-            debug!("Wall ID {} scheduled for respawn in {} seconds.", wall_id, respawn_delay_duration.as_secs());
+            debug!(
+                "Wall ID {} scheduled for respawn in {} seconds.",
+                wall_id,
+                respawn_delay_duration.as_secs()
+            );
         } else {
-            warn!("Wall ID {} not found in templates, cannot schedule respawn.", wall_id);
+            warn!(
+                "Wall ID {} not found in templates, cannot schedule respawn.",
+                wall_id
+            );
         }
     }
 
@@ -355,7 +387,10 @@ impl WallRespawnManager {
                 if let Some((_id, info)) = self.destroyed_walls.remove(&wall_id) {
                     ready_to_respawn_walls.push(info.wall_data.clone());
                 } else {
-                    warn!("Wall ID {} was due for respawn but not found in destroyed_walls map.", wall_id);
+                    warn!(
+                        "Wall ID {} was due for respawn but not found in destroyed_walls map.",
+                        wall_id
+                    );
                 }
             } else {
                 break;
@@ -366,19 +401,30 @@ impl WallRespawnManager {
 
     pub fn get_wall_respawn_timer(&self, wall_id: EntityId) -> Option<Duration> {
         let now = Instant::now();
-        if let Some(entry) = self.respawn_queue.read().iter().find(|(id, _)| *id == wall_id) {
+        if let Some(entry) = self
+            .respawn_queue
+            .read()
+            .iter()
+            .find(|(id, _)| *id == wall_id)
+        {
             if entry.1 > now {
                 return Some(entry.1.duration_since(now));
             } else {
-                 if self.destroyed_walls.contains_key(&wall_id) {
-                    warn!("Wall {} in respawn_queue but past its time and still in destroyed_walls.", wall_id);
+                if self.destroyed_walls.contains_key(&wall_id) {
+                    warn!(
+                        "Wall {} in respawn_queue but past its time and still in destroyed_walls.",
+                        wall_id
+                    );
                     return Some(Duration::ZERO);
-                 }
-                 return None;
+                }
+                return None;
             }
         }
         if self.destroyed_walls.contains_key(&wall_id) {
-            warn!("Wall {} in destroyed_walls but not in respawn_queue. Inconsistent state.", wall_id);
+            warn!(
+                "Wall {} in destroyed_walls but not in respawn_queue. Inconsistent state.",
+                wall_id
+            );
         }
         None
     }

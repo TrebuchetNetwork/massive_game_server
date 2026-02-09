@@ -1,10 +1,10 @@
 // massive_game_server/server/src/concurrent/thread_pools.rs
-use crate::core::config::{ServerConfig, CoreAllocation};
+use crate::core::config::{CoreAllocation, ServerConfig};
 use crate::core::error::{ServerError, ServerResult};
-use rayon::{ThreadPool, ThreadPoolBuilder};
 use core_affinity::CoreId;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::sync::Arc;
-use tracing::{info, error, warn};
+use tracing::{error, info, warn};
 
 pub struct ThreadPoolSystem {
     pub physics_pool: Arc<ThreadPool>,
@@ -111,17 +111,24 @@ impl ThreadPoolSystem {
         let pool_identity_name_default = name_str.to_string();
 
         if num_threads == 0 {
-            warn!("Thread pool '{}' configured with 0 threads. Creating a minimal pool.", pool_identity_name_default);
-             return ThreadPoolBuilder::new()
+            warn!(
+                "Thread pool '{}' configured with 0 threads. Creating a minimal pool.",
+                pool_identity_name_default
+            );
+            return ThreadPoolBuilder::new()
                 .num_threads(1)
                 .thread_name(move |i| format!("{}-default-{}", pool_identity_name_default, i))
                 .build()
-                .map_err(|e| ServerError::ThreadingError(format!("Failed to build default {} pool: {}", name_str, e)));
+                .map_err(|e| {
+                    ServerError::ThreadingError(format!(
+                        "Failed to build default {} pool: {}",
+                        name_str, e
+                    ))
+                });
         }
 
         let name_for_thread_name = name_str.to_string();
         let name_for_start_handler = name_str.to_string();
-
 
         ThreadPoolBuilder::new()
             .num_threads(num_threads)

@@ -7,10 +7,10 @@ pub const TICK_DURATION: Duration = Duration::from_millis(TICK_DURATION_MS);
 
 // World constants
 pub const WORLD_MIN_X: f32 = -800.0; // Example, adjust as needed
-pub const WORLD_MAX_X: f32 = 800.0;  // Example
+pub const WORLD_MAX_X: f32 = 800.0; // Example
 pub const WORLD_MIN_Y: f32 = -600.0; // Example
-pub const WORLD_MAX_Y: f32 = 600.0;  // Example
-pub const PARTITION_GRID_SIZE: usize = 8; 
+pub const WORLD_MAX_Y: f32 = 600.0; // Example
+pub const PARTITION_GRID_SIZE: usize = 8;
 pub const PARTITION_SIZE_X: f32 = (WORLD_MAX_X - WORLD_MIN_X) / PARTITION_GRID_SIZE as f32;
 pub const PARTITION_SIZE_Y: f32 = (WORLD_MAX_Y - WORLD_MIN_Y) / PARTITION_GRID_SIZE as f32;
 pub const BOUNDARY_ZONE_WIDTH: f32 = 100.0;
@@ -47,17 +47,13 @@ pub const MAX_INPUT_QUEUE_SIZE_PER_PLAYER: usize = 32;
 
 pub const SAFE_SPAWN_RADIUS_FROM_ENEMY: f32 = 300.0; // Example value, adjust as needed
 
-
-
-// Performance 
-pub const TARGET_TICK_MS: u64      = 16;   // 60 Hz
-pub const SLOW_TICK_LOG_MS: u64    = 12;   // warn if physics+logic exceed this
-pub const NET_IO_TIMEOUT_MS: u64   = 10;   // drop network read if it blocks
-pub const AI_TIMEOUT_MS: u64       = 10;   // fail-safe for runaway AI
-pub const FAN_OUT_TIMEOUT_MS: u64  = 50;   // serialization + broadcast (increased for initial state)
-pub const AI_UPDATE_STRIDE: u64    = 2;    // run AI every N frames (≈ 30 Hz) - more responsive bots
-
-
+// Performance
+pub const TARGET_TICK_MS: u64 = 16; // 60 Hz
+pub const SLOW_TICK_LOG_MS: u64 = 12; // warn if physics+logic exceed this
+pub const NET_IO_TIMEOUT_MS: u64 = 10; // drop network read if it blocks
+pub const AI_TIMEOUT_MS: u64 = 10; // fail-safe for runaway AI
+pub const FAN_OUT_TIMEOUT_MS: u64 = 50; // serialization + broadcast (increased for initial state)
+pub const AI_UPDATE_STRIDE: u64 = 2; // run AI every N frames (≈ 30 Hz) - more responsive bots
 
 // Placeholder constants for projectile speeds (define these in your core::constants.rs)
 pub const PISTOL_PROJECTILE_SPEED: f32 = 450.0;
@@ -65,6 +61,5 @@ pub const SHOTGUN_PROJECTILE_SPEED: f32 = 400.0;
 pub const RIFLE_PROJECTILE_SPEED: f32 = 600.0;
 pub const SNIPER_PROJECTILE_SPEED: f32 = 800.0;
 
-
-pub const AOI_RADIUS: f32 = 600.0; 
+pub const AOI_RADIUS: f32 = 600.0;
 pub const AOI_UPDATE_INTERVAL_SECS: f32 = 0.1;

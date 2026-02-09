@@ -2,11 +2,9 @@
 
 Welcome to the Massive Game Server project! This is a high-performance game server written in Rust, designed from the ground up to handle a massive number of concurrent players and AI-controlled entities. It utilizes WebRTC for real-time client-server communication and FlatBuffers for efficient data serialization. This server is a core component of the Trebuchet Network initiative, aimed at pushing the boundaries of large-scale multiplayer interactions.
 
-## Live demo 200vs200: 
+## Live demo 200vs200:
 
-http://34.31.109.145:8080/client_optimized.html (faster but untested)
-
-http://34.31.109.145:8080/client.html (stable but slower bc of UI)
+http://34.31.109.145:8080/client.html
 
 
 Note: Server is in Iowa USA so this might affect your latency. 
@@ -32,7 +30,7 @@ max_players_per_match: 400
 * **AOI (Area of Interest) System:** For efficient state synchronization to clients.
 * **Configurable Server Parameters:** Tick rate, player sharding, and thread pools can be tuned for performance.
 * **Basic Bot System:** Capable of simulating AI-controlled players for testing and gameplay.
-* **Static Web Client:** Includes an HTML/JavaScript client (`static_client/client.html`) using Pixi.js for testing and visualization.
+* **Static Web Client:** Includes a single canonical HTML/JavaScript client (`static_client/client.html`) using Pixi.js for testing and visualization.
 
 ## Prerequisites
 
@@ -77,6 +75,65 @@ Follow these steps to get the server up and running:
 4.  **Test with the Static Web Client:**
     * Open the `http://localhost:8080/client.html` file (located in the root of the cloned repository, e.g., `massive_game_server/static_client/client.html`) in a modern web browser.
     * The client should provide an interface to connect to the WebSocket URL logged by the server (default: `ws://localhost:8080/ws`).
+
+## Scale Validation
+
+Run the full backend + frontend scale suite:
+
+```bash
+./scripts/scale/run.sh
+```
+
+Results are written to `artifacts/scale/`.
+
+## UI Validation
+
+Run a full UI validation pass (surface audit screenshots + headless connect/runtime checks):
+
+```bash
+./scripts/validate_ui.sh
+```
+
+By default it runs on `127.0.0.1:18080`. Override with:
+
+```bash
+MGS_PORT=28080 ./scripts/validate_ui.sh
+```
+
+Audit artifacts are written to `artifacts/ui_audit/<run-id>/`.
+
+## Live UI Profiling
+
+Run live in-browser profiling (FPS/long tasks/heap plus per-phase runtime breakdown):
+
+```bash
+./scripts/ui_profile.sh --url http://127.0.0.1:18080/client.html --ws ws://127.0.0.1:18080/ws --duration 30 --warmup 5 --out artifacts/ui_profile_baseline.json
+```
+
+For ultra mode:
+
+```bash
+./scripts/ui_profile.sh --url http://127.0.0.1:18080/client_ultra.html --ws ws://127.0.0.1:18080/ws --duration 30 --warmup 5 --out artifacts/ui_profile_ultra.json
+```
+
+## Ultra Client Profile
+
+For a dedicated high-density UI profile tuned for many on-screen objects, open:
+
+```text
+http://localhost:8080/client_ultra.html
+```
+
+This routes to `client.html` with forced ultra settings (`mode=ultra`, compact HUD, focus UI).
+The default `client.html` now also auto-enables ultra mode when player density or sustained frame-time pressure is high.
+
+For browser-first reliability with lighter visuals, open:
+
+```text
+http://localhost:8080/client_stable.html
+```
+
+This routes to `client.html?mode=stable` (non-breaking protocol/UI with conservative render settings).
 
 ## Client-Side Schema Generation
 

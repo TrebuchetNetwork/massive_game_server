@@ -1,5 +1,5 @@
 // server/src/operational/monitoring/metrics.rs
-use metrics::{counter, gauge, histogram, describe_counter, describe_gauge, describe_histogram};
+use metrics::{counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::time::Instant;
 // Removed unused Arc and Mutex imports
@@ -22,9 +22,18 @@ impl MetricsSystem {
         describe_counter!("game_frames_total", "Total number of game frames processed");
         describe_gauge!("game_players_connected", "Number of connected players");
         describe_gauge!("game_cpu_usage_percent", "CPU usage percentage"); // Added this based on previous discussions
-        describe_histogram!("game_frame_time_seconds", "Frame processing time in seconds");
-        describe_histogram!("game_physics_time_seconds", "Physics update time in seconds");
-        describe_histogram!("game_network_time_seconds", "Network update time in seconds");
+        describe_histogram!(
+            "game_frame_time_seconds",
+            "Frame processing time in seconds"
+        );
+        describe_histogram!(
+            "game_physics_time_seconds",
+            "Physics update time in seconds"
+        );
+        describe_histogram!(
+            "game_network_time_seconds",
+            "Network update time in seconds"
+        );
         // Add more descriptions as needed
 
         Ok(MetricsSystem {
@@ -57,8 +66,9 @@ impl MetricsSystem {
 }
 
 // Logging setup
-pub fn init_logging() -> Result<()> { // Changed return type to anyhow::Result
-    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, fmt};
+pub fn init_logging() -> Result<()> {
+    // Changed return type to anyhow::Result
+    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
     tracing_subscriber::registry()
         .with(

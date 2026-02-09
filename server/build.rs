@@ -1,6 +1,6 @@
 // server/build.rs
+use flatc_rust::{Args, Flatc};
 use std::path::Path;
-use flatc_rust::{Flatc, Args};
 
 fn main() {
     // Generate build-time information (existing)
@@ -26,8 +26,12 @@ fn main() {
     let out_dir_str = std::env::var("OUT_DIR").unwrap();
     let output_dir = Path::new(&out_dir_str).join("flatbuffers_generated");
 
-    std::fs::create_dir_all(&output_dir)
-        .unwrap_or_else(|e| panic!("Failed to create FlatBuffers output directory {:?}: {}", output_dir, e));
+    std::fs::create_dir_all(&output_dir).unwrap_or_else(|e| {
+        panic!(
+            "Failed to create FlatBuffers output directory {:?}: {}",
+            output_dir, e
+        )
+    });
 
     println!("cargo:rerun-if-changed={}", schema_file.to_str().unwrap());
 
@@ -51,7 +55,9 @@ fn main() {
     // Corrected typo: flatc_compiler instead of flatccompiler
     match flatc_compiler.run(args) {
         Ok(_) => {
-            println!("cargo:info=FlatBuffers schema compilation successful (invoked via flatc-rust).");
+            println!(
+                "cargo:info=FlatBuffers schema compilation successful (invoked via flatc-rust)."
+            );
         }
         Err(e) => {
             panic!(
@@ -70,6 +76,9 @@ fn main() {
             expected_generated_file
         );
     } else {
-        println!("cargo:info=Successfully verified that the generated FlatBuffers file exists at {:?}", expected_generated_file);
+        println!(
+            "cargo:info=Successfully verified that the generated FlatBuffers file exists at {:?}",
+            expected_generated_file
+        );
     }
 }

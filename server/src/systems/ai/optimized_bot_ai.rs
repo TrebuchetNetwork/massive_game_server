@@ -1,15 +1,15 @@
 // Optimized Bot AI with CTF Support
 
-use crate::core::types::{PlayerID, PlayerInputData, Vec2, PlayerState, ServerWeaponType};
 use crate::core::constants::*;
-use crate::server::instance::{BotController, BotBehaviorState, MassiveGameServer};
+use crate::core::types::{PlayerID, PlayerInputData, ServerWeaponType, Vec2};
 use crate::flatbuffers_generated::game_protocol as fb;
+use crate::server::instance::{BotBehaviorState, BotController, MassiveGameServer};
 
-use std::sync::Arc;
-use std::time::{Instant, Duration, SystemTime, UNIX_EPOCH};
-use std::collections::HashMap;
 use rand::Rng;
-use tracing::{trace, warn, debug};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tracing::{debug, trace, warn};
 
 // Optimized constants
 const BOT_UPDATE_BATCH_SIZE: usize = 50; // Process all bots every frame
@@ -27,108 +27,299 @@ const BOT_STUCK_CHECK_INTERVAL: f32 = 0.5; // Check every half second
 
 #[derive(Debug, Clone)]
 enum BotObjective {
-    AttackEnemyFlag,      // Go get the enemy flag
-    DefendOwnFlag,        // Stay near own flag base
-    ChaseEnemyCarrier,    // Chase enemy who has our flag
+    AttackEnemyFlag,        // Go get the enemy flag
+    DefendOwnFlag,          // Stay near own flag base
+    ChaseEnemyCarrier,      // Chase enemy who has our flag
     ProtectFriendlyCarrier, // Protect teammate with enemy flag
-    PatrolMidfield,       // General patrol
-    EngageNearbyEnemy,    // Fight nearby enemy
+    PatrolMidfield,         // General patrol
+    EngageNearbyEnemy,      // Fight nearby enemy
 }
 
 pub struct OptimizedBotAI;
 
+#[derive(Clone)]
+struct EnemySnapshot {
+    id: PlayerID,
+    x: f32,
+    y: f32,
+    team_id: u8,
+    carries_flag_team_id: u8,
+}
+
+#[derive(Clone)]
+struct BotSnapshotOwned {
+    username: String,
+    x: f32,
+    y: f32,
+    rotation: f32,
+    ammo: i32,
+    weapon: ServerWeaponType,
+    team_id: u8,
+    is_carrying_flag_team_id: u8,
+    last_processed_input_sequence: u32,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TeamObjectiveMetrics {
+    defenders_at_base: usize,
+    attackers_going_for_flag: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TeamObjectiveSummary {
+    team1: TeamObjectiveMetrics,
+    team2: TeamObjectiveMetrics,
+}
+
+impl TeamObjectiveSummary {
+    #[inline]
+    fn for_team(&self, team_id: u8) -> TeamObjectiveMetrics {
+        match team_id {
+            1 => self.team1,
+            2 => self.team2,
+            _ => TeamObjectiveMetrics::default(),
+        }
+    }
+
+    #[inline]
+    fn for_team_mut(&mut self, team_id: u8) -> Option<&mut TeamObjectiveMetrics> {
+        match team_id {
+            1 => Some(&mut self.team1),
+            2 => Some(&mut self.team2),
+            _ => None,
+        }
+    }
+}
+
 impl OptimizedBotAI {
     /// Process ALL bots every frame for consistent movement
     pub fn update_bots_batch(server_instance: &MassiveGameServer, delta_time: f32) {
-        let frame_count = server_instance.frame_counter.load(std::sync::atomic::Ordering::Relaxed);
+        let frame_count = server_instance
+            .frame_counter
+            .load(std::sync::atomic::Ordering::Relaxed);
         let current_time = Instant::now();
-        
-        // Get list of bot IDs
-        let bot_ids: Vec<PlayerID> = server_instance
-            .bot_players
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect();
-        
+
+        // Get list of bot IDs (reuse allocation)
+        thread_local! {
+            static BOT_IDS: RefCell<Vec<PlayerID>> = RefCell::new(Vec::new());
+        }
+        let mut bot_ids = BOT_IDS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+        bot_ids.clear();
+        bot_ids.extend(
+            server_instance
+                .bot_players
+                .iter()
+                .map(|entry| entry.key().clone()),
+        );
+
         if bot_ids.is_empty() {
+            BOT_IDS.with(|cell| *cell.borrow_mut() = bot_ids);
             return;
         }
-        
+
         trace!("Frame {}: Processing {} bots", frame_count, bot_ids.len());
-        
+
         // Get current match info
         let match_info_guard = server_instance.match_info.read();
         let game_mode = match_info_guard.game_mode;
         let match_state = match_info_guard.match_state;
-        let flag_states = match_info_guard.flag_states.clone();
-        drop(match_info_guard);
-        
+        let flag_states = &match_info_guard.flag_states;
+
+        // Precompute enemies and team objective counts once per tick.
+        let mut enemies_team1 = Vec::new();
+        let mut enemies_team2 = Vec::new();
+        let mut live_players_by_id: HashMap<PlayerID, EnemySnapshot> = HashMap::new();
+        let mut team_objectives = TeamObjectiveSummary::default();
+        let team1_base = MassiveGameServer::get_flag_base_position(1);
+        let team2_base = MassiveGameServer::get_flag_base_position(2);
+        let team1_enemy_flag_pos = flag_states.get(&2).map(|f| f.position);
+        let team2_enemy_flag_pos = flag_states.get(&1).map(|f| f.position);
+
+        server_instance
+            .player_manager
+            .for_each_player(|id, player| {
+                if !player.alive || player.team_id == 0 {
+                    return;
+                }
+
+                let snapshot = EnemySnapshot {
+                    id: id.clone(),
+                    x: player.x,
+                    y: player.y,
+                    team_id: player.team_id,
+                    carries_flag_team_id: player.is_carrying_flag_team_id,
+                };
+
+                live_players_by_id.insert(id.clone(), snapshot.clone());
+
+                if let Some(metrics) = team_objectives.for_team_mut(player.team_id) {
+                    let own_base = if player.team_id == 1 {
+                        team1_base
+                    } else {
+                        team2_base
+                    };
+                    let dist_to_base_sq =
+                        (player.x - own_base.x).powi(2) + (player.y - own_base.y).powi(2);
+                    if dist_to_base_sq < 200.0 * 200.0 {
+                        metrics.defenders_at_base += 1;
+                    }
+
+                    let enemy_flag_pos = if player.team_id == 1 {
+                        team1_enemy_flag_pos
+                    } else {
+                        team2_enemy_flag_pos
+                    };
+                    if let Some(flag_pos) = enemy_flag_pos {
+                        let dist_to_enemy_flag_sq =
+                            (player.x - flag_pos.x).powi(2) + (player.y - flag_pos.y).powi(2);
+                        if dist_to_enemy_flag_sq < 300.0 * 300.0 {
+                            metrics.attackers_going_for_flag += 1;
+                        }
+                    }
+                }
+
+                if player.team_id == 1 {
+                    enemies_team2.push(snapshot);
+                } else if player.team_id == 2 {
+                    enemies_team1.push(snapshot);
+                }
+            });
+
         // Process ALL bots every frame
-        for bot_id in &bot_ids {
-            // Get bot state
-            let bot_state_opt = server_instance.player_manager
-                .get_player_state(bot_id)
-                .map(|guard| (*guard).clone());
-            
-            if let Some(bot_state) = bot_state_opt {
+        for bot_id in bot_ids.iter() {
+            // Build an owned snapshot first so any read guard is dropped before mutable access.
+            let bot_snapshot = {
+                let bot_state_guard_opt = server_instance.player_manager.get_player_state(bot_id);
+                let Some(bot_state_guard) = bot_state_guard_opt else {
+                    continue;
+                };
+                let bot_state = &*bot_state_guard;
                 if !bot_state.alive {
                     continue;
                 }
-                
-                // Update bot controller
-                if let Some(mut bot_controller_entry) = server_instance.bot_players.get_mut(bot_id) {
-                    let bot_controller = bot_controller_entry.value_mut();
-                    
-                    // Only make new decisions at intervals, but always generate movement
-                    if current_time.duration_since(bot_controller.last_decision_time) > BOT_MOVEMENT_CHANGE_INTERVAL {
-                        bot_controller.last_decision_time = current_time;
-                        
-                        if game_mode == fb::GameModeType::CaptureTheFlag && match_state == fb::MatchStateType::Active {
-                            Self::make_ctf_decision(bot_controller, &bot_state, &flag_states, server_instance);
+                BotSnapshotOwned {
+                    username: bot_state.username.clone(),
+                    x: bot_state.x,
+                    y: bot_state.y,
+                    rotation: bot_state.rotation,
+                    ammo: bot_state.ammo,
+                    weapon: bot_state.weapon,
+                    team_id: bot_state.team_id,
+                    is_carrying_flag_team_id: bot_state.is_carrying_flag_team_id,
+                    last_processed_input_sequence: bot_state.last_processed_input_sequence,
+                }
+            };
+
+            // Update bot controller
+            if let Some(mut bot_controller_entry) = server_instance.bot_players.get_mut(bot_id) {
+                let bot_controller = bot_controller_entry.value_mut();
+
+                // Only make new decisions at intervals, but always generate movement
+                if current_time.duration_since(bot_controller.last_decision_time)
+                    > BOT_MOVEMENT_CHANGE_INTERVAL
+                {
+                    bot_controller.last_decision_time = current_time;
+
+                    if game_mode == fb::GameModeType::CaptureTheFlag
+                        && match_state == fb::MatchStateType::Active
+                    {
+                        let enemies = if bot_snapshot.team_id == 1 {
+                            &enemies_team1
                         } else {
-                            Self::make_simple_movement_decision(bot_controller, &bot_state);
-                        }
-                        
-                        debug!("Bot {} made new decision: {:?} targeting {:?}", 
-                            bot_state.username, bot_controller.behavior_state, bot_controller.target_position);
+                            &enemies_team2
+                        };
+                        Self::make_ctf_decision(
+                            bot_controller,
+                            &bot_snapshot,
+                            flag_states,
+                            &live_players_by_id,
+                            team_objectives,
+                            enemies,
+                        );
+                    } else {
+                        Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
                     }
-                    
-                    // Check if bot is stuck before generating input
-                    Self::check_stuck_status(bot_controller, &bot_state, delta_time);
-                    
-                    // Always generate input based on current objective
-                    let input = Self::generate_combat_input(&bot_state, bot_controller, server_instance, game_mode);
-                    
-                    // Queue the input
-                    if let Some(mut player_state_entry) = server_instance.player_manager.get_player_state_mut(bot_id) {
-                        if input.move_forward || input.move_backward || input.move_left || input.move_right || input.shooting {
-                            trace!("Bot {} input - forward:{} back:{} left:{} right:{} rot:{:.2} shoot:{}", 
-                                bot_state.username, input.move_forward, input.move_backward, 
-                                input.move_left, input.move_right, input.rotation, input.shooting);
-                        }
-                        player_state_entry.queue_input(input);
+
+                    debug!(
+                        "Bot {} made new decision: {:?} targeting {:?}",
+                        bot_snapshot.username,
+                        bot_controller.behavior_state,
+                        bot_controller.target_position
+                    );
+                }
+
+                // Check if bot is stuck before generating input
+                Self::check_stuck_status(bot_controller, &bot_snapshot, delta_time);
+
+                // Always generate input based on current objective
+                let enemies = if bot_snapshot.team_id == 1 {
+                    &enemies_team1
+                } else {
+                    &enemies_team2
+                };
+                let input = Self::generate_combat_input(
+                    &bot_snapshot,
+                    bot_controller,
+                    server_instance,
+                    game_mode,
+                    enemies,
+                );
+
+                // Queue the input
+                if let Some(mut player_state_entry) =
+                    server_instance.player_manager.get_player_state_mut(bot_id)
+                {
+                    if input.move_forward
+                        || input.move_backward
+                        || input.move_left
+                        || input.move_right
+                        || input.shooting
+                    {
+                        trace!(
+                            "Bot {} input - forward:{} back:{} left:{} right:{} rot:{:.2} shoot:{}",
+                            bot_snapshot.username,
+                            input.move_forward,
+                            input.move_backward,
+                            input.move_left,
+                            input.move_right,
+                            input.rotation,
+                            input.shooting
+                        );
                     }
+                    player_state_entry.queue_input(input);
                 }
             }
         }
+        drop(match_info_guard);
+        BOT_IDS.with(|cell| *cell.borrow_mut() = bot_ids);
     }
-    
+
     /// Make CTF-specific decisions
     fn make_ctf_decision(
         bot_controller: &mut BotController,
-        bot_state: &PlayerState,
+        bot_state: &BotSnapshotOwned,
         flag_states: &HashMap<u8, crate::server::instance::ServerFlagState>,
-        server_instance: &MassiveGameServer,
+        live_players_by_id: &HashMap<PlayerID, EnemySnapshot>,
+        team_objectives: TeamObjectiveSummary,
+        enemies: &[EnemySnapshot],
     ) {
         let mut rng = rand::thread_rng();
         let bot_team = bot_state.team_id;
         let enemy_team = if bot_team == 1 { 2 } else { 1 };
-        
+
         // Determine objective based on game state
-        let objective = Self::determine_ctf_objective(bot_state, flag_states, server_instance);
-        
-        debug!("Bot {} (Team {}) objective: {:?}", bot_state.username, bot_team, objective);
-        
+        let objective = Self::determine_ctf_objective(
+            bot_state,
+            flag_states,
+            live_players_by_id,
+            team_objectives,
+        );
+
+        debug!(
+            "Bot {} (Team {}) objective: {:?}",
+            bot_state.username, bot_team, objective
+        );
+
         match objective {
             BotObjective::AttackEnemyFlag => {
                 // If carrying flag, go to own base. Otherwise attack enemy flag
@@ -137,12 +328,18 @@ impl OptimizedBotAI {
                     let own_base = MassiveGameServer::get_flag_base_position(bot_team);
                     bot_controller.target_position = Some(own_base);
                     bot_controller.behavior_state = BotBehaviorState::MovingToObjective;
-                    debug!("Bot {} carrying flag, returning to base at {:?}", bot_state.username, own_base);
+                    debug!(
+                        "Bot {} carrying flag, returning to base at {:?}",
+                        bot_state.username, own_base
+                    );
                 } else if let Some(enemy_flag) = flag_states.get(&enemy_team) {
                     // Go get enemy flag
                     bot_controller.target_position = Some(enemy_flag.position);
                     bot_controller.behavior_state = BotBehaviorState::MovingToObjective;
-                    debug!("Bot {} going for enemy flag at {:?}", bot_state.username, enemy_flag.position);
+                    debug!(
+                        "Bot {} going for enemy flag at {:?}",
+                        bot_state.username, enemy_flag.position
+                    );
                 }
             }
             BotObjective::DefendOwnFlag => {
@@ -153,7 +350,7 @@ impl OptimizedBotAI {
                 let distance = rng.gen_range(50.0..defend_radius);
                 bot_controller.target_position = Some(Vec2::new(
                     base_pos.x + distance * angle.cos(),
-                    base_pos.y + distance * angle.sin()
+                    base_pos.y + distance * angle.sin(),
                 ));
                 bot_controller.behavior_state = BotBehaviorState::Defending;
             }
@@ -161,8 +358,9 @@ impl OptimizedBotAI {
                 // Find and chase the enemy carrying our flag
                 if let Some(own_flag) = flag_states.get(&bot_team) {
                     if let Some(carrier_id) = &own_flag.carrier_id {
-                        if let Some(carrier_state) = server_instance.player_manager.get_player_state(carrier_id) {
-                            bot_controller.target_position = Some(Vec2::new(carrier_state.x, carrier_state.y));
+                        if let Some(carrier_state) = live_players_by_id.get(carrier_id) {
+                            bot_controller.target_position =
+                                Some(Vec2::new(carrier_state.x, carrier_state.y));
                             bot_controller.target_enemy_id = Some(carrier_id.clone());
                             bot_controller.behavior_state = BotBehaviorState::Engaging;
                         }
@@ -173,13 +371,13 @@ impl OptimizedBotAI {
                 // Find and protect teammate carrying enemy flag
                 if let Some(enemy_flag) = flag_states.get(&enemy_team) {
                     if let Some(carrier_id) = &enemy_flag.carrier_id {
-                        if let Some(carrier_state) = server_instance.player_manager.get_player_state(carrier_id) {
+                        if let Some(carrier_state) = live_players_by_id.get(carrier_id) {
                             // Move near the carrier but not too close
                             let offset_angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
                             let offset_dist = 100.0;
                             bot_controller.target_position = Some(Vec2::new(
                                 carrier_state.x + offset_dist * offset_angle.cos(),
-                                carrier_state.y + offset_dist * offset_angle.sin()
+                                carrier_state.y + offset_dist * offset_angle.sin(),
                             ));
                             bot_controller.behavior_state = BotBehaviorState::Defending;
                         }
@@ -195,51 +393,52 @@ impl OptimizedBotAI {
             }
             BotObjective::EngageNearbyEnemy => {
                 // Find nearest enemy
-                if let Some((enemy_pos, enemy_id)) = Self::find_nearest_enemy(bot_state, server_instance) {
+                if let Some((enemy_pos, enemy_id)) = Self::find_nearest_enemy(bot_state, enemies) {
                     bot_controller.target_position = Some(enemy_pos);
-                    bot_controller.target_enemy_id = Some(enemy_id);
+                    bot_controller.target_enemy_id = Some(enemy_id.clone());
                     bot_controller.behavior_state = BotBehaviorState::Engaging;
                 }
             }
         }
     }
-    
+
     /// Determine the best objective for a bot in CTF mode
     fn determine_ctf_objective(
-        bot_state: &PlayerState,
+        bot_state: &BotSnapshotOwned,
         flag_states: &HashMap<u8, crate::server::instance::ServerFlagState>,
-        server_instance: &MassiveGameServer,
+        live_players_by_id: &HashMap<PlayerID, EnemySnapshot>,
+        team_objectives: TeamObjectiveSummary,
     ) -> BotObjective {
         let bot_team = bot_state.team_id;
         let enemy_team = if bot_team == 1 { 2 } else { 1 };
-        
+
         // Check if bot is carrying flag - HIGHEST PRIORITY
         if bot_state.is_carrying_flag_team_id != 0 {
             // Bot has flag, should return to base
             return BotObjective::AttackEnemyFlag; // Will navigate to own base
         }
-        
+
         // Check flag states
         let own_flag = flag_states.get(&bot_team);
         let enemy_flag = flag_states.get(&enemy_team);
-        
+
         // Priority 1: Chase enemy who has our flag - VERY IMPORTANT
         if let Some(own_flag_state) = own_flag {
             if own_flag_state.status == fb::FlagStatus::Carried {
                 if let Some(carrier_id) = &own_flag_state.carrier_id {
-                    if let Some(carrier_state) = server_instance.player_manager.get_player_state(carrier_id) {
+                    if live_players_by_id.get(carrier_id).is_some() {
                         // Always chase if our flag is taken
                         return BotObjective::ChaseEnemyCarrier;
                     }
                 }
             }
         }
-        
+
         // Priority 2: Protect friendly flag carrier
         if let Some(enemy_flag_state) = enemy_flag {
             if enemy_flag_state.status == fb::FlagStatus::Carried {
                 if let Some(carrier_id) = &enemy_flag_state.carrier_id {
-                    if let Some(carrier_state) = server_instance.player_manager.get_player_state(carrier_id) {
+                    if let Some(carrier_state) = live_players_by_id.get(carrier_id) {
                         if carrier_state.team_id == bot_team {
                             // Always protect our flag carrier
                             return BotObjective::ProtectFriendlyCarrier;
@@ -248,34 +447,15 @@ impl OptimizedBotAI {
                 }
             }
         }
-        
-        // Count teammates near each objective
-        let mut defenders_at_base = 0;
-        let mut attackers_going_for_flag = 0;
-        
-        server_instance.player_manager.for_each_player(|_, player| {
-            if player.team_id == bot_team && player.alive {
-                let own_base = MassiveGameServer::get_flag_base_position(bot_team);
-                let dist_to_base = ((player.x - own_base.x).powi(2) + 
-                                   (player.y - own_base.y).powi(2)).sqrt();
-                if dist_to_base < 200.0 {
-                    defenders_at_base += 1;
-                }
-                
-                if let Some(enemy_flag_state) = enemy_flag {
-                    let dist_to_enemy_flag = ((player.x - enemy_flag_state.position.x).powi(2) + 
-                                             (player.y - enemy_flag_state.position.y).powi(2)).sqrt();
-                    if dist_to_enemy_flag < 300.0 {
-                        attackers_going_for_flag += 1;
-                    }
-                }
-            }
-        });
-        
+
+        let metrics = team_objectives.for_team(bot_team);
+        let defenders_at_base = metrics.defenders_at_base;
+        let attackers_going_for_flag = metrics.attackers_going_for_flag;
+
         // More aggressive role distribution
         let mut rng = rand::thread_rng();
         let role_choice = rng.gen_range(0..100);
-        
+
         // 60% attack, 25% defend, 15% flexible - MORE AGGRESSIVE
         if defenders_at_base < 1 && role_choice < 25 {
             // Only 1-2 defenders needed
@@ -283,7 +463,9 @@ impl OptimizedBotAI {
         } else if attackers_going_for_flag < 5 && role_choice < 85 {
             // Most bots should attack
             BotObjective::AttackEnemyFlag
-        } else if defenders_at_base < 2 && own_flag.map_or(false, |f| f.status == fb::FlagStatus::Dropped) {
+        } else if defenders_at_base < 2
+            && own_flag.map_or(false, |f| f.status == fb::FlagStatus::Dropped)
+        {
             // If our flag is dropped, help return it
             BotObjective::DefendOwnFlag
         } else {
@@ -291,32 +473,36 @@ impl OptimizedBotAI {
             BotObjective::AttackEnemyFlag
         }
     }
-    
-    /// Find nearest enemy to the bot
-    fn find_nearest_enemy(bot_state: &PlayerState, server_instance: &MassiveGameServer) -> Option<(Vec2, PlayerID)> {
+
+    /// Find nearest enemy to the bot from a precomputed list
+    fn find_nearest_enemy(
+        bot_state: &BotSnapshotOwned,
+        enemies: &[EnemySnapshot],
+    ) -> Option<(Vec2, PlayerID)> {
         let mut nearest_enemy = None;
         let mut nearest_dist_sq = f32::MAX;
-        
-        server_instance.player_manager.for_each_player(|id, player| {
-            if player.alive && player.team_id != bot_state.team_id && player.team_id != 0 {
-                let dist_sq = (player.x - bot_state.x).powi(2) + (player.y - bot_state.y).powi(2);
-                if dist_sq < nearest_dist_sq && dist_sq < BOT_TARGET_ACQUISITION_RANGE.powi(2) {
-                    nearest_dist_sq = dist_sq;
-                    nearest_enemy = Some((Vec2::new(player.x, player.y), id.clone()));
-                }
+
+        for enemy in enemies {
+            let dist_sq = (enemy.x - bot_state.x).powi(2) + (enemy.y - bot_state.y).powi(2);
+            if dist_sq < nearest_dist_sq && dist_sq < BOT_TARGET_ACQUISITION_RANGE.powi(2) {
+                nearest_dist_sq = dist_sq;
+                nearest_enemy = Some((Vec2::new(enemy.x, enemy.y), enemy.id.clone()));
             }
-        });
-        
+        }
+
         nearest_enemy
     }
-    
+
     /// Enhanced movement decision with combat awareness
-    fn make_simple_movement_decision(bot_controller: &mut BotController, bot_state: &PlayerState) {
+    fn make_simple_movement_decision(
+        bot_controller: &mut BotController,
+        bot_state: &BotSnapshotOwned,
+    ) {
         let mut rng = rand::thread_rng();
-        
+
         // Randomly choose behavior
         let behavior_choice = rng.gen_range(0..100);
-        
+
         if behavior_choice < 40 {
             // 40% - Aggressive: Move towards center for action
             let target_x = rng.gen_range(-200.0..200.0);
@@ -337,65 +523,71 @@ impl OptimizedBotAI {
             bot_controller.target_position = Some(Vec2::new(target_x, target_y));
             bot_controller.behavior_state = BotBehaviorState::Patrolling;
         }
-        
+
         // Randomly switch weapons occasionally
         if rng.gen_bool(0.1) {
             bot_controller.path_recalculation_timer = Instant::now(); // Use as weapon switch timer
         }
-        
-        trace!("Bot {} behavior: {:?}, target: {:?}", 
-            bot_state.username, bot_controller.behavior_state, bot_controller.target_position);
+
+        trace!(
+            "Bot {} behavior: {:?}, target: {:?}",
+            bot_state.username,
+            bot_controller.behavior_state,
+            bot_controller.target_position
+        );
     }
-    
+
     /// Check if there's a clear line of sight between two positions
-    fn has_line_of_sight(
-        from: Vec2,
-        to: Vec2,
-        server_instance: &MassiveGameServer,
-    ) -> bool {
+    fn has_line_of_sight(from: Vec2, to: Vec2, server_instance: &MassiveGameServer) -> bool {
         let dx = to.x - from.x;
         let dy = to.y - from.y;
         let distance = (dx * dx + dy * dy).sqrt();
-        
+
         // Number of steps to check along the line
         let steps = (distance / 20.0).ceil() as usize;
-        
+
         for i in 1..=steps {
             let t = i as f32 / steps as f32;
             let check_x = from.x + dx * t;
             let check_y = from.y + dy * t;
-            
+
             // Query walls near this point
-            let nearby_walls = server_instance.wall_spatial_index.query_radius(check_x, check_y, 5.0);
-            
+            let nearby_walls = server_instance
+                .wall_spatial_index
+                .query_radius(check_x, check_y, 5.0);
+
             // Check if any wall blocks this point
             for wall in nearby_walls {
                 // Skip destructible walls that are destroyed
                 if wall.is_destructible && wall.current_health <= 0 {
                     continue;
                 }
-                
+
                 // Check if point is inside wall
-                if check_x >= wall.x && check_x <= wall.x + wall.width &&
-                   check_y >= wall.y && check_y <= wall.y + wall.height {
+                if check_x >= wall.x
+                    && check_x <= wall.x + wall.width
+                    && check_y >= wall.y
+                    && check_y <= wall.y + wall.height
+                {
                     return false; // Wall blocks line of sight
                 }
             }
         }
-        
+
         true // Clear line of sight
     }
-    
+
     /// Generate enhanced combat input with shooting and movement
     fn generate_combat_input(
-        bot_state: &PlayerState,
+        bot_state: &BotSnapshotOwned,
         bot_controller: &BotController,
         server_instance: &MassiveGameServer,
         game_mode: fb::GameModeType,
+        enemies: &[EnemySnapshot],
     ) -> PlayerInputData {
         let mut rng = rand::thread_rng();
         let current_time = Instant::now();
-        
+
         let mut input = PlayerInputData {
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -413,69 +605,71 @@ impl OptimizedBotAI {
             change_weapon_slot: 0,
             use_ability_slot: 0,
         };
-        
+
         // Weapon switching logic
-        if current_time.duration_since(bot_controller.path_recalculation_timer) < Duration::from_secs(1) {
+        if current_time.duration_since(bot_controller.path_recalculation_timer)
+            < Duration::from_secs(1)
+        {
             input.change_weapon_slot = rng.gen_range(1..=4);
         }
-        
+
         // Reload if low on ammo
         if bot_state.ammo == 0 {
             input.reload = true;
         }
-        
+
         // Find nearby enemies for combat
         let mut nearest_enemy_dist = f32::MAX;
         let mut nearest_enemy_angle = 0.0;
         let mut has_enemy_target = false;
         let mut enemy_position = Vec2::zero();
-        
-        server_instance.player_manager.for_each_player(|_, player| {
-            if player.alive && player.team_id != bot_state.team_id && player.team_id != 0 {
-                let dx = player.x - bot_state.x;
-                let dy = player.y - bot_state.y;
-                let dist_sq = dx * dx + dy * dy;
-                
-                if dist_sq < BOT_TARGET_ACQUISITION_RANGE.powi(2) && dist_sq < nearest_enemy_dist {
-                    // Check line of sight before targeting
-                    let bot_pos = Vec2::new(bot_state.x, bot_state.y);
-                    let enemy_pos = Vec2::new(player.x, player.y);
-                    
-                    if Self::has_line_of_sight(bot_pos, enemy_pos, server_instance) {
-                        nearest_enemy_dist = dist_sq;
-                        nearest_enemy_angle = dy.atan2(dx);
-                        has_enemy_target = true;
-                        enemy_position = enemy_pos;
-                        
-                        // Priority target: enemy flag carrier
-                        if game_mode == fb::GameModeType::CaptureTheFlag && 
-                           player.is_carrying_flag_team_id == bot_state.team_id {
-                            // This enemy has our flag - prioritize them!
-                            nearest_enemy_dist *= 0.5; // Make them seem closer for priority
-                        }
-                    }
+
+        for enemy in enemies {
+            let dx = enemy.x - bot_state.x;
+            let dy = enemy.y - bot_state.y;
+            let dist_sq = dx * dx + dy * dy;
+
+            if dist_sq < BOT_TARGET_ACQUISITION_RANGE.powi(2) && dist_sq < nearest_enemy_dist {
+                nearest_enemy_dist = dist_sq;
+                nearest_enemy_angle = dy.atan2(dx);
+                has_enemy_target = true;
+                enemy_position = Vec2::new(enemy.x, enemy.y);
+
+                // Priority target: enemy flag carrier
+                if game_mode == fb::GameModeType::CaptureTheFlag
+                    && enemy.carries_flag_team_id == bot_state.team_id
+                {
+                    nearest_enemy_dist *= 0.5;
                 }
             }
-        });
-        
+        }
+
+        // Verify line of sight only for the nearest target
+        if has_enemy_target {
+            let bot_pos = Vec2::new(bot_state.x, bot_state.y);
+            if !Self::has_line_of_sight(bot_pos, enemy_position, server_instance) {
+                has_enemy_target = false;
+            }
+        }
+
         // Movement towards objective - THIS IS THE KEY PART
         let mut movement_handled = false;
-        
+
         if let Some(target_pos) = bot_controller.target_position {
             let dx = target_pos.x - bot_state.x;
             let dy = target_pos.y - bot_state.y;
             let dist_sq = dx * dx + dy * dy;
-            
+
             // Always set rotation towards target
             let target_angle = dy.atan2(dx);
             input.rotation = target_angle;
-            
+
             // Move if not at target
             if dist_sq > BOT_MOVEMENT_TOLERANCE * BOT_MOVEMENT_TOLERANCE {
                 // Always move forward when we have a target
                 input.move_forward = true;
                 movement_handled = true;
-                
+
                 // Add some zigzag movement occasionally
                 if rng.gen_bool(0.1) {
                     if rng.gen_bool(0.5) {
@@ -484,7 +678,7 @@ impl OptimizedBotAI {
                         input.move_right = true;
                     }
                 }
-                
+
                 // If carrying flag, sprint more
                 if bot_state.is_carrying_flag_team_id != 0 {
                     input.move_forward = true;
@@ -494,9 +688,14 @@ impl OptimizedBotAI {
                         input.move_right = !input.move_left;
                     }
                 }
-                
-                trace!("Bot {} moving to target at ({:.0}, {:.0}), distance: {:.0}", 
-                    bot_state.username, target_pos.x, target_pos.y, dist_sq.sqrt());
+
+                trace!(
+                    "Bot {} moving to target at ({:.0}, {:.0}), distance: {:.0}",
+                    bot_state.username,
+                    target_pos.x,
+                    target_pos.y,
+                    dist_sq.sqrt()
+                );
             } else {
                 // At objective - defensive behavior
                 match bot_controller.behavior_state {
@@ -533,25 +732,25 @@ impl OptimizedBotAI {
                 input.rotation += rng.gen_range(-0.5..0.5);
             }
         }
-        
+
         // Combat behavior - only override rotation if we have a nearby enemy
         if has_enemy_target && nearest_enemy_dist < BOT_TARGET_ACQUISITION_RANGE.powi(2) {
             // Aim at enemy with some inaccuracy
             let aim_offset = rng.gen_range(-0.2..0.2) * (1.0 - BOT_SHOOT_ACCURACY);
             input.rotation = nearest_enemy_angle + aim_offset;
-            
+
             // Shoot if close enough and have line of sight
             let shoot_range: f32 = match bot_state.weapon {
                 ServerWeaponType::Shotgun => 150.0,
                 ServerWeaponType::Sniper => 800.0,
                 _ => 400.0,
             };
-            
+
             if nearest_enemy_dist < shoot_range.powi(2) {
                 // Apply reaction time
                 if bot_controller.last_decision_time.elapsed() > BOT_REACTION_TIME {
                     input.shooting = rng.gen_bool(0.7); // 70% chance to shoot when in range
-                    
+
                     // Sometimes use melee if very close
                     if nearest_enemy_dist < 60.0 * 60.0 && rng.gen_bool(0.3) {
                         input.melee_attack = true;
@@ -559,7 +758,7 @@ impl OptimizedBotAI {
                     }
                 }
             }
-            
+
             // Tactical movement during combat
             if has_enemy_target && !movement_handled {
                 if nearest_enemy_dist < 200.0 * 200.0 {
@@ -581,55 +780,64 @@ impl OptimizedBotAI {
                 }
             }
         }
-        
+
         input
     }
-    
+
     /// Check if bot is stuck and needs to change direction
-    fn check_stuck_status(bot_controller: &mut BotController, bot_state: &PlayerState, delta_time: f32) {
+    fn check_stuck_status(
+        bot_controller: &mut BotController,
+        bot_state: &BotSnapshotOwned,
+        delta_time: f32,
+    ) {
         let current_pos = Vec2::new(bot_state.x, bot_state.y);
-        
+
         // Update stuck timer
         bot_controller.stuck_timer += delta_time;
-        
+
         // Check position every BOT_STUCK_CHECK_INTERVAL seconds
         if bot_controller.stuck_timer >= BOT_STUCK_CHECK_INTERVAL {
             let dx = current_pos.x - bot_controller.stuck_check_position.x;
             let dy = current_pos.y - bot_controller.stuck_check_position.y;
             let distance_moved = (dx * dx + dy * dy).sqrt();
-            
+
             // Check if bot has moved enough
             if distance_moved < BOT_STUCK_THRESHOLD {
                 // Bot is potentially stuck
                 if bot_controller.stuck_timer >= BOT_STUCK_TIME_THRESHOLD {
                     // Bot is definitely stuck - take action
-                    warn!("Bot {} is stuck at ({:.0}, {:.0}), generating new target", 
-                        bot_state.username, current_pos.x, current_pos.y);
-                    
+                    warn!(
+                        "Bot {} is stuck at ({:.0}, {:.0}), generating new target",
+                        bot_state.username, current_pos.x, current_pos.y
+                    );
+
                     let mut rng = rand::thread_rng();
-                    
+
                     // Try to move in a random direction away from current position
                     let escape_angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
                     let escape_distance = rng.gen_range(100.0..300.0);
-                    
+
                     let new_x = (current_pos.x + escape_distance * escape_angle.cos())
                         .clamp(WORLD_MIN_X + 100.0, WORLD_MAX_X - 100.0);
                     let new_y = (current_pos.y + escape_distance * escape_angle.sin())
                         .clamp(WORLD_MIN_Y + 100.0, WORLD_MAX_Y - 100.0);
-                    
+
                     bot_controller.target_position = Some(Vec2::new(new_x, new_y));
                     bot_controller.behavior_state = BotBehaviorState::MovingToPosition;
-                    
+
                     // Reset stuck detection
                     bot_controller.stuck_timer = 0.0;
                     bot_controller.stuck_check_position = current_pos;
                     bot_controller.last_position = current_pos;
-                    
+
                     // Force a new decision soon
-                    bot_controller.last_decision_time = Instant::now() - BOT_MOVEMENT_CHANGE_INTERVAL + Duration::from_millis(500);
-                    
-                    debug!("Bot {} unstuck - new target: ({:.0}, {:.0})", 
-                        bot_state.username, new_x, new_y);
+                    bot_controller.last_decision_time =
+                        Instant::now() - BOT_MOVEMENT_CHANGE_INTERVAL + Duration::from_millis(500);
+
+                    debug!(
+                        "Bot {} unstuck - new target: ({:.0}, {:.0})",
+                        bot_state.username, new_x, new_y
+                    );
                 }
             } else {
                 // Bot has moved, reset stuck detection
@@ -637,7 +845,7 @@ impl OptimizedBotAI {
                 bot_controller.stuck_check_position = current_pos;
             }
         }
-        
+
         // Always update last position
         bot_controller.last_position = current_pos;
     }

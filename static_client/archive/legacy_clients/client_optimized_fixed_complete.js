@@ -10,6 +10,7 @@ const PLAYER_RADIUS = 15;
 const PICKUP_RADIUS = 20;
 const MIN_PLAYERS_TO_START = 2;
 const MAX_CHAT_MESSAGE_LENGTH = 100;
+const MAX_LOG_ENTRIES = 200;
 const SERVER_TICK_RATE = 60;
 const VIEW_DISTANCE_BUFFER = 150; // Pixels outside viewport to keep updating
 
@@ -197,6 +198,9 @@ function log(message, type = 'info') {
     entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
     entry.classList.add('log-entry', `log-${type}`);
     logOutput.appendChild(entry);
+    while (logOutput.childElementCount > MAX_LOG_ENTRIES) {
+        logOutput.removeChild(logOutput.firstElementChild);
+    }
     logOutput.scrollTop = logOutput.scrollHeight;
 }
 
