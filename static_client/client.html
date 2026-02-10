@@ -718,15 +718,43 @@
         const GP = GameProtocol;
         const uiModeParams = new URLSearchParams(window.location.search);
         const BENCH_MODE = uiModeParams.get('mode') === 'bench' || uiModeParams.get('bench') === '1';
-        const STABLE_MODE_FORCED = uiModeParams.get('mode') === 'stable' || uiModeParams.get('stable') === '1';
+        const MASS_MODE_FORCED = uiModeParams.get('mode') === 'mass' || uiModeParams.get('mass') === '1';
+        const STABLE_MODE_FORCED =
+            MASS_MODE_FORCED ||
+            uiModeParams.get('mode') === 'stable' ||
+            uiModeParams.get('stable') === '1';
         const TOURNAMENT_MODE_FORCED = uiModeParams.get('mode') === 'tournament' || uiModeParams.get('tournament') === '1';
         const LOW_OVERHEAD_MODE = BENCH_MODE || STABLE_MODE_FORCED;
+        const WORKER_CULL_PARAM = uiModeParams.get('worker_cull');
+        const WORKER_CULL_ENABLED = WORKER_CULL_PARAM === '0'
+            ? false
+            : (WORKER_CULL_PARAM === '1' || MASS_MODE_FORCED || STABLE_MODE_FORCED || TOURNAMENT_MODE_FORCED);
+        const WORKER_CULL_INTERVAL_MS = Math.max(
+            16,
+            Math.min(250, Math.floor(Number(uiModeParams.get('worker_cull_interval_ms')) || 33))
+        );
+        const DEFAULT_WORKER_CULL_WASM_URL = './workers/entity_cull_kernel.wasm';
+        const WORKER_CULL_WASM_URL = String(uiModeParams.get('worker_wasm_url') || '').trim();
         const PERF_PROFILE_FORCED = uiModeParams.get('perf') === '1' || uiModeParams.get('profile') === '1';
         const ULTRA_MODE_FORCED = uiModeParams.get('mode') === 'ultra' || uiModeParams.get('ultra') === '1';
         const WEBGPU_TEST_MODE = uiModeParams.get('mode') === 'webgpu' || uiModeParams.get('webgpu') === '1' || uiModeParams.get('webgpu_test') === '1';
+        const WEBGPU_PROJECTILE_LAYER_ENABLED =
+            uiModeParams.get('webgpu_projectiles') === '1' ||
+            uiModeParams.get('webgpu_instances') === '1';
         const WEBGPU_REQUIRED = uiModeParams.get('require_webgpu') === '1';
-        const ULTRA_AUTO_UPSHIFT_PLAYERS = 90;
-        const ULTRA_AUTO_DOWNSHIFT_PLAYERS = 65;
+        const benchMaxFpsParam = Number.parseInt(uiModeParams.get('bench_max_fps') || '', 10);
+        const BENCH_MAX_FPS = Number.isFinite(benchMaxFpsParam) && benchMaxFpsParam >= 30
+            ? Math.min(240, benchMaxFpsParam)
+            : 30;
+        const ULTRA_AUTO_UPSHIFT_PLAYERS = STABLE_MODE_FORCED ? 36 : 90;
+        const ULTRA_AUTO_DOWNSHIFT_PLAYERS = STABLE_MODE_FORCED ? 24 : 65;
+        const TARGET_FRAME_MS_60FPS = 16.67;
+        const STABLE_DENSE_FRAME_MS = 17.8;
+        const STABLE_ULTRA_FRAME_MS = 19.5;
+        const AIMING_LITE_PLAYER_THRESHOLD = 10;
+        const INPUT_ROTATION_QUANT_STEP = 0.012;
+        const INPUT_IDLE_HEARTBEAT_MS = 120;
+        const INPUT_MOVEMENT_HEARTBEAT_MS = 66;
         const EFFECTS_PROFILE_PRIORITY = Object.freeze({
             ultra: 0,
             dense: 1,
@@ -892,11 +920,18 @@
         let smoothedFrameMs = 16.67;
         let lowFpsFrameStreak = 0;
         let recoveryFrameStreak = 0;
-        let activeEffectsProfileName = TOURNAMENT_MODE_FORCED ? 'dense' : (LOW_OVERHEAD_MODE ? 'dense' : 'high');
+        let activeEffectsProfileName = TOURNAMENT_MODE_FORCED
+            ? 'dense'
+            : ((BENCH_MODE || STABLE_MODE_FORCED) ? 'ultra' : (LOW_OVERHEAD_MODE ? 'dense' : 'high'));
         const DEVICE_PIXEL_RATIO = window.devicePixelRatio || 1;
         const BASE_RENDER_RESOLUTION = LOW_OVERHEAD_MODE ? 1 : Math.min(1.5, Math.max(1, DEVICE_PIXEL_RATIO));
-        const DENSE_RENDER_RESOLUTION = LOW_OVERHEAD_MODE ? 0.85 : Math.max(0.8, BASE_RENDER_RESOLUTION * 0.8);
-        const ULTRA_RENDER_RESOLUTION = LOW_OVERHEAD_MODE ? 0.7 : Math.max(0.65, BASE_RENDER_RESOLUTION * 0.65);
+        const DENSE_RENDER_RESOLUTION = STABLE_MODE_FORCED
+            ? 0.72
+            : (LOW_OVERHEAD_MODE ? 0.85 : Math.max(0.8, BASE_RENDER_RESOLUTION * 0.8));
+        const ULTRA_RENDER_RESOLUTION = STABLE_MODE_FORCED
+            ? 0.62
+            : (LOW_OVERHEAD_MODE ? 0.7 : Math.max(0.65, BASE_RENDER_RESOLUTION * 0.65));
+        const STABLE_BASE_RENDER_RESOLUTION = STABLE_MODE_FORCED ? 0.82 : BASE_RENDER_RESOLUTION;
         let currentRenderResolution = BASE_RENDER_RESOLUTION;
         let cachedMinimapWalls = [];
         let cachedMinimapFlags = [];
@@ -989,28 +1024,296 @@
             );
         }
 
+        function initCullWorker() {
+            if (!WORKER_CULL_ENABLED || typeof Worker === 'undefined') {
+                return;
+            }
+            if (cullWorker) {
+                return;
+            }
+            try {
+                cullWorker = new Worker('./workers/entity_cull_worker.js', { type: 'module' });
+            } catch (error) {
+                log(`Cull worker unavailable: ${error?.message || error}`, 'warn');
+                cullWorker = null;
+                return;
+            }
+
+            cullWorker.onmessage = (event) => {
+                const message = event?.data || {};
+                if (message.type === 'ready') {
+                    cullWorkerReady = true;
+                    cullWorkerStats.wasmKernelActive = !!message.wasmKernelActive;
+                    cullWorkerStats.wasmKernelLabel = String(message.kernel || 'js');
+                    if (window.__e2e) {
+                        window.__e2e.workerCullEnabled = true;
+                        window.__e2e.workerCullReady = true;
+                        window.__e2e.workerCullKernel = cullWorkerStats.wasmKernelLabel;
+                    }
+                    log(`Cull worker ready (${cullWorkerStats.wasmKernelLabel}).`, 'info');
+                    return;
+                }
+
+                if (message.type === 'result') {
+                    cullWorkerBusy = false;
+                    const seq = Number(message.seq) || 0;
+                    if (seq < cullWorkerResultSeq) {
+                        return;
+                    }
+                    cullWorkerResultSeq = seq;
+                    const playerIds = Array.isArray(message.playerIds) ? message.playerIds : [];
+                    const projectileIds = Array.isArray(message.projectileIds) ? message.projectileIds : [];
+                    const computeMs = Number(message.computeMs) || 0;
+                    const roundTripMs = Number(message.roundTripMs) || 0;
+                    cullWorkerResult = {
+                        seq,
+                        playerSet: new Set(playerIds),
+                        projectileSet: new Set(projectileIds),
+                        computeMs,
+                        roundTripMs,
+                        generatedAtMs: Number(message.generatedAtMs) || 0
+                    };
+                    cullWorkerStats.responses += 1;
+                    cullWorkerStats.lastComputeMs = computeMs;
+                    cullWorkerStats.avgComputeMs = cullWorkerStats.avgComputeMs * 0.85 + computeMs * 0.15;
+                    return;
+                }
+
+                if (message.type === 'error') {
+                    cullWorkerBusy = false;
+                    log(`Cull worker error: ${message.error || 'unknown'}`, 'warn');
+                }
+            };
+
+            cullWorker.onerror = (event) => {
+                cullWorkerBusy = false;
+                cullWorkerReady = false;
+                log(`Cull worker crashed: ${event?.message || 'unknown error'}`, 'warn');
+            };
+
+            const requestedWasmUrl = WORKER_CULL_WASM_URL || DEFAULT_WORKER_CULL_WASM_URL;
+            let resolvedWasmUrl = '';
+            try {
+                resolvedWasmUrl = new URL(requestedWasmUrl, window.location.href).toString();
+            } catch (_) {
+                resolvedWasmUrl = '';
+            }
+            cullWorker.postMessage({
+                type: 'init',
+                wasmUrl: resolvedWasmUrl
+            });
+            if (window.__e2e) {
+                window.__e2e.workerCullEnabled = true;
+                window.__e2e.workerCullReady = false;
+                window.__e2e.workerCullKernel = 'js';
+            }
+        }
+
+        function isCullWorkerUsable() {
+            return !!(WORKER_CULL_ENABLED && cullWorker && cullWorkerReady);
+        }
+
+        function dispatchCullWorkerIfNeeded(currentTimeMs) {
+            if (!isCullWorkerUsable()) return;
+            if ((currentTimeMs - lastCullWorkerDispatchTime) < WORKER_CULL_INTERVAL_MS) return;
+
+            const totalObjects = players.size + projectiles.size;
+            if (!MASS_MODE_FORCED && totalObjects < 30) {
+                return;
+            }
+
+            if (cullWorkerBusy) {
+                cullWorkerStats.dropped += 1;
+                return;
+            }
+
+            const playerRenderCap = getPlayerRenderCap();
+            const localAnchorX = localPlayerState
+                ? (localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x)
+                : 0;
+            const localAnchorY = localPlayerState
+                ? (localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y)
+                : 0;
+            const playerDenseVisualMode =
+                ultraPerformanceMode ||
+                totalPlayerCount > HIGH_POPULATION_PLAYER_COUNT ||
+                smoothedFrameMs > 24 ||
+                (STABLE_MODE_FORCED && (totalPlayerCount >= 24 || smoothedFrameMs > STABLE_DENSE_FRAME_MS));
+            const playerUpdateContext = {
+                totalPlayerCount,
+                denseVisualMode: playerDenseVisualMode,
+                detailTickDivisor: ultraPerformanceMode ? 4 : (STABLE_MODE_FORCED ? 3 : 2)
+            };
+            const remoteRenderCap = Math.max(0, playerRenderCap - ((myPlayerId && players.has(myPlayerId)) ? 1 : 0));
+            const remotePriorityOverflowCap = remoteRenderCap > 0
+                ? Math.max(4, Math.floor(remoteRenderCap * 0.1))
+                : 0;
+            const projectileRenderCap = getProjectileRenderCap();
+            const rawProjectileMode = projectileRawModeActive;
+
+            const playerRows = [];
+            players.forEach((playerEntry, playerId) => {
+                const player = (playerId === myPlayerId && localPlayerState) ? localPlayerState : playerEntry;
+                if (!player) return;
+                const px = player.render_x !== undefined ? player.render_x : player.x;
+                const py = player.render_y !== undefined ? player.render_y : player.y;
+                playerRows.push([
+                    playerId,
+                    Number(px) || 0,
+                    Number(py) || 0,
+                    playerId === myPlayerId ? 1 : 0,
+                    player.alive ? 1 : 0
+                ]);
+            });
+
+            const projectileRows = [];
+            projectiles.forEach((projectile, projectileId) => {
+                const px = rawProjectileMode
+                    ? projectile.x
+                    : (projectile.render_x !== undefined ? projectile.render_x : projectile.x);
+                const py = rawProjectileMode
+                    ? projectile.y
+                    : (projectile.render_y !== undefined ? projectile.render_y : projectile.y);
+                projectileRows.push([
+                    projectileId,
+                    Number(px) || 0,
+                    Number(py) || 0
+                ]);
+            });
+
+            const requestSeq = cullWorkerSeq + 1;
+            cullWorkerSeq = requestSeq;
+            cullWorkerBusy = true;
+            lastCullWorkerDispatchTime = currentTimeMs;
+            cullWorkerStats.dispatches += 1;
+            const requestedAtMs = performance.now();
+
+            cullWorker.postMessage({
+                type: 'compute',
+                seq: requestSeq,
+                requestedAtMs,
+                config: {
+                    playerCullMargin: PLAYER_CULL_MARGIN_WORLD,
+                    projectileCullMargin: PROJECTILE_CULL_MARGIN_WORLD,
+                    playerPriorityDistanceSq: PLAYER_PRIORITY_DISTANCE_SQ,
+                    remoteRenderCap,
+                    remotePriorityOverflowCap,
+                    projectileRenderCap,
+                    localAnchorX,
+                    localAnchorY
+                },
+                viewBounds: {
+                    left: worldViewBounds.left,
+                    right: worldViewBounds.right,
+                    top: worldViewBounds.top,
+                    bottom: worldViewBounds.bottom
+                },
+                players: playerRows,
+                projectiles: projectileRows
+            });
+        }
+
+        function shouldUseRawProjectilePositions() {
+            if (projectiles.size <= 140 && smoothedFrameMs <= (TARGET_FRAME_MS_60FPS + 1.0)) {
+                return false;
+            }
+            if (projectiles.size >= PROJECTILE_RAW_MODE_HARD_COUNT) return true;
+            if (smoothedFrameMs >= PROJECTILE_RAW_MODE_FRAME_MS) return true;
+            if ((STABLE_MODE_FORCED || ultraPerformanceMode) && projectiles.size >= PROJECTILE_RAW_MODE_SOFT_COUNT) {
+                return true;
+            }
+            return false;
+        }
+
+        function getProjectileInterpolationSet() {
+            if (!isCullWorkerUsable()) return null;
+            if (!cullWorkerResult?.projectileSet) return null;
+            if (projectiles.size < PROJECTILE_RAW_MODE_SOFT_COUNT) return null;
+            return cullWorkerResult.projectileSet;
+        }
+
+        function forEachInterpolatedProjectile(projectileSet, callback) {
+            if (projectileSet && projectileSet.size > 0) {
+                projectileSet.forEach((projectileId) => {
+                    const projectile = projectiles.get(projectileId);
+                    if (projectile) {
+                        callback(projectile, projectileId);
+                    }
+                });
+                return;
+            }
+            projectiles.forEach(callback);
+        }
+
+        function applyDynamicEffectsCap() {
+            if (!effectsManager || typeof effectsManager.dropOverflowEffects !== 'function') return;
+            const profileMax = Math.max(
+                0,
+                Math.floor(Number(effectsManager.performanceProfile?.maxActiveEffects || effectsManager.maxActiveEffects || 0))
+            );
+            if (profileMax <= 0) return;
+
+            let targetMax = profileMax;
+            if (projectiles.size >= 760 || smoothedFrameMs >= 27) {
+                targetMax = Math.min(targetMax, 160);
+            } else if (projectiles.size >= 620 || smoothedFrameMs >= 24) {
+                targetMax = Math.min(targetMax, 220);
+            } else if (projectiles.size >= 480 || smoothedFrameMs >= 21.5) {
+                targetMax = Math.min(targetMax, 280);
+            }
+
+            if (effectsManager.maxActiveEffects !== targetMax) {
+                effectsManager.maxActiveEffects = targetMax;
+                effectsManager.dropOverflowEffects(0);
+            }
+        }
+
         function getProjectileRenderCap() {
-            if (ultraPerformanceMode) return PROJECTILE_RENDER_CAP_ULTRA;
+            const severePressure = projectiles.size >= 760 || smoothedFrameMs >= 26;
+            const recoveryPressure = projectiles.size >= 620 || smoothedFrameMs >= 23;
+            const softPressure = projectiles.size >= 480 || smoothedFrameMs >= 21.5;
+
+            if (ultraPerformanceMode) {
+                if (severePressure) return PROJECTILE_RENDER_CAP_ULTRA_EMERGENCY;
+                if (recoveryPressure) return PROJECTILE_RENDER_CAP_ULTRA_RECOVERY;
+                if (softPressure) return PROJECTILE_RENDER_CAP_ULTRA_SOFT;
+                return PROJECTILE_RENDER_CAP_ULTRA;
+            }
+            if (STABLE_MODE_FORCED) {
+                if (severePressure) return PROJECTILE_RENDER_CAP_ULTRA_EMERGENCY;
+                if (recoveryPressure) return PROJECTILE_RENDER_CAP_ULTRA_RECOVERY;
+                if (softPressure) return PROJECTILE_RENDER_CAP_ULTRA_SOFT;
+                if (players.size >= 32 || smoothedFrameMs > STABLE_ULTRA_FRAME_MS) return PROJECTILE_RENDER_CAP_ULTRA;
+                if (players.size >= 22 || smoothedFrameMs > STABLE_DENSE_FRAME_MS) return PROJECTILE_RENDER_CAP_DENSE;
+                return PROJECTILE_RENDER_CAP_STABLE;
+            }
             if (players.size > HIGH_POPULATION_PLAYER_COUNT) return PROJECTILE_RENDER_CAP_DENSE;
             return PROJECTILE_RENDER_CAP_DEFAULT;
         }
 
         function getPlayerRenderCap() {
             if (ultraPerformanceMode) return PLAYER_RENDER_CAP_ULTRA;
+            if (STABLE_MODE_FORCED) {
+                if (players.size >= 38 || smoothedFrameMs > STABLE_ULTRA_FRAME_MS) return PLAYER_RENDER_CAP_ULTRA;
+                if (players.size >= 24 || smoothedFrameMs > STABLE_DENSE_FRAME_MS) return PLAYER_RENDER_CAP_DENSE;
+                return PLAYER_RENDER_CAP_STABLE;
+            }
             if (players.size > HIGH_POPULATION_PLAYER_COUNT || smoothedFrameMs > 24) return PLAYER_RENDER_CAP_DENSE;
             return PLAYER_RENDER_CAP_DEFAULT;
         }
 
         function updateFramePerformanceSignals(deltaMs) {
             smoothedFrameMs = smoothedFrameMs * 0.92 + deltaMs * 0.08;
+            const lowFpsThreshold = STABLE_MODE_FORCED ? STABLE_ULTRA_FRAME_MS : 28;
+            const recoveryThreshold = STABLE_MODE_FORCED ? STABLE_DENSE_FRAME_MS : 20;
 
-            if (smoothedFrameMs > 28) {
+            if (smoothedFrameMs > lowFpsThreshold) {
                 lowFpsFrameStreak = Math.min(lowFpsFrameStreak + 1, 600);
             } else {
                 lowFpsFrameStreak = Math.max(lowFpsFrameStreak - 2, 0);
             }
 
-            if (smoothedFrameMs < 20) {
+            if (smoothedFrameMs < recoveryThreshold) {
                 recoveryFrameStreak = Math.min(recoveryFrameStreak + 1, 600);
             } else {
                 recoveryFrameStreak = Math.max(recoveryFrameStreak - 2, 0);
@@ -1025,11 +1328,19 @@
         }
 
         function getTargetEffectsProfileName() {
-            if (BENCH_MODE || ultraPerformanceMode) return 'ultra';
-            if (STABLE_MODE_FORCED) return 'dense';
-
             const playerCount = players.size;
             const activeEffectCount = effectsManager?.activeEffects?.length || 0;
+            if (BENCH_MODE || ultraPerformanceMode) return 'ultra';
+            if (STABLE_MODE_FORCED) {
+                if (
+                    smoothedFrameMs > TARGET_FRAME_MS_60FPS ||
+                    playerCount >= 24 ||
+                    activeEffectCount >= 140
+                ) {
+                    return 'ultra';
+                }
+                return 'dense';
+            }
 
             if (TOURNAMENT_MODE_FORCED) {
                 if (smoothedFrameMs > 26 || playerCount >= 150 || activeEffectCount >= 1200) return 'ultra';
@@ -1070,13 +1381,17 @@
 
         function updateRenderResolutionBudget(reason = '') {
             let targetResolution = BASE_RENDER_RESOLUTION;
-            if (ultraPerformanceMode) {
+            if (STABLE_MODE_FORCED) {
+                targetResolution = STABLE_BASE_RENDER_RESOLUTION;
+                if (ultraPerformanceMode || players.size >= 36 || smoothedFrameMs > STABLE_ULTRA_FRAME_MS) {
+                    targetResolution = ULTRA_RENDER_RESOLUTION;
+                } else if (players.size >= 22 || smoothedFrameMs > STABLE_DENSE_FRAME_MS) {
+                    targetResolution = DENSE_RENDER_RESOLUTION;
+                }
+            } else if (ultraPerformanceMode) {
                 targetResolution = ULTRA_RENDER_RESOLUTION;
             } else if (players.size >= HIGH_POPULATION_PLAYER_COUNT || smoothedFrameMs > 24) {
                 targetResolution = DENSE_RENDER_RESOLUTION;
-            }
-            if (STABLE_MODE_FORCED) {
-                targetResolution = Math.min(targetResolution, DENSE_RENDER_RESOLUTION);
             }
             if (TOURNAMENT_MODE_FORCED) {
                 targetResolution = Math.min(targetResolution, Math.max(0.78, DENSE_RENDER_RESOLUTION));
@@ -1663,6 +1978,330 @@
             }
         }
 
+        class WebGPUProjectileLayer {
+            constructor(hostElement) {
+                this.hostElement = hostElement;
+                this.canvas = null;
+                this.context = null;
+                this.adapter = null;
+                this.device = null;
+                this.format = null;
+                this.pipeline = null;
+                this.uniformBuffer = null;
+                this.bindGroup = null;
+                this.quadBuffer = null;
+                this.instanceBuffer = null;
+                this.instanceCapacity = 0;
+                this.instanceCount = 0;
+                this.ready = false;
+                this.lastError = null;
+                this.lastInstanceCount = 0;
+            }
+
+            async init(width, height) {
+                if (!navigator.gpu) {
+                    throw new Error('WebGPU unavailable');
+                }
+                this.adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+                if (!this.adapter) {
+                    throw new Error('No WebGPU adapter available');
+                }
+                this.device = await this.adapter.requestDevice();
+
+                this.canvas = document.createElement('canvas');
+                this.canvas.className = 'webgpu-projectile-layer';
+                this.canvas.style.position = 'absolute';
+                this.canvas.style.left = '0';
+                this.canvas.style.top = '0';
+                this.canvas.style.width = '100%';
+                this.canvas.style.height = '100%';
+                this.canvas.style.pointerEvents = 'none';
+                this.canvas.style.zIndex = '3';
+                this.hostElement.style.position = this.hostElement.style.position || 'relative';
+                this.hostElement.appendChild(this.canvas);
+
+                this.context = this.canvas.getContext('webgpu');
+                if (!this.context) {
+                    throw new Error('Failed to acquire WebGPU canvas context');
+                }
+                this.format = navigator.gpu.getPreferredCanvasFormat
+                    ? navigator.gpu.getPreferredCanvasFormat()
+                    : 'bgra8unorm';
+                this.context.configure({
+                    device: this.device,
+                    format: this.format,
+                    alphaMode: 'premultiplied'
+                });
+
+                this.resize(width, height);
+                this.initPipeline();
+                this.ensureInstanceCapacity(1024);
+                this.ready = true;
+            }
+
+            initPipeline() {
+                const shader = this.device.createShaderModule({
+                    code: `
+struct ViewUniform {
+  left: f32,
+  top: f32,
+  width: f32,
+  height: f32,
+};
+
+@group(0) @binding(0) var<uniform> view: ViewUniform;
+
+struct VertexInput {
+  @location(0) corner: vec2<f32>,
+  @location(1) worldPos: vec2<f32>,
+  @location(2) size: f32,
+  @location(3) color: vec4<f32>,
+};
+
+struct VertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) color: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+  let world = input.worldPos + input.corner * input.size;
+  let nx = ((world.x - view.left) / max(view.width, 1.0)) * 2.0 - 1.0;
+  let ny = 1.0 - ((world.y - view.top) / max(view.height, 1.0)) * 2.0;
+  var out: VertexOutput;
+  out.position = vec4<f32>(nx, ny, 0.0, 1.0);
+  out.color = input.color;
+  return out;
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+  return input.color;
+}
+                    `
+                });
+
+                this.uniformBuffer = this.device.createBuffer({
+                    size: 16,
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+                });
+
+                const bindGroupLayout = this.device.createBindGroupLayout({
+                    entries: [
+                        {
+                            binding: 0,
+                            visibility: GPUShaderStage.VERTEX,
+                            buffer: { type: 'uniform' }
+                        }
+                    ]
+                });
+                const pipelineLayout = this.device.createPipelineLayout({
+                    bindGroupLayouts: [bindGroupLayout]
+                });
+
+                this.pipeline = this.device.createRenderPipeline({
+                    layout: pipelineLayout,
+                    vertex: {
+                        module: shader,
+                        entryPoint: 'vs_main',
+                        buffers: [
+                            {
+                                arrayStride: 8,
+                                stepMode: 'vertex',
+                                attributes: [
+                                    { shaderLocation: 0, offset: 0, format: 'float32x2' }
+                                ]
+                            },
+                            {
+                                arrayStride: 28,
+                                stepMode: 'instance',
+                                attributes: [
+                                    { shaderLocation: 1, offset: 0, format: 'float32x2' },
+                                    { shaderLocation: 2, offset: 8, format: 'float32' },
+                                    { shaderLocation: 3, offset: 12, format: 'float32x4' }
+                                ]
+                            }
+                        ]
+                    },
+                    fragment: {
+                        module: shader,
+                        entryPoint: 'fs_main',
+                        targets: [
+                            {
+                                format: this.format,
+                                blend: {
+                                    color: {
+                                        srcFactor: 'src-alpha',
+                                        dstFactor: 'one',
+                                        operation: 'add'
+                                    },
+                                    alpha: {
+                                        srcFactor: 'one',
+                                        dstFactor: 'one-minus-src-alpha',
+                                        operation: 'add'
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    primitive: {
+                        topology: 'triangle-list'
+                    }
+                });
+
+                this.bindGroup = this.device.createBindGroup({
+                    layout: bindGroupLayout,
+                    entries: [
+                        {
+                            binding: 0,
+                            resource: { buffer: this.uniformBuffer }
+                        }
+                    ]
+                });
+
+                const quadVertices = new Float32Array([
+                    -1, -1,
+                     1, -1,
+                    -1,  1,
+                    -1,  1,
+                     1, -1,
+                     1,  1
+                ]);
+                this.quadBuffer = this.device.createBuffer({
+                    size: quadVertices.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+                });
+                this.device.queue.writeBuffer(this.quadBuffer, 0, quadVertices);
+            }
+
+            ensureInstanceCapacity(count) {
+                if (count <= this.instanceCapacity) return;
+                let nextCapacity = Math.max(1024, this.instanceCapacity);
+                while (nextCapacity < count) {
+                    nextCapacity *= 2;
+                }
+                this.instanceBuffer = this.device.createBuffer({
+                    size: nextCapacity * 28,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+                });
+                this.instanceCapacity = nextCapacity;
+            }
+
+            resize(width, height) {
+                if (!this.canvas) return;
+                const w = Math.max(1, Math.floor(width));
+                const h = Math.max(1, Math.floor(height));
+                this.canvas.width = w;
+                this.canvas.height = h;
+            }
+
+            render(viewBounds, instanceArray) {
+                if (!this.ready || !this.context || !this.device || !this.pipeline) return;
+                const view = new Float32Array([
+                    Number(viewBounds.left) || 0,
+                    Number(viewBounds.top) || 0,
+                    Math.max(1, (Number(viewBounds.right) || 0) - (Number(viewBounds.left) || 0)),
+                    Math.max(1, (Number(viewBounds.bottom) || 0) - (Number(viewBounds.top) || 0))
+                ]);
+                this.device.queue.writeBuffer(this.uniformBuffer, 0, view);
+
+                const instanceCount = Math.max(0, Math.floor((instanceArray?.length || 0) / 7));
+                this.instanceCount = instanceCount;
+                this.lastInstanceCount = instanceCount;
+                if (instanceCount > 0) {
+                    this.ensureInstanceCapacity(instanceCount);
+                    this.device.queue.writeBuffer(this.instanceBuffer, 0, instanceArray);
+                }
+
+                const encoder = this.device.createCommandEncoder();
+                const pass = encoder.beginRenderPass({
+                    colorAttachments: [
+                        {
+                            view: this.context.getCurrentTexture().createView(),
+                            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+                            loadOp: 'clear',
+                            storeOp: 'store'
+                        }
+                    ]
+                });
+                pass.setPipeline(this.pipeline);
+                pass.setBindGroup(0, this.bindGroup);
+                pass.setVertexBuffer(0, this.quadBuffer);
+                if (instanceCount > 0) {
+                    pass.setVertexBuffer(1, this.instanceBuffer);
+                    pass.draw(6, instanceCount, 0, 0);
+                }
+                pass.end();
+                this.device.queue.submit([encoder.finish()]);
+            }
+
+            clear(viewBounds) {
+                this.render(viewBounds, new Float32Array(0));
+            }
+
+            destroy() {
+                this.ready = false;
+                try {
+                    if (this.context && typeof this.context.unconfigure === 'function') {
+                        this.context.unconfigure();
+                    }
+                } catch (_) {}
+                try {
+                    if (this.device && typeof this.device.destroy === 'function') {
+                        this.device.destroy();
+                    }
+                } catch (_) {}
+                if (this.canvas && this.canvas.parentNode) {
+                    this.canvas.parentNode.removeChild(this.canvas);
+                }
+                this.canvas = null;
+                this.context = null;
+                this.adapter = null;
+                this.device = null;
+                this.pipeline = null;
+                this.bindGroup = null;
+                this.uniformBuffer = null;
+                this.quadBuffer = null;
+                this.instanceBuffer = null;
+                this.instanceCapacity = 0;
+                this.instanceCount = 0;
+            }
+        }
+
+        async function initWebGPUProjectileLayer(hostElement, width, height) {
+            if (!WEBGPU_PROJECTILE_LAYER_ENABLED || !hostElement) return;
+            if (webgpuProjectileLayerInitStarted || webgpuProjectileLayer) return;
+            webgpuProjectileLayerInitStarted = true;
+            try {
+                const layer = new WebGPUProjectileLayer(hostElement);
+                await layer.init(width, height);
+                webgpuProjectileLayer = layer;
+                log('WebGPU projectile instance layer enabled.', 'info');
+            } catch (error) {
+                webgpuProjectileLayer = null;
+                log(`WebGPU projectile layer unavailable: ${error?.message || error}`, 'warn');
+            }
+            if (window.__e2e) {
+                window.__e2e.webgpuProjectileLayerEnabled = !!webgpuProjectileLayer;
+                window.__e2e.webgpuProjectileLayerReady = !!(webgpuProjectileLayer && webgpuProjectileLayer.ready);
+            }
+        }
+
+        function disableWebGPUProjectileLayer(reason, error = null) {
+            if (!webgpuProjectileLayer) return;
+            try {
+                webgpuProjectileLayer.destroy();
+            } catch (_) {}
+            webgpuProjectileLayer = null;
+            const detail = error?.message ? `${reason}: ${error.message}` : reason;
+            log(`WebGPU projectile layer disabled: ${detail}`, 'warn');
+            if (window.__e2e) {
+                window.__e2e.webgpuProjectileLayerEnabled = false;
+                window.__e2e.webgpuProjectileLayerReady = false;
+                window.__e2e.webgpuProjectileInstances = 0;
+            }
+        }
+
         function applyFullFxMode() {
             if (typeof gameSettings !== 'object' || !gameSettings) {
                 return false;
@@ -1861,6 +2500,15 @@
         let lastConnectionStatusKey = '';
         let lastConnectionDetail = '';
         let lastConnectionStatusUpdate = 0;
+        let autoReconnectEnabled = false;
+        let autoReconnectMaxAttempts = 0;
+        let autoReconnectBaseDelayMs = 1200;
+        let autoReconnectMaxDelayMs = 12000;
+        let autoConnectOnLoad = false;
+        let reconnectAttemptCount = 0;
+        let reconnectTimerId = null;
+        let connectAttemptInFlight = false;
+        let activeSignalingUrl = '';
         let controlsPanelHidden = false;
         let focusModeEnabled = false;
         if (!window.__e2e) {
@@ -1877,11 +2525,28 @@
         window.__e2e.perfProfilingEnabled = perfEnabled;
         window.__e2e.ultraPerformanceMode = ultraPerformanceMode;
         window.__e2e.stableMode = STABLE_MODE_FORCED;
+        window.__e2e.massMode = MASS_MODE_FORCED;
+        window.__e2e.benchMaxFps = BENCH_MAX_FPS;
         window.__e2e.tournamentMode = TOURNAMENT_MODE_FORCED;
+        window.__e2e.workerCullEnabled = WORKER_CULL_ENABLED;
+        window.__e2e.workerCullReady = false;
+        window.__e2e.workerCullBusy = false;
+        window.__e2e.workerCullKernel = 'js';
+        window.__e2e.workerCullDispatches = 0;
+        window.__e2e.workerCullResponses = 0;
+        window.__e2e.workerCullAvgComputeMs = 0;
+        window.__e2e.workerCullLastComputeMs = 0;
+        window.__e2e.workerCullDropped = 0;
+        window.__e2e.workerCullResultSeq = 0;
+        window.__e2e.projectileRawMode = false;
         window.__e2e.webgpuMode = WEBGPU_TEST_MODE;
         window.__e2e.webgpuRequired = WEBGPU_REQUIRED;
         window.__e2e.webgpuSupported = typeof navigator.gpu !== 'undefined';
         window.__e2e.webgpuLastResult = null;
+        window.__e2e.webgpuProjectileLayerRequested = WEBGPU_PROJECTILE_LAYER_ENABLED;
+        window.__e2e.webgpuProjectileLayerEnabled = false;
+        window.__e2e.webgpuProjectileLayerReady = false;
+        window.__e2e.webgpuProjectileInstances = 0;
         window.__e2e.effectsProfile = activeEffectsProfileName;
         window.__e2e.rendererBackend = getRendererBackendSummary();
         window.__e2e.renderResolution = currentRenderResolution;
@@ -1916,6 +2581,31 @@
         window.__e2e.startFxStress = (options = {}) => startFxStress(options);
         window.__e2e.stopFxStress = (clearProjectiles = false) => stopFxStress(clearProjectiles);
         window.__e2e.runWebGPUTest = (options = {}) => runWebGPUTest(options);
+        window.__e2e.forceCloseSignaling = () => {
+            if (!signalingSocket) return false;
+            try {
+                signalingSocket.close(4101, 'e2e chaos close');
+            } catch (_) {}
+            return true;
+        };
+        window.__e2e.forceCloseDataChannel = () => {
+            if (!dataChannel) return false;
+            try {
+                dataChannel.close();
+            } catch (_) {}
+            return true;
+        };
+        window.__e2e.forceResetConnection = () => {
+            resetConnectionUI({
+                allowReconnect: true,
+                reconnectReason: 'e2e forced reset'
+            });
+            return true;
+        };
+        window.__e2e.forceReconnectNow = () => {
+            resetReconnectState();
+            return startConnectionAttempt({ isRetry: true });
+        };
         const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
         let touchControlsInitialized = false;
 
@@ -1952,6 +2642,22 @@
 
         const forceMobileClient = uiModeParams.get('platform') === 'mobile' || uiModeParams.get('mobile') === '1';
         const mobileDynamicsEnabled = forceMobileClient || (isTouchDevice && window.innerWidth <= 1100);
+        autoReconnectEnabled = uiModeParams.get('auto_reconnect') === '0'
+            ? false
+            : (uiModeParams.get('auto_reconnect') === '1' || mobileDynamicsEnabled);
+        autoReconnectMaxAttempts = Math.max(
+            1,
+            Math.min(30, Math.floor(Number(uiModeParams.get('auto_reconnect_max')) || 10))
+        );
+        autoReconnectBaseDelayMs = Math.max(
+            300,
+            Math.min(15000, Math.floor(Number(uiModeParams.get('auto_reconnect_base_ms')) || 1200))
+        );
+        autoReconnectMaxDelayMs = Math.max(
+            autoReconnectBaseDelayMs,
+            Math.min(45000, Math.floor(Number(uiModeParams.get('auto_reconnect_max_ms')) || 12000))
+        );
+        autoConnectOnLoad = uiModeParams.get('auto_connect') === '1' || uiModeParams.get('autoconnect') === '1';
         if (BENCH_MODE) {
             setFocusMode(true);
             setControlsPanelHidden(true);
@@ -2142,6 +2848,64 @@
             wsUrlInput.value = getDefaultWsUrl();
         }
 
+        function clearReconnectTimer() {
+            if (reconnectTimerId !== null) {
+                clearTimeout(reconnectTimerId);
+                reconnectTimerId = null;
+            }
+        }
+
+        function resetReconnectState() {
+            reconnectAttemptCount = 0;
+            clearReconnectTimer();
+        }
+
+        function canStartConnectionAttempt() {
+            if (connectAttemptInFlight) return false;
+            if (dataChannel && dataChannel.readyState === 'open') return false;
+            if (signalingSocket && (
+                signalingSocket.readyState === WebSocket.CONNECTING ||
+                signalingSocket.readyState === WebSocket.OPEN
+            )) {
+                return false;
+            }
+            return true;
+        }
+
+        function computeReconnectDelayMs(attemptNumber) {
+            const safeAttempt = Math.max(1, attemptNumber);
+            const backoff = Math.pow(1.6, safeAttempt - 1);
+            return Math.min(autoReconnectMaxDelayMs, Math.floor(autoReconnectBaseDelayMs * backoff));
+        }
+
+        function scheduleAutoReconnect(reason = '') {
+            if (!autoReconnectEnabled) return false;
+            if (!hasAttemptedConnection) return false;
+            if (reconnectTimerId !== null) return false;
+            if (!canStartConnectionAttempt()) return false;
+            if (reconnectAttemptCount >= autoReconnectMaxAttempts) {
+                const detail = `Reconnect limit reached (${autoReconnectMaxAttempts}). Tap Connect to retry.`;
+                log(detail, 'warn');
+                applyConnectionStatus('error', detail);
+                return false;
+            }
+
+            const attemptNumber = reconnectAttemptCount + 1;
+            reconnectAttemptCount = attemptNumber;
+            const delayMs = computeReconnectDelayMs(attemptNumber);
+            const delaySec = Math.max(1, Math.round(delayMs / 1000));
+            const prefix = reason ? `${reason}. ` : '';
+            applyConnectionStatus(
+                'connecting',
+                `${prefix}Retrying in ${delaySec}s (${attemptNumber}/${autoReconnectMaxAttempts})`
+            );
+            reconnectTimerId = setTimeout(() => {
+                reconnectTimerId = null;
+                startConnectionAttempt({ isRetry: true });
+            }, delayMs);
+            return true;
+        }
+
         function updateMobileControlsVisibility() {
             if (!mobileControlsDiv) return;
             const shouldShow = forceMobileClient || isTouchDevice || window.innerWidth <= 900;
@@ -2326,6 +3090,8 @@
         let signalingSocket;
         let peerConnection;
         let dataChannel;
+        let webgpuProjectileLayer = null;
+        let webgpuProjectileLayerInitStarted = false;
 
         // PIXI.js Application
         let app;
@@ -2355,6 +3121,16 @@
         let flagStates = new Map();
         const playerSprites = new Map();
         const projectileSprites = new Map();
+        const projectileSpritePool = [];
+        const PROJECTILE_SPRITE_POOL_LIMIT = 8192;
+        const WEBGPU_PROJECTILE_INSTANCE_STRIDE = 7;
+        const WEBGPU_PROJECTILE_BASE_SIZE = {
+            [GP.WeaponType.Pistol]: 7,
+            [GP.WeaponType.Shotgun]: 7,
+            [GP.WeaponType.Rifle]: 8,
+            [GP.WeaponType.Sniper]: 9,
+            [GP.WeaponType.Melee]: 6
+        };
         const pickupSprites = new Map();
         const SHIP_POINTS = [
             0, -PLAYER_RADIUS * 1.2,
@@ -2365,17 +3141,28 @@
             -PLAYER_RADIUS * 0.8, PLAYER_RADIUS * 0.8
         ];
         const HIGH_POPULATION_PLAYER_COUNT = 80;
-        const FAR_DETAIL_DISTANCE_SQ = 1800 * 1800;
+        const FAR_DETAIL_DISTANCE_SQ = (STABLE_MODE_FORCED ? 1200 : 1800) * (STABLE_MODE_FORCED ? 1200 : 1800);
         const PLAYER_PRIORITY_DISTANCE_SQ = 900 * 900;
         const PLAYER_CULL_MARGIN_WORLD = 240;
         const PROJECTILE_CULL_MARGIN_WORLD = 220;
         const PICKUP_CULL_MARGIN_WORLD = 160;
         const PLAYER_RENDER_CAP_DEFAULT = 220;
+        const PLAYER_RENDER_CAP_STABLE = 140;
         const PLAYER_RENDER_CAP_DENSE = 150;
         const PLAYER_RENDER_CAP_ULTRA = 100;
         const PROJECTILE_RENDER_CAP_DEFAULT = 1400;
+        const PROJECTILE_RENDER_CAP_STABLE = 700;
         const PROJECTILE_RENDER_CAP_DENSE = 900;
         const PROJECTILE_RENDER_CAP_ULTRA = 450;
+        const PROJECTILE_RENDER_CAP_ULTRA_SOFT = 320;
+        const PROJECTILE_RENDER_CAP_ULTRA_RECOVERY = 220;
+        const PROJECTILE_RENDER_CAP_ULTRA_EMERGENCY = 140;
+        const PROJECTILE_RAW_MODE_SOFT_COUNT = 320;
+        const PROJECTILE_RAW_MODE_HARD_COUNT = 480;
+        const PROJECTILE_RAW_MODE_FRAME_MS = 21;
+        const PICKUP_VISIBILITY_UPDATE_STRIDE = STABLE_MODE_FORCED ? 3 : 2;
+        const TRANSFORM_EPSILON = 0.0001;
+        const ALPHA_EPSILON = 0.002;
         const SYNTHETIC_PROJECTILE_PREFIX = '__synthetic_proj_';
         const GLOBAL_LIGHT_DIR = { x: 0.62, y: 0.78 };
         const PLAYER_SHADOW_BASE_OFFSET = 10;
@@ -2386,6 +3173,24 @@
         let lastProjectileRenderCap = PROJECTILE_RENDER_CAP_DEFAULT;
         let fxStressIntervalId = null;
         let fxStressConfig = null;
+        let cullWorker = null;
+        let cullWorkerReady = false;
+        let cullWorkerBusy = false;
+        let cullWorkerSeq = 0;
+        let cullWorkerResultSeq = 0;
+        let lastCullWorkerDispatchTime = 0;
+        let cullWorkerResult = null;
+        let projectileRawModeActive = false;
+        let webgpuProjectileInstanceScratch = new Float32Array(0);
+        const cullWorkerStats = {
+            dispatches: 0,
+            responses: 0,
+            dropped: 0,
+            avgComputeMs: 0,
+            lastComputeMs: 0,
+            wasmKernelActive: false,
+            wasmKernelLabel: 'js'
+        };
         const renderAssetCache = {
             initialized: false,
             shipTexture: null,
@@ -2439,6 +3244,10 @@
 
         // Timing
         let lastInputSendTime = 0;
+        let lastInputStateSentAt = 0;
+        let lastSentInputMoveMask = -1;
+        let lastSentInputRotationQuant = Number.NaN;
+        let lastSentInputShooting = false;
         let pingStartTime = 0;
         let ping = 0;
         let frameCount = 0;
@@ -2526,7 +3335,7 @@
             gameSettings.particleEffects = false;
             gameSettings.screenShake = false;
             gameSettings.showFPS = false;
-            activeEffectsProfileName = 'dense';
+            activeEffectsProfileName = 'ultra';
             setFocusMode(false);
         }
 
@@ -2580,12 +3389,9 @@
             lastSnapshotArrivalTime = snapshotTime;
         }
 
-        function applyRenderTarget(entity, targetX, targetY, targetRotation, deltaSeconds, options = {}) {
+        function applyRenderTarget(entity, targetX, targetY, targetRotation, positionGain, rotationGain, snapDistanceSq) {
             if (!entity) return;
-            const useProjectileTuning = !!options.projectile;
-            const baseGain = useProjectileTuning ? 0.52 : 0.3;
-            const snapDistanceSq = useProjectileTuning ? PROJECTILE_SNAP_DISTANCE_SQ : POSITION_SNAP_DISTANCE_SQ;
-            const gain = smoothFollowGain(baseGain, deltaSeconds);
+            const gain = positionGain;
 
             if (!Number.isFinite(entity.render_x) || !Number.isFinite(entity.render_y)) {
                 entity.render_x = targetX;
@@ -2608,11 +3414,10 @@
                     entity.render_rotation = targetRotation;
                 } else {
                     const rotDiff = normalizeAngle(targetRotation - entity.render_rotation);
-                    const rotGain = smoothFollowGain(0.34, deltaSeconds);
                     if (Math.abs(rotDiff) > 2.4) {
                         entity.render_rotation = targetRotation;
                     } else {
-                        entity.render_rotation = normalizeAngle(entity.render_rotation + rotDiff * rotGain);
+                        entity.render_rotation = normalizeAngle(entity.render_rotation + rotDiff * rotationGain);
                     }
                 }
             }
@@ -2657,9 +3462,94 @@
             return normalizeAngle(baseRotation + bestDiff * dynamicsTuning.aimAssistStrength);
         }
 
-        const peerConnectionConfig = {
-            'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }]
-        };
+        function splitNonEmptyValues(rawValue, delimiter = ',') {
+            if (!rawValue) return [];
+            return String(rawValue)
+                .split(delimiter)
+                .map((value) => value.trim())
+                .filter((value) => value.length > 0);
+        }
+
+        function parseIceServerSpec(rawSpec) {
+            if (!rawSpec) return null;
+            const parts = String(rawSpec)
+                .split('|')
+                .map((part) => part.trim());
+            if (!parts[0]) return null;
+            const urls = splitNonEmptyValues(parts[0], ',');
+            if (!urls.length) return null;
+
+            const server = {
+                urls: urls.length === 1 ? urls[0] : urls
+            };
+            if (parts[1]) server.username = parts[1];
+            if (parts[2]) server.credential = parts[2];
+            return server;
+        }
+
+        function buildPeerConnectionConfig() {
+            const disableClientStun = uiModeParams.get('disable_stun') === '1' || uiModeParams.get('nostun') === '1';
+            const servers = [];
+
+            const addServer = (server) => {
+                if (!server || !server.urls) return;
+                servers.push(server);
+            };
+
+            const stunParam = uiModeParams.get('stun');
+            if (!disableClientStun) {
+                const stunUrls = splitNonEmptyValues(stunParam, ',');
+                if (stunUrls.length) {
+                    addServer({ urls: stunUrls.length === 1 ? stunUrls[0] : stunUrls });
+                } else {
+                    addServer({ urls: 'stun:stun.l.google.com:19302' });
+                }
+            }
+
+            const genericIceSpecs = [];
+            if (typeof uiModeParams.getAll === 'function') {
+                genericIceSpecs.push(...uiModeParams.getAll('ice'));
+            } else if (uiModeParams.get('ice')) {
+                genericIceSpecs.push(uiModeParams.get('ice'));
+            }
+            genericIceSpecs.forEach((rawSpec) => {
+                splitNonEmptyValues(rawSpec, ';').forEach((entry) => {
+                    addServer(parseIceServerSpec(entry));
+                });
+            });
+
+            const turnUrls = splitNonEmptyValues(uiModeParams.get('turn'), ',');
+            if (turnUrls.length) {
+                const turnServer = {
+                    urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls
+                };
+                const turnUser = String(uiModeParams.get('turn_user') || uiModeParams.get('turn_username') || '').trim();
+                const turnCredential = String(uiModeParams.get('turn_pass') || uiModeParams.get('turn_credential') || '').trim();
+                if (turnUser) turnServer.username = turnUser;
+                if (turnCredential) turnServer.credential = turnCredential;
+                addServer(turnServer);
+            }
+
+            const deduped = [];
+            const seen = new Set();
+            servers.forEach((server) => {
+                const key = JSON.stringify({
+                    urls: server.urls,
+                    username: server.username || '',
+                    credential: server.credential || ''
+                });
+                if (seen.has(key)) return;
+                seen.add(key);
+                deduped.push(server);
+            });
+
+            return { iceServers: deduped };
+        }
+
+        const peerConnectionConfig = buildPeerConnectionConfig();
+        if (window.__e2e) {
+            window.__e2e.iceServerCount = peerConnectionConfig.iceServers.length;
+        }
 
         // Utility function to mix colors
         function mixColors(color1, color2, amount) {
@@ -2859,8 +3749,9 @@
                     powerPreference: 'high-performance',
                 });
                 pixiContainer.appendChild(app.view);
+                initWebGPUProjectileLayer(pixiContainer, containerRect.width, containerRect.height);
 
-                app.ticker.maxFPS = BENCH_MODE ? 30 : 60;
+                app.ticker.maxFPS = BENCH_MODE ? BENCH_MAX_FPS : 60;
 
                 if (!app || !app.stage) {
                     log('CRITICAL ERROR: PIXI Application failed to initialize!', 'error');
@@ -2991,6 +3882,9 @@
                     app.renderer.resolution = currentRenderResolution;
                 }
                 app.renderer.resize(containerRect.width, containerRect.height);
+                if (webgpuProjectileLayer && webgpuProjectileLayer.ready) {
+                    webgpuProjectileLayer.resize(containerRect.width, containerRect.height);
+                }
                 updateCamera();
             }
 
@@ -2999,29 +3893,35 @@
     function createPlayerSprite(player, isLocal = false) {
     const container = new PIXI.Container();
     container.playerId = player.id;
+    const lightweightRemote = STABLE_MODE_FORCED && !isLocal;
+    container._lightweightRemote = lightweightRemote;
 
-    const shadow = new PIXI.Sprite(renderAssetCache.shadowTexture);
-    shadow.anchor.set(0.5);
-    shadow.position.set(GLOBAL_LIGHT_DIR.x * PLAYER_SHADOW_BASE_OFFSET, GLOBAL_LIGHT_DIR.y * PLAYER_SHADOW_BASE_OFFSET);
-    shadow.tint = 0x000000;
-    shadow.alpha = 0.38;
-    shadow.blendMode = PIXI.BLEND_MODES.MULTIPLY;
-    container.addChild(shadow);
-    container.shadowSprite = shadow;
+    if (!lightweightRemote) {
+        const shadow = new PIXI.Sprite(renderAssetCache.shadowTexture);
+        shadow.anchor.set(0.5);
+        shadow.position.set(GLOBAL_LIGHT_DIR.x * PLAYER_SHADOW_BASE_OFFSET, GLOBAL_LIGHT_DIR.y * PLAYER_SHADOW_BASE_OFFSET);
+        shadow.tint = 0x000000;
+        shadow.alpha = 0.38;
+        shadow.blendMode = PIXI.BLEND_MODES.MULTIPLY;
+        container.addChild(shadow);
+        container.shadowSprite = shadow;
+    }
 
     const body = new PIXI.Sprite(renderAssetCache.shipTexture);
     body.anchor.set(0.5);
     container.addChild(body);
     container.body = body;
 
-    const engineGlow = new PIXI.Sprite(renderAssetCache.engineGlowTexture);
-    engineGlow.anchor.set(0.5);
-    engineGlow.position.set(0, PLAYER_RADIUS * 0.8);
-    engineGlow.tint = 0x00FFFF;
-    engineGlow.alpha = 0;
-    engineGlow.blendMode = PIXI.BLEND_MODES.ADD;
-    body.addChildAt(engineGlow, 0);
-    container.engineGlow = engineGlow;
+    if (!lightweightRemote) {
+        const engineGlow = new PIXI.Sprite(renderAssetCache.engineGlowTexture);
+        engineGlow.anchor.set(0.5);
+        engineGlow.position.set(0, PLAYER_RADIUS * 0.8);
+        engineGlow.tint = 0x00FFFF;
+        engineGlow.alpha = 0;
+        engineGlow.blendMode = PIXI.BLEND_MODES.ADD;
+        body.addChildAt(engineGlow, 0);
+        container.engineGlow = engineGlow;
+    }
 
     if (isLocal) {
         const localIndicator = new PIXI.Sprite(renderAssetCache.localIndicatorTexture);
@@ -3038,42 +3938,44 @@
     container.addChild(gun);
     container.gun = gun;
 
-    const healthBarContainer = new PIXI.Container();
-    healthBarContainer.position.set(0, -PLAYER_RADIUS - 15);
-    const healthBg = new PIXI.Graphics();
-    healthBg.beginFill(0x1F2937, 0.9);
-    healthBg.drawRoundedRect(-PLAYER_RADIUS - 2, -2, PLAYER_RADIUS * 2 + 4, 10, 5);
-    healthBg.endFill();
-    healthBarContainer.addChild(healthBg);
-    const healthBorder = new PIXI.Graphics();
-    healthBorder.lineStyle(1, 0x4B5563, 0.8);
-    healthBorder.drawRoundedRect(-PLAYER_RADIUS - 2, -2, PLAYER_RADIUS * 2 + 4, 10, 5);
-    healthBarContainer.addChild(healthBorder);
-    const healthFg = new PIXI.Graphics();
-    healthBarContainer.addChild(healthFg);
-    container.addChild(healthBarContainer);
-    container.healthFg = healthFg;
-    container.healthBarContainer = healthBarContainer;
+    if (!lightweightRemote) {
+        const healthBarContainer = new PIXI.Container();
+        healthBarContainer.position.set(0, -PLAYER_RADIUS - 15);
+        const healthBg = new PIXI.Graphics();
+        healthBg.beginFill(0x1F2937, 0.9);
+        healthBg.drawRoundedRect(-PLAYER_RADIUS - 2, -2, PLAYER_RADIUS * 2 + 4, 10, 5);
+        healthBg.endFill();
+        healthBarContainer.addChild(healthBg);
+        const healthBorder = new PIXI.Graphics();
+        healthBorder.lineStyle(1, 0x4B5563, 0.8);
+        healthBorder.drawRoundedRect(-PLAYER_RADIUS - 2, -2, PLAYER_RADIUS * 2 + 4, 10, 5);
+        healthBarContainer.addChild(healthBorder);
+        const healthFg = new PIXI.Graphics();
+        healthBarContainer.addChild(healthFg);
+        container.addChild(healthBarContainer);
+        container.healthFg = healthFg;
+        container.healthBarContainer = healthBarContainer;
 
-    const shieldVisual = new PIXI.Sprite(renderAssetCache.shieldTexture);
-    shieldVisual.anchor.set(0.5);
-    shieldVisual.tint = 0x00BFFF;
-    shieldVisual.blendMode = PIXI.BLEND_MODES.ADD;
-    shieldVisual.visible = false;
-    container.addChildAt(shieldVisual, 1);
-    container.shieldVisual = shieldVisual;
+        const shieldVisual = new PIXI.Sprite(renderAssetCache.shieldTexture);
+        shieldVisual.anchor.set(0.5);
+        shieldVisual.tint = 0x00BFFF;
+        shieldVisual.blendMode = PIXI.BLEND_MODES.ADD;
+        shieldVisual.visible = false;
+        container.addChildAt(shieldVisual, 1);
+        container.shieldVisual = shieldVisual;
 
-    const usernameStyle = new PIXI.TextStyle({
-        fontFamily: 'Arial', fontSize: 12, fill: [0xFFFFFF, 0xE5E7EB],
-        stroke: 0x111827, strokeThickness: 3,
-        dropShadow: true, dropShadowColor: 0x000000, dropShadowBlur: 3, dropShadowDistance: 1,
-        align: 'center'
-    });
-    const usernameText = new PIXI.Text(player.username || 'Player', usernameStyle);
-    usernameText.anchor.set(0.5);
-    usernameText.position.y = -PLAYER_RADIUS - 28;
-    container.addChild(usernameText);
-    container.usernameText = usernameText;
+        const usernameStyle = new PIXI.TextStyle({
+            fontFamily: 'Arial', fontSize: 12, fill: [0xFFFFFF, 0xE5E7EB],
+            stroke: 0x111827, strokeThickness: 3,
+            dropShadow: true, dropShadowColor: 0x000000, dropShadowBlur: 3, dropShadowDistance: 1,
+            align: 'center'
+        });
+        const usernameText = new PIXI.Text(player.username || 'Player', usernameStyle);
+        usernameText.anchor.set(0.5);
+        usernameText.position.y = -PLAYER_RADIUS - 28;
+        container.addChild(usernameText);
+        container.usernameText = usernameText;
+    }
 
     container.speedBoostEffect = null;
     container.damageBoostEffect = null;
@@ -3110,36 +4012,47 @@
     if (sprite.respawnText) sprite.respawnText.visible = false;
 }
 
-    function updatePlayerSprite(sprite, player) {
-    sprite.position.x = player.render_x !== undefined ? player.render_x : player.x;
-    sprite.position.y = player.render_y !== undefined ? player.render_y : player.y;
+    function updatePlayerSprite(sprite, player, localAnchorX, localAnchorY, updateContext, skipVisibilityCheck = false) {
+    const targetX = player.render_x !== undefined ? player.render_x : player.x;
+    const targetY = player.render_y !== undefined ? player.render_y : player.y;
+    if (sprite.position.x !== targetX) sprite.position.x = targetX;
+    if (sprite.position.y !== targetY) sprite.position.y = targetY;
 
     const effectiveRotation = (player.render_rotation !== undefined ? player.render_rotation : player.rotation) + (Math.PI / 2);
-    sprite.rotation = effectiveRotation;
+    if (sprite.rotation !== effectiveRotation) sprite.rotation = effectiveRotation;
 
     const isLocalSprite = sprite.playerId === myPlayerId;
-    const denseVisualMode = ultraPerformanceMode || players.size > HIGH_POPULATION_PLAYER_COUNT || smoothedFrameMs > 24;
-    const hideRemoteFxByDensity = denseVisualMode && !isLocalSprite;
-    if (!isLocalSprite && !isWorldPointVisible(sprite.position.x, sprite.position.y, PLAYER_CULL_MARGIN_WORLD)) {
+    const totalPlayerCount = updateContext.totalPlayerCount;
+    const denseVisualMode = updateContext.denseVisualMode;
+    const detailTickDivisor = updateContext.detailTickDivisor;
+    const hideRemoteFxByDensity = !isLocalSprite && (denseVisualMode || !!sprite._lightweightRemote);
+    if (!isLocalSprite && !skipVisibilityCheck && !isWorldPointVisible(targetX, targetY, PLAYER_CULL_MARGIN_WORLD)) {
         hidePlayerSprite(sprite);
         return;
     }
 
     // Keep shadow aligned to global light, not ship heading.
     if (sprite.shadowSprite) {
-        sprite.shadowSprite.visible = !hideRemoteFxByDensity;
-        if (sprite.shadowSprite.visible) {
+        const shadowVisible = !hideRemoteFxByDensity;
+        if (sprite.shadowSprite.visible !== shadowVisible) {
+            sprite.shadowSprite.visible = shadowVisible;
+        }
+        if (shadowVisible) {
             const distance = PLAYER_SHADOW_BASE_OFFSET;
             const worldOffsetX = GLOBAL_LIGHT_DIR.x * distance;
             const worldOffsetY = GLOBAL_LIGHT_DIR.y * distance;
             const cos = Math.cos(-effectiveRotation);
             const sin = Math.sin(-effectiveRotation);
-            sprite.shadowSprite.position.set(
-                worldOffsetX * cos - worldOffsetY * sin,
-                worldOffsetX * sin + worldOffsetY * cos
-            );
-            sprite.shadowSprite.rotation = -effectiveRotation;
-            sprite.shadowSprite.alpha = player.alive ? 0.38 : 0.24;
+            const shadowX = worldOffsetX * cos - worldOffsetY * sin;
+            const shadowY = worldOffsetX * sin + worldOffsetY * cos;
+            if (sprite.shadowSprite.position.x !== shadowX) sprite.shadowSprite.position.x = shadowX;
+            if (sprite.shadowSprite.position.y !== shadowY) sprite.shadowSprite.position.y = shadowY;
+            const shadowRotation = -effectiveRotation;
+            if (sprite.shadowSprite.rotation !== shadowRotation) sprite.shadowSprite.rotation = shadowRotation;
+            const shadowAlpha = player.alive ? 0.38 : 0.24;
+            if (Math.abs(sprite.shadowSprite.alpha - shadowAlpha) > ALPHA_EPSILON) {
+                sprite.shadowSprite.alpha = shadowAlpha;
+            }
         }
     }
 
@@ -3152,55 +4065,77 @@
     }
 
     if (sprite.localIndicator) {
-        sprite.localIndicator.visible = (isLocalSprite && player.alive);
+        const localIndicatorVisible = isLocalSprite && player.alive;
+        if (sprite.localIndicator.visible !== localIndicatorVisible) {
+            sprite.localIndicator.visible = localIndicatorVisible;
+        }
     }
 
     if (sprite.engineGlow) {
         if (hideRemoteFxByDensity) {
-            sprite.engineGlow.visible = false;
+            if (sprite.engineGlow.visible) sprite.engineGlow.visible = false;
         } else {
         const moving = player.velocity_x !== 0 || player.velocity_y !== 0;
         if (player.alive && moving) {
-            sprite.engineGlow.visible = true;
+            if (!sprite.engineGlow.visible) sprite.engineGlow.visible = true;
             const speed = Math.sqrt(player.velocity_x * player.velocity_x + player.velocity_y * player.velocity_y);
             const intensity = Math.min(1, speed / 150);
-            sprite.engineGlow.alpha = 0.35 + intensity * 0.45;
-            sprite.engineGlow.scale.set(0.8 + intensity * 0.4);
-        } else {
+            const glowAlpha = 0.35 + intensity * 0.45;
+            if (Math.abs(sprite.engineGlow.alpha - glowAlpha) > ALPHA_EPSILON) {
+                sprite.engineGlow.alpha = glowAlpha;
+            }
+            const glowScale = 0.8 + intensity * 0.4;
+            if (Math.abs((sprite.engineGlow.scale.x || 0) - glowScale) > TRANSFORM_EPSILON) {
+                sprite.engineGlow.scale.set(glowScale);
+            }
+        } else if (sprite.engineGlow.visible) {
             sprite.engineGlow.visible = false;
         }
         }
     }
 
-    sprite.visible = player.alive || (player.respawn_timer !== undefined && player.respawn_timer > 0);
-    sprite.alpha = player.alive ? 1 : 0.55;
+    const playerVisible = player.alive || (player.respawn_timer !== undefined && player.respawn_timer > 0);
+    if (sprite.visible !== playerVisible) sprite.visible = playerVisible;
+    const playerAlpha = player.alive ? 1 : 0.55;
+    if (Math.abs(sprite.alpha - playerAlpha) > ALPHA_EPSILON) {
+        sprite.alpha = playerAlpha;
+    }
 
-    const localX = localPlayerState ? (localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x) : sprite.position.x;
-    const localY = localPlayerState ? (localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y) : sprite.position.y;
-    const dx = sprite.position.x - localX;
-    const dy = sprite.position.y - localY;
-    const farDetailMode = ultraPerformanceMode || players.size > HIGH_POPULATION_PLAYER_COUNT || ((dx * dx + dy * dy) > FAR_DETAIL_DISTANCE_SQ);
+    const localX = Number.isFinite(localAnchorX) ? localAnchorX : targetX;
+    const localY = Number.isFinite(localAnchorY) ? localAnchorY : targetY;
+    const dx = targetX - localX;
+    const dy = targetY - localY;
+    const farDetailMode =
+        ultraPerformanceMode ||
+        totalPlayerCount > HIGH_POPULATION_PLAYER_COUNT ||
+        ((STABLE_MODE_FORCED && !isLocalSprite) || ((dx * dx + dy * dy) > FAR_DETAIL_DISTANCE_SQ));
 
     if (sprite._lastFarDetail !== farDetailMode || sprite._lastDenseVisualMode !== hideRemoteFxByDensity) {
         sprite._lastFarDetail = farDetailMode;
         sprite._lastDenseVisualMode = hideRemoteFxByDensity;
         if (sprite.usernameText) {
-            sprite.usernameText.visible = (!farDetailMode && !hideRemoteFxByDensity) || isLocalSprite;
+            const usernameVisible = (!farDetailMode && !hideRemoteFxByDensity) || isLocalSprite;
+            if (sprite.usernameText.visible !== usernameVisible) {
+                sprite.usernameText.visible = usernameVisible;
+            }
         }
         if (sprite.healthBarContainer) {
-            sprite.healthBarContainer.visible = ((!farDetailMode && !hideRemoteFxByDensity) || isLocalSprite) && player.alive;
+            const healthVisible = ((!farDetailMode && !hideRemoteFxByDensity) || isLocalSprite) && player.alive;
+            if (sprite.healthBarContainer.visible !== healthVisible) {
+                sprite.healthBarContainer.visible = healthVisible;
+            }
         }
     }
 
     // Throttle expensive visuals for far-detail remote players.
-    const shouldSkipDetailTick = farDetailMode && !isLocalSprite && (frameCounter % (ultraPerformanceMode ? 4 : 2) !== 0);
+    const shouldSkipDetailTick = farDetailMode && !isLocalSprite && (frameCounter % detailTickDivisor !== 0);
     if (!shouldSkipDetailTick) {
         updatePlayerGun(sprite, player);
         updatePlayerHealthBar(sprite, player);
         updateShieldVisual(sprite, player.shield_current || 0, player.shield_max || 0);
     }
 
-    if (!shouldSkipDetailTick && sprite.usernameText.text !== (player.username || 'Player')) {
+    if (!shouldSkipDetailTick && sprite.usernameText && sprite.usernameText.text !== (player.username || 'Player')) {
         sprite.usernameText.text = player.username || 'Player';
     }
 
@@ -3213,8 +4148,8 @@
             sprite.addChild(sprite.respawnText);
         }
         sprite.respawnText.text = Math.ceil(player.respawn_timer) + 's';
-        sprite.respawnText.visible = true;
-    } else if (sprite.respawnText) {
+        if (!sprite.respawnText.visible) sprite.respawnText.visible = true;
+    } else if (sprite.respawnText && sprite.respawnText.visible) {
         sprite.respawnText.visible = false;
     }
 
@@ -3224,9 +4159,12 @@
             sprite.addChildAt(sprite.speedBoostEffect, 0);
         }
         if (sprite.speedBoostEffect) {
-            sprite.speedBoostEffect.visible = !hideRemoteFxByDensity && !farDetailMode && !shouldSkipDetailTick;
+            const speedBoostVisible = !hideRemoteFxByDensity && !farDetailMode && !shouldSkipDetailTick;
+            if (sprite.speedBoostEffect.visible !== speedBoostVisible) {
+                sprite.speedBoostEffect.visible = speedBoostVisible;
+            }
         }
-    } else if (sprite.speedBoostEffect) {
+    } else if (sprite.speedBoostEffect && sprite.speedBoostEffect.visible) {
         sprite.speedBoostEffect.visible = false;
     }
 
@@ -3241,9 +4179,12 @@
             sprite.addChild(sprite.carriedFlagSprite);
             sprite._lastCarryingFlagTeam = carryingTeam;
         }
-        sprite.carriedFlagSprite.visible = !hideRemoteFxByDensity && !farDetailMode && !shouldSkipDetailTick;
+        const carriedFlagVisible = !hideRemoteFxByDensity && !farDetailMode && !shouldSkipDetailTick;
+        if (sprite.carriedFlagSprite.visible !== carriedFlagVisible) {
+            sprite.carriedFlagSprite.visible = carriedFlagVisible;
+        }
     } else if (sprite.carriedFlagSprite) {
-        sprite.carriedFlagSprite.visible = false;
+        if (sprite.carriedFlagSprite.visible) sprite.carriedFlagSprite.visible = false;
         sprite._lastCarryingFlagTeam = 0;
     }
 }
@@ -3252,11 +4193,11 @@
         const gun = sprite.gun;
         if (!gun) return;
         if (!player.alive) {
-            gun.visible = false;
+            if (gun.visible) gun.visible = false;
             return;
         }
 
-        gun.visible = true;
+        if (!gun.visible) gun.visible = true;
         const weapon = player.weapon ?? GP.WeaponType.Pistol;
         if (sprite._lastWeapon !== weapon) {
             gun.texture = renderAssetCache.gunTextures.get(weapon) || renderAssetCache.gunTextures.get(GP.WeaponType.Pistol);
@@ -3267,11 +4208,17 @@
         const hasDamageBoost = player.damage_boost_remaining > 0;
         if (hasDamageBoost) {
             const pulse = Math.sin(frameNowMs * 0.01) * 0.25 + 0.75;
-            gun.tint = PIXI.utils.rgb2hex([1, pulse, pulse]);
-            gun.alpha = 0.85 + 0.15 * pulse;
+            const boostedTint = PIXI.utils.rgb2hex([1, pulse, pulse]);
+            if (gun.tint !== boostedTint) {
+                gun.tint = boostedTint;
+            }
+            const boostedAlpha = 0.85 + 0.15 * pulse;
+            if (Math.abs(gun.alpha - boostedAlpha) > ALPHA_EPSILON) {
+                gun.alpha = boostedAlpha;
+            }
         } else {
-            gun.tint = baseTint;
-            gun.alpha = 1;
+            if (gun.tint !== baseTint) gun.tint = baseTint;
+            if (gun.alpha !== 1) gun.alpha = 1;
         }
         sprite._lastDamageBoost = hasDamageBoost;
     }
@@ -3384,38 +4331,114 @@ function updateShieldVisual(sprite, current, max) {
     sprite._lastShieldMax = max;
 }
 
+function getWebGPUProjectileSize(weaponType) {
+    const size = WEBGPU_PROJECTILE_BASE_SIZE[weaponType];
+    return Number.isFinite(size) ? size : WEBGPU_PROJECTILE_BASE_SIZE[GP.WeaponType.Pistol];
+}
+
+function ensureWebGPUProjectileScratchCapacity(instanceCount) {
+    const requiredFloats = Math.max(0, instanceCount) * WEBGPU_PROJECTILE_INSTANCE_STRIDE;
+    if (requiredFloats <= webgpuProjectileInstanceScratch.length) {
+        return webgpuProjectileInstanceScratch;
+    }
+    let nextSize = Math.max(1024 * WEBGPU_PROJECTILE_INSTANCE_STRIDE, webgpuProjectileInstanceScratch.length || 0);
+    while (nextSize < requiredFloats) {
+        nextSize *= 2;
+    }
+    webgpuProjectileInstanceScratch = new Float32Array(nextSize);
+    return webgpuProjectileInstanceScratch;
+}
+
+function writeWebGPUProjectileInstance(buffer, offset, projectile, worldX, worldY) {
+    const weaponType = projectile.weapon_type ?? GP.WeaponType.Pistol;
+    const tint = weaponColors[weaponType] || 0xFFFFFF;
+    const denseVisualMode =
+        ultraPerformanceMode ||
+        STABLE_MODE_FORCED ||
+        players.size > HIGH_POPULATION_PLAYER_COUNT ||
+        smoothedFrameMs > STABLE_DENSE_FRAME_MS;
+
+    let alpha = 0.9;
+    if (denseVisualMode) {
+        alpha = 0.88;
+    } else if (weaponType === GP.WeaponType.Sniper || weaponType === GP.WeaponType.Rifle) {
+        const projectileId = projectile.id;
+        const idSeed = typeof projectileId === 'string' ? projectileId.length : (Number(projectileId) || 0);
+        alpha = Math.sin(frameNowMs * 0.02 + idSeed) * 0.08 + 0.92;
+    }
+
+    buffer[offset] = worldX;
+    buffer[offset + 1] = worldY;
+    buffer[offset + 2] = getWebGPUProjectileSize(weaponType);
+    buffer[offset + 3] = ((tint >> 16) & 0xFF) / 255;
+    buffer[offset + 4] = ((tint >> 8) & 0xFF) / 255;
+    buffer[offset + 5] = (tint & 0xFF) / 255;
+    buffer[offset + 6] = alpha;
+    return offset + WEBGPU_PROJECTILE_INSTANCE_STRIDE;
+}
+
         // Create projectile sprite
 function createProjectileSprite(projectile) {
     const weaponType = projectile.weapon_type ?? GP.WeaponType.Pistol;
     const texture = renderAssetCache.projectileTextures.get(weaponType) || renderAssetCache.projectileTextures.get(GP.WeaponType.Pistol);
-    const sprite = new PIXI.Sprite(texture);
+    const sprite = projectileSpritePool.length > 0 ? projectileSpritePool.pop() : new PIXI.Sprite(texture);
+    if (sprite.texture !== texture) {
+        sprite.texture = texture;
+    }
     sprite.anchor.set(0.5);
     sprite.projectileId = projectile.id;
     sprite.weaponType = weaponType;
     sprite.tint = weaponColors[weaponType] || 0xFFFFFF;
     sprite.alpha = 0.92;
     sprite.blendMode = weaponType === GP.WeaponType.Sniper ? PIXI.BLEND_MODES.ADD : PIXI.BLEND_MODES.NORMAL;
+    sprite._lastVelX = Number.NaN;
+    sprite._lastVelY = Number.NaN;
     return sprite;
 }
 
+function releaseProjectileSprite(sprite) {
+    if (!sprite) return;
+    sprite.visible = false;
+    sprite.projectileId = null;
+    sprite.weaponType = GP.WeaponType.Pistol;
+    sprite.rotation = 0;
+    sprite.alpha = 0.92;
+    sprite.scale.set(1, 1);
+    sprite.tint = weaponColors[GP.WeaponType.Pistol] || 0xFFFFFF;
+    sprite.blendMode = PIXI.BLEND_MODES.NORMAL;
+    sprite._lastVelX = Number.NaN;
+    sprite._lastVelY = Number.NaN;
 
-function updateProjectileSprite(sprite, projectile, px = null, py = null) {
+    if (projectileSpritePool.length < PROJECTILE_SPRITE_POOL_LIMIT) {
+        projectileSpritePool.push(sprite);
+    } else {
+        sprite.destroy({ children: true });
+    }
+}
+
+
+function updateProjectileSprite(sprite, projectile, px = null, py = null, skipVisibilityCheck = false, denseVisualMode = false) {
     const worldX = px !== null ? px : (projectile.render_x !== undefined ? projectile.render_x : projectile.x);
     const worldY = py !== null ? py : (projectile.render_y !== undefined ? projectile.render_y : projectile.y);
-    sprite.position.x = worldX;
-    sprite.position.y = worldY;
+    if (sprite.position.x !== worldX) sprite.position.x = worldX;
+    if (sprite.position.y !== worldY) sprite.position.y = worldY;
 
-    if (!isWorldPointVisible(worldX, worldY, PROJECTILE_CULL_MARGIN_WORLD)) {
-        sprite.visible = false;
+    if (!skipVisibilityCheck && !isWorldPointVisible(worldX, worldY, PROJECTILE_CULL_MARGIN_WORLD)) {
+        if (sprite.visible) sprite.visible = false;
         return false;
     }
 
-    sprite.visible = true;
+    if (!sprite.visible) sprite.visible = true;
     if (projectile.velocity_x !== undefined && projectile.velocity_y !== undefined) {
-        sprite.rotation = Math.atan2(projectile.velocity_y, projectile.velocity_x);
+        const vx = projectile.velocity_x || 0;
+        const vy = projectile.velocity_y || 0;
+        if (vx !== sprite._lastVelX || vy !== sprite._lastVelY) {
+            sprite.rotation = Math.atan2(vy, vx);
+            sprite._lastVelX = vx;
+            sprite._lastVelY = vy;
+        }
     }
 
-    const denseVisualMode = ultraPerformanceMode || players.size > HIGH_POPULATION_PLAYER_COUNT || smoothedFrameMs > 24;
     const desiredBlendMode =
         !denseVisualMode && sprite.weaponType === GP.WeaponType.Sniper
             ? PIXI.BLEND_MODES.ADD
@@ -3424,17 +4447,23 @@ function updateProjectileSprite(sprite, projectile, px = null, py = null) {
         sprite.blendMode = desiredBlendMode;
     }
 
-    if (ultraPerformanceMode) {
-        sprite.alpha = 0.88;
+    if (ultraPerformanceMode || STABLE_MODE_FORCED || denseVisualMode) {
+        if (Math.abs(sprite.alpha - 0.88) > ALPHA_EPSILON) {
+            sprite.alpha = 0.88;
+        }
         return true;
     }
 
     if (sprite.weaponType === GP.WeaponType.Sniper || sprite.weaponType === GP.WeaponType.Rifle) {
         const idSeed = typeof sprite.projectileId === 'string' ? sprite.projectileId.length : (Number(sprite.projectileId) || 0);
         const pulse = Math.sin(frameNowMs * 0.02 + idSeed) * 0.08 + 0.92;
-        sprite.alpha = pulse;
+        if (Math.abs(sprite.alpha - pulse) > ALPHA_EPSILON) {
+            sprite.alpha = pulse;
+        }
     } else {
-        sprite.alpha = 0.9;
+        if (Math.abs(sprite.alpha - 0.9) > ALPHA_EPSILON) {
+            sprite.alpha = 0.9;
+        }
     }
     return true;
 }
@@ -4381,6 +5410,8 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             updateFramePerformanceSignals(app.ticker.deltaMS);
             evaluateUltraPerformanceMode(currentTime);
             evaluateAdaptiveEffectsProfile(currentTime);
+            projectileRawModeActive = shouldUseRawProjectilePositions();
+            applyDynamicEffectsCap();
             renderTimestamp = currentTime - adaptiveInterpolationDelayMs;
             const clientDeltaTime = app.ticker.deltaMS / 1000;
             const perfStartTime = perfEnabled ? perfStart() : 0;
@@ -4397,6 +5428,8 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 window.__e2e.playerRenderCap = lastPlayerRenderCap;
                 window.__e2e.rendererBackend = getRendererBackendSummary();
                 window.__e2e.webgpuSupported = typeof navigator.gpu !== 'undefined';
+                window.__e2e.webgpuProjectileLayerEnabled = !!webgpuProjectileLayer;
+                window.__e2e.webgpuProjectileLayerReady = !!(webgpuProjectileLayer && webgpuProjectileLayer.ready);
                 window.__e2e.projectileCount = projectiles.size;
                 window.__e2e.visibleProjectileCount = lastVisibleProjectiles;
                 window.__e2e.projectileRenderCap = lastProjectileRenderCap;
@@ -4404,6 +5437,17 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 window.__e2e.activeEffectCount = effectsManager?.activeEffects?.length || 0;
                 window.__e2e.fxStressActive = fxStressIntervalId !== null;
                 window.__e2e.effectsProfile = activeEffectsProfileName;
+                window.__e2e.workerCullEnabled = WORKER_CULL_ENABLED;
+                window.__e2e.workerCullReady = cullWorkerReady;
+                window.__e2e.workerCullBusy = cullWorkerBusy;
+                window.__e2e.workerCullKernel = cullWorkerStats.wasmKernelLabel;
+                window.__e2e.workerCullDispatches = cullWorkerStats.dispatches;
+                window.__e2e.workerCullResponses = cullWorkerStats.responses;
+                window.__e2e.workerCullAvgComputeMs = Number(cullWorkerStats.avgComputeMs.toFixed(3));
+                window.__e2e.workerCullLastComputeMs = Number(cullWorkerStats.lastComputeMs.toFixed(3));
+                window.__e2e.workerCullDropped = cullWorkerStats.dropped;
+                window.__e2e.workerCullResultSeq = cullWorkerResultSeq;
+                window.__e2e.projectileRawMode = projectileRawModeActive;
                 window.__e2e.fullFxMode = !!(
                     gameSettings &&
                     gameSettings.graphicsQuality === 'high' &&
@@ -4436,30 +5480,33 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             }
 
     // Keep new projectiles smooth while interpolation history catches up.
-    if (perfEnabled) {
-        const t = perfStart();
-        projectiles.forEach(proj => {
-            if (!Number.isFinite(proj.render_x) || !Number.isFinite(proj.render_y)) {
-                const vx = Number(proj.velocity_x) || 0;
-                const vy = Number(proj.velocity_y) || 0;
-                proj.render_x = proj.x + vx * clientDeltaTime;
-                proj.render_y = proj.y + vy * clientDeltaTime;
-            }
-        });
-        perfEnd('projectiles', t);
-    } else {
-        projectiles.forEach(proj => {
-            if (!Number.isFinite(proj.render_x) || !Number.isFinite(proj.render_y)) {
-                const vx = Number(proj.velocity_x) || 0;
-                const vy = Number(proj.velocity_y) || 0;
-                proj.render_x = proj.x + vx * clientDeltaTime;
-                proj.render_y = proj.y + vy * clientDeltaTime;
-            }
-        });
-            }
+    if (!projectileRawModeActive) {
+        if (perfEnabled) {
+            const t = perfStart();
+            projectiles.forEach(proj => {
+                if (!Number.isFinite(proj.render_x) || !Number.isFinite(proj.render_y)) {
+                    const vx = Number(proj.velocity_x) || 0;
+                    const vy = Number(proj.velocity_y) || 0;
+                    proj.render_x = proj.x + vx * clientDeltaTime;
+                    proj.render_y = proj.y + vy * clientDeltaTime;
+                }
+            });
+            perfEnd('projectiles', t);
+        } else {
+            projectiles.forEach(proj => {
+                if (!Number.isFinite(proj.render_x) || !Number.isFinite(proj.render_y)) {
+                    const vx = Number(proj.velocity_x) || 0;
+                    const vy = Number(proj.velocity_y) || 0;
+                    proj.render_x = proj.x + vx * clientDeltaTime;
+                    proj.render_y = proj.y + vy * clientDeltaTime;
+                }
+            });
+        }
+    }
 
 
             updateWorldViewBounds();
+            dispatchCullWorkerIfNeeded(currentTime);
             if (perfEnabled) {
                 const t = perfStart();
                 updateSprites();
@@ -4477,7 +5524,18 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             
             // Update aiming system
             if (showAiming && localPlayerState && localPlayerState.alive) {
-                const shouldDrawAiming = !ultraPerformanceMode || smoothedFrameMs < 24 || (frameCounter % 2 === 0);
+                const shouldPrioritizeAiming =
+                    !!inputState.shooting ||
+                    localPlayerState.weapon === GP.WeaponType.Sniper;
+                const denseAimingMode =
+                    ultraPerformanceMode ||
+                    STABLE_MODE_FORCED ||
+                    players.size >= AIMING_LITE_PLAYER_THRESHOLD ||
+                    smoothedFrameMs > TARGET_FRAME_MS_60FPS;
+                const aimingFrameStride = shouldPrioritizeAiming
+                    ? 1
+                    : (denseAimingMode ? 2 : 1);
+                const shouldDrawAiming = (frameCounter % aimingFrameStride) === 0;
                 if (shouldDrawAiming) {
                     if (perfEnabled) {
                         const t = perfStart();
@@ -4720,6 +5778,10 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         function interpolateEntities(deltaSeconds) {
             const now = Date.now();
             const renderTime = now - adaptiveInterpolationDelayMs;
+            const projectileInterpolationSet = projectileRawModeActive ? null : getProjectileInterpolationSet();
+            const playerPositionGain = smoothFollowGain(0.3, deltaSeconds);
+            const projectilePositionGain = smoothFollowGain(0.52, deltaSeconds);
+            const rotationGain = smoothFollowGain(0.34, deltaSeconds);
 
             while (serverUpdates.length > 0 && serverUpdates[0].timestamp <= renderTime - INTERPOLATION_RETENTION_MS) {
                 serverUpdates.shift();
@@ -4758,42 +5820,79 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         const latestState = latestUpdate.players.get(playerId);
                         if (!latestState) return;
 
-                        const targetX = latestState.x + (Number(latestState.velocity_x) || 0) * playerExtraSec;
-                        const targetY = latestState.y + (Number(latestState.velocity_y) || 0) * playerExtraSec;
-                        const targetRotation = Number(latestState.rotation);
-                        applyRenderTarget(currentPlayerState, targetX, targetY, targetRotation, deltaSeconds);
-                        currentPlayerState.velocity_x = Number(latestState.velocity_x) || 0;
-                        currentPlayerState.velocity_y = Number(latestState.velocity_y) || 0;
+                        const velocityX = latestState.velocity_x || 0;
+                        const velocityY = latestState.velocity_y || 0;
+                        const targetX = latestState.x + velocityX * playerExtraSec;
+                        const targetY = latestState.y + velocityY * playerExtraSec;
+                        applyRenderTarget(
+                            currentPlayerState,
+                            targetX,
+                            targetY,
+                            latestState.rotation,
+                            playerPositionGain,
+                            rotationGain,
+                            POSITION_SNAP_DISTANCE_SQ
+                        );
+                        currentPlayerState.velocity_x = velocityX;
+                        currentPlayerState.velocity_y = velocityY;
                     });
 
-                    projectiles.forEach((currentProjState, projId) => {
-                        const latestState = latestUpdate.projectiles.get(projId);
-                        if (!latestState) return;
-                        const vx = Number(latestState.velocity_x) || 0;
-                        const vy = Number(latestState.velocity_y) || 0;
-                        const targetX = latestState.x + vx * projectileExtraSec;
-                        const targetY = latestState.y + vy * projectileExtraSec;
-                        const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
-                        applyRenderTarget(currentProjState, targetX, targetY, targetRotation, deltaSeconds, { projectile: true });
-                        currentProjState.velocity_x = vx;
-                        currentProjState.velocity_y = vy;
-                    });
+                    if (!projectileRawModeActive) {
+                        forEachInterpolatedProjectile(projectileInterpolationSet, (currentProjState, projId) => {
+                            const latestState = latestUpdate.projectiles.get(projId);
+                            if (!latestState) return;
+                            const vx = latestState.velocity_x || 0;
+                            const vy = latestState.velocity_y || 0;
+                            const targetX = latestState.x + vx * projectileExtraSec;
+                            const targetY = latestState.y + vy * projectileExtraSec;
+                            const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
+                            applyRenderTarget(
+                                currentProjState,
+                                targetX,
+                                targetY,
+                                targetRotation,
+                                projectilePositionGain,
+                                rotationGain,
+                                PROJECTILE_SNAP_DISTANCE_SQ
+                            );
+                            currentProjState.velocity_x = vx;
+                            currentProjState.velocity_y = vy;
+                        });
+                    }
                 } else {
                     const oldestUpdate = serverUpdates[0];
                     players.forEach((currentPlayerState, playerId) => {
                         if (playerId === myPlayerId) return;
                         const state = oldestUpdate.players.get(playerId);
                         if (!state) return;
-                        applyRenderTarget(currentPlayerState, state.x, state.y, Number(state.rotation), deltaSeconds);
+                        applyRenderTarget(
+                            currentPlayerState,
+                            state.x,
+                            state.y,
+                            state.rotation,
+                            playerPositionGain,
+                            rotationGain,
+                            POSITION_SNAP_DISTANCE_SQ
+                        );
                     });
-                    projectiles.forEach((currentProjState, projId) => {
-                        const state = oldestUpdate.projectiles.get(projId);
-                        if (!state) return;
-                        const vx = Number(state.velocity_x) || 0;
-                        const vy = Number(state.velocity_y) || 0;
-                        const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
-                        applyRenderTarget(currentProjState, state.x, state.y, targetRotation, deltaSeconds, { projectile: true });
-                    });
+                    if (!projectileRawModeActive) {
+                        forEachInterpolatedProjectile(projectileInterpolationSet, (currentProjState, projId) => {
+                            const state = oldestUpdate.projectiles.get(projId);
+                            if (!state) return;
+                            const vx = state.velocity_x || 0;
+                            const vy = state.velocity_y || 0;
+                            const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
+                            applyRenderTarget(
+                                currentProjState,
+                                state.x,
+                                state.y,
+                                targetRotation,
+                                projectilePositionGain,
+                                rotationGain,
+                                PROJECTILE_SNAP_DISTANCE_SQ
+                            );
+                        });
+                    }
                 }
                 return;
             }
@@ -4812,57 +5911,78 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 if (state1 && state2) {
                     const targetX = lerp(state1.x, state2.x, clampedT);
                     const targetY = lerp(state1.y, state2.y, clampedT);
-                    const rot1 = Number(state1.rotation);
-                    const rot2 = Number(state2.rotation);
+                    const rot1 = state1.rotation;
+                    const rot2 = state2.rotation;
                     const rotDiff = normalizeAngle(rot2 - rot1);
                     const targetRotation = rot1 + rotDiff * clampedT;
-                    applyRenderTarget(currentPlayerState, targetX, targetY, targetRotation, deltaSeconds);
-                    currentPlayerState.velocity_x = lerp(Number(state1.velocity_x) || 0, Number(state2.velocity_x) || 0, clampedT);
-                    currentPlayerState.velocity_y = lerp(Number(state1.velocity_y) || 0, Number(state2.velocity_y) || 0, clampedT);
+                    applyRenderTarget(
+                        currentPlayerState,
+                        targetX,
+                        targetY,
+                        targetRotation,
+                        playerPositionGain,
+                        rotationGain,
+                        POSITION_SNAP_DISTANCE_SQ
+                    );
+                    currentPlayerState.velocity_x = lerp(state1.velocity_x || 0, state2.velocity_x || 0, clampedT);
+                    currentPlayerState.velocity_y = lerp(state1.velocity_y || 0, state2.velocity_y || 0, clampedT);
                 } else if (state2 || state1) {
                     const fallback = state2 || state1;
                     applyRenderTarget(
                         currentPlayerState,
                         fallback.x,
                         fallback.y,
-                        Number(fallback.rotation),
-                        deltaSeconds
+                        fallback.rotation,
+                        playerPositionGain,
+                        rotationGain,
+                        POSITION_SNAP_DISTANCE_SQ
                     );
-                    currentPlayerState.velocity_x = Number(fallback.velocity_x) || 0;
-                    currentPlayerState.velocity_y = Number(fallback.velocity_y) || 0;
+                    currentPlayerState.velocity_x = fallback.velocity_x || 0;
+                    currentPlayerState.velocity_y = fallback.velocity_y || 0;
                 }
             });
 
-            projectiles.forEach((currentProjState, projId) => {
-                const state1 = update1.projectiles.get(projId);
-                const state2 = update2.projectiles.get(projId);
+            if (!projectileRawModeActive) {
+                forEachInterpolatedProjectile(projectileInterpolationSet, (currentProjState, projId) => {
+                    const state1 = update1.projectiles.get(projId);
+                    const state2 = update2.projectiles.get(projId);
 
-                if (state1 && state2) {
-                    const targetX = lerp(state1.x, state2.x, clampedT);
-                    const targetY = lerp(state1.y, state2.y, clampedT);
-                    const vx = lerp(Number(state1.velocity_x) || 0, Number(state2.velocity_x) || 0, clampedT);
-                    const vy = lerp(Number(state1.velocity_y) || 0, Number(state2.velocity_y) || 0, clampedT);
-                    const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
-                    applyRenderTarget(currentProjState, targetX, targetY, targetRotation, deltaSeconds, { projectile: true });
-                    currentProjState.velocity_x = vx;
-                    currentProjState.velocity_y = vy;
-                } else if (state2 || state1) {
-                    const fallback = state2 || state1;
-                    const vx = Number(fallback.velocity_x) || 0;
-                    const vy = Number(fallback.velocity_y) || 0;
-                    const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
-                    applyRenderTarget(
-                        currentProjState,
-                        fallback.x,
-                        fallback.y,
-                        targetRotation,
-                        deltaSeconds,
-                        { projectile: true }
-                    );
-                    currentProjState.velocity_x = vx;
-                    currentProjState.velocity_y = vy;
-                }
-            });
+                    if (state1 && state2) {
+                        const targetX = lerp(state1.x, state2.x, clampedT);
+                        const targetY = lerp(state1.y, state2.y, clampedT);
+                        const vx = lerp(state1.velocity_x || 0, state2.velocity_x || 0, clampedT);
+                        const vy = lerp(state1.velocity_y || 0, state2.velocity_y || 0, clampedT);
+                        const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
+                        applyRenderTarget(
+                            currentProjState,
+                            targetX,
+                            targetY,
+                            targetRotation,
+                            projectilePositionGain,
+                            rotationGain,
+                            PROJECTILE_SNAP_DISTANCE_SQ
+                        );
+                        currentProjState.velocity_x = vx;
+                        currentProjState.velocity_y = vy;
+                    } else if (state2 || state1) {
+                        const fallback = state2 || state1;
+                        const vx = fallback.velocity_x || 0;
+                        const vy = fallback.velocity_y || 0;
+                        const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
+                        applyRenderTarget(
+                            currentProjState,
+                            fallback.x,
+                            fallback.y,
+                            targetRotation,
+                            projectilePositionGain,
+                            rotationGain,
+                            PROJECTILE_SNAP_DISTANCE_SQ
+                        );
+                        currentProjState.velocity_x = vx;
+                        currentProjState.velocity_y = vy;
+                    }
+                });
+            }
         }
 
         function maybeRecordInterpolationSnapshot(serverTime) {
@@ -4920,43 +6040,75 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         function updateSprites() {
             // Update player sprites
             const playerRenderCap = getPlayerRenderCap();
+            const totalPlayerCount = players.size;
             const localAnchorX = localPlayerState
                 ? (localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x)
                 : 0;
             const localAnchorY = localPlayerState
                 ? (localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y)
                 : 0;
+            const playerDenseVisualMode =
+                ultraPerformanceMode ||
+                totalPlayerCount > HIGH_POPULATION_PLAYER_COUNT ||
+                smoothedFrameMs > 24 ||
+                (STABLE_MODE_FORCED && (totalPlayerCount >= 24 || smoothedFrameMs > STABLE_DENSE_FRAME_MS));
+            const playerUpdateContext = {
+                totalPlayerCount,
+                denseVisualMode: playerDenseVisualMode,
+                detailTickDivisor: ultraPerformanceMode ? 4 : (STABLE_MODE_FORCED ? 3 : 2)
+            };
             const remoteRenderCap = Math.max(0, playerRenderCap - ((myPlayerId && players.has(myPlayerId)) ? 1 : 0));
             const remotePriorityOverflowCap = remoteRenderCap > 0
                 ? Math.max(4, Math.floor(remoteRenderCap * 0.1))
                 : 0;
             let renderedRemotePlayers = 0;
             let visiblePlayers = 0;
+            const workerPlayerSet = cullWorkerResult?.playerSet || null;
+            const workerProjectileSet = cullWorkerResult?.projectileSet || null;
+            const playerCullLeft = worldViewBounds.left - PLAYER_CULL_MARGIN_WORLD;
+            const playerCullRight = worldViewBounds.right + PLAYER_CULL_MARGIN_WORLD;
+            const playerCullTop = worldViewBounds.top - PLAYER_CULL_MARGIN_WORLD;
+            const playerCullBottom = worldViewBounds.bottom + PLAYER_CULL_MARGIN_WORLD;
 
-            players.forEach((playerEntry, playerId) => {
+            for (const [playerId, playerEntry] of players) {
                 const player = (playerId === myPlayerId && localPlayerState) ? localPlayerState : playerEntry;
                 const isLocal = playerId === myPlayerId;
                 const px = player.render_x !== undefined ? player.render_x : player.x;
                 const py = player.render_y !== undefined ? player.render_y : player.y;
                 let sprite = playerSprites.get(playerId);
                 if (!isLocal) {
-                    const inView = isWorldPointVisible(px, py, PLAYER_CULL_MARGIN_WORLD);
-                    if (!inView) {
-                        if (sprite) hidePlayerSprite(sprite);
-                        return;
-                    }
+                    if (workerPlayerSet) {
+                        if (!workerPlayerSet.has(playerId)) {
+                            if (sprite) hidePlayerSprite(sprite);
+                            continue;
+                        }
+                    } else {
+                        const inView =
+                            px >= playerCullLeft &&
+                            px <= playerCullRight &&
+                            py >= playerCullTop &&
+                            py <= playerCullBottom;
+                        if (!inView) {
+                            if (sprite) hidePlayerSprite(sprite);
+                            continue;
+                        }
 
-                    const dx = px - localAnchorX;
-                    const dy = py - localAnchorY;
-                    const isPriorityPlayer = (dx * dx + dy * dy) <= PLAYER_PRIORITY_DISTANCE_SQ;
-                    const allowedRemoteCount = isPriorityPlayer
-                        ? (remoteRenderCap + remotePriorityOverflowCap)
-                        : remoteRenderCap;
-                    if (renderedRemotePlayers >= allowedRemoteCount) {
-                        if (sprite) hidePlayerSprite(sprite);
-                        return;
+                        const dx = px - localAnchorX;
+                        const dy = py - localAnchorY;
+                        const isPriorityPlayer = (dx * dx + dy * dy) <= PLAYER_PRIORITY_DISTANCE_SQ;
+                        const allowedRemoteCount = isPriorityPlayer
+                            ? (remoteRenderCap + remotePriorityOverflowCap)
+                            : remoteRenderCap;
+                        if (renderedRemotePlayers >= allowedRemoteCount) {
+                            if (sprite) hidePlayerSprite(sprite);
+                            continue;
+                        }
+                        renderedRemotePlayers += 1;
                     }
-                    renderedRemotePlayers += 1;
+                    if (workerPlayerSet && !player.alive && player.respawn_timer <= 0) {
+                        if (sprite) hidePlayerSprite(sprite);
+                        continue;
+                    }
                 }
                 if (!sprite) {
                     sprite = createPlayerSprite(player, isLocal);
@@ -4967,11 +6119,11 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     }
                 }
 
-                updatePlayerSprite(sprite, player);
+                updatePlayerSprite(sprite, player, localAnchorX, localAnchorY, playerUpdateContext, true);
                 if (sprite.visible) {
                     visiblePlayers += 1;
                 }
-            });
+            }
             lastVisiblePlayers = visiblePlayers;
             lastPlayerRenderCap = playerRenderCap;
 
@@ -4987,48 +6139,166 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             // Update projectile sprites
             const projectileRenderCap = getProjectileRenderCap();
+            const rawProjectileMode = projectileRawModeActive;
+            const useWebGPUProjectiles = !!(webgpuProjectileLayer && webgpuProjectileLayer.ready);
+            const projectileDenseVisualMode =
+                ultraPerformanceMode ||
+                STABLE_MODE_FORCED ||
+                totalPlayerCount > HIGH_POPULATION_PLAYER_COUNT ||
+                smoothedFrameMs > STABLE_DENSE_FRAME_MS;
+            const projectileCullLeft = worldViewBounds.left - PROJECTILE_CULL_MARGIN_WORLD;
+            const projectileCullRight = worldViewBounds.right + PROJECTILE_CULL_MARGIN_WORLD;
+            const projectileCullTop = worldViewBounds.top - PROJECTILE_CULL_MARGIN_WORLD;
+            const projectileCullBottom = worldViewBounds.bottom + PROJECTILE_CULL_MARGIN_WORLD;
+            let projectileInstanceBuffer = null;
+            let projectileInstanceOffset = 0;
+            if (useWebGPUProjectiles) {
+                const projectedCount = workerProjectileSet
+                    ? Math.min(projectiles.size, Math.max(projectileRenderCap, workerProjectileSet.size))
+                    : Math.min(projectiles.size, projectileRenderCap);
+                projectileInstanceBuffer = ensureWebGPUProjectileScratchCapacity(projectedCount);
+
+                if (projectileSprites.size > 0) {
+                    for (const [projectileId, sprite] of projectileSprites) {
+                        projectileContainer.removeChild(sprite);
+                        releaseProjectileSprite(sprite);
+                        projectileSprites.delete(projectileId);
+                    }
+                }
+            }
             let visibleProjectiles = 0;
-            projectiles.forEach((projectile, projectileId) => {
+            for (const [projectileId, projectile] of projectiles) {
                 let sprite = projectileSprites.get(projectileId);
+                const px = rawProjectileMode
+                    ? projectile.x
+                    : (projectile.render_x !== undefined ? projectile.render_x : projectile.x);
+                const py = rawProjectileMode
+                    ? projectile.y
+                    : (projectile.render_y !== undefined ? projectile.render_y : projectile.y);
+                const inView =
+                    px >= projectileCullLeft &&
+                    px <= projectileCullRight &&
+                    py >= projectileCullTop &&
+                    py <= projectileCullBottom;
+
+                if (!inView) {
+                    if (sprite && !useWebGPUProjectiles) {
+                        sprite.visible = false;
+                    }
+                    continue;
+                }
+
+                if (workerProjectileSet) {
+                    if (!workerProjectileSet.has(projectileId)) {
+                        if (sprite && !useWebGPUProjectiles) {
+                            sprite.visible = false;
+                        }
+                        continue;
+                    }
+                } else if (visibleProjectiles >= projectileRenderCap) {
+                    if (sprite && !useWebGPUProjectiles) {
+                        sprite.visible = false;
+                    }
+                    continue;
+                }
+
+                if (useWebGPUProjectiles) {
+                    projectileInstanceOffset = writeWebGPUProjectileInstance(
+                        projectileInstanceBuffer,
+                        projectileInstanceOffset,
+                        projectile,
+                        px,
+                        py
+                    );
+                    visibleProjectiles += 1;
+                    continue;
+                }
+
                 if (!sprite) {
                     sprite = createProjectileSprite(projectile);
                     projectileSprites.set(projectileId, sprite);
                     projectileContainer.addChild(sprite);
                 }
-
-                const px = projectile.render_x !== undefined ? projectile.render_x : projectile.x;
-                const py = projectile.render_y !== undefined ? projectile.render_y : projectile.y;
-                if (visibleProjectiles >= projectileRenderCap) {
-                    sprite.position.x = px;
-                    sprite.position.y = py;
-                    sprite.visible = false;
-                    return;
-                }
-                if (updateProjectileSprite(sprite, projectile, px, py)) {
+                if (updateProjectileSprite(sprite, projectile, px, py, true, projectileDenseVisualMode)) {
                     visibleProjectiles += 1;
                 }
-            });
+            }
             lastVisibleProjectiles = visibleProjectiles;
             lastProjectileRenderCap = projectileRenderCap;
+
+            if (useWebGPUProjectiles) {
+                try {
+                    if (projectileInstanceOffset > 0) {
+                        const instances = projectileInstanceOffset / WEBGPU_PROJECTILE_INSTANCE_STRIDE;
+                        webgpuProjectileLayer.render(
+                            worldViewBounds,
+                            projectileInstanceBuffer.subarray(0, projectileInstanceOffset)
+                        );
+                        if (window.__e2e) {
+                            window.__e2e.webgpuProjectileInstances = instances;
+                        }
+                    } else {
+                        webgpuProjectileLayer.clear(worldViewBounds);
+                        if (window.__e2e) {
+                            window.__e2e.webgpuProjectileInstances = 0;
+                        }
+                    }
+                } catch (error) {
+                    disableWebGPUProjectileLayer('projectile render failure', error);
+                }
+            } else {
+                if (window.__e2e) {
+                    window.__e2e.webgpuProjectileInstances = 0;
+                }
+                if (webgpuProjectileLayer && webgpuProjectileLayer.ready) {
+                    try {
+                        webgpuProjectileLayer.clear(worldViewBounds);
+                    } catch (error) {
+                        disableWebGPUProjectileLayer('projectile clear failure', error);
+                    }
+                }
+            }
 
             for (const [projectileId, sprite] of projectileSprites) {
                 if (projectiles.has(projectileId)) continue;
                 projectileContainer.removeChild(sprite);
-                sprite.destroy({ children: true });
+                releaseProjectileSprite(sprite);
                 projectileSprites.delete(projectileId);
             }
 
             // Update pickup sprites
-            pickups.forEach((pickup, pickupId) => {
+            const pickupCullLeft = worldViewBounds.left - PICKUP_CULL_MARGIN_WORLD;
+            const pickupCullRight = worldViewBounds.right + PICKUP_CULL_MARGIN_WORLD;
+            const pickupCullTop = worldViewBounds.top - PICKUP_CULL_MARGIN_WORLD;
+            const pickupCullBottom = worldViewBounds.bottom + PICKUP_CULL_MARGIN_WORLD;
+            const shouldRefreshPickupVisibility =
+                !ultraPerformanceMode ||
+                (frameCounter % PICKUP_VISIBILITY_UPDATE_STRIDE === 0);
+            for (const [pickupId, pickup] of pickups) {
                 let sprite = pickupSprites.get(pickupId);
+                let isNewSprite = false;
                 if (!sprite) {
                     sprite = createPickupSprite(pickup);
                     pickupSprites.set(pickupId, sprite);
                     pickupContainer.addChild(sprite);
+                    isNewSprite = true;
                 }
-                sprite.position.set(pickup.x, pickup.y);
-                sprite.visible = !!pickup.is_active && isWorldPointVisible(pickup.x, pickup.y, PICKUP_CULL_MARGIN_WORLD);
-            });
+
+                if (isNewSprite || sprite._lastWorldX !== pickup.x || sprite._lastWorldY !== pickup.y) {
+                    sprite.position.set(pickup.x, pickup.y);
+                    sprite._lastWorldX = pickup.x;
+                    sprite._lastWorldY = pickup.y;
+                }
+
+                if (isNewSprite || shouldRefreshPickupVisibility) {
+                    sprite.visible =
+                        !!pickup.is_active &&
+                        pickup.x >= pickupCullLeft &&
+                        pickup.x <= pickupCullRight &&
+                        pickup.y >= pickupCullTop &&
+                        pickup.y <= pickupCullBottom;
+                }
+            }
 
             for (const [pickupId, sprite] of pickupSprites) {
                 if (pickups.has(pickupId)) continue;
@@ -5948,12 +7218,39 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             const now = Date.now();
             if (now - lastInputSendTime < 1000 / INPUT_SEND_RATE) return;
-            lastInputSendTime = now;
 
             let effectiveRotation = inputState.rotation;
             if (inputState.shooting) {
                 effectiveRotation = getAimAssistRotation(effectiveRotation);
             }
+
+            const moveMask =
+                (inputState.move_forward ? 1 : 0) |
+                (inputState.move_backward ? 2 : 0) |
+                (inputState.move_left ? 4 : 0) |
+                (inputState.move_right ? 8 : 0);
+            const quantizedRotation = Number.isFinite(effectiveRotation)
+                ? Math.round(effectiveRotation / INPUT_ROTATION_QUANT_STEP)
+                : 0;
+            const hasOneShotInput =
+                !!inputState.reload ||
+                !!inputState.melee_attack ||
+                inputState.change_weapon_slot !== 0 ||
+                inputState.use_ability_slot !== 0;
+            const stickyStateChanged =
+                moveMask !== lastSentInputMoveMask ||
+                quantizedRotation !== lastSentInputRotationQuant ||
+                !!inputState.shooting !== !!lastSentInputShooting;
+
+            const heartbeatMs = inputState.shooting
+                ? (1000 / INPUT_SEND_RATE)
+                : (moveMask !== 0 ? INPUT_MOVEMENT_HEARTBEAT_MS : INPUT_IDLE_HEARTBEAT_MS);
+            const sinceLastStateMs = now - lastInputStateSentAt;
+            if (!hasOneShotInput && !stickyStateChanged && sinceLastStateMs < heartbeatMs) {
+                return;
+            }
+
+            lastInputSendTime = now;
 
             const currentFrameInput = {
                 timestamp: now,
@@ -5983,6 +7280,10 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             const bytes = createInputMessage(currentFrameInput);
             dataChannel.send(bytes);
+            lastInputStateSentAt = now;
+            lastSentInputMoveMask = moveMask;
+            lastSentInputRotationQuant = quantizedRotation;
+            lastSentInputShooting = !!inputState.shooting;
 
             // Reset one-time inputs
             if (inputState.reload) inputState.reload = false;
@@ -6390,7 +7691,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             applyTournamentPresetSettings();
             if (BENCH_MODE) {
                 activeEffectsProfileName = 'ultra';
-            } else if (STABLE_MODE_FORCED || TOURNAMENT_MODE_FORCED || gameSettings.graphicsQuality === 'low') {
+            } else if (STABLE_MODE_FORCED) {
+                activeEffectsProfileName = 'ultra';
+            } else if (TOURNAMENT_MODE_FORCED || gameSettings.graphicsQuality === 'low') {
                 activeEffectsProfileName = 'dense';
             } else if (gameSettings.graphicsQuality === 'medium') {
                 activeEffectsProfileName = 'medium';
@@ -6429,7 +7732,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             applyBenchPresetSettings();
             if (BENCH_MODE) {
                 activeEffectsProfileName = 'ultra';
-            } else if (STABLE_MODE_FORCED || TOURNAMENT_MODE_FORCED || gameSettings.graphicsQuality === 'low') {
+            } else if (STABLE_MODE_FORCED) {
+                activeEffectsProfileName = 'ultra';
+            } else if (TOURNAMENT_MODE_FORCED || gameSettings.graphicsQuality === 'low') {
                 activeEffectsProfileName = 'dense';
             } else if (gameSettings.graphicsQuality === 'medium') {
                 activeEffectsProfileName = 'medium';
@@ -6500,23 +7805,41 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         });
 
 
-        // WebRTC Connection
-        connectButton.addEventListener('click', () => {
+        function startConnectionAttempt(options = {}) {
+            const isRetry = !!options.isRetry;
+            if (!canStartConnectionAttempt()) {
+                return false;
+            }
+
             const normalized = normalizeSignalingUrl(wsUrlInput.value);
             if (!normalized.ok) {
                 log(normalized.error, 'error');
                 setConnectionError(normalized.error);
-                return;
+                if (isRetry) {
+                    scheduleAutoReconnect('Invalid signaling URL');
+                }
+                return false;
             }
+
             const url = normalized.url;
+            activeSignalingUrl = url;
             wsUrlInput.value = url;
-            log(`Connecting to signaling server: ${url}`);
+            if (window.__e2e) {
+                window.__e2e.activeSignalingUrl = activeSignalingUrl;
+            }
+            connectAttemptInFlight = true;
             hasAttemptedConnection = true;
             clearConnectionOverride();
-            applyConnectionStatus('connecting', 'Contacting signaling server...');
+            clearReconnectTimer();
+            applyConnectionStatus(
+                'connecting',
+                isRetry ? 'Retrying signaling connection...' : 'Contacting signaling server...'
+            );
+            log(`${isRetry ? 'Reconnecting' : 'Connecting'} to signaling server: ${url}`);
             signalingSocket = new WebSocket(url);
 
             signalingSocket.onopen = () => {
+                connectAttemptInFlight = false;
                 log('Connected to signaling server.', 'success');
                 applyConnectionStatus('negotiating', 'Establishing peer connection...');
                 connectButton.disabled = true;
@@ -6552,24 +7875,52 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             };
 
             signalingSocket.onerror = (e) => {
+                connectAttemptInFlight = false;
                 const detail = summarizeSignalingError(e, signalingSocket, url);
                 log(detail, 'error');
                 setConnectionError(detail);
-                resetConnectionUI();
+                resetConnectionUI({ allowReconnect: true, reconnectReason: detail });
             };
 
             signalingSocket.onclose = (event) => {
+                connectAttemptInFlight = false;
                 const closeCode = typeof event?.code === 'number' ? event.code : 'unknown';
                 const closeReason = event?.reason ? ` reason="${event.reason}"` : '';
                 const clean = event?.wasClean ? 'clean' : 'unclean';
                 const detail = `Signaling closed (${clean}, code=${closeCode}${closeReason})`;
                 log(detail, 'error');
                 setConnectionError(detail);
-                resetConnectionUI();
+                resetConnectionUI({ allowReconnect: true, reconnectReason: detail });
             };
+
+            return true;
+        }
+
+        // WebRTC Connection
+        connectButton.addEventListener('click', () => {
+            resetReconnectState();
+            startConnectionAttempt({ isRetry: false });
         });
 
-        function resetConnectionUI() {
+        window.addEventListener('online', () => {
+            if (!autoReconnectEnabled || !hasAttemptedConnection) return;
+            if (dataChannel && dataChannel.readyState === 'open') return;
+            log('Network online. Scheduling reconnect attempt.', 'info');
+            scheduleAutoReconnect('Network restored');
+        });
+
+        window.addEventListener('offline', () => {
+            if (!hasAttemptedConnection) return;
+            const detail = 'Browser offline. Waiting for network...';
+            log(detail, 'warn');
+            setConnectionError(detail);
+            applyConnectionStatus('error', detail);
+        });
+
+        function resetConnectionUI(options = {}) {
+            const allowReconnect = options.allowReconnect === true;
+            const reconnectReason = String(options.reconnectReason || '').trim();
+            connectAttemptInFlight = false;
             connectButton.disabled = false;
             connectButton.textContent = 'Connect';
             connectButton.classList.replace('bg-gray-500', 'bg-indigo-600');
@@ -6605,6 +7956,10 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                     }
                 } catch (_) {}
                 signalingSocket = null;
+            }
+            activeSignalingUrl = '';
+            if (window.__e2e) {
+                window.__e2e.activeSignalingUrl = activeSignalingUrl;
             }
 
             // Clear game state
@@ -6642,12 +7997,23 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 window.__e2e.rendererBackend = getRendererBackendSummary();
                 window.__e2e.webgpuSupported = typeof navigator.gpu !== 'undefined';
                 window.__e2e.webgpuLastResult = null;
+                window.__e2e.webgpuProjectileLayerEnabled = !!webgpuProjectileLayer;
+                window.__e2e.webgpuProjectileLayerReady = !!(webgpuProjectileLayer && webgpuProjectileLayer.ready);
+                window.__e2e.webgpuProjectileInstances = 0;
                 window.__e2e.fxStressActive = false;
                 window.__e2e.fxStressConfig = null;
                 window.__e2e.syntheticFxBursts = 0;
                 window.__e2e.syntheticFxEvents = 0;
                 window.__e2e.lastSyntheticFxBurstAt = 0;
+                window.__e2e.workerCullReady = cullWorkerReady;
+                window.__e2e.workerCullBusy = false;
+                window.__e2e.workerCullKernel = cullWorkerStats.wasmKernelLabel;
+                window.__e2e.workerCullResultSeq = cullWorkerResultSeq;
+                window.__e2e.projectileRawMode = false;
             }
+            cullWorkerBusy = false;
+            cullWorkerResult = null;
+            projectileRawModeActive = false;
             pendingInputs = [];
             serverUpdates = [];
             lastInterpolationSnapshotAt = 0;
@@ -6656,6 +8022,11 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             snapshotIntervalEma = INTERPOLATION_SNAPSHOT_INTERVAL_MS;
             snapshotJitterEma = 0;
             inputSequence = 0;
+            lastInputSendTime = 0;
+            lastInputStateSentAt = 0;
+            lastSentInputMoveMask = -1;
+            lastSentInputRotationQuant = Number.NaN;
+            lastSentInputShooting = false;
             lastAdaptiveEffectsEvalTime = 0;
             if (ULTRA_MODE_FORCED) {
                 setUltraPerformanceMode(true, 'forced');
@@ -6668,7 +8039,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 playerContainer.removeChildren().forEach(child => child.destroy?.({ children: true }));
             }
             if (projectileContainer) {
-                projectileContainer.removeChildren().forEach(child => child.destroy?.({ children: true }));
+                projectileContainer.removeChildren().forEach(child => releaseProjectileSprite(child));
             }
             if (pickupContainer) {
                 pickupContainer.removeChildren().forEach(child => child.destroy?.({ children: true }));
@@ -6679,6 +8050,13 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             if (wallGraphics) wallGraphics.clear();
             if (effectsManager) effectsManager.clearAllEffects();
             if (minimap) minimap.clear();
+            if (webgpuProjectileLayer && webgpuProjectileLayer.ready) {
+                try {
+                    webgpuProjectileLayer.clear(worldViewBounds);
+                } catch (error) {
+                    disableWebGPUProjectileLayer('connection reset clear failed', error);
+                }
+            }
             playerSprites.clear();
             projectileSprites.clear();
             pickupSprites.clear();
@@ -6693,10 +8071,14 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             } else {
                 applyConnectionStatus('idle', 'Click Connect to join a match');
             }
+
+            if (allowReconnect) {
+                scheduleAutoReconnect(reconnectReason || connectionErrorDetail || 'Connection lost');
+            }
         }
 
         function initializePeerConnection() {
-            log('Initializing RTCPeerConnection...');
+            log(`Initializing RTCPeerConnection (${peerConnectionConfig.iceServers.length} ICE server(s))...`);
             peerConnection = new RTCPeerConnection(peerConnectionConfig);
 
             peerConnection.onicecandidate = e => {
@@ -6717,7 +8099,11 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 log(`ICE state: ${peerConnection.iceConnectionState}`);
                 if (['failed', 'disconnected', 'closed'].includes(peerConnection.iceConnectionState)) {
                     log('WebRTC disconnected.', 'error');
-                    resetConnectionUI();
+                    setConnectionError(`WebRTC ${peerConnection.iceConnectionState}.`);
+                    resetConnectionUI({
+                        allowReconnect: true,
+                        reconnectReason: `WebRTC ${peerConnection.iceConnectionState}`
+                    });
                 }
             };
 
@@ -6742,6 +8128,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         function setupDataChannelEvents(dcInstance) {
             dcInstance.onopen = () => {
                 log(`DataChannel "${dcInstance.label}" OPENED.`, 'success');
+                resetReconnectState();
                 controlsDiv.classList.remove('hidden');
                 setupInputHandlers();
                 pingStartTime = Date.now(); 
@@ -6759,7 +8146,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             dcInstance.onclose = () => {
                 log(`DataChannel "${dcInstance.label}" CLOSED.`, 'error');
                 setConnectionError('Data channel closed.');
-                resetConnectionUI();
+                resetConnectionUI({ allowReconnect: true, reconnectReason: 'Data channel closed' });
             };
 
             dcInstance.onmessage = (event) => {
@@ -6828,6 +8215,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             dcInstance.onerror = (e) => {
                 log(`DataChannel "${dcInstance.label}" error: ${JSON.stringify(e)}`, 'error');
                 setConnectionError('Data channel error.');
+                resetConnectionUI({ allowReconnect: true, reconnectReason: 'Data channel error' });
             };
         }
 
@@ -6902,7 +8290,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         
         // Pre-generate particle textures
         this.particleTextures = this.generateParticleTextures();
-        const defaultProfile = TOURNAMENT_MODE_FORCED ? 'dense' : (LOW_OVERHEAD_MODE ? 'dense' : 'high');
+        const defaultProfile = TOURNAMENT_MODE_FORCED
+            ? 'dense'
+            : ((BENCH_MODE || STABLE_MODE_FORCED) ? 'ultra' : (LOW_OVERHEAD_MODE ? 'dense' : 'high'));
         this.setPerformanceProfile(defaultProfile);
     }
 
@@ -8998,6 +10388,35 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         this.statusDot.endFill();
     }
 }
+
+        function drawLiteAimingSystem(playerX, playerY, aimX, aimY, currentWeapon, crosshairColor, distance) {
+            const crosshairRadius = currentWeapon === GP.WeaponType.Sniper ? 11 : 8;
+            aimingGraphics.lineStyle(2, crosshairColor, 0.9);
+            aimingGraphics.drawCircle(aimX, aimY, crosshairRadius);
+
+            aimingGraphics.lineStyle(1.5, crosshairColor, 0.9);
+            aimingGraphics.moveTo(aimX - crosshairRadius, aimY);
+            aimingGraphics.lineTo(aimX + crosshairRadius, aimY);
+            aimingGraphics.moveTo(aimX, aimY - crosshairRadius);
+            aimingGraphics.lineTo(aimX, aimY + crosshairRadius);
+
+            trajectoryGraphics.lineStyle(1, crosshairColor, 0.24);
+            trajectoryGraphics.moveTo(playerX, playerY);
+            trajectoryGraphics.lineTo(aimX, aimY);
+
+            if (currentWeapon === GP.WeaponType.Sniper) {
+                if (sniperRangeText) {
+                    sniperRangeText.text = Math.round(distance) + 'm';
+                    sniperRangeText.style.fill = crosshairColor;
+                    sniperRangeText.position.set(aimX + 20, aimY - 22);
+                    sniperRangeText.visible = true;
+                }
+            } else if (sniperRangeText) {
+                sniperRangeText.visible = false;
+            }
+            aimingGraphics.position.set(0, 0);
+        }
+
         // Advanced Aiming System with Trajectory Prediction
         function drawAimingSystem() {
             if (!localPlayerState || !localPlayerState.alive || !mouseWorldPos) {
@@ -9018,6 +10437,29 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 aimingGraphics.position.set(0, 0);
                 return;
             }
+
+            const dx = mouseWorldPos.x - playerX;
+            const dy = mouseWorldPos.y - playerY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const crosshairColor = weaponColors[currentWeapon] || 0xFFFFFF;
+            const useLiteAiming =
+                ultraPerformanceMode ||
+                STABLE_MODE_FORCED ||
+                LOW_OVERHEAD_MODE ||
+                players.size >= AIMING_LITE_PLAYER_THRESHOLD ||
+                smoothedFrameMs > TARGET_FRAME_MS_60FPS;
+            if (useLiteAiming) {
+                drawLiteAimingSystem(
+                    playerX,
+                    playerY,
+                    mouseWorldPos.x,
+                    mouseWorldPos.y,
+                    currentWeapon,
+                    crosshairColor,
+                    distance
+                );
+                return;
+            }
             
             // Get weapon velocity
             const weaponVel = weaponVelocities[currentWeapon] || 800;
@@ -9027,18 +10469,12 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             const playerVelY = localPlayerState.velocity_y || 0;
             
             // Calculate aim direction
-            const dx = mouseWorldPos.x - playerX;
-            const dy = mouseWorldPos.y - playerY;
-            const distance = Math.sqrt(dx * dx + dy * dy);
             const aimAngle = Math.atan2(dy, dx);
             
             // Draw crosshair at mouse position
             const crosshairSize = 15;
             const crosshairThickness = 2;
             const crosshairGap = 5;
-            
-            // Crosshair color based on weapon
-            const crosshairColor = weaponColors[currentWeapon] || 0xFFFFFF;
             
             // Outer circle
             aimingGraphics.lineStyle(crosshairThickness, crosshairColor, 0.8);
@@ -9408,12 +10844,26 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
 
             // Load settings
             loadSettings();
+            initCullWorker();
+            if (window.__e2e) {
+                window.__e2e.autoReconnectEnabled = autoReconnectEnabled;
+                window.__e2e.autoReconnectMaxAttempts = autoReconnectMaxAttempts;
+                window.__e2e.autoConnectOnLoad = autoConnectOnLoad;
+                window.__e2e.activeSignalingUrl = activeSignalingUrl;
+            }
 
             // Initialize PIXI
             initPixi();
             
             // Initialize music player
             musicPlayer = new MusicPlayer();
+
+            log(`ICE servers configured: ${peerConnectionConfig.iceServers.length}`, 'info');
+            if (autoConnectOnLoad) {
+                log('Auto-connect enabled from URL.', 'info');
+                resetReconnectState();
+                startConnectionAttempt({ isRetry: false });
+            }
 
             if (WEBGPU_TEST_MODE) {
                 const webGpuOptions = readWebGpuAutorunConfigFromUrl();
