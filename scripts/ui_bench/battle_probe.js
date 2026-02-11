@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright");
+const { buildLaunchOptions, urlRequestsWebGpu } = require("./launch_options");
 
 function parseArgs(argv) {
   const args = {
@@ -16,6 +17,7 @@ function parseArgs(argv) {
     sampleIntervalMs: 500,
     fpsThreshold: 0,
     headless: true,
+    headlessExplicit: false,
     outPath: path.resolve(process.cwd(), "artifacts", "scale", "battle_probe.json")
   };
 
@@ -30,7 +32,14 @@ function parseArgs(argv) {
     else if (arg === "--duration") args.durationMs = Number(argv[++i]) * 1000;
     else if (arg === "--sample-interval-ms") args.sampleIntervalMs = Number(argv[++i]);
     else if (arg === "--fps-threshold") args.fpsThreshold = Number(argv[++i]);
-    else if (arg === "--headed") args.headless = false;
+    else if (arg === "--headed") {
+      args.headless = false;
+      args.headlessExplicit = true;
+    }
+    else if (arg === "--headless") {
+      args.headless = true;
+      args.headlessExplicit = true;
+    }
     else if (arg === "--out") args.outPath = path.resolve(process.cwd(), argv[++i]);
     else if (arg === "--help") {
       printHelp();
@@ -59,6 +68,7 @@ function printHelp() {
   --sample-interval-ms <ms>      Sample interval (default: 500)
   --fps-threshold <fps>          Optional FPS gate (default: 0 disabled)
   --headed                       Run with visible browser
+  --headless                     Force headless mode
   --out <path>                   Output JSON path
 `);
 }
@@ -144,8 +154,16 @@ function summaryFromSamples(samples, fps) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const startedAt = Date.now();
+  const webgpuRequested = urlRequestsWebGpu(args.url);
 
-  const browser = await chromium.launch({ headless: args.headless });
+  // WebGPU instance layers are typically disabled in headless Chromium.
+  // For battle validation, default to headed mode unless explicitly overridden.
+  if (webgpuRequested && !args.headlessExplicit) {
+    args.headless = false;
+  }
+
+  const launchOptions = buildLaunchOptions({ headless: args.headless, url: args.url });
+  const browser = await chromium.launch(launchOptions);
   const context = await browser.newContext({ viewport: { width: 1600, height: 900 } });
   const page = await context.newPage();
 
@@ -224,7 +242,11 @@ async function main() {
         activeEffectCount: Number(window.__e2e?.activeEffectCount ?? 0),
         smoothedFrameMs: Number(window.__e2e?.smoothedFrameMs ?? 0),
         ultraPerformanceMode: Boolean(window.__e2e?.ultraPerformanceMode),
-        effectsProfile: window.__e2e?.effectsProfile ?? null
+        effectsProfile: window.__e2e?.effectsProfile ?? null,
+        webgpuProjectileLayerReady: Boolean(window.__e2e?.webgpuProjectileLayerReady),
+        webgpuProjectileInstances: Number(window.__e2e?.webgpuProjectileInstances ?? 0),
+        webgpuPlayerLayerReady: Boolean(window.__e2e?.webgpuPlayerLayerReady),
+        webgpuPlayerInstances: Number(window.__e2e?.webgpuPlayerInstances ?? 0)
       }));
       samples.push(sample);
     }
@@ -247,7 +269,11 @@ async function main() {
         activeEffectCount: Number(window.__e2e?.activeEffectCount ?? 0),
         smoothedFrameMs: Number(window.__e2e?.smoothedFrameMs ?? 0),
         ultraPerformanceMode: Boolean(window.__e2e?.ultraPerformanceMode),
-        effectsProfile: window.__e2e?.effectsProfile ?? null
+        effectsProfile: window.__e2e?.effectsProfile ?? null,
+        webgpuProjectileLayerReady: Boolean(window.__e2e?.webgpuProjectileLayerReady),
+        webgpuProjectileInstances: Number(window.__e2e?.webgpuProjectileInstances ?? 0),
+        webgpuPlayerLayerReady: Boolean(window.__e2e?.webgpuPlayerLayerReady),
+        webgpuPlayerInstances: Number(window.__e2e?.webgpuPlayerInstances ?? 0)
       };
     });
 
@@ -259,6 +285,10 @@ async function main() {
     const result = {
       url: args.url,
       wsUrl: args.wsUrl,
+      launch: {
+        headless: args.headless,
+        webgpuRequested: launchOptions.webgpuRequested
+      },
       durationSec: toFixed(durationSec, 2),
       runtime: {
         fps: toFixed(fps, 2),

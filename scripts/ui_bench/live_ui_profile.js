@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright");
+const { buildLaunchOptions, urlRequestsWebGpu } = require("./launch_options");
 
 function parseArgs(argv) {
   const args = {
@@ -19,6 +20,7 @@ function parseArgs(argv) {
     autoConnect: true,
     wsUrl: null,
     headless: true,
+    headlessExplicit: false,
     outPath: path.resolve(process.cwd(), "artifacts", "ui_profile.json")
   };
 
@@ -35,7 +37,14 @@ function parseArgs(argv) {
     else if (arg === "--max-heap-growth-mb") args.maxHeapGrowthMb = Number(argv[++i]);
     else if (arg === "--ws") args.wsUrl = argv[++i];
     else if (arg === "--out") args.outPath = path.resolve(process.cwd(), argv[++i]);
-    else if (arg === "--headed") args.headless = false;
+    else if (arg === "--headed") {
+      args.headless = false;
+      args.headlessExplicit = true;
+    }
+    else if (arg === "--headless") {
+      args.headless = true;
+      args.headlessExplicit = true;
+    }
     else if (arg === "--no-auto-connect") args.autoConnect = false;
     else if (arg === "--help") {
       printHelp();
@@ -59,6 +68,7 @@ function printHelp() {
   --max-heap-growth-mb <mb>   Optional heap growth gate (-1 disables)
   --ws <ws_url>               Set wsUrl input before connect
   --headed                    Show browser UI
+  --headless                  Force headless mode
   --no-auto-connect           Do not click connect button
   --out <path>                Output JSON path (default: artifacts/ui_profile.json)
   --help                      Show help
@@ -179,10 +189,15 @@ async function main() {
     ...rawArgs,
     url: ensureProfileParam(rawArgs.url)
   };
+  const webgpuRequested = urlRequestsWebGpu(args.url);
+  if (webgpuRequested && !args.headlessExplicit) {
+    args.headless = false;
+  }
 
   const startWallTime = Date.now();
 
-  const browser = await chromium.launch({ headless: args.headless });
+  const launchOptions = buildLaunchOptions({ headless: args.headless, url: args.url });
+  const browser = await chromium.launch(launchOptions);
   const context = await browser.newContext({ viewport: { width: 1600, height: 900 } });
   const page = await context.newPage();
 
@@ -385,6 +400,10 @@ async function main() {
     result = {
       url: args.url,
       wsUrl: args.wsUrl,
+      launch: {
+        headless: args.headless,
+        webgpuRequested: launchOptions.webgpuRequested
+      },
       durationSec: toFixedNumber(durationSec, 2),
       runtime: {
         fps: toFixedNumber(fps, 2),

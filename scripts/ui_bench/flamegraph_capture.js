@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright");
+const { buildLaunchOptions, urlRequestsWebGpu } = require("./launch_options");
 
 const META_FRAME_NAMES = new Set([
   "(root)",
@@ -24,6 +25,7 @@ function parseArgs(argv) {
     topFrames: 20,
     includeMetaFrames: false,
     headless: true,
+    headlessExplicit: false,
     outPath: path.resolve(process.cwd(), "artifacts", "scale", "ui_flamegraph.cpuprofile"),
     summaryPath: null
   };
@@ -40,7 +42,14 @@ function parseArgs(argv) {
     else if (arg === "--sample-interval-ms") args.sampleIntervalMs = Number(argv[++i]);
     else if (arg === "--top-frames") args.topFrames = Number(argv[++i]);
     else if (arg === "--include-meta-frames") args.includeMetaFrames = true;
-    else if (arg === "--headed") args.headless = false;
+    else if (arg === "--headed") {
+      args.headless = false;
+      args.headlessExplicit = true;
+    }
+    else if (arg === "--headless") {
+      args.headless = true;
+      args.headlessExplicit = true;
+    }
     else if (arg === "--out") args.outPath = path.resolve(process.cwd(), argv[++i]);
     else if (arg === "--summary-out") args.summaryPath = path.resolve(process.cwd(), argv[++i]);
     else if (arg === "--help") {
@@ -75,6 +84,7 @@ function printHelp() {
   --top-frames <n>               Number of top frames to report (default: 20)
   --include-meta-frames          Include root/program/idle/GC frames in rankings
   --headed                       Run with visible browser
+  --headless                     Force headless mode
   --out <path>                   Output .cpuprofile path
   --summary-out <path>           Output summary JSON path
 `);
@@ -327,8 +337,13 @@ async function main() {
     ...rawArgs,
     url: ensureProfileParam(rawArgs.url)
   };
+  const webgpuRequested = urlRequestsWebGpu(args.url);
+  if (webgpuRequested && !args.headlessExplicit) {
+    args.headless = false;
+  }
 
-  const browser = await chromium.launch({ headless: args.headless });
+  const launchOptions = buildLaunchOptions({ headless: args.headless, url: args.url });
+  const browser = await chromium.launch(launchOptions);
   const context = await browser.newContext({ viewport: { width: 1600, height: 900 } });
   const page = await context.newPage();
 
@@ -367,6 +382,10 @@ async function main() {
       capturedAt: new Date().toISOString(),
       url: args.url,
       wsUrl: args.wsUrl,
+      launch: {
+        headless: args.headless,
+        webgpuRequested: launchOptions.webgpuRequested
+      },
       durationSec: toFixed(args.durationMs / 1000, 2),
       profilePath: args.outPath,
       profileStats: {
