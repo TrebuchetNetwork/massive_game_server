@@ -745,6 +745,10 @@
             uiModeParams.get('webgpu_players') === '1' ||
             uiModeParams.get('webgpu_instances') === '1';
         const WEBGPU_REQUIRED = uiModeParams.get('require_webgpu') === '1';
+        const SPRITE_CADENCE_MODE = String(uiModeParams.get('sprite_cadence') || '').trim().toLowerCase();
+        const SPRITE_CADENCE_ENABLED = SPRITE_CADENCE_MODE !== 'off' && SPRITE_CADENCE_MODE !== 'disabled';
+        const DAMAGE_BATCH_MODE = String(uiModeParams.get('damage_batch') || '').trim().toLowerCase();
+        const DAMAGE_BATCH_ENABLED = DAMAGE_BATCH_MODE !== 'off' && DAMAGE_BATCH_MODE !== 'disabled';
         const benchMaxFpsParam = Number.parseInt(uiModeParams.get('bench_max_fps') || '', 10);
         const BENCH_MAX_FPS = Number.isFinite(benchMaxFpsParam) && benchMaxFpsParam >= 30
             ? Math.min(240, benchMaxFpsParam)
@@ -752,8 +756,8 @@
         const ULTRA_AUTO_UPSHIFT_PLAYERS = STABLE_MODE_FORCED ? 36 : 90;
         const ULTRA_AUTO_DOWNSHIFT_PLAYERS = STABLE_MODE_FORCED ? 24 : 65;
         const TARGET_FRAME_MS_60FPS = 16.67;
-        const STABLE_DENSE_FRAME_MS = 17.8;
-        const STABLE_ULTRA_FRAME_MS = 19.5;
+        const STABLE_DENSE_FRAME_MS = 17.3;
+        const STABLE_ULTRA_FRAME_MS = 18.8;
         const AIMING_LITE_PLAYER_THRESHOLD = 10;
         const INPUT_ROTATION_QUANT_STEP = 0.012;
         const INPUT_IDLE_HEARTBEAT_MS = 120;
@@ -923,19 +927,57 @@
         let smoothedFrameMs = 16.67;
         let lowFpsFrameStreak = 0;
         let recoveryFrameStreak = 0;
+        const E2E_STATS_UPDATE_INTERVAL_MS = 120;
+        const RENDER_RESOLUTION_DOWNSHIFT_COOLDOWN_MS = STABLE_MODE_FORCED ? 1500 : 900;
+        const RENDER_RESOLUTION_UPSHIFT_COOLDOWN_MS = STABLE_MODE_FORCED ? 6000 : 3200;
+        const RENDER_RESOLUTION_DOWNSHIFT_HOLD_MS = STABLE_MODE_FORCED ? 900 : 500;
+        const RENDER_RESOLUTION_UPSHIFT_HOLD_MS = STABLE_MODE_FORCED ? 2800 : 1400;
+        const RENDER_RESOLUTION_UPSHIFT_RECOVERY_FRAMES = STABLE_MODE_FORCED ? 120 : 90;
+        const EFFECTS_UPDATE_SKIP_STRIDE_SOFT = 2;
+        const EFFECTS_UPDATE_SKIP_STRIDE_HARD = 3;
+        const DAMAGE_NUMBER_POOL_PREALLOC = 40;
+        const DAMAGE_NUMBER_POOL_MAX = 200;
+        const DAMAGE_NUMBER_ACTIVE_CAP_SOFT = 72;
+        const DAMAGE_NUMBER_ACTIVE_CAP_HARD = 40;
+        const DAMAGE_NUMBER_BITMAP_FONT_BASE = 'mgs_damage_bitmap';
+        const DAMAGE_NUMBER_BITMAP_CHARS = '+-!~0123456789';
+        const DAMAGE_NUMBER_BATCH_MAX_PENDING = 180;
+        const DAMAGE_NUMBER_BATCH_WINDOW_MS_DESKTOP = STABLE_MODE_FORCED ? 24 : 18;
+        const DAMAGE_NUMBER_BATCH_WINDOW_MS_MOBILE = STABLE_MODE_FORCED ? 34 : 26;
+        const DAMAGE_NUMBER_BATCH_WINDOW_MS_SOFT = STABLE_MODE_FORCED ? 48 : 40;
+        const DAMAGE_NUMBER_BATCH_WINDOW_MS_HARD = STABLE_MODE_FORCED ? 62 : 54;
+        const DAMAGE_NUMBER_BATCH_CELL_SIZE_DESKTOP = 32;
+        const DAMAGE_NUMBER_BATCH_CELL_SIZE_MOBILE = 42;
+        const DAMAGE_NUMBER_BATCH_FLUSH_LIMIT_SOFT = 8;
+        const DAMAGE_NUMBER_BATCH_FLUSH_LIMIT_HARD = 5;
+        const DAMAGE_NUMBER_MERGE_MAX_KEYS_DESKTOP = 14;
+        const DAMAGE_NUMBER_MERGE_MAX_KEYS_MOBILE = 8;
+        const DAMAGE_NUMBER_MERGE_FALLBACK_BUCKETS_DESKTOP = 6;
+        const DAMAGE_NUMBER_MERGE_FALLBACK_BUCKETS_MOBILE = 4;
+        const DAMAGE_NUMBER_MERGE_CELL_MIN_DESKTOP = 96;
+        const DAMAGE_NUMBER_MERGE_CELL_MIN_MOBILE = 128;
+        let lastE2EStatsUpdateTime = 0;
+        let lastRendererBackendSummaryAt = 0;
+        let lastRenderResolutionEvalTime = 0;
+        let lastRenderResolutionChangeAt = 0;
+        let pendingRenderResolutionTarget = 0;
+        let pendingRenderResolutionSince = 0;
+        let lastRendererWidth = 0;
+        let lastRendererHeight = 0;
         let activeEffectsProfileName = TOURNAMENT_MODE_FORCED
             ? 'dense'
             : ((BENCH_MODE || STABLE_MODE_FORCED) ? 'ultra' : (LOW_OVERHEAD_MODE ? 'dense' : 'high'));
         const DEVICE_PIXEL_RATIO = window.devicePixelRatio || 1;
         const BASE_RENDER_RESOLUTION = LOW_OVERHEAD_MODE ? 1 : Math.min(1.5, Math.max(1, DEVICE_PIXEL_RATIO));
         const DENSE_RENDER_RESOLUTION = STABLE_MODE_FORCED
-            ? 0.72
+            ? 0.68
             : (LOW_OVERHEAD_MODE ? 0.85 : Math.max(0.8, BASE_RENDER_RESOLUTION * 0.8));
         const ULTRA_RENDER_RESOLUTION = STABLE_MODE_FORCED
             ? 0.62
             : (LOW_OVERHEAD_MODE ? 0.7 : Math.max(0.65, BASE_RENDER_RESOLUTION * 0.65));
-        const STABLE_BASE_RENDER_RESOLUTION = STABLE_MODE_FORCED ? 0.82 : BASE_RENDER_RESOLUTION;
+        const STABLE_BASE_RENDER_RESOLUTION = STABLE_MODE_FORCED ? 0.78 : BASE_RENDER_RESOLUTION;
         let currentRenderResolution = BASE_RENDER_RESOLUTION;
+        pendingRenderResolutionTarget = currentRenderResolution;
         let cachedMinimapWalls = [];
         let cachedMinimapFlags = [];
         let minimapWallsCacheDirty = true;
@@ -1248,11 +1290,11 @@
 
             let targetMax = profileMax;
             if (projectiles.size >= 760 || smoothedFrameMs >= 27) {
-                targetMax = Math.min(targetMax, 160);
+                targetMax = Math.min(targetMax, 36);
             } else if (projectiles.size >= 620 || smoothedFrameMs >= 24) {
-                targetMax = Math.min(targetMax, 220);
+                targetMax = Math.min(targetMax, 56);
             } else if (projectiles.size >= 480 || smoothedFrameMs >= 21.5) {
-                targetMax = Math.min(targetMax, 280);
+                targetMax = Math.min(targetMax, 96);
             }
 
             if (effectsManager.maxActiveEffects !== targetMax) {
@@ -1293,6 +1335,69 @@
             }
             if (players.size > HIGH_POPULATION_PLAYER_COUNT || smoothedFrameMs > 24) return PLAYER_RENDER_CAP_DENSE;
             return PLAYER_RENDER_CAP_DEFAULT;
+        }
+
+        function getRemotePlayerSpriteUpdateStride() {
+            if (!SPRITE_CADENCE_ENABLED) return 1;
+            const mobileCadence = mobileDynamicsEnabled || forceMobileClient;
+            const hardStride = mobileCadence
+                ? REMOTE_PLAYER_UPDATE_STRIDE_HARD_MOBILE
+                : REMOTE_PLAYER_UPDATE_STRIDE_HARD_DESKTOP;
+            const softStride = mobileCadence
+                ? REMOTE_PLAYER_UPDATE_STRIDE_SOFT_MOBILE
+                : REMOTE_PLAYER_UPDATE_STRIDE_SOFT_DESKTOP;
+
+            const severePressure =
+                ultraPerformanceMode ||
+                smoothedFrameMs >= (mobileCadence ? 20.5 : 25) ||
+                players.size >= (mobileCadence ? 20 : 48) ||
+                projectiles.size >= (mobileCadence ? 120 : 320);
+            if (severePressure) return hardStride;
+            const softPressure =
+                STABLE_MODE_FORCED ||
+                smoothedFrameMs >= (mobileCadence ? 18.5 : 22) ||
+                players.size >= (mobileCadence ? 12 : 30) ||
+                projectiles.size >= (mobileCadence ? 70 : 180);
+            if (softPressure) return softStride;
+            return 1;
+        }
+
+        function getProjectileSpriteUpdateStride() {
+            if (!SPRITE_CADENCE_ENABLED) return 1;
+            const mobileCadence = mobileDynamicsEnabled || forceMobileClient;
+            const hardStride = mobileCadence
+                ? PROJECTILE_SPRITE_UPDATE_STRIDE_HARD_MOBILE
+                : PROJECTILE_SPRITE_UPDATE_STRIDE_HARD_DESKTOP;
+            const softStride = mobileCadence
+                ? PROJECTILE_SPRITE_UPDATE_STRIDE_SOFT_MOBILE
+                : PROJECTILE_SPRITE_UPDATE_STRIDE_SOFT_DESKTOP;
+
+            const severePressure =
+                ultraPerformanceMode ||
+                smoothedFrameMs >= (mobileCadence ? 20.5 : 25) ||
+                projectiles.size >= (mobileCadence ? 220 : 560);
+            if (severePressure) return hardStride;
+            const softPressure =
+                STABLE_MODE_FORCED ||
+                smoothedFrameMs >= (mobileCadence ? 18.5 : 22) ||
+                projectiles.size >= (mobileCadence ? 110 : 260);
+            if (softPressure) return softStride;
+            return 1;
+        }
+
+        function getEntityCadenceBucket(entityId) {
+            if (typeof entityId === 'number') {
+                return Math.abs(entityId) % 31;
+            }
+            if (typeof entityId === 'string') {
+                let hash = 0;
+                const maxLen = Math.min(entityId.length, 12);
+                for (let i = 0; i < maxLen; i += 1) {
+                    hash = ((hash << 5) - hash + entityId.charCodeAt(i)) | 0;
+                }
+                return Math.abs(hash) % 31;
+            }
+            return 0;
         }
 
         function updateFramePerformanceSignals(deltaMs) {
@@ -1391,18 +1496,51 @@
             }
 
             targetResolution = Math.max(0.5, Math.min(BASE_RENDER_RESOLUTION, targetResolution));
-            if (Math.abs(currentRenderResolution - targetResolution) < 0.01) {
+            const delta = targetResolution - currentRenderResolution;
+            if (Math.abs(delta) < 0.01) {
+                pendingRenderResolutionTarget = targetResolution;
+                pendingRenderResolutionSince = 0;
                 return;
             }
+            const now = Date.now();
+            const isUpshift = delta > 0;
+            const bypassCooldown =
+                reason === 'init' ||
+                reason === 'perf mode' ||
+                reason === 'forced';
+            if (!bypassCooldown) {
+                if (Math.abs(targetResolution - pendingRenderResolutionTarget) >= 0.01) {
+                    pendingRenderResolutionTarget = targetResolution;
+                    pendingRenderResolutionSince = now;
+                    return;
+                }
+                const holdMs = isUpshift
+                    ? RENDER_RESOLUTION_UPSHIFT_HOLD_MS
+                    : RENDER_RESOLUTION_DOWNSHIFT_HOLD_MS;
+                if (
+                    pendingRenderResolutionSince > 0 &&
+                    (now - pendingRenderResolutionSince) < holdMs
+                ) {
+                    return;
+                }
+                if (isUpshift && recoveryFrameStreak < RENDER_RESOLUTION_UPSHIFT_RECOVERY_FRAMES) {
+                    return;
+                }
+                const cooldownMs = isUpshift
+                    ? RENDER_RESOLUTION_UPSHIFT_COOLDOWN_MS
+                    : RENDER_RESOLUTION_DOWNSHIFT_COOLDOWN_MS;
+                if ((now - lastRenderResolutionChangeAt) < cooldownMs) {
+                    return;
+                }
+            }
+
             currentRenderResolution = targetResolution;
+            lastRenderResolutionChangeAt = now;
+            pendingRenderResolutionTarget = targetResolution;
+            pendingRenderResolutionSince = 0;
 
             if (app?.renderer) {
-                app.renderer.resolution = currentRenderResolution;
-                const pixiContainer = document.getElementById('pixiContainer');
-                if (pixiContainer) {
-                    const containerRect = pixiContainer.getBoundingClientRect();
-                    app.renderer.resize(containerRect.width, containerRect.height);
-                }
+                resizePixiApp();
             }
 
             if (window.__e2e) {
@@ -1457,7 +1595,10 @@
                 if (ULTRA_MODE_FORCED && !ultraPerformanceMode) {
                     setUltraPerformanceMode(true, 'forced');
                 }
-                updateRenderResolutionBudget('forced');
+                if ((currentTime - lastRenderResolutionEvalTime) >= 1000) {
+                    lastRenderResolutionEvalTime = currentTime;
+                    updateRenderResolutionBudget('forced');
+                }
                 return;
             }
 
@@ -1482,6 +1623,7 @@
             ) {
                 setUltraPerformanceMode(false, `${playerCount} players / ${smoothedFrameMs.toFixed(1)}ms`);
             }
+            lastRenderResolutionEvalTime = currentTime;
             updateRenderResolutionBudget('adaptive');
         }
 
@@ -2684,89 +2826,131 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             return instigatorId;
         }
 
+        function createSeededFxRandom(seed) {
+            let state = (Math.floor(Number(seed) || 0) >>> 0);
+            if (state === 0) state = 1;
+            return () => {
+                state = (state * 1664525 + 1013904223) >>> 0;
+                return state / 4294967296;
+            };
+        }
+
+        function configureSyntheticFxSeed(seedValue) {
+            if (!Number.isFinite(seedValue)) {
+                syntheticFxSeedState = null;
+                return null;
+            }
+            const normalizedSeed = (Math.floor(Number(seedValue)) >>> 0) || 1;
+            syntheticFxSeedState = {
+                seed: normalizedSeed,
+                random: createSeededFxRandom(normalizedSeed)
+            };
+            return normalizedSeed;
+        }
+
+        function runWithSyntheticFxRandom(callback) {
+            if (!syntheticFxSeedState || typeof callback !== 'function') {
+                return typeof callback === 'function' ? callback() : 0;
+            }
+            const originalRandom = Math.random;
+            Math.random = syntheticFxSeedState.random;
+            try {
+                return callback();
+            } finally {
+                Math.random = originalRandom;
+            }
+        }
+
         function emitSyntheticBattleFx(rawIntensity = 1, options = {}) {
             if (!effectsManager) return 0;
 
-            applyFullFxMode();
-            const intensity = Math.max(1, Math.min(40, Math.floor(Number(rawIntensity) || 1)));
-            const includeScreenFx = options.includeScreenFx !== false;
-            const instigatorId = getFxInstigatorId();
-            const targetId = getFxTargetId(instigatorId);
-            const base = getFxAnchorPosition();
-            const weaponTypes = [
-                GP.WeaponType.Pistol,
-                GP.WeaponType.Shotgun,
-                GP.WeaponType.Rifle,
-                GP.WeaponType.Sniper
-            ];
+            const inlineSeed = Number(options.seed);
+            if (Number.isFinite(inlineSeed)) {
+                configureSyntheticFxSeed(inlineSeed);
+            }
 
-            let emittedEvents = 0;
+            return runWithSyntheticFxRandom(() => {
+                applyFullFxMode();
+                const intensity = Math.max(1, Math.min(40, Math.floor(Number(rawIntensity) || 1)));
+                const includeScreenFx = options.includeScreenFx !== false;
+                const instigatorId = getFxInstigatorId();
+                const targetId = getFxTargetId(instigatorId);
+                const base = getFxAnchorPosition();
+                const weaponTypes = [
+                    GP.WeaponType.Pistol,
+                    GP.WeaponType.Shotgun,
+                    GP.WeaponType.Rifle,
+                    GP.WeaponType.Sniper
+                ];
 
-            for (let i = 0; i < intensity; i += 1) {
-                const angle = (i / Math.max(1, intensity)) * Math.PI * 2;
-                const radius = 28 + (i % 8) * 18;
-                const pos = {
-                    x: base.x + Math.cos(angle) * radius,
-                    y: base.y + Math.sin(angle) * radius
-                };
-                const weaponType = weaponTypes[i % weaponTypes.length];
-                const damageValue = 18 + (i % 6) * 8;
-                const damageType = (i % 2 === 0) ? 'enemyReceived' : 'enemyDealt';
+                let emittedEvents = 0;
 
-                effectsManager.createEnhancedBulletImpact(pos, weaponType);
-                effectsManager.createEnhancedDamageNumbers(pos, damageValue, damageType);
+                for (let i = 0; i < intensity; i += 1) {
+                    const angle = (i / Math.max(1, intensity)) * Math.PI * 2;
+                    const radius = 28 + (i % 8) * 18;
+                    const pos = {
+                        x: base.x + Math.cos(angle) * radius,
+                        y: base.y + Math.sin(angle) * radius
+                    };
+                    const weaponType = weaponTypes[i % weaponTypes.length];
+                    const damageValue = 18 + (i % 6) * 8;
+                    const damageType = (i % 2 === 0) ? 'enemyReceived' : 'enemyDealt';
+
+                    effectsManager.createEnhancedBulletImpact(pos, weaponType);
+                    effectsManager.createEnhancedDamageNumbers(pos, damageValue, damageType);
+                    emittedEvents += 2;
+
+                    if (i % 3 === 0) {
+                        effectsManager.createEnhancedExplosion(pos, 28 + (i % 5) * 8);
+                        emittedEvents += 1;
+                    }
+
+                    if (instigatorId) {
+                        effectsManager.processGameEvent({
+                            event_type: GP.GameEventType.WeaponFire,
+                            position: pos,
+                            weapon_type: weaponType,
+                            value: 0,
+                            instigator_id: instigatorId,
+                            target_id: targetId
+                        });
+                        effectsManager.processGameEvent({
+                            event_type: GP.GameEventType.PlayerDamageEffect,
+                            position: pos,
+                            weapon_type: weaponType,
+                            value: damageValue,
+                            instigator_id: instigatorId,
+                            target_id: targetId
+                        });
+                        emittedEvents += 2;
+                    }
+                }
+
+                effectsManager.createEnhancedPowerupCollectEffect({
+                    x: base.x + 60,
+                    y: base.y - 36
+                });
+                effectsManager.createEnhancedFlagCaptureEffect({
+                    x: base.x - 72,
+                    y: base.y + 48
+                });
                 emittedEvents += 2;
 
-                if (i % 3 === 0) {
-                    effectsManager.createEnhancedExplosion(pos, 28 + (i % 5) * 8);
+                if (includeScreenFx && app) {
+                    if (gameSettings && gameSettings.screenShake && gameScene) {
+                        applyScreenShake(gameScene, 8, Math.min(12, 3 + intensity * 0.25));
+                    }
+                    createScreenFlash(app, 0xFFE9AA, 8, 0.18);
                     emittedEvents += 1;
                 }
 
-                if (instigatorId) {
-                    effectsManager.processGameEvent({
-                        event_type: GP.GameEventType.WeaponFire,
-                        position: pos,
-                        weapon_type: weaponType,
-                        value: 0,
-                        instigator_id: instigatorId,
-                        target_id: targetId
-                    });
-                    effectsManager.processGameEvent({
-                        event_type: GP.GameEventType.PlayerDamageEffect,
-                        position: pos,
-                        weapon_type: weaponType,
-                        value: damageValue,
-                        instigator_id: instigatorId,
-                        target_id: targetId
-                    });
-                    emittedEvents += 2;
+                if (window.__e2e) {
+                    window.__e2e.syntheticFxBursts = (window.__e2e.syntheticFxBursts || 0) + 1;
+                    window.__e2e.syntheticFxEvents = (window.__e2e.syntheticFxEvents || 0) + emittedEvents;
+                    window.__e2e.lastSyntheticFxBurstAt = performance.now();
                 }
-            }
-
-            effectsManager.createEnhancedPowerupCollectEffect({
-                x: base.x + 60,
-                y: base.y - 36
+                return emittedEvents;
             });
-            effectsManager.createEnhancedFlagCaptureEffect({
-                x: base.x - 72,
-                y: base.y + 48
-            });
-            emittedEvents += 2;
-
-            if (includeScreenFx && app) {
-                if (gameSettings && gameSettings.screenShake && gameScene) {
-                    applyScreenShake(gameScene, 8, Math.min(12, 3 + intensity * 0.25));
-                }
-                createScreenFlash(app, 0xFFE9AA, 8, 0.18);
-                emittedEvents += 1;
-            }
-
-            if (window.__e2e) {
-                window.__e2e.syntheticFxBursts = (window.__e2e.syntheticFxBursts || 0) + 1;
-                window.__e2e.syntheticFxEvents = (window.__e2e.syntheticFxEvents || 0) + emittedEvents;
-                window.__e2e.lastSyntheticFxBurstAt = performance.now();
-            }
-            return emittedEvents;
         }
 
         function stopFxStress(clearProjectiles = false) {
@@ -2775,11 +2959,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 fxStressIntervalId = null;
             }
             fxStressConfig = null;
+            syntheticFxSeedState = null;
             if (clearProjectiles) {
                 clearSyntheticProjectiles();
             }
             if (window.__e2e) {
                 window.__e2e.fxStressActive = false;
+                window.__e2e.syntheticFxSeed = null;
             }
             return true;
         }
@@ -2792,9 +2978,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 Math.min(5000, Math.floor(Number(options.syntheticProjectiles) || 0))
             );
             const includeScreenFx = options.includeScreenFx !== false;
+            const requestedSeed = Number(options.seed);
+            const normalizedSeed = Number.isFinite(requestedSeed)
+                ? configureSyntheticFxSeed(requestedSeed)
+                : null;
 
             applyFullFxMode();
             stopFxStress(false);
+
+            if (normalizedSeed !== null) {
+                configureSyntheticFxSeed(normalizedSeed);
+            }
 
             if (syntheticProjectiles > 0) {
                 setSyntheticProjectileCount(syntheticProjectiles);
@@ -2804,7 +2998,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 intervalMs,
                 intensity,
                 syntheticProjectiles,
-                includeScreenFx
+                includeScreenFx,
+                seed: normalizedSeed
             };
 
             const emitBurst = () => emitSyntheticBattleFx(intensity, { includeScreenFx });
@@ -2814,6 +3009,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             if (window.__e2e) {
                 window.__e2e.fxStressActive = true;
                 window.__e2e.fxStressConfig = { ...fxStressConfig };
+                window.__e2e.syntheticFxSeed = normalizedSeed;
             }
             return true;
         }
@@ -3475,6 +3671,15 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         const HIGH_POPULATION_PLAYER_COUNT = 80;
         const FAR_DETAIL_DISTANCE_SQ = (STABLE_MODE_FORCED ? 1200 : 1800) * (STABLE_MODE_FORCED ? 1200 : 1800);
         const PLAYER_PRIORITY_DISTANCE_SQ = 900 * 900;
+        const PROJECTILE_PRIORITY_DISTANCE_SQ = (STABLE_MODE_FORCED ? 520 : 760) * (STABLE_MODE_FORCED ? 520 : 760);
+        const REMOTE_PLAYER_UPDATE_STRIDE_SOFT_DESKTOP = 2;
+        const REMOTE_PLAYER_UPDATE_STRIDE_HARD_DESKTOP = 3;
+        const REMOTE_PLAYER_UPDATE_STRIDE_SOFT_MOBILE = 3;
+        const REMOTE_PLAYER_UPDATE_STRIDE_HARD_MOBILE = 4;
+        const PROJECTILE_SPRITE_UPDATE_STRIDE_SOFT_DESKTOP = 2;
+        const PROJECTILE_SPRITE_UPDATE_STRIDE_HARD_DESKTOP = 3;
+        const PROJECTILE_SPRITE_UPDATE_STRIDE_SOFT_MOBILE = 3;
+        const PROJECTILE_SPRITE_UPDATE_STRIDE_HARD_MOBILE = 4;
         const PLAYER_CULL_MARGIN_WORLD = 240;
         const PROJECTILE_CULL_MARGIN_WORLD = 220;
         const PICKUP_CULL_MARGIN_WORLD = 160;
@@ -3484,11 +3689,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         const PLAYER_RENDER_CAP_ULTRA = 100;
         const PROJECTILE_RENDER_CAP_DEFAULT = 1400;
         const PROJECTILE_RENDER_CAP_STABLE = 700;
-        const PROJECTILE_RENDER_CAP_DENSE = 900;
-        const PROJECTILE_RENDER_CAP_ULTRA = 450;
-        const PROJECTILE_RENDER_CAP_ULTRA_SOFT = 320;
-        const PROJECTILE_RENDER_CAP_ULTRA_RECOVERY = 220;
-        const PROJECTILE_RENDER_CAP_ULTRA_EMERGENCY = 140;
+        const PROJECTILE_RENDER_CAP_DENSE = 520;
+        const PROJECTILE_RENDER_CAP_ULTRA = 300;
+        const PROJECTILE_RENDER_CAP_ULTRA_SOFT = 240;
+        const PROJECTILE_RENDER_CAP_ULTRA_RECOVERY = 160;
+        const PROJECTILE_RENDER_CAP_ULTRA_EMERGENCY = 96;
         const PROJECTILE_RAW_MODE_SOFT_COUNT = 320;
         const PROJECTILE_RAW_MODE_HARD_COUNT = 480;
         const PROJECTILE_RAW_MODE_FRAME_MS = 21;
@@ -3503,8 +3708,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let lastPlayerRenderCap = PLAYER_RENDER_CAP_DEFAULT;
         let lastVisibleProjectiles = 0;
         let lastProjectileRenderCap = PROJECTILE_RENDER_CAP_DEFAULT;
+        let lastRemotePlayerUpdateStride = 1;
+        let lastProjectileSpriteUpdateStride = 1;
         let fxStressIntervalId = null;
         let fxStressConfig = null;
+        let syntheticFxSeedState = null;
         let cullWorker = null;
         let cullWorkerReady = false;
         let cullWorkerBusy = false;
@@ -4216,15 +4424,24 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 const pixiContainer = document.getElementById('pixiContainer');
                 if (!app || !pixiContainer) return;
                 const containerRect = pixiContainer.getBoundingClientRect();
-                if (Math.abs(app.renderer.resolution - currentRenderResolution) > 0.01) {
+                const nextWidth = Math.max(1, Math.floor(containerRect.width));
+                const nextHeight = Math.max(1, Math.floor(containerRect.height));
+                const resolutionChanged = Math.abs(app.renderer.resolution - currentRenderResolution) > 0.01;
+                const sizeChanged = nextWidth !== lastRendererWidth || nextHeight !== lastRendererHeight;
+                if (!resolutionChanged && !sizeChanged) {
+                    return;
+                }
+                if (resolutionChanged) {
                     app.renderer.resolution = currentRenderResolution;
                 }
-                app.renderer.resize(containerRect.width, containerRect.height);
+                app.renderer.resize(nextWidth, nextHeight);
+                lastRendererWidth = nextWidth;
+                lastRendererHeight = nextHeight;
                 if (webgpuProjectileLayer && webgpuProjectileLayer.ready) {
-                    webgpuProjectileLayer.resize(containerRect.width, containerRect.height);
+                    webgpuProjectileLayer.resize(nextWidth, nextHeight);
                 }
                 if (webgpuPlayerLayer && webgpuPlayerLayer.ready) {
-                    webgpuPlayerLayer.resize(containerRect.width, containerRect.height);
+                    webgpuPlayerLayer.resize(nextWidth, nextHeight);
                 }
                 updateCamera();
             }
@@ -5793,44 +6010,61 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             // Update FPS
             frameCount++;
-            if (window.__e2e) {
-                window.__e2e.renderFrames += 1;
-                window.__e2e.lastRenderTime = performance.now();
-                window.__e2e.hasLocalPlayer = !!localPlayerState;
-                window.__e2e.smoothedFrameMs = Number(smoothedFrameMs.toFixed(2));
-                window.__e2e.playerCount = players.size;
-                window.__e2e.visiblePlayerCount = lastVisiblePlayers;
-                window.__e2e.playerRenderCap = lastPlayerRenderCap;
-                window.__e2e.rendererBackend = getRendererBackendSummary();
-                window.__e2e.webgpuSupported = typeof navigator.gpu !== 'undefined';
-                window.__e2e.webgpuProjectileLayerEnabled = !!webgpuProjectileLayer;
-                window.__e2e.webgpuProjectileLayerReady = !!(webgpuProjectileLayer && webgpuProjectileLayer.ready);
-                window.__e2e.webgpuPlayerLayerEnabled = !!webgpuPlayerLayer;
-                window.__e2e.webgpuPlayerLayerReady = !!(webgpuPlayerLayer && webgpuPlayerLayer.ready);
-                window.__e2e.projectileCount = projectiles.size;
-                window.__e2e.visibleProjectileCount = lastVisibleProjectiles;
-                window.__e2e.projectileRenderCap = lastProjectileRenderCap;
-                window.__e2e.syntheticProjectileCount = syntheticProjectileCount;
-                window.__e2e.activeEffectCount = effectsManager?.activeEffects?.length || 0;
-                window.__e2e.fxStressActive = fxStressIntervalId !== null;
-                window.__e2e.effectsProfile = activeEffectsProfileName;
-                window.__e2e.workerCullEnabled = WORKER_CULL_ENABLED;
-                window.__e2e.workerCullReady = cullWorkerReady;
-                window.__e2e.workerCullBusy = cullWorkerBusy;
-                window.__e2e.workerCullKernel = cullWorkerStats.wasmKernelLabel;
-                window.__e2e.workerCullDispatches = cullWorkerStats.dispatches;
-                window.__e2e.workerCullResponses = cullWorkerStats.responses;
-                window.__e2e.workerCullAvgComputeMs = Number(cullWorkerStats.avgComputeMs.toFixed(3));
-                window.__e2e.workerCullLastComputeMs = Number(cullWorkerStats.lastComputeMs.toFixed(3));
-                window.__e2e.workerCullDropped = cullWorkerStats.dropped;
-                window.__e2e.workerCullResultSeq = cullWorkerResultSeq;
-                window.__e2e.projectileRawMode = projectileRawModeActive;
-                window.__e2e.fullFxMode = !!(
-                    gameSettings &&
-                    gameSettings.graphicsQuality === 'high' &&
-                    gameSettings.particleEffects &&
-                    gameSettings.screenShake
-                );
+            const e2e = window.__e2e;
+            if (e2e) {
+                e2e.renderFrames += 1;
+                e2e.lastRenderTime = performance.now();
+
+                if ((currentTime - lastE2EStatsUpdateTime) >= E2E_STATS_UPDATE_INTERVAL_MS) {
+                    lastE2EStatsUpdateTime = currentTime;
+                    e2e.hasLocalPlayer = !!localPlayerState;
+                    e2e.smoothedFrameMs = Number(smoothedFrameMs.toFixed(2));
+                    e2e.playerCount = players.size;
+                    e2e.visiblePlayerCount = lastVisiblePlayers;
+                    e2e.playerRenderCap = lastPlayerRenderCap;
+                    if ((currentTime - lastRendererBackendSummaryAt) >= 1000) {
+                        e2e.rendererBackend = getRendererBackendSummary();
+                        lastRendererBackendSummaryAt = currentTime;
+                    }
+                    e2e.webgpuSupported = typeof navigator.gpu !== 'undefined';
+                    e2e.webgpuProjectileLayerEnabled = !!webgpuProjectileLayer;
+                    e2e.webgpuProjectileLayerReady = !!(webgpuProjectileLayer && webgpuProjectileLayer.ready);
+                    e2e.webgpuPlayerLayerEnabled = !!webgpuPlayerLayer;
+                    e2e.webgpuPlayerLayerReady = !!(webgpuPlayerLayer && webgpuPlayerLayer.ready);
+                    e2e.projectileCount = projectiles.size;
+                    e2e.visibleProjectileCount = lastVisibleProjectiles;
+                    e2e.projectileRenderCap = lastProjectileRenderCap;
+                    e2e.mobileDynamicsEnabled = mobileDynamicsEnabled;
+                    e2e.spriteCadenceEnabled = SPRITE_CADENCE_ENABLED;
+                    e2e.remotePlayerUpdateStride = lastRemotePlayerUpdateStride;
+                    e2e.projectileSpriteUpdateStride = lastProjectileSpriteUpdateStride;
+                    e2e.syntheticProjectileCount = syntheticProjectileCount;
+                    e2e.activeEffectCount = effectsManager?.activeEffects?.length || 0;
+                    e2e.activeDamageNumberCount = effectsManager?.activeDamageNumberCount || 0;
+                    e2e.damageBatchEnabled = DAMAGE_BATCH_ENABLED;
+                    e2e.pendingDamageBatchCount = effectsManager?.pendingDamageBatchCount || 0;
+                    e2e.activeDamageMergeCount = effectsManager?.activeDamageNumberEffectsByKey?.size || 0;
+                    e2e.fxStressActive = fxStressIntervalId !== null;
+                    e2e.effectsProfile = activeEffectsProfileName;
+                    e2e.effectsLoadTier = Number(effectsManager?.lastLoadTier ?? 0);
+                    e2e.workerCullEnabled = WORKER_CULL_ENABLED;
+                    e2e.workerCullReady = cullWorkerReady;
+                    e2e.workerCullBusy = cullWorkerBusy;
+                    e2e.workerCullKernel = cullWorkerStats.wasmKernelLabel;
+                    e2e.workerCullDispatches = cullWorkerStats.dispatches;
+                    e2e.workerCullResponses = cullWorkerStats.responses;
+                    e2e.workerCullAvgComputeMs = Number(cullWorkerStats.avgComputeMs.toFixed(3));
+                    e2e.workerCullLastComputeMs = Number(cullWorkerStats.lastComputeMs.toFixed(3));
+                    e2e.workerCullDropped = cullWorkerStats.dropped;
+                    e2e.workerCullResultSeq = cullWorkerResultSeq;
+                    e2e.projectileRawMode = projectileRawModeActive;
+                    e2e.fullFxMode = !!(
+                        gameSettings &&
+                        gameSettings.graphicsQuality === 'high' &&
+                        gameSettings.particleEffects &&
+                        gameSettings.screenShake
+                    );
+                }
             }
             if (currentTime - lastFPSUpdate >= 1000) {
                 fpsValueSpan.textContent = frameCount;
@@ -6429,6 +6663,10 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 totalPlayerCount > HIGH_POPULATION_PLAYER_COUNT ||
                 smoothedFrameMs > 24 ||
                 (STABLE_MODE_FORCED && (totalPlayerCount >= 24 || smoothedFrameMs > STABLE_DENSE_FRAME_MS));
+            const remotePlayerUpdateStride = getRemotePlayerSpriteUpdateStride();
+            const projectileSpriteUpdateStride = getProjectileSpriteUpdateStride();
+            lastRemotePlayerUpdateStride = remotePlayerUpdateStride;
+            lastProjectileSpriteUpdateStride = projectileSpriteUpdateStride;
             const playerUpdateContext = {
                 totalPlayerCount,
                 denseVisualMode: playerDenseVisualMode,
@@ -6473,6 +6711,9 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 const isLocal = playerId === myPlayerId;
                 const px = player.render_x !== undefined ? player.render_x : player.x;
                 const py = player.render_y !== undefined ? player.render_y : player.y;
+                const dxToLocal = px - localAnchorX;
+                const dyToLocal = py - localAnchorY;
+                const isPriorityPlayer = !isLocal && ((dxToLocal * dxToLocal + dyToLocal * dyToLocal) <= PLAYER_PRIORITY_DISTANCE_SQ);
                 let sprite = playerSprites.get(playerId);
                 if (!isLocal) {
                     if (workerPlayerSet) {
@@ -6491,9 +6732,6 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             continue;
                         }
 
-                        const dx = px - localAnchorX;
-                        const dy = py - localAnchorY;
-                        const isPriorityPlayer = (dx * dx + dy * dy) <= PLAYER_PRIORITY_DISTANCE_SQ;
                         const allowedRemoteCount = isPriorityPlayer
                             ? (remoteRenderCap + remotePriorityOverflowCap)
                             : remoteRenderCap;
@@ -6512,6 +6750,20 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     if (!remoteVisibleState) {
                         if (sprite) hidePlayerSprite(sprite);
                         continue;
+                    }
+
+                    if (!useWebGPUPlayers && remotePlayerUpdateStride > 1 && !isPriorityPlayer && sprite) {
+                        const cadenceBucket = getEntityCadenceBucket(playerId);
+                        const shouldUpdateRemoteSprite = ((frameCounter + cadenceBucket) % remotePlayerUpdateStride) === 0;
+                        if (!shouldUpdateRemoteSprite) {
+                            if (sprite.position.x !== px) sprite.position.x = px;
+                            if (sprite.position.y !== py) sprite.position.y = py;
+                            const effectiveRotation = (player.render_rotation !== undefined ? player.render_rotation : player.rotation) + (Math.PI / 2);
+                            if (sprite.rotation !== effectiveRotation) sprite.rotation = effectiveRotation;
+                            if (!sprite.visible) sprite.visible = true;
+                            visiblePlayers += 1;
+                            continue;
+                        }
                     }
 
                     if (useWebGPUPlayers) {
@@ -6668,6 +6920,22 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     projectileSprites.set(projectileId, sprite);
                     projectileContainer.addChild(sprite);
                 }
+                if (!useWebGPUProjectiles && projectileSpriteUpdateStride > 1) {
+                    const pdx = px - localAnchorX;
+                    const pdy = py - localAnchorY;
+                    const isPriorityProjectile = (pdx * pdx + pdy * pdy) <= PROJECTILE_PRIORITY_DISTANCE_SQ;
+                    if (!isPriorityProjectile) {
+                        const cadenceBucket = getEntityCadenceBucket(projectileId);
+                        const shouldUpdateProjectileSprite = ((frameCounter + cadenceBucket) % projectileSpriteUpdateStride) === 0;
+                        if (!shouldUpdateProjectileSprite) {
+                            if (sprite.position.x !== px) sprite.position.x = px;
+                            if (sprite.position.y !== py) sprite.position.y = py;
+                            if (!sprite.visible) sprite.visible = true;
+                            visibleProjectiles += 1;
+                            continue;
+                        }
+                    }
+                }
                 if (updateProjectileSprite(sprite, projectile, px, py, true, projectileDenseVisualMode)) {
                     visibleProjectiles += 1;
                 }
@@ -6755,6 +7023,19 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 sprite.destroy({ children: true });
                 pickupSprites.delete(pickupId);
             }
+        }
+
+        const MATCH_INFO_REFRESH_INTERVAL_MS = 125;
+        let lastMatchInfoRefreshTime = 0;
+
+        function refreshMatchInfoUi(force = false) {
+            const now = Date.now();
+            if (!force && (now - lastMatchInfoRefreshTime) < MATCH_INFO_REFRESH_INTERVAL_MS) {
+                return;
+            }
+            lastMatchInfoRefreshTime = now;
+            updateMatchInfo();
+            updateScoreboard();
         }
 
         // Process server update
@@ -7034,8 +7315,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 if (window.__e2e) {
                     window.__e2e.matchInfoReady = true;
                 }
-                updateMatchInfo();
-                updateScoreboard(); // This needs to be called to refresh scoreboard with new player/match data
+                refreshMatchInfoUi(isInitial); // This needs to be called to refresh scoreboard with new player/match data
             } else if (isInitial) {
                 // If it's an initial state and match_info is missing, it's an issue, but less likely to be undefined
                 log("Initial state received without match_info.", "warn");
@@ -7108,6 +7388,436 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             killFeedEntry: new GP.KillFeedEntry(),
             gameEvent: new GP.GameEvent(),
         };
+        const FAST_DELTA_APPLY_ENABLED = true;
+        const flatbufferByteBufferScratch = new flatbuffers.ByteBuffer(new Uint8Array(0));
+        let fastDeltaPathErrorCount = 0;
+
+        function bindFlatBufferData(data) {
+            let bytes = null;
+            if (data instanceof Uint8Array) {
+                bytes = data;
+            } else if (data instanceof ArrayBuffer) {
+                bytes = new Uint8Array(data);
+            } else if (ArrayBuffer.isView(data) && data.buffer instanceof ArrayBuffer) {
+                bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            }
+            if (!bytes) {
+                return null;
+            }
+            flatbufferByteBufferScratch.bytes_ = bytes;
+            flatbufferByteBufferScratch.position_ = 0;
+            return flatbufferByteBufferScratch;
+        }
+
+        function assignWallStateFromTable(target, wall) {
+            target.id = wall.id();
+            target.x = wall.x();
+            target.y = wall.y();
+            target.width = wall.width();
+            target.height = wall.height();
+            target.is_destructible = wall.isDestructible();
+            target.current_health = wall.currentHealth();
+            target.max_health = wall.maxHealth();
+            return target;
+        }
+
+        function assignPlayerStateFromTable(target, player, resolvedUsername) {
+            target.id = player.id();
+            target.username = resolvedUsername;
+            target.x = player.x();
+            target.y = player.y();
+            target.rotation = player.rotation();
+            target.velocity_x = player.velocityX();
+            target.velocity_y = player.velocityY();
+            target.health = player.health();
+            target.max_health = player.maxHealth();
+            target.alive = player.alive();
+            target.respawn_timer = player.respawnTimer();
+            target.weapon = player.weapon();
+            target.ammo = player.ammo();
+            target.reload_progress = player.reloadProgress();
+            target.score = player.score();
+            target.kills = player.kills();
+            target.deaths = player.deaths();
+            target.team_id = player.teamId();
+            target.speed_boost_remaining = player.speedBoostRemaining();
+            target.damage_boost_remaining = player.damageBoostRemaining();
+            target.shield_current = player.shieldCurrent();
+            target.shield_max = player.shieldMax();
+            target.is_carrying_flag_team_id = player.isCarryingFlagTeamId();
+            return target;
+        }
+
+        function assignProjectileStateFromTable(target, projectile) {
+            target.id = projectile.id();
+            target.x = projectile.x();
+            target.y = projectile.y();
+            target.weapon_type = projectile.weaponType();
+            target.velocity_x = projectile.velocityX();
+            target.velocity_y = projectile.velocityY();
+            return target;
+        }
+
+        function assignPickupStateFromTable(target, pickup) {
+            target.id = pickup.id();
+            target.x = pickup.x();
+            target.y = pickup.y();
+            target.pickup_type = pickup.pickupType();
+            target.weapon_type = pickup.weaponType();
+            target.is_active = pickup.isActive();
+            return target;
+        }
+
+        function processDeltaStateFast(delta) {
+            const serverTime = Number(delta.timestamp());
+            let wallsChanged = false;
+            const wallDebugEnabled = isWallDebugEnabled();
+
+            const destroyedWallLength = delta.destroyedWallIdsLength();
+            if (destroyedWallLength > 0) {
+                if (wallDebugEnabled) {
+                    logWallDebug(`[WALL DEBUG] Destroying ${destroyedWallLength} walls`, 'info');
+                }
+                for (let i = 0; i < destroyedWallLength; i += 1) {
+                    const wallId = delta.destroyedWallIds(i);
+                    if (!wallId) continue;
+                    const wall = walls.get(wallId);
+                    if (wall) {
+                        wall.current_health = 0;
+                        wallsChanged = true;
+                        if (wallDebugEnabled) {
+                            logWallDebug(`[WALL DESTROYED] Wall ${wallId} destroyed at (${wall.x}, ${wall.y})`, 'warn');
+                        }
+                    }
+                }
+            }
+
+            if (DELTA_SUPPORTS_UPDATED_WALLS) {
+                const updatedWallLength = delta.updatedWallsLength();
+                if (updatedWallLength > 0) {
+                    if (wallDebugEnabled) {
+                        logWallDebug(`[WALL DEBUG] Received ${updatedWallLength} updated walls in delta`, 'info');
+                    }
+                    const wallTable = flatbufferParseScratch.wall;
+                    for (let i = 0; i < updatedWallLength; i += 1) {
+                        const wall = delta.updatedWalls(i, wallTable);
+                        if (!wall) continue;
+                        const wallId = wall.id();
+                        const prevWall = walls.get(wallId);
+                        const prevHealth = prevWall ? prevWall.current_health : null;
+                        const nextWall = prevWall || {};
+                        assignWallStateFromTable(nextWall, wall);
+                        walls.set(wallId, nextWall);
+                        wallsChanged = true;
+
+                        if (prevWall && prevHealth === 0 && nextWall.current_health > 0) {
+                            if (wallDebugEnabled) {
+                                logWallDebug(`[WALL RESPAWN] Wall ${nextWall.id} respawned at (${nextWall.x}, ${nextWall.y}) with health ${nextWall.current_health}/${nextWall.max_health}`, 'success');
+                            }
+                            if (effectsManager && localPlayerState) {
+                                const dx = nextWall.x + nextWall.width / 2 - localPlayerState.x;
+                                const dy = nextWall.y + nextWall.height / 2 - localPlayerState.y;
+                                const distance = Math.sqrt(dx * dx + dy * dy);
+                                if (distance < 1000) {
+                                    effectsManager.createWallRespawnEffect({
+                                        x: nextWall.x + nextWall.width / 2,
+                                        y: nextWall.y + nextWall.height / 2
+                                    }, nextWall);
+                                }
+                            }
+                        } else if (!prevWall) {
+                            if (wallDebugEnabled) {
+                                logWallDebug(`[WALL NEW] New wall ${nextWall.id} discovered at (${nextWall.x}, ${nextWall.y}) with health ${nextWall.current_health}/${nextWall.max_health}`, 'warn');
+                            }
+                            if (wallDebugEnabled && nextWall.is_destructible && nextWall.current_health === nextWall.max_health) {
+                                logWallDebug(`[WALL RESPAWN?] This new wall has full health - might be a respawn`, 'warn');
+                            }
+                        } else if (wallDebugEnabled && prevHealth !== nextWall.current_health) {
+                            logWallDebug(`[WALL HEALTH] Wall ${nextWall.id} health changed from ${prevHealth} to ${nextWall.current_health}`, 'info');
+                        }
+                    }
+                } else if (wallDebugEnabled && destroyedWallLength > 0) {
+                    logWallDebug(`[WALL DEBUG] ${destroyedWallLength} walls destroyed but no updated_walls in this delta`, 'warn');
+                }
+            }
+
+            if (DELTA_SUPPORTS_FULL_WALLS) {
+                const wallLength = delta.wallsLength();
+                if (wallLength > 0) {
+                    if (wallDebugEnabled) {
+                        logWallDebug(`Received ${wallLength} walls in delta update - possible AOI change`, 'info');
+                    }
+                    const wallTable = flatbufferParseScratch.wall;
+                    const incomingWallIds = new Set();
+                    const previousWallIds = new Set(walls.keys());
+                    for (let i = 0; i < wallLength; i += 1) {
+                        const wall = delta.walls(i, wallTable);
+                        if (!wall) continue;
+                        const wallId = wall.id();
+                        incomingWallIds.add(wallId);
+                        const previousWall = walls.get(wallId);
+                        const nextWall = previousWall || {};
+                        assignWallStateFromTable(nextWall, wall);
+                        walls.set(wallId, nextWall);
+                        if (!previousWall) {
+                            wallsChanged = true;
+                            if (wallDebugEnabled) {
+                                logWallDebug(`New wall ${wallId} discovered in AOI at (${nextWall.x}, ${nextWall.y})`, 'info');
+                            }
+                            if (nextWall.current_health > 0 && nextWall.is_destructible && effectsManager && localPlayerState) {
+                                const dx = nextWall.x + nextWall.width / 2 - localPlayerState.x;
+                                const dy = nextWall.y + nextWall.height / 2 - localPlayerState.y;
+                                const distance = Math.sqrt(dx * dx + dy * dy);
+                                if (distance < 1000) {
+                                    effectsManager.createWallRespawnEffect({
+                                        x: nextWall.x + nextWall.width / 2,
+                                        y: nextWall.y + nextWall.height / 2
+                                    }, nextWall);
+                                }
+                            }
+                        }
+                    }
+                    previousWallIds.forEach((wallId) => {
+                        if (incomingWallIds.has(wallId)) return;
+                        walls.delete(wallId);
+                        wallsChanged = true;
+                        if (wallDebugEnabled) {
+                            logWallDebug(`Wall ${wallId} removed - left AOI`, 'info');
+                        }
+                    });
+                }
+            }
+
+            if (wallsChanged) {
+                drawWalls();
+            }
+
+            const playerTable = flatbufferParseScratch.playerState;
+            const playerLength = delta.playersLength();
+            for (let i = 0; i < playerLength; i += 1) {
+                const player = delta.players(i, playerTable);
+                if (!player) continue;
+                const playerId = player.id();
+                const existingPlayer = players.get(playerId);
+                let resolvedUsername = playerId === myPlayerId
+                    ? (localPlayerState?.username || existingPlayer?.username || '')
+                    : (existingPlayer?.username || '');
+                if (!resolvedUsername) {
+                    resolvedUsername = player.username() || '';
+                }
+
+                if (playerId === myPlayerId) {
+                    if (!localPlayerState) {
+                        localPlayerState = {};
+                    }
+                    const previousPredictedX = Number.isFinite(localPlayerState.x) ? localPlayerState.x : player.x();
+                    const previousPredictedY = Number.isFinite(localPlayerState.y) ? localPlayerState.y : player.y();
+                    const previousPredictedRotation = Number.isFinite(localPlayerState.rotation)
+                        ? localPlayerState.rotation
+                        : player.rotation();
+
+                    assignPlayerStateFromTable(localPlayerState, player, resolvedUsername);
+
+                    const serverX = localPlayerState.x;
+                    const serverY = localPlayerState.y;
+                    const serverRotation = localPlayerState.rotation;
+                    const errorX = serverX - previousPredictedX;
+                    const errorY = serverY - previousPredictedY;
+                    const errorSq = errorX * errorX + errorY * errorY;
+                    if (!localPlayerState.alive || errorSq > (260 * 260)) {
+                        localPlayerState.x = serverX;
+                        localPlayerState.y = serverY;
+                        localPlayerState.rotation = serverRotation;
+                    } else {
+                        localPlayerState.x = previousPredictedX + (errorX * 0.24);
+                        localPlayerState.y = previousPredictedY + (errorY * 0.24);
+                        const rotError = normalizeAngle(serverRotation - previousPredictedRotation);
+                        localPlayerState.rotation = normalizeAngle(previousPredictedRotation + (rotError * 0.28));
+                    }
+                    localPlayerState.render_x = localPlayerState.x;
+                    localPlayerState.render_y = localPlayerState.y;
+                    localPlayerState.render_rotation = localPlayerState.rotation;
+                    players.set(playerId, localPlayerState);
+                } else {
+                    const remoteState = existingPlayer || {};
+                    assignPlayerStateFromTable(remoteState, player, resolvedUsername);
+                    players.set(playerId, remoteState);
+                }
+            }
+
+            const lastProcessedInputSequence = delta.lastProcessedInputSequence();
+            if (lastProcessedInputSequence !== undefined && lastProcessedInputSequence !== null) {
+                lastProcessedInput = Number(lastProcessedInputSequence);
+                if (!isNaN(lastProcessedInput)) {
+                    pendingInputs = pendingInputs.filter(inp => inp.sequence > lastProcessedInput);
+                }
+            }
+
+            if (DELTA_SUPPORTS_REMOVED_PLAYER_IDS) {
+                const removedPlayerLength = delta.removedPlayerIdsLength();
+                if (removedPlayerLength > 0) {
+                    for (let i = 0; i < removedPlayerLength; i += 1) {
+                        const removedId = delta.removedPlayerIds(i);
+                        if (!removedId) continue;
+                        players.delete(removedId);
+                        log(`Player ${removedId} removed.`, 'info');
+                    }
+                }
+            }
+
+            const projectileTable = flatbufferParseScratch.projectileState;
+            const projectileLength = delta.projectilesLength();
+            for (let i = 0; i < projectileLength; i += 1) {
+                const projectile = delta.projectiles(i, projectileTable);
+                if (!projectile) continue;
+                const projectileId = projectile.id();
+                const projectileState = projectiles.get(projectileId) || {};
+                assignProjectileStateFromTable(projectileState, projectile);
+                projectiles.set(projectileId, projectileState);
+            }
+
+            const removedProjectileLength = delta.removedProjectilesLength();
+            if (removedProjectileLength > 0) {
+                for (let i = 0; i < removedProjectileLength; i += 1) {
+                    const projectileId = delta.removedProjectiles(i);
+                    if (!projectileId) continue;
+                    projectiles.delete(projectileId);
+                }
+            }
+
+            const pickupTable = flatbufferParseScratch.pickup;
+            const pickupLength = delta.pickupsLength();
+            for (let i = 0; i < pickupLength; i += 1) {
+                const pickup = delta.pickups(i, pickupTable);
+                if (!pickup) continue;
+                const pickupId = pickup.id();
+                const pickupState = pickups.get(pickupId) || {};
+                assignPickupStateFromTable(pickupState, pickup);
+                pickups.set(pickupId, pickupState);
+            }
+
+            const deactivatedPickupLength = delta.deactivatedPickupIdsLength();
+            if (deactivatedPickupLength > 0) {
+                for (let i = 0; i < deactivatedPickupLength; i += 1) {
+                    const pickupId = delta.deactivatedPickupIds(i);
+                    if (!pickupId) continue;
+                    const pickup = pickups.get(pickupId);
+                    if (pickup) pickup.is_active = false;
+                }
+            }
+
+            const vecTable = flatbufferParseScratch.vec2;
+            const killFeedEntry = flatbufferParseScratch.killFeedEntry;
+            const killFeedLength = delta.killFeedLength();
+            if (killFeedLength > 0) {
+                const rows = new Array(killFeedLength);
+                let writeIdx = 0;
+                for (let i = 0; i < killFeedLength; i += 1) {
+                    const killFeedRow = delta.killFeed(i, killFeedEntry);
+                    if (!killFeedRow) continue;
+                    const killerPosition = killFeedRow.killerPosition(vecTable);
+                    const victimPosition = killFeedRow.victimPosition(vecTable);
+                    rows[writeIdx++] = {
+                        killer_name: killFeedRow.killerName(),
+                        victim_name: killFeedRow.victimName(),
+                        weapon: killFeedRow.weapon(),
+                        timestamp: killFeedRow.timestamp(),
+                        killer_position: killerPosition ? { x: killerPosition.x(), y: killerPosition.y() } : null,
+                        victim_position: victimPosition ? { x: victimPosition.x(), y: victimPosition.y() } : null,
+                        is_headshot: killFeedRow.isHeadshot()
+                    };
+                }
+                if (writeIdx > 0) {
+                    rows.length = writeIdx;
+                    killFeed = rows;
+                    updateKillFeed();
+                }
+            }
+
+            const parsedMatchInfo = parseMatchInfo(delta.matchInfo(flatbufferParseScratch.matchInfo));
+            if (parsedMatchInfo) {
+                matchInfo = parsedMatchInfo;
+                if (window.__e2e) {
+                    window.__e2e.matchInfoReady = true;
+                }
+                refreshMatchInfoUi(false);
+            }
+
+            const flagTable = flatbufferParseScratch.flagState;
+            const flagLength = delta.flagStatesLength();
+            if (flagLength > 0) {
+                const rows = new Array(flagLength);
+                let writeIdx = 0;
+                for (let i = 0; i < flagLength; i += 1) {
+                    const flagState = delta.flagStates(i, flagTable);
+                    if (!flagState) continue;
+                    const position = flagState.position(vecTable);
+                    rows[writeIdx++] = {
+                        team_id: flagState.teamId(),
+                        status: flagState.status(),
+                        position: position ? { x: position.x(), y: position.y() } : { x: 0, y: 0 },
+                        carrier_id: flagState.carrierId(),
+                        respawn_timer: flagState.respawnTimer()
+                    };
+                }
+                if (writeIdx > 0) {
+                    rows.length = writeIdx;
+                    updateFlags(rows);
+                }
+            }
+
+            if (effectsManager) {
+                const gameEventTable = flatbufferParseScratch.gameEvent;
+                const gameEventLength = delta.gameEventsLength();
+                for (let i = 0; i < gameEventLength; i += 1) {
+                    const gameEvent = delta.gameEvents(i, gameEventTable);
+                    if (!gameEvent) continue;
+                    const position = gameEvent.position(vecTable);
+                    effectsManager.processGameEvent({
+                        event_type: gameEvent.eventType(),
+                        position: position ? { x: position.x(), y: position.y() } : { x: 0, y: 0 },
+                        instigator_id: gameEvent.instigatorId(),
+                        target_id: gameEvent.targetId(),
+                        weapon_type: gameEvent.weaponType(),
+                        value: gameEvent.value()
+                    });
+                }
+            }
+
+            maybeRecordInterpolationSnapshot(serverTime);
+        }
+
+        function tryProcessDeltaMessageFast(data, e2eRef = null) {
+            if (!FAST_DELTA_APPLY_ENABLED) {
+                return false;
+            }
+            const buf = bindFlatBufferData(data);
+            if (!buf) {
+                return false;
+            }
+            try {
+                const gameMsg = GameProtocol.GameMessage.getRootAsGameMessage(buf, flatbufferParseScratch.gameMessage);
+                if (gameMsg.msgType() !== GP.MessageType.DeltaState) {
+                    return false;
+                }
+                const delta = gameMsg.actualMessage(flatbufferParseScratch.deltaStateMessage);
+                if (!delta) {
+                    return false;
+                }
+                processDeltaStateFast(delta);
+                if (e2eRef) {
+                    e2eRef.lastStateUpdate = performance.now();
+                }
+                return true;
+            } catch (error) {
+                fastDeltaPathErrorCount += 1;
+                if (fastDeltaPathErrorCount <= 3 || (fastDeltaPathErrorCount % 50) === 0) {
+                    console.error('Fast delta apply failed; falling back to generic parser.', error);
+                    log(`Fast delta apply failed (${fastDeltaPathErrorCount}): ${error?.message || error}`, 'warn');
+                }
+                return false;
+            }
+        }
 
         function parseTeamScores(matchInfoTable) {
             const length = matchInfoTable?.teamScoresLength?.() || 0;
@@ -7139,7 +7849,11 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         // Parse FlatBuffer message.
         function parseFlatBufferMessage(data) {
             try {
-                const buf = new flatbuffers.ByteBuffer(new Uint8Array(data));
+                const buf = bindFlatBufferData(data);
+                if (!buf) {
+                    log('Received unsupported data payload on DataChannel.', 'error');
+                    return null;
+                }
                 const gameMsg = GameProtocol.GameMessage.getRootAsGameMessage(buf, flatbufferParseScratch.gameMessage);
                 const msgType = gameMsg.msgType();
 
@@ -8798,9 +9512,13 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                         return;
                     }
 
+                    const e2e = window.__e2e;
+                    if (tryProcessDeltaMessageFast(event.data, e2e)) {
+                        return;
+                    }
+
                     const parsed = parseFlatBufferMessage(event.data);
                     if (!parsed) return;
-                    const e2e = window.__e2e;
 
                     switch (parsed.type) {
                         case 'welcome':
@@ -8836,8 +9554,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                         case 'match_update': // Handle explicit match updates if server sends them separately
                             if (parsed.data) {
                                 matchInfo = parsed.data;
-                                updateMatchInfo();
-                                updateScoreboard();
+                                refreshMatchInfoUi(true);
                             }
                             break;
                     }
@@ -8929,6 +9646,25 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         this.particlesEnabled = true;
         this.audioManager = audioManager;  // Store audio manager reference
         this.damageNumberTextStyles = new Map();
+        this.damageNumberPool = [];
+        this.damageNumberPoolSize = 0;
+        this.activeDamageNumberCount = 0;
+        this.pendingDamageNumberBatches = new Map();
+        this.activeDamageNumberEffectsByKey = new Map();
+        this.pendingDamageBatchCount = 0;
+        this.damageNumberUseBitmapText = !!(
+            PIXI &&
+            PIXI.BitmapText &&
+            PIXI.BitmapFont &&
+            typeof PIXI.BitmapFont.from === 'function'
+        );
+        this.damageNumberBitmapFontNames = {
+            full: `${DAMAGE_NUMBER_BITMAP_FONT_BASE}_full`,
+            lite: `${DAMAGE_NUMBER_BITMAP_FONT_BASE}_lite`,
+            minimal: `${DAMAGE_NUMBER_BITMAP_FONT_BASE}_minimal`
+        };
+        this.damageNumberOnUpdate = this.updateDamageNumberEffect.bind(this);
+        this.damageNumberOnComplete = this.completeDamageNumberEffect.bind(this);
         this.effectStats = {
             dropped: 0,
             evicted: 0
@@ -8966,6 +9702,16 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         this.performanceProfileName = 'high';
         this.performanceProfile = this.performanceProfiles.high;
         this.maxActiveEffects = this.performanceProfile.maxActiveEffects;
+        this.effectSpawnSequence = 0;
+        this.effectUpdateFrame = 0;
+        this.lastLoadTier = 0;
+        this.ensureDamageNumberBitmapFonts();
+        const preallocCount = Math.min(DAMAGE_NUMBER_POOL_PREALLOC, DAMAGE_NUMBER_POOL_MAX);
+        for (let i = 0; i < preallocCount; i += 1) {
+            const entry = this.createDamageNumberPoolEntry();
+            if (!entry) break;
+            this.damageNumberPool.push(entry);
+        }
         
         // Pre-generate particle textures
         this.particleTextures = this.generateParticleTextures();
@@ -8973,6 +9719,61 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             ? 'dense'
             : ((BENCH_MODE || STABLE_MODE_FORCED) ? 'ultra' : (LOW_OVERHEAD_MODE ? 'dense' : 'high'));
         this.setPerformanceProfile(defaultProfile);
+    }
+
+    ensureDamageNumberBitmapFonts() {
+        if (!this.damageNumberUseBitmapText) return;
+        const variants = [
+            { key: 'full', fontSize: 24 },
+            { key: 'lite', fontSize: 19 },
+            { key: 'minimal', fontSize: 16 }
+        ];
+        for (let i = 0; i < variants.length; i += 1) {
+            const variant = variants[i];
+            const fontName = this.damageNumberBitmapFontNames[variant.key];
+            const available = PIXI.BitmapFont?.available;
+            if (available && available[fontName]) continue;
+            try {
+                PIXI.BitmapFont.from(
+                    fontName,
+                    {
+                        fontFamily: 'Arial',
+                        fontSize: variant.fontSize,
+                        fontWeight: '700',
+                        fill: '#ffffff',
+                        stroke: '#000000',
+                        strokeThickness: variant.key === 'minimal' ? 1 : 2
+                    },
+                    {
+                        chars: DAMAGE_NUMBER_BITMAP_CHARS
+                    }
+                );
+            } catch (error) {
+                console.warn('Bitmap font generation failed, falling back to PIXI.Text:', error);
+                this.damageNumberUseBitmapText = false;
+                return;
+            }
+        }
+    }
+
+    createDamageNumberTextNode(variant = 'full') {
+        const normalizedVariant = variant === 'minimal' ? 'minimal' : (variant === 'lite' ? 'lite' : 'full');
+        if (this.damageNumberUseBitmapText) {
+            const fontName = this.damageNumberBitmapFontNames[normalizedVariant];
+            const node = new PIXI.BitmapText('', { fontName });
+            if (node.anchor && typeof node.anchor.set === 'function') {
+                node.anchor.set(0.5);
+            }
+            node.visible = false;
+            return node;
+        }
+
+        const fallbackStyle = this.getDamageNumberTextStyle('enemyReceived', DAMAGE_NUMBER_CONFIGS.enemyReceived, normalizedVariant);
+        const node = new PIXI.Text('', fallbackStyle);
+        node.anchor.set(0.5);
+        node.resolution = 1;
+        node.visible = false;
+        return node;
     }
 
 
@@ -9044,6 +9845,386 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         return Math.max(minimum, scaled);
     }
 
+    getLoadTier() {
+        const projectileCount = Number(projectiles?.size || 0);
+        const effectUtilization = this.maxActiveEffects > 0
+            ? (this.activeEffects.length / this.maxActiveEffects)
+            : 0;
+
+        if (
+            ultraPerformanceMode ||
+            smoothedFrameMs >= 30 ||
+            projectileCount >= 120 ||
+            effectUtilization >= 0.75
+        ) {
+            return 2;
+        }
+        if (smoothedFrameMs >= 22 || projectileCount >= 60 || effectUtilization >= 0.55) {
+            return 1;
+        }
+        return 0;
+    }
+
+    getUpdateStrideForLoad(loadTier) {
+        if (loadTier >= 2) return EFFECTS_UPDATE_SKIP_STRIDE_HARD;
+        if (loadTier === 1) return EFFECTS_UPDATE_SKIP_STRIDE_SOFT;
+        return 1;
+    }
+
+    shouldEmitEffect(kind = 'generic') {
+        const loadTier = this.getLoadTier();
+        if (loadTier <= 0) return true;
+
+        const heavy = loadTier >= 2;
+        let stride = heavy ? 4 : 2;
+        switch (kind) {
+            case 'damage':
+                stride = heavy ? 3 : 2;
+                break;
+            case 'impact':
+                stride = heavy ? 3 : 2;
+                break;
+            case 'muzzle':
+                stride = heavy ? 5 : 3;
+                break;
+            case 'explosion':
+                stride = heavy ? 6 : 3;
+                break;
+            case 'powerup':
+                stride = heavy ? 8 : 4;
+                break;
+            case 'flag':
+                stride = heavy ? 10 : 6;
+                break;
+            default:
+                break;
+        }
+
+        this.effectSpawnSequence = (this.effectSpawnSequence + 1) % 1000000;
+        return (this.effectSpawnSequence % stride) === 0;
+    }
+
+    createDamageNumberPoolEntry() {
+        if (this.damageNumberPoolSize >= DAMAGE_NUMBER_POOL_MAX) return null;
+        const container = new PIXI.Container();
+        container.visible = false;
+        container.renderable = false;
+
+        const glow = new PIXI.Graphics();
+        glow.beginFill(0xFFFFFF, 0.25);
+        glow.drawCircle(0, 0, 20);
+        glow.endFill();
+        glow.visible = false;
+        container.addChild(glow);
+
+        const criticalBurst = new PIXI.Graphics();
+        criticalBurst.lineStyle(2, 0xFFFF00, 0.8);
+        drawStar(criticalBurst, 0, 0, 8, 25, 15);
+        criticalBurst.visible = false;
+        container.addChild(criticalBurst);
+
+        const textNodes = {
+            full: this.createDamageNumberTextNode('full'),
+            lite: this.createDamageNumberTextNode('lite'),
+            minimal: this.createDamageNumberTextNode('minimal')
+        };
+        container.addChild(textNodes.full);
+        container.addChild(textNodes.lite);
+        container.addChild(textNodes.minimal);
+        textNodes.full.visible = true;
+
+        const arrow = new PIXI.Graphics();
+        arrow.beginFill(0xFFFFFF, 0.7);
+        arrow.drawPolygon([-5, -25, 5, -25, 0, -30]);
+        arrow.endFill();
+        arrow.visible = false;
+        container.addChild(arrow);
+
+        const entry = {
+            container,
+            glow,
+            criticalBurst,
+            text: textNodes.full,
+            textNodes,
+            activeTextVariant: 'full',
+            arrow,
+            inUse: false,
+            styleKey: '',
+            lastText: ''
+        };
+        this.damageNumberPoolSize += 1;
+        return entry;
+    }
+
+    acquireDamageNumberEntry() {
+        if (this.damageNumberPool.length > 0) {
+            return this.damageNumberPool.pop();
+        }
+        return this.createDamageNumberPoolEntry();
+    }
+
+    releaseDamageNumberEntry(entry) {
+        if (!entry) return;
+        const wasInUse = !!entry.inUse;
+        entry.inUse = false;
+        entry.lastText = '';
+        entry.styleKey = '';
+        entry.activeTextVariant = 'full';
+        if (entry.textNodes) {
+            const variants = Object.keys(entry.textNodes);
+            for (let i = 0; i < variants.length; i += 1) {
+                const node = entry.textNodes[variants[i]];
+                if (node) {
+                    node.visible = variants[i] === 'full';
+                    if (typeof node.text === 'string') {
+                        node.text = '';
+                    }
+                }
+            }
+            entry.text = entry.textNodes.full || entry.text;
+        }
+        const container = entry.container;
+        if (container && !container.destroyed) {
+            container.visible = false;
+            container.renderable = false;
+            container.rotation = 0;
+            container.alpha = 1;
+            container.scale.set(1, 1);
+            if (container.parent) {
+                container.parent.removeChild(container);
+            }
+        }
+        if (wasInUse) {
+            this.activeDamageNumberCount = Math.max(0, this.activeDamageNumberCount - 1);
+        }
+        if (this.damageNumberPool.length < DAMAGE_NUMBER_POOL_MAX) {
+            this.damageNumberPool.push(entry);
+        }
+    }
+
+    getDamageNumberActiveLimit(loadTier) {
+        if (loadTier >= 2 || ultraPerformanceMode) return DAMAGE_NUMBER_ACTIVE_CAP_HARD;
+        if (loadTier >= 1 || smoothedFrameMs > 22) return DAMAGE_NUMBER_ACTIVE_CAP_SOFT;
+        return DAMAGE_NUMBER_POOL_MAX;
+    }
+
+    getDamageBatchWindowMs(loadTier) {
+        if (loadTier >= 2) return DAMAGE_NUMBER_BATCH_WINDOW_MS_HARD;
+        if (loadTier >= 1) return DAMAGE_NUMBER_BATCH_WINDOW_MS_SOFT;
+        return (mobileDynamicsEnabled || forceMobileClient)
+            ? DAMAGE_NUMBER_BATCH_WINDOW_MS_MOBILE
+            : DAMAGE_NUMBER_BATCH_WINDOW_MS_DESKTOP;
+    }
+
+    getDamageBatchCellSize(loadTier) {
+        const baseSize = (mobileDynamicsEnabled || forceMobileClient)
+            ? DAMAGE_NUMBER_BATCH_CELL_SIZE_MOBILE
+            : DAMAGE_NUMBER_BATCH_CELL_SIZE_DESKTOP;
+        if (loadTier >= 2) return Math.round(baseSize * 4.0);
+        if (loadTier >= 1) return Math.round(baseSize * 2.8);
+        return baseSize;
+    }
+
+    getDamageBatchFlushLimit(loadTier) {
+        if (loadTier >= 2) return DAMAGE_NUMBER_BATCH_FLUSH_LIMIT_HARD;
+        if (loadTier >= 1) return DAMAGE_NUMBER_BATCH_FLUSH_LIMIT_SOFT;
+        return 12;
+    }
+
+    isDamageMergePressure(loadTier) {
+        if (loadTier >= 1 || ultraPerformanceMode || smoothedFrameMs >= 22) return true;
+        if (window.__e2e?.fxStressActive) return true;
+        const mergeLimit = (mobileDynamicsEnabled || forceMobileClient)
+            ? DAMAGE_NUMBER_MERGE_MAX_KEYS_MOBILE
+            : DAMAGE_NUMBER_MERGE_MAX_KEYS_DESKTOP;
+        return this.activeDamageNumberEffectsByKey.size >= mergeLimit;
+    }
+
+    resolveDamageMergeKey(damageType, position, targetId = null, loadTier = 0) {
+        const resolvedType = DAMAGE_NUMBER_CONFIGS[damageType] ? damageType : 'enemyReceived';
+        const normalizedTargetId = Number.isFinite(Number(targetId)) ? Number(targetId) : null;
+        if (normalizedTargetId !== null) {
+            return `${resolvedType}|t:${normalizedTargetId}`;
+        }
+
+        const x = Number(position?.x);
+        const y = Number(position?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+        const mobileMerge = mobileDynamicsEnabled || forceMobileClient;
+        const underPressure = this.isDamageMergePressure(loadTier);
+        const baseCellSize = this.getDamageBatchCellSize(loadTier);
+        const mergeCellMin = mobileMerge
+            ? DAMAGE_NUMBER_MERGE_CELL_MIN_MOBILE
+            : DAMAGE_NUMBER_MERGE_CELL_MIN_DESKTOP;
+        const cellSize = underPressure ? Math.max(baseCellSize, mergeCellMin) : baseCellSize;
+        const cellX = Math.round(x / cellSize);
+        const cellY = Math.round(y / cellSize);
+        const baseKey = `${resolvedType}|p:${cellX},${cellY}`;
+        if (!underPressure) return baseKey;
+        if (this.activeDamageNumberEffectsByKey.has(baseKey) || this.pendingDamageNumberBatches.has(baseKey)) {
+            return baseKey;
+        }
+
+        const mergeLimit = mobileMerge
+            ? DAMAGE_NUMBER_MERGE_MAX_KEYS_MOBILE
+            : DAMAGE_NUMBER_MERGE_MAX_KEYS_DESKTOP;
+        if (
+            this.activeDamageNumberEffectsByKey.size < mergeLimit &&
+            this.pendingDamageNumberBatches.size < (mergeLimit * 3)
+        ) {
+            return baseKey;
+        }
+
+        const fallbackBuckets = mobileMerge
+            ? DAMAGE_NUMBER_MERGE_FALLBACK_BUCKETS_MOBILE
+            : DAMAGE_NUMBER_MERGE_FALLBACK_BUCKETS_DESKTOP;
+        const fallbackCellSize = cellSize * 1.25;
+        const bucketX = Math.round(x / fallbackCellSize);
+        const bucketY = Math.round(y / fallbackCellSize);
+        const bucket = Math.abs(((bucketX * 73856093) ^ (bucketY * 19349663))) % fallbackBuckets;
+        return `${resolvedType}|g:${bucket}`;
+    }
+
+    queueDamageNumber(position, damage, damageType = 'enemyReceived', targetId = null, loadTierOverride = null) {
+        const x = Number(position?.x);
+        const y = Number(position?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+
+        const roundedDamage = Math.max(0, Math.round(Number(damage) || 0));
+        if (roundedDamage <= 0) return false;
+
+        const resolvedType = DAMAGE_NUMBER_CONFIGS[damageType] ? damageType : 'enemyReceived';
+        const loadTier = Number.isFinite(loadTierOverride) ? Number(loadTierOverride) : this.getLoadTier();
+        const normalizedTargetId = Number.isFinite(Number(targetId)) ? Number(targetId) : null;
+        const key = this.resolveDamageMergeKey(resolvedType, { x, y }, normalizedTargetId, loadTier);
+        if (!key) return false;
+        const now = Date.now();
+        const existing = this.pendingDamageNumberBatches.get(key);
+        if (existing) {
+            const nextCount = existing.count + 1;
+            existing.count = nextCount;
+            existing.damage = Math.min(9999, existing.damage + roundedDamage);
+            existing.position.x = ((existing.position.x * (nextCount - 1)) + x) / nextCount;
+            existing.position.y = ((existing.position.y * (nextCount - 1)) + y) / nextCount;
+            existing.lastAt = now;
+            return true;
+        }
+
+        if (!this.shouldEmitEffect('damage')) return false;
+
+        while (this.pendingDamageNumberBatches.size >= DAMAGE_NUMBER_BATCH_MAX_PENDING) {
+            const oldestKey = this.pendingDamageNumberBatches.keys().next().value;
+            if (typeof oldestKey === 'undefined') break;
+            this.pendingDamageNumberBatches.delete(oldestKey);
+            this.effectStats.dropped += 1;
+        }
+
+        this.pendingDamageNumberBatches.set(key, {
+            mergeKey: key,
+            position: { x, y },
+            damage: roundedDamage,
+            damageType: resolvedType,
+            count: 1,
+            firstAt: now,
+            lastAt: now
+        });
+        this.pendingDamageBatchCount = this.pendingDamageNumberBatches.size;
+        return true;
+    }
+
+    flushQueuedDamageNumbers(force = false, loadTierOverride = null) {
+        if (this.pendingDamageNumberBatches.size <= 0) {
+            this.pendingDamageBatchCount = 0;
+            return;
+        }
+
+        const loadTier = Number.isFinite(loadTierOverride) ? Number(loadTierOverride) : this.getLoadTier();
+        const now = Date.now();
+        const batchWindowMs = this.getDamageBatchWindowMs(loadTier);
+        const activeLimit = this.getDamageNumberActiveLimit(loadTier);
+        const availableSlots = Math.max(0, activeLimit - this.activeDamageNumberCount);
+        if (!force && availableSlots <= 0) return;
+
+        let flushBudget = force
+            ? this.pendingDamageNumberBatches.size
+            : Math.min(this.getDamageBatchFlushLimit(loadTier), availableSlots);
+        if (flushBudget <= 0) return;
+
+        const readyKeys = [];
+        for (const [key, batch] of this.pendingDamageNumberBatches) {
+            if (!batch) {
+                readyKeys.push(key);
+                continue;
+            }
+            if (!force && (now - batch.firstAt) < batchWindowMs) {
+                continue;
+            }
+            readyKeys.push(key);
+            if (readyKeys.length >= flushBudget) {
+                break;
+            }
+        }
+
+        for (let i = 0; i < readyKeys.length && flushBudget > 0; i += 1) {
+            const key = readyKeys[i];
+            const batch = this.pendingDamageNumberBatches.get(key);
+            this.pendingDamageNumberBatches.delete(key);
+            if (batch) {
+                const created = this.spawnDamageNumberEffect(
+                    batch.position,
+                    batch.damage,
+                    batch.damageType,
+                    loadTier,
+                    { mergeKey: batch.mergeKey || key }
+                );
+                if (!created) {
+                    this.effectStats.dropped += 1;
+                }
+                flushBudget -= 1;
+            }
+        }
+        this.pendingDamageBatchCount = this.pendingDamageNumberBatches.size;
+    }
+
+    updateDamageNumberEffect(progress, effect) {
+        const entry = effect?.damageEntry;
+        if (!entry || !entry.inUse) return;
+        const container = entry.container;
+        if (!container || container.destroyed) return;
+
+        container.y = effect.damageStartY + (effect.damageMoveDirection * progress * 50);
+        container.alpha = effect.damageVariant === 'minimal'
+            ? (1 - progress * 0.9)
+            : (1 - progress * 0.7);
+
+        if (effect.damageVariant === 'minimal') {
+            container.scale.set((1 - progress * 0.05) * effect.damageScaleBase);
+        } else if (effect.damageIsDealt) {
+            container.scale.set((1 + progress * 0.3) * effect.damageScaleBase);
+        } else {
+            container.scale.set((1 - progress * 0.1) * effect.damageScaleBase);
+        }
+
+        if (effect.damageFriendlyFire) {
+            container.rotation = Math.sin(progress * Math.PI * 4) * 0.1;
+        } else {
+            container.rotation = 0;
+        }
+    }
+
+    completeDamageNumberEffect(effect) {
+        const mergeKey = effect?.damageMergeKey;
+        if (mergeKey) {
+            const mapped = this.activeDamageNumberEffectsByKey.get(mergeKey);
+            if (mapped === effect) {
+                this.activeDamageNumberEffectsByKey.delete(mergeKey);
+            }
+        }
+        const entry = effect?.damageEntry;
+        this.releaseDamageNumberEntry(entry);
+    }
+
     destroyEffectObject(object) {
         if (!object || object.destroyed) return;
         if (object.parent) {
@@ -9093,7 +10274,11 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             const effect = this.activeEffects[i];
             const priority = effect.priority ?? 1;
             if (overflow > 0 && priority <= 1) {
-                this.destroyEffectObject(effect.object);
+                if (typeof effect.onAbort === 'function') {
+                    effect.onAbort(effect);
+                } else {
+                    this.destroyEffectObject(effect.object);
+                }
                 this.effectStats.evicted += 1;
                 overflow -= 1;
                 continue;
@@ -9103,7 +10288,11 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
 
         while (overflow > 0 && survivors.length > 0) {
             const effect = survivors.shift();
-            this.destroyEffectObject(effect.object);
+            if (typeof effect.onAbort === 'function') {
+                effect.onAbort(effect);
+            } else {
+                this.destroyEffectObject(effect.object);
+            }
             this.effectStats.evicted += 1;
             overflow -= 1;
         }
@@ -9116,12 +10305,14 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         const pos = { x: event.position.x, y: event.position.y };
         switch (event.event_type) {
             case GP.GameEventType.BulletImpact:
+                if (!this.shouldEmitEffect('impact')) break;
                 this.createEnhancedBulletImpact(pos, event.weapon_type);
                 if (this.audioManager) {
                     this.audioManager.playSound('bulletImpact', pos, 0.5);
                 }
                 break;
             case GP.GameEventType.Explosion:
+                if (!this.shouldEmitEffect('explosion')) break;
                 this.createEnhancedExplosion(pos, event.value);
                 if (this.audioManager) {
                     this.audioManager.playSound('explosion', pos);
@@ -9131,6 +10322,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 if (event.weapon_type === GP.WeaponType.Melee) {
                     this.createMeleeSwingEffect(pos, event.instigator_id);
                 } else {
+                    if (!this.shouldEmitEffect('muzzle')) break;
                     this.createEnhancedMuzzleFlash(pos, event.weapon_type, event.instigator_id);
                 }
                 if (this.audioManager) {
@@ -9159,24 +10351,27 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                         }
                     }
                 }
-                this.createEnhancedDamageNumbers(pos, event.value, damageType);
+                this.createEnhancedDamageNumbers(pos, event.value, damageType, { targetId: event.target_id });
                 if (this.audioManager) {
                     this.audioManager.playSound('playerHit', pos);
                 }
                 break;
             case GP.GameEventType.WallDestroyed:
+                if (!this.shouldEmitEffect('explosion')) break;
                 this.createEnhancedWallDestructionEffect(pos);
                 if (this.audioManager) {
                     this.audioManager.playSound('explosion', pos, 0.7);
                 }
                 break;
             case GP.GameEventType.PowerupActivated:
+                if (!this.shouldEmitEffect('powerup')) break;
                 this.createEnhancedPowerupCollectEffect(pos);
                 if (this.audioManager) {
                     this.audioManager.playSound('powerupCollect', pos);
                 }
                 break;
             case GP.GameEventType.FlagCaptured:
+                if (!this.shouldEmitEffect('flag')) break;
                 this.createEnhancedFlagCaptureEffect(pos);
                 if (this.audioManager) {
                     this.audioManager.playSound('flagCapture', pos);
@@ -9195,6 +10390,8 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
     }
 
     createEnhancedBulletImpact(position, weaponType) {
+        if (!this.shouldEmitEffect('impact')) return;
+        const loadTier = this.getLoadTier();
         const impactConfigs = {
             [GP.WeaponType.Pistol]: { size: 4, sparkCount: 3, color: 0xFFFF00 },
             [GP.WeaponType.Shotgun]: { size: 3, sparkCount: 2, color: 0xFF6600 },
@@ -9210,11 +10407,28 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         impact.drawCircle(0, 0, config.size);
         impact.endFill();
         impact.position.set(position.x, position.y);
-        impact.filters = [new PIXI.BlurFilter(2)];
+        if (loadTier === 0) {
+            impact.filters = [new PIXI.BlurFilter(2)];
+        }
         this.effectsContainer.addChild(impact);
-        
+
+        if (loadTier >= 2) {
+            this.animateEffect(impact, {
+                duration: 120,
+                onUpdate: p => {
+                    impact.scale.set(1 + p * 2);
+                    impact.alpha = 1 - p;
+                },
+                onComplete: () => impact.destroy()
+            });
+            return;
+        }
+
         // Sparks
-        const sparkCount = this.scaleEffectCount(config.sparkCount, 1);
+        let sparkCount = this.scaleEffectCount(config.sparkCount, 1);
+        if (loadTier === 1) {
+            sparkCount = Math.max(1, Math.floor(sparkCount * 0.5));
+        }
         for (let i = 0; i < sparkCount; i++) {
             const spark = new PIXI.Sprite(this.particleTextures.spark);
             spark.anchor.set(0.5);
@@ -9254,6 +10468,8 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
     }
 
     createEnhancedMuzzleFlash(position, weaponType, instigatorId) {
+        if (!this.shouldEmitEffect('muzzle')) return;
+        const loadTier = this.getLoadTier();
         const playerSprite = playerContainer.children.find(s => s.playerId === instigatorId);
         if (!playerSprite) return;
 
@@ -9268,32 +10484,52 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         
         // Multi-layered flash
         const flashContainer = new PIXI.Container();
-        
+        const gunLength = PLAYER_RADIUS + 15; // Approximate gun length
+        flashContainer.position.set(gunLength, 0); // Position at the tip of the gun sprite
+        flashContainer.rotation = Math.random() * Math.PI * 2; // Random rotation for variety
+        playerSprite.gun.addChild(flashContainer); // Add to the gun sprite of the player
+
+        if (loadTier >= 2) {
+            const flashLite = new PIXI.Graphics();
+            flashLite.beginFill(config.color, 0.65);
+            flashLite.drawCircle(0, 0, Math.max(6, config.size * 0.45));
+            flashLite.endFill();
+            flashContainer.addChild(flashLite);
+
+            this.animateEffect(flashContainer, {
+                duration: 80,
+                onUpdate: p => {
+                    flashContainer.scale.set(0.7 + 0.4 * (1 - p));
+                    flashContainer.alpha = 1 - p;
+                },
+                onComplete: () => flashContainer.destroy()
+            });
+            return;
+        }
+
         // Outer glow
-        const glow = new PIXI.Graphics();
-        glow.beginFill(config.color, 0.3);
-        glow.drawCircle(0, 0, config.size * 1.5);
-        glow.endFill();
-        glow.filters = [new PIXI.BlurFilter(4)];
-        flashContainer.addChild(glow);
-        
+        if (loadTier === 0) {
+            const glow = new PIXI.Graphics();
+            glow.beginFill(config.color, 0.3);
+            glow.drawCircle(0, 0, config.size * 1.5);
+            glow.endFill();
+            glow.filters = [new PIXI.BlurFilter(4)];
+            flashContainer.addChild(glow);
+        }
+
         // Main flash
         const flash = new PIXI.Graphics();
         flash.beginFill(config.color, 0.8);
-        drawStar(flash, 0, 0, config.points, config.size, config.size * 0.4);
+        const starPoints = loadTier === 1 ? Math.max(4, config.points - 2) : config.points;
+        drawStar(flash, 0, 0, starPoints, config.size, config.size * 0.4);
         flash.endFill();
         
         // Core
         flash.beginFill(0xFFFFFF, 1);
         flash.drawCircle(0, 0, config.size * 0.3);
         flash.endFill();
-        
+
         flashContainer.addChild(flash);
-        
-        const gunLength = PLAYER_RADIUS + 15; // Approximate gun length
-        flashContainer.position.set(gunLength, 0); // Position at the tip of the gun sprite
-        flashContainer.rotation = Math.random() * Math.PI * 2; // Random rotation for variety
-        playerSprite.gun.addChild(flashContainer); // Add to the gun sprite of the player
         
         this.animateEffect(flashContainer, {
             duration: 100,
@@ -9305,95 +10541,248 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         });
     }
 
-    getDamageNumberTextStyle(damageType, config) {
-        const styleKey = String(damageType || 'enemyReceived');
+    getDamageNumberTextStyle(damageType, config, variant = 'full') {
+        const normalizedVariant = variant === 'minimal' ? 'minimal' : (variant === 'lite' ? 'lite' : 'full');
+        const styleKey = `${String(damageType || 'enemyReceived')}:${normalizedVariant}`;
         if (this.damageNumberTextStyles.has(styleKey)) {
             return this.damageNumberTextStyles.get(styleKey);
         }
-        const style = new PIXI.TextStyle({
-            fontSize: 20 * config.scale,
+        const isLite = normalizedVariant !== 'full';
+        const isMinimal = normalizedVariant === 'minimal';
+        const styleOptions = {
+            fontSize: (isMinimal ? 15 : (isLite ? 17 : 20)) * config.scale,
             fontWeight: 'bold',
-            fill: config.textColor,
-            fillGradientType: PIXI.TEXT_GRADIENT.LINEAR_VERTICAL,
+            fill: isLite ? (Array.isArray(config.textColor) ? config.textColor[0] : config.textColor) : config.textColor,
             stroke: config.strokeColor,
-            strokeThickness: 4,
-            dropShadow: true,
-            dropShadowColor: 0x000000,
-            dropShadowBlur: 4,
-            dropShadowDistance: 2
-        });
+            strokeThickness: isMinimal ? 1 : (isLite ? 2 : 4),
+            dropShadow: !isLite
+        };
+        if (!isLite) {
+            styleOptions.fillGradientType = PIXI.TEXT_GRADIENT.LINEAR_VERTICAL;
+            styleOptions.dropShadowColor = 0x000000;
+            styleOptions.dropShadowBlur = 4;
+            styleOptions.dropShadowDistance = 2;
+        }
+        const style = new PIXI.TextStyle(styleOptions);
         this.damageNumberTextStyles.set(styleKey, style);
         return style;
     }
 
-    createEnhancedDamageNumbers(position, damage, damageType = 'enemy') {
-        const container = new PIXI.Container();
+    getDamageNumberAnimationDuration(useMinimalVariant, useLiteVariant) {
+        if (useMinimalVariant) return 520;
+        if (useLiteVariant) return 760;
+        return 1000;
+    }
+
+    getDamageNumberUpdateStride(loadTier, useMinimalVariant, useLiteVariant) {
+        if (useMinimalVariant || loadTier >= 2) return 3;
+        if (useLiteVariant || loadTier >= 1 || mobileDynamicsEnabled || forceMobileClient) return 2;
+        return 1;
+    }
+
+    applyDamageNumberEntryVisual(entry, resolvedType, config, styleVariant, damageValue) {
+        if (!entry || !config) return;
+        const normalizedVariant = styleVariant === 'minimal' ? 'minimal' : (styleVariant === 'lite' ? 'lite' : 'full');
+        const useLiteVariant = normalizedVariant !== 'full';
+        const useMinimalVariant = normalizedVariant === 'minimal';
+        const glow = entry.glow;
+        const criticalBurst = entry.criticalBurst;
+        const arrow = entry.arrow;
+        const roundedDamage = Math.max(0, Math.round(Number(damageValue) || 0));
+        const textColor = Array.isArray(config.textColor) ? config.textColor[0] : config.textColor;
+        const textValue = config.prefix + roundedDamage;
+
+        const textNodes = entry.textNodes || null;
+        let textNode = entry.text;
+        if (textNodes) {
+            if (entry.activeTextVariant !== normalizedVariant) {
+                entry.activeTextVariant = normalizedVariant;
+                entry.styleKey = '';
+                entry.lastText = '';
+            }
+            const variants = ['full', 'lite', 'minimal'];
+            for (let i = 0; i < variants.length; i += 1) {
+                const key = variants[i];
+                const node = textNodes[key];
+                if (!node) continue;
+                const shouldShow = key === normalizedVariant;
+                if (node.visible !== shouldShow) {
+                    node.visible = shouldShow;
+                }
+                if (shouldShow) {
+                    textNode = node;
+                }
+            }
+            entry.text = textNode;
+        }
+        if (!textNode) return;
+
+        if (entry.lastText !== textValue || textNode.text !== textValue) {
+            textNode.text = textValue;
+            entry.lastText = textValue;
+        }
+        const resolvedTextTint = typeof textColor === 'number' ? textColor : 0xFFFFFF;
+        if (textNode.tint !== resolvedTextTint) {
+            textNode.tint = resolvedTextTint;
+        }
+
+        if (!this.damageNumberUseBitmapText) {
+            const styleKey = `${resolvedType}:${normalizedVariant}`;
+            if (entry.styleKey !== styleKey) {
+                textNode.style = this.getDamageNumberTextStyle(resolvedType, config, normalizedVariant);
+                entry.styleKey = styleKey;
+            }
+        } else {
+            entry.styleKey = `${resolvedType}:${normalizedVariant}:bitmap`;
+        }
+
+        const showGlow = !useLiteVariant;
+        glow.visible = showGlow;
+        glow.tint = config.glowColor;
+        glow.alpha = showGlow ? 1 : 0;
+
+        const showArrow = !useMinimalVariant && (resolvedType === 'enemyReceived' || resolvedType === 'friendlyFireReceived');
+        arrow.visible = showArrow;
+        arrow.tint = config.glowColor;
+
+        const showCritical = !useLiteVariant && roundedDamage > 50;
+        criticalBurst.visible = showCritical;
+    }
+
+    createEnhancedDamageNumbers(position, damage, damageType = 'enemy', options = {}) {
+        const loadTier = this.getLoadTier();
+        const resolvedType = DAMAGE_NUMBER_CONFIGS[damageType] ? damageType : 'enemyReceived';
+        const normalizedTargetId = Number.isFinite(Number(options?.targetId)) ? Number(options.targetId) : null;
+        const syntheticStressActive = Boolean(window.__e2e?.fxStressActive);
+        const allowMerge = DAMAGE_BATCH_ENABLED;
+        const mergeKey = allowMerge
+            ? this.resolveDamageMergeKey(resolvedType, position, normalizedTargetId, loadTier)
+            : null;
+        const shouldUseBatch = DAMAGE_BATCH_ENABLED && (
+            loadTier >= 1 ||
+            ultraPerformanceMode ||
+            mobileDynamicsEnabled ||
+            forceMobileClient ||
+            syntheticStressActive
+        );
+        if (!shouldUseBatch) {
+            if (!this.shouldEmitEffect('damage')) return false;
+            return this.spawnDamageNumberEffect(position, damage, damageType, loadTier, { mergeKey });
+        }
+        if (options && options.immediate) {
+            if (!this.shouldEmitEffect('damage')) return false;
+            return this.spawnDamageNumberEffect(position, damage, damageType, loadTier, { ...options, mergeKey });
+        }
+        return this.queueDamageNumber(position, damage, damageType, normalizedTargetId, loadTier);
+    }
+
+    spawnDamageNumberEffect(position, damage, damageType = 'enemy', loadTierOverride = null, options = null) {
+        const loadTier = Number.isFinite(loadTierOverride) ? Number(loadTierOverride) : this.getLoadTier();
+        const useLiteVariant = loadTier >= 1;
+        const useMinimalVariant = loadTier >= 2;
         const resolvedType = DAMAGE_NUMBER_CONFIGS[damageType] ? damageType : 'enemyReceived';
         const config = DAMAGE_NUMBER_CONFIGS[resolvedType];
-        
-        // Background glow
-        const glow = new PIXI.Graphics();
-        glow.beginFill(config.glowColor, 0.3);
-        glow.drawCircle(0, 0, 20);
-        glow.endFill();
-        glow.filters = [new PIXI.BlurFilter(5)];
-        container.addChild(glow);
-        
-        // Reuse style objects to avoid repeated TextStyle allocations under heavy combat.
-        const textStyle = this.getDamageNumberTextStyle(resolvedType, config);
-        const text = new PIXI.Text(config.prefix + Math.round(damage), textStyle);
-        text.anchor.set(0.5);
-        container.addChild(text);
-        
-        // Add directional indicator for damage source
-        if (damageType === 'enemyReceived' || damageType === 'friendlyFireReceived') {
-            const arrow = new PIXI.Graphics();
-            arrow.beginFill(config.glowColor, 0.6);
-            arrow.drawPolygon([-5, -25, 5, -25, 0, -30]);
-            arrow.endFill();
-            container.addChild(arrow);
-        }
-        
-        container.position.set(position.x, position.y + config.offsetY);
-        this.effectsContainer.addChild(container);
-        
-        // Critical hit effect for high damage
-        if (damage > 50) {
-            text.scale.set(1.2, 1.2);
-            const criticalBurst = new PIXI.Graphics();
-            criticalBurst.lineStyle(2, 0xFFFF00, 0.8);
-            drawStar(criticalBurst, 0, 0, 8, 25, 15);
-            container.addChildAt(criticalBurst, 1);
-        }
-        
-        // Different animations based on damage type
-        const isDealt = damageType === 'enemyDealt' || damageType === 'friendlyFireDealt';
+        const roundedDamage = Math.max(0, Math.round(Number(damage) || 0));
+        if (roundedDamage <= 0) return false;
+        const mergeKey = (options && typeof options.mergeKey === 'string') ? options.mergeKey : null;
+        const isDealt = resolvedType === 'enemyDealt' || resolvedType === 'friendlyFireDealt';
         const moveDirection = isDealt ? 1 : -1; // Dealt damage moves up, received damage moves down
-        
-        this.animateEffect(container, {
-            duration: 1000,
+        const styleVariant = useMinimalVariant ? 'minimal' : (useLiteVariant ? 'lite' : 'full');
+        const animationDuration = this.getDamageNumberAnimationDuration(useMinimalVariant, useLiteVariant);
+        const damageUpdateStride = this.getDamageNumberUpdateStride(loadTier, useMinimalVariant, useLiteVariant);
+
+        if (mergeKey) {
+            const existingEffect = this.activeDamageNumberEffectsByKey.get(mergeKey);
+            if (existingEffect) {
+                const existingEntry = existingEffect.damageEntry;
+                const existingContainer = existingEntry?.container;
+                if (existingEntry && existingEntry.inUse && existingContainer && !existingContainer.destroyed) {
+                    const mergedDamage = Math.min(9999, Math.max(0, Math.round(Number(existingEffect.damageTotal) || 0)) + roundedDamage);
+                    existingEffect.damageTotal = mergedDamage;
+                    this.applyDamageNumberEntryVisual(existingEntry, resolvedType, config, styleVariant, mergedDamage);
+                    existingContainer.position.set(position.x, position.y + config.offsetY);
+                    existingContainer.scale.set(config.scale);
+                    existingContainer.alpha = 1;
+                    existingContainer.rotation = 0;
+                    existingContainer.visible = true;
+                    existingContainer.renderable = true;
+                    existingEffect.damageStartY = position.y + config.offsetY;
+                    existingEffect.damageMoveDirection = moveDirection;
+                    existingEffect.damageScaleBase = config.scale;
+                    existingEffect.damageVariant = styleVariant;
+                    existingEffect.damageIsDealt = isDealt;
+                    existingEffect.damageFriendlyFire = resolvedType === 'friendlyFireDealt' || resolvedType === 'friendlyFireReceived';
+                    existingEffect.duration = animationDuration;
+                    existingEffect.updateStride = damageUpdateStride;
+                    existingEffect.updateStrideTick = 0;
+                    const now = Date.now();
+                    existingEffect.startTime = now;
+                    existingEffect.actualStartTime = now;
+                    existingEffect.started = true;
+                    return true;
+                }
+                this.activeDamageNumberEffectsByKey.delete(mergeKey);
+            }
+        }
+
+        const activeLimit = this.getDamageNumberActiveLimit(loadTier);
+        if (this.activeDamageNumberCount >= activeLimit) {
+            this.effectStats.dropped += 1;
+            return false;
+        }
+
+        const poolEntry = this.acquireDamageNumberEntry();
+        if (!poolEntry) {
+            this.effectStats.dropped += 1;
+            return false;
+        }
+
+        const container = poolEntry.container;
+        this.applyDamageNumberEntryVisual(poolEntry, resolvedType, config, styleVariant, roundedDamage);
+
+        container.position.set(position.x, position.y + config.offsetY);
+        container.scale.set(config.scale);
+        container.alpha = 1;
+        container.rotation = 0;
+        container.visible = true;
+        container.renderable = true;
+
+        this.effectsContainer.addChild(container);
+        poolEntry.inUse = true;
+        this.activeDamageNumberCount += 1;
+
+        const queued = this.animateEffect(container, {
+            duration: animationDuration,
             priority: 3,
-            onUpdate: p => {
-                container.y = position.y + config.offsetY + (moveDirection * p * 50);
-                container.alpha = 1 - p * 0.7;
-                
-                // Scale effect based on damage type
-                if (isDealt) {
-                    container.scale.set((1 + p * 0.3) * config.scale);
-                } else {
-                    container.scale.set((1 - p * 0.1) * config.scale);
-                }
-                
-                // Rotation for friendly fire
-                if (damageType === 'friendlyFireDealt' || damageType === 'friendlyFireReceived') {
-                    container.rotation = Math.sin(p * Math.PI * 4) * 0.1;
-                }
-            },
-            onComplete: () => container.destroy()
+            damageTotal: roundedDamage,
+            damageMergeKey: mergeKey,
+            damageEntry: poolEntry,
+            damageStartY: position.y + config.offsetY,
+            damageMoveDirection: moveDirection,
+            damageScaleBase: config.scale,
+            damageVariant: styleVariant,
+            damageIsDealt: isDealt,
+            damageFriendlyFire: resolvedType === 'friendlyFireDealt' || resolvedType === 'friendlyFireReceived',
+            updateStride: damageUpdateStride,
+            updateStrideTick: 0,
+            preserveObjectOnDrop: true,
+            onUpdate: this.damageNumberOnUpdate,
+            onComplete: this.damageNumberOnComplete,
+            onAbort: this.damageNumberOnComplete
         });
+        if (!queued) {
+            this.releaseDamageNumberEntry(poolEntry);
+            return false;
+        }
+        if (mergeKey) {
+            this.activeDamageNumberEffectsByKey.set(mergeKey, queued);
+        }
+        return true;
     }
 
     createEnhancedExplosion(position, radius = 30) {
+        if (!this.shouldEmitEffect('explosion')) return;
+        const loadTier = this.getLoadTier();
         const explosionContainer = new PIXI.Container();
         explosionContainer.position.set(position.x, position.y);
         this.effectsContainer.addChild(explosionContainer);
@@ -9403,6 +10792,32 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         shockwave.lineStyle(3, 0xFFAA00, 0.8);
         shockwave.drawCircle(0, 0, 10);
         explosionContainer.addChild(shockwave);
+
+        if (loadTier >= 2) {
+            const blastLite = new PIXI.Graphics();
+            blastLite.beginFill(0xFFAA33, 0.55);
+            blastLite.drawCircle(0, 0, Math.max(12, radius * 0.45));
+            blastLite.endFill();
+            explosionContainer.addChild(blastLite);
+
+            this.animateEffect(blastLite, {
+                duration: 240,
+                onUpdate: (progress) => {
+                    blastLite.scale.set(1 + progress * 1.2);
+                    blastLite.alpha = 0.55 * (1 - progress);
+                },
+                onComplete: () => blastLite.destroy()
+            });
+            this.animateEffect(shockwave, {
+                duration: 320,
+                onUpdate: (progress) => {
+                    shockwave.scale.set(1 + progress * 2.8);
+                    shockwave.alpha = 0.7 * (1 - progress);
+                },
+                onComplete: () => explosionContainer.destroy({ children: true })
+            });
+            return;
+        }
         
         // Main explosion
         const explosion = new PIXI.Graphics();
@@ -9415,11 +10830,16 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         explosion.beginFill(0xFF0000, 0.4);
         explosion.drawCircle(0, 0, radius);
         explosion.endFill();
-        explosion.filters = [new PIXI.BlurFilter(3)];
+        if (loadTier === 0) {
+            explosion.filters = [new PIXI.BlurFilter(3)];
+        }
         explosionContainer.addChild(explosion);
         
         // Particles
-        const particleCount = this.scaleEffectCount(20 + Math.floor(radius / 10), 6);
+        let particleCount = this.scaleEffectCount(20 + Math.floor(radius / 10), 4);
+        if (loadTier === 1) {
+            particleCount = Math.max(2, Math.floor(particleCount * 0.35));
+        }
         for (let i = 0; i < particleCount; i++) {
             const particle = new PIXI.Sprite(this.particleTextures.spark);
             particle.anchor.set(0.5);
@@ -9555,9 +10975,28 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
     }
 
     createEnhancedPowerupCollectEffect(position) {
+        if (!this.shouldEmitEffect('powerup')) return;
+        const loadTier = this.getLoadTier();
         const container = new PIXI.Container();
         container.position.set(position.x, position.y);
         this.effectsContainer.addChild(container);
+
+        if (loadTier >= 2) {
+            const pulse = new PIXI.Graphics();
+            pulse.beginFill(0x00FF88, 0.5);
+            pulse.drawCircle(0, 0, 14);
+            pulse.endFill();
+            container.addChild(pulse);
+            this.animateEffect(pulse, {
+                duration: 260,
+                onUpdate: (progress) => {
+                    pulse.scale.set(1 + progress * 1.8);
+                    pulse.alpha = 0.5 * (1 - progress);
+                },
+                onComplete: () => container.destroy({ children: true })
+            });
+            return;
+        }
         
         // Energy burst
         const burst = new PIXI.Graphics();
@@ -9567,7 +11006,10 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         container.addChild(burst);
         
         // Ring waves
-        const ringCount = this.scaleEffectCount(3, 1);
+        let ringCount = this.scaleEffectCount(3, 1);
+        if (loadTier === 1) {
+            ringCount = Math.max(1, Math.floor(ringCount * 0.5));
+        }
         for (let i = 0; i < ringCount; i++) {
             const ring = new PIXI.Graphics();
             ring.lineStyle(2, 0x00FF00, 0.8);
@@ -9586,7 +11028,10 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         }
         
         // Sparkles
-        const sparkleCount = this.scaleEffectCount(12, 4);
+        let sparkleCount = this.scaleEffectCount(12, 2);
+        if (loadTier === 1) {
+            sparkleCount = Math.max(2, Math.floor(sparkleCount * 0.35));
+        }
         for (let i = 0; i < sparkleCount; i++) {
             const sparkle = new PIXI.Graphics();
             sparkle.beginFill(0xFFFFFF, 0.9);
@@ -9634,9 +11079,29 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
     }
 
     createEnhancedFlagCaptureEffect(position) {
+        if (!this.shouldEmitEffect('flag')) return;
+        const loadTier = this.getLoadTier();
         const container = new PIXI.Container();
         container.position.set(position.x, position.y);
         this.effectsContainer.addChild(container);
+
+        if (loadTier >= 1) {
+            const flashLite = new PIXI.Graphics();
+            flashLite.beginFill(0xFFD447, 0.7);
+            drawStar(flashLite, 0, 0, 6, 20, 10);
+            flashLite.endFill();
+            container.addChild(flashLite);
+
+            this.animateEffect(flashLite, {
+                duration: loadTier >= 2 ? 320 : 480,
+                onUpdate: (progress) => {
+                    flashLite.scale.set(0.8 + progress * 1.6);
+                    flashLite.alpha = 0.7 * (1 - progress);
+                },
+                onComplete: () => container.destroy({ children: true })
+            });
+            return;
+        }
         
         // Fireworks effect
         const colors = [0xFF0000, 0x0000FF, 0xFFFF00, 0x00FF00, 0xFF00FF];
@@ -9735,7 +11200,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         this.dropOverflowEffects(1);
         if (this.activeEffects.length >= this.maxActiveEffects) {
             this.effectStats.dropped += 1;
-            this.destroyEffectObject(object);
+            if (!config.preserveObjectOnDrop) {
+                this.destroyEffectObject(object);
+            }
             return false;
         }
 
@@ -9745,20 +11212,38 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             duration,
             startTime: Date.now() + delay,
             started: false,
+            updateStride: Math.max(1, Math.floor(Number(config.updateStride) || 1)),
+            updateStrideTick: 0,
             priority: Number.isFinite(config.priority) ? Number(config.priority) : 1,
-            onUpdate: typeof config.onUpdate === 'function' ? config.onUpdate : (() => {})
+            onUpdate: typeof config.onUpdate === 'function' ? config.onUpdate : (() => {}),
+            onAbort: typeof config.onAbort === 'function' ? config.onAbort : null
         };
         this.activeEffects.push(effect);
-        return true;
+        return effect;
     }
 
     update(deltaMS) {
         if (this.activeEffects.length > this.maxActiveEffects) {
             this.dropOverflowEffects(0);
         }
+        const loadTier = this.getLoadTier();
+        this.lastLoadTier = loadTier;
+        this.flushQueuedDamageNumbers(false, loadTier);
+        const updateStride = this.getUpdateStrideForLoad(loadTier);
+        if (updateStride > 1) {
+            this.effectUpdateFrame = (this.effectUpdateFrame + 1) % updateStride;
+            if (this.effectUpdateFrame !== 0) {
+                return;
+            }
+        }
         const now = Date.now();
         this.activeEffects = this.activeEffects.filter(effect => {
-            if (!effect || !effect.object || effect.object.destroyed) return false;
+            if (!effect || !effect.object || effect.object.destroyed) {
+                if (effect && typeof effect.onAbort === 'function') {
+                    effect.onAbort(effect);
+                }
+                return false;
+            }
             if (now < effect.startTime) return true;
             if (!effect.started) {
                 effect.started = true;
@@ -9767,12 +11252,19 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             
             const elapsed = now - effect.actualStartTime;
             const progress = Math.min(elapsed / effect.duration, 1);
-            
-            effect.onUpdate(progress);
+
+            if (progress < 1 && effect.updateStride > 1) {
+                effect.updateStrideTick = (effect.updateStrideTick + 1) % effect.updateStride;
+                if (effect.updateStrideTick !== 0) {
+                    return true;
+                }
+            }
+
+            effect.onUpdate(progress, effect);
             
             if (progress >= 1) {
                 if (effect.onComplete && effect.object && !effect.object.destroyed) {
-                    effect.onComplete();
+                    effect.onComplete(effect);
                 }
                 return false;
             }
@@ -10478,9 +11970,19 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
     clearAllEffects() {
         this.pendingTimers.forEach(timerId => clearTimeout(timerId));
         this.pendingTimers.clear();
-        this.activeEffects.forEach(effect => this.destroyEffectObject(effect.object));
+        this.activeEffects.forEach(effect => {
+            if (effect && typeof effect.onAbort === 'function') {
+                effect.onAbort(effect);
+            } else if (effect) {
+                this.destroyEffectObject(effect.object);
+            }
+        });
         this.activeEffects = [];
         this.effectsContainer.removeChildren().forEach(c => this.destroyEffectObject(c));
+        this.activeDamageNumberCount = 0;
+        this.pendingDamageNumberBatches.clear();
+        this.activeDamageNumberEffectsByKey.clear();
+        this.pendingDamageBatchCount = 0;
     }
 }
         
@@ -10518,6 +12020,41 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             flagDropped: { freq: [600, 400], duration: 0.25, type: 'sawtooth', vol: 0.4 },
             flagReturned: { freq: [500, 800, 600], duration: 0.3, type: 'sine', vol: 0.5 },
         };
+
+        this.resumeInFlight = false;
+        this.soundActivity = new Map();
+        this.voicePool = [];
+        this.voiceCursor = 0;
+        this.noiseBufferCache = new Map();
+        this.mobileSoundBudget = mobileDynamicsEnabled || forceMobileClient;
+        this.soundBudgetScale = this.mobileSoundBudget ? 1.8 : 1.0;
+        this.defaultSoundLimit = Object.freeze({
+            minIntervalMs: 12,
+            windowMs: 1000,
+            maxPerWindow: 72,
+            maxConcurrent: 8
+        });
+        this.soundLimits = Object.freeze({
+            pistolFire: { minIntervalMs: 16, windowMs: 1000, maxPerWindow: 42, maxConcurrent: 5 },
+            rifleFire: { minIntervalMs: 14, windowMs: 1000, maxPerWindow: 52, maxConcurrent: 6 },
+            shotgunFire: { minIntervalMs: 24, windowMs: 1000, maxPerWindow: 28, maxConcurrent: 4 },
+            sniperFire: { minIntervalMs: 72, windowMs: 1000, maxPerWindow: 12, maxConcurrent: 2 },
+            meleeSwing: { minIntervalMs: 48, windowMs: 1000, maxPerWindow: 14, maxConcurrent: 2 },
+            bulletImpact: { minIntervalMs: 48, windowMs: 1000, maxPerWindow: 18, maxConcurrent: 3 },
+            playerHit: { minIntervalMs: 52, windowMs: 1000, maxPerWindow: 16, maxConcurrent: 3 },
+            explosion: { minIntervalMs: 120, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 }
+        });
+        this.mobileSoundLimits = Object.freeze({
+            pistolFire: { minIntervalMs: 24, windowMs: 1000, maxPerWindow: 24, maxConcurrent: 3 },
+            rifleFire: { minIntervalMs: 22, windowMs: 1000, maxPerWindow: 28, maxConcurrent: 3 },
+            shotgunFire: { minIntervalMs: 40, windowMs: 1000, maxPerWindow: 14, maxConcurrent: 2 },
+            bulletImpact: { minIntervalMs: 80, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
+            playerHit: { minIntervalMs: 88, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
+            explosion: { minIntervalMs: 180, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
+            reloadStart: { minIntervalMs: 120, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 }
+        });
+        this.maxVoices = this.mobileSoundBudget ? 8 : 20;
+        this.initializeVoicePool();
     }
 
     setGlobalVolume(volume) {
@@ -10541,15 +12078,181 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         this.playSound(soundName, position, isLocalPlayer ? 1.0 : 0.7);
     }
 
+    getSoundLimiterConfig(soundName) {
+        const mobileConfig = this.mobileSoundBudget ? this.mobileSoundLimits[soundName] : null;
+        const rawConfig = mobileConfig || this.soundLimits[soundName] || this.defaultSoundLimit;
+        const scale = this.soundBudgetScale;
+        return {
+            minIntervalMs: Math.max(0, Math.round((Number(rawConfig.minIntervalMs) || 0) * scale)),
+            windowMs: Math.max(250, Math.round(Number(rawConfig.windowMs) || 1000)),
+            maxPerWindow: Math.max(1, Math.floor((Number(rawConfig.maxPerWindow) || 1) / scale)),
+            maxConcurrent: Math.max(1, Math.floor((Number(rawConfig.maxConcurrent) || 1) / scale))
+        };
+    }
+
+    getSoundActivityState(soundName, nowMs = 0) {
+        let state = this.soundActivity.get(soundName);
+        if (!state) {
+            state = {
+                lastPlayAtMs: -1e9,
+                windowStartMs: nowMs,
+                windowCount: 0,
+                activeCount: 0
+            };
+            this.soundActivity.set(soundName, state);
+        }
+        return state;
+    }
+
+    shouldPlaySoundNow(soundName, nowMs) {
+        const limit = this.getSoundLimiterConfig(soundName);
+        const state = this.getSoundActivityState(soundName, nowMs);
+        if (state.activeCount >= limit.maxConcurrent) {
+            return false;
+        }
+        if ((nowMs - state.lastPlayAtMs) < limit.minIntervalMs) {
+            return false;
+        }
+        if ((nowMs - state.windowStartMs) >= limit.windowMs) {
+            state.windowStartMs = nowMs;
+            state.windowCount = 0;
+        }
+        if (state.windowCount >= limit.maxPerWindow) {
+            return false;
+        }
+        state.lastPlayAtMs = nowMs;
+        state.windowCount += 1;
+        return true;
+    }
+
+    initializeVoicePool() {
+        if (!this.audioContext) return;
+        for (let i = 0; i < this.maxVoices; i += 1) {
+            try {
+                const gainNode = this.audioContext.createGain();
+                gainNode.gain.value = 0.0001;
+                let pannerNode = null;
+                if (typeof this.audioContext.createStereoPanner === 'function') {
+                    pannerNode = this.audioContext.createStereoPanner();
+                    pannerNode.pan.value = 0;
+                    gainNode.connect(pannerNode);
+                    pannerNode.connect(this.audioContext.destination);
+                } else {
+                    gainNode.connect(this.audioContext.destination);
+                }
+                this.voicePool.push({
+                    gainNode,
+                    pannerNode,
+                    sourceNode: null,
+                    soundName: '',
+                    busyUntilMs: 0
+                });
+            } catch (error) {
+                console.warn('Audio voice pool init failed:', error);
+                this.voicePool = [];
+                break;
+            }
+        }
+    }
+
+    sweepExpiredVoices(nowMs) {
+        if (!this.voicePool.length) return;
+        for (let i = 0; i < this.voicePool.length; i += 1) {
+            const voice = this.voicePool[i];
+            if (!voice?.sourceNode) continue;
+            if (nowMs >= (voice.busyUntilMs + 2)) {
+                this.markVoiceReleased(voice, voice.sourceNode);
+            }
+        }
+    }
+
+    acquireVoiceSlot(soundName, durationSec, nowMs) {
+        if (!this.voicePool.length) return null;
+        const voiceCount = this.voicePool.length;
+        for (let offset = 0; offset < voiceCount; offset += 1) {
+            const index = (this.voiceCursor + offset) % voiceCount;
+            const voice = this.voicePool[index];
+            if (voice.sourceNode) {
+                continue;
+            }
+            this.voiceCursor = (index + 1) % voiceCount;
+            voice.soundName = soundName;
+            voice.busyUntilMs = nowMs + Math.ceil(durationSec * 1000) + 48;
+            const state = this.getSoundActivityState(soundName, nowMs);
+            state.activeCount += 1;
+            return voice;
+        }
+        return null;
+    }
+
+    markVoiceReleased(voice, sourceNode = null) {
+        if (!voice) return;
+        if (sourceNode && voice.sourceNode && voice.sourceNode !== sourceNode) {
+            return;
+        }
+
+        const activeSoundName = voice.soundName;
+        const currentSource = voice.sourceNode;
+        voice.sourceNode = null;
+        voice.soundName = '';
+        voice.busyUntilMs = 0;
+
+        if (currentSource) {
+            try {
+                currentSource.onended = null;
+            } catch (_) {}
+        }
+
+        if (activeSoundName) {
+            const state = this.soundActivity.get(activeSoundName);
+            if (state) {
+                state.activeCount = Math.max(0, state.activeCount - 1);
+            }
+        }
+    }
+
+    getNoiseBuffer(durationSec) {
+        if (!this.audioContext) return null;
+        const durationMs = Math.max(20, Math.round(durationSec * 1000));
+        const cacheKey = `${this.audioContext.sampleRate}:${durationMs}`;
+        const cached = this.noiseBufferCache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
+        const frameCount = Math.max(1, Math.floor(this.audioContext.sampleRate * (durationMs / 1000)));
+        const buffer = this.audioContext.createBuffer(1, frameCount, this.audioContext.sampleRate);
+        const output = buffer.getChannelData(0);
+        for (let i = 0; i < frameCount; i += 1) {
+            output[i] = (Math.random() * 2) - 1;
+        }
+        this.noiseBufferCache.set(cacheKey, buffer);
+        if (this.noiseBufferCache.size > 24) {
+            const oldestKey = this.noiseBufferCache.keys().next().value;
+            if (typeof oldestKey !== 'undefined') {
+                this.noiseBufferCache.delete(oldestKey);
+            }
+        }
+        return buffer;
+    }
+
     playSound(soundName, position = null, volumeMultiplier = 1.0) {
         if (!this.soundEnabled || !this.audioContext || !this.sounds[soundName]) return;
-         if (this.audioContext.state === 'suspended') { 
-            this.audioContext.resume().catch(e => console.warn("AudioContext resume failed:", e));
+        if (this.audioContext.state === 'suspended') {
+            if (!this.resumeInFlight) {
+                this.resumeInFlight = true;
+                this.audioContext.resume()
+                    .catch(e => console.warn("AudioContext resume failed:", e))
+                    .finally(() => {
+                        this.resumeInFlight = false;
+                    });
+            }
+            return;
         }
 
         const soundProfile = this.sounds[soundName];
-        // Ensure duration is positive and finite
-        if (!Number.isFinite(soundProfile.duration) || soundProfile.duration <= 0) {
+        const durationSec = Number(soundProfile.duration);
+        if (!Number.isFinite(durationSec) || durationSec <= 0) {
             console.warn(`Invalid duration for sound: ${soundName}`, soundProfile.duration);
             return;
         }
@@ -10558,8 +12261,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         if (baseVolume <= 0.001) return;
 
         let finalVolume = baseVolume;
-        let pannerNode = null;
-
+        let panValue = 0;
         if (position && localPlayerState && app && gameScene) {
             const viewCenter = { x: app.screen.width / 2, y: app.screen.height / 2 };
             const soundWorldPos = gameScene.toGlobal(position);
@@ -10571,75 +12273,87 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             if (distance > maxAudibleDistance) return;
             finalVolume *= Math.max(0, 1 - (distance / maxAudibleDistance));
             if (finalVolume <= 0.001) return;
-
-            pannerNode = this.audioContext.createStereoPanner();
-            pannerNode.pan.value = Math.max(-1, Math.min(1, dx / (app.screen.width / 2)));
+            panValue = Math.max(-1, Math.min(1, dx / (app.screen.width / 2)));
         }
-        
-        this._playTone(soundProfile, finalVolume, pannerNode); // Pass pannerNode directly
+
+        const nowMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? performance.now()
+            : Date.now();
+        this.sweepExpiredVoices(nowMs);
+        if (!this.shouldPlaySoundNow(soundName, nowMs)) {
+            return;
+        }
+        this._playTone(soundName, soundProfile, finalVolume, panValue, durationSec, nowMs);
     }
 
-    _playTone(profile, volume, pannerNode) { // pannerNode can be null
+    _playTone(soundName, profile, volume, panValue, durationSec, nowMs) {
+        if (!this.audioContext) return;
+        const voice = this.acquireVoiceSlot(soundName, durationSec, nowMs);
+        if (!voice) {
+            return;
+        }
+
         const now = this.audioContext.currentTime;
-        const gainNode = this.audioContext.createGain();
-        gainNode.gain.setValueAtTime(volume, now);
-        
-        // Ensure duration is valid for ramp
-        if (Number.isFinite(profile.duration) && profile.duration > 0) {
-            gainNode.gain.exponentialRampToValueAtTime(0.001, now + profile.duration);
-        } else {
-            gainNode.gain.setValueAtTime(0.001, now + 0.01); // Fallback quick fade
+        const gainNode = voice.gainNode;
+        try {
+            gainNode.gain.cancelScheduledValues(now);
+            gainNode.gain.setValueAtTime(Math.max(0.001, volume), now);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, now + durationSec);
+        } catch (_) {
+            this.markVoiceReleased(voice);
+            return;
         }
 
-        if (pannerNode) {
-            gainNode.connect(pannerNode);
-            pannerNode.connect(this.audioContext.destination);
-        } else {
-            gainNode.connect(this.audioContext.destination);
+        if (voice.pannerNode) {
+            try {
+                voice.pannerNode.pan.cancelScheduledValues(now);
+                voice.pannerNode.pan.setValueAtTime(Math.max(-1, Math.min(1, Number(panValue) || 0)), now);
+            } catch (_) {}
         }
 
+        let sourceNode = null;
         if (profile.type === 'noise') {
-            const bufferSize = this.audioContext.sampleRate * profile.duration;
-            const buffer = this.audioContext.createBuffer(1, bufferSize, this.audioContext.sampleRate);
-            const output = buffer.getChannelData(0);
-            for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
-
-            const source = this.audioContext.createBufferSource();
-            source.buffer = buffer;
-            source.connect(gainNode);
-            source.start(now);
-            source.stop(now + profile.duration);
+            const buffer = this.getNoiseBuffer(durationSec);
+            if (!buffer) {
+                this.markVoiceReleased(voice);
+                return;
+            }
+            sourceNode = this.audioContext.createBufferSource();
+            sourceNode.buffer = buffer;
         } else {
             const oscillator = this.audioContext.createOscillator();
             oscillator.type = profile.type || 'sine';
-
             if (Array.isArray(profile.freq)) {
-                if (Number.isFinite(profile.freq[0])) {
-                   oscillator.frequency.setValueAtTime(profile.freq[0], now);
-                } else {
+                if (!Number.isFinite(profile.freq[0])) {
                     console.warn("Invalid profile.freq[0]", profile);
-                    return; // Don't play if initial frequency is bad
+                    this.markVoiceReleased(voice);
+                    return;
                 }
-                
-                // Check for freq[1] and valid duration for the first ramp
-                if (profile.freq.length > 1 && Number.isFinite(profile.freq[1]) && Number.isFinite(profile.duration) && profile.duration > 0) {
-                    oscillator.frequency.linearRampToValueAtTime(profile.freq[1], now + profile.duration * 0.8);
+                oscillator.frequency.setValueAtTime(profile.freq[0], now);
+                if (profile.freq.length > 1 && Number.isFinite(profile.freq[1])) {
+                    oscillator.frequency.linearRampToValueAtTime(profile.freq[1], now + durationSec * 0.8);
                 }
-                // Check for freq[2] and valid duration for the second ramp
-                if (profile.freq.length > 2 && Number.isFinite(profile.freq[2]) && Number.isFinite(profile.duration) && profile.duration > 0) {
-                    oscillator.frequency.linearRampToValueAtTime(profile.freq[2], now + profile.duration);
+                if (profile.freq.length > 2 && Number.isFinite(profile.freq[2])) {
+                    oscillator.frequency.linearRampToValueAtTime(profile.freq[2], now + durationSec);
                 }
             } else if (Number.isFinite(profile.freq)) {
                 oscillator.frequency.setValueAtTime(profile.freq, now);
             } else {
                 console.warn("Invalid profile.freq", profile);
-                return; // Don't play if frequency is bad
+                this.markVoiceReleased(voice);
+                return;
             }
-            
-            oscillator.connect(gainNode);
-            oscillator.start(now);
-            // Ensure duration is positive for stop time
-            oscillator.stop(now + (Number.isFinite(profile.duration) && profile.duration > 0 ? profile.duration : 0.01));
+            sourceNode = oscillator;
+        }
+
+        sourceNode.connect(gainNode);
+        voice.sourceNode = sourceNode;
+
+        try {
+            sourceNode.start(now);
+            sourceNode.stop(now + durationSec);
+        } catch (_) {
+            this.markVoiceReleased(voice, sourceNode);
         }
     }
 }

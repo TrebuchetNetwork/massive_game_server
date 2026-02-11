@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use crate::core::constants::{AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS}; // Assuming these are in constants
 use crate::core::types::{PlayerAoI, PlayerID, Vec2};
 use crate::network::signaling::{ChatMessage, ClientState};
-use std::collections::HashSet; // If not already imported for PlayerAoI
+use std::collections::HashSet;
 use tokio::time::sleep; // Add this import
 
 const MAX_FRAME_TIME_HISTORY: usize = 100;
@@ -94,9 +94,9 @@ impl MassiveGameServer {
 
             self.frame_counter.fetch_add(1, AtomicOrdering::Relaxed);
 
-            // Log frame time if it's too long
+            // Log frame time if it's too long (sampled to avoid log-induced stalls under load).
             let frame_time = frame_start_time.elapsed();
-            if frame_time > TICK_DURATION + Duration::from_millis(5) {
+            if frame_time > TICK_DURATION + Duration::from_millis(5) && current_frame % 60 == 0 {
                 warn!("Frame {} took too long: {:?}", current_frame, frame_time);
             }
         }
@@ -127,33 +127,25 @@ impl MassiveGameServer {
             .max(1.0) as u64;
         let update_aoi_this_frame = update_aoi && frame % aoi_stride == 0;
 
-        // Only players with active data channels need AoI refreshes.
-        let connected_player_ids: Option<HashSet<String>> = if update_aoi_this_frame {
-            Some(
-                self.data_channels_map
-                    .iter()
-                    .map(|entry| entry.key().clone())
-                    .collect(),
-            )
-        } else {
-            None
-        };
-
         let mut players_to_update = Vec::with_capacity(self.player_manager.player_count());
         self.player_manager
             .for_each_player(|player_id, player_state| {
-                let last_pos_opt = self.player_last_sync_positions.get(player_id);
-                let mut needs_full_aoi_update = true;
+                let is_connected_client =
+                    update_aoi_this_frame && self.data_channels_map.contains_key(player_id.as_str());
+                let mut needs_full_aoi_update = false;
 
-                if let Some(last_pos_entry) = last_pos_opt {
-                    let last_pos = last_pos_entry.value();
-                    let dist_moved_sq = (player_state.x - last_pos.0).powi(2)
-                        + (player_state.y - last_pos.1).powi(2);
+                if is_connected_client {
+                    needs_full_aoi_update = true;
+                    if let Some(last_pos_entry) = self.player_last_sync_positions.get(player_id) {
+                        let last_pos = last_pos_entry.value();
+                        let dist_moved_sq = (player_state.x - last_pos.0).powi(2)
+                            + (player_state.y - last_pos.1).powi(2);
 
-                    if dist_moved_sq < SIGNIFICANT_MOVEMENT_THRESHOLD_SQ
-                        && player_state.changed_fields == 0
-                    {
-                        needs_full_aoi_update = false;
+                        if dist_moved_sq < SIGNIFICANT_MOVEMENT_THRESHOLD_SQ
+                            && player_state.changed_fields == 0
+                        {
+                            needs_full_aoi_update = false;
+                        }
                     }
                 }
 
@@ -171,22 +163,18 @@ impl MassiveGameServer {
                     player_state.x,
                     player_state.y,
                     partition_idx,
+                    is_connected_client,
                     needs_full_aoi_update,
                 ));
             });
 
-        let partitions = self.world_partition_manager.get_partitions_for_processing();
-        for (player_id, x, y, partition_idx, needs_full_aoi_update) in players_to_update {
-            if let Some(partition) = partitions.get(partition_idx) {
+        for (player_id, x, y, partition_idx, is_connected_client, needs_full_aoi_update) in players_to_update {
+            if let Some(partition) = self.world_partition_manager.get_partition(partition_idx) {
                 let is_newly_entered_partition = !partition.local_players.contains(&player_id);
                 partition.update_player_status(&player_id, x, y, is_newly_entered_partition);
             }
 
-            let should_refresh_aoi = update_aoi_this_frame
-                && needs_full_aoi_update
-                && connected_player_ids
-                    .as_ref()
-                    .map_or(false, |ids| ids.contains(player_id.as_str()));
+            let should_refresh_aoi = is_connected_client && needs_full_aoi_update;
 
             if should_refresh_aoi {
                 self.update_player_aoi(&player_id, x, y);

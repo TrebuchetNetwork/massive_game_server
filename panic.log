@@ -28,3 +28,7 @@ PANIC at 1770590539: panicked at /Users/ivo/.cargo/registry/src/index.crates.io-
 error binding to 0.0.0.0:18080: error creating server listener: Address already in use (os error 48)
 PANIC at 1770591099: panicked at /Users/ivo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/warp-0.3.7/src/server.rs:217:27:
 error binding to 127.0.0.1:8080: error creating server listener: Address already in use (os error 48)
+PANIC at 1770675760: panicked at /Users/ivo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/warp-0.3.7/src/server.rs:217:27:
+error binding to 0.0.0.0:18082: error creating server listener: Operation not permitted (os error 1)
+PANIC at 1770688265: panicked at /Users/ivo/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/warp-0.3.7/src/server.rs:217:27:
+error binding to 0.0.0.0:18082: error creating server listener: Address already in use (os error 48)

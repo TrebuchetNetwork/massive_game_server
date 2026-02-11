@@ -3,7 +3,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { chromium } = require("playwright");
+const { chromium, devices } = require("playwright");
 const { buildLaunchOptions, urlRequestsWebGpu } = require("./launch_options");
 
 const META_FRAME_NAMES = new Set([
@@ -22,8 +22,14 @@ function parseArgs(argv) {
     warmupMs: 5000,
     durationMs: 20000,
     sampleIntervalMs: 250,
+    fxIntensity: 0,
+    fxIntervalMs: 120,
+    syntheticProjectiles: 0,
+    fxSeed: null,
+    includeScreenFx: true,
     topFrames: 20,
     includeMetaFrames: false,
+    device: null,
     headless: true,
     headlessExplicit: false,
     outPath: path.resolve(process.cwd(), "artifacts", "scale", "ui_flamegraph.cpuprofile"),
@@ -40,8 +46,14 @@ function parseArgs(argv) {
     else if (arg === "--warmup") args.warmupMs = Number(argv[++i]) * 1000;
     else if (arg === "--duration") args.durationMs = Number(argv[++i]) * 1000;
     else if (arg === "--sample-interval-ms") args.sampleIntervalMs = Number(argv[++i]);
+    else if (arg === "--fx-intensity") args.fxIntensity = Number(argv[++i]);
+    else if (arg === "--fx-interval-ms") args.fxIntervalMs = Number(argv[++i]);
+    else if (arg === "--synthetic-projectiles") args.syntheticProjectiles = Number(argv[++i]);
+    else if (arg === "--fx-seed") args.fxSeed = Number(argv[++i]);
+    else if (arg === "--no-screen-fx") args.includeScreenFx = false;
     else if (arg === "--top-frames") args.topFrames = Number(argv[++i]);
     else if (arg === "--include-meta-frames") args.includeMetaFrames = true;
+    else if (arg === "--device") args.device = String(argv[++i] || "").trim();
     else if (arg === "--headed") {
       args.headless = false;
       args.headlessExplicit = true;
@@ -62,6 +74,14 @@ function parseArgs(argv) {
   args.warmupMs = Math.max(0, Math.floor(Number(args.warmupMs) || 0));
   args.durationMs = Math.max(1000, Math.floor(Number(args.durationMs) || 20000));
   args.sampleIntervalMs = Math.max(50, Math.floor(Number(args.sampleIntervalMs) || 250));
+  args.fxIntensity = Math.max(0, Math.min(40, Math.floor(Number(args.fxIntensity) || 0)));
+  args.fxIntervalMs = Math.max(25, Math.min(2000, Math.floor(Number(args.fxIntervalMs) || 120)));
+  args.syntheticProjectiles = Math.max(0, Math.min(5000, Math.floor(Number(args.syntheticProjectiles) || 0)));
+  if (!Number.isFinite(args.fxSeed)) {
+    args.fxSeed = null;
+  } else {
+    args.fxSeed = Math.floor(args.fxSeed);
+  }
   args.topFrames = Math.max(1, Math.floor(Number(args.topFrames) || 20));
   if (!args.summaryPath) {
     args.summaryPath = args.outPath.endsWith(".cpuprofile")
@@ -81,8 +101,14 @@ function printHelp() {
   --warmup <seconds>             Warmup before CPU profiling (default: 5)
   --duration <seconds>           CPU profile duration (default: 20)
   --sample-interval-ms <ms>      Poll interval waiting for live state (default: 250)
+  --fx-intensity <n>             Optional synthetic FX stress intensity (0 disables, default: 0)
+  --fx-interval-ms <ms>          Synthetic FX stress interval (default: 120)
+  --synthetic-projectiles <n>    Synthetic projectile pressure during profiling (default: 0)
+  --fx-seed <int>                Fixed synthetic FX random seed for reproducible runs
+  --no-screen-fx                 Disable flash/shake during synthetic FX stress
   --top-frames <n>               Number of top frames to report (default: 20)
   --include-meta-frames          Include root/program/idle/GC frames in rankings
+  --device <name>                Playwright device profile (e.g. "iPhone 13", "Pixel 7")
   --headed                       Run with visible browser
   --headless                     Force headless mode
   --out <path>                   Output .cpuprofile path
@@ -304,6 +330,46 @@ async function waitForLiveState(page, timeoutMs, sampleIntervalMs) {
   throw new Error(`timed out after ${timeoutMs}ms waiting for live state`);
 }
 
+async function configureLockedFxStress(page, args) {
+  if (args.fxIntensity <= 0 && args.syntheticProjectiles <= 0) {
+    return { enabled: false };
+  }
+  return page.evaluate((cfg) => {
+    const e2e = window.__e2e || null;
+    if (!e2e || typeof e2e.startFxStress !== "function") {
+      return { enabled: false, error: "__e2e.startFxStress unavailable" };
+    }
+    if (typeof e2e.stopFxStress === "function") {
+      try {
+        e2e.stopFxStress(true);
+      } catch (_) {}
+    }
+    const options = {
+      intensity: cfg.intensity,
+      intervalMs: cfg.intervalMs,
+      syntheticProjectiles: cfg.syntheticProjectiles,
+      includeScreenFx: cfg.includeScreenFx
+    };
+    if (Number.isFinite(cfg.seed)) {
+      options.seed = cfg.seed;
+    }
+    e2e.startFxStress(options);
+    return {
+      enabled: true,
+      config: e2e.fxStressConfig || null,
+      syntheticFxSeed: Number.isFinite(Number(e2e.syntheticFxSeed))
+        ? Number(e2e.syntheticFxSeed)
+        : null
+    };
+  }, {
+    intensity: args.fxIntensity,
+    intervalMs: args.fxIntervalMs,
+    syntheticProjectiles: args.syntheticProjectiles,
+    includeScreenFx: args.includeScreenFx,
+    seed: args.fxSeed
+  });
+}
+
 async function captureSnapshot(page) {
   return page.evaluate(() => {
     const e2e = window.__e2e || null;
@@ -317,7 +383,22 @@ async function captureSnapshot(page) {
       projectileCount: Number(e2e?.projectileCount ?? 0),
       visibleProjectileCount: Number(e2e?.visibleProjectileCount ?? 0),
       activeEffectCount: Number(e2e?.activeEffectCount ?? 0),
+      activeDamageNumberCount: Number(e2e?.activeDamageNumberCount ?? 0),
+      pendingDamageBatchCount: Number(e2e?.pendingDamageBatchCount ?? 0),
+      activeDamageMergeCount: Number(e2e?.activeDamageMergeCount ?? 0),
       smoothedFrameMs: Number(e2e?.smoothedFrameMs ?? 0),
+      mobileDynamicsEnabled: Boolean(e2e?.mobileDynamicsEnabled),
+      spriteCadenceEnabled: Boolean(e2e?.spriteCadenceEnabled),
+      damageBatchEnabled: Boolean(e2e?.damageBatchEnabled),
+      remotePlayerUpdateStride: Number(e2e?.remotePlayerUpdateStride ?? 0),
+      projectileSpriteUpdateStride: Number(e2e?.projectileSpriteUpdateStride ?? 0),
+      fxStressActive: Boolean(e2e?.fxStressActive),
+      fxStressConfig: e2e?.fxStressConfig ?? null,
+      syntheticFxSeed: Number.isFinite(Number(e2e?.syntheticFxSeed))
+        ? Number(e2e.syntheticFxSeed)
+        : null,
+      syntheticFxBursts: Number(e2e?.syntheticFxBursts ?? 0),
+      syntheticFxEvents: Number(e2e?.syntheticFxEvents ?? 0),
       workerCullReady: Boolean(e2e?.workerCullReady),
       workerCullKernel: e2e?.workerCullKernel ?? null,
       workerCullAvgComputeMs: Number(e2e?.workerCullAvgComputeMs ?? 0),
@@ -344,7 +425,17 @@ async function main() {
 
   const launchOptions = buildLaunchOptions({ headless: args.headless, url: args.url });
   const browser = await chromium.launch(launchOptions);
-  const context = await browser.newContext({ viewport: { width: 1600, height: 900 } });
+  const contextOptions = args.device
+    ? (() => {
+      const deviceProfile = devices[args.device];
+      if (!deviceProfile) {
+        const available = Object.keys(devices).slice(0, 30).join(", ");
+        throw new Error(`Unknown device profile: "${args.device}". Available examples: ${available}`);
+      }
+      return { ...deviceProfile };
+    })()
+    : { viewport: { width: 1600, height: 900 } };
+  const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
 
   try {
@@ -356,6 +447,12 @@ async function main() {
       await clickConnect(page);
       await waitForLiveState(page, args.connectTimeoutMs, args.sampleIntervalMs);
     }
+
+    const stressSetup = await configureLockedFxStress(page, args);
+    if (stressSetup?.error) {
+      throw new Error(`Failed to configure synthetic FX stress: ${stressSetup.error}`);
+    }
+
     if (args.warmupMs > 0) {
       await page.waitForTimeout(args.warmupMs);
     }
@@ -384,7 +481,18 @@ async function main() {
       wsUrl: args.wsUrl,
       launch: {
         headless: args.headless,
-        webgpuRequested: launchOptions.webgpuRequested
+        webgpuRequested: launchOptions.webgpuRequested,
+        device: args.device || null,
+        isMobileEmulation: Boolean(contextOptions.isMobile)
+      },
+      lockedScenario: {
+        fxIntensity: args.fxIntensity,
+        fxIntervalMs: args.fxIntervalMs,
+        syntheticProjectiles: args.syntheticProjectiles,
+        fxSeed: args.fxSeed,
+        includeScreenFx: args.includeScreenFx,
+        stressEnabled: Boolean(stressSetup?.enabled),
+        stressConfig: stressSetup?.config || null
       },
       durationSec: toFixed(args.durationMs / 1000, 2),
       profilePath: args.outPath,
@@ -407,6 +515,13 @@ async function main() {
 
     console.log(JSON.stringify(summary, null, 2));
   } finally {
+    try {
+      await page.evaluate(() => {
+        if (window.__e2e?.stopFxStress) {
+          window.__e2e.stopFxStress(true);
+        }
+      });
+    } catch (_) {}
     await browser.close();
   }
 }

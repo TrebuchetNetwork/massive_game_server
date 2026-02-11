@@ -77,6 +77,9 @@ impl LockFreeBoundaryZone {
 
     pub fn update_snapshots(&self) {
         for dir_idx in 0..4 {
+            if self.channels[dir_idx].is_empty() {
+                continue;
+            }
             let direction = Direction::from_index(dir_idx).unwrap_or(Direction::North);
             self.update_direction_snapshot(direction);
         }
@@ -84,6 +87,9 @@ impl LockFreeBoundaryZone {
 
     fn update_direction_snapshot(&self, direction: Direction) {
         let channel = &self.channels[direction as usize];
+        if channel.is_empty() {
+            return;
+        }
         let snapshot_atomic_ptr = &self.snapshots[direction as usize];
 
         // Pin the guard for safe dereferencing and defer_destroy
@@ -154,6 +160,11 @@ impl LockFreeBoundaryZone {
                 ));
             }
         }
+    }
+
+    #[inline]
+    pub fn has_pending_updates(&self) -> bool {
+        self.channels.iter().any(|channel| !channel.is_empty())
     }
 
     pub fn get_snapshot<'g>(
@@ -427,7 +438,9 @@ impl WorldPartitionManager {
 
     pub fn update_all_boundary_snapshots(&self) {
         for partition_arc in &self.partitions {
-            partition_arc.boundary_zone.update_snapshots();
+            if partition_arc.boundary_zone.has_pending_updates() {
+                partition_arc.boundary_zone.update_snapshots();
+            }
         }
     }
 }

@@ -9,7 +9,7 @@ use rand::Rng;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 // Optimized constants
 const BOT_UPDATE_BATCH_SIZE: usize = 50; // Process all bots every frame
@@ -806,7 +806,7 @@ impl OptimizedBotAI {
                 // Bot is potentially stuck
                 if bot_controller.stuck_timer >= BOT_STUCK_TIME_THRESHOLD {
                     // Bot is definitely stuck - take action
-                    warn!(
+                    debug!(
                         "Bot {} is stuck at ({:.0}, {:.0}), generating new target",
                         bot_state.username, current_pos.x, current_pos.y
                     );

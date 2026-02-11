@@ -61,5 +61,10 @@ pub const SHOTGUN_PROJECTILE_SPEED: f32 = 400.0;
 pub const RIFLE_PROJECTILE_SPEED: f32 = 600.0;
 pub const SNIPER_PROJECTILE_SPEED: f32 = 800.0;
 
-pub const AOI_RADIUS: f32 = 600.0;
+// AoI tuning for higher player counts: smaller radius + capped nearest entities per client.
+pub const AOI_RADIUS: f32 = 520.0;
 pub const AOI_UPDATE_INTERVAL_SECS: f32 = 0.1;
+pub const AOI_MAX_VISIBLE_PLAYERS: usize = 96;
+pub const AOI_MAX_VISIBLE_PROJECTILES: usize = 420;
+pub const AOI_MAX_VISIBLE_PICKUPS: usize = 64;
+pub const AOI_MAX_VISIBLE_WALLS: usize = 120;
