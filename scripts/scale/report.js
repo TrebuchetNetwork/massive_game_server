@@ -10,6 +10,8 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--steps") args.steps = argv[++i];
     else if (arg === "--ui") args.ui = argv[++i];
+    else if (arg === "--render") args.render = argv[++i];
+    else if (arg === "--webgpu") args.webgpu = argv[++i];
     else if (arg === "--multi") args.multi = argv[++i];
     else if (arg === "--out") args.out = argv[++i];
     else if (arg === "--md") args.md = argv[++i];
@@ -22,7 +24,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: node report.js --steps <steps.tsv> --ui <ui.json> --multi <multi.json> --out <summary.json> --md <summary.md>`);
+  console.log(`Usage: node report.js --steps <steps.tsv> --ui <ui.json> --render <render.json> --webgpu <webgpu.json> --multi <multi.json> --out <summary.json> --md <summary.md>`);
 }
 
 function readJsonIfExists(filePath) {
@@ -113,6 +115,28 @@ function toMarkdown(summary) {
     lines.push("- UI Bench: unavailable");
   }
 
+  if (summary.metrics.renderStress) {
+    const m = summary.metrics.renderStress;
+    const sustainable = m.summary?.maxSustainableObjects ?? "n/a";
+    const firstFail = m.summary?.firstFailingObjects ?? "n/a";
+    const minStressFps = m.summary?.minStressFps ?? "n/a";
+    lines.push(
+      `- UI Render Stress: sustainableObjects=${sustainable}, firstFailingObjects=${firstFail}, minStressFps=${minStressFps}, passed=${m.passed}`
+    );
+  } else {
+    lines.push("- UI Render Stress: unavailable");
+  }
+
+  if (summary.metrics.webgpuProbe) {
+    const m = summary.metrics.webgpuProbe;
+    const r = m.result || {};
+    lines.push(
+      `- WebGPU Probe: supported=${r.supported}, mode=${r.framePacing || "n/a"}, fps=${r.fps ?? "n/a"}, submitFps=${r.submitFps ?? "n/a"}, queueDrainMs=${r.queueDrainMs ?? "n/a"}`
+    );
+  } else {
+    lines.push("- WebGPU Probe: unavailable");
+  }
+
   if (summary.metrics.multiClient) {
     const m = summary.metrics.multiClient;
     lines.push(
@@ -134,6 +158,8 @@ function main() {
 
   const steps = parseSteps(args.steps);
   const uiBench = readJsonIfExists(args.ui);
+  const renderStress = readJsonIfExists(args.render);
+  const webgpuProbe = readJsonIfExists(args.webgpu);
   const multiClient = readJsonIfExists(args.multi);
 
   const stressBaselineStep = findStep(steps, "Backend stress baseline");
@@ -151,6 +177,8 @@ function main() {
       stressBaseline,
       stressBots,
       uiBench,
+      renderStress,
+      webgpuProbe,
       multiClient,
     },
   };

@@ -6,6 +6,8 @@
     "bench": "node run.js",
     "multi-client": "node multi_client.js",
     "profile": "node live_ui_profile.js",
+    "flamegraph": "node flamegraph_capture.js",
+    "render-stress": "node render_stress.js",
     "full-fx-battle": "node full_fx_battle.js",
     "webgpu-probe": "node webgpu_probe.js"
   },

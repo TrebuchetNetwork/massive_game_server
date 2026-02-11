@@ -84,6 +84,24 @@ Key parameters include:
 
 These are set to default values optimized for a 12-core development machine but should be tuned for your specific hardware and load requirements.
 
+### Internet/Mobile WebRTC Connectivity (ICE/TURN)
+
+For real internet play (especially mobile networks), configure ICE/TURN explicitly:
+
+* `MGS_DISABLE_STUN=1|0`: Disable default STUN bootstrap when set to `1`.
+* `MGS_STUN_URLS`: Comma-separated STUN URLs (example: `stun:stun.l.google.com:19302`).
+* `MGS_TURN_URLS`: Comma-separated TURN URLs (example: `turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp`).
+* `MGS_TURN_USERNAME`: TURN username.
+* `MGS_TURN_CREDENTIAL`: TURN credential/password.
+* `MGS_ICE_SERVERS`: Extra ICE entries, semicolon-separated, with format:
+  * `urls_csv|username|credential`
+  * Example: `turn:turn-a.example.com:3478?transport=udp|user|pass;turns:turn-a.example.com:5349?transport=tcp|user|pass`
+
+The client can also override ICE servers via URL params:
+* `?stun=stun:...`
+* `?turn=turn:...&turn_user=...&turn_pass=...`
+* `?ice=stun:...;turn:...|user|pass`
+
 ## Project Structure
 
 A brief overview of the main directories:

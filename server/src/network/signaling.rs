@@ -119,6 +119,97 @@ struct SignalingMessageJson {
     ice: Option<RTCIceCandidateInitSerde>,
 }
 
+fn env_bool(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|raw| {
+            let normalized = raw.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        })
+        .unwrap_or(false)
+}
+
+fn parse_csv(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn parse_ice_servers_env(raw: &str) -> Vec<RTCIceServer> {
+    raw.split(';')
+        .filter_map(|entry| {
+            let mut parts = entry.split('|').map(|segment| segment.trim());
+            let urls_raw = parts.next().unwrap_or_default();
+            let urls = parse_csv(urls_raw);
+            if urls.is_empty() {
+                return None;
+            }
+
+            let username = parts.next().unwrap_or_default().to_owned();
+            let credential = parts.next().unwrap_or_default().to_owned();
+
+            let mut server = RTCIceServer {
+                urls,
+                ..Default::default()
+            };
+            if !username.is_empty() {
+                server.username = username;
+            }
+            if !credential.is_empty() {
+                server.credential = credential;
+            }
+            Some(server)
+        })
+        .collect()
+}
+
+fn build_ice_servers() -> Vec<RTCIceServer> {
+    let disable_stun = env_bool("MGS_DISABLE_STUN");
+    let mut ice_servers: Vec<RTCIceServer> = Vec::new();
+
+    if !disable_stun {
+        let stun_urls = std::env::var("MGS_STUN_URLS")
+            .ok()
+            .map(|raw| parse_csv(&raw))
+            .filter(|urls| !urls.is_empty())
+            .unwrap_or_else(|| vec!["stun:stun.l.google.com:19302".to_owned()]);
+        ice_servers.push(RTCIceServer {
+            urls: stun_urls,
+            ..Default::default()
+        });
+    }
+
+    let turn_urls = std::env::var("MGS_TURN_URLS")
+        .ok()
+        .map(|raw| parse_csv(&raw))
+        .unwrap_or_default();
+    if !turn_urls.is_empty() {
+        let mut turn_server = RTCIceServer {
+            urls: turn_urls,
+            ..Default::default()
+        };
+        if let Ok(username) = std::env::var("MGS_TURN_USERNAME") {
+            if !username.trim().is_empty() {
+                turn_server.username = username.trim().to_owned();
+            }
+        }
+        if let Ok(credential) = std::env::var("MGS_TURN_CREDENTIAL") {
+            if !credential.trim().is_empty() {
+                turn_server.credential = credential.trim().to_owned();
+            }
+        }
+        ice_servers.push(turn_server);
+    }
+
+    if let Ok(extra_ice_servers) = std::env::var("MGS_ICE_SERVERS") {
+        ice_servers.extend(parse_ice_servers_env(&extra_ice_servers));
+    }
+
+    ice_servers
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct RTCIceCandidateInitSerde {
     candidate: String,
@@ -206,21 +297,12 @@ pub async fn handle_signaling_connection(
     }
 
     let api = APIBuilder::new().with_media_engine(m).build();
-    let disable_stun = std::env::var("MGS_DISABLE_STUN")
-        .ok()
-        .map(|raw| {
-            let normalized = raw.trim().to_ascii_lowercase();
-            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
-        })
-        .unwrap_or(false);
-    let ice_servers = if disable_stun {
-        Vec::new()
-    } else {
-        vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }]
-    };
+    let ice_servers = build_ice_servers();
+    info!(
+        "[{}]: Using {} ICE server(s) for WebRTC negotiation.",
+        peer_id_str,
+        ice_servers.len()
+    );
     let rtc_config = RTCConfiguration {
         ice_servers,
         ..Default::default()

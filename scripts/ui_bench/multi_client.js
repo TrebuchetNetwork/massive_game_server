@@ -198,13 +198,40 @@ function calculateMaxTotalMs(args) {
   );
 }
 
+function resolveLaunchOptions(args) {
+  const launchOptions = { headless: args.headless };
+  const configuredExecutablePath = process.env.MGS_PLAYWRIGHT_EXECUTABLE_PATH;
+  if (configuredExecutablePath) {
+    launchOptions.executablePath = configuredExecutablePath;
+    return launchOptions;
+  }
+
+  const defaultExecutablePath = chromium.executablePath();
+  if (!defaultExecutablePath || fs.existsSync(defaultExecutablePath)) {
+    return launchOptions;
+  }
+
+  // Playwright can occasionally resolve x64 cache paths on Apple Silicon hosts.
+  if (process.platform === "darwin" && defaultExecutablePath.includes("-x64/")) {
+    const arm64ExecutablePath = defaultExecutablePath.replace("-x64/", "-arm64/");
+    if (arm64ExecutablePath !== defaultExecutablePath && fs.existsSync(arm64ExecutablePath)) {
+      launchOptions.executablePath = arm64ExecutablePath;
+      console.warn(
+        `[multi] default chromium path missing; falling back to arm64 binary: ${arm64ExecutablePath}`
+      );
+    }
+  }
+
+  return launchOptions;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const startedAt = new Date();
   const effectiveConcurrency = Math.max(1, Math.min(args.clients, Math.floor(args.connectConcurrency)));
   const maxTotalMs = calculateMaxTotalMs({ ...args, connectConcurrency: effectiveConcurrency });
 
-  const browser = await chromium.launch({ headless: args.headless });
+  const browser = await chromium.launch(resolveLaunchOptions(args));
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   context.setDefaultTimeout(Math.max(args.connectTimeoutMs, args.clickTimeoutMs, 10000));
 
@@ -212,6 +239,8 @@ async function main() {
   const launchFailures = [];
   let connectedAtLeastOnce = 0;
   const startedMs = Date.now();
+  let timedOutDuringLaunch = false;
+  let timedOutDuringSampling = false;
 
   console.log(
     `[multi] start clients=${args.clients} concurrency=${effectiveConcurrency} durationMs=${args.durationMs} timeoutMs=${maxTotalMs}`
@@ -221,7 +250,8 @@ async function main() {
     const launchClient = async (index) => {
       const id = index + 1;
       if (Date.now() - startedMs > maxTotalMs) {
-        throw new Error(`benchmark timed out after ${maxTotalMs}ms during launch`);
+        timedOutDuringLaunch = true;
+        return;
       }
 
       const page = await withTimeout(
@@ -258,6 +288,9 @@ async function main() {
 
     const inFlight = new Set();
     for (let i = 0; i < args.clients; i += 1) {
+      if (timedOutDuringLaunch) {
+        break;
+      }
       const task = launchClient(i).finally(() => {
         inFlight.delete(task);
       });
@@ -273,14 +306,24 @@ async function main() {
     if (inFlight.size > 0) {
       await Promise.all(Array.from(inFlight));
     }
+    if (timedOutDuringLaunch) {
+      console.warn(`[multi] launch window exceeded maxTotalMs=${maxTotalMs}; continuing with partial client set`);
+    }
 
     const sampleWindowStart = Date.now();
     const sampleWindowEnd = sampleWindowStart + args.durationMs;
+    // Enforce the global timeout during sampling only if launch already timed out.
+    // Otherwise slow-but-successful launches can produce false sampling timeouts.
+    const enforceGlobalTimeoutDuringSampling = timedOutDuringLaunch;
     const errorClientsObserved = new Set();
 
     while (Date.now() < sampleWindowEnd) {
-      if (Date.now() - startedMs > maxTotalMs) {
-        throw new Error(`benchmark timed out after ${maxTotalMs}ms during sampling`);
+      if (enforceGlobalTimeoutDuringSampling && Date.now() - startedMs > maxTotalMs) {
+        timedOutDuringSampling = true;
+        console.warn(
+          `[multi] sampling window exceeded maxTotalMs=${maxTotalMs}; finishing with collected samples`
+        );
+        break;
       }
       for (const client of clients) {
         if (!client) continue;
@@ -338,6 +381,12 @@ async function main() {
         `Error clients ${errorClientsObserved.size} > max ${args.maxErrorClients}`
       );
     }
+    if (timedOutDuringLaunch) {
+      failures.push(`Timed out during launch after ${maxTotalMs}ms`);
+    }
+    if (timedOutDuringSampling) {
+      failures.push(`Timed out during sampling after ${maxTotalMs}ms`);
+    }
 
     const result = {
       url: args.url,
@@ -354,6 +403,8 @@ async function main() {
         minConnectedRatio: args.minConnectedRatio,
         maxErrorClients: args.maxErrorClients,
       },
+      timedOutDuringLaunch,
+      timedOutDuringSampling,
       passed: failures.length === 0,
       failures,
       startedAt: startedAt.toISOString(),

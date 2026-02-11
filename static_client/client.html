@@ -741,6 +741,9 @@
         const WEBGPU_PROJECTILE_LAYER_ENABLED =
             uiModeParams.get('webgpu_projectiles') === '1' ||
             uiModeParams.get('webgpu_instances') === '1';
+        const WEBGPU_PLAYER_LAYER_ENABLED =
+            uiModeParams.get('webgpu_players') === '1' ||
+            uiModeParams.get('webgpu_instances') === '1';
         const WEBGPU_REQUIRED = uiModeParams.get('require_webgpu') === '1';
         const benchMaxFpsParam = Number.parseInt(uiModeParams.get('bench_max_fps') || '', 10);
         const BENCH_MAX_FPS = Number.isFinite(benchMaxFpsParam) && benchMaxFpsParam >= 30
@@ -1134,16 +1137,6 @@
             const localAnchorY = localPlayerState
                 ? (localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y)
                 : 0;
-            const playerDenseVisualMode =
-                ultraPerformanceMode ||
-                totalPlayerCount > HIGH_POPULATION_PLAYER_COUNT ||
-                smoothedFrameMs > 24 ||
-                (STABLE_MODE_FORCED && (totalPlayerCount >= 24 || smoothedFrameMs > STABLE_DENSE_FRAME_MS));
-            const playerUpdateContext = {
-                totalPlayerCount,
-                denseVisualMode: playerDenseVisualMode,
-                detailTickDivisor: ultraPerformanceMode ? 4 : (STABLE_MODE_FORCED ? 3 : 2)
-            };
             const remoteRenderCap = Math.max(0, playerRenderCap - ((myPlayerId && players.has(myPlayerId)) ? 1 : 0));
             const remotePriorityOverflowCap = remoteRenderCap > 0
                 ? Math.max(4, Math.floor(remoteRenderCap * 0.1))
@@ -2268,6 +2261,303 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             }
         }
 
+        class WebGPUPlayerLayer {
+            constructor(hostElement) {
+                this.hostElement = hostElement;
+                this.canvas = null;
+                this.context = null;
+                this.adapter = null;
+                this.device = null;
+                this.format = null;
+                this.pipeline = null;
+                this.uniformBuffer = null;
+                this.bindGroup = null;
+                this.shipVertexBuffer = null;
+                this.instanceBuffer = null;
+                this.instanceCapacity = 0;
+                this.instanceCount = 0;
+                this.ready = false;
+                this.lastError = null;
+                this.lastInstanceCount = 0;
+            }
+
+            async init(width, height) {
+                if (!navigator.gpu) {
+                    throw new Error('WebGPU unavailable');
+                }
+                this.adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+                if (!this.adapter) {
+                    throw new Error('No WebGPU adapter available');
+                }
+                this.device = await this.adapter.requestDevice();
+
+                this.canvas = document.createElement('canvas');
+                this.canvas.className = 'webgpu-player-layer';
+                this.canvas.style.position = 'absolute';
+                this.canvas.style.left = '0';
+                this.canvas.style.top = '0';
+                this.canvas.style.width = '100%';
+                this.canvas.style.height = '100%';
+                this.canvas.style.pointerEvents = 'none';
+                this.canvas.style.zIndex = '4';
+                this.hostElement.style.position = this.hostElement.style.position || 'relative';
+                this.hostElement.appendChild(this.canvas);
+
+                this.context = this.canvas.getContext('webgpu');
+                if (!this.context) {
+                    throw new Error('Failed to acquire WebGPU canvas context');
+                }
+                this.format = navigator.gpu.getPreferredCanvasFormat
+                    ? navigator.gpu.getPreferredCanvasFormat()
+                    : 'bgra8unorm';
+                this.context.configure({
+                    device: this.device,
+                    format: this.format,
+                    alphaMode: 'premultiplied'
+                });
+
+                this.resize(width, height);
+                this.initPipeline();
+                this.ensureInstanceCapacity(512);
+                this.ready = true;
+            }
+
+            initPipeline() {
+                const shader = this.device.createShaderModule({
+                    code: `
+struct ViewUniform {
+  left: f32,
+  top: f32,
+  width: f32,
+  height: f32,
+};
+
+@group(0) @binding(0) var<uniform> view: ViewUniform;
+
+struct VertexInput {
+  @location(0) localPos: vec2<f32>,
+  @location(1) worldPos: vec2<f32>,
+  @location(2) rotation: f32,
+  @location(3) size: f32,
+  @location(4) color: vec4<f32>,
+};
+
+struct VertexOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) color: vec4<f32>,
+};
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+  let c = cos(input.rotation);
+  let s = sin(input.rotation);
+  let scaled = input.localPos * input.size;
+  let rotated = vec2<f32>(
+    scaled.x * c - scaled.y * s,
+    scaled.x * s + scaled.y * c
+  );
+  let world = input.worldPos + rotated;
+  let nx = ((world.x - view.left) / max(view.width, 1.0)) * 2.0 - 1.0;
+  let ny = 1.0 - ((world.y - view.top) / max(view.height, 1.0)) * 2.0;
+  var out: VertexOutput;
+  out.position = vec4<f32>(nx, ny, 0.0, 1.0);
+  out.color = input.color;
+  return out;
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+  return input.color;
+}
+                    `
+                });
+
+                this.uniformBuffer = this.device.createBuffer({
+                    size: 16,
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+                });
+
+                const bindGroupLayout = this.device.createBindGroupLayout({
+                    entries: [
+                        {
+                            binding: 0,
+                            visibility: GPUShaderStage.VERTEX,
+                            buffer: { type: 'uniform' }
+                        }
+                    ]
+                });
+                const pipelineLayout = this.device.createPipelineLayout({
+                    bindGroupLayouts: [bindGroupLayout]
+                });
+
+                this.pipeline = this.device.createRenderPipeline({
+                    layout: pipelineLayout,
+                    vertex: {
+                        module: shader,
+                        entryPoint: 'vs_main',
+                        buffers: [
+                            {
+                                arrayStride: 8,
+                                stepMode: 'vertex',
+                                attributes: [
+                                    { shaderLocation: 0, offset: 0, format: 'float32x2' }
+                                ]
+                            },
+                            {
+                                arrayStride: 32,
+                                stepMode: 'instance',
+                                attributes: [
+                                    { shaderLocation: 1, offset: 0, format: 'float32x2' },
+                                    { shaderLocation: 2, offset: 8, format: 'float32' },
+                                    { shaderLocation: 3, offset: 12, format: 'float32' },
+                                    { shaderLocation: 4, offset: 16, format: 'float32x4' }
+                                ]
+                            }
+                        ]
+                    },
+                    fragment: {
+                        module: shader,
+                        entryPoint: 'fs_main',
+                        targets: [
+                            {
+                                format: this.format,
+                                blend: {
+                                    color: {
+                                        srcFactor: 'src-alpha',
+                                        dstFactor: 'one-minus-src-alpha',
+                                        operation: 'add'
+                                    },
+                                    alpha: {
+                                        srcFactor: 'one',
+                                        dstFactor: 'one-minus-src-alpha',
+                                        operation: 'add'
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    primitive: {
+                        topology: 'triangle-list'
+                    }
+                });
+
+                this.bindGroup = this.device.createBindGroup({
+                    layout: bindGroupLayout,
+                    entries: [
+                        {
+                            binding: 0,
+                            resource: { buffer: this.uniformBuffer }
+                        }
+                    ]
+                });
+
+                // Arrow-like ship triangle (nose points +X in local space).
+                const shipVertices = new Float32Array([
+                    1.0, 0.0,
+                    -0.8, 0.68,
+                    -0.8, -0.68
+                ]);
+                this.shipVertexBuffer = this.device.createBuffer({
+                    size: shipVertices.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+                });
+                this.device.queue.writeBuffer(this.shipVertexBuffer, 0, shipVertices);
+            }
+
+            ensureInstanceCapacity(count) {
+                if (count <= this.instanceCapacity) return;
+                let nextCapacity = Math.max(512, this.instanceCapacity);
+                while (nextCapacity < count) {
+                    nextCapacity *= 2;
+                }
+                this.instanceBuffer = this.device.createBuffer({
+                    size: nextCapacity * 32,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+                });
+                this.instanceCapacity = nextCapacity;
+            }
+
+            resize(width, height) {
+                if (!this.canvas) return;
+                const w = Math.max(1, Math.floor(width));
+                const h = Math.max(1, Math.floor(height));
+                this.canvas.width = w;
+                this.canvas.height = h;
+            }
+
+            render(viewBounds, instanceArray) {
+                if (!this.ready || !this.context || !this.device || !this.pipeline) return;
+                const view = new Float32Array([
+                    Number(viewBounds.left) || 0,
+                    Number(viewBounds.top) || 0,
+                    Math.max(1, (Number(viewBounds.right) || 0) - (Number(viewBounds.left) || 0)),
+                    Math.max(1, (Number(viewBounds.bottom) || 0) - (Number(viewBounds.top) || 0))
+                ]);
+                this.device.queue.writeBuffer(this.uniformBuffer, 0, view);
+
+                const instanceCount = Math.max(0, Math.floor((instanceArray?.length || 0) / WEBGPU_PLAYER_INSTANCE_STRIDE));
+                this.instanceCount = instanceCount;
+                this.lastInstanceCount = instanceCount;
+                if (instanceCount > 0) {
+                    this.ensureInstanceCapacity(instanceCount);
+                    this.device.queue.writeBuffer(this.instanceBuffer, 0, instanceArray);
+                }
+
+                const encoder = this.device.createCommandEncoder();
+                const pass = encoder.beginRenderPass({
+                    colorAttachments: [
+                        {
+                            view: this.context.getCurrentTexture().createView(),
+                            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+                            loadOp: 'clear',
+                            storeOp: 'store'
+                        }
+                    ]
+                });
+                pass.setPipeline(this.pipeline);
+                pass.setBindGroup(0, this.bindGroup);
+                pass.setVertexBuffer(0, this.shipVertexBuffer);
+                if (instanceCount > 0) {
+                    pass.setVertexBuffer(1, this.instanceBuffer);
+                    pass.draw(3, instanceCount, 0, 0);
+                }
+                pass.end();
+                this.device.queue.submit([encoder.finish()]);
+            }
+
+            clear(viewBounds) {
+                this.render(viewBounds, new Float32Array(0));
+            }
+
+            destroy() {
+                this.ready = false;
+                try {
+                    if (this.context && typeof this.context.unconfigure === 'function') {
+                        this.context.unconfigure();
+                    }
+                } catch (_) {}
+                try {
+                    if (this.device && typeof this.device.destroy === 'function') {
+                        this.device.destroy();
+                    }
+                } catch (_) {}
+                if (this.canvas && this.canvas.parentNode) {
+                    this.canvas.parentNode.removeChild(this.canvas);
+                }
+                this.canvas = null;
+                this.context = null;
+                this.adapter = null;
+                this.device = null;
+                this.pipeline = null;
+                this.bindGroup = null;
+                this.uniformBuffer = null;
+                this.shipVertexBuffer = null;
+                this.instanceBuffer = null;
+                this.instanceCapacity = 0;
+                this.instanceCount = 0;
+            }
+        }
+
         async function initWebGPUProjectileLayer(hostElement, width, height) {
             if (!WEBGPU_PROJECTILE_LAYER_ENABLED || !hostElement) return;
             if (webgpuProjectileLayerInitStarted || webgpuProjectileLayer) return;
@@ -2299,6 +2589,40 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 window.__e2e.webgpuProjectileLayerEnabled = false;
                 window.__e2e.webgpuProjectileLayerReady = false;
                 window.__e2e.webgpuProjectileInstances = 0;
+            }
+        }
+
+        async function initWebGPUPlayerLayer(hostElement, width, height) {
+            if (!WEBGPU_PLAYER_LAYER_ENABLED || !hostElement) return;
+            if (webgpuPlayerLayerInitStarted || webgpuPlayerLayer) return;
+            webgpuPlayerLayerInitStarted = true;
+            try {
+                const layer = new WebGPUPlayerLayer(hostElement);
+                await layer.init(width, height);
+                webgpuPlayerLayer = layer;
+                log('WebGPU player instance layer enabled.', 'info');
+            } catch (error) {
+                webgpuPlayerLayer = null;
+                log(`WebGPU player layer unavailable: ${error?.message || error}`, 'warn');
+            }
+            if (window.__e2e) {
+                window.__e2e.webgpuPlayerLayerEnabled = !!webgpuPlayerLayer;
+                window.__e2e.webgpuPlayerLayerReady = !!(webgpuPlayerLayer && webgpuPlayerLayer.ready);
+            }
+        }
+
+        function disableWebGPUPlayerLayer(reason, error = null) {
+            if (!webgpuPlayerLayer) return;
+            try {
+                webgpuPlayerLayer.destroy();
+            } catch (_) {}
+            webgpuPlayerLayer = null;
+            const detail = error?.message ? `${reason}: ${error.message}` : reason;
+            log(`WebGPU player layer disabled: ${detail}`, 'warn');
+            if (window.__e2e) {
+                window.__e2e.webgpuPlayerLayerEnabled = false;
+                window.__e2e.webgpuPlayerLayerReady = false;
+                window.__e2e.webgpuPlayerInstances = 0;
             }
         }
 
@@ -2547,6 +2871,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         window.__e2e.webgpuProjectileLayerEnabled = false;
         window.__e2e.webgpuProjectileLayerReady = false;
         window.__e2e.webgpuProjectileInstances = 0;
+        window.__e2e.webgpuPlayerLayerRequested = WEBGPU_PLAYER_LAYER_ENABLED;
+        window.__e2e.webgpuPlayerLayerEnabled = false;
+        window.__e2e.webgpuPlayerLayerReady = false;
+        window.__e2e.webgpuPlayerInstances = 0;
         window.__e2e.effectsProfile = activeEffectsProfileName;
         window.__e2e.rendererBackend = getRendererBackendSummary();
         window.__e2e.renderResolution = currentRenderResolution;
@@ -3092,6 +3420,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let dataChannel;
         let webgpuProjectileLayer = null;
         let webgpuProjectileLayerInitStarted = false;
+        let webgpuPlayerLayer = null;
+        let webgpuPlayerLayerInitStarted = false;
 
         // PIXI.js Application
         let app;
@@ -3124,6 +3454,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         const projectileSpritePool = [];
         const PROJECTILE_SPRITE_POOL_LIMIT = 8192;
         const WEBGPU_PROJECTILE_INSTANCE_STRIDE = 7;
+        const WEBGPU_PLAYER_INSTANCE_STRIDE = 8;
+        const WEBGPU_PLAYER_BASE_SIZE = PLAYER_RADIUS * 1.1;
         const WEBGPU_PROJECTILE_BASE_SIZE = {
             [GP.WeaponType.Pistol]: 7,
             [GP.WeaponType.Shotgun]: 7,
@@ -3182,6 +3514,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let cullWorkerResult = null;
         let projectileRawModeActive = false;
         let webgpuProjectileInstanceScratch = new Float32Array(0);
+        let webgpuPlayerInstanceScratch = new Float32Array(0);
         const cullWorkerStats = {
             dispatches: 0,
             responses: 0,
@@ -3750,6 +4083,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 });
                 pixiContainer.appendChild(app.view);
                 initWebGPUProjectileLayer(pixiContainer, containerRect.width, containerRect.height);
+                initWebGPUPlayerLayer(pixiContainer, containerRect.width, containerRect.height);
 
                 app.ticker.maxFPS = BENCH_MODE ? BENCH_MAX_FPS : 60;
 
@@ -3884,6 +4218,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 app.renderer.resize(containerRect.width, containerRect.height);
                 if (webgpuProjectileLayer && webgpuProjectileLayer.ready) {
                     webgpuProjectileLayer.resize(containerRect.width, containerRect.height);
+                }
+                if (webgpuPlayerLayer && webgpuPlayerLayer.ready) {
+                    webgpuPlayerLayer.resize(containerRect.width, containerRect.height);
                 }
                 updateCamera();
             }
@@ -4347,6 +4684,40 @@ function ensureWebGPUProjectileScratchCapacity(instanceCount) {
     }
     webgpuProjectileInstanceScratch = new Float32Array(nextSize);
     return webgpuProjectileInstanceScratch;
+}
+
+function ensureWebGPUPlayerScratchCapacity(instanceCount) {
+    const requiredFloats = Math.max(0, instanceCount) * WEBGPU_PLAYER_INSTANCE_STRIDE;
+    if (requiredFloats <= webgpuPlayerInstanceScratch.length) {
+        return webgpuPlayerInstanceScratch;
+    }
+    let nextSize = Math.max(512 * WEBGPU_PLAYER_INSTANCE_STRIDE, webgpuPlayerInstanceScratch.length || 0);
+    while (nextSize < requiredFloats) {
+        nextSize *= 2;
+    }
+    webgpuPlayerInstanceScratch = new Float32Array(nextSize);
+    return webgpuPlayerInstanceScratch;
+}
+
+function writeWebGPUPlayerInstance(buffer, offset, player, worldX, worldY) {
+    const renderRotation = Number(
+        player.render_rotation !== undefined ? player.render_rotation : player.rotation
+    ) || 0;
+    const alive = !!player.alive;
+    const tint = alive
+        ? (teamColors[player.team_id] || teamColors[0])
+        : 0x6B7280;
+    const alpha = alive ? 1 : 0.55;
+
+    buffer[offset] = worldX;
+    buffer[offset + 1] = worldY;
+    buffer[offset + 2] = renderRotation;
+    buffer[offset + 3] = WEBGPU_PLAYER_BASE_SIZE;
+    buffer[offset + 4] = ((tint >> 16) & 0xFF) / 255;
+    buffer[offset + 5] = ((tint >> 8) & 0xFF) / 255;
+    buffer[offset + 6] = (tint & 0xFF) / 255;
+    buffer[offset + 7] = alpha;
+    return offset + WEBGPU_PLAYER_INSTANCE_STRIDE;
 }
 
 function writeWebGPUProjectileInstance(buffer, offset, projectile, worldX, worldY) {
@@ -5430,6 +5801,8 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 window.__e2e.webgpuSupported = typeof navigator.gpu !== 'undefined';
                 window.__e2e.webgpuProjectileLayerEnabled = !!webgpuProjectileLayer;
                 window.__e2e.webgpuProjectileLayerReady = !!(webgpuProjectileLayer && webgpuProjectileLayer.ready);
+                window.__e2e.webgpuPlayerLayerEnabled = !!webgpuPlayerLayer;
+                window.__e2e.webgpuPlayerLayerReady = !!(webgpuPlayerLayer && webgpuPlayerLayer.ready);
                 window.__e2e.projectileCount = projectiles.size;
                 window.__e2e.visibleProjectileCount = lastVisibleProjectiles;
                 window.__e2e.projectileRenderCap = lastProjectileRenderCap;
@@ -6069,6 +6442,27 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             const playerCullRight = worldViewBounds.right + PLAYER_CULL_MARGIN_WORLD;
             const playerCullTop = worldViewBounds.top - PLAYER_CULL_MARGIN_WORLD;
             const playerCullBottom = worldViewBounds.bottom + PLAYER_CULL_MARGIN_WORLD;
+            const useWebGPUPlayers = !!(webgpuPlayerLayer && webgpuPlayerLayer.ready);
+            let playerInstanceBuffer = null;
+            let playerInstanceOffset = 0;
+            if (useWebGPUPlayers) {
+                const projectedCount = workerPlayerSet
+                    ? Math.min(
+                        Math.max(0, players.size - ((myPlayerId && players.has(myPlayerId)) ? 1 : 0)),
+                        Math.max(remoteRenderCap, workerPlayerSet.size)
+                    )
+                    : Math.max(0, remoteRenderCap + remotePriorityOverflowCap);
+                playerInstanceBuffer = ensureWebGPUPlayerScratchCapacity(projectedCount);
+
+                if (playerSprites.size > 0) {
+                    for (const [existingPlayerId, existingSprite] of playerSprites) {
+                        if (existingPlayerId === myPlayerId) continue;
+                        playerContainer.removeChild(existingSprite);
+                        existingSprite.destroy({ children: true });
+                        playerSprites.delete(existingPlayerId);
+                    }
+                }
+            }
 
             for (const [playerId, playerEntry] of players) {
                 const player = (playerId === myPlayerId && localPlayerState) ? localPlayerState : playerEntry;
@@ -6109,6 +6503,24 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         if (sprite) hidePlayerSprite(sprite);
                         continue;
                     }
+
+                    const remoteVisibleState = player.alive || (player.respawn_timer !== undefined && player.respawn_timer > 0);
+                    if (!remoteVisibleState) {
+                        if (sprite) hidePlayerSprite(sprite);
+                        continue;
+                    }
+
+                    if (useWebGPUPlayers) {
+                        playerInstanceOffset = writeWebGPUPlayerInstance(
+                            playerInstanceBuffer,
+                            playerInstanceOffset,
+                            player,
+                            px,
+                            py
+                        );
+                        visiblePlayers += 1;
+                        continue;
+                    }
                 }
                 if (!sprite) {
                     sprite = createPlayerSprite(player, isLocal);
@@ -6126,6 +6538,39 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             }
             lastVisiblePlayers = visiblePlayers;
             lastPlayerRenderCap = playerRenderCap;
+
+            if (useWebGPUPlayers) {
+                try {
+                    if (playerInstanceOffset > 0) {
+                        const instances = playerInstanceOffset / WEBGPU_PLAYER_INSTANCE_STRIDE;
+                        webgpuPlayerLayer.render(
+                            worldViewBounds,
+                            playerInstanceBuffer.subarray(0, playerInstanceOffset)
+                        );
+                        if (window.__e2e) {
+                            window.__e2e.webgpuPlayerInstances = instances;
+                        }
+                    } else {
+                        webgpuPlayerLayer.clear(worldViewBounds);
+                        if (window.__e2e) {
+                            window.__e2e.webgpuPlayerInstances = 0;
+                        }
+                    }
+                } catch (error) {
+                    disableWebGPUPlayerLayer('player render failure', error);
+                }
+            } else {
+                if (window.__e2e) {
+                    window.__e2e.webgpuPlayerInstances = 0;
+                }
+                if (webgpuPlayerLayer && webgpuPlayerLayer.ready) {
+                    try {
+                        webgpuPlayerLayer.clear(worldViewBounds);
+                    } catch (error) {
+                        disableWebGPUPlayerLayer('player clear failure', error);
+                    }
+                }
+            }
 
             for (const [playerId, sprite] of playerSprites) {
                 if (players.has(playerId)) continue;
@@ -8000,6 +8445,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 window.__e2e.webgpuProjectileLayerEnabled = !!webgpuProjectileLayer;
                 window.__e2e.webgpuProjectileLayerReady = !!(webgpuProjectileLayer && webgpuProjectileLayer.ready);
                 window.__e2e.webgpuProjectileInstances = 0;
+                window.__e2e.webgpuPlayerLayerEnabled = !!webgpuPlayerLayer;
+                window.__e2e.webgpuPlayerLayerReady = !!(webgpuPlayerLayer && webgpuPlayerLayer.ready);
+                window.__e2e.webgpuPlayerInstances = 0;
                 window.__e2e.fxStressActive = false;
                 window.__e2e.fxStressConfig = null;
                 window.__e2e.syntheticFxBursts = 0;
@@ -8055,6 +8503,13 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                     webgpuProjectileLayer.clear(worldViewBounds);
                 } catch (error) {
                     disableWebGPUProjectileLayer('connection reset clear failed', error);
+                }
+            }
+            if (webgpuPlayerLayer && webgpuPlayerLayer.ready) {
+                try {
+                    webgpuPlayerLayer.clear(worldViewBounds);
+                } catch (error) {
+                    disableWebGPUPlayerLayer('connection reset clear failed', error);
                 }
             }
             playerSprites.clear();
@@ -8240,6 +8695,49 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             }
         }
 
+        const DAMAGE_NUMBER_CONFIGS = Object.freeze({
+            enemyReceived: Object.freeze({
+                glowColor: 0xFF0000,    // Red - damage received from enemies
+                textColor: [0xFFFFFF, 0xFF4444],
+                strokeColor: 0x660000,
+                prefix: '-',
+                offsetY: -PLAYER_RADIUS,
+                scale: 1.1
+            }),
+            friendlyFireReceived: Object.freeze({
+                glowColor: 0xFF8C00,    // Orange - friendly fire received
+                textColor: [0xFFFFFF, 0xFFA500],
+                strokeColor: 0x994400,
+                prefix: '-',
+                offsetY: -PLAYER_RADIUS,
+                scale: 1.0
+            }),
+            enemyDealt: Object.freeze({
+                glowColor: 0x90EE90,    // Light green - damage dealt to enemies
+                textColor: [0xFFFFFF, 0x90EE90],
+                strokeColor: 0x228B22,
+                prefix: '+',
+                offsetY: -PLAYER_RADIUS - 10,
+                scale: 1.2
+            }),
+            friendlyFireDealt: Object.freeze({
+                glowColor: 0xFFFF00,    // Yellow - friendly fire dealt
+                textColor: [0xFFFFFF, 0xFFFF44],
+                strokeColor: 0x666600,
+                prefix: '!',
+                offsetY: -PLAYER_RADIUS - 5,
+                scale: 0.9
+            }),
+            enemyFriendlyFire: Object.freeze({
+                glowColor: 0x9370DB,    // Purple - enemy team friendly fire
+                textColor: [0xFFFFFF, 0xDDA0DD],
+                strokeColor: 0x4B0082,
+                prefix: '~',
+                offsetY: -PLAYER_RADIUS - 3,
+                scale: 0.95
+            })
+        });
+
         // Effects Manager
         class EffectsManager {
             constructor(app, container, audioManager = null) {
@@ -8250,6 +8748,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         this.pendingTimers = new Set();
         this.particlesEnabled = true;
         this.audioManager = audioManager;  // Store audio manager reference
+        this.damageNumberTextStyles = new Map();
         this.effectStats = {
             dropped: 0,
             evicted: 0
@@ -8626,65 +9125,12 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         });
     }
 
-    createEnhancedDamageNumbers(position, damage, damageType = 'enemy') {
-        const container = new PIXI.Container();
-        
-        // Damage type configurations
-        const damageConfigs = {
-            enemyReceived: {
-                glowColor: 0xFF0000,    // Red - damage received from enemies
-                textColor: [0xFFFFFF, 0xFF4444],
-                strokeColor: 0x660000,
-                prefix: '-',
-                offsetY: -PLAYER_RADIUS,
-                scale: 1.1
-            },
-            friendlyFireReceived: {
-                glowColor: 0xFF8C00,    // Orange - friendly fire received
-                textColor: [0xFFFFFF, 0xFFA500],
-                strokeColor: 0x994400,
-                prefix: '-',
-                offsetY: -PLAYER_RADIUS,
-                scale: 1.0
-            },
-            enemyDealt: {
-                glowColor: 0x90EE90,    // Light Green - damage dealt to enemies (beneficial)
-                textColor: [0xFFFFFF, 0x90EE90],
-                strokeColor: 0x228B22,
-                prefix: '+',
-                offsetY: -PLAYER_RADIUS - 10,
-                scale: 1.2
-            },
-            friendlyFireDealt: {
-                glowColor: 0xFFFF00,    // Yellow - friendly fire dealt (warning)
-                textColor: [0xFFFFFF, 0xFFFF44],
-                strokeColor: 0x666600,
-                prefix: '!',
-                offsetY: -PLAYER_RADIUS - 5,
-                scale: 0.9
-            },
-            enemyFriendlyFire: {
-                glowColor: 0x9370DB,    // Purple - enemy team friendly fire
-                textColor: [0xFFFFFF, 0xDDA0DD],
-                strokeColor: 0x4B0082,
-                prefix: '~',
-                offsetY: -PLAYER_RADIUS - 3,
-                scale: 0.95
-            }
-        };
-        
-        const config = damageConfigs[damageType] || damageConfigs.enemyReceived;
-        
-        // Background glow
-        const glow = new PIXI.Graphics();
-        glow.beginFill(config.glowColor, 0.3);
-        glow.drawCircle(0, 0, 20);
-        glow.endFill();
-        glow.filters = [new PIXI.BlurFilter(5)];
-        container.addChild(glow);
-        
-        // Damage text with gradient
-        const textStyle = new PIXI.TextStyle({
+    getDamageNumberTextStyle(damageType, config) {
+        const styleKey = String(damageType || 'enemyReceived');
+        if (this.damageNumberTextStyles.has(styleKey)) {
+            return this.damageNumberTextStyles.get(styleKey);
+        }
+        const style = new PIXI.TextStyle({
             fontSize: 20 * config.scale,
             fontWeight: 'bold',
             fill: config.textColor,
@@ -8696,7 +9142,25 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             dropShadowBlur: 4,
             dropShadowDistance: 2
         });
+        this.damageNumberTextStyles.set(styleKey, style);
+        return style;
+    }
+
+    createEnhancedDamageNumbers(position, damage, damageType = 'enemy') {
+        const container = new PIXI.Container();
+        const resolvedType = DAMAGE_NUMBER_CONFIGS[damageType] ? damageType : 'enemyReceived';
+        const config = DAMAGE_NUMBER_CONFIGS[resolvedType];
         
+        // Background glow
+        const glow = new PIXI.Graphics();
+        glow.beginFill(config.glowColor, 0.3);
+        glow.drawCircle(0, 0, 20);
+        glow.endFill();
+        glow.filters = [new PIXI.BlurFilter(5)];
+        container.addChild(glow);
+        
+        // Reuse style objects to avoid repeated TextStyle allocations under heavy combat.
+        const textStyle = this.getDamageNumberTextStyle(resolvedType, config);
         const text = new PIXI.Text(config.prefix + Math.round(damage), textStyle);
         text.anchor.set(0.5);
         container.addChild(text);
@@ -8715,7 +9179,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         
         // Critical hit effect for high damage
         if (damage > 50) {
-            text.style.fontSize = 24 * config.scale;
+            text.scale.set(1.2, 1.2);
             const criticalBurst = new PIXI.Graphics();
             criticalBurst.lineStyle(2, 0xFFFF00, 0.8);
             drawStar(criticalBurst, 0, 0, 8, 25, 15);
