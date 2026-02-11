@@ -4057,8 +4057,12 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             logOutput.scrollTop = logOutput.scrollHeight;
         }
 
+        function isWallDebugEnabled() {
+            return !!(DEBUG_WALL_UPDATES || gameSettings.showDestroyedWallDebug);
+        }
+
         function logWallDebug(message, type = 'info') {
-            if (DEBUG_WALL_UPDATES || gameSettings.showDestroyedWallDebug) {
+            if (isWallDebugEnabled()) {
                 log(message, type);
             }
         }
@@ -6764,20 +6768,23 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             const serverTime = Number(messageData.timestamp);
             let wallsChanged = false;
+            const wallDebugEnabled = isWallDebugEnabled();
             // const parsed = messageData; // This alias is confusing, messageData is already the parsed data payload.
 
             if (isInitial) {
                 walls.clear();
                 if (messageData.walls) {
-                    messageData.walls.forEach(wallData => {
+                    const initialWalls = messageData.walls;
+                    for (let i = 0; i < initialWalls.length; i += 1) {
+                        const wallData = initialWalls[i];
                         // CRITICAL: Only store non-destroyed walls for collision detection
                         if (!wallData.is_destructible || wallData.current_health > 0) {
                             walls.set(wallData.id, wallData);
                             wallsChanged = true;
-                        } else {
+                        } else if (wallDebugEnabled) {
                             logWallDebug(`[INITIAL STATE] Filtering out destroyed wall ${wallData.id} with health ${wallData.current_health}`, 'warn');
                         }
-                    });
+                    }
                 }
                 drawWalls();
                 if (messageData.map_name) currentMapName = messageData.map_name;
@@ -6785,28 +6792,39 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 if (minimap) minimap.wallsNeedUpdate = true;
             } else { // Delta update
                 if (messageData.destroyed_wall_ids && messageData.destroyed_wall_ids.length > 0) {
-                    logWallDebug(`[WALL DEBUG] Destroying ${messageData.destroyed_wall_ids.length} walls`, 'info');
-                    messageData.destroyed_wall_ids.forEach(wallId => {
+                    if (wallDebugEnabled) {
+                        logWallDebug(`[WALL DEBUG] Destroying ${messageData.destroyed_wall_ids.length} walls`, 'info');
+                    }
+                    for (let i = 0; i < messageData.destroyed_wall_ids.length; i += 1) {
+                        const wallId = messageData.destroyed_wall_ids[i];
                         const wall = walls.get(wallId);
                         if (wall) {
                             wall.current_health = 0; // Mark as destroyed client-side
                             wallsChanged = true;
-                            logWallDebug(`[WALL DESTROYED] Wall ${wallId} destroyed at (${wall.x}, ${wall.y})`, 'warn');
+                            if (wallDebugEnabled) {
+                                logWallDebug(`[WALL DESTROYED] Wall ${wallId} destroyed at (${wall.x}, ${wall.y})`, 'warn');
+                            }
                         }
-                    });
+                    }
                 }
 
                 // Fix 1: Handle respawned walls in delta updates
                 if (messageData.updated_walls && messageData.updated_walls.length > 0) {
-                    logWallDebug(`[WALL DEBUG] Received ${messageData.updated_walls.length} updated walls in delta`, 'info');
-                    messageData.updated_walls.forEach(wallData => {
+                    if (wallDebugEnabled) {
+                        logWallDebug(`[WALL DEBUG] Received ${messageData.updated_walls.length} updated walls in delta`, 'info');
+                    }
+                    const updatedWalls = messageData.updated_walls;
+                    for (let i = 0; i < updatedWalls.length; i += 1) {
+                        const wallData = updatedWalls[i];
                         const prevWall = walls.get(wallData.id);
                         walls.set(wallData.id, wallData); // Update or add the wall (respawned walls)
                         wallsChanged = true;
                         
                         // Enhanced logging for debugging
                         if (prevWall && prevWall.current_health === 0 && wallData.current_health > 0) {
-                            logWallDebug(`[WALL RESPAWN] Wall ${wallData.id} respawned at (${wallData.x}, ${wallData.y}) with health ${wallData.current_health}/${wallData.max_health}`, 'success');
+                            if (wallDebugEnabled) {
+                                logWallDebug(`[WALL RESPAWN] Wall ${wallData.id} respawned at (${wallData.x}, ${wallData.y}) with health ${wallData.current_health}/${wallData.max_health}`, 'success');
+                            }
                             
                             // Create respawn animation if wall health was restored
                             if (effectsManager && localPlayerState) {
@@ -6824,23 +6842,25 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             }
                         } else if (!prevWall) {
                             // This is a new wall we didn't know about (possibly respawned outside AOI)
-                            logWallDebug(`[WALL NEW] New wall ${wallData.id} discovered at (${wallData.x}, ${wallData.y}) with health ${wallData.current_health}/${wallData.max_health}`, 'warn');
+                            if (wallDebugEnabled) {
+                                logWallDebug(`[WALL NEW] New wall ${wallData.id} discovered at (${wallData.x}, ${wallData.y}) with health ${wallData.current_health}/${wallData.max_health}`, 'warn');
+                            }
                             
                             // Check if this might be a respawned wall
-                            if (wallData.is_destructible && wallData.current_health === wallData.max_health) {
+                            if (wallDebugEnabled && wallData.is_destructible && wallData.current_health === wallData.max_health) {
                                 logWallDebug(`[WALL RESPAWN?] This new wall has full health - might be a respawn`, 'warn');
                             }
                             
                             // Also force redraw for newly discovered walls
                             wallsChanged = true;
-                        } else if (prevWall && prevWall.current_health !== wallData.current_health) {
+                        } else if (wallDebugEnabled && prevWall && prevWall.current_health !== wallData.current_health) {
                             // Wall health changed but not respawned
                             logWallDebug(`[WALL HEALTH] Wall ${wallData.id} health changed from ${prevWall.current_health} to ${wallData.current_health}`, 'info');
                         }
-                    });
+                    }
                 } else {
                     // Log when no updated_walls received
-                    if (messageData.destroyed_wall_ids && messageData.destroyed_wall_ids.length > 0) {
+                    if (wallDebugEnabled && messageData.destroyed_wall_ids && messageData.destroyed_wall_ids.length > 0) {
                         logWallDebug(`[WALL DEBUG] ${messageData.destroyed_wall_ids.length} walls destroyed but no updated_walls in this delta`, 'warn');
                     }
                 }
@@ -6849,19 +6869,27 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             // Fix 2: Handle full walls list in delta updates (server might send all walls in AOI)
             if (messageData.walls && messageData.walls.length > 0 && !isInitial) {
                 // This is a full walls list in a delta update (when entering new AOI)
-                logWallDebug(`Received ${messageData.walls.length} walls in delta update - possible AOI change`, 'info');
+                if (wallDebugEnabled) {
+                    logWallDebug(`Received ${messageData.walls.length} walls in delta update - possible AOI change`, 'info');
+                }
+                const incomingWalls = messageData.walls;
+                const incomingWallIds = new Set();
                 
                 // Track which walls we had before
                 const previousWallIds = new Set(walls.keys());
                 
                 // Update all walls
-                messageData.walls.forEach(wallData => {
+                for (let i = 0; i < incomingWalls.length; i += 1) {
+                    const wallData = incomingWalls[i];
                     walls.set(wallData.id, wallData);
+                    incomingWallIds.add(wallData.id);
                     
                     // Check if this is a wall we didn't know about
                     if (!previousWallIds.has(wallData.id)) {
                         wallsChanged = true;
-                        logWallDebug(`New wall ${wallData.id} discovered in AOI at (${wallData.x}, ${wallData.y})`, 'info');
+                        if (wallDebugEnabled) {
+                            logWallDebug(`New wall ${wallData.id} discovered in AOI at (${wallData.x}, ${wallData.y})`, 'info');
+                        }
                         
                         // If it's a respawned wall with health, show respawn effect
                         if (wallData.current_health > 0 && wallData.is_destructible && effectsManager && localPlayerState) {
@@ -6877,14 +6905,16 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             }
                         }
                     }
-                });
+                }
                 
                 // Remove walls that are no longer in AOI
                 previousWallIds.forEach(wallId => {
-                    if (!messageData.walls.find(w => w.id === wallId)) {
+                    if (!incomingWallIds.has(wallId)) {
                         walls.delete(wallId);
                         wallsChanged = true;
-                        logWallDebug(`Wall ${wallId} removed - left AOI`, 'info');
+                        if (wallDebugEnabled) {
+                            logWallDebug(`Wall ${wallId} removed - left AOI`, 'info');
+                        }
                     }
                 });
             }
@@ -6896,7 +6926,9 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             // Update players
             // const newPlayerStates = new Map(); // Not strictly needed if updating global 'players' map directly
             if (messageData.players) {
-                messageData.players.forEach(pData => {
+                const incomingPlayers = messageData.players;
+                for (let i = 0; i < incomingPlayers.length; i += 1) {
+                    const pData = incomingPlayers[i];
                     if (pData.id === myPlayerId) {
                         if (!localPlayerState) {
                             localPlayerState = { ...pData };
@@ -6936,39 +6968,58 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         localPlayerState.render_rotation = localPlayerState.rotation;
                         players.set(pData.id, localPlayerState);
                     } else {
+                        const existingPlayer = players.get(pData.id);
+                        if ((!pData.username || pData.username.length === 0) && existingPlayer?.username) {
+                            pData.username = existingPlayer.username;
+                        }
                         players.set(pData.id, pData);
                     }
-                });
+                }
             }
             
             // Handle removed players (if server sends this information in DeltaState)
             if (messageData.removed_player_ids && messageData.removed_player_ids.length > 0) {
-                messageData.removed_player_ids.forEach(removedId => {
+                const removedPlayers = messageData.removed_player_ids;
+                for (let i = 0; i < removedPlayers.length; i += 1) {
+                    const removedId = removedPlayers[i];
                     players.delete(removedId);
                     log(`Player ${removedId} removed.`, 'info');
-                });
+                }
             }
 
 
             // Update projectiles
             // const newProjectileStates = new Map(); // Not strictly needed
             if (messageData.projectiles) {
-                messageData.projectiles.forEach(pData => projectiles.set(pData.id, pData));
+                const incomingProjectiles = messageData.projectiles;
+                for (let i = 0; i < incomingProjectiles.length; i += 1) {
+                    const projectileData = incomingProjectiles[i];
+                    projectiles.set(projectileData.id, projectileData);
+                }
             }
             if (messageData.removed_projectiles) {
-                messageData.removed_projectiles.forEach(id => projectiles.delete(id));
+                const removedProjectiles = messageData.removed_projectiles;
+                for (let i = 0; i < removedProjectiles.length; i += 1) {
+                    projectiles.delete(removedProjectiles[i]);
+                }
             }
             // newProjectileStates.forEach((pData, pId) => projectiles.set(pId, pData)); // If using newProjectileStates
 
             // Update pickups
             if (messageData.pickups) {
-                messageData.pickups.forEach(pData => pickups.set(pData.id, pData));
+                const incomingPickups = messageData.pickups;
+                for (let i = 0; i < incomingPickups.length; i += 1) {
+                    const pickupData = incomingPickups[i];
+                    pickups.set(pickupData.id, pickupData);
+                }
             }
             if (messageData.deactivated_pickup_ids) {
-                messageData.deactivated_pickup_ids.forEach(id => {
+                const deactivatedPickups = messageData.deactivated_pickup_ids;
+                for (let i = 0; i < deactivatedPickups.length; i += 1) {
+                    const id = deactivatedPickups[i];
                     const pickup = pickups.get(id);
                     if (pickup) pickup.is_active = false;
-                });
+                }
             }
 
             // Update kill feed
@@ -6998,7 +7049,10 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             // Process game events
             if (messageData.game_events && effectsManager) {
-                messageData.game_events.forEach(eventData => effectsManager.processGameEvent(eventData));
+                const gameEvents = messageData.game_events;
+                for (let i = 0; i < gameEvents.length; i += 1) {
+                    effectsManager.processGameEvent(gameEvents[i]);
+                }
             }
 
             // This was part of the original code, ensure it's still relevant or remove
@@ -7033,16 +7087,65 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             maybeRecordInterpolationSnapshot(serverTime);
         }
 
-        // Parse FlatBuffer message - FIXED VERSION
+        const DELTA_SUPPORTS_REMOVED_PLAYER_IDS = typeof GP.DeltaStateMessage.prototype.removedPlayerIdsLength === 'function';
+        const DELTA_SUPPORTS_UPDATED_WALLS = typeof GP.DeltaStateMessage.prototype.updatedWallsLength === 'function';
+        const DELTA_SUPPORTS_FULL_WALLS = typeof GP.DeltaStateMessage.prototype.wallsLength === 'function';
+
+        const flatbufferParseScratch = {
+            gameMessage: new GP.GameMessage(),
+            welcomeMessage: new GP.WelcomeMessage(),
+            initialStateMessage: new GP.InitialStateMessage(),
+            deltaStateMessage: new GP.DeltaStateMessage(),
+            chatMessage: new GP.ChatMessage(),
+            matchInfo: new GP.MatchInfo(),
+            teamScoreEntry: new GP.TeamScoreEntry(),
+            wall: new GP.Wall(),
+            playerState: new GP.PlayerState(),
+            projectileState: new GP.ProjectileState(),
+            pickup: new GP.Pickup(),
+            flagState: new GP.FlagState(),
+            vec2: new GP.Vec2(),
+            killFeedEntry: new GP.KillFeedEntry(),
+            gameEvent: new GP.GameEvent(),
+        };
+
+        function parseTeamScores(matchInfoTable) {
+            const length = matchInfoTable?.teamScoresLength?.() || 0;
+            if (length <= 0) return [];
+            const rows = new Array(length);
+            const teamScoreEntry = flatbufferParseScratch.teamScoreEntry;
+            for (let i = 0; i < length; i += 1) {
+                const teamScore = matchInfoTable.teamScores(i, teamScoreEntry);
+                rows[i] = {
+                    team_id: teamScore ? teamScore.teamId() : 0,
+                    score: teamScore ? teamScore.score() : 0
+                };
+            }
+            return rows;
+        }
+
+        function parseMatchInfo(matchInfoTable) {
+            if (!matchInfoTable) return null;
+            return {
+                time_remaining: matchInfoTable.timeRemaining(),
+                match_state: matchInfoTable.matchState(),
+                winner_id: matchInfoTable.winnerId(),
+                winner_name: matchInfoTable.winnerName(),
+                game_mode: matchInfoTable.gameMode(),
+                team_scores: parseTeamScores(matchInfoTable),
+            };
+        }
+
+        // Parse FlatBuffer message.
         function parseFlatBufferMessage(data) {
             try {
                 const buf = new flatbuffers.ByteBuffer(new Uint8Array(data));
-                const gameMsg = GameProtocol.GameMessage.getRootAsGameMessage(buf);
+                const gameMsg = GameProtocol.GameMessage.getRootAsGameMessage(buf, flatbufferParseScratch.gameMessage);
                 const msgType = gameMsg.msgType();
-                
+
                 switch (msgType) {
-                    case GameProtocol.MessageType.Welcome:
-                        const welcome = gameMsg.actualMessage(new GP.WelcomeMessage());
+                    case GameProtocol.MessageType.Welcome: {
+                        const welcome = gameMsg.actualMessage(flatbufferParseScratch.welcomeMessage);
                         if (!welcome) {
                             log('Failed to get WelcomeMessage from union', 'error');
                             return null;
@@ -7053,30 +7156,31 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             message: welcome.message(),
                             serverTickRate: welcome.serverTickRate()
                         };
+                    }
 
-                    case GP.MessageType.InitialState:
-                        const initial = gameMsg.actualMessage(new GP.InitialStateMessage());
+                    case GP.MessageType.InitialState: {
+                        const initial = gameMsg.actualMessage(flatbufferParseScratch.initialStateMessage);
                         if (!initial) {
                             log(`No InitialState payload for type ${msgType}`, 'error');
                             return null;
                         }
+
                         const initialStateData = {
                             player_id: initial.playerId(),
-                            walls: [],
-                            players: [],
-                            projectiles: [],
-                            pickups: [],
-                            flag_states: [],
-                            match_info: null, // Initialize as null
                             timestamp: Number(initial.timestamp()),
-                            map_name: initial.mapName()
+                            map_name: initial.mapName(),
+                            match_info: parseMatchInfo(initial.matchInfo(flatbufferParseScratch.matchInfo)),
                         };
 
-                        // Parse walls
-                        for (let i = 0; i < initial.wallsLength(); i++) {
-                            const wall = initial.walls(i);
-                            if (wall) {
-                                initialStateData.walls.push({
+                        const wallTable = flatbufferParseScratch.wall;
+                        const wallLength = initial.wallsLength();
+                        if (wallLength > 0) {
+                            const rows = new Array(wallLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < wallLength; i += 1) {
+                                const wall = initial.walls(i, wallTable);
+                                if (!wall) continue;
+                                rows[writeIdx++] = {
                                     id: wall.id(),
                                     x: wall.x(),
                                     y: wall.y(),
@@ -7085,361 +7189,449 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                                     is_destructible: wall.isDestructible(),
                                     current_health: wall.currentHealth(),
                                     max_health: wall.maxHealth()
-                                });
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                initialStateData.walls = rows;
                             }
                         }
 
-                        // Parse players
-                        for (let i = 0; i < initial.playersLength(); i++) {
-                            const p = initial.players(i);
-                            if (p) {
-                                initialStateData.players.push({
-                                    id: p.id(),
-                                    username: p.username(),
-                                    x: p.x(),
-                                    y: p.y(),
-                                    rotation: p.rotation(),
-                                    velocity_x: p.velocityX(),
-                                    velocity_y: p.velocityY(),
-                                    health: p.health(),
-                                    max_health: p.maxHealth(),
-                                    alive: p.alive(),
-                                    respawn_timer: p.respawnTimer(),
-                                    weapon: p.weapon(),
-                                    ammo: p.ammo(),
-                                    reload_progress: p.reloadProgress(),
-                                    score: p.score(),
-                                    kills: p.kills(),
-                                    deaths: p.deaths(),
-                                    team_id: p.teamId(),
-                                    speed_boost_remaining: p.speedBoostRemaining(),
-                                    damage_boost_remaining: p.damageBoostRemaining(),
-                                    shield_current: p.shieldCurrent(),
-                                    shield_max: p.shieldMax(),
-                                    is_carrying_flag_team_id: p.isCarryingFlagTeamId()
-                                });
+                        const playerTable = flatbufferParseScratch.playerState;
+                        const playerLength = initial.playersLength();
+                        if (playerLength > 0) {
+                            const rows = new Array(playerLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < playerLength; i += 1) {
+                                const player = initial.players(i, playerTable);
+                                if (!player) continue;
+                                rows[writeIdx++] = {
+                                    id: player.id(),
+                                    username: player.username(),
+                                    x: player.x(),
+                                    y: player.y(),
+                                    rotation: player.rotation(),
+                                    velocity_x: player.velocityX(),
+                                    velocity_y: player.velocityY(),
+                                    health: player.health(),
+                                    max_health: player.maxHealth(),
+                                    alive: player.alive(),
+                                    respawn_timer: player.respawnTimer(),
+                                    weapon: player.weapon(),
+                                    ammo: player.ammo(),
+                                    reload_progress: player.reloadProgress(),
+                                    score: player.score(),
+                                    kills: player.kills(),
+                                    deaths: player.deaths(),
+                                    team_id: player.teamId(),
+                                    speed_boost_remaining: player.speedBoostRemaining(),
+                                    damage_boost_remaining: player.damageBoostRemaining(),
+                                    shield_current: player.shieldCurrent(),
+                                    shield_max: player.shieldMax(),
+                                    is_carrying_flag_team_id: player.isCarryingFlagTeamId()
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                initialStateData.players = rows;
                             }
                         }
 
-                        // Parse projectiles
-                        for (let i = 0; i < initial.projectilesLength(); i++) {
-                            const p = initial.projectiles(i);
-                            if (p) {
-                                initialStateData.projectiles.push({
-                                    id: p.id(),
-                                    x: p.x(),
-                                    y: p.y(),
-                                    owner_id: p.ownerId(),
-                                    weapon_type: p.weaponType(),
-                                    velocity_x: p.velocityX(), 
-                                    velocity_y: p.velocityY()
-                                });
+                        const projectileTable = flatbufferParseScratch.projectileState;
+                        const projectileLength = initial.projectilesLength();
+                        if (projectileLength > 0) {
+                            const rows = new Array(projectileLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < projectileLength; i += 1) {
+                                const projectile = initial.projectiles(i, projectileTable);
+                                if (!projectile) continue;
+                                rows[writeIdx++] = {
+                                    id: projectile.id(),
+                                    x: projectile.x(),
+                                    y: projectile.y(),
+                                    weapon_type: projectile.weaponType(),
+                                    velocity_x: projectile.velocityX(),
+                                    velocity_y: projectile.velocityY()
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                initialStateData.projectiles = rows;
                             }
                         }
 
-                        // Parse pickups
-                        for (let i = 0; i < initial.pickupsLength(); i++) {
-                            const p = initial.pickups(i);
-                            if (p) {
-                                initialStateData.pickups.push({
-                                    id: p.id(),
-                                    x: p.x(),
-                                    y: p.y(),
-                                    pickup_type: p.pickupType(),
-                                    weapon_type: p.weaponType(),
-                                    is_active: p.isActive()
-                                });
+                        const pickupTable = flatbufferParseScratch.pickup;
+                        const pickupLength = initial.pickupsLength();
+                        if (pickupLength > 0) {
+                            const rows = new Array(pickupLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < pickupLength; i += 1) {
+                                const pickup = initial.pickups(i, pickupTable);
+                                if (!pickup) continue;
+                                rows[writeIdx++] = {
+                                    id: pickup.id(),
+                                    x: pickup.x(),
+                                    y: pickup.y(),
+                                    pickup_type: pickup.pickupType(),
+                                    weapon_type: pickup.weaponType(),
+                                    is_active: pickup.isActive()
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                initialStateData.pickups = rows;
                             }
                         }
 
-                        // Parse match info
-                        const mi = initial.matchInfo(); // This can be null
-                        if (mi) {
-                            const teamScores = [];
-                            for (let i = 0; i < mi.teamScoresLength(); i++) {
-                                const ts = mi.teamScores(i);
-                                if (ts) {
-                                    teamScores.push({
-                                        team_id: ts.teamId(),
-                                        score: ts.score()
-                                    });
-                                }
+                        const flagTable = flatbufferParseScratch.flagState;
+                        const vecTable = flatbufferParseScratch.vec2;
+                        const flagLength = initial.flagStatesLength();
+                        if (flagLength > 0) {
+                            const rows = new Array(flagLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < flagLength; i += 1) {
+                                const flagState = initial.flagStates(i, flagTable);
+                                if (!flagState) continue;
+                                const position = flagState.position(vecTable);
+                                rows[writeIdx++] = {
+                                    team_id: flagState.teamId(),
+                                    status: flagState.status(),
+                                    position: position ? { x: position.x(), y: position.y() } : { x: 0, y: 0 },
+                                    carrier_id: flagState.carrierId(),
+                                    respawn_timer: flagState.respawnTimer()
+                                };
                             }
-                            initialStateData.match_info = { // Assign object if mi exists
-                                time_remaining: mi.timeRemaining(),
-                                match_state: mi.matchState(),
-                                winner_id: mi.winnerId(),
-                                winner_name: mi.winnerName(),
-                                game_mode: mi.gameMode(),
-                                team_scores: teamScores
-                            };
-                        } // If mi is null, initialStateData.match_info remains null
-
-                        // Parse flag states
-                        for (let i = 0; i < initial.flagStatesLength(); i++) {
-                            const fs = initial.flagStates(i);
-                            if (fs) {
-                                const pos = fs.position();
-                                initialStateData.flag_states.push({
-                                    team_id: fs.teamId(),
-                                    status: fs.status(),
-                                    position: pos ? { x: pos.x(), y: pos.y() } : { x: 0, y: 0 },
-                                    carrier_id: fs.carrierId(),
-                                    respawn_timer: fs.respawnTimer()
-                                });
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                initialStateData.flag_states = rows;
                             }
                         }
 
                         return { type: 'initial', data: initialStateData };
+                    }
 
-                    case GP.MessageType.DeltaState:
-                        const delta = gameMsg.actualMessage(new GP.DeltaStateMessage());
+                    case GP.MessageType.DeltaState: {
+                        const delta = gameMsg.actualMessage(flatbufferParseScratch.deltaStateMessage);
                         if (!delta) {
                             log(`No DeltaState payload for type ${msgType}`, 'error');
                             return null;
                         }
+
                         const deltaStateData = {
-                            players: [],
-                            projectiles: [],
-                            removed_projectiles: [],
-                            pickups: [],
-                            destroyed_wall_ids: [],
-                            deactivated_pickup_ids: [],
-                            kill_feed: [],
-                            match_info: null, // Initialize as null
-                            flag_states: [],
-                            game_events: [],
                             timestamp: Number(delta.timestamp()),
                             last_processed_input_sequence: delta.lastProcessedInputSequence(),
-                            removed_player_ids: [] // Initialize for removed players
+                            match_info: parseMatchInfo(delta.matchInfo(flatbufferParseScratch.matchInfo)),
                         };
-                        
-                        // Parse removed_player_ids if present in schema
-                        if (typeof delta.removedPlayerIdsLength === 'function') { // Check if method exists
-                            for (let i = 0; i < delta.removedPlayerIdsLength(); i++) {
-                                const removedId = delta.removedPlayerIds(i);
-                                if (removedId) {
-                                    deltaStateData.removed_player_ids.push(removedId);
+
+                        if (DELTA_SUPPORTS_REMOVED_PLAYER_IDS) {
+                            const removedPlayerLength = delta.removedPlayerIdsLength();
+                            if (removedPlayerLength > 0) {
+                                const rows = new Array(removedPlayerLength);
+                                let writeIdx = 0;
+                                for (let i = 0; i < removedPlayerLength; i += 1) {
+                                    const removedPlayerId = delta.removedPlayerIds(i);
+                                    if (!removedPlayerId) continue;
+                                    rows[writeIdx++] = removedPlayerId;
+                                }
+                                if (writeIdx > 0) {
+                                    rows.length = writeIdx;
+                                    deltaStateData.removed_player_ids = rows;
                                 }
                             }
                         }
 
-
-                        // Parse players
-                        for (let i = 0; i < delta.playersLength(); i++) {
-                            const p = delta.players(i);
-                            if (p) {
-                                deltaStateData.players.push({
-                                    id: p.id(),
-                                    username: p.username(),
-                                    x: p.x(),
-                                    y: p.y(),
-                                    rotation: p.rotation(),
-                                    velocity_x: p.velocityX(),
-                                    velocity_y: p.velocityY(),
-                                    health: p.health(),
-                                    max_health: p.maxHealth(),
-                                    alive: p.alive(),
-                                    respawn_timer: p.respawnTimer(),
-                                    weapon: p.weapon(),
-                                    ammo: p.ammo(),
-                                    reload_progress: p.reloadProgress(),
-                                    score: p.score(),
-                                    kills: p.kills(),
-                                    deaths: p.deaths(),
-                                    team_id: p.teamId(),
-                                    speed_boost_remaining: p.speedBoostRemaining(),
-                                    damage_boost_remaining: p.damageBoostRemaining(),
-                                    shield_current: p.shieldCurrent(),
-                                    shield_max: p.shieldMax(),
-                                    is_carrying_flag_team_id: p.isCarryingFlagTeamId()
-                                });
+                        const playerTable = flatbufferParseScratch.playerState;
+                        const playerLength = delta.playersLength();
+                        if (playerLength > 0) {
+                            const rows = new Array(playerLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < playerLength; i += 1) {
+                                const player = delta.players(i, playerTable);
+                                if (!player) continue;
+                                const playerId = player.id();
+                                const existingPlayer = players.get(playerId);
+                                const cachedUsername = playerId === myPlayerId
+                                    ? (localPlayerState?.username || existingPlayer?.username || '')
+                                    : (existingPlayer?.username || '');
+                                const resolvedUsername = cachedUsername || player.username() || '';
+                                rows[writeIdx++] = {
+                                    id: playerId,
+                                    username: resolvedUsername,
+                                    x: player.x(),
+                                    y: player.y(),
+                                    rotation: player.rotation(),
+                                    velocity_x: player.velocityX(),
+                                    velocity_y: player.velocityY(),
+                                    health: player.health(),
+                                    max_health: player.maxHealth(),
+                                    alive: player.alive(),
+                                    respawn_timer: player.respawnTimer(),
+                                    weapon: player.weapon(),
+                                    ammo: player.ammo(),
+                                    reload_progress: player.reloadProgress(),
+                                    score: player.score(),
+                                    kills: player.kills(),
+                                    deaths: player.deaths(),
+                                    team_id: player.teamId(),
+                                    speed_boost_remaining: player.speedBoostRemaining(),
+                                    damage_boost_remaining: player.damageBoostRemaining(),
+                                    shield_current: player.shieldCurrent(),
+                                    shield_max: player.shieldMax(),
+                                    is_carrying_flag_team_id: player.isCarryingFlagTeamId()
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                deltaStateData.players = rows;
                             }
                         }
 
-                        // Parse projectiles
-                        for (let i = 0; i < delta.projectilesLength(); i++) {
-                            const p = delta.projectiles(i);
-                            if (p) {
-                                deltaStateData.projectiles.push({
-                                    id: p.id(),
-                                    x: p.x(),
-                                    y: p.y(),
-                                    owner_id: p.ownerId(),
-                                    weapon_type: p.weaponType(),
-                                    velocity_x: p.velocityX(), 
-                                    velocity_y: p.velocityY()
-                                });
+                        const projectileTable = flatbufferParseScratch.projectileState;
+                        const projectileLength = delta.projectilesLength();
+                        if (projectileLength > 0) {
+                            const rows = new Array(projectileLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < projectileLength; i += 1) {
+                                const projectile = delta.projectiles(i, projectileTable);
+                                if (!projectile) continue;
+                                rows[writeIdx++] = {
+                                    id: projectile.id(),
+                                    x: projectile.x(),
+                                    y: projectile.y(),
+                                    weapon_type: projectile.weaponType(),
+                                    velocity_x: projectile.velocityX(),
+                                    velocity_y: projectile.velocityY()
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                deltaStateData.projectiles = rows;
                             }
                         }
 
-                        // Parse removed projectiles
-                        for (let i = 0; i < delta.removedProjectilesLength(); i++) {
-                            deltaStateData.removed_projectiles.push(delta.removedProjectiles(i));
-                        }
-
-                        // Parse pickups
-                        for (let i = 0; i < delta.pickupsLength(); i++) {
-                            const p = delta.pickups(i);
-                            if (p) {
-                                deltaStateData.pickups.push({
-                                    id: p.id(),
-                                    x: p.x(),
-                                    y: p.y(),
-                                    pickup_type: p.pickupType(),
-                                    weapon_type: p.weaponType(),
-                                    is_active: p.isActive()
-                                });
+                        const removedProjectileLength = delta.removedProjectilesLength();
+                        if (removedProjectileLength > 0) {
+                            const rows = new Array(removedProjectileLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < removedProjectileLength; i += 1) {
+                                const removedProjectileId = delta.removedProjectiles(i);
+                                if (!removedProjectileId) continue;
+                                rows[writeIdx++] = removedProjectileId;
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                deltaStateData.removed_projectiles = rows;
                             }
                         }
 
-                        // Parse destroyed walls
-                        for (let i = 0; i < delta.destroyedWallIdsLength(); i++) {
-                            deltaStateData.destroyed_wall_ids.push(delta.destroyedWallIds(i));
-                        }
-
-                        // Parse deactivated pickups
-                        for (let i = 0; i < delta.deactivatedPickupIdsLength(); i++) {
-                            deltaStateData.deactivated_pickup_ids.push(delta.deactivatedPickupIds(i));
-                        }
-
-                        // Parse kill feed
-                        for (let i = 0; i < delta.killFeedLength(); i++) {
-                            const kf = delta.killFeed(i);
-                            if (kf) {
-                                const killerPos = kf.killerPosition();
-                                const victimPos = kf.victimPosition();
-                                deltaStateData.kill_feed.push({
-                                    killer_name: kf.killerName(),
-                                    victim_name: kf.victimName(),
-                                    weapon: kf.weapon(),
-                                    timestamp: kf.timestamp(),
-                                    killer_position: killerPos ? { x: killerPos.x(), y: killerPos.y() } : null,
-                                    victim_position: victimPos ? { x: victimPos.x(), y: victimPos.y() } : null,
-                                    is_headshot: kf.isHeadshot()
-                                });
+                        const pickupTable = flatbufferParseScratch.pickup;
+                        const pickupLength = delta.pickupsLength();
+                        if (pickupLength > 0) {
+                            const rows = new Array(pickupLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < pickupLength; i += 1) {
+                                const pickup = delta.pickups(i, pickupTable);
+                                if (!pickup) continue;
+                                rows[writeIdx++] = {
+                                    id: pickup.id(),
+                                    x: pickup.x(),
+                                    y: pickup.y(),
+                                    pickup_type: pickup.pickupType(),
+                                    weapon_type: pickup.weaponType(),
+                                    is_active: pickup.isActive()
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                deltaStateData.pickups = rows;
                             }
                         }
 
-                        // Parse match info
-                        const dmi = delta.matchInfo(); // This can be null
-                        if (dmi) {
-                            const teamScores = [];
-                            for (let i = 0; i < dmi.teamScoresLength(); i++) {
-                                const ts = dmi.teamScores(i);
-                                if (ts) {
-                                    teamScores.push({
-                                        team_id: ts.teamId(),
-                                        score: ts.score()
-                                    });
+                        const destroyedWallLength = delta.destroyedWallIdsLength();
+                        if (destroyedWallLength > 0) {
+                            const rows = new Array(destroyedWallLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < destroyedWallLength; i += 1) {
+                                const wallId = delta.destroyedWallIds(i);
+                                if (!wallId) continue;
+                                rows[writeIdx++] = wallId;
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                deltaStateData.destroyed_wall_ids = rows;
+                            }
+                        }
+
+                        const deactivatedPickupLength = delta.deactivatedPickupIdsLength();
+                        if (deactivatedPickupLength > 0) {
+                            const rows = new Array(deactivatedPickupLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < deactivatedPickupLength; i += 1) {
+                                const pickupId = delta.deactivatedPickupIds(i);
+                                if (!pickupId) continue;
+                                rows[writeIdx++] = pickupId;
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                deltaStateData.deactivated_pickup_ids = rows;
+                            }
+                        }
+
+                        const killFeedEntry = flatbufferParseScratch.killFeedEntry;
+                        const vecTable = flatbufferParseScratch.vec2;
+                        const killFeedLength = delta.killFeedLength();
+                        if (killFeedLength > 0) {
+                            const rows = new Array(killFeedLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < killFeedLength; i += 1) {
+                                const killFeed = delta.killFeed(i, killFeedEntry);
+                                if (!killFeed) continue;
+                                const killerPosition = killFeed.killerPosition(vecTable);
+                                const victimPosition = killFeed.victimPosition(vecTable);
+                                rows[writeIdx++] = {
+                                    killer_name: killFeed.killerName(),
+                                    victim_name: killFeed.victimName(),
+                                    weapon: killFeed.weapon(),
+                                    timestamp: killFeed.timestamp(),
+                                    killer_position: killerPosition ? { x: killerPosition.x(), y: killerPosition.y() } : null,
+                                    victim_position: victimPosition ? { x: victimPosition.x(), y: victimPosition.y() } : null,
+                                    is_headshot: killFeed.isHeadshot()
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                deltaStateData.kill_feed = rows;
+                            }
+                        }
+
+                        const flagTable = flatbufferParseScratch.flagState;
+                        const flagLength = delta.flagStatesLength();
+                        if (flagLength > 0) {
+                            const rows = new Array(flagLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < flagLength; i += 1) {
+                                const flagState = delta.flagStates(i, flagTable);
+                                if (!flagState) continue;
+                                const position = flagState.position(vecTable);
+                                rows[writeIdx++] = {
+                                    team_id: flagState.teamId(),
+                                    status: flagState.status(),
+                                    position: position ? { x: position.x(), y: position.y() } : { x: 0, y: 0 },
+                                    carrier_id: flagState.carrierId(),
+                                    respawn_timer: flagState.respawnTimer()
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                deltaStateData.flag_states = rows;
+                            }
+                        }
+
+                        const gameEventTable = flatbufferParseScratch.gameEvent;
+                        const gameEventLength = delta.gameEventsLength();
+                        if (gameEventLength > 0) {
+                            const rows = new Array(gameEventLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < gameEventLength; i += 1) {
+                                const gameEvent = delta.gameEvents(i, gameEventTable);
+                                if (!gameEvent) continue;
+                                const position = gameEvent.position(vecTable);
+                                rows[writeIdx++] = {
+                                    event_type: gameEvent.eventType(),
+                                    position: position ? { x: position.x(), y: position.y() } : { x: 0, y: 0 },
+                                    instigator_id: gameEvent.instigatorId(),
+                                    target_id: gameEvent.targetId(),
+                                    weapon_type: gameEvent.weaponType(),
+                                    value: gameEvent.value()
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                deltaStateData.game_events = rows;
+                            }
+                        }
+
+                        if (DELTA_SUPPORTS_UPDATED_WALLS) {
+                            const updatedWallLength = delta.updatedWallsLength();
+                            if (updatedWallLength > 0) {
+                                if (isWallDebugEnabled()) {
+                                    logWallDebug(`[DELTA DEBUG] updated wall count: ${updatedWallLength}`, 'info');
+                                }
+                                const wallTable = flatbufferParseScratch.wall;
+                                const rows = new Array(updatedWallLength);
+                                let writeIdx = 0;
+                                for (let i = 0; i < updatedWallLength; i += 1) {
+                                    const wall = delta.updatedWalls(i, wallTable);
+                                    if (!wall) continue;
+                                    rows[writeIdx++] = {
+                                        id: wall.id(),
+                                        x: wall.x(),
+                                        y: wall.y(),
+                                        width: wall.width(),
+                                        height: wall.height(),
+                                        is_destructible: wall.isDestructible(),
+                                        current_health: wall.currentHealth(),
+                                        max_health: wall.maxHealth()
+                                    };
+                                }
+                                if (writeIdx > 0) {
+                                    rows.length = writeIdx;
+                                    deltaStateData.updated_walls = rows;
                                 }
                             }
-                            deltaStateData.match_info = { // Assign object if dmi exists
-                                time_remaining: dmi.timeRemaining(),
-                                match_state: dmi.matchState(),
-                                winner_id: dmi.winnerId(),
-                                winner_name: dmi.winnerName(),
-                                game_mode: dmi.gameMode(),
-                                team_scores: teamScores
+                        }
+
+                        if (DELTA_SUPPORTS_FULL_WALLS) {
+                            const wallLength = delta.wallsLength();
+                            if (wallLength > 0) {
+                                if (isWallDebugEnabled()) {
+                                    logWallDebug(`[DELTA DEBUG] full wall list count: ${wallLength}`, 'info');
+                                }
+                                const wallTable = flatbufferParseScratch.wall;
+                                const rows = new Array(wallLength);
+                                let writeIdx = 0;
+                                for (let i = 0; i < wallLength; i += 1) {
+                                    const wall = delta.walls(i, wallTable);
+                                    if (!wall) continue;
+                                    rows[writeIdx++] = {
+                                        id: wall.id(),
+                                        x: wall.x(),
+                                        y: wall.y(),
+                                        width: wall.width(),
+                                        height: wall.height(),
+                                        is_destructible: wall.isDestructible(),
+                                        current_health: wall.currentHealth(),
+                                        max_health: wall.maxHealth()
+                                    };
+                                }
+                                if (writeIdx > 0) {
+                                    rows.length = writeIdx;
+                                    deltaStateData.walls = rows;
+                                }
+                            }
+                        }
+
+                        if (isWallDebugEnabled()) {
+                            const debugInfo = {
+                                hasPlayers: !!(deltaStateData.players && deltaStateData.players.length > 0),
+                                playerCount: deltaStateData.players ? deltaStateData.players.length : 0,
+                                hasDestroyedWalls: !!(deltaStateData.destroyed_wall_ids && deltaStateData.destroyed_wall_ids.length > 0),
+                                destroyedWallCount: deltaStateData.destroyed_wall_ids ? deltaStateData.destroyed_wall_ids.length : 0,
+                                hasUpdatedWalls: !!(deltaStateData.updated_walls && deltaStateData.updated_walls.length > 0),
+                                updatedWallCount: deltaStateData.updated_walls ? deltaStateData.updated_walls.length : 0,
+                                hasFullWallsList: !!(deltaStateData.walls && deltaStateData.walls.length > 0),
+                                fullWallsCount: deltaStateData.walls ? deltaStateData.walls.length : 0
                             };
-                        } // If dmi is null, deltaStateData.match_info remains null
-
-
-                        // Parse flag states
-                        for (let i = 0; i < delta.flagStatesLength(); i++) {
-                            const fs = delta.flagStates(i);
-                            if (fs) {
-                                const pos = fs.position();
-                                deltaStateData.flag_states.push({
-                                    team_id: fs.teamId(),
-                                    status: fs.status(),
-                                    position: pos ? { x: pos.x(), y: pos.y() } : { x: 0, y: 0 },
-                                    carrier_id: fs.carrierId(),
-                                    respawn_timer: fs.respawnTimer()
-                                });
+                            if (debugInfo.hasDestroyedWalls || debugInfo.hasUpdatedWalls || debugInfo.hasFullWallsList) {
+                                logWallDebug(`[DELTA DEBUG] Wall data summary: ${JSON.stringify(debugInfo)}`, 'info');
                             }
-                        }
-
-                        // Parse game events
-                        for (let i = 0; i < delta.gameEventsLength(); i++) {
-                            const ge = delta.gameEvents(i);
-                            if (ge) {
-                                const pos = ge.position();
-                                deltaStateData.game_events.push({
-                                    event_type: ge.eventType(),
-                                    position: pos ? { x: pos.x(), y: pos.y() } : { x: 0, y: 0 },
-                                    instigator_id: ge.instigatorId(),
-                                    target_id: ge.targetId(),
-                                    weapon_type: ge.weaponType(),
-                                    value: ge.value()
-                                });
-                            }
-                        }
-
-                        // Parse updated_walls if present in schema
-                        if (typeof delta.updatedWallsLength === 'function') {
-                            logWallDebug(`[DELTA DEBUG] updatedWallsLength function exists, length: ${delta.updatedWallsLength()}`, 'info');
-                            deltaStateData.updated_walls = [];
-                            for (let i = 0; i < delta.updatedWallsLength(); i++) {
-                                const wall = delta.updatedWalls(i);
-                                if (wall) {
-                                    deltaStateData.updated_walls.push({
-                                        id: wall.id(),
-                                        x: wall.x(),
-                                        y: wall.y(),
-                                        width: wall.width(),
-                                        height: wall.height(),
-                                        is_destructible: wall.isDestructible(),
-                                        current_health: wall.currentHealth(),
-                                        max_health: wall.maxHealth()
-                                    });
-                                }
-                            }
-                        } else {
-                            logWallDebug(`[DELTA DEBUG] updatedWallsLength function NOT found in delta message schema!`, 'warn');
-                        }
-
-                        // Parse walls (full list) if present in delta
-                        if (typeof delta.wallsLength === 'function') {
-                            logWallDebug(`[DELTA DEBUG] wallsLength function exists, length: ${delta.wallsLength()}`, 'info');
-                            deltaStateData.walls = [];
-                            for (let i = 0; i < delta.wallsLength(); i++) {
-                                const wall = delta.walls(i);
-                                if (wall) {
-                                    deltaStateData.walls.push({
-                                        id: wall.id(),
-                                        x: wall.x(),
-                                        y: wall.y(),
-                                        width: wall.width(),
-                                        height: wall.height(),
-                                        is_destructible: wall.isDestructible(),
-                                        current_health: wall.currentHealth(),
-                                        max_health: wall.maxHealth()
-                                    });
-                                }
-                            }
-                        }
-
-                        // Debug log to see what fields we actually got
-                        const debugInfo = {
-                            hasPlayers: deltaStateData.players.length > 0,
-                            playerCount: deltaStateData.players.length,
-                            hasDestroyedWalls: deltaStateData.destroyed_wall_ids.length > 0,
-                            destroyedWallCount: deltaStateData.destroyed_wall_ids.length,
-                            hasUpdatedWalls: deltaStateData.updated_walls && deltaStateData.updated_walls.length > 0,
-                            updatedWallCount: deltaStateData.updated_walls ? deltaStateData.updated_walls.length : 0,
-                            hasFullWallsList: deltaStateData.walls && deltaStateData.walls.length > 0,
-                            fullWallsCount: deltaStateData.walls ? deltaStateData.walls.length : 0
-                        };
-                        
-                        if (debugInfo.hasDestroyedWalls || debugInfo.hasUpdatedWalls || debugInfo.hasFullWallsList) {
-                            logWallDebug(`[DELTA DEBUG] Wall data summary: ${JSON.stringify(debugInfo)}`, 'info');
                         }
 
                         return { type: 'delta', data: deltaStateData };
+                    }
 
-                    case GP.MessageType.Chat:
-                        const chat = gameMsg.actualMessage(new GP.ChatMessage());
+                    case GP.MessageType.Chat: {
+                        const chat = gameMsg.actualMessage(flatbufferParseScratch.chatMessage);
                         if (!chat) {
                             log(`No Chat payload for type ${msgType}`, 'error');
                             return null;
@@ -7447,38 +7639,26 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         return {
                             type: 'chat',
                             data: {
-                                seq: Number(chat.seq()), 
+                                seq: Number(chat.seq()),
                                 player_id: chat.playerId(),
                                 username: chat.username(),
                                 message: chat.message(),
                                 timestamp: Number(chat.timestamp())
                             }
                         };
+                    }
 
-                    case GP.MessageType.MatchUpdate: // This case might be redundant if deltas handle match_info
-                        const matchUpdateMsg = gameMsg.actualMessage(new GP.MatchInfo()); // Assuming MatchInfo is the payload
+                    case GP.MessageType.MatchUpdate: {
+                        const matchUpdateMsg = gameMsg.actualMessage(flatbufferParseScratch.matchInfo);
                         if (!matchUpdateMsg) {
                             log(`No MatchInfo payload for type MatchUpdate`, 'error');
                             return null;
                         }
-                        const teamScoresMU = [];
-                        for (let i = 0; i < matchUpdateMsg.teamScoresLength(); i++) {
-                            const ts = matchUpdateMsg.teamScores(i);
-                            if (ts) {
-                                teamScoresMU.push({ team_id: ts.teamId(), score: ts.score() });
-                            }
-                        }
                         return {
-                            type: 'match_update', // Ensure this type is handled in dcInstance.onmessage
-                            data: {
-                                time_remaining: matchUpdateMsg.timeRemaining(),
-                                match_state: matchUpdateMsg.matchState(),
-                                winner_id: matchUpdateMsg.winnerId(),
-                                winner_name: matchUpdateMsg.winnerName(),
-                                game_mode: matchUpdateMsg.gameMode(),
-                                team_scores: teamScoresMU
-                            }
+                            type: 'match_update',
+                            data: parseMatchInfo(matchUpdateMsg)
                         };
+                    }
 
                     default:
                         log(`Received unknown or unhandled message type: ${msgType}`, 'error');
@@ -8581,6 +8761,8 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         }
 
         function setupDataChannelEvents(dcInstance) {
+            dcInstance.binaryType = 'arraybuffer';
+
             dcInstance.onopen = () => {
                 log(`DataChannel "${dcInstance.label}" OPENED.`, 'success');
                 resetReconnectState();
@@ -8611,55 +8793,53 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                         pingStartTime = Date.now(); // Reset for next measurement
                     }
 
-                    if (event.data instanceof ArrayBuffer) {
-                        const parsed = parseFlatBufferMessage(event.data);
-
-                        if (parsed) {
-                            switch (parsed.type) {
-                                case 'welcome':
-                                    myPlayerId = parsed.playerId;
-                                    log(`Welcome! Your ID: ${myPlayerId}. Server Tick: ${parsed.serverTickRate}Hz`, 'success');
-                                    break;
-                                case 'initial':
-                                    processServerUpdate(parsed.data, true);
-                                    if (window.__e2e) {
-                                        window.__e2e.lastStateUpdate = performance.now();
-                                    }
-                                    log(`Initial game state received. Map: ${parsed.data.map_name}`, 'info');
-                                    break;
-                                case 'delta':
-                                    processServerUpdate(parsed.data, false);
-                                    if (window.__e2e) {
-                                        window.__e2e.lastStateUpdate = performance.now();
-                                    }
-                                    break;
-                                case 'chat':
-                                    if (parsed.data) {
-                                        chatMessages.push({
-                                            seq: parsed.data.seq,
-                                            player_id: parsed.data.player_id,
-                                            username: parsed.data.username,
-                                            message: parsed.data.message,
-                                            timestamp: parsed.data.timestamp
-                                        });
-                                        if (chatMessages.length > 50) chatMessages.shift();
-                                        updateChatDisplay();
-                                        if (audioManager && gameSettings.soundEnabled) {
-                                            audioManager.playSound('chatMessage', null, 0.3);
-                                        }
-                                    }
-                                    break;
-                                case 'match_update': // Handle explicit match updates if server sends them separately
-                                    if (parsed.data) {
-                                        matchInfo = parsed.data;
-                                        updateMatchInfo();
-                                        updateScoreboard();
-                                    }
-                                    break;
-                            }
-                        }
-                    } else {
+                    if (!(event.data instanceof ArrayBuffer)) {
                         log('Received non-binary message on DataChannel.', 'error');
+                        return;
+                    }
+
+                    const parsed = parseFlatBufferMessage(event.data);
+                    if (!parsed) return;
+                    const e2e = window.__e2e;
+
+                    switch (parsed.type) {
+                        case 'welcome':
+                            myPlayerId = parsed.playerId;
+                            log(`Welcome! Your ID: ${myPlayerId}. Server Tick: ${parsed.serverTickRate}Hz`, 'success');
+                            break;
+                        case 'initial':
+                        case 'delta':
+                            processServerUpdate(parsed.data, parsed.type === 'initial');
+                            if (e2e) {
+                                e2e.lastStateUpdate = performance.now();
+                            }
+                            if (parsed.type === 'initial') {
+                                log(`Initial game state received. Map: ${parsed.data.map_name}`, 'info');
+                            }
+                            break;
+                        case 'chat':
+                            if (parsed.data) {
+                                chatMessages.push({
+                                    seq: parsed.data.seq,
+                                    player_id: parsed.data.player_id,
+                                    username: parsed.data.username,
+                                    message: parsed.data.message,
+                                    timestamp: parsed.data.timestamp
+                                });
+                                if (chatMessages.length > 50) chatMessages.shift();
+                                updateChatDisplay();
+                                if (audioManager && gameSettings.soundEnabled) {
+                                    audioManager.playSound('chatMessage', null, 0.3);
+                                }
+                            }
+                            break;
+                        case 'match_update': // Handle explicit match updates if server sends them separately
+                            if (parsed.data) {
+                                matchInfo = parsed.data;
+                                updateMatchInfo();
+                                updateScoreboard();
+                            }
+                            break;
                     }
                 } catch (e) {
                     console.error("DC Message Error:", e);
