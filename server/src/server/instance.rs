@@ -51,6 +51,45 @@ const INITIAL_SNAPSHOT_MAX_PLAYERS: usize = 24;
 const INITIAL_SNAPSHOT_MAX_WALLS: usize = 128;
 const INITIAL_SNAPSHOT_MAX_PROJECTILES: usize = 200;
 const INITIAL_SNAPSHOT_MAX_PICKUPS: usize = 24;
+const INITIAL_SNAPSHOT_TAIL_MAX_PLAYERS: usize = 16;
+const INITIAL_SNAPSHOT_TAIL_MAX_WALLS: usize = 96;
+const INITIAL_SNAPSHOT_TAIL_MAX_PROJECTILES: usize = 120;
+const INITIAL_SNAPSHOT_TAIL_MAX_PICKUPS: usize = 16;
+const INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PLAYERS: usize = 12;
+const INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_WALLS: usize = 72;
+const INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PROJECTILES: usize = 80;
+const INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PICKUPS: usize = 12;
+
+#[derive(Clone, Copy, Debug)]
+struct InitialSnapshotCaps {
+    max_players: usize,
+    max_walls: usize,
+    max_projectiles: usize,
+    max_pickups: usize,
+}
+
+impl InitialSnapshotCaps {
+    const DEFAULT: Self = Self {
+        max_players: INITIAL_SNAPSHOT_MAX_PLAYERS,
+        max_walls: INITIAL_SNAPSHOT_MAX_WALLS,
+        max_projectiles: INITIAL_SNAPSHOT_MAX_PROJECTILES,
+        max_pickups: INITIAL_SNAPSHOT_MAX_PICKUPS,
+    };
+
+    const TAIL: Self = Self {
+        max_players: INITIAL_SNAPSHOT_TAIL_MAX_PLAYERS,
+        max_walls: INITIAL_SNAPSHOT_TAIL_MAX_WALLS,
+        max_projectiles: INITIAL_SNAPSHOT_TAIL_MAX_PROJECTILES,
+        max_pickups: INITIAL_SNAPSHOT_TAIL_MAX_PICKUPS,
+    };
+
+    const TAIL_AGGRESSIVE: Self = Self {
+        max_players: INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PLAYERS,
+        max_walls: INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_WALLS,
+        max_projectiles: INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PROJECTILES,
+        max_pickups: INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PICKUPS,
+    };
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServerFlagState {
@@ -270,6 +309,9 @@ struct SharedBroadcastData {
     chat_messages: Vec<ChatMessage>,
     match_info_snapshot: MatchInfoSnapshot,
     kill_feed_snapshot: Vec<ServerKillFeedEntry>,
+    initial_snapshot_caps: InitialSnapshotCaps,
+    tail_join_mode: bool,
+    aggressive_tail_join_mode: bool,
 }
 
 // Lightweight match info snapshot
@@ -1309,6 +1351,7 @@ impl MassiveGameServer {
         client_state.last_known_team_scores = shared_data.match_info_snapshot.team_scores.clone();
         client_state.match_info_pending = false;
 
+        let snapshot_caps = shared_data.initial_snapshot_caps;
         let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
         if let Some(self_pstate_guard) = shared_data.player_states_snapshot.get(&self_player_id_arc)
         {
@@ -1325,7 +1368,7 @@ impl MassiveGameServer {
             for visible_player_id in p_aoi
                 .visible_players
                 .iter()
-                .take(INITIAL_SNAPSHOT_MAX_PLAYERS.saturating_sub(1))
+                .take(snapshot_caps.max_players.saturating_sub(1))
             {
                 if let Some(pstate_guard) = shared_data.player_states_snapshot.get(visible_player_id)
                 {
@@ -1340,13 +1383,13 @@ impl MassiveGameServer {
             client_state.last_known_projectile_ids = p_aoi
                 .visible_projectiles
                 .iter()
-                .take(INITIAL_SNAPSHOT_MAX_PROJECTILES)
+                .take(snapshot_caps.max_projectiles)
                 .copied()
                 .collect();
             for pickup_id in p_aoi
                 .visible_pickups
                 .iter()
-                .take(INITIAL_SNAPSHOT_MAX_PICKUPS)
+                .take(snapshot_caps.max_pickups)
             {
                 if let Some(pickup) = shared_data.pickups_snapshot.get(pickup_id) {
                     client_state.last_known_pickup_states.insert(
@@ -2833,8 +2876,16 @@ impl MassiveGameServer {
 
         const DELTA_SEND_TIMEOUT_MS: u64 = 50;
         const INITIAL_SEND_TIMEOUT_MS: u64 = 200;
+        const INITIAL_SEND_TIMEOUT_TAIL_MS: u64 = 320;
+        const INITIAL_SEND_TIMEOUT_AGGRESSIVE_TAIL_MS: u64 = 420;
         let send_timeout_ms = if client_info.needs_initial_state {
-            INITIAL_SEND_TIMEOUT_MS
+            if shared_data.aggressive_tail_join_mode {
+                INITIAL_SEND_TIMEOUT_AGGRESSIVE_TAIL_MS
+            } else if shared_data.tail_join_mode {
+                INITIAL_SEND_TIMEOUT_TAIL_MS
+            } else {
+                INITIAL_SEND_TIMEOUT_MS
+            }
         } else {
             DELTA_SEND_TIMEOUT_MS
         };
@@ -3246,6 +3297,9 @@ impl MassiveGameServer {
     async fn prepare_shared_broadcast_data(
         &self,
         include_active_walls_snapshot: bool,
+        initial_snapshot_caps: InitialSnapshotCaps,
+        tail_join_mode: bool,
+        aggressive_tail_join_mode: bool,
     ) -> SharedBroadcastData {
         let current_timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3350,6 +3404,9 @@ impl MassiveGameServer {
             chat_messages,
             match_info_snapshot,
             kill_feed_snapshot,
+            initial_snapshot_caps,
+            tail_join_mode,
+            aggressive_tail_join_mode,
         }
     }
 
@@ -4535,6 +4592,12 @@ impl MassiveGameServer {
         const TAIL_JOIN_MAX_DELTA_PER_FRAME: usize = 6;
         const TAIL_JOIN_DELTA_SKIP_MODULUS: u64 = 3;
         const TAIL_JOIN_CONCURRENCY_CAP: usize = 32;
+        const TAIL_JOIN_AGGRESSIVE_CONNECTED_CLIENTS_MIN: usize = 73;
+        const TAIL_JOIN_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN: usize = 8;
+        const TAIL_JOIN_AGGRESSIVE_INITIAL_PER_FRAME_BOOST: usize = 40;
+        const TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME: usize = 2;
+        const TAIL_JOIN_AGGRESSIVE_DELTA_SKIP_MODULUS: u64 = 5;
+        const TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP: usize = 24;
 
         let current_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
         let last_broadcast = self.last_broadcast_frame.load(AtomicOrdering::Relaxed);
@@ -4620,6 +4683,16 @@ impl MassiveGameServer {
         let pending_initial_total_count = pending_initial_open_count + pending_initial_closed_count;
         let tail_join_mode = connected_clients >= TAIL_JOIN_CONNECTED_CLIENTS_MIN
             && pending_initial_open_count >= TAIL_JOIN_PENDING_INITIAL_OPEN_MIN;
+        let aggressive_tail_join_mode =
+            connected_clients >= TAIL_JOIN_AGGRESSIVE_CONNECTED_CLIENTS_MIN
+                && pending_initial_open_count >= TAIL_JOIN_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN;
+        let initial_snapshot_caps = if aggressive_tail_join_mode {
+            InitialSnapshotCaps::TAIL_AGGRESSIVE
+        } else if tail_join_mode {
+            InitialSnapshotCaps::TAIL
+        } else {
+            InitialSnapshotCaps::DEFAULT
+        };
 
         // Keep budget decisions tied to total backlog, but only schedule actionable
         // initial sends (open data channels).
@@ -4634,6 +4707,10 @@ impl MassiveGameServer {
         if tail_join_mode {
             // 70+ client wave: allocate more slots to initial delivery to drain backlog sooner.
             max_initial_per_frame = max_initial_per_frame.max(TAIL_JOIN_INITIAL_PER_FRAME_BOOST);
+        }
+        if aggressive_tail_join_mode {
+            max_initial_per_frame =
+                max_initial_per_frame.max(TAIL_JOIN_AGGRESSIVE_INITIAL_PER_FRAME_BOOST);
         }
 
         let scheduled_initial_entries =
@@ -4663,7 +4740,12 @@ impl MassiveGameServer {
         if tail_join_mode {
             max_delta_per_frame = max_delta_per_frame.min(TAIL_JOIN_MAX_DELTA_PER_FRAME);
         }
-        let delta_skip_modulus = if tail_join_mode {
+        if aggressive_tail_join_mode {
+            max_delta_per_frame = max_delta_per_frame.min(TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME);
+        }
+        let delta_skip_modulus = if aggressive_tail_join_mode {
+            TAIL_JOIN_AGGRESSIVE_DELTA_SKIP_MODULUS
+        } else if tail_join_mode {
             TAIL_JOIN_DELTA_SKIP_MODULUS
         } else {
             MASS_JOIN_DELTA_SKIP_MODULUS
@@ -4683,15 +4765,20 @@ impl MassiveGameServer {
         }
 
         debug!(
-            "[Frame {}] Join scheduler: pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, tail_join_mode={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, scheduled_initial={}, scheduled_delta={}",
+            "[Frame {}] Join scheduler: pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, tail_join_mode={}, aggressive_tail_join_mode={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, snapshot_caps={{players:{}, walls:{}, projectiles:{}, pickups:{}}}, scheduled_initial={}, scheduled_delta={}",
             current_frame,
             pending_initial_total_count,
             pending_initial_open_count,
             pending_initial_closed_count,
             tail_join_mode,
+            aggressive_tail_join_mode,
             max_initial_per_frame,
             max_delta_per_frame,
             delta_skip_modulus,
+            initial_snapshot_caps.max_players,
+            initial_snapshot_caps.max_walls,
+            initial_snapshot_caps.max_projectiles,
+            initial_snapshot_caps.max_pickups,
             scheduled_client_entries
                 .iter()
                 .filter(|(_, _, needs_initial)| *needs_initial)
@@ -4700,8 +4787,13 @@ impl MassiveGameServer {
         );
 
         let shared_broadcast_data = Arc::new(
-            self.prepare_shared_broadcast_data(include_active_walls_snapshot)
-                .await,
+            self.prepare_shared_broadcast_data(
+                include_active_walls_snapshot,
+                initial_snapshot_caps,
+                tail_join_mode,
+                aggressive_tail_join_mode,
+            )
+            .await,
         );
         trace!("[Frame {}] Prepared shared broadcast data. Events: {}, Destroyed Walls: {}, Chat: {}, KF: {}", 
             current_frame, shared_broadcast_data.events.len(), shared_broadcast_data.destroyed_wall_ids.len(),
@@ -4718,6 +4810,10 @@ impl MassiveGameServer {
         }
         if tail_join_mode {
             broadcast_concurrency = broadcast_concurrency.min(TAIL_JOIN_CONCURRENCY_CAP);
+        }
+        if aggressive_tail_join_mode {
+            broadcast_concurrency =
+                broadcast_concurrency.min(TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP);
         }
 
         let mut fanout_tasks = JoinSet::new();
@@ -4798,6 +4894,7 @@ impl MassiveGameServer {
             let mut builder = builder_cell.borrow_mut();
             builder.reset();
             let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+            let snapshot_caps = shared_data.initial_snapshot_caps;
             info!("[Frame {}] Client {}: Building InitialStateMessage.", frame, peer_id_str);
 
             let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
@@ -4816,8 +4913,9 @@ impl MassiveGameServer {
                 active_walls_to_send.len()
             );
 
-            let mut walls_fb_vec = Vec::with_capacity(active_walls_to_send.len().min(INITIAL_SNAPSHOT_MAX_WALLS));
-            for wall_data in active_walls_to_send.iter().take(INITIAL_SNAPSHOT_MAX_WALLS) {
+            let mut walls_fb_vec =
+                Vec::with_capacity(active_walls_to_send.len().min(snapshot_caps.max_walls));
+            for wall_data in active_walls_to_send.iter().take(snapshot_caps.max_walls) {
                 let id_fb = fb_safe_str(&mut builder, &wall_data.id.to_string());
                 walls_fb_vec.push(fb::Wall::create(&mut builder, &fb::WallArgs{
                     id: Some(id_fb), x: wall_data.x, y: wall_data.y, width: wall_data.width, height: wall_data.height,
@@ -4841,7 +4939,11 @@ impl MassiveGameServer {
                 warn!("[Frame {} Client {}] InitialState: Self player state not found!", frame, peer_id_str);
             }
 
-            for visible_player_id in player_aoi_data_for_initial_state.visible_players.iter().take(INITIAL_SNAPSHOT_MAX_PLAYERS.saturating_sub(players_fb_vec.len())) {
+            for visible_player_id in player_aoi_data_for_initial_state
+                .visible_players
+                .iter()
+                .take(snapshot_caps.max_players.saturating_sub(players_fb_vec.len()))
+            {
                 if visible_player_id != &self_player_id_arc { // Already added self
                     if let Some(pstate_guard) = shared_data.player_states_snapshot.get(visible_player_id) {
                         players_fb_vec.push(create_fb_player_state_for_delta(&mut builder, pstate_guard, 0xFFFF));
@@ -4853,7 +4955,11 @@ impl MassiveGameServer {
 
             // 3. Projectiles (from AoI)
             let mut projectiles_fb_vec = Vec::new();
-            for proj_id in player_aoi_data_for_initial_state.visible_projectiles.iter().take(INITIAL_SNAPSHOT_MAX_PROJECTILES) {
+            for proj_id in player_aoi_data_for_initial_state
+                .visible_projectiles
+                .iter()
+                .take(snapshot_caps.max_projectiles)
+            {
                 if let Some(proj) = shared_data.projectiles_snapshot.get(proj_id) {
                     let id_fb = fb_safe_str(&mut builder, &proj.id.to_string());
                     let owner_id_fb = fb_safe_str(&mut builder, proj.owner_id.as_str());
@@ -4869,7 +4975,11 @@ impl MassiveGameServer {
 
             // 4. Pickups (Active ones from AoI)
             let mut pickups_fb_vec = Vec::new();
-            for pickup_id in player_aoi_data_for_initial_state.visible_pickups.iter().take(INITIAL_SNAPSHOT_MAX_PICKUPS) {
+            for pickup_id in player_aoi_data_for_initial_state
+                .visible_pickups
+                .iter()
+                .take(snapshot_caps.max_pickups)
+            {
                 if let Some(pickup) = shared_data.pickups_snapshot.get(pickup_id) {
                     if pickup.is_active { // Only send active pickups
                         let (fb_pickup_type, fb_weapon_type_opt) = map_core_pickup_to_fb(&pickup.pickup_type);

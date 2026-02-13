@@ -22,6 +22,16 @@
     - `25-48`: `count=24/24`, `avg=21863.33`, `p95=29118.15`
     - `49-72`: `count=24/24`, `avg=44989.96`, `p95=69302.25`
     - `73+`: `count=20/48`, `avg=86006.05`, `p95=97647.45`
+- Next tail-focused pass (aggressive `73+` policy + reduced initial snapshot caps):
+  - `artifacts/scale/multi_client_fresh_120_after_tail_pass_20260213.json`
+  - `99/120`, `connectedRatio=0.825`, `passed=false`, `durationMs=612658`
+  - Delta vs prior rerun: `+7` connected, `-27.1s` duration, `+7` in `wave_73_plus`
+  - `connectLatencyMs`: `p50=29228`, `p90=77772.4`, `p95=85394`, `p99=88385.2`, `max=89571`
+  - `connectLatencyByWave`:
+    - `1-24`: `count=24/24`, `avg=17518.38`, `p95=24906.1`
+    - `25-48`: `count=24/24`, `avg=24171.21`, `p95=31668`
+    - `49-72`: `count=24/24`, `avg=33973.83`, `p95=42953.85`
+    - `73+`: `count=27/48`, `avg=67767.67`, `p95=88360.4`
 
 ## Deterministic Benchmark Setup
 - Server target: `target/release/massive_game_server_core` on `127.0.0.1:19080`.
@@ -41,6 +51,8 @@
   - Made initial pickup generation deterministic and scaled by target players.
   - Synced pickups into partition `dynamic_objects` index on init / collect / respawn.
   - Added `active_walls_by_id` shared cache and dynamic wall visibility recovery in optimized delta state.
+  - Added aggressive `73+` tail policy: higher initial-send floor, tighter delta gating, lower fanout concurrency, and tail-aware initial send timeout.
+  - Added adaptive initial snapshot caps under tail pressure to reduce first payload size and data-channel contention.
 - `server/src/world/partition.rs`
   - Added partition index collection helpers for AOI/bounds.
 - `server/src/server/game_loop.rs`
@@ -93,6 +105,15 @@
     - `49-72`: `count=24/24`, `avg=44989.96`, `p95=69302.25`
     - `73+`: `count=20/48`, `avg=86006.05`, `p95=97647.45`
   - Result: duration improved vs previous `120` run, but `73+` completion remains `20/48` so boundary still unchanged
+- `artifacts/scale/multi_client_fresh_120_after_tail_pass_20260213.json` (aggressive `73+` scheduling + tail snapshot caps)
+  - `99/120`, `connectedRatio=0.825`, `passed=false`, `durationMs=612658`
+  - `connectLatencyMs`: `p50=29228`, `p90=77772.4`, `p95=85394`, `p99=88385.2`, `max=89571`
+  - `connectLatencyByWave`:
+    - `1-24`: `count=24/24`, `avg=17518.38`, `p95=24906.1`
+    - `25-48`: `count=24/24`, `avg=24171.21`, `p95=31668`
+    - `49-72`: `count=24/24`, `avg=33973.83`, `p95=42953.85`
+    - `73+`: `count=27/48`, `avg=67767.67`, `p95=88360.4`
+  - Result: boundary improved (`+7` launched clients) but still below target `>=108/120` for pass criteria
 
 ## Stress / Regression Checks
 - `cargo test -p massive_game_server_core --test boundary_stress -- --nocapture`
@@ -104,12 +125,12 @@
 
 ## Current Bottleneck
 - `80` clients is no longer timeout-limited under this configuration.
-- `120` clients remains launch-timeout limited (`92/120` at 600000ms cap in latest run).
-- Remaining risk is long-tail join latency in final waves (`73+` wave `avg~86.0s`, `p95~97.6s`, with only `20/48` tail slots connected).
+- `120` clients remains launch-timeout limited (`99/120` at 600000ms cap in latest run).
+- Remaining risk is long-tail join latency in final waves (`73+` wave `avg~67.8s`, `p95~88.4s`, with `27/48` tail slots connected).
 
 ## Next Step Candidates
 - Tune join pipeline specifically for wave `73+`:
-  - reserve a larger per-frame initial-send floor for `70+` connected clients
-  - gate non-essential delta traffic more aggressively when `pending_initial_open > 0` in tail mode
-  - prefer backoff/retry over timeout for initial-state sends once connect latency exceeds `~70s`
+  - keep aggressive scheduling only while `pending_initial_open` exceeds a threshold; relax earlier to avoid over-throttling deltas
+  - add adaptive decay of initial snapshot caps after backlog drops (recover fidelity sooner)
+  - tune initial send timeout and retry cadence around the `85-95s` tail band observed in slowest clients
 - Rerun deterministic `120` benchmark after each join-policy tweak and track `connectLatencyByWave.wave_73_plus.count` as the primary success metric.

@@ -92,10 +92,31 @@
     - `49-72`: `count=24/24`, `avg=44989.96`, `p95=69302.25`
     - `73+`: `count=20/48`, `avg=86006.05`, `p95=97647.45`
 
+### Aggressive 73+ tail pass (2026-02-13)
+- `server/src/server/instance.rs`
+  - Added aggressive tail mode when `73+` clients are connected and initial-open backlog remains high.
+  - Increased initial-send budget, tightened delta cadence, and reduced fanout concurrency during aggressive tail windows.
+  - Added tail-mode initial snapshot caps (players/walls/projectiles/pickups) to shrink first payloads.
+  - Raised initial-send timeout in tail modes to reduce resend churn on congested data channels.
+- Rerun result:
+  - `artifacts/scale/multi_client_fresh_120_after_tail_pass_20260213.json`
+  - `99/120`, `connectedRatio=0.825`, `passed=false`, `durationMs=612658`
+  - Delta vs previous rerun (`multi_client_fresh_120_after_ui_gate_tune_20260213.json`):
+    - `+7` launched clients (`92 -> 99`)
+    - `+0.0583` connected ratio (`0.7667 -> 0.825`)
+    - `-27055ms` duration (`639713 -> 612658`)
+    - `wave_73_plus count: 20 -> 27`
+  - `connectLatencyMs`: `p50=29228`, `p90=77772.4`, `p95=85394`, `p99=88385.2`, `max=89571`
+  - `connectLatencyByWave`:
+    - `1-24`: `count=24/24`, `avg=17518.38`, `p95=24906.1`
+    - `25-48`: `count=24/24`, `avg=24171.21`, `p95=31668`
+    - `49-72`: `count=24/24`, `avg=33973.83`, `p95=42953.85`
+    - `73+`: `count=27/48`, `avg=67767.67`, `p95=88360.4`
+
 ### Updated boundary status
 - `80` clients still clears at `80/80`.
-- `120` clients remains launch-timeout limited; latest refreshed rerun remains `92/120`.
-- Main unresolved bottleneck is still the `73+` wave tail where fewer than half of requested slots connect within the 600000ms cap (`20/48` in latest rerun).
+- `120` clients remains launch-timeout limited; latest rerun improved to `99/120`.
+- Main unresolved bottleneck is still the `73+` wave tail (`27/48` connected), but latency improved substantially (`avg~67.8s`, `p95~88.4s`).
 
 ### Test status
 - `cargo test -p massive_game_server_core --test boundary_stress -- --nocapture` passed.
