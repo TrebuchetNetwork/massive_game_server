@@ -1,69 +1,83 @@
- 2025-06-09T22:26:15.266403Z  WARN massive_game_server_core::server::game_loop: Frame 47688 took too long: 46.476387ms
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:15.466258Z  WARN massive_game_server_core::server::game_loop: Frame 47694 took too long: 47.348699ms
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:15.640562Z  INFO massive_game_server_core::server::game_loop: Game loop running - Frame: 47700
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:15.653819Z  INFO massive_game_server_core::server::instance: [Frame 47700] Rebuilding structural wall cache (was for frame 47685).
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:15.654573Z  INFO massive_game_server_core::server::instance: [Frame 47700] Structural wall cache rebuilt with 29 walls.
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:15.664134Z  WARN massive_game_server_core::server::instance: Frame 47700 timing breakdown:
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: Total: 23.55ms
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: - Input/AI (Stage 1): 13.23ms
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: - Physics (Stage 2a): 3.08ms
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: - Game Logic (Stage 2b): 3.05ms
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: - State Sync (Stage 3a): 4.18ms
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: - Broadcast (Stage 3b): 0.01ms (timed_out: false)
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: (Target Tick: 16ms)
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:15.664147Z  WARN massive_game_server_core::server::instance: Tick processing WORK exceeded hard budget (game_loop will log wall-clock overrun) frame=47700 ms=23.546 target=16
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:15.664153Z  WARN massive_game_server_core::server::game_loop: Frame 47700 took too long: 48.67993ms
-Jun 09 22:26:15 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:15.862693Z  WARN massive_game_server_core::server::game_loop: Frame 47706 took too long: 48.029098ms
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:16.060121Z  WARN massive_game_server_core::server::game_loop: Frame 47712 took too long: 49.026859ms
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:16.136809Z  INFO massive_game_server_core::server::instance: [Frame 47715] Rebuilding structural wall cache (was for frame 47700).
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:16.137642Z  INFO massive_game_server_core::server::instance: [Frame 47715] Structural wall cache rebuilt with 29 walls.
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:16.258459Z  WARN massive_game_server_core::server::game_loop: Frame 47718 took too long: 48.107958ms
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:16.454371Z  WARN massive_game_server_core::server::game_loop: Frame 47724 took too long: 47.275418ms
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:16.643879Z  INFO massive_game_server_core::server::instance: [Frame 47730] Rebuilding structural wall cache (was for frame 47715).
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:16.644636Z  INFO massive_game_server_core::server::instance: [Frame 47730] Structural wall cache rebuilt with 29 walls.
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:16.655395Z  WARN massive_game_server_core::server::instance: Frame 47730 timing breakdown:
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: Total: 24.53ms
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: - Input/AI (Stage 1): 13.01ms
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: - Physics (Stage 2a): 3.17ms
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: - Game Logic (Stage 2b): 3.06ms
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: - State Sync (Stage 3a): 5.29ms
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: - Broadcast (Stage 3b): 0.01ms (timed_out: false)
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: (Target Tick: 16ms)
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:16.655409Z  WARN massive_game_server_core::server::game_loop: Frame 47730 took too long: 48.703518ms
-Jun 09 22:26:16 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:16.850860Z  WARN massive_game_server_core::server::game_loop: Frame 47736 took too long: 47.122718ms
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.050484Z  WARN massive_game_server_core::server::game_loop: Frame 47742 took too long: 48.331968ms
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.126804Z  INFO massive_game_server_core::server::instance: [Frame 47745] Rebuilding structural wall cache (was for frame 47730).
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.127609Z  INFO massive_game_server_core::server::instance: [Frame 47745] Structural wall cache rebuilt with 29 walls.
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.246562Z  WARN massive_game_server_core::server::game_loop: Frame 47748 took too long: 47.573019ms
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.445747Z  WARN massive_game_server_core::server::game_loop: Frame 47754 took too long: 47.088008ms
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.620136Z  INFO massive_game_server_core::server::game_loop: Game loop running - Frame: 47760
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.633408Z  INFO massive_game_server_core::server::instance: [Frame 47760] Rebuilding structural wall cache (was for frame 47745).
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.634163Z  INFO massive_game_server_core::server::instance: [Frame 47760] Structural wall cache rebuilt with 29 walls.
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.643393Z  WARN massive_game_server_core::server::instance: Frame 47760 timing breakdown:
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: Total: 23.23ms
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: - Input/AI (Stage 1): 13.25ms
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: - Physics (Stage 2a): 2.71ms
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: - Game Logic (Stage 2b): 3.04ms
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: - State Sync (Stage 3a): 4.22ms
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: - Broadcast (Stage 3b): 0.01ms (timed_out: false)
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: (Target Tick: 16ms)
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.643406Z  WARN massive_game_server_core::server::instance: Tick processing WORK exceeded hard budget (game_loop will log wall-clock overrun) frame=47760 ms=23.23 target=16
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.643413Z  WARN massive_game_server_core::server::game_loop: Frame 47760 took too long: 48.369418ms
-Jun 09 22:26:17 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:17.842541Z  WARN massive_game_server_core::server::game_loop: Frame 47766 took too long: 47.576399ms
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:18.038009Z  WARN massive_game_server_core::server::game_loop: Frame 47772 took too long: 46.508778ms
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:18.117265Z  INFO massive_game_server_core::server::instance: [Frame 47775] Rebuilding structural wall cache (was for frame 47760).
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:18.118042Z  INFO massive_game_server_core::server::instance: [Frame 47775] Structural wall cache rebuilt with 29 walls.
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:18.237291Z  WARN massive_game_server_core::server::game_loop: Frame 47778 took too long: 46.242638ms
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:18.436155Z  WARN massive_game_server_core::server::game_loop: Frame 47784 took too long: 48.379838ms
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:18.623903Z  INFO massive_game_server_core::server::instance: [Frame 47790] Rebuilding structural wall cache (was for frame 47775).
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:18.624660Z  INFO massive_game_server_core::server::instance: [Frame 47790] Structural wall cache rebuilt with 29 walls.
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:18.634497Z  WARN massive_game_server_core::server::instance: Frame 47790 timing breakdown:
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: Total: 24.08ms
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: - Input/AI (Stage 1): 13.49ms
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: - Physics (Stage 2a): 2.40ms
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: - Game Logic (Stage 2b): 3.05ms
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: - State Sync (Stage 3a): 5.14ms
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: - Broadcast (Stage 3b): 0.01ms (timed_out: false)
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: (Target Tick: 16ms)
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:18.634511Z  WARN massive_game_server_core::server::game_loop: Frame 47790 took too long: 48.264917ms
-Jun 09 22:26:18 instance-20250602-155313 massive_game_server_core[599082]: 2025-06-09T22:26:18.829736Z  WARN massive_game_server_core::server::game_loop: Frame 47796 took too long: 45.876198ms
+# Production Performance Log (Refreshed 2026-02-12)
+
+## Join-Throughput Pass Summary
+
+### Pass objective
+- Execute the next join-throughput optimization pass for the remaining `80+` launch timeout.
+- Rebaseline with deterministic world generation and refreshed measurements.
+
+### Key code updates in this pass
+- `server/src/world/map_generator.rs`
+  - seeded dynamic map generation and player-count scaling.
+- `server/src/server/instance.rs`
+  - deterministic map config via `MGS_MAP_SEED` / `MGS_MAP_TARGET_PLAYERS`.
+  - deterministic, scaled pickup generation; pickup partition index kept in sync.
+  - shared `active_walls_by_id` cache and dynamic wall delta recovery.
+- `server/src/world/partition.rs`
+  - partition index collection helpers for AOI/bounds.
+- `server/src/server/game_loop.rs`
+  - AOI object selection uses partition candidates + visibility caps.
+
+### Deterministic rerun profile
+- server: `target/release/massive_game_server_core` on `127.0.0.1:19080`
+- env: `MGS_DISABLE_STUN=1`, `MGS_TARGET_BOT_COUNT=0`, `MGS_MAP_SEED=424242`, `MGS_MAP_TARGET_PLAYERS=<clients>`
+- multi-client runner: `scripts/ui_bench/multi_client.js`
+- hard cap: `--max-total-ms 600000`
+
+### 80-client benchmark progression (600000ms cap)
+- baseline: `artifacts/scale/multi_client_fresh_80.json` -> `74/80` (timeout)
+- welcome-only on-open patch: `artifacts/scale/multi_client_fresh_80_after_10v10_opt.json` -> `79/80` (timeout)
+- retry + scheduler iterations (best pre-pass): `artifacts/scale/multi_client_fresh_80_after_join_scheduler_tune_opt.json` -> `75/80` (timeout)
+- dynamic deterministic consistency pass: `artifacts/scale/multi_client_fresh_80_after_dynamic_consistency_opt.json` -> `80/80` (`connectedRatio=1.0`, `passed=true`, `durationMs=456572`)
+
+### Refreshed validation matrix
+- `artifacts/scale/multi_client_fresh_20_after_dynamic_consistency_opt.json`
+  - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=102680`
+- `artifacts/scale/multi_client_fresh_40_after_dynamic_consistency_opt.json`
+  - `40/40`, `connectedRatio=1.0`, `passed=true`, `durationMs=188679`
+- `artifacts/scale/multi_client_fresh_80_after_dynamic_consistency_opt.json`
+  - `80/80`, `connectedRatio=1.0`, `passed=true`, `durationMs=456572`
+- `artifacts/scale/multi_client_fresh_120_after_dynamic_consistency_opt.json`
+  - `93/120`, `connectedRatio=0.775`, `passed=false`, `durationMs=639341`, timeout fail
+
+### Current scale boundary (deterministic profile)
+- `80` clients: clears within cap (`80/80`).
+- `120` clients: launch-timeout limited (`93/120` at 600000ms cap).
+- Tail latency in final launch wave reached `~94s` per client.
+
+### Follow-up optimization pass (open-channel scheduler + latency instrumentation)
+- `scripts/ui_bench/multi_client.js`
+  - Added `connectLatencyMs` summary to output JSON (`min/avg/max`, `p50/p90/p95/p99`, `slowestClients`).
+  - Added `elapsedMs` to launch failure entries.
+- `server/src/server/instance.rs`
+  - Join scheduler now prioritizes actionable initial sends (open data channels) while retaining backlog-based throttling.
+- Rerun result:
+  - `artifacts/scale/multi_client_fresh_120_after_open_channel_scheduler_opt_v2.json`
+  - `93/120`, `connectedRatio=0.775`, timeout fail (same boundary as prior run)
+  - `connectLatencyMs`: `p50=28139`, `p90=81954.6`, `p95=89151.6`, `p99=92496.44`, `max=93801`
+
+### Tail-wave optimization + per-wave bucket pass
+- `scripts/ui_bench/multi_client.js`
+  - Added `connectLatencyByWave` output with fixed buckets: `1-24`, `25-48`, `49-72`, `73+`.
+- `server/src/server/instance.rs`
+  - Added `tail_join_mode` for `70+` connected clients with pending initial backlog.
+  - Tail policy now boosts initial-send budget, tightens delta budget/skip modulus, and lowers broadcast concurrency cap.
+- Rerun result:
+  - `artifacts/scale/multi_client_fresh_120_after_tail_wave_join_opt.json`
+  - `92/120`, `connectedRatio=0.7667`, timeout fail (`durationMs=667903`)
+  - `connectLatencyMs`: `p50=30888`, `p90=86102.8`, `p95=91272.4`, `p99=93538.78`, `max=93759`
+  - `connectLatencyByWave`:
+    - `1-24`: `count=24/24`, `avg=17153`, `p95=23016.85`
+    - `25-48`: `count=24/24`, `avg=23516.5`, `p95=31573.3`
+    - `49-72`: `count=24/24`, `avg=48885.54`, `p95=65229.55`
+    - `73+`: `count=20/48`, `avg=84908.05`, `p95=93529.1`
+
+### Updated boundary status
+- `80` clients still clears at `80/80`.
+- `120` clients remains launch-timeout limited; latest pass regressed slightly from `93/120` to `92/120`.
+- Main unresolved bottleneck is the `73+` wave tail where fewer than half of requested slots connect within the 600000ms cap.
+
+### Test status
+- `cargo test -p massive_game_server_core --test boundary_stress -- --nocapture` passed.
+- `RUN_STRESS_TEST=1 ... --exact stress_test_game_tick --nocapture` passed (`avg=1.13ms`, `p95=1.79ms`, `max=4.34ms`).
+- `RUN_STRESS_TEST=1 ... --exact stress_test_game_tick_with_bots --nocapture` passed (`avg=1.34ms`, `p95=1.87ms`, `max=2.26ms`).

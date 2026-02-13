@@ -13,9 +13,11 @@ use massive_game_server_core::network::signaling::{
     SignalingPeers,
     WorldPartitionManagerRef,
 };
+use massive_game_server_core::operational::auth::{build_auth_routes, AuthService};
 use massive_game_server_core::server::instance::MassiveGameServer;
 
 use parking_lot::RwLock as ParkingLotRwLock;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -38,6 +40,12 @@ fn init_logging() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to set global default tracing subscriber: {}", e))?;
     info!("Tracing subscriber initialized.");
     Ok(())
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct WsAuthQuery {
+    auth_token: Option<String>,
+    token: Option<String>,
 }
 
 #[tokio::main]
@@ -117,6 +125,8 @@ async fn main() -> anyhow::Result<()> {
 
     let signaling_peers_state: SignalingPeers =
         Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let auth_service = AuthService::new_from_env();
+    let auth_routes = build_auth_routes(auth_service.clone());
 
     let config_for_ws = config.clone();
     let signaling_peers_for_ws = signaling_peers_state.clone();
@@ -129,9 +139,15 @@ async fn main() -> anyhow::Result<()> {
     let chat_messages_for_ws = chat_messages_state.clone();
     let player_aois_for_ws = player_aois_state.clone();
     let server_instance_for_ws = game_server_instance.clone(); // Clone Arc for WebSocket handler
+    let auth_service_for_ws = auth_service.clone();
 
     let signaling_route = warp::path("ws")
         .and(warp::ws())
+        .and(
+            warp::query::<WsAuthQuery>()
+                .or(warp::any().map(WsAuthQuery::default))
+                .unify(),
+        )
         .and(warp::any().map(move || signaling_peers_for_ws.clone()))
         .and(warp::any().map(move || player_manager_for_ws.clone()))
         .and(warp::any().map(move || world_partition_manager_for_ws.clone()))
@@ -141,8 +157,10 @@ async fn main() -> anyhow::Result<()> {
         .and(warp::any().map(move || config_for_ws.clone()))
         .and(warp::any().map(move || player_aois_for_ws.clone()))
         .and(warp::any().map(move || server_instance_for_ws.clone())) // Pass server instance Arc
+        .and(warp::any().map(move || auth_service_for_ws.clone()))
         .map(
             |ws: warp::ws::Ws,
+             ws_auth_query: WsAuthQuery,
              s_peers: SignalingPeers,
              p_manager: PlayerManagerRef,
              w_p_manager: WorldPartitionManagerRef,
@@ -151,9 +169,15 @@ async fn main() -> anyhow::Result<()> {
              chats: ChatMessagesQueue,
              conf: Arc<ServerConfig>,
              p_aois: Arc<DashMap<String, PlayerAoI>>,
-             server_inst: ServerInstanceRef| {
+             server_inst: ServerInstanceRef,
+             auth_service: AuthService| {
                 // Accept server instance Arc
                 let peer_id = Uuid::new_v4().to_string();
+                let auth_token = ws_auth_query
+                    .auth_token
+                    .or(ws_auth_query.token)
+                    .unwrap_or_default();
+                let auth_user_id = auth_service.resolve_user_id_from_token(&auth_token);
                 ws.on_upgrade(move |socket| {
                     handle_signaling_connection(
                         socket,
@@ -167,6 +191,8 @@ async fn main() -> anyhow::Result<()> {
                         conf,
                         p_aois,
                         server_inst, // Pass server instance to handler
+                        auth_service,
+                        auth_user_id,
                     )
                 })
             },
@@ -185,12 +211,13 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
-    let routes = signaling_route.or(static_files_route).with(
+    let routes = auth_routes.or(signaling_route).or(static_files_route).with(
         warp::cors()
             .allow_any_origin()
             .allow_methods(vec!["GET", "POST", "OPTIONS"])
             .allow_headers(vec![
                 "Content-Type",
+                "Authorization",
                 "User-Agent",
                 "Sec-WebSocket-Key",
                 "Sec-WebSocket-Version",

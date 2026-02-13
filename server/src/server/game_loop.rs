@@ -14,7 +14,10 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 // Removed unused: use crate::core::types::{PlayerID, PlayerAoI, Vec2, GameEvent, CorePickupType, EventPriority};
 // Removed unused: use crate::core::types::EntityId;
 // Removed unused: use std::collections::HashSet;
-use crate::core::constants::{AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS}; // Assuming these are in constants
+use crate::core::constants::{
+    AOI_MAX_VISIBLE_PICKUPS, AOI_MAX_VISIBLE_PLAYERS, AOI_MAX_VISIBLE_PROJECTILES,
+    AOI_MAX_VISIBLE_WALLS, AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS,
+}; // Assuming these are in constants
 use crate::core::types::{PlayerAoI, PlayerID, Vec2};
 use crate::network::signaling::{ChatMessage, ClientState};
 use std::collections::HashSet;
@@ -218,9 +221,15 @@ impl MassiveGameServer {
 
         // 1. Update visible players (using spatial index)
         let nearby_player_ids = self.spatial_index.query_nearby_players(x, y, AOI_RADIUS);
-        for other_id_arc in nearby_player_ids {
+        for other_id_arc in nearby_player_ids
+            .into_iter()
+            .take(AOI_MAX_VISIBLE_PLAYERS.saturating_add(1))
+        {
             if &other_id_arc != player_id {
                 player_aoi.visible_players.insert(other_id_arc);
+                if player_aoi.visible_players.len() >= AOI_MAX_VISIBLE_PLAYERS {
+                    break;
+                }
             }
         }
 
@@ -228,60 +237,63 @@ impl MassiveGameServer {
         let nearby_projectile_ids = self
             .spatial_index
             .query_nearby_projectiles(x, y, AOI_RADIUS);
-        for proj_id in nearby_projectile_ids {
+        for proj_id in nearby_projectile_ids
+            .into_iter()
+            .take(AOI_MAX_VISIBLE_PROJECTILES)
+        {
             player_aoi.visible_projectiles.insert(proj_id);
         }
 
-        // 3. Update visible pickups
-        let pickups_guard = self.pickups.read();
-        let total_pickups = pickups_guard.len();
+        // Candidate partitions for map/items within this AoI.
+        let mut candidate_partition_indices = Vec::with_capacity(64);
+        self.world_partition_manager.collect_partition_indices_for_aoi(
+            x,
+            y,
+            AOI_RADIUS,
+            &mut candidate_partition_indices,
+        );
+
+        // 3. Update visible pickups via partition dynamic object index.
+        let mut candidate_pickups = 0usize;
         let mut active_pickups = 0;
-        for pickup in pickups_guard.iter() {
-            if pickup.is_active {
-                active_pickups += 1;
-                let dx = pickup.x - x;
-                let dy = pickup.y - y;
-                if (dx * dx + dy * dy) <= AOI_RADIUS_SQUARED {
-                    player_aoi.visible_pickups.insert(pickup.id);
+        'pickups: for partition_idx in candidate_partition_indices.iter().copied() {
+            if let Some(partition) = self.world_partition_manager.get_partition(partition_idx) {
+                for pickup_entry in partition.dynamic_objects.iter() {
+                    candidate_pickups += 1;
+                    let pickup = pickup_entry.value();
+                    if !pickup.is_active {
+                        continue;
+                    }
+
+                    active_pickups += 1;
+                    let dx = pickup.x - x;
+                    let dy = pickup.y - y;
+                    if (dx * dx + dy * dy) <= AOI_RADIUS_SQUARED {
+                        player_aoi.visible_pickups.insert(pickup.id);
+                        if player_aoi.visible_pickups.len() >= AOI_MAX_VISIBLE_PICKUPS {
+                            break 'pickups;
+                        }
+                    }
                 }
             }
         }
-        drop(pickups_guard);
 
-        // 4. Update visible walls (check relevant partitions)
+        // 4. Update visible walls (check overlapping partitions)
         let min_aoi_x = x - AOI_RADIUS;
         let max_aoi_x = x + AOI_RADIUS;
         let min_aoi_y = y - AOI_RADIUS;
         let max_aoi_y = y + AOI_RADIUS;
 
-        let candidate_partition_indices = [
-            self.world_partition_manager
-                .get_partition_index_for_point(x, y),
-            self.world_partition_manager
-                .get_partition_index_for_point(min_aoi_x, min_aoi_y),
-            self.world_partition_manager
-                .get_partition_index_for_point(max_aoi_x, min_aoi_y),
-            self.world_partition_manager
-                .get_partition_index_for_point(min_aoi_x, max_aoi_y),
-            self.world_partition_manager
-                .get_partition_index_for_point(max_aoi_x, max_aoi_y),
-        ];
-        let mut deduped_indices = [usize::MAX; 5];
-        let mut deduped_count = 0usize;
-        'dedupe: for idx in candidate_partition_indices {
-            for existing in deduped_indices.iter().take(deduped_count) {
-                if *existing == idx {
-                    continue 'dedupe;
-                }
-            }
-            deduped_indices[deduped_count] = idx;
-            deduped_count += 1;
-        }
-
-        for partition_idx in deduped_indices.iter().take(deduped_count).copied() {
+        let mut candidate_walls = 0usize;
+        'walls: for partition_idx in candidate_partition_indices.iter().copied() {
             if let Some(partition) = self.world_partition_manager.get_partition(partition_idx) {
                 for wall_entry in partition.all_walls_in_partition.iter() {
                     let wall = wall_entry.value();
+                    if wall.is_destructible && wall.current_health <= 0 {
+                        continue;
+                    }
+
+                    candidate_walls += 1;
                     // Check if wall AABB intersects with AoI AABB
                     if wall.x < max_aoi_x
                         && wall.x + wall.width > min_aoi_x
@@ -289,6 +301,9 @@ impl MassiveGameServer {
                         && wall.y + wall.height > min_aoi_y
                     {
                         player_aoi.visible_walls.insert(wall.id);
+                        if player_aoi.visible_walls.len() >= AOI_MAX_VISIBLE_WALLS {
+                            break 'walls;
+                        }
                     }
                 }
             }
@@ -296,14 +311,15 @@ impl MassiveGameServer {
 
         // Debug logging
         trace!(
-            "[AoI Update] Player {}: {} players, {} projectiles, {} pickups (of {} active/{} total), {} walls visible",
+            "[AoI Update] Player {}: {} players, {} projectiles, {} pickups ({} active/{} candidates), {} walls ({} candidates)",
             player_id_str,
             player_aoi.visible_players.len(),
             player_aoi.visible_projectiles.len(),
             player_aoi.visible_pickups.len(),
             active_pickups,
-            total_pickups,
-            player_aoi.visible_walls.len()
+            candidate_pickups,
+            player_aoi.visible_walls.len(),
+            candidate_walls
         );
 
         player_aoi.last_update = Instant::now();

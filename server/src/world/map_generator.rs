@@ -1,21 +1,47 @@
 // massive_game_server/server/src/world/map_generator.rs
 use crate::core::constants::*;
 use crate::core::types::{Vec2, Wall}; // Removed unused EntityId
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand::rngs::StdRng;
 use uuid::Uuid;
 
 pub struct MapGenerator;
 
 impl MapGenerator {
     pub fn generate_10v10_map() -> Vec<Wall> {
+        Self::generate_10v10_map_with_seed(10_010)
+    }
+
+    pub fn generate_10v10_map_with_seed(seed: u64) -> Vec<Wall> {
+        Self::generate_map_with_density(seed, 6, 3)
+    }
+
+    pub fn generate_dynamic_map(target_players: usize) -> (Vec<Wall>, String) {
+        let derived_seed = 100_000u64.wrapping_add(target_players.max(10) as u64);
+        Self::generate_dynamic_map_with_seed(target_players, derived_seed)
+    }
+
+    pub fn generate_dynamic_map_with_seed(target_players: usize, seed: u64) -> (Vec<Wall>, String) {
+        let target = target_players.max(10);
+        let cover_points = (target / 6).clamp(6, 30);
+        let destructible_nodes = (target / 14).clamp(3, 18);
+        let walls = Self::generate_map_with_density(seed, cover_points, destructible_nodes);
+        let map_name = format!("Massive Arena Dynamic {}p", target);
+        (walls, map_name)
+    }
+
+    fn generate_map_with_density(seed: u64, cover_points: usize, destructible_nodes: usize) -> Vec<Wall> {
         let mut walls = Vec::new();
-        let mut rng = rand::thread_rng();
+        let mut rng = StdRng::seed_from_u64(seed);
 
         walls.extend(Self::create_border_walls());
         walls.extend(Self::create_central_arena_open());
         walls.extend(Self::create_team_bases_open());
-        walls.extend(Self::create_strategic_cover_sparse(&mut rng));
-        walls.extend(Self::create_destructible_nodes_sparse(&mut rng));
+        walls.extend(Self::create_strategic_cover_sparse(&mut rng, cover_points));
+        walls.extend(Self::create_destructible_nodes_sparse(
+            &mut rng,
+            destructible_nodes,
+        ));
         walls.extend(Self::create_lanes_and_pathways(&mut rng)); // rng is used here
 
         walls
@@ -261,9 +287,8 @@ impl MapGenerator {
         walls
     }
 
-    fn create_strategic_cover_sparse(rng: &mut impl Rng) -> Vec<Wall> {
+    fn create_strategic_cover_sparse(rng: &mut impl Rng, number_of_cover_points: usize) -> Vec<Wall> {
         let mut walls = Vec::new();
-        let number_of_cover_points = 6;
         let cover_health = 120;
 
         for _ in 0..number_of_cover_points {
@@ -293,9 +318,8 @@ impl MapGenerator {
         walls
     }
 
-    fn create_destructible_nodes_sparse(rng: &mut impl Rng) -> Vec<Wall> {
+    fn create_destructible_nodes_sparse(rng: &mut impl Rng, number_of_nodes: usize) -> Vec<Wall> {
         let mut walls = Vec::new();
-        let number_of_nodes = 3;
         let node_health = 200;
 
         for _ in 0..number_of_nodes {

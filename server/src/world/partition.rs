@@ -436,6 +436,50 @@ impl WorldPartitionManager {
         self.partitions.clone()
     }
 
+    pub fn collect_partition_indices_for_aoi(
+        &self,
+        x: f32,
+        y: f32,
+        radius: f32,
+        out: &mut Vec<usize>,
+    ) {
+        self.collect_partition_indices_for_bounds(
+            x - radius,
+            x + radius,
+            y - radius,
+            y + radius,
+            out,
+        );
+    }
+
+    pub fn collect_partition_indices_for_bounds(
+        &self,
+        min_x: f32,
+        max_x: f32,
+        min_y: f32,
+        max_y: f32,
+        out: &mut Vec<usize>,
+    ) {
+        let max_index = self.grid_dim.saturating_sub(1) as isize;
+        let grid_min_x =
+            (((min_x - self.world_min_x) / self.partition_width).floor() as isize).clamp(0, max_index);
+        let grid_max_x =
+            (((max_x - self.world_min_x) / self.partition_width).floor() as isize).clamp(0, max_index);
+        let grid_min_y =
+            (((min_y - self.world_min_y) / self.partition_height).floor() as isize).clamp(0, max_index);
+        let grid_max_y =
+            (((max_y - self.world_min_y) / self.partition_height).floor() as isize).clamp(0, max_index);
+
+        out.clear();
+        out.reserve(((grid_max_x - grid_min_x + 1) * (grid_max_y - grid_min_y + 1)) as usize);
+
+        for grid_y in grid_min_y..=grid_max_y {
+            for grid_x in grid_min_x..=grid_max_x {
+                out.push((grid_y as usize) * self.grid_dim + grid_x as usize);
+            }
+        }
+    }
+
     pub fn update_all_boundary_snapshots(&self) {
         for partition_arc in &self.partitions {
             if partition_arc.boundary_zone.has_pending_updates() {

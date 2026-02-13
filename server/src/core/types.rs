@@ -732,6 +732,16 @@ impl RTCDataChannel {
         }
     }
 
+    pub fn is_open(&self) -> bool {
+        match &self.backend {
+            RTCDataChannelBackend::Real(inner) => {
+                inner.ready_state()
+                    == webrtc::data_channel::data_channel_state::RTCDataChannelState::Open
+            }
+            RTCDataChannelBackend::MockCounter(_) => true,
+        }
+    }
+
     pub async fn send(&self, data: &bytes::Bytes) -> Result<(), String> {
         match &self.backend {
             RTCDataChannelBackend::Real(inner) => inner

@@ -11,6 +11,7 @@ use crate::core::constants::*;
 use crate::core::types::PlayerState;
 use crate::entities::player::ImprovedPlayerManager;
 use crate::flatbuffers_generated::game_protocol as fb;
+use crate::operational::auth::AuthService;
 use crate::server::instance::MassiveGameServer; // Added for server access for initial spawn
 use crate::world::partition::WorldPartitionManager;
 use parking_lot::RwLock as ParkingLotRwLock;
@@ -64,6 +65,7 @@ static NEXT_CHAT_MESSAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::
 #[derive(Clone, Debug)]
 pub struct ClientState {
     pub known_walls_sent: bool,
+    pub pending_initial_state_bytes: Option<Bytes>,
     pub last_update_sent_time: Instant,
     pub last_known_player_states: HashMap<PlayerID, PlayerState>,
     pub last_known_projectile_ids: HashSet<EntityId>,
@@ -90,6 +92,7 @@ impl Default for ClientState {
     fn default() -> Self {
         ClientState {
             known_walls_sent: false,
+            pending_initial_state_bytes: None,
             last_update_sent_time: Instant::now(),
             last_known_player_states: HashMap::new(),
             last_known_projectile_ids: HashSet::new(),
@@ -243,6 +246,8 @@ pub async fn handle_signaling_connection(
     config: Arc<ServerConfig>,
     player_aois: PlayerAoIs,
     server_instance: ServerInstanceRef, // Added server instance for initial spawn
+    auth_service: AuthService,
+    auth_user_id: Option<String>,
 ) {
     info!("[{}]: New WebSocket connection for signaling.", peer_id_str);
 
@@ -292,6 +297,7 @@ pub async fn handle_signaling_connection(
             &data_channels_map,
             &client_states_map,
             &player_aois,
+            &auth_service,
         );
         return;
     }
@@ -319,6 +325,7 @@ pub async fn handle_signaling_connection(
                 &data_channels_map,
                 &client_states_map,
                 &player_aois,
+                &auth_service,
             );
             return;
         }
@@ -374,6 +381,7 @@ pub async fn handle_signaling_connection(
     let dc_map_clone_sc = data_channels_map.clone();
     let cs_map_clone_sc = client_states_map.clone();
     let pa_map_clone_sc = player_aois.clone();
+    let auth_service_clone_sc = auth_service.clone();
 
     pc_for_state_change.on_peer_connection_state_change(Box::new(
         move |s: RTCPeerConnectionState| {
@@ -399,6 +407,7 @@ pub async fn handle_signaling_connection(
                     &dc_map_clone_sc,
                     &cs_map_clone_sc,
                     &pa_map_clone_sc,
+                    &auth_service_clone_sc,
                 );
             }
             Box::pin(async {})
@@ -413,6 +422,8 @@ pub async fn handle_signaling_connection(
     let chat_messages_queue_for_dc_event = chat_messages_queue.clone();
     let config_for_dc_event = config.clone();
     let server_instance_for_dc_event = server_instance.clone(); // Clone server instance for DC event
+    let auth_service_for_dc_event = auth_service.clone();
+    let auth_user_id_for_dc_event = auth_user_id.clone();
 
     pc_for_datachannel_event.on_data_channel(Box::new(move |dc: Arc<RTCDataChannel>| {
         let dc_label_owned = dc.label().to_owned();
@@ -431,6 +442,8 @@ pub async fn handle_signaling_connection(
         let config_on_open = config_for_dc_event.clone();
         let dc_label_for_on_open = dc_label_owned.clone();
         let server_instance_on_open = server_instance_for_dc_event.clone(); // Clone server instance for on_open
+        let auth_service_on_open = auth_service_for_dc_event.clone();
+        let auth_user_id_on_open = auth_user_id_for_dc_event.clone();
 
         dc_on_open_arc.on_open(Box::new(move || {
             let current_peer_id_on_open_cb = peer_id_on_open.clone();
@@ -476,10 +489,21 @@ pub async fn handle_signaling_connection(
                     .await;
             });
 
-            let username = format!(
+            let mut username = format!(
                 "Player_{}",
                 &current_peer_id_on_open_cb[..4.min(current_peer_id_on_open_cb.len())]
             );
+
+            if let Some(bound_user_id) = auth_user_id_on_open.as_deref() {
+                if let Some(profile) = auth_service_on_open.profile_by_user_id(bound_user_id) {
+                    username = profile.display_name;
+                    auth_service_on_open.bind_peer_to_user(&current_peer_id_on_open_cb, bound_user_id);
+                    info!(
+                        "[{}]: Bound authenticated user '{}' to peer.",
+                        current_peer_id_on_open_cb, bound_user_id
+                    );
+                }
+            }
 
             // Fix 2.2: Use RespawnManager for initial spawn
             let player_id_arc_for_spawn = player_manager_on_open
@@ -559,12 +583,8 @@ pub async fn handle_signaling_connection(
                 );
             }
 
-            // Send initial state now that the player exists and AoI is initialized.
+            // Send welcome immediately; initial world snapshot is sent by broadcast pipeline.
             let config_for_welcome = config_on_open.clone();
-            let server_for_initial = server_instance_on_open.clone();
-            let peer_id_for_initial = current_peer_id_on_open_cb.clone();
-            let dc_for_initial = core_dc.clone();
-            let client_states_for_initial = client_states_map_on_open.clone();
 
             Box::pin(async move {
                 let mut builder_welcome = flatbuffers::FlatBufferBuilder::with_capacity(256);
@@ -599,17 +619,8 @@ pub async fn handle_signaling_connection(
                     );
                 } else {
                     info!(
-                        "[{}]: Sent WelcomeMessage. Sending initial state now.",
+                        "[{}]: Sent WelcomeMessage. Initial state will be sent by broadcast pipeline.",
                         current_peer_id_on_open_cb
-                    );
-                }
-
-                let mut client_states_guard = client_states_for_initial.write();
-                if let Some(client_state) = client_states_guard.get_mut(&peer_id_for_initial) {
-                    server_for_initial.send_initial_state_to_client(
-                        &peer_id_for_initial,
-                        &dc_for_initial,
-                        client_state,
                     );
                 }
             })
@@ -841,6 +852,7 @@ pub async fn handle_signaling_connection(
         &data_channels_map,
         &client_states_map,
         &player_aois,
+        &auth_service,
     );
     if let Err(e) = peer_connection.close().await {
         error!("[{}]: Error closing PeerConnection: {}", peer_id_str, e);
@@ -854,6 +866,7 @@ pub fn cleanup_connection(
     data_channels_map: &DataChannelsMap,
     client_states_map: &ClientStatesMap,
     player_aois: &PlayerAoIs,
+    auth_service: &AuthService,
 ) {
     info!("[{}]: Cleaning up resources.", peer_id_str);
     // Check if peer_id was already removed from signaling_peers to prevent double cleanup issues.
@@ -863,6 +876,19 @@ pub fn cleanup_connection(
         .remove(peer_id_str)
         .is_some()
     {
+        let player_state_snapshot = {
+            let player_id_lookup: PlayerID = Arc::new(peer_id_str.to_owned());
+            player_manager
+                .get_player_state(&player_id_lookup)
+                .map(|entry| entry.clone())
+        };
+
+        if let Some(player_state) = player_state_snapshot.as_ref() {
+            auth_service.record_disconnect_score_for_peer(peer_id_str, player_state);
+        } else {
+            auth_service.clear_peer_binding(peer_id_str);
+        }
+
         // Only proceed with other removals if this was the first successful removal from signaling_peers
         player_manager.remove_player(peer_id_str); // This is where the warn originates
         data_channels_map.remove(peer_id_str);

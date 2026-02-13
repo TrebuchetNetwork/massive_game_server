@@ -82,6 +82,100 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const CONNECT_LATENCY_WAVES = [
+  { key: "wave_1_24", label: "1-24", startClientId: 1, endClientId: 24 },
+  { key: "wave_25_48", label: "25-48", startClientId: 25, endClientId: 48 },
+  { key: "wave_49_72", label: "49-72", startClientId: 49, endClientId: 72 },
+  { key: "wave_73_plus", label: "73+", startClientId: 73, endClientId: null },
+];
+
+function percentileFromSorted(values, percentile) {
+  if (!values.length) return 0;
+  if (values.length === 1) return values[0];
+  const clamped = Math.max(0, Math.min(1, percentile));
+  const index = (values.length - 1) * clamped;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return values[lower];
+  const weight = index - lower;
+  return values[lower] + (values[upper] - values[lower]) * weight;
+}
+
+function summarizeConnectLatency(connectLatencyEvents) {
+  if (!connectLatencyEvents.length) {
+    return {
+      count: 0,
+      minMs: 0,
+      avgMs: 0,
+      maxMs: 0,
+      p50Ms: 0,
+      p90Ms: 0,
+      p95Ms: 0,
+      p99Ms: 0,
+      slowestClients: [],
+    };
+  }
+
+  const durations = connectLatencyEvents
+    .map((event) => event.durationMs)
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((a, b) => a - b);
+
+  const avgMs =
+    durations.reduce((sum, value) => sum + value, 0) / durations.length;
+
+  const slowestClients = connectLatencyEvents
+    .slice()
+    .sort((a, b) => b.durationMs - a.durationMs)
+    .slice(0, 5)
+    .map((event) => ({
+      clientId: event.clientId,
+      durationMs: Number(event.durationMs.toFixed(2)),
+      statusKey: event.statusKey || "unknown",
+    }));
+
+  return {
+    count: durations.length,
+    minMs: Number(durations[0].toFixed(2)),
+    avgMs: Number(avgMs.toFixed(2)),
+    maxMs: Number(durations[durations.length - 1].toFixed(2)),
+    p50Ms: Number(percentileFromSorted(durations, 0.5).toFixed(2)),
+    p90Ms: Number(percentileFromSorted(durations, 0.9).toFixed(2)),
+    p95Ms: Number(percentileFromSorted(durations, 0.95).toFixed(2)),
+    p99Ms: Number(percentileFromSorted(durations, 0.99).toFixed(2)),
+    slowestClients,
+  };
+}
+
+function requestedSlotsForWave(clientsRequested, wave) {
+  const start = wave.startClientId;
+  const endInclusive =
+    Number.isFinite(wave.endClientId) ? wave.endClientId : clientsRequested;
+  if (clientsRequested < start) return 0;
+  const clampedEnd = Math.min(clientsRequested, endInclusive);
+  return Math.max(0, clampedEnd - start + 1);
+}
+
+function summarizeConnectLatencyByWave(connectLatencyEvents, clientsRequested) {
+  const summaryByWave = {};
+  for (const wave of CONNECT_LATENCY_WAVES) {
+    const waveEvents = connectLatencyEvents.filter((event) => {
+      if (event.clientId < wave.startClientId) return false;
+      if (!Number.isFinite(wave.endClientId)) return true;
+      return event.clientId <= wave.endClientId;
+    });
+    const waveSummary = summarizeConnectLatency(waveEvents);
+    summaryByWave[wave.key] = {
+      label: wave.label,
+      startClientId: wave.startClientId,
+      endClientId: Number.isFinite(wave.endClientId) ? wave.endClientId : null,
+      requestedSlots: requestedSlotsForWave(clientsRequested, wave),
+      ...waveSummary,
+    };
+  }
+  return summaryByWave;
+}
+
 function withTimeout(promise, timeoutMs, message) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return promise;
@@ -237,6 +331,7 @@ async function main() {
 
   const clients = [];
   const launchFailures = [];
+  const connectLatencyEvents = [];
   let connectedAtLeastOnce = 0;
   const startedMs = Date.now();
   let timedOutDuringLaunch = false;
@@ -263,6 +358,7 @@ async function main() {
         id,
         page,
         connectedAtLeastOnce: false,
+        connectDurationMs: null,
         lastState: null,
         stateSamples: 0,
         playerCountSamples: 0,
@@ -273,15 +369,26 @@ async function main() {
       const clientStarted = Date.now();
       try {
         const initialState = await connectClient(page, args, id);
+        const connectDurationMs = Date.now() - clientStarted;
         client.connectedAtLeastOnce = true;
+        client.connectDurationMs = connectDurationMs;
         client.lastState = initialState;
+        connectLatencyEvents.push({
+          clientId: client.id,
+          durationMs: connectDurationMs,
+          statusKey: initialState.statusKey,
+        });
         connectedAtLeastOnce += 1;
         console.log(
-          `[multi] client ${id}/${args.clients} connected in ${Date.now() - clientStarted}ms (${initialState.statusKey || "unknown"})`
+          `[multi] client ${id}/${args.clients} connected in ${connectDurationMs}ms (${initialState.statusKey || "unknown"})`
         );
       } catch (err) {
         const errorMsg = String(err.message || err);
-        launchFailures.push({ clientId: client.id, error: errorMsg });
+        launchFailures.push({
+          clientId: client.id,
+          error: errorMsg,
+          elapsedMs: Date.now() - clientStarted,
+        });
         console.log(`[multi] client ${id}/${args.clients} failed: ${errorMsg}`);
       }
     };
@@ -387,6 +494,11 @@ async function main() {
     if (timedOutDuringSampling) {
       failures.push(`Timed out during sampling after ${maxTotalMs}ms`);
     }
+    const connectLatencyMs = summarizeConnectLatency(connectLatencyEvents);
+    const connectLatencyByWave = summarizeConnectLatencyByWave(
+      connectLatencyEvents,
+      args.clients
+    );
 
     const result = {
       url: args.url,
@@ -397,6 +509,8 @@ async function main() {
       clientsHealthyFinal: finalHealthyClients,
       connectedRatio: Number(connectedRatio.toFixed(4)),
       averagePlayerCountPerClient: Number(avgPlayerCount.toFixed(2)),
+      connectLatencyMs,
+      connectLatencyByWave,
       launchFailures,
       errorClientIds: Array.from(errorClientsObserved).sort((a, b) => a - b),
       thresholds: {

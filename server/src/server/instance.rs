@@ -33,7 +33,8 @@ use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 use parking_lot::RwLock as ParkingLotRwLock;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
+use rand::rngs::StdRng;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
@@ -45,6 +46,11 @@ use uuid::Uuid;
 use tracing::{debug, error, info, trace, warn}; // Ensure all levels are available
 
 use tokio::{task::JoinSet, time::timeout};
+
+const INITIAL_SNAPSHOT_MAX_PLAYERS: usize = 24;
+const INITIAL_SNAPSHOT_MAX_WALLS: usize = 128;
+const INITIAL_SNAPSHOT_MAX_PROJECTILES: usize = 200;
+const INITIAL_SNAPSHOT_MAX_PICKUPS: usize = 24;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServerFlagState {
@@ -256,6 +262,7 @@ struct SharedBroadcastData {
     events: Vec<GameEvent>,
     destroyed_wall_ids: Vec<EntityId>,
     updated_walls: HashMap<EntityId, Wall>,
+    active_walls_by_id: HashMap<EntityId, Wall>,
     active_walls_snapshot: Vec<Wall>,
     player_states_snapshot: HashMap<PlayerID, PlayerState>,
     projectiles_snapshot: HashMap<EntityId, Projectile>,
@@ -314,6 +321,7 @@ pub struct MassiveGameServer {
     pub bot_players: Arc<DashMap<PlayerID, BotController>>,
     pub target_bot_count: Arc<AtomicU64>,
     pub bot_name_counter: Arc<AtomicU64>,
+    pub map_name: String,
 
     pub last_broadcast_frame: Arc<AtomicU64>,
     pub player_last_sync_positions: Arc<DashMap<PlayerID, (f32, f32)>>,
@@ -352,8 +360,44 @@ impl MassiveGameServer {
             config.num_player_shards
         );
 
-        let all_map_walls = MapGenerator::generate_10v10_map();
-        info!("Generated {} walls for the map.", all_map_walls.len());
+        let force_10v10_map = std::env::var("MGS_FORCE_10V10_MAP")
+            .ok()
+            .map(|raw| {
+                let normalized = raw.trim().to_ascii_lowercase();
+                normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+            })
+            .unwrap_or(false);
+        let map_target_players = std::env::var("MGS_MAP_TARGET_PLAYERS")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(config.max_players_per_match.max(20));
+        let map_seed = std::env::var("MGS_MAP_SEED")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or_else(|| {
+                if force_10v10_map {
+                    10_010
+                } else {
+                    100_000u64.wrapping_add(map_target_players.max(10) as u64)
+                }
+            });
+
+        let (all_map_walls, map_name) = if force_10v10_map {
+            (
+                MapGenerator::generate_10v10_map_with_seed(map_seed),
+                "Massive Arena 10v10".to_string(),
+            )
+        } else {
+            MapGenerator::generate_dynamic_map_with_seed(map_target_players, map_seed)
+        };
+        info!(
+            "Generated {} walls for map '{}' (target players: {}, force_10v10: {}, seed: {}).",
+            all_map_walls.len(),
+            map_name,
+            map_target_players,
+            force_10v10_map,
+            map_seed
+        );
 
         let world_partition_manager = Arc::new(WorldPartitionManager::new(
             config.world_partition_grid_dim,
@@ -412,8 +456,17 @@ impl MassiveGameServer {
             destructible_walls_vec.len()
         );
 
-        let initial_pickups = Self::generate_initial_pickups(&all_map_walls);
-        info!("Generated {} initial pickups.", initial_pickups.len());
+        let initial_pickups = Self::generate_initial_pickups(
+            &all_map_walls,
+            map_target_players,
+            map_seed ^ 0x9E3779B97F4A7C15,
+        );
+        info!(
+            "Generated {} initial pickups for target player count {}.",
+            initial_pickups.len(),
+            map_target_players
+        );
+        Self::sync_pickups_to_partition_index(&world_partition_manager, &initial_pickups);
 
         // Initialize wall spatial index
         let wall_spatial_index = Arc::new(WallSpatialIndex::new());
@@ -471,6 +524,7 @@ impl MassiveGameServer {
             bot_players: Arc::new(DashMap::new()),
             target_bot_count: Arc::new(AtomicU64::new(initial_target_bot_count)),
             bot_name_counter: Arc::new(AtomicU64::new(0)),
+            map_name,
             last_broadcast_frame: Arc::new(AtomicU64::new(0)),
             player_last_sync_positions: Arc::new(DashMap::new()),
         };
@@ -479,9 +533,39 @@ impl MassiveGameServer {
         server
     }
 
-    fn generate_initial_pickups(map_walls: &[Wall]) -> Vec<Pickup> {
-        let mut pickups = Vec::new();
-        let mut rng = rand::thread_rng();
+    fn sync_pickups_to_partition_index(
+        world_partition_manager: &Arc<WorldPartitionManager>,
+        pickups: &[Pickup],
+    ) {
+        for partition in world_partition_manager.get_partitions_for_processing() {
+            partition.dynamic_objects.clear();
+        }
+
+        for pickup in pickups {
+            let partition_idx =
+                world_partition_manager.get_partition_index_for_point(pickup.x, pickup.y);
+            if let Some(partition) = world_partition_manager.get_partition(partition_idx) {
+                partition.add_dynamic_object(pickup.clone());
+            }
+        }
+    }
+
+    fn upsert_pickup_in_partition_index(&self, pickup: &Pickup) {
+        let partition_idx = self
+            .world_partition_manager
+            .get_partition_index_for_point(pickup.x, pickup.y);
+        if let Some(partition) = self.world_partition_manager.get_partition(partition_idx) {
+            partition.add_dynamic_object(pickup.clone());
+        }
+    }
+
+    fn generate_initial_pickups(
+        map_walls: &[Wall],
+        target_players: usize,
+        seed: u64,
+    ) -> Vec<Pickup> {
+        let mut pickups: Vec<Pickup> = Vec::new();
+        let mut rng = StdRng::seed_from_u64(seed);
         let pickup_types = [
             CorePickupType::Health,
             CorePickupType::Ammo,
@@ -493,7 +577,7 @@ impl MassiveGameServer {
             CorePickupType::WeaponCrate(ServerWeaponType::Sniper),
         ];
 
-        let strategic_locations = [
+        let strategic_locations = vec![
             Vec2::new(0.0, 0.0),
             Vec2::new(WORLD_MIN_X / 2.0, WORLD_MIN_Y / 2.0),
             Vec2::new(WORLD_MAX_X / 2.0, WORLD_MIN_Y / 2.0),
@@ -502,15 +586,26 @@ impl MassiveGameServer {
             Vec2::new(WORLD_MIN_X + 250.0, 0.0),
             Vec2::new(WORLD_MAX_X - 250.0, 0.0),
         ];
+        let strategic_anchor_count = strategic_locations.len();
+        let mut spawn_anchors = strategic_locations;
+        let extra_anchor_count = (target_players / 12).clamp(0, 32);
+        for _ in 0..extra_anchor_count {
+            spawn_anchors.push(Vec2::new(
+                rng.gen_range(WORLD_MIN_X + 120.0..WORLD_MAX_X - 120.0),
+                rng.gen_range(WORLD_MIN_Y + 120.0..WORLD_MAX_Y - 120.0),
+            ));
+        }
+        let desired_pickups = (8 + (target_players / 8)).clamp(8, 48);
+        const PICKUP_SPACING_MIN: f32 = 70.0;
+        const PICKUP_SPACING_MIN_SQ: f32 = PICKUP_SPACING_MIN * PICKUP_SPACING_MIN;
 
-        let num_pickups_to_spawn = strategic_locations.len().min(pickup_types.len());
-
-        for i in 0..num_pickups_to_spawn {
-            let base_pos = strategic_locations[i % strategic_locations.len()];
+        for i in 0..desired_pickups {
+            let base_pos = spawn_anchors[i % spawn_anchors.len()];
+            let jitter = if i < strategic_anchor_count { 50.0 } else { 110.0 };
             let mut placed = false;
-            for _attempt in 0..10 {
-                let x_offset = rng.gen_range(-50.0..50.0);
-                let y_offset = rng.gen_range(-50.0..50.0);
+            for _attempt in 0..24 {
+                let x_offset = rng.gen_range(-jitter..jitter);
+                let y_offset = rng.gen_range(-jitter..jitter);
                 let x = (base_pos.x + x_offset).clamp(WORLD_MIN_X + 50.0, WORLD_MAX_X - 50.0);
                 let y = (base_pos.y + y_offset).clamp(WORLD_MIN_Y + 50.0, WORLD_MAX_Y - 50.0);
 
@@ -529,6 +624,15 @@ impl MassiveGameServer {
                     }
                 }
                 if !obstructed {
+                    let too_close_to_existing = pickups.iter().any(|existing| {
+                        let dx = existing.x - x;
+                        let dy = existing.y - y;
+                        (dx * dx + dy * dy) < PICKUP_SPACING_MIN_SQ
+                    });
+                    if too_close_to_existing {
+                        continue;
+                    }
+
                     let pickup_type = pickup_types[i % pickup_types.len()].clone();
                     pickups.push(Pickup::new(
                         Uuid::new_v4().as_u128() as u64,
@@ -542,7 +646,7 @@ impl MassiveGameServer {
             }
             if !placed {
                 warn!(
-                    "Could not place pickup {} near {:?} after 10 attempts.",
+                    "Could not place pickup {} near {:?} after 24 attempts.",
                     i, base_pos
                 );
             }
@@ -1218,7 +1322,11 @@ impl MassiveGameServer {
 
         if let Some(aoi_entry) = self.player_aois.get(peer_id_str) {
             let p_aoi = aoi_entry.value();
-            for visible_player_id in p_aoi.visible_players.iter() {
+            for visible_player_id in p_aoi
+                .visible_players
+                .iter()
+                .take(INITIAL_SNAPSHOT_MAX_PLAYERS.saturating_sub(1))
+            {
                 if let Some(pstate_guard) = shared_data.player_states_snapshot.get(visible_player_id)
                 {
                     client_state
@@ -1229,8 +1337,17 @@ impl MassiveGameServer {
                     .last_known_players
                     .insert(visible_player_id.clone());
             }
-            client_state.last_known_projectile_ids = p_aoi.visible_projectiles.clone();
-            for pickup_id in p_aoi.visible_pickups.iter() {
+            client_state.last_known_projectile_ids = p_aoi
+                .visible_projectiles
+                .iter()
+                .take(INITIAL_SNAPSHOT_MAX_PROJECTILES)
+                .copied()
+                .collect();
+            for pickup_id in p_aoi
+                .visible_pickups
+                .iter()
+                .take(INITIAL_SNAPSHOT_MAX_PICKUPS)
+            {
                 if let Some(pickup) = shared_data.pickups_snapshot.get(pickup_id) {
                     client_state.last_known_pickup_states.insert(
                         *pickup_id,
@@ -1240,6 +1357,22 @@ impl MassiveGameServer {
                     );
                 }
             }
+
+            for wall_id in p_aoi.visible_walls.iter().take(AOI_MAX_VISIBLE_WALLS) {
+                if let Some(wall_data) = shared_data.active_walls_by_id.get(wall_id) {
+                    client_state
+                        .last_known_wall_states
+                        .insert(*wall_id, (wall_data.current_health, wall_data.max_health));
+                }
+            }
+            client_state.last_known_wall_ids = Some(
+                p_aoi
+                    .visible_walls
+                    .iter()
+                    .take(AOI_MAX_VISIBLE_WALLS)
+                    .copied()
+                    .collect(),
+            );
         }
 
         let key_for_insert = peer_id_str.to_string();
@@ -1360,13 +1493,23 @@ impl MassiveGameServer {
                 .insert(visible_player_id.clone());
         }
 
-        // Update visible walls tracking if you have it
-        if let Some(ref mut last_known_walls) = client_state.last_known_wall_ids {
-            last_known_walls.clear();
-            for wall_id in &player_aoi.visible_walls {
-                last_known_walls.insert(*wall_id);
+        // Update visible wall tracking and wall state knowledge.
+        client_state.last_known_wall_states.clear();
+        for wall_id in player_aoi.visible_walls.iter().take(AOI_MAX_VISIBLE_WALLS) {
+            if let Some(wall_data) = shared_data.active_walls_by_id.get(wall_id) {
+                client_state
+                    .last_known_wall_states
+                    .insert(*wall_id, (wall_data.current_health, wall_data.max_health));
             }
         }
+        client_state.last_known_wall_ids = Some(
+            player_aoi
+                .visible_walls
+                .iter()
+                .take(AOI_MAX_VISIBLE_WALLS)
+                .copied()
+                .collect(),
+        );
 
         trace!(
             "Updated client state for {}: {} projectiles, {} pickups, {} players tracked",
@@ -2161,6 +2304,7 @@ impl MassiveGameServer {
                     if *timer <= 0.0 {
                         pickup.is_active = true;
                         pickup.respawn_timer = None;
+                        self.upsert_pickup_in_partition_index(pickup);
                     }
                 }
             }
@@ -2343,6 +2487,8 @@ impl MassiveGameServer {
                             if collected {
                                 mut_pickup.is_active = false;
                                 mut_pickup.respawn_timer = Some(mut_pickup.get_respawn_duration());
+                                let pickup_partition_state = mut_pickup.clone();
+                                self.upsert_pickup_in_partition_index(&pickup_partition_state);
                                 self.global_game_events.push(
                                     GameEvent::PowerupCollected {
                                         player_id: player_id_arc_for_pickup.clone(),
@@ -2605,16 +2751,43 @@ impl MassiveGameServer {
             return Ok(());
         }
 
-        let mut client_state_for_delta: Option<ClientState> = None;
-        let state_result = if client_info.needs_initial_state {
+        if client_info.needs_initial_state && !client_info.data_channel.is_open() {
             trace!(
-                "[Frame {}] Building initial state for {}",
+                "[Frame {}] Client {} data channel not open yet, deferring initial state build.",
                 frame,
                 peer_id_str
             );
-            server
-                .build_initial_state_optimized(peer_id_str, shared_data)
-                .await
+            return Ok(());
+        }
+
+        let mut client_state_for_delta: Option<ClientState> = None;
+        let mut used_cached_initial_state = false;
+        let state_result = if client_info.needs_initial_state {
+            let cached_initial_state = server
+                .client_states_map
+                .read()
+                .get(peer_id_str)
+                .and_then(|state| state.pending_initial_state_bytes.clone());
+
+            if let Some(cached_bytes) = cached_initial_state {
+                used_cached_initial_state = true;
+                trace!(
+                    "[Frame {}] Reusing cached initial state for {} ({} bytes)",
+                    frame,
+                    peer_id_str,
+                    cached_bytes.len()
+                );
+                Ok(cached_bytes)
+            } else {
+                trace!(
+                    "[Frame {}] Building initial state for {}",
+                    frame,
+                    peer_id_str
+                );
+                server
+                    .build_initial_state_optimized(peer_id_str, shared_data)
+                    .await
+            }
         } else {
             trace!("[Frame {}] Building delta state for {}", frame, peer_id_str);
             let client_state_snapshot = server.client_states_map
@@ -2658,14 +2831,22 @@ impl MassiveGameServer {
             peer_id_str
         );
 
-        const SEND_TIMEOUT_MS: u64 = 50;
+        const DELTA_SEND_TIMEOUT_MS: u64 = 50;
+        const INITIAL_SEND_TIMEOUT_MS: u64 = 200;
+        let send_timeout_ms = if client_info.needs_initial_state {
+            INITIAL_SEND_TIMEOUT_MS
+        } else {
+            DELTA_SEND_TIMEOUT_MS
+        };
+        let mut send_succeeded = false;
         match tokio::time::timeout(
-            Duration::from_millis(SEND_TIMEOUT_MS),
+            Duration::from_millis(send_timeout_ms),
             client_info.data_channel.send(&bytes_to_send),
         )
         .await
         {
             Ok(Ok(_)) => {
+                send_succeeded = true;
                 trace!(
                     "[Frame {}] Data sent successfully to {}",
                     frame,
@@ -2681,9 +2862,26 @@ impl MassiveGameServer {
             Err(_) => {
                 warn!(
                     "[Frame {}] Send timeout for client {} after {}ms",
-                    frame, peer_id_str, SEND_TIMEOUT_MS
+                    frame, peer_id_str, send_timeout_ms
                 );
             }
+        }
+
+        if client_info.needs_initial_state && !send_succeeded {
+            if !used_cached_initial_state {
+                let mut client_states = server.client_states_map.write();
+                let state_entry = client_states
+                    .entry(peer_id_str.to_string())
+                    .or_insert_with(ClientState::default);
+                state_entry.pending_initial_state_bytes = Some(bytes_to_send.clone());
+                state_entry.known_walls_sent = false;
+            }
+            trace!(
+                "[Frame {}] Initial state send not completed for {}, retrying on next broadcast.",
+                frame,
+                peer_id_str
+            );
+            return Ok(());
         }
 
         trace!(
@@ -3074,9 +3272,15 @@ impl MassiveGameServer {
         // Snapshot updated walls
         let updated_walls = self.updated_walls_this_tick.read().clone();
 
-        // Snapshot active walls once when at least one client needs initial state.
+        // Snapshot active walls once per broadcast and index them for fast dynamic wall streaming.
+        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+        let active_walls_cached = self.get_active_walls_cached(frame).await;
+        let mut active_walls_by_id = HashMap::with_capacity(active_walls_cached.len());
+        for wall in active_walls_cached.iter() {
+            active_walls_by_id.insert(wall.id, wall.clone());
+        }
         let active_walls_snapshot = if include_active_walls_snapshot {
-            self.collect_active_walls_optimized()
+            active_walls_cached.iter().cloned().collect()
         } else {
             Vec::new()
         };
@@ -3138,6 +3342,7 @@ impl MassiveGameServer {
             events,
             destroyed_wall_ids,
             updated_walls,
+            active_walls_by_id,
             active_walls_snapshot,
             player_states_snapshot,
             projectiles_snapshot,
@@ -3708,15 +3913,11 @@ impl MassiveGameServer {
 
             // Build updated walls (respawned walls)
             let mut updated_walls_vec = Vec::new();
+            let mut updated_wall_ids_sent = HashSet::new();
 
-            // Get updated walls from shared data (not from instance to avoid race condition)
+            // First, send walls explicitly updated this tick (damage/respawn) within AoI.
             for (wall_id, wall_data) in shared_data.updated_walls.iter() {
-                // Check if this wall is visible to the player
                 if player_aoi.visible_walls.contains(wall_id) {
-                    debug!(
-                        "[{}] Sending updated wall {} to client (health: {}/{})",
-                        peer_id_str, wall_id, wall_data.current_health, wall_data.max_health
-                    );
                     let id_fb = builder.create_string(&wall_data.id.to_string());
                     let wall_fb = fb::Wall::create(
                         &mut builder,
@@ -3732,6 +3933,56 @@ impl MassiveGameServer {
                         },
                     );
                     updated_walls_vec.push(wall_fb);
+                    updated_wall_ids_sent.insert(*wall_id);
+                    if updated_walls_vec.len() >= AOI_MAX_VISIBLE_WALLS {
+                        break;
+                    }
+                }
+            }
+
+            // Then stream newly visible or changed walls so larger/dynamic maps load progressively.
+            if updated_walls_vec.len() < AOI_MAX_VISIBLE_WALLS {
+                for visible_wall_id in &player_aoi.visible_walls {
+                    if updated_wall_ids_sent.contains(visible_wall_id) {
+                        continue;
+                    }
+
+                    let wall_data = match shared_data.active_walls_by_id.get(visible_wall_id) {
+                        Some(wall) => wall,
+                        None => continue,
+                    };
+
+                    let should_send = client_state
+                        .last_known_wall_states
+                        .get(visible_wall_id)
+                        .map_or(true, |(known_health, known_max_health)| {
+                            *known_health != wall_data.current_health
+                                || *known_max_health != wall_data.max_health
+                        });
+
+                    if !should_send {
+                        continue;
+                    }
+
+                    let id_fb = builder.create_string(&wall_data.id.to_string());
+                    let wall_fb = fb::Wall::create(
+                        &mut builder,
+                        &fb::WallArgs {
+                            id: Some(id_fb),
+                            x: wall_data.x,
+                            y: wall_data.y,
+                            width: wall_data.width,
+                            height: wall_data.height,
+                            is_destructible: wall_data.is_destructible,
+                            current_health: wall_data.current_health,
+                            max_health: wall_data.max_health,
+                        },
+                    );
+                    updated_walls_vec.push(wall_fb);
+                    updated_wall_ids_sent.insert(*visible_wall_id);
+                    if updated_walls_vec.len() >= AOI_MAX_VISIBLE_WALLS {
+                        break;
+                    }
                 }
             }
 
@@ -4268,6 +4519,22 @@ impl MassiveGameServer {
         const BROADCAST_INTERVAL_FRAMES: u64 = 1;
         const MIN_BROADCAST_CONCURRENCY: usize = 8;
         const MAX_BROADCAST_CONCURRENCY: usize = 64;
+        const MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN: usize = 8;
+        const MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN: usize = 24;
+        const MASS_JOIN_HEAVY_PENDING_INITIAL_MIN: usize = 48;
+        const MASS_JOIN_DELTA_SKIP_MODULUS: u64 = 2;
+        const MASS_JOIN_INITIAL_PER_FRAME_LIGHT: usize = 24;
+        const MASS_JOIN_INITIAL_PER_FRAME_MEDIUM: usize = 20;
+        const MASS_JOIN_INITIAL_PER_FRAME_HEAVY: usize = 16;
+        const MASS_JOIN_MAX_DELTA_PER_FRAME_MEDIUM: usize = 20;
+        const MASS_JOIN_MAX_DELTA_PER_FRAME_HEAVY: usize = 10;
+        const MASS_JOIN_CONCURRENCY_CAP: usize = 48;
+        const TAIL_JOIN_CONNECTED_CLIENTS_MIN: usize = 70;
+        const TAIL_JOIN_PENDING_INITIAL_OPEN_MIN: usize = 4;
+        const TAIL_JOIN_INITIAL_PER_FRAME_BOOST: usize = 28;
+        const TAIL_JOIN_MAX_DELTA_PER_FRAME: usize = 6;
+        const TAIL_JOIN_DELTA_SKIP_MODULUS: u64 = 3;
+        const TAIL_JOIN_CONCURRENCY_CAP: usize = 32;
 
         let current_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
         let last_broadcast = self.last_broadcast_frame.load(AtomicOrdering::Relaxed);
@@ -4321,17 +4588,116 @@ impl MassiveGameServer {
                 .iter()
                 .map(|entry| {
                     let peer_id = entry.key().clone();
+                    let data_channel = Arc::clone(entry.value());
                     let needs_initial = !client_states_guard
                         .get(&peer_id)
                         .map_or(false, |cs_state| cs_state.known_walls_sent);
-                    (peer_id, Arc::clone(entry.value()), needs_initial)
+                    let channel_open = data_channel.is_open();
+                    (peer_id, data_channel, needs_initial, channel_open)
                 })
                 .collect()
         };
 
-        let include_active_walls_snapshot = client_entries
-            .iter()
-            .any(|(_, _, needs_initial)| *needs_initial);
+        let mut initial_entries_open: Vec<(String, Arc<crate::core::types::RTCDataChannel>, bool)> =
+            Vec::new();
+        let mut delta_entries: Vec<(String, Arc<crate::core::types::RTCDataChannel>, bool)> =
+            Vec::new();
+        let mut pending_initial_closed_count = 0usize;
+
+        for (peer_id, data_channel, needs_initial, channel_open) in client_entries {
+            if needs_initial {
+                if channel_open {
+                    initial_entries_open.push((peer_id, data_channel, true));
+                } else {
+                    pending_initial_closed_count += 1;
+                }
+            } else {
+                delta_entries.push((peer_id, data_channel, false));
+            }
+        }
+
+        let pending_initial_open_count = initial_entries_open.len();
+        let pending_initial_total_count = pending_initial_open_count + pending_initial_closed_count;
+        let tail_join_mode = connected_clients >= TAIL_JOIN_CONNECTED_CLIENTS_MIN
+            && pending_initial_open_count >= TAIL_JOIN_PENDING_INITIAL_OPEN_MIN;
+
+        // Keep budget decisions tied to total backlog, but only schedule actionable
+        // initial sends (open data channels).
+        let mut max_initial_per_frame =
+            if pending_initial_total_count >= MASS_JOIN_HEAVY_PENDING_INITIAL_MIN {
+            MASS_JOIN_INITIAL_PER_FRAME_HEAVY
+        } else if pending_initial_total_count >= MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN {
+            MASS_JOIN_INITIAL_PER_FRAME_MEDIUM
+        } else {
+            MASS_JOIN_INITIAL_PER_FRAME_LIGHT
+        };
+        if tail_join_mode {
+            // 70+ client wave: allocate more slots to initial delivery to drain backlog sooner.
+            max_initial_per_frame = max_initial_per_frame.max(TAIL_JOIN_INITIAL_PER_FRAME_BOOST);
+        }
+
+        let scheduled_initial_entries =
+            if pending_initial_open_count > max_initial_per_frame && max_initial_per_frame > 0 {
+                let start_index = (current_frame as usize) % pending_initial_open_count;
+                let mut selected = Vec::with_capacity(max_initial_per_frame);
+                for offset in 0..max_initial_per_frame {
+                    let idx = (start_index + offset) % pending_initial_open_count;
+                    selected.push(initial_entries_open[idx].clone());
+                }
+                selected
+            } else {
+                initial_entries_open
+            };
+
+        let include_active_walls_snapshot = !scheduled_initial_entries.is_empty();
+        let throttle_delta_broadcasts =
+            tail_join_mode || pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN;
+        let mut max_delta_per_frame = if pending_initial_total_count >= MASS_JOIN_HEAVY_PENDING_INITIAL_MIN
+        {
+            MASS_JOIN_MAX_DELTA_PER_FRAME_HEAVY
+        } else if pending_initial_total_count >= MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN {
+            MASS_JOIN_MAX_DELTA_PER_FRAME_MEDIUM
+        } else {
+            usize::MAX
+        };
+        if tail_join_mode {
+            max_delta_per_frame = max_delta_per_frame.min(TAIL_JOIN_MAX_DELTA_PER_FRAME);
+        }
+        let delta_skip_modulus = if tail_join_mode {
+            TAIL_JOIN_DELTA_SKIP_MODULUS
+        } else {
+            MASS_JOIN_DELTA_SKIP_MODULUS
+        };
+
+        let mut scheduled_client_entries = scheduled_initial_entries;
+        let mut scheduled_delta_count = 0usize;
+        for (peer_id, data_channel, needs_initial) in delta_entries {
+            if throttle_delta_broadcasts && current_frame % delta_skip_modulus != 0 {
+                continue;
+            }
+            if scheduled_delta_count >= max_delta_per_frame {
+                continue;
+            }
+            scheduled_client_entries.push((peer_id, data_channel, needs_initial));
+            scheduled_delta_count += 1;
+        }
+
+        debug!(
+            "[Frame {}] Join scheduler: pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, tail_join_mode={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, scheduled_initial={}, scheduled_delta={}",
+            current_frame,
+            pending_initial_total_count,
+            pending_initial_open_count,
+            pending_initial_closed_count,
+            tail_join_mode,
+            max_initial_per_frame,
+            max_delta_per_frame,
+            delta_skip_modulus,
+            scheduled_client_entries
+                .iter()
+                .filter(|(_, _, needs_initial)| *needs_initial)
+                .count(),
+            scheduled_delta_count
+        );
 
         let shared_broadcast_data = Arc::new(
             self.prepare_shared_broadcast_data(include_active_walls_snapshot)
@@ -4341,15 +4707,21 @@ impl MassiveGameServer {
             current_frame, shared_broadcast_data.events.len(), shared_broadcast_data.destroyed_wall_ids.len(),
             shared_broadcast_data.chat_messages.len(), shared_broadcast_data.kill_feed_snapshot.len());
 
-        let broadcast_concurrency = (self
+        let mut broadcast_concurrency = (self
             .config
             .thread_pools
             .networking_threads
             .saturating_mul(4))
         .clamp(MIN_BROADCAST_CONCURRENCY, MAX_BROADCAST_CONCURRENCY);
+        if pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN {
+            broadcast_concurrency = broadcast_concurrency.min(MASS_JOIN_CONCURRENCY_CAP);
+        }
+        if tail_join_mode {
+            broadcast_concurrency = broadcast_concurrency.min(TAIL_JOIN_CONCURRENCY_CAP);
+        }
 
         let mut fanout_tasks = JoinSet::new();
-        for (peer_id_str, data_channel_arc, needs_initial) in client_entries {
+        for (peer_id_str, data_channel_arc, needs_initial) in scheduled_client_entries {
             let server_ref = Arc::clone(&self);
             let shared_data_ref = Arc::clone(&shared_broadcast_data);
 
@@ -4413,10 +4785,6 @@ impl MassiveGameServer {
         peer_id_str: &str,
         shared_data: &SharedBroadcastData, // Used for timestamp, match_info, kill_feed
     ) -> Result<Bytes, Box<dyn std::error::Error + Send + Sync>> {
-        const MAX_INITIAL_PLAYERS: usize = 50;
-        const MAX_INITIAL_WALLS: usize = 350; // Increased slightly, adjust as needed
-        const MAX_INITIAL_PROJECTILES: usize = 500;
-        const MAX_INITIAL_PICKUPS: usize = 50;
         const MAX_INITIAL_EVENTS: usize = 30;
         const MAX_INITIAL_KILL_FEED: usize = 10;
         const MAX_MESSAGE_SIZE_BYTES: usize = 160000; // Slightly less than 64KB
@@ -4448,8 +4816,8 @@ impl MassiveGameServer {
                 active_walls_to_send.len()
             );
 
-            let mut walls_fb_vec = Vec::with_capacity(active_walls_to_send.len().min(MAX_INITIAL_WALLS));
-            for wall_data in active_walls_to_send.iter().take(MAX_INITIAL_WALLS) {
+            let mut walls_fb_vec = Vec::with_capacity(active_walls_to_send.len().min(INITIAL_SNAPSHOT_MAX_WALLS));
+            for wall_data in active_walls_to_send.iter().take(INITIAL_SNAPSHOT_MAX_WALLS) {
                 let id_fb = fb_safe_str(&mut builder, &wall_data.id.to_string());
                 walls_fb_vec.push(fb::Wall::create(&mut builder, &fb::WallArgs{
                     id: Some(id_fb), x: wall_data.x, y: wall_data.y, width: wall_data.width, height: wall_data.height,
@@ -4473,7 +4841,7 @@ impl MassiveGameServer {
                 warn!("[Frame {} Client {}] InitialState: Self player state not found!", frame, peer_id_str);
             }
 
-            for visible_player_id in player_aoi_data_for_initial_state.visible_players.iter().take(MAX_INITIAL_PLAYERS.saturating_sub(players_fb_vec.len())) {
+            for visible_player_id in player_aoi_data_for_initial_state.visible_players.iter().take(INITIAL_SNAPSHOT_MAX_PLAYERS.saturating_sub(players_fb_vec.len())) {
                 if visible_player_id != &self_player_id_arc { // Already added self
                     if let Some(pstate_guard) = shared_data.player_states_snapshot.get(visible_player_id) {
                         players_fb_vec.push(create_fb_player_state_for_delta(&mut builder, pstate_guard, 0xFFFF));
@@ -4485,7 +4853,7 @@ impl MassiveGameServer {
 
             // 3. Projectiles (from AoI)
             let mut projectiles_fb_vec = Vec::new();
-            for proj_id in player_aoi_data_for_initial_state.visible_projectiles.iter().take(MAX_INITIAL_PROJECTILES) {
+            for proj_id in player_aoi_data_for_initial_state.visible_projectiles.iter().take(INITIAL_SNAPSHOT_MAX_PROJECTILES) {
                 if let Some(proj) = shared_data.projectiles_snapshot.get(proj_id) {
                     let id_fb = fb_safe_str(&mut builder, &proj.id.to_string());
                     let owner_id_fb = fb_safe_str(&mut builder, proj.owner_id.as_str());
@@ -4501,7 +4869,7 @@ impl MassiveGameServer {
 
             // 4. Pickups (Active ones from AoI)
             let mut pickups_fb_vec = Vec::new();
-            for pickup_id in player_aoi_data_for_initial_state.visible_pickups.iter().take(MAX_INITIAL_PICKUPS) {
+            for pickup_id in player_aoi_data_for_initial_state.visible_pickups.iter().take(INITIAL_SNAPSHOT_MAX_PICKUPS) {
                 if let Some(pickup) = shared_data.pickups_snapshot.get(pickup_id) {
                     if pickup.is_active { // Only send active pickups
                         let (fb_pickup_type, fb_weapon_type_opt) = map_core_pickup_to_fb(&pickup.pickup_type);
@@ -4545,7 +4913,7 @@ impl MassiveGameServer {
             let flag_states_fb = builder.create_vector(&fb_flag_states_vec);
 
             // 7. Map Name
-            let map_name_fb = fb_safe_str(&mut builder, "Massive Arena"); // Or get from config/state
+            let map_name_fb = fb_safe_str(&mut builder, &self.map_name);
 
             // 8. Timestamp (from shared_data)
             let timestamp_initial = shared_data.timestamp_ms;
@@ -4768,7 +5136,7 @@ impl MassiveGameServer {
         );
         drop(match_info_guard);
 
-        let map_name_fb = builder.create_string("Massive Arena 10v10");
+        let map_name_fb = builder.create_string(&self.map_name);
         let timestamp_initial = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
