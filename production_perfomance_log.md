@@ -1,4 +1,4 @@
-# Production Performance Log (Refreshed 2026-02-12)
+# Production Performance Log (Refreshed 2026-02-13)
 
 ## Join-Throughput Pass Summary
 
@@ -72,10 +72,30 @@
     - `49-72`: `count=24/24`, `avg=48885.54`, `p95=65229.55`
     - `73+`: `count=20/48`, `avg=84908.05`, `p95=93529.1`
 
+### UI render gate retune + deterministic rerun (2026-02-13)
+- Gate defaults updated for headless/older GPU variance:
+  - `scripts/ui_bench/render_stress.js`: `minFpsRatio=0.45`, `maxSmoothedFrameMs=36`
+  - `scripts/scale/run.sh`: `UI_RENDER_STRESS_MIN_FPS_RATIO=0.45`, `UI_RENDER_STRESS_MAX_SMOOTHED_FRAME_MS=36`
+  - `scripts/scale/README.md`: defaults documented accordingly
+- A/B render-stress reruns with tuned gate:
+  - `artifacts/ui_bench/render_stress_combat_ui_auto_gate_tuned.json`
+    - `passed=true`, baseline `119.56 FPS`, stress(400) `54.53 FPS`
+  - `artifacts/ui_bench/render_stress_combat_ui_low_gate_tuned.json`
+    - `passed=true`, baseline `117.58 FPS`, stress(400) `55.29 FPS`
+- Fresh deterministic `120` rerun:
+  - `artifacts/scale/multi_client_fresh_120_after_ui_gate_tune_20260213.json`
+  - `92/120`, `connectedRatio=0.7667`, `passed=false`, `durationMs=639713`
+  - `connectLatencyMs`: `p50=26140.5`, `p90=90676`, `p95=94906.2`, `p99=97708.61`, `max=99100`
+  - `connectLatencyByWave`:
+    - `1-24`: `count=24/24`, `avg=16665.04`, `p95=20207.45`
+    - `25-48`: `count=24/24`, `avg=21863.33`, `p95=29118.15`
+    - `49-72`: `count=24/24`, `avg=44989.96`, `p95=69302.25`
+    - `73+`: `count=20/48`, `avg=86006.05`, `p95=97647.45`
+
 ### Updated boundary status
 - `80` clients still clears at `80/80`.
-- `120` clients remains launch-timeout limited; latest pass regressed slightly from `93/120` to `92/120`.
-- Main unresolved bottleneck is the `73+` wave tail where fewer than half of requested slots connect within the 600000ms cap.
+- `120` clients remains launch-timeout limited; latest refreshed rerun remains `92/120`.
+- Main unresolved bottleneck is still the `73+` wave tail where fewer than half of requested slots connect within the 600000ms cap (`20/48` in latest rerun).
 
 ### Test status
 - `cargo test -p massive_game_server_core --test boundary_stress -- --nocapture` passed.

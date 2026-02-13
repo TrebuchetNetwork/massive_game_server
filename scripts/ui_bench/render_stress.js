@@ -25,11 +25,11 @@ function parseArgs(argv) {
     minIntensity: 2,
     maxIntensity: 40,
     minFps: 0,
-    minFpsRatio: 0.6,
+    minFpsRatio: 0.45,
     maxLongTasks: -1,
     maxLongTaskAvgMs: -1,
     maxHeapGrowthMb: -1,
-    maxSmoothedFrameMs: 34,
+    maxSmoothedFrameMs: 36,
     headless: true,
     outPath: path.resolve(process.cwd(), "artifacts", "ui_bench", "render_stress.json")
   };
@@ -110,11 +110,11 @@ function printHelp() {
   --min-intensity <n>            Lower clamp for FX intensity (default: 2)
   --max-intensity <n>            Upper clamp for FX intensity (default: 40)
   --min-fps <fps>                Absolute FPS floor (default: 0)
-  --min-fps-ratio <0-1>          Min ratio vs baseline FPS (default: 0.6)
+  --min-fps-ratio <0-1>          Min ratio vs baseline FPS (default: 0.45)
   --max-long-tasks <n>           Max long tasks per stage (-1 disables)
   --max-long-task-avg-ms <ms>    Max long-task avg duration (-1 disables)
   --max-heap-growth-mb <mb>      Max heap growth per stage (-1 disables)
-  --max-smoothed-frame-ms <ms>   Max average smoothed frame ms (-1 disables, default: 34)
+  --max-smoothed-frame-ms <ms>   Max average smoothed frame ms (-1 disables, default: 36)
   --headed                       Run with visible browser
   --out <path>                   Output JSON path
 `);

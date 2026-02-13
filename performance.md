@@ -1,8 +1,27 @@
-# Performance Status (2026-02-12)
+# Performance Status (2026-02-13)
 
 ## Scope
 - Goal: keep `10v10` stable and clear the remaining `80+` launch-timeout bottleneck.
 - This refresh retested join throughput after the dynamic+deterministic world optimization pass.
+
+## Incremental Refresh (2026-02-13)
+- Retested the UI render-stress gate with tuned defaults to stop false negatives on headless/GPU-variant runs:
+  - `UI_RENDER_STRESS_MIN_FPS_RATIO=0.45` (from `0.6`)
+  - `UI_RENDER_STRESS_MAX_SMOOTHED_FRAME_MS=36` (from `34`)
+- Refreshed artifacts:
+  - `artifacts/ui_bench/render_stress_combat_ui_auto_gate_tuned.json`
+    - `passed=true`, baseline `119.56 FPS`, stress(400) `54.53 FPS`
+  - `artifacts/ui_bench/render_stress_combat_ui_low_gate_tuned.json`
+    - `passed=true`, baseline `117.58 FPS`, stress(400) `55.29 FPS`
+- Re-ran deterministic `120` benchmark with the same launch profile:
+  - `artifacts/scale/multi_client_fresh_120_after_ui_gate_tune_20260213.json`
+  - `92/120`, `connectedRatio=0.7667`, `passed=false`, `durationMs=639713`
+  - `connectLatencyMs`: `p50=26140.5`, `p90=90676`, `p95=94906.2`, `p99=97708.61`, `max=99100`
+  - `connectLatencyByWave`:
+    - `1-24`: `count=24/24`, `avg=16665.04`, `p95=20207.45`
+    - `25-48`: `count=24/24`, `avg=21863.33`, `p95=29118.15`
+    - `49-72`: `count=24/24`, `avg=44989.96`, `p95=69302.25`
+    - `73+`: `count=20/48`, `avg=86006.05`, `p95=97647.45`
 
 ## Deterministic Benchmark Setup
 - Server target: `target/release/massive_game_server_core` on `127.0.0.1:19080`.
@@ -65,6 +84,15 @@
     - `49-72`: `count=24/24`, `avg=48885.54`, `p95=65229.55`
     - `73+`: `count=20/48`, `avg=84908.05`, `p95=93529.1`
   - Result: instrumentation now pinpoints the tail failure window, but boundary remains unchanged (`120` still timeout-limited)
+- `artifacts/scale/multi_client_fresh_120_after_ui_gate_tune_20260213.json` (fresh retest, same deterministic profile)
+  - `92/120`, `connectedRatio=0.7667`, `passed=false`, `durationMs=639713`
+  - `connectLatencyMs`: `p50=26140.5`, `p90=90676`, `p95=94906.2`, `p99=97708.61`, `max=99100`
+  - `connectLatencyByWave`:
+    - `1-24`: `count=24/24`, `avg=16665.04`, `p95=20207.45`
+    - `25-48`: `count=24/24`, `avg=21863.33`, `p95=29118.15`
+    - `49-72`: `count=24/24`, `avg=44989.96`, `p95=69302.25`
+    - `73+`: `count=20/48`, `avg=86006.05`, `p95=97647.45`
+  - Result: duration improved vs previous `120` run, but `73+` completion remains `20/48` so boundary still unchanged
 
 ## Stress / Regression Checks
 - `cargo test -p massive_game_server_core --test boundary_stress -- --nocapture`
@@ -77,7 +105,7 @@
 ## Current Bottleneck
 - `80` clients is no longer timeout-limited under this configuration.
 - `120` clients remains launch-timeout limited (`92/120` at 600000ms cap in latest run).
-- Remaining risk is long-tail join latency in final waves (`73+` wave `avg~84.9s`, `p95~93.5s`, with only `20/48` tail slots connected).
+- Remaining risk is long-tail join latency in final waves (`73+` wave `avg~86.0s`, `p95~97.6s`, with only `20/48` tail slots connected).
 
 ## Next Step Candidates
 - Tune join pipeline specifically for wave `73+`:

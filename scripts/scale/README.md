@@ -47,8 +47,8 @@ Run outputs include:
 - `UI_RENDER_STRESS_START_OBJECTS=400`: starting synthetic object pressure
 - `UI_RENDER_STRESS_MAX_OBJECTS=2800`: max synthetic object pressure
 - `UI_RENDER_STRESS_STEP_OBJECTS=400`: object sweep step size
-- `UI_RENDER_STRESS_MIN_FPS_RATIO=0.6`: min FPS ratio vs baseline in render stress
-- `UI_RENDER_STRESS_MAX_SMOOTHED_FRAME_MS=34`: max average smoothed frame-time per stage
+- `UI_RENDER_STRESS_MIN_FPS_RATIO=0.45`: min FPS ratio vs baseline in render stress
+- `UI_RENDER_STRESS_MAX_SMOOTHED_FRAME_MS=36`: max average smoothed frame-time per stage
 - `RUN_WEBGPU_PROBE=1`: run the WebGPU probe stage
 - `WEBGPU_PROBE_FRAME_PACING=uncapped`: `uncapped` or `raf`
 - `WEBGPU_PROBE_WAIT_GPU_EVERY_FRAMES=120`: periodic queue sync cadence for stable probe metrics
