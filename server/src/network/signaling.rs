@@ -62,6 +62,10 @@ pub struct ChatMessage {
 pub type ChatMessagesQueue = Arc<RwLock<VecDeque<ChatMessage>>>;
 static NEXT_CHAT_MESSAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+pub fn next_chat_message_seq() -> u64 {
+    NEXT_CHAT_MESSAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Clone, Debug)]
 pub struct ClientState {
     pub known_walls_sent: bool,
@@ -523,7 +527,10 @@ pub async fn handle_signaling_connection(
                 }
             }
 
-            if !server_instance_on_open.ensure_human_join_capacity(&current_peer_id_on_open_cb) {
+            let team_to_assign = player_manager_on_open.assign_team_to_new_player();
+            if !server_instance_on_open
+                .ensure_human_join_capacity_for_team(&current_peer_id_on_open_cb, Some(team_to_assign))
+            {
                 warn!(
                     "[{}]: server is full and no bot slot could be reclaimed for human priority join.",
                     current_peer_id_on_open_cb
@@ -534,7 +541,6 @@ pub async fn handle_signaling_connection(
             let player_id_arc_for_spawn = player_manager_on_open
                 .id_pool
                 .get_or_create(&current_peer_id_on_open_cb);
-            let team_to_assign = player_manager_on_open.assign_team_to_new_player();
             let initial_spawn_pos = server_instance_on_open
                 .respawn_manager
                 .get_respawn_position(
@@ -733,8 +739,7 @@ pub async fn handle_signaling_connection(
 
                                         let trimmed_msg: String =
                                             message_text_fb.chars().take(100).collect();
-                                        let current_seq = NEXT_CHAT_MESSAGE_SEQ
-                                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                        let current_seq = next_chat_message_seq();
                                         let chat_entry = ChatMessage {
                                             seq: current_seq,
                                             player_id: player_id_arc_for_chat,

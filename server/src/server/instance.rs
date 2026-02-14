@@ -18,7 +18,8 @@ use crate::flatbuffers_generated::game_protocol as fb;
 use crate::network::signaling::ChatMessage;
 use crate::network::signaling::PickupState;
 use crate::network::signaling::{
-    handle_dc_send_error, ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap,
+    handle_dc_send_error, next_chat_message_seq, ChatMessagesQueue, ClientState, ClientStatesMap,
+    DataChannelsMap,
 };
 use crate::systems::ai::bot_ai::BotAISystem;
 use crate::systems::ai::optimized_bot_ai::OptimizedBotAI;
@@ -575,7 +576,8 @@ async fn send_packet_batch_over_channel(
 
     let mut sent_packets = 0usize;
     for packet in packets {
-        match tokio::time::timeout(Duration::from_millis(timeout_ms), data_channel.send(packet)).await
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), data_channel.send(packet))
+            .await
         {
             Ok(Ok(_)) => {
                 sent_packets += 1;
@@ -735,6 +737,7 @@ pub struct MassiveGameServer {
 }
 
 const MAX_KILL_FEED_HISTORY: usize = 10;
+const MAX_CHAT_MESSAGES_HISTORY: usize = 50;
 const MAX_MELEE_EVENTS_PER_TICK: usize = 200;
 static CACHED_WALLS: OnceCell<Arc<ParkingLotRwLock<(u64, Vec<Wall>)>>> = OnceCell::new();
 
@@ -2314,11 +2317,12 @@ impl MassiveGameServer {
         // Snapshot alive player positions once for this tick to avoid repeated per-hit lock lookups.
         let player_collision_snapshot: Arc<HashMap<PlayerID, (f32, f32)>> = {
             let mut by_id = HashMap::with_capacity(self.player_manager.player_count());
-            self.player_manager.for_each_player(|player_id, player_state| {
-                if player_state.alive {
-                    by_id.insert(player_id.clone(), (player_state.x, player_state.y));
-                }
-            });
+            self.player_manager
+                .for_each_player(|player_id, player_state| {
+                    if player_state.alive {
+                        by_id.insert(player_id.clone(), (player_state.x, player_state.y));
+                    }
+                });
             Arc::new(by_id)
         };
 
@@ -3222,7 +3226,9 @@ impl MassiveGameServer {
 
         let projectiles_guard = self.projectiles.read();
         self.projectile_soa_snapshot
-            .publish(ProjectileSoASnapshot::from_projectiles_slice(&projectiles_guard));
+            .publish(ProjectileSoASnapshot::from_projectiles_slice(
+                &projectiles_guard,
+            ));
         drop(projectiles_guard);
 
         let pickups_guard = self.pickups.read();
@@ -4405,8 +4411,7 @@ impl MassiveGameServer {
         .await;
 
         if let Ok(bytes) = message_result {
-            let sent_packets =
-                send_packet_batch_over_channel(&data_channel, &[bytes], 50).await;
+            let sent_packets = send_packet_batch_over_channel(&data_channel, &[bytes], 50).await;
             if sent_packets == 0 {
                 handle_dc_send_error(
                     "send timeout/failure",
@@ -4468,29 +4473,54 @@ impl MassiveGameServer {
         }
     }
 
+    fn team_player_counts(&self) -> (usize, usize) {
+        let mut team1_count = 0usize;
+        let mut team2_count = 0usize;
+        self.player_manager.for_each_player(|_, state| {
+            if state.team_id == 1 {
+                team1_count += 1;
+            } else if state.team_id == 2 {
+                team2_count += 1;
+            }
+        });
+        (team1_count, team2_count)
+    }
+
     pub fn ensure_human_join_capacity(&self, joining_peer_id: &str) -> bool {
+        self.ensure_human_join_capacity_for_team(joining_peer_id, None)
+    }
+
+    pub fn ensure_human_join_capacity_for_team(
+        &self,
+        joining_peer_id: &str,
+        joining_team: Option<u8>,
+    ) -> bool {
         if !self.human_priority_enabled {
             return self.player_manager.player_count() < self.config.max_players_per_match;
         }
         if self.player_manager.player_count() < self.config.max_players_per_match {
             return true;
         }
-        let Some(bot_id) = self.select_lowest_performing_bot() else {
+        let selected_bot = match joining_team {
+            Some(team) if team == 1 || team == 2 => self.select_balanced_bot_for_human_join(team),
+            _ => self.select_lowest_performing_bot(),
+        };
+        let Some(bot_id) = selected_bot else {
             warn!(
                 "[Human Priority] No bot available to evict for human '{}'; server remains full.",
                 joining_peer_id
             );
             return false;
         };
-        self.evict_bot_for_human(&bot_id, joining_peer_id)
+        self.evict_bot_for_human(&bot_id, joining_peer_id, joining_team)
     }
 
-    fn select_lowest_performing_bot(&self) -> Option<PlayerID> {
-        let mut worst: Option<(PlayerID, i64)> = None;
+    fn bot_eviction_candidates(&self) -> Vec<(PlayerID, i64, u8, String)> {
+        let mut candidates = Vec::with_capacity(self.bot_players.len());
 
         for entry in self.bot_players.iter() {
             let bot_id = entry.key().clone();
-            let rating = self
+            let (rating, team_id, username) = self
                 .player_manager
                 .get_player_state(&bot_id)
                 .map(|state| {
@@ -4498,23 +4528,104 @@ impl MassiveGameServer {
                     let kills = state.kills as i64 * 25;
                     let deaths_penalty = state.deaths as i64 * 10;
                     let health_bonus = state.health.max(0) as i64;
-                    score + kills + health_bonus - deaths_penalty
+                    (
+                        score + kills + health_bonus - deaths_penalty,
+                        state.team_id,
+                        state.username.clone(),
+                    )
                 })
-                .unwrap_or(i64::MIN);
-
-            let should_replace = worst
-                .as_ref()
-                .map(|(_, current_rating)| rating < *current_rating)
-                .unwrap_or(true);
-            if should_replace {
-                worst = Some((bot_id, rating));
-            }
+                .unwrap_or((i64::MIN, 0, bot_id.as_str().to_owned()));
+            candidates.push((bot_id, rating, team_id, username));
         }
 
-        worst.map(|(bot_id, _)| bot_id)
+        candidates
     }
 
-    fn evict_bot_for_human(&self, bot_id: &PlayerID, joining_peer_id: &str) -> bool {
+    fn select_lowest_performing_bot(&self) -> Option<PlayerID> {
+        self.bot_eviction_candidates()
+            .into_iter()
+            .min_by_key(|(_, rating, _, _)| *rating)
+            .map(|(bot_id, _, _, _)| bot_id)
+    }
+
+    fn select_balanced_bot_for_human_join(&self, joining_team: u8) -> Option<PlayerID> {
+        let candidates = self.bot_eviction_candidates();
+        if candidates.is_empty() {
+            return None;
+        }
+        if joining_team != 1 && joining_team != 2 {
+            return candidates
+                .into_iter()
+                .min_by_key(|(_, rating, _, _)| *rating)
+                .map(|(bot_id, _, _, _)| bot_id);
+        }
+
+        let (team1_count, team2_count) = self.team_player_counts();
+        candidates
+            .into_iter()
+            .map(|(bot_id, rating, bot_team, _)| {
+                let mut projected_team1 =
+                    team1_count as i64 + if joining_team == 1 { 1 } else { 0 };
+                let mut projected_team2 =
+                    team2_count as i64 + if joining_team == 2 { 1 } else { 0 };
+                if bot_team == 1 {
+                    projected_team1 -= 1;
+                } else if bot_team == 2 {
+                    projected_team2 -= 1;
+                }
+                let imbalance = (projected_team1 - projected_team2).abs();
+                (bot_id, imbalance, rating)
+            })
+            .min_by(|lhs, rhs| lhs.1.cmp(&rhs.1).then_with(|| lhs.2.cmp(&rhs.2)))
+            .map(|(bot_id, _, _)| bot_id)
+    }
+
+    fn enqueue_system_chat_message(&self, message: String) {
+        let entry = ChatMessage {
+            seq: next_chat_message_seq(),
+            player_id: self.player_manager.id_pool.get_or_create("system"),
+            username: "System".to_owned(),
+            message: message.chars().take(160).collect(),
+            timestamp: self.get_server_timestamp_ms(),
+        };
+
+        if let Ok(mut chat_q_guard) = self.chat_messages_queue.try_write() {
+            chat_q_guard.push_back(entry);
+            if chat_q_guard.len() > MAX_CHAT_MESSAGES_HISTORY {
+                chat_q_guard.pop_front();
+            }
+            return;
+        }
+
+        let queue = self.chat_messages_queue.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let mut chat_q_guard = queue.write().await;
+                chat_q_guard.push_back(entry);
+                if chat_q_guard.len() > MAX_CHAT_MESSAGES_HISTORY {
+                    chat_q_guard.pop_front();
+                }
+            });
+        } else {
+            warn!(
+                "[System Chat] Dropped announcement without runtime: {}",
+                message
+            );
+        }
+    }
+
+    fn evict_bot_for_human(
+        &self,
+        bot_id: &PlayerID,
+        joining_peer_id: &str,
+        joining_team: Option<u8>,
+    ) -> bool {
+        let bot_snapshot = self
+            .bot_eviction_candidates()
+            .into_iter()
+            .find(|(candidate_bot_id, _, _, _)| candidate_bot_id == bot_id)
+            .map(|(_, _, team_id, username)| (team_id, username));
+
         if self.bot_players.remove(bot_id).is_none() {
             return false;
         }
@@ -4528,6 +4639,25 @@ impl MassiveGameServer {
             "[Human Priority] Evicted bot '{}' to free a slot for human '{}'.",
             bot_id, joining_peer_id
         );
+
+        if joining_peer_id != "bot_population_manager" {
+            let (bot_team, bot_name) =
+                bot_snapshot.unwrap_or((0, format!("Bot {}", bot_id.as_str())));
+            let mut announcement = format!(
+                "{} was rotated out to free a slot for {}.",
+                bot_name, joining_peer_id
+            );
+            if let Some(team) = joining_team {
+                if (team == 1 || team == 2) && (bot_team == 1 || bot_team == 2) {
+                    announcement.push_str(&format!(
+                        " Team balance: joiner T{}, removed bot T{}.",
+                        team, bot_team
+                    ));
+                }
+            }
+            self.enqueue_system_chat_message(announcement);
+        }
+
         true
     }
 
@@ -4662,7 +4792,7 @@ impl MassiveGameServer {
             let Some(bot_key) = self.select_lowest_performing_bot() else {
                 break;
             };
-            if self.evict_bot_for_human(&bot_key, "bot_population_manager") {
+            if self.evict_bot_for_human(&bot_key, "bot_population_manager", None) {
                 removed_count += 1;
             } else {
                 break;
@@ -7103,8 +7233,8 @@ impl MassiveGameServer {
                 .iter()
                 .map(build_chat_game_message_bytes)
                 .collect();
-            let sent_packets = send_packet_batch_over_channel(data_channel, &outbound_packets, 30)
-                .await;
+            let sent_packets =
+                send_packet_batch_over_channel(data_channel, &outbound_packets, 30).await;
 
             for chat_entry in chat_messages_to_send.iter().take(sent_packets) {
                 if chat_entry.seq > max_seq_in_batch {

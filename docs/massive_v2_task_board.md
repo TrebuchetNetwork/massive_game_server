@@ -46,11 +46,13 @@
   - `server/src/server/instance.rs`
   - `server/src/network/signaling.rs`
   - full server joins can evict the lowest-performing bot when match is full.
+  - team-aware bot eviction bias for balanced joins (`ensure_human_join_capacity_for_team`)
+  - explicit eviction announcement enqueued to system chat feed for all human-priority slot reclaim events.
 - Updated server docs:
   - `server/README.md`
 
 ## Next Execution Batch
 1. Wire OpenRouter provider call in `code_generation` service (currently deterministic template fallback).
 2. Add wasm upload/registration API path (`model -> wasm artifact`) and execute round-robin arena workers.
-3. Extend slot manager policy with reserved-team balancing and explicit eviction announcements in kill feed/system chat.
+3. Extend slot manager policy with explicit kill-feed style notification (current rollout emits system chat announcements with team-balance context).
 4. Continue tail-wave join regression isolation with `120` deterministic reruns.
