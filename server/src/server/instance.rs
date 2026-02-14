@@ -264,6 +264,45 @@ fn create_fb_player_state_for_delta<'a>(
     )
 }
 
+fn build_chat_game_message_bytes(chat_entry: &ChatMessage) -> Bytes {
+    thread_local! {
+        static CHAT_BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
+            RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(256));
+    }
+
+    CHAT_BUILDER.with(|builder_cell| {
+        let mut chat_builder = builder_cell.borrow_mut();
+        chat_builder.reset();
+
+        let player_id_fb = chat_builder.create_string(chat_entry.player_id.as_str());
+        let username_fb = chat_builder.create_string(&chat_entry.username);
+        let message_fb = chat_builder.create_string(&chat_entry.message);
+
+        let chat_payload_offset = fb::ChatMessage::create(
+            &mut chat_builder,
+            &fb::ChatMessageArgs {
+                seq: chat_entry.seq,
+                player_id: Some(player_id_fb),
+                username: Some(username_fb),
+                message: Some(message_fb),
+                timestamp: chat_entry.timestamp,
+            },
+        );
+
+        let game_message_offset = fb::GameMessage::create(
+            &mut chat_builder,
+            &fb::GameMessageArgs {
+                msg_type: fb::MessageType::Chat,
+                actual_message_type: fb::MessagePayload::ChatMessage,
+                actual_message: Some(chat_payload_offset.as_union_value()),
+            },
+        );
+
+        chat_builder.finish(game_message_offset, None);
+        Bytes::from(chat_builder.finished_data().to_vec())
+    })
+}
+
 fn build_game_event_fb<'a>(
     builder: &mut flatbuffers::FlatBufferBuilder<'a>,
     event: &GameEvent,
@@ -1443,34 +1482,7 @@ impl MassiveGameServer {
             .collect();
 
         for chat_entry in messages_to_send {
-            let mut chat_builder = flatbuffers::FlatBufferBuilder::with_capacity(256);
-
-            let player_id_fb = chat_builder.create_string(chat_entry.player_id.as_str());
-            let username_fb = chat_builder.create_string(&chat_entry.username);
-            let message_fb = chat_builder.create_string(&chat_entry.message);
-
-            let chat_payload_offset = fb::ChatMessage::create(
-                &mut chat_builder,
-                &fb::ChatMessageArgs {
-                    seq: chat_entry.seq,
-                    player_id: Some(player_id_fb),
-                    username: Some(username_fb),
-                    message: Some(message_fb),
-                    timestamp: chat_entry.timestamp,
-                },
-            );
-
-            let game_message_offset = fb::GameMessage::create(
-                &mut chat_builder,
-                &fb::GameMessageArgs {
-                    msg_type: fb::MessageType::Chat,
-                    actual_message_type: fb::MessagePayload::ChatMessage,
-                    actual_message: Some(chat_payload_offset.as_union_value()),
-                },
-            );
-
-            chat_builder.finish(game_message_offset, None);
-            let chat_msg_bytes = Bytes::from(chat_builder.finished_data().to_vec());
+            let chat_msg_bytes = build_chat_game_message_bytes(chat_entry);
 
             let _ = data_channel.send(&chat_msg_bytes).await;
 
@@ -5928,34 +5940,7 @@ impl MassiveGameServer {
 
         if !chat_messages_to_send.is_empty() {
             for chat_entry in chat_messages_to_send.iter() {
-                let mut chat_builder = flatbuffers::FlatBufferBuilder::with_capacity(256);
-
-                let player_id_fb = chat_builder.create_string(chat_entry.player_id.as_str());
-                let username_fb = chat_builder.create_string(&chat_entry.username);
-                let message_fb = chat_builder.create_string(&chat_entry.message);
-
-                let chat_payload_offset = fb::ChatMessage::create(
-                    &mut chat_builder,
-                    &fb::ChatMessageArgs {
-                        seq: chat_entry.seq,
-                        player_id: Some(player_id_fb),
-                        username: Some(username_fb),
-                        message: Some(message_fb),
-                        timestamp: chat_entry.timestamp,
-                    },
-                );
-
-                let game_message_offset = fb::GameMessage::create(
-                    &mut chat_builder,
-                    &fb::GameMessageArgs {
-                        msg_type: fb::MessageType::Chat,
-                        actual_message_type: fb::MessagePayload::ChatMessage,
-                        actual_message: Some(chat_payload_offset.as_union_value()),
-                    },
-                );
-
-                chat_builder.finish(game_message_offset, None);
-                let chat_msg_bytes = Bytes::from(chat_builder.finished_data().to_vec());
+                let chat_msg_bytes = build_chat_game_message_bytes(chat_entry);
 
                 let dc_for_chat = Arc::clone(data_channel);
                 let peer_id_for_log = peer_id_str.to_string();
@@ -6276,34 +6261,7 @@ impl MassiveGameServer {
             .collect();
 
         for chat_entry in messages_to_send {
-            let mut chat_builder = flatbuffers::FlatBufferBuilder::with_capacity(256);
-
-            let player_id_fb = chat_builder.create_string(chat_entry.player_id.as_str());
-            let username_fb = chat_builder.create_string(&chat_entry.username);
-            let message_fb = chat_builder.create_string(&chat_entry.message);
-
-            let chat_payload_offset = fb::ChatMessage::create(
-                &mut chat_builder,
-                &fb::ChatMessageArgs {
-                    seq: chat_entry.seq,
-                    player_id: Some(player_id_fb),
-                    username: Some(username_fb),
-                    message: Some(message_fb),
-                    timestamp: chat_entry.timestamp,
-                },
-            );
-
-            let game_message_offset = fb::GameMessage::create(
-                &mut chat_builder,
-                &fb::GameMessageArgs {
-                    msg_type: fb::MessageType::Chat,
-                    actual_message_type: fb::MessagePayload::ChatMessage,
-                    actual_message: Some(chat_payload_offset.as_union_value()),
-                },
-            );
-
-            chat_builder.finish(game_message_offset, None);
-            let chat_msg_bytes = Bytes::from(chat_builder.finished_data().to_vec());
+            let chat_msg_bytes = build_chat_game_message_bytes(chat_entry);
 
             let _ = data_channel.send(&chat_msg_bytes).await;
 

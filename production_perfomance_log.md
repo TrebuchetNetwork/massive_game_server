@@ -1,4 +1,4 @@
-# Production Performance Log (Refreshed 2026-02-13)
+# Production Performance Log (Refreshed 2026-02-14)
 
 ## Join-Throughput Pass Summary
 
@@ -113,10 +113,32 @@
     - `49-72`: `count=24/24`, `avg=33973.83`, `p95=42953.85`
     - `73+`: `count=27/48`, `avg=67767.67`, `p95=88360.4`
 
+### Follow-up experiment (discarded) + stable serializer pass (2026-02-14)
+- Discarded scheduler experiment:
+  - `artifacts/scale/multi_client_fresh_120_after_tail_pass_v2_20260214.json`
+  - Added cached-initial prioritization + aggressive delta suppression.
+  - Result regressed to `95/120` (`connectedRatio=0.7917`) with `49-72 avg=59054.63ms`; not kept.
+- Stable pass implemented:
+  - `server/src/network/signaling.rs`: pooled FlatBuffer builder for welcome message serialization.
+  - `server/src/server/instance.rs`: pooled FlatBuffer builders for chat serialization paths.
+- Stable rerun result:
+  - `artifacts/scale/multi_client_fresh_120_after_fb_pool_20260214.json`
+  - `105/120`, `connectedRatio=0.8667`, `passed=false`, `durationMs=712278`
+  - Delta vs previous best (`after_tail_pass_20260213`):
+    - `+6` launched clients (`99 -> 105`)
+    - `+0.0417` connected ratio (`0.825 -> 0.8667`)
+    - `wave_73_plus count: 27 -> 32`
+  - `connectLatencyMs`: `p50=24616.5`, `p90=74285.5`, `p95=81188.4`, `p99=93501.13`, `max=115036`
+  - `connectLatencyByWave`:
+    - `1-24`: `count=24/24`, `avg=15224.38`, `p95=19192.55`
+    - `25-48`: `count=24/24`, `avg=19145.83`, `p95=22250.25`
+    - `49-72`: `count=24/24`, `avg=33062.25`, `p95=50740.5`
+    - `73+`: `count=32/48`, `avg=62741`, `p95=93382.05`
+
 ### Updated boundary status
 - `80` clients still clears at `80/80`.
-- `120` clients remains launch-timeout limited; latest rerun improved to `99/120`.
-- Main unresolved bottleneck is still the `73+` wave tail (`27/48` connected), but latency improved substantially (`avg~67.8s`, `p95~88.4s`).
+- `120` clients remains launch-timeout limited; latest rerun improved to `105/120`.
+- Main unresolved bottleneck is still the `73+` wave tail (`32/48` connected) with occasional extreme outliers (max `115s`).
 
 ### Test status
 - `cargo test -p massive_game_server_core --test boundary_stress -- --nocapture` passed.

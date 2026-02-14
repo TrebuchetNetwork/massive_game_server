@@ -1,10 +1,10 @@
-# Performance Status (2026-02-13)
+# Performance Status (2026-02-14)
 
 ## Scope
 - Goal: keep `10v10` stable and clear the remaining `80+` launch-timeout bottleneck.
 - This refresh retested join throughput after the dynamic+deterministic world optimization pass.
 
-## Incremental Refresh (2026-02-13)
+## Incremental Refresh (2026-02-14)
 - Retested the UI render-stress gate with tuned defaults to stop false negatives on headless/GPU-variant runs:
   - `UI_RENDER_STRESS_MIN_FPS_RATIO=0.45` (from `0.6`)
   - `UI_RENDER_STRESS_MAX_SMOOTHED_FRAME_MS=36` (from `34`)
@@ -32,6 +32,20 @@
     - `25-48`: `count=24/24`, `avg=24171.21`, `p95=31668`
     - `49-72`: `count=24/24`, `avg=33973.83`, `p95=42953.85`
     - `73+`: `count=27/48`, `avg=67767.67`, `p95=88360.4`
+- Experimental tail-scheduler variant (`cached-initial priority + aggressive delta suppression`) was evaluated and discarded:
+  - `artifacts/scale/multi_client_fresh_120_after_tail_pass_v2_20260214.json`
+  - `95/120`, `connectedRatio=0.7917`, `durationMs=647959`
+  - Regression signal: `49-72 avg` increased to `59054.63ms` and total launched clients dropped.
+- FlatBuffer builder pooling pass (welcome + chat hot paths) on top of the stable tail policy:
+  - `artifacts/scale/multi_client_fresh_120_after_fb_pool_20260214.json`
+  - `105/120`, `connectedRatio=0.8667`, `passed=false`, `durationMs=712278`
+  - Delta vs previous best (`after_tail_pass_20260213`): `+6` launched, `+5` in `wave_73_plus`
+  - `connectLatencyMs`: `p50=24616.5`, `p90=74285.5`, `p95=81188.4`, `p99=93501.13`, `max=115036`
+  - `connectLatencyByWave`:
+    - `1-24`: `count=24/24`, `avg=15224.38`, `p95=19192.55`
+    - `25-48`: `count=24/24`, `avg=19145.83`, `p95=22250.25`
+    - `49-72`: `count=24/24`, `avg=33062.25`, `p95=50740.5`
+    - `73+`: `count=32/48`, `avg=62741`, `p95=93382.05`
 
 ## Deterministic Benchmark Setup
 - Server target: `target/release/massive_game_server_core` on `127.0.0.1:19080`.
@@ -53,6 +67,9 @@
   - Added `active_walls_by_id` shared cache and dynamic wall visibility recovery in optimized delta state.
   - Added aggressive `73+` tail policy: higher initial-send floor, tighter delta gating, lower fanout concurrency, and tail-aware initial send timeout.
   - Added adaptive initial snapshot caps under tail pressure to reduce first payload size and data-channel contention.
+  - Added pooled FlatBuffer builders for chat message serialization hot paths.
+- `server/src/network/signaling.rs`
+  - Added pooled FlatBuffer builder for welcome-message serialization on data-channel open.
 - `server/src/world/partition.rs`
   - Added partition index collection helpers for AOI/bounds.
 - `server/src/server/game_loop.rs`
@@ -114,6 +131,18 @@
     - `49-72`: `count=24/24`, `avg=33973.83`, `p95=42953.85`
     - `73+`: `count=27/48`, `avg=67767.67`, `p95=88360.4`
   - Result: boundary improved (`+7` launched clients) but still below target `>=108/120` for pass criteria
+- `artifacts/scale/multi_client_fresh_120_after_tail_pass_v2_20260214.json` (discarded experiment)
+  - `95/120`, `connectedRatio=0.7917`, `passed=false`, `durationMs=647959`
+  - `connectLatencyByWave` showed regression in `49-72` (`avg=59054.63`), so this variant was not kept.
+- `artifacts/scale/multi_client_fresh_120_after_fb_pool_20260214.json` (stable tail policy + pooled builders)
+  - `105/120`, `connectedRatio=0.8667`, `passed=false`, `durationMs=712278`
+  - `connectLatencyMs`: `p50=24616.5`, `p90=74285.5`, `p95=81188.4`, `p99=93501.13`, `max=115036`
+  - `connectLatencyByWave`:
+    - `1-24`: `count=24/24`, `avg=15224.38`, `p95=19192.55`
+    - `25-48`: `count=24/24`, `avg=19145.83`, `p95=22250.25`
+    - `49-72`: `count=24/24`, `avg=33062.25`, `p95=50740.5`
+    - `73+`: `count=32/48`, `avg=62741`, `p95=93382.05`
+  - Result: highest launched-client count to date on this deterministic profile (`105/120`)
 
 ## Stress / Regression Checks
 - `cargo test -p massive_game_server_core --test boundary_stress -- --nocapture`
@@ -125,12 +154,12 @@
 
 ## Current Bottleneck
 - `80` clients is no longer timeout-limited under this configuration.
-- `120` clients remains launch-timeout limited (`99/120` at 600000ms cap in latest run).
-- Remaining risk is long-tail join latency in final waves (`73+` wave `avg~67.8s`, `p95~88.4s`, with `27/48` tail slots connected).
+- `120` clients remains launch-timeout limited (`105/120` at 600000ms cap in latest run).
+- Remaining risk is long-tail join latency in final waves (`73+` wave `avg~62.7s`, `p95~93.4s`, with `32/48` tail slots connected and a `max~115.0s` outlier).
 
 ## Next Step Candidates
 - Tune join pipeline specifically for wave `73+`:
-  - keep aggressive scheduling only while `pending_initial_open` exceeds a threshold; relax earlier to avoid over-throttling deltas
-  - add adaptive decay of initial snapshot caps after backlog drops (recover fidelity sooner)
-  - tune initial send timeout and retry cadence around the `85-95s` tail band observed in slowest clients
+  - cap pathological retries by introducing per-client initial-send backoff jitter once latency exceeds `~90s`
+  - isolate ultra-slow tail clients from the main launch wave (small reserved retry slice per frame)
+  - keep pooled serialization paths and measure CPU/tick headroom while pushing `connect-concurrency` sensitivity runs
 - Rerun deterministic `120` benchmark after each join-policy tweak and track `connectLatencyByWave.wave_73_plus.count` as the primary success metric.

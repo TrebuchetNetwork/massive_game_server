@@ -21,6 +21,7 @@ use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -138,6 +139,36 @@ fn parse_csv(raw: &str) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .collect()
+}
+
+fn build_welcome_message_bytes(player_id: &str, server_tick_rate: u16) -> Bytes {
+    thread_local! {
+        static WELCOME_BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
+            RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(256));
+    }
+
+    WELCOME_BUILDER.with(|builder_cell| {
+        let mut builder_welcome = builder_cell.borrow_mut();
+        builder_welcome.reset();
+
+        let player_id_fb_welcome = builder_welcome.create_string(player_id);
+        let welcome_text_fb = builder_welcome.create_string("Welcome to MassiveGameServer!");
+        let welcome_msg_args = fb::WelcomeMessageArgs {
+            player_id: Some(player_id_fb_welcome),
+            message: Some(welcome_text_fb),
+            server_tick_rate,
+        };
+        let welcome_msg = fb::WelcomeMessage::create(&mut builder_welcome, &welcome_msg_args);
+        let game_msg_welcome_args = fb::GameMessageArgs {
+            msg_type: fb::MessageType::Welcome,
+            actual_message_type: fb::MessagePayload::WelcomeMessage,
+            actual_message: Some(welcome_msg.as_union_value()),
+        };
+        let game_msg_welcome = fb::GameMessage::create(&mut builder_welcome, &game_msg_welcome_args);
+        builder_welcome.finish(game_msg_welcome, None);
+
+        Bytes::from(builder_welcome.finished_data().to_vec())
+    })
 }
 
 fn parse_ice_servers_env(raw: &str) -> Vec<RTCIceServer> {
@@ -587,29 +618,13 @@ pub async fn handle_signaling_connection(
             let config_for_welcome = config_on_open.clone();
 
             Box::pin(async move {
-                let mut builder_welcome = flatbuffers::FlatBufferBuilder::with_capacity(256);
-                let player_id_fb_welcome =
-                    builder_welcome.create_string(&current_peer_id_on_open_cb);
-                let welcome_text_fb =
-                    builder_welcome.create_string("Welcome to MassiveGameServer!");
-                let welcome_msg_args = fb::WelcomeMessageArgs {
-                    player_id: Some(player_id_fb_welcome),
-                    message: Some(welcome_text_fb),
-                    server_tick_rate: config_for_welcome.tick_rate as u16,
-                };
-                let welcome_msg =
-                    fb::WelcomeMessage::create(&mut builder_welcome, &welcome_msg_args);
-                let game_msg_welcome_args = fb::GameMessageArgs {
-                    msg_type: fb::MessageType::Welcome,
-                    actual_message_type: fb::MessagePayload::WelcomeMessage,
-                    actual_message: Some(welcome_msg.as_union_value()),
-                };
-                let game_msg_welcome =
-                    fb::GameMessage::create(&mut builder_welcome, &game_msg_welcome_args);
-                builder_welcome.finish(game_msg_welcome, None);
+                let welcome_bytes = build_welcome_message_bytes(
+                    &current_peer_id_on_open_cb,
+                    config_for_welcome.tick_rate as u16,
+                );
 
                 if let Err(e) = dc_for_async_block
-                    .send(&Bytes::from(builder_welcome.finished_data().to_vec()))
+                    .send(&welcome_bytes)
                     .await
                 {
                     handle_dc_send_error(
