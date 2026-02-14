@@ -38,6 +38,7 @@ use parking_lot::RwLock as ParkingLotRwLock;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
@@ -245,6 +246,89 @@ fn single_machine_optimization_enabled() -> bool {
     })
 }
 
+fn join_tail_policy_enabled() -> bool {
+    static ENABLED: OnceCell<bool> = OnceCell::new();
+    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_TAIL_POLICY"))
+}
+
+fn join_packet_batching_enabled() -> bool {
+    static ENABLED: OnceCell<bool> = OnceCell::new();
+    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_PACKET_BATCHING"))
+}
+
+fn join_soa_snapshot_enabled() -> bool {
+    static ENABLED: OnceCell<bool> = OnceCell::new();
+    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_SOA_SNAPSHOT"))
+}
+
+fn join_soa_adaptive_fallback_enabled() -> bool {
+    static ENABLED: OnceCell<bool> = OnceCell::new();
+    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_SOA_ADAPTIVE_FALLBACK"))
+}
+
+fn join_zero_copy_serialization_enabled() -> bool {
+    static ENABLED: OnceCell<bool> = OnceCell::new();
+    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_ZERO_COPY_SERIALIZATION"))
+}
+
+#[derive(Clone, Debug, Default)]
+struct JoinStageTrace {
+    join_sequence: u64,
+    first_seen_ms: u64,
+    first_channel_open_ms: Option<u64>,
+    first_build_start_ms: Option<u64>,
+    first_build_done_ms: Option<u64>,
+    first_send_start_ms: Option<u64>,
+    first_send_done_ms: Option<u64>,
+    build_attempts: u32,
+    send_attempts: u32,
+    retry_count: u32,
+    retry_interval_total_ms: u64,
+    retry_interval_samples: u32,
+    last_retry_at_ms: Option<u64>,
+    completed_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct JoinStageLatencyStats {
+    pub count: usize,
+    pub avg_ms: f64,
+    pub p95_ms: f64,
+    pub max_ms: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct JoinStageWaveSummary {
+    pub label: String,
+    pub start_sequence: u64,
+    pub end_sequence: Option<u64>,
+    pub requested_slots: u64,
+    pub tracked_clients: usize,
+    pub completed_clients: usize,
+    pub queue_wait_ms: JoinStageLatencyStats,
+    pub snapshot_build_ms: JoinStageLatencyStats,
+    pub send_ack_ms: JoinStageLatencyStats,
+    pub retry_interval_ms: JoinStageLatencyStats,
+    pub retry_count_avg: f64,
+    pub build_attempts_avg: f64,
+    pub send_attempts_avg: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct JoinStageReport {
+    pub generated_at_ms: u64,
+    pub total_tracked_clients: usize,
+    pub total_completed_clients: usize,
+    pub waves: HashMap<String, JoinStageWaveSummary>,
+}
+
+const JOIN_STAGE_WAVES: [(&str, &str, u64, Option<u64>); 4] = [
+    ("wave_1_24", "1-24", 1, Some(24)),
+    ("wave_25_48", "25-48", 25, Some(48)),
+    ("wave_49_72", "49-72", 49, Some(72)),
+    ("wave_73_plus", "73+", 73, None),
+];
+
 #[inline]
 fn fb_safe_str<'b>(
     builder: &mut flatbuffers::FlatBufferBuilder<'b>,
@@ -397,8 +481,12 @@ fn build_chat_game_message_bytes(chat_entry: &ChatMessage) -> Bytes {
     );
 
     chat_builder.finish(game_message_offset, None);
-    let (buffer, root_index) = chat_builder.collapse();
-    Bytes::from(buffer).slice(root_index..)
+    if join_zero_copy_serialization_enabled() {
+        let (buffer, root_index) = chat_builder.collapse();
+        Bytes::from(buffer).slice(root_index..)
+    } else {
+        Bytes::copy_from_slice(chat_builder.finished_data())
+    }
 }
 
 fn build_coalesced_packet_batch(packets: &[Bytes]) -> Option<Bytes> {
@@ -407,8 +495,10 @@ fn build_coalesced_packet_batch(packets: &[Bytes]) -> Option<Bytes> {
     }
 
     let payload_bytes = packets.iter().map(|packet| packet.len()).sum::<usize>();
-    let header_bytes =
-        PACKET_BATCH_HEADER_BYTES + packets.len().saturating_mul(PACKET_BATCH_ENTRY_HEADER_BYTES);
+    let header_bytes = PACKET_BATCH_HEADER_BYTES
+        + packets
+            .len()
+            .saturating_mul(PACKET_BATCH_ENTRY_HEADER_BYTES);
     let total_bytes = header_bytes.saturating_add(payload_bytes);
     if total_bytes > MAX_COALESCED_PACKET_BYTES {
         return None;
@@ -500,6 +590,8 @@ struct SharedBroadcastData {
     initial_snapshot_caps: InitialSnapshotCaps,
     tail_join_mode: bool,
     aggressive_tail_join_mode: bool,
+    soa_fallback_active: bool,
+    use_soa_snapshot: bool,
 }
 
 // Lightweight match info snapshot
@@ -556,6 +648,8 @@ pub struct MassiveGameServer {
     pub last_broadcast_frame: Arc<AtomicU64>,
     pub player_last_sync_positions: Arc<DashMap<PlayerID, (f32, f32)>>,
     pub player_soa_snapshot: Arc<AtomicPlayerSnapshot>,
+    join_stage_traces: Arc<DashMap<String, JoinStageTrace>>,
+    join_sequence_counter: Arc<AtomicU64>,
 }
 
 const MAX_KILL_FEED_HISTORY: usize = 10;
@@ -762,6 +856,8 @@ impl MassiveGameServer {
             last_broadcast_frame: Arc::new(AtomicU64::new(0)),
             player_last_sync_positions: Arc::new(DashMap::new()),
             player_soa_snapshot: Arc::new(AtomicPlayerSnapshot::new()),
+            join_stage_traces: Arc::new(DashMap::new()),
+            join_sequence_counter: Arc::new(AtomicU64::new(0)),
         };
 
         info!("MassiveGameServer initialized successfully.");
@@ -2958,6 +3054,10 @@ impl MassiveGameServer {
             return Ok(());
         }
 
+        if client_info.needs_initial_state {
+            server.ensure_join_trace(peer_id_str, client_info.data_channel.is_open());
+        }
+
         if client_info.needs_initial_state && !client_info.data_channel.is_open() {
             trace!(
                 "[Frame {}] Client {} data channel not open yet, deferring initial state build.",
@@ -2969,6 +3069,7 @@ impl MassiveGameServer {
 
         let mut client_state_for_delta: Option<ClientState> = None;
         let mut used_cached_initial_state = false;
+        let packet_batching_enabled = join_packet_batching_enabled();
         let state_result = if client_info.needs_initial_state {
             let cached_initial_state = server
                 .client_states_map
@@ -2986,14 +3087,19 @@ impl MassiveGameServer {
                 );
                 Ok(cached_bytes)
             } else {
+                server.mark_join_build_start(peer_id_str);
                 trace!(
                     "[Frame {}] Building initial state for {}",
                     frame,
                     peer_id_str
                 );
-                server
+                let initial_result = server
                     .build_initial_state_optimized(peer_id_str, shared_data)
-                    .await
+                    .await;
+                if initial_result.is_ok() {
+                    server.mark_join_build_done(peer_id_str);
+                }
+                initial_result
             }
         } else {
             trace!("[Frame {}] Building delta state for {}", frame, peer_id_str);
@@ -3048,14 +3154,21 @@ impl MassiveGameServer {
                 collect_pending_chat_packets(last_chat_seq_sent, &shared_data.chat_packets);
         }
 
-        let mut outbound_packets: Vec<Bytes> =
-            Vec::with_capacity(1 + pending_chat_packets_for_delta.len());
-        outbound_packets.push(bytes_to_send.clone());
-        outbound_packets.extend(
-            pending_chat_packets_for_delta
-                .iter()
-                .map(|packet| packet.bytes.clone()),
+        let mut outbound_packets: Vec<Bytes> = Vec::with_capacity(
+            1 + if packet_batching_enabled {
+                pending_chat_packets_for_delta.len()
+            } else {
+                0
+            },
         );
+        outbound_packets.push(bytes_to_send.clone());
+        if packet_batching_enabled {
+            outbound_packets.extend(
+                pending_chat_packets_for_delta
+                    .iter()
+                    .map(|packet| packet.bytes.clone()),
+            );
+        }
 
         const DELTA_SEND_TIMEOUT_MS: u64 = 50;
         const INITIAL_SEND_TIMEOUT_MS: u64 = 200;
@@ -3073,12 +3186,18 @@ impl MassiveGameServer {
             DELTA_SEND_TIMEOUT_MS
         };
         let send_timeout_ms = base_send_timeout_ms.saturating_add(
-            ((outbound_packets.len().saturating_sub(1) as u64) * 12)
-                .min(INITIAL_SEND_TIMEOUT_MS),
+            ((outbound_packets.len().saturating_sub(1) as u64) * 12).min(INITIAL_SEND_TIMEOUT_MS),
         );
 
+        if client_info.needs_initial_state {
+            server.mark_join_send_start(peer_id_str);
+        }
         let sent_packets = server
-            .send_packet_batch_optimized(&client_info.data_channel, &outbound_packets, send_timeout_ms)
+            .send_packet_batch_optimized(
+                &client_info.data_channel,
+                &outbound_packets,
+                send_timeout_ms,
+            )
             .await;
         let send_succeeded = sent_packets > 0;
         let sent_chat_packets_count = sent_packets
@@ -3103,6 +3222,7 @@ impl MassiveGameServer {
         }
 
         if client_info.needs_initial_state && !send_succeeded {
+            server.mark_join_send_failure(peer_id_str);
             if !used_cached_initial_state {
                 let mut client_states = server.client_states_map.write();
                 let state_entry = client_states
@@ -3125,6 +3245,10 @@ impl MassiveGameServer {
                 peer_id_str
             );
             return Ok(());
+        }
+
+        if client_info.needs_initial_state && send_succeeded {
+            server.mark_join_send_done(peer_id_str);
         }
 
         trace!(
@@ -3183,6 +3307,230 @@ impl MassiveGameServer {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64
+    }
+
+    #[inline]
+    fn lookup_player_state_from_shared<'a>(
+        shared_data: &'a SharedBroadcastData,
+        player_id: &PlayerID,
+    ) -> Option<&'a PlayerState> {
+        if shared_data.use_soa_snapshot {
+            shared_data.player_soa_snapshot.get_state(player_id)
+        } else {
+            shared_data.player_states_snapshot.get(player_id)
+        }
+    }
+
+    fn ensure_join_trace(&self, peer_id: &str, channel_open: bool) {
+        let now_ms = self.get_server_timestamp();
+        let mut trace = self
+            .join_stage_traces
+            .entry(peer_id.to_owned())
+            .or_insert_with(|| JoinStageTrace {
+                join_sequence: self
+                    .join_sequence_counter
+                    .fetch_add(1, AtomicOrdering::Relaxed)
+                    + 1,
+                first_seen_ms: now_ms,
+                ..JoinStageTrace::default()
+            });
+        if channel_open && trace.first_channel_open_ms.is_none() {
+            trace.first_channel_open_ms = Some(now_ms);
+        }
+    }
+
+    fn mark_join_build_start(&self, peer_id: &str) {
+        self.ensure_join_trace(peer_id, false);
+        let now_ms = self.get_server_timestamp();
+        if let Some(mut trace) = self.join_stage_traces.get_mut(peer_id) {
+            if trace.first_build_start_ms.is_none() {
+                trace.first_build_start_ms = Some(now_ms);
+            }
+            trace.build_attempts = trace.build_attempts.saturating_add(1);
+        }
+    }
+
+    fn mark_join_build_done(&self, peer_id: &str) {
+        let now_ms = self.get_server_timestamp();
+        if let Some(mut trace) = self.join_stage_traces.get_mut(peer_id) {
+            if trace.first_build_done_ms.is_none() {
+                trace.first_build_done_ms = Some(now_ms);
+            }
+        }
+    }
+
+    fn mark_join_send_start(&self, peer_id: &str) {
+        self.ensure_join_trace(peer_id, true);
+        let now_ms = self.get_server_timestamp();
+        if let Some(mut trace) = self.join_stage_traces.get_mut(peer_id) {
+            if trace.first_send_start_ms.is_none() {
+                trace.first_send_start_ms = Some(now_ms);
+            }
+            trace.send_attempts = trace.send_attempts.saturating_add(1);
+        }
+    }
+
+    fn mark_join_send_failure(&self, peer_id: &str) {
+        let now_ms = self.get_server_timestamp();
+        if let Some(mut trace) = self.join_stage_traces.get_mut(peer_id) {
+            trace.retry_count = trace.retry_count.saturating_add(1);
+            if let Some(previous_retry_ms) = trace.last_retry_at_ms {
+                if now_ms > previous_retry_ms {
+                    trace.retry_interval_total_ms = trace
+                        .retry_interval_total_ms
+                        .saturating_add(now_ms.saturating_sub(previous_retry_ms));
+                    trace.retry_interval_samples = trace.retry_interval_samples.saturating_add(1);
+                }
+            }
+            trace.last_retry_at_ms = Some(now_ms);
+        }
+    }
+
+    fn mark_join_send_done(&self, peer_id: &str) {
+        let now_ms = self.get_server_timestamp();
+        if let Some(mut trace) = self.join_stage_traces.get_mut(peer_id) {
+            if trace.first_send_done_ms.is_none() {
+                trace.first_send_done_ms = Some(now_ms);
+            }
+            if trace.completed_ms.is_none() {
+                trace.completed_ms = Some(now_ms);
+            }
+        }
+    }
+
+    pub fn reset_join_stage_report(&self) {
+        self.join_stage_traces.clear();
+        self.join_sequence_counter.store(0, AtomicOrdering::Relaxed);
+    }
+
+    pub fn join_stage_report(&self) -> JoinStageReport {
+        let traces: Vec<JoinStageTrace> = self
+            .join_stage_traces
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        let total_tracked_clients = traces.len();
+        let total_completed_clients = traces
+            .iter()
+            .filter(|trace| trace.completed_ms.is_some())
+            .count();
+
+        let mut waves = HashMap::new();
+        for (wave_key, wave_label, wave_start, wave_end) in JOIN_STAGE_WAVES {
+            let wave_traces: Vec<&JoinStageTrace> = traces
+                .iter()
+                .filter(|trace| trace.join_sequence >= wave_start)
+                .filter(|trace| wave_end.map_or(true, |end| trace.join_sequence <= end))
+                .collect();
+
+            let queue_wait_ms: Vec<f64> = wave_traces
+                .iter()
+                .filter_map(|trace| {
+                    trace
+                        .first_build_start_ms
+                        .map(|build_start| build_start.saturating_sub(trace.first_seen_ms) as f64)
+                })
+                .collect();
+            let snapshot_build_ms: Vec<f64> = wave_traces
+                .iter()
+                .filter_map(
+                    |trace| match (trace.first_build_start_ms, trace.first_build_done_ms) {
+                        (Some(build_start), Some(build_done)) if build_done >= build_start => {
+                            Some(build_done.saturating_sub(build_start) as f64)
+                        }
+                        _ => None,
+                    },
+                )
+                .collect();
+            let send_ack_ms: Vec<f64> = wave_traces
+                .iter()
+                .filter_map(
+                    |trace| match (trace.first_send_start_ms, trace.completed_ms) {
+                        (Some(send_start), Some(completed)) if completed >= send_start => {
+                            Some(completed.saturating_sub(send_start) as f64)
+                        }
+                        _ => None,
+                    },
+                )
+                .collect();
+            let retry_interval_ms: Vec<f64> = wave_traces
+                .iter()
+                .filter_map(|trace| {
+                    if trace.retry_interval_samples == 0 {
+                        None
+                    } else {
+                        Some(
+                            trace.retry_interval_total_ms as f64
+                                / trace.retry_interval_samples as f64,
+                        )
+                    }
+                })
+                .collect();
+
+            let retry_count_avg = if wave_traces.is_empty() {
+                0.0
+            } else {
+                wave_traces
+                    .iter()
+                    .map(|trace| trace.retry_count as f64)
+                    .sum::<f64>()
+                    / wave_traces.len() as f64
+            };
+            let build_attempts_avg = if wave_traces.is_empty() {
+                0.0
+            } else {
+                wave_traces
+                    .iter()
+                    .map(|trace| trace.build_attempts as f64)
+                    .sum::<f64>()
+                    / wave_traces.len() as f64
+            };
+            let send_attempts_avg = if wave_traces.is_empty() {
+                0.0
+            } else {
+                wave_traces
+                    .iter()
+                    .map(|trace| trace.send_attempts as f64)
+                    .sum::<f64>()
+                    / wave_traces.len() as f64
+            };
+
+            let requested_slots = if let Some(end) = wave_end {
+                end.saturating_sub(wave_start).saturating_add(1)
+            } else {
+                total_tracked_clients.max((wave_start.saturating_sub(1)) as usize) as u64
+                    - wave_start.saturating_sub(1)
+            };
+
+            waves.insert(
+                wave_key.to_owned(),
+                JoinStageWaveSummary {
+                    label: wave_label.to_owned(),
+                    start_sequence: wave_start,
+                    end_sequence: wave_end,
+                    requested_slots,
+                    tracked_clients: wave_traces.len(),
+                    completed_clients: wave_traces
+                        .iter()
+                        .filter(|trace| trace.completed_ms.is_some())
+                        .count(),
+                    queue_wait_ms: summarize_join_stage_latencies(&queue_wait_ms),
+                    snapshot_build_ms: summarize_join_stage_latencies(&snapshot_build_ms),
+                    send_ack_ms: summarize_join_stage_latencies(&send_ack_ms),
+                    retry_interval_ms: summarize_join_stage_latencies(&retry_interval_ms),
+                    retry_count_avg: round_metric(retry_count_avg),
+                    build_attempts_avg: round_metric(build_attempts_avg),
+                    send_attempts_avg: round_metric(send_attempts_avg),
+                },
+            );
+        }
+
+        JoinStageReport {
+            generated_at_ms: self.get_server_timestamp(),
+            total_tracked_clients,
+            total_completed_clients,
+            waves,
+        }
     }
 
     // Extracted melee processing logic
@@ -3507,6 +3855,7 @@ impl MassiveGameServer {
         initial_snapshot_caps: InitialSnapshotCaps,
         tail_join_mode: bool,
         aggressive_tail_join_mode: bool,
+        disable_soa_snapshot_for_backlog: bool,
         max_delta_events_per_client: usize,
     ) -> SharedBroadcastData {
         let current_timestamp_ms = SystemTime::now()
@@ -3556,11 +3905,18 @@ impl MassiveGameServer {
                 });
             by_id
         };
-        let player_soa_snapshot = Arc::new(PlayerSoASnapshot::from_player_states_map(
-            &player_states_snapshot,
-        ));
-        self.player_soa_snapshot
-            .publish_arc(player_soa_snapshot.clone());
+        let configured_soa_snapshot = join_soa_snapshot_enabled();
+        let use_soa_snapshot = configured_soa_snapshot && !disable_soa_snapshot_for_backlog;
+        let soa_fallback_active = configured_soa_snapshot && !use_soa_snapshot;
+        let player_soa_snapshot = if use_soa_snapshot {
+            let snapshot = Arc::new(PlayerSoASnapshot::from_player_states_map(
+                &player_states_snapshot,
+            ));
+            self.player_soa_snapshot.publish_arc(snapshot.clone());
+            snapshot
+        } else {
+            Arc::new(PlayerSoASnapshot::default())
+        };
 
         // Snapshot projectiles once per tick (reused for all client delta builds).
         let projectiles_snapshot = {
@@ -3631,6 +3987,8 @@ impl MassiveGameServer {
             initial_snapshot_caps,
             tail_join_mode,
             aggressive_tail_join_mode,
+            soa_fallback_active,
+            use_soa_snapshot,
         }
     }
 
@@ -3947,381 +4305,385 @@ impl MassiveGameServer {
 
         trace!("[{}] DeltaBuilder: Started", peer_id_str);
 
-            // Get player's current AoI
-            let player_aoi = self
-                .player_aois
-                .get(peer_id_str)
-                .map(|entry| entry.value().clone())
-                .unwrap_or_else(|| PlayerAoI::new());
+        // Get player's current AoI
+        let player_aoi = self
+            .player_aois
+            .get(peer_id_str)
+            .map(|entry| entry.value().clone())
+            .unwrap_or_else(|| PlayerAoI::new());
 
-            // Build player deltas (only changed or newly visible)
-            let mut players_fb_vec = Vec::new();
-            let mut player_fields_mask_vec: Vec<u8> = Vec::new();
-            let mut removed_player_ids_vec = Vec::new();
-            let encode_changed_mask = |mask: u16| -> u8 {
-                if mask == 0xFFFF {
-                    u8::MAX
+        // Build player deltas (only changed or newly visible)
+        let mut players_fb_vec = Vec::new();
+        let mut player_fields_mask_vec: Vec<u8> = Vec::new();
+        let mut removed_player_ids_vec = Vec::new();
+        let encode_changed_mask = |mask: u16| -> u8 {
+            if mask == 0xFFFF {
+                u8::MAX
+            } else {
+                (mask & 0x00FF) as u8
+            }
+        };
+
+        // Add self player only if changed or not known yet
+        if let Some(self_state) = Self::lookup_player_state_from_shared(shared_data, &player_id) {
+            let is_new = !client_state.last_known_players.contains(&player_id);
+            if is_new || self_state.changed_fields > 0 {
+                let mask = if is_new {
+                    0xFFFF
                 } else {
-                    (mask & 0x00FF) as u8
-                }
-            };
-
-            // Add self player only if changed or not known yet
-            if let Some(self_state) = shared_data.player_soa_snapshot.get_state(&player_id) {
-                let is_new = !client_state.last_known_players.contains(&player_id);
-                if is_new || self_state.changed_fields > 0 {
-                    let mask = if is_new {
-                        0xFFFF
-                    } else {
-                        self_state.changed_fields
-                    };
-                    players_fb_vec.push(create_fb_player_state_for_delta(
-                        &mut builder,
-                        &self_state,
-                        mask,
-                    ));
-                    player_fields_mask_vec.push(encode_changed_mask(mask));
-                }
+                    self_state.changed_fields
+                };
+                players_fb_vec.push(create_fb_player_state_for_delta(
+                    &mut builder,
+                    &self_state,
+                    mask,
+                ));
+                player_fields_mask_vec.push(encode_changed_mask(mask));
             }
+        }
 
-            // Add visible players only if changed or newly visible
-            for visible_player_id in &player_aoi.visible_players {
-                if visible_player_id != &player_id {
-                    if let Some(player_state) =
-                        shared_data.player_soa_snapshot.get_state(visible_player_id)
-                    {
-                        let is_new = !client_state.last_known_players.contains(visible_player_id);
-                        if is_new || player_state.changed_fields > 0 {
-                            let mask = if is_new {
-                                0xFFFF
-                            } else {
-                                player_state.changed_fields
-                            };
-                            players_fb_vec.push(create_fb_player_state_for_delta(
-                                &mut builder,
-                                &player_state,
-                                mask,
-                            ));
-                            player_fields_mask_vec.push(encode_changed_mask(mask));
-                        }
-                    }
-                }
-            }
-
-            // Find removed players
-            for known_player_id in &client_state.last_known_players {
-                if !player_aoi.visible_players.contains(known_player_id)
-                    && known_player_id != &player_id
+        // Add visible players only if changed or newly visible
+        for visible_player_id in &player_aoi.visible_players {
+            if visible_player_id != &player_id {
+                if let Some(player_state) =
+                    Self::lookup_player_state_from_shared(shared_data, visible_player_id)
                 {
-                    removed_player_ids_vec.push(builder.create_string(known_player_id.as_str()));
-                }
-            }
-
-            let players_fb = builder.create_vector(&players_fb_vec);
-            let changed_player_fields_fb = if !player_fields_mask_vec.is_empty() {
-                Some(builder.create_vector(&player_fields_mask_vec))
-            } else {
-                None
-            };
-            let removed_players_fb = builder.create_vector(&removed_player_ids_vec);
-
-            // Build projectile deltas
-            let mut new_projectiles_vec = Vec::new();
-            let mut removed_projectile_ids_vec = Vec::new();
-
-            for proj_id in &player_aoi.visible_projectiles {
-                if !client_state.last_known_projectile_ids.contains(proj_id) {
-                    if let Some(proj) = shared_data.projectiles_snapshot.get(proj_id) {
-                        let id_str = builder.create_string(&proj.id.to_string());
-                        let owner_str = builder.create_string(proj.owner_id.as_str());
-
-                        let proj_fb = fb::ProjectileState::create(
+                    let is_new = !client_state.last_known_players.contains(visible_player_id);
+                    if is_new || player_state.changed_fields > 0 {
+                        let mask = if is_new {
+                            0xFFFF
+                        } else {
+                            player_state.changed_fields
+                        };
+                        players_fb_vec.push(create_fb_player_state_for_delta(
                             &mut builder,
-                            &fb::ProjectileStateArgs {
-                                id: Some(id_str),
-                                x: proj.x,
-                                y: proj.y,
-                                owner_id: Some(owner_str),
-                                weapon_type: map_server_weapon_to_fb(proj.weapon_type),
-                                velocity_x: proj.velocity_x, // not vx
-                                velocity_y: proj.velocity_y, // not vy
-                            },
-                        );
-                        new_projectiles_vec.push(proj_fb);
+                            &player_state,
+                            mask,
+                        ));
+                        player_fields_mask_vec.push(encode_changed_mask(mask));
                     }
                 }
             }
+        }
 
-            for known_proj_id in &client_state.last_known_projectile_ids {
-                if !player_aoi.visible_projectiles.contains(known_proj_id) {
-                    let id_str = builder.create_string(&known_proj_id.to_string());
-                    removed_projectile_ids_vec.push(id_str);
+        // Find removed players
+        for known_player_id in &client_state.last_known_players {
+            if !player_aoi.visible_players.contains(known_player_id)
+                && known_player_id != &player_id
+            {
+                removed_player_ids_vec.push(builder.create_string(known_player_id.as_str()));
+            }
+        }
+
+        let players_fb = builder.create_vector(&players_fb_vec);
+        let changed_player_fields_fb = if !player_fields_mask_vec.is_empty() {
+            Some(builder.create_vector(&player_fields_mask_vec))
+        } else {
+            None
+        };
+        let removed_players_fb = builder.create_vector(&removed_player_ids_vec);
+
+        // Build projectile deltas
+        let mut new_projectiles_vec = Vec::new();
+        let mut removed_projectile_ids_vec = Vec::new();
+
+        for proj_id in &player_aoi.visible_projectiles {
+            if !client_state.last_known_projectile_ids.contains(proj_id) {
+                if let Some(proj) = shared_data.projectiles_snapshot.get(proj_id) {
+                    let id_str = builder.create_string(&proj.id.to_string());
+                    let owner_str = builder.create_string(proj.owner_id.as_str());
+
+                    let proj_fb = fb::ProjectileState::create(
+                        &mut builder,
+                        &fb::ProjectileStateArgs {
+                            id: Some(id_str),
+                            x: proj.x,
+                            y: proj.y,
+                            owner_id: Some(owner_str),
+                            weapon_type: map_server_weapon_to_fb(proj.weapon_type),
+                            velocity_x: proj.velocity_x, // not vx
+                            velocity_y: proj.velocity_y, // not vy
+                        },
+                    );
+                    new_projectiles_vec.push(proj_fb);
                 }
             }
+        }
 
-            let projectiles_fb = builder.create_vector(&new_projectiles_vec);
-            let removed_projectiles_fb = builder.create_vector(&removed_projectile_ids_vec);
+        for known_proj_id in &client_state.last_known_projectile_ids {
+            if !player_aoi.visible_projectiles.contains(known_proj_id) {
+                let id_str = builder.create_string(&known_proj_id.to_string());
+                removed_projectile_ids_vec.push(id_str);
+            }
+        }
 
-            // Build pickup deltas
-            let mut pickups_delta_vec = Vec::new();
-            let mut deactivated_pickup_ids_vec = Vec::new();
+        let projectiles_fb = builder.create_vector(&new_projectiles_vec);
+        let removed_projectiles_fb = builder.create_vector(&removed_projectile_ids_vec);
 
-            for pickup_id in &player_aoi.visible_pickups {
-                if let Some(pickup) = shared_data.pickups_snapshot.get(pickup_id) {
-                    let should_send = if let Some(last_known_state) =
-                        client_state.last_known_pickup_states.get(pickup_id)
-                    {
-                        last_known_state.is_active != pickup.is_active
-                    } else {
-                        true
-                    };
+        // Build pickup deltas
+        let mut pickups_delta_vec = Vec::new();
+        let mut deactivated_pickup_ids_vec = Vec::new();
 
-                    if should_send {
-                        let (pickup_type_fb, weapon_type_fb) =
-                            map_core_pickup_to_fb(&pickup.pickup_type);
-                        let id_str = builder.create_string(&pickup.id.to_string());
+        for pickup_id in &player_aoi.visible_pickups {
+            if let Some(pickup) = shared_data.pickups_snapshot.get(pickup_id) {
+                let should_send = if let Some(last_known_state) =
+                    client_state.last_known_pickup_states.get(pickup_id)
+                {
+                    last_known_state.is_active != pickup.is_active
+                } else {
+                    true
+                };
 
-                        let pickup_fb = fb::Pickup::create(
-                            &mut builder,
-                            &fb::PickupArgs {
-                                id: Some(id_str),
-                                x: pickup.x,
-                                y: pickup.y,
-                                pickup_type: pickup_type_fb,
-                                weapon_type: weapon_type_fb.unwrap_or(fb::WeaponType::Pistol),
-                                is_active: pickup.is_active,
-                            },
-                        );
-                        pickups_delta_vec.push(pickup_fb);
-                    }
+                if should_send {
+                    let (pickup_type_fb, weapon_type_fb) =
+                        map_core_pickup_to_fb(&pickup.pickup_type);
+                    let id_str = builder.create_string(&pickup.id.to_string());
+
+                    let pickup_fb = fb::Pickup::create(
+                        &mut builder,
+                        &fb::PickupArgs {
+                            id: Some(id_str),
+                            x: pickup.x,
+                            y: pickup.y,
+                            pickup_type: pickup_type_fb,
+                            weapon_type: weapon_type_fb.unwrap_or(fb::WeaponType::Pistol),
+                            is_active: pickup.is_active,
+                        },
+                    );
+                    pickups_delta_vec.push(pickup_fb);
                 }
             }
+        }
 
-            for (known_pickup_id, _) in &client_state.last_known_pickup_states {
-                if !player_aoi.visible_pickups.contains(known_pickup_id) {
-                    let id_str = builder.create_string(&known_pickup_id.to_string());
-                    deactivated_pickup_ids_vec.push(id_str);
-                }
+        for (known_pickup_id, _) in &client_state.last_known_pickup_states {
+            if !player_aoi.visible_pickups.contains(known_pickup_id) {
+                let id_str = builder.create_string(&known_pickup_id.to_string());
+                deactivated_pickup_ids_vec.push(id_str);
             }
+        }
 
-            let pickups_fb = builder.create_vector(&pickups_delta_vec);
-            let deactivated_pickups_fb = builder.create_vector(&deactivated_pickup_ids_vec);
+        let pickups_fb = builder.create_vector(&pickups_delta_vec);
+        let deactivated_pickups_fb = builder.create_vector(&deactivated_pickup_ids_vec);
 
-            // Build events (single-machine/tail mode can lower per-client event budget).
-            let game_events_fb = if shared_data.max_delta_events_per_client == 0 {
+        // Build events (single-machine/tail mode can lower per-client event budget).
+        let game_events_fb = if shared_data.max_delta_events_per_client == 0 {
+            None
+        } else {
+            let events_vec: Vec<_> = shared_data
+                .events
+                .iter()
+                .take(shared_data.max_delta_events_per_client)
+                .map(|event| build_game_event_fb(&mut builder, event))
+                .collect();
+            if events_vec.is_empty() {
                 None
             } else {
-                let events_vec: Vec<_> = shared_data
-                    .events
+                Some(builder.create_vector(&events_vec))
+            }
+        };
+
+        // Build kill feed
+        let kill_feed_vec: Vec<_> = shared_data
+            .kill_feed_snapshot
+            .iter()
+            .skip(client_state.last_kill_feed_count_sent)
+            .map(|entry| {
+                let killer_name_fb = builder.create_string(&entry.killer_name);
+                let victim_name_fb = builder.create_string(&entry.victim_name);
+                fb::KillFeedEntry::create(
+                    &mut builder,
+                    &fb::KillFeedEntryArgs {
+                        killer_name: Some(killer_name_fb),
+                        victim_name: Some(victim_name_fb),
+                        weapon: map_server_weapon_to_fb(entry.weapon),
+                        timestamp: entry.timestamp as f32,
+                        killer_position: None,
+                        victim_position: None,
+                        is_headshot: false,
+                    },
+                )
+            })
+            .collect();
+        let kill_feed_fb = builder.create_vector(&kill_feed_vec);
+
+        // Build match info if changed
+        let match_info_fb = {
+            let match_snapshot = &shared_data.match_info_snapshot;
+            let team_scores_changed =
+                client_state.last_known_team_scores != match_snapshot.team_scores;
+            let time_changed = client_state
+                .last_known_match_time_remaining
+                .map_or(true, |t| (t - match_snapshot.time_remaining).abs() > 0.5);
+            let state_changed = client_state
+                .last_known_match_state
+                .map_or(true, |s| s != match_snapshot.match_state);
+            if client_state.match_info_pending
+                || state_changed
+                || time_changed
+                || team_scores_changed
+            {
+                let team_scores_vec: Vec<_> = match_snapshot
+                    .team_scores
                     .iter()
-                    .take(shared_data.max_delta_events_per_client)
-                    .map(|event| build_game_event_fb(&mut builder, event))
+                    .map(|(team_id, score)| {
+                        fb::TeamScoreEntry::create(
+                            &mut builder,
+                            &fb::TeamScoreEntryArgs {
+                                team_id: *team_id as i8,
+                                score: *score,
+                            },
+                        )
+                    })
                     .collect();
-                if events_vec.is_empty() {
-                    None
-                } else {
-                    Some(builder.create_vector(&events_vec))
-                }
-            };
-
-            // Build kill feed
-            let kill_feed_vec: Vec<_> = shared_data
-                .kill_feed_snapshot
-                .iter()
-                .skip(client_state.last_kill_feed_count_sent)
-                .map(|entry| {
-                    let killer_name_fb = builder.create_string(&entry.killer_name);
-                    let victim_name_fb = builder.create_string(&entry.victim_name);
-                    fb::KillFeedEntry::create(
-                        &mut builder,
-                        &fb::KillFeedEntryArgs {
-                            killer_name: Some(killer_name_fb),
-                            victim_name: Some(victim_name_fb),
-                            weapon: map_server_weapon_to_fb(entry.weapon),
-                            timestamp: entry.timestamp as f32,
-                            killer_position: None,
-                            victim_position: None,
-                            is_headshot: false,
-                        },
-                    )
-                })
-                .collect();
-            let kill_feed_fb = builder.create_vector(&kill_feed_vec);
-
-            // Build match info if changed
-            let match_info_fb = {
-                let match_snapshot = &shared_data.match_info_snapshot;
-                let team_scores_changed =
-                    client_state.last_known_team_scores != match_snapshot.team_scores;
-                let time_changed = client_state
-                    .last_known_match_time_remaining
-                    .map_or(true, |t| (t - match_snapshot.time_remaining).abs() > 0.5);
-                let state_changed = client_state
-                    .last_known_match_state
-                    .map_or(true, |s| s != match_snapshot.match_state);
-                if client_state.match_info_pending
-                    || state_changed
-                    || time_changed
-                    || team_scores_changed
-                {
-                    let team_scores_vec: Vec<_> = match_snapshot
-                        .team_scores
-                        .iter()
-                        .map(|(team_id, score)| {
-                            fb::TeamScoreEntry::create(
-                                &mut builder,
-                                &fb::TeamScoreEntryArgs {
-                                    team_id: *team_id as i8,
-                                    score: *score,
-                                },
-                            )
-                        })
-                        .collect();
-                    let team_scores_fb = builder.create_vector(&team_scores_vec);
-                    Some(fb::MatchInfo::create(
-                        &mut builder,
-                        &fb::MatchInfoArgs {
-                            time_remaining: match_snapshot.time_remaining,
-                            match_state: match_snapshot.match_state,
-                            winner_id: None,
-                            winner_name: None,
-                            game_mode: match_snapshot.game_mode,
-                            team_scores: Some(team_scores_fb),
-                        },
-                    ))
-                } else {
-                    None
-                }
-            };
-
-            // Build destroyed wall IDs
-            let destroyed_walls_vec: Vec<_> = shared_data
-                .destroyed_wall_ids
-                .iter()
-                .filter(|id| !client_state.known_destroyed_wall_ids.contains(*id))
-                .map(|id| builder.create_string(&id.to_string()))
-                .collect();
-            let destroyed_wall_ids_fb = if !destroyed_walls_vec.is_empty() {
-                Some(builder.create_vector(&destroyed_walls_vec))
+                let team_scores_fb = builder.create_vector(&team_scores_vec);
+                Some(fb::MatchInfo::create(
+                    &mut builder,
+                    &fb::MatchInfoArgs {
+                        time_remaining: match_snapshot.time_remaining,
+                        match_state: match_snapshot.match_state,
+                        winner_id: None,
+                        winner_name: None,
+                        game_mode: match_snapshot.game_mode,
+                        team_scores: Some(team_scores_fb),
+                    },
+                ))
             } else {
                 None
-            };
+            }
+        };
 
-            // Build updated walls (respawned walls)
-            let mut updated_walls_vec = Vec::new();
-            let mut updated_wall_ids_sent = HashSet::new();
+        // Build destroyed wall IDs
+        let destroyed_walls_vec: Vec<_> = shared_data
+            .destroyed_wall_ids
+            .iter()
+            .filter(|id| !client_state.known_destroyed_wall_ids.contains(*id))
+            .map(|id| builder.create_string(&id.to_string()))
+            .collect();
+        let destroyed_wall_ids_fb = if !destroyed_walls_vec.is_empty() {
+            Some(builder.create_vector(&destroyed_walls_vec))
+        } else {
+            None
+        };
 
-            // First, send walls explicitly updated this tick (damage/respawn) within AoI.
-            for (wall_id, wall_data) in shared_data.updated_walls.iter() {
-                if player_aoi.visible_walls.contains(wall_id) {
-                    let id_fb = builder.create_string(&wall_data.id.to_string());
-                    let wall_fb = fb::Wall::create(
-                        &mut builder,
-                        &fb::WallArgs {
-                            id: Some(id_fb),
-                            x: wall_data.x,
-                            y: wall_data.y,
-                            width: wall_data.width,
-                            height: wall_data.height,
-                            is_destructible: wall_data.is_destructible,
-                            current_health: wall_data.current_health,
-                            max_health: wall_data.max_health,
-                        },
-                    );
-                    updated_walls_vec.push(wall_fb);
-                    updated_wall_ids_sent.insert(*wall_id);
-                    if updated_walls_vec.len() >= AOI_MAX_VISIBLE_WALLS {
-                        break;
-                    }
+        // Build updated walls (respawned walls)
+        let mut updated_walls_vec = Vec::new();
+        let mut updated_wall_ids_sent = HashSet::new();
+
+        // First, send walls explicitly updated this tick (damage/respawn) within AoI.
+        for (wall_id, wall_data) in shared_data.updated_walls.iter() {
+            if player_aoi.visible_walls.contains(wall_id) {
+                let id_fb = builder.create_string(&wall_data.id.to_string());
+                let wall_fb = fb::Wall::create(
+                    &mut builder,
+                    &fb::WallArgs {
+                        id: Some(id_fb),
+                        x: wall_data.x,
+                        y: wall_data.y,
+                        width: wall_data.width,
+                        height: wall_data.height,
+                        is_destructible: wall_data.is_destructible,
+                        current_health: wall_data.current_health,
+                        max_health: wall_data.max_health,
+                    },
+                );
+                updated_walls_vec.push(wall_fb);
+                updated_wall_ids_sent.insert(*wall_id);
+                if updated_walls_vec.len() >= AOI_MAX_VISIBLE_WALLS {
+                    break;
                 }
             }
+        }
 
-            // Then stream newly visible or changed walls so larger/dynamic maps load progressively.
-            if updated_walls_vec.len() < AOI_MAX_VISIBLE_WALLS {
-                for visible_wall_id in &player_aoi.visible_walls {
-                    if updated_wall_ids_sent.contains(visible_wall_id) {
-                        continue;
-                    }
+        // Then stream newly visible or changed walls so larger/dynamic maps load progressively.
+        if updated_walls_vec.len() < AOI_MAX_VISIBLE_WALLS {
+            for visible_wall_id in &player_aoi.visible_walls {
+                if updated_wall_ids_sent.contains(visible_wall_id) {
+                    continue;
+                }
 
-                    let wall_data = match shared_data.active_walls_by_id.get(visible_wall_id) {
-                        Some(wall) => wall,
-                        None => continue,
-                    };
+                let wall_data = match shared_data.active_walls_by_id.get(visible_wall_id) {
+                    Some(wall) => wall,
+                    None => continue,
+                };
 
-                    let should_send = client_state
-                        .last_known_wall_states
-                        .get(visible_wall_id)
-                        .map_or(true, |(known_health, known_max_health)| {
-                            *known_health != wall_data.current_health
-                                || *known_max_health != wall_data.max_health
-                        });
+                let should_send = client_state
+                    .last_known_wall_states
+                    .get(visible_wall_id)
+                    .map_or(true, |(known_health, known_max_health)| {
+                        *known_health != wall_data.current_health
+                            || *known_max_health != wall_data.max_health
+                    });
 
-                    if !should_send {
-                        continue;
-                    }
+                if !should_send {
+                    continue;
+                }
 
-                    let id_fb = builder.create_string(&wall_data.id.to_string());
-                    let wall_fb = fb::Wall::create(
-                        &mut builder,
-                        &fb::WallArgs {
-                            id: Some(id_fb),
-                            x: wall_data.x,
-                            y: wall_data.y,
-                            width: wall_data.width,
-                            height: wall_data.height,
-                            is_destructible: wall_data.is_destructible,
-                            current_health: wall_data.current_health,
-                            max_health: wall_data.max_health,
-                        },
-                    );
-                    updated_walls_vec.push(wall_fb);
-                    updated_wall_ids_sent.insert(*visible_wall_id);
-                    if updated_walls_vec.len() >= AOI_MAX_VISIBLE_WALLS {
-                        break;
-                    }
+                let id_fb = builder.create_string(&wall_data.id.to_string());
+                let wall_fb = fb::Wall::create(
+                    &mut builder,
+                    &fb::WallArgs {
+                        id: Some(id_fb),
+                        x: wall_data.x,
+                        y: wall_data.y,
+                        width: wall_data.width,
+                        height: wall_data.height,
+                        is_destructible: wall_data.is_destructible,
+                        current_health: wall_data.current_health,
+                        max_health: wall_data.max_health,
+                    },
+                );
+                updated_walls_vec.push(wall_fb);
+                updated_wall_ids_sent.insert(*visible_wall_id);
+                if updated_walls_vec.len() >= AOI_MAX_VISIBLE_WALLS {
+                    break;
                 }
             }
+        }
 
-            let updated_walls_fb = if !updated_walls_vec.is_empty() {
-                Some(builder.create_vector(&updated_walls_vec))
-            } else {
-                None
-            };
+        let updated_walls_fb = if !updated_walls_vec.is_empty() {
+            Some(builder.create_vector(&updated_walls_vec))
+        } else {
+            None
+        };
 
-            // Build delta state message with correct field names
-            let delta_state_args = fb::DeltaStateMessageArgs {
-                players: Some(players_fb),
-                projectiles: Some(projectiles_fb),
-                removed_projectiles: Some(removed_projectiles_fb),
-                pickups: Some(pickups_fb),
-                deactivated_pickup_ids: Some(deactivated_pickups_fb),
-                game_events: game_events_fb,
-                timestamp: shared_data.timestamp_ms,
-                last_processed_input_sequence: 0, // Get from player state if needed
-                changed_player_fields: changed_player_fields_fb,
-                kill_feed: Some(kill_feed_fb),
-                match_info: match_info_fb,
-                destroyed_wall_ids: destroyed_wall_ids_fb,
-                flag_states: None,
-                removed_player_ids: Some(removed_players_fb),
-                updated_walls: updated_walls_fb,
-            };
+        // Build delta state message with correct field names
+        let delta_state_args = fb::DeltaStateMessageArgs {
+            players: Some(players_fb),
+            projectiles: Some(projectiles_fb),
+            removed_projectiles: Some(removed_projectiles_fb),
+            pickups: Some(pickups_fb),
+            deactivated_pickup_ids: Some(deactivated_pickups_fb),
+            game_events: game_events_fb,
+            timestamp: shared_data.timestamp_ms,
+            last_processed_input_sequence: 0, // Get from player state if needed
+            changed_player_fields: changed_player_fields_fb,
+            kill_feed: Some(kill_feed_fb),
+            match_info: match_info_fb,
+            destroyed_wall_ids: destroyed_wall_ids_fb,
+            flag_states: None,
+            removed_player_ids: Some(removed_players_fb),
+            updated_walls: updated_walls_fb,
+        };
 
-            let delta_state = fb::DeltaStateMessage::create(&mut builder, &delta_state_args);
+        let delta_state = fb::DeltaStateMessage::create(&mut builder, &delta_state_args);
 
-            // Wrap in GameMessage
-            let game_msg = fb::GameMessage::create(
-                &mut builder,
-                &fb::GameMessageArgs {
-                    msg_type: fb::MessageType::DeltaState,
-                    actual_message_type: fb::MessagePayload::DeltaStateMessage,
-                    actual_message: Some(delta_state.as_union_value()),
-                },
-            );
+        // Wrap in GameMessage
+        let game_msg = fb::GameMessage::create(
+            &mut builder,
+            &fb::GameMessageArgs {
+                msg_type: fb::MessageType::DeltaState,
+                actual_message_type: fb::MessagePayload::DeltaStateMessage,
+                actual_message: Some(delta_state.as_union_value()),
+            },
+        );
 
         builder.finish(game_msg, None);
-        let (buffer, root_index) = builder.collapse();
-        let bytes = Bytes::from(buffer).slice(root_index..);
+        let bytes = if join_zero_copy_serialization_enabled() {
+            let (buffer, root_index) = builder.collapse();
+            Bytes::from(buffer).slice(root_index..)
+        } else {
+            Bytes::copy_from_slice(builder.finished_data())
+        };
 
         trace!(
             "[{}] DeltaBuilder: Completed in {:?}",
@@ -4954,9 +5316,12 @@ impl MassiveGameServer {
             TAIL_JOIN_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN
         };
 
-        let tail_join_mode = connected_clients >= tail_connected_clients_min
+        let tail_policy_enabled = join_tail_policy_enabled();
+        let tail_join_mode = tail_policy_enabled
+            && connected_clients >= tail_connected_clients_min
             && pending_initial_open_count >= tail_pending_initial_open_min;
-        let aggressive_tail_join_mode = connected_clients >= aggressive_connected_clients_min
+        let aggressive_tail_join_mode = tail_policy_enabled
+            && connected_clients >= aggressive_connected_clients_min
             && pending_initial_open_count >= aggressive_pending_initial_open_min;
         let initial_snapshot_caps = if aggressive_tail_join_mode {
             InitialSnapshotCaps::TAIL_AGGRESSIVE
@@ -4981,6 +5346,11 @@ impl MassiveGameServer {
         } else {
             MAX_DELTA_EVENTS_DEFAULT
         };
+        let soa_adaptive_fallback_active = join_soa_adaptive_fallback_enabled()
+            && connected_clients >= MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN
+            && (pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+                || aggressive_tail_join_mode
+                || tail_join_mode);
 
         // Keep budget decisions tied to total backlog, but only schedule actionable
         // initial sends (open data channels).
@@ -5068,14 +5438,16 @@ impl MassiveGameServer {
         }
 
         debug!(
-            "[Frame {}] Join scheduler: pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, tail_join_mode={}, aggressive_tail_join_mode={}, single_machine_opt={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, delta_event_budget={}, snapshot_caps={{players:{}, walls:{}, projectiles:{}, pickups:{}}}, scheduled_initial={}, scheduled_delta={}",
+            "[Frame {}] Join scheduler: pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, tail_policy_enabled={}, tail_join_mode={}, aggressive_tail_join_mode={}, single_machine_opt={}, soa_fallback_active={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, delta_event_budget={}, snapshot_caps={{players:{}, walls:{}, projectiles:{}, pickups:{}}}, scheduled_initial={}, scheduled_delta={}",
             current_frame,
             pending_initial_total_count,
             pending_initial_open_count,
             pending_initial_closed_count,
+            tail_policy_enabled,
             tail_join_mode,
             aggressive_tail_join_mode,
             single_machine_opt,
+            soa_adaptive_fallback_active,
             max_initial_per_frame,
             max_delta_per_frame,
             delta_skip_modulus,
@@ -5097,13 +5469,15 @@ impl MassiveGameServer {
                 initial_snapshot_caps,
                 tail_join_mode,
                 aggressive_tail_join_mode,
+                soa_adaptive_fallback_active,
                 max_delta_events_per_client,
             )
             .await,
         );
-        trace!("[Frame {}] Prepared shared broadcast data. Events: {}, Destroyed Walls: {}, Chat: {}, KF: {}",
+        trace!("[Frame {}] Prepared shared broadcast data. Events: {}, Destroyed Walls: {}, Chat: {}, KF: {}, use_soa_snapshot={}, soa_fallback_active={}",
             current_frame, shared_broadcast_data.events.len(), shared_broadcast_data.destroyed_wall_ids.len(),
-            shared_broadcast_data.chat_messages.len(), shared_broadcast_data.kill_feed_snapshot.len());
+            shared_broadcast_data.chat_messages.len(), shared_broadcast_data.kill_feed_snapshot.len(),
+            shared_broadcast_data.use_soa_snapshot, shared_broadcast_data.soa_fallback_active);
 
         let mut broadcast_concurrency = (self
             .config
@@ -5203,258 +5577,255 @@ impl MassiveGameServer {
 
         let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
 
-            // 1. Walls: Reuse per-broadcast active wall snapshot when available.
-            let active_walls_to_send: Cow<'_, [Wall]> =
-                if shared_data.active_walls_snapshot.is_empty() {
-                    Cow::Owned(self.collect_active_walls_optimized())
-                } else {
-                    Cow::Borrowed(shared_data.active_walls_snapshot.as_slice())
-                };
+        // 1. Walls: Reuse per-broadcast active wall snapshot when available.
+        let active_walls_to_send: Cow<'_, [Wall]> = if shared_data.active_walls_snapshot.is_empty()
+        {
+            Cow::Owned(self.collect_active_walls_optimized())
+        } else {
+            Cow::Borrowed(shared_data.active_walls_snapshot.as_slice())
+        };
 
-            info!(
-                "[Frame {} Client {}] InitialState: Collected {} active walls.",
-                frame,
-                peer_id_str,
-                active_walls_to_send.len()
+        info!(
+            "[Frame {} Client {}] InitialState: Collected {} active walls.",
+            frame,
+            peer_id_str,
+            active_walls_to_send.len()
+        );
+
+        let mut walls_fb_vec =
+            Vec::with_capacity(active_walls_to_send.len().min(snapshot_caps.max_walls));
+        for wall_data in active_walls_to_send.iter().take(snapshot_caps.max_walls) {
+            let id_fb = fb_safe_str(&mut builder, &wall_data.id.to_string());
+            walls_fb_vec.push(fb::Wall::create(
+                &mut builder,
+                &fb::WallArgs {
+                    id: Some(id_fb),
+                    x: wall_data.x,
+                    y: wall_data.y,
+                    width: wall_data.width,
+                    height: wall_data.height,
+                    is_destructible: wall_data.is_destructible,
+                    current_health: wall_data.current_health,
+                    max_health: wall_data.max_health,
+                },
+            ));
+        }
+        let walls_fb = builder.create_vector(&walls_fb_vec);
+        info!(
+            "[Frame {} Client {}] InitialState: Serialized {} walls.",
+            frame,
+            peer_id_str,
+            walls_fb_vec.len()
+        );
+
+        // 2. Player States (Self + AoI)
+        let mut players_fb_vec = Vec::new();
+        let mut player_aoi_data_for_initial_state = Self::get_empty_player_aoi(); // Default empty
+
+        if let Some(self_pstate_guard) =
+            Self::lookup_player_state_from_shared(shared_data, &self_player_id_arc)
+        {
+            players_fb_vec.push(create_fb_player_state_for_delta(
+                &mut builder,
+                self_pstate_guard,
+                0xFFFF,
+            ));
+            // Fetch AoI based on self's current position for other entities
+            player_aoi_data_for_initial_state = self.get_player_aoi_data_fast(&self_player_id_arc);
+        } else {
+            warn!(
+                "[Frame {} Client {}] InitialState: Self player state not found!",
+                frame, peer_id_str
             );
+        }
 
-            let mut walls_fb_vec =
-                Vec::with_capacity(active_walls_to_send.len().min(snapshot_caps.max_walls));
-            for wall_data in active_walls_to_send.iter().take(snapshot_caps.max_walls) {
-                let id_fb = fb_safe_str(&mut builder, &wall_data.id.to_string());
-                walls_fb_vec.push(fb::Wall::create(
+        for visible_player_id in player_aoi_data_for_initial_state
+            .visible_players
+            .iter()
+            .take(
+                snapshot_caps
+                    .max_players
+                    .saturating_sub(players_fb_vec.len()),
+            )
+        {
+            if visible_player_id != &self_player_id_arc {
+                // Already added self
+                if let Some(pstate_guard) =
+                    Self::lookup_player_state_from_shared(shared_data, visible_player_id)
+                {
+                    players_fb_vec.push(create_fb_player_state_for_delta(
+                        &mut builder,
+                        pstate_guard,
+                        0xFFFF,
+                    ));
+                }
+            }
+        }
+        let players_fb = builder.create_vector(&players_fb_vec);
+        info!(
+            "[Frame {} Client {}] InitialState: Serialized {} player states.",
+            frame,
+            peer_id_str,
+            players_fb_vec.len()
+        );
+
+        // 3. Projectiles (from AoI)
+        let mut projectiles_fb_vec = Vec::new();
+        for proj_id in player_aoi_data_for_initial_state
+            .visible_projectiles
+            .iter()
+            .take(snapshot_caps.max_projectiles)
+        {
+            if let Some(proj) = shared_data.projectiles_snapshot.get(proj_id) {
+                let id_fb = fb_safe_str(&mut builder, &proj.id.to_string());
+                let owner_id_fb = fb_safe_str(&mut builder, proj.owner_id.as_str());
+                projectiles_fb_vec.push(fb::ProjectileState::create(
                     &mut builder,
-                    &fb::WallArgs {
+                    &fb::ProjectileStateArgs {
                         id: Some(id_fb),
-                        x: wall_data.x,
-                        y: wall_data.y,
-                        width: wall_data.width,
-                        height: wall_data.height,
-                        is_destructible: wall_data.is_destructible,
-                        current_health: wall_data.current_health,
-                        max_health: wall_data.max_health,
+                        x: proj.x,
+                        y: proj.y,
+                        owner_id: Some(owner_id_fb),
+                        weapon_type: map_server_weapon_to_fb(proj.weapon_type),
+                        velocity_x: proj.velocity_x,
+                        velocity_y: proj.velocity_y,
                     },
                 ));
             }
-            let walls_fb = builder.create_vector(&walls_fb_vec);
-            info!(
-                "[Frame {} Client {}] InitialState: Serialized {} walls.",
-                frame,
-                peer_id_str,
-                walls_fb_vec.len()
-            );
+        }
+        let projectiles_fb = builder.create_vector(&projectiles_fb_vec);
+        info!(
+            "[Frame {} Client {}] InitialState: Serialized {} projectiles.",
+            frame,
+            peer_id_str,
+            projectiles_fb_vec.len()
+        );
 
-            // 2. Player States (Self + AoI)
-            let mut players_fb_vec = Vec::new();
-            let mut player_aoi_data_for_initial_state = Self::get_empty_player_aoi(); // Default empty
-
-            if let Some(self_pstate_guard) = shared_data
-                .player_soa_snapshot
-                .get_state(&self_player_id_arc)
-            {
-                players_fb_vec.push(create_fb_player_state_for_delta(
-                    &mut builder,
-                    self_pstate_guard,
-                    0xFFFF,
-                ));
-                // Fetch AoI based on self's current position for other entities
-                player_aoi_data_for_initial_state =
-                    self.get_player_aoi_data_fast(&self_player_id_arc);
-            } else {
-                warn!(
-                    "[Frame {} Client {}] InitialState: Self player state not found!",
-                    frame, peer_id_str
-                );
-            }
-
-            for visible_player_id in player_aoi_data_for_initial_state
-                .visible_players
-                .iter()
-                .take(
-                    snapshot_caps
-                        .max_players
-                        .saturating_sub(players_fb_vec.len()),
-                )
-            {
-                if visible_player_id != &self_player_id_arc {
-                    // Already added self
-                    if let Some(pstate_guard) =
-                        shared_data.player_soa_snapshot.get_state(visible_player_id)
-                    {
-                        players_fb_vec.push(create_fb_player_state_for_delta(
-                            &mut builder,
-                            pstate_guard,
-                            0xFFFF,
-                        ));
-                    }
-                }
-            }
-            let players_fb = builder.create_vector(&players_fb_vec);
-            info!(
-                "[Frame {} Client {}] InitialState: Serialized {} player states.",
-                frame,
-                peer_id_str,
-                players_fb_vec.len()
-            );
-
-            // 3. Projectiles (from AoI)
-            let mut projectiles_fb_vec = Vec::new();
-            for proj_id in player_aoi_data_for_initial_state
-                .visible_projectiles
-                .iter()
-                .take(snapshot_caps.max_projectiles)
-            {
-                if let Some(proj) = shared_data.projectiles_snapshot.get(proj_id) {
-                    let id_fb = fb_safe_str(&mut builder, &proj.id.to_string());
-                    let owner_id_fb = fb_safe_str(&mut builder, proj.owner_id.as_str());
-                    projectiles_fb_vec.push(fb::ProjectileState::create(
+        // 4. Pickups (Active ones from AoI)
+        let mut pickups_fb_vec = Vec::new();
+        for pickup_id in player_aoi_data_for_initial_state
+            .visible_pickups
+            .iter()
+            .take(snapshot_caps.max_pickups)
+        {
+            if let Some(pickup) = shared_data.pickups_snapshot.get(pickup_id) {
+                if pickup.is_active {
+                    // Only send active pickups
+                    let (fb_pickup_type, fb_weapon_type_opt) =
+                        map_core_pickup_to_fb(&pickup.pickup_type);
+                    let id_fb = fb_safe_str(&mut builder, &pickup.id.to_string());
+                    pickups_fb_vec.push(fb::Pickup::create(
                         &mut builder,
-                        &fb::ProjectileStateArgs {
+                        &fb::PickupArgs {
                             id: Some(id_fb),
-                            x: proj.x,
-                            y: proj.y,
-                            owner_id: Some(owner_id_fb),
-                            weapon_type: map_server_weapon_to_fb(proj.weapon_type),
-                            velocity_x: proj.velocity_x,
-                            velocity_y: proj.velocity_y,
+                            x: pickup.x,
+                            y: pickup.y,
+                            pickup_type: fb_pickup_type,
+                            weapon_type: fb_weapon_type_opt.unwrap_or(fb::WeaponType::Pistol),
+                            is_active: pickup.is_active,
                         },
                     ));
                 }
             }
-            let projectiles_fb = builder.create_vector(&projectiles_fb_vec);
-            info!(
-                "[Frame {} Client {}] InitialState: Serialized {} projectiles.",
-                frame,
-                peer_id_str,
-                projectiles_fb_vec.len()
-            );
+        }
+        let pickups_fb = builder.create_vector(&pickups_fb_vec);
+        info!(
+            "[Frame {} Client {}] InitialState: Serialized {} active pickups.",
+            frame,
+            peer_id_str,
+            pickups_fb_vec.len()
+        );
 
-            // 4. Pickups (Active ones from AoI)
-            let mut pickups_fb_vec = Vec::new();
-            for pickup_id in player_aoi_data_for_initial_state
-                .visible_pickups
-                .iter()
-                .take(snapshot_caps.max_pickups)
-            {
-                if let Some(pickup) = shared_data.pickups_snapshot.get(pickup_id) {
-                    if pickup.is_active {
-                        // Only send active pickups
-                        let (fb_pickup_type, fb_weapon_type_opt) =
-                            map_core_pickup_to_fb(&pickup.pickup_type);
-                        let id_fb = fb_safe_str(&mut builder, &pickup.id.to_string());
-                        pickups_fb_vec.push(fb::Pickup::create(
-                            &mut builder,
-                            &fb::PickupArgs {
-                                id: Some(id_fb),
-                                x: pickup.x,
-                                y: pickup.y,
-                                pickup_type: fb_pickup_type,
-                                weapon_type: fb_weapon_type_opt.unwrap_or(fb::WeaponType::Pistol),
-                                is_active: pickup.is_active,
-                            },
-                        ));
-                    }
-                }
-            }
-            let pickups_fb = builder.create_vector(&pickups_fb_vec);
-            info!(
-                "[Frame {} Client {}] InitialState: Serialized {} active pickups.",
-                frame,
-                peer_id_str,
-                pickups_fb_vec.len()
-            );
+        // 5. Match Info (from shared_data snapshot)
+        let match_snapshot = &shared_data.match_info_snapshot;
+        let fb_team_scores_vec: Vec<_> = match_snapshot
+            .team_scores
+            .iter()
+            .map(|(team_id, score)| {
+                fb::TeamScoreEntry::create(
+                    &mut builder,
+                    &fb::TeamScoreEntryArgs {
+                        team_id: *team_id as i8,
+                        score: *score,
+                    },
+                )
+            })
+            .collect();
+        let team_scores_fb = builder.create_vector(&fb_team_scores_vec);
 
-            // 5. Match Info (from shared_data snapshot)
-            let match_snapshot = &shared_data.match_info_snapshot;
-            let fb_team_scores_vec: Vec<_> = match_snapshot
-                .team_scores
-                .iter()
-                .map(|(team_id, score)| {
-                    fb::TeamScoreEntry::create(
-                        &mut builder,
-                        &fb::TeamScoreEntryArgs {
-                            team_id: *team_id as i8,
-                            score: *score,
-                        },
-                    )
-                })
-                .collect();
-            let team_scores_fb = builder.create_vector(&fb_team_scores_vec);
+        let match_info_fb = fb::MatchInfo::create(
+            &mut builder,
+            &fb::MatchInfoArgs {
+                time_remaining: match_snapshot.time_remaining,
+                match_state: match_snapshot.match_state,
+                winner_id: None, // Typically not known at initial state
+                winner_name: None,
+                game_mode: match_snapshot.game_mode,
+                team_scores: Some(team_scores_fb),
+            },
+        );
 
-            let match_info_fb = fb::MatchInfo::create(
-                &mut builder,
-                &fb::MatchInfoArgs {
-                    time_remaining: match_snapshot.time_remaining,
-                    match_state: match_snapshot.match_state,
-                    winner_id: None, // Typically not known at initial state
-                    winner_name: None,
-                    game_mode: match_snapshot.game_mode,
-                    team_scores: Some(team_scores_fb),
-                },
-            );
+        // 6. Flag States (from shared_data snapshot)
+        let fb_flag_states_vec: Vec<_> = match_snapshot
+            .flag_states
+            .values()
+            .map(|fs| {
+                let carrier_id_fb = fs
+                    .carrier_id
+                    .as_ref()
+                    .map(|id| fb_safe_str(&mut builder, id.as_str()));
+                let pos_fb = fb::Vec2::create(
+                    &mut builder,
+                    &fb::Vec2Args {
+                        x: fs.position.x,
+                        y: fs.position.y,
+                    },
+                );
+                fb::FlagState::create(
+                    &mut builder,
+                    &fb::FlagStateArgs {
+                        team_id: fs.team_id as i8,
+                        status: fs.status,
+                        position: Some(pos_fb),
+                        carrier_id: carrier_id_fb,
+                        respawn_timer: fs.respawn_timer,
+                    },
+                )
+            })
+            .collect();
+        let flag_states_fb = builder.create_vector(&fb_flag_states_vec);
 
-            // 6. Flag States (from shared_data snapshot)
-            let fb_flag_states_vec: Vec<_> = match_snapshot
-                .flag_states
-                .values()
-                .map(|fs| {
-                    let carrier_id_fb = fs
-                        .carrier_id
-                        .as_ref()
-                        .map(|id| fb_safe_str(&mut builder, id.as_str()));
-                    let pos_fb = fb::Vec2::create(
-                        &mut builder,
-                        &fb::Vec2Args {
-                            x: fs.position.x,
-                            y: fs.position.y,
-                        },
-                    );
-                    fb::FlagState::create(
-                        &mut builder,
-                        &fb::FlagStateArgs {
-                            team_id: fs.team_id as i8,
-                            status: fs.status,
-                            position: Some(pos_fb),
-                            carrier_id: carrier_id_fb,
-                            respawn_timer: fs.respawn_timer,
-                        },
-                    )
-                })
-                .collect();
-            let flag_states_fb = builder.create_vector(&fb_flag_states_vec);
+        // 7. Map Name
+        let map_name_fb = fb_safe_str(&mut builder, &self.map_name);
 
-            // 7. Map Name
-            let map_name_fb = fb_safe_str(&mut builder, &self.map_name);
+        // 8. Timestamp (from shared_data)
+        let timestamp_initial = shared_data.timestamp_ms;
 
-            // 8. Timestamp (from shared_data)
-            let timestamp_initial = shared_data.timestamp_ms;
+        // 9. Player ID for the message
+        let player_id_fb_initial = fb_safe_str(&mut builder, peer_id_str);
 
-            // 9. Player ID for the message
-            let player_id_fb_initial = fb_safe_str(&mut builder, peer_id_str);
+        // Create InitialStateMessage
+        let initial_state_args = fb::InitialStateMessageArgs {
+            player_id: Some(player_id_fb_initial),
+            walls: Some(walls_fb),
+            players: Some(players_fb),
+            projectiles: Some(projectiles_fb),
+            pickups: Some(pickups_fb),
+            match_info: Some(match_info_fb),
+            flag_states: Some(flag_states_fb),
+            timestamp: timestamp_initial,
+            map_name: Some(map_name_fb),
+        };
+        let initial_state_msg = fb::InitialStateMessage::create(&mut builder, &initial_state_args);
 
-            // Create InitialStateMessage
-            let initial_state_args = fb::InitialStateMessageArgs {
-                player_id: Some(player_id_fb_initial),
-                walls: Some(walls_fb),
-                players: Some(players_fb),
-                projectiles: Some(projectiles_fb),
-                pickups: Some(pickups_fb),
-                match_info: Some(match_info_fb),
-                flag_states: Some(flag_states_fb),
-                timestamp: timestamp_initial,
-                map_name: Some(map_name_fb),
-            };
-            let initial_state_msg =
-                fb::InitialStateMessage::create(&mut builder, &initial_state_args);
-
-            // Wrap in GameMessage
-            let game_msg_args = fb::GameMessageArgs {
-                msg_type: fb::MessageType::InitialState,
-                actual_message_type: fb::MessagePayload::InitialStateMessage,
-                actual_message: Some(initial_state_msg.as_union_value()),
-            };
-            let game_msg = fb::GameMessage::create(&mut builder, &game_msg_args);
-            builder.finish(game_msg, None);
+        // Wrap in GameMessage
+        let game_msg_args = fb::GameMessageArgs {
+            msg_type: fb::MessageType::InitialState,
+            actual_message_type: fb::MessagePayload::InitialStateMessage,
+            actual_message: Some(initial_state_msg.as_union_value()),
+        };
+        let game_msg = fb::GameMessage::create(&mut builder, &game_msg_args);
+        builder.finish(game_msg, None);
 
         let finished_len = builder.finished_data().len();
         info!(
@@ -5466,8 +5837,12 @@ impl MassiveGameServer {
             return Err("Initial state too large".into());
         }
 
-        let (buffer, root_index) = builder.collapse();
-        Ok(Bytes::from(buffer).slice(root_index..))
+        if join_zero_copy_serialization_enabled() {
+            let (buffer, root_index) = builder.collapse();
+            Ok(Bytes::from(buffer).slice(root_index..))
+        } else {
+            Ok(Bytes::copy_from_slice(builder.finished_data()))
+        }
     }
 
     pub(crate) fn send_initial_state_to_client(
@@ -6649,31 +7024,33 @@ impl MassiveGameServer {
             return 0;
         }
 
-        if let Some(coalesced_packet) = build_coalesced_packet_batch(packets) {
-            let coalesced_timeout_ms =
-                timeout_ms.saturating_add((packets.len() as u64).saturating_mul(4));
-            match tokio::time::timeout(
-                Duration::from_millis(coalesced_timeout_ms),
-                data_channel.send(&coalesced_packet),
-            )
-            .await
-            {
-                Ok(Ok(_)) => {
-                    return packets.len();
-                }
-                Ok(Err(e)) => {
-                    warn!(
-                        "Coalesced packet send error ({} logical packets): {:?}. Falling back to sequential dispatch.",
-                        packets.len(),
-                        e
-                    );
-                }
-                Err(_) => {
-                    warn!(
-                        "Coalesced packet send timeout after {}ms ({} logical packets). Falling back to sequential dispatch.",
-                        coalesced_timeout_ms,
-                        packets.len()
-                    );
+        if join_packet_batching_enabled() {
+            if let Some(coalesced_packet) = build_coalesced_packet_batch(packets) {
+                let coalesced_timeout_ms =
+                    timeout_ms.saturating_add((packets.len() as u64).saturating_mul(4));
+                match tokio::time::timeout(
+                    Duration::from_millis(coalesced_timeout_ms),
+                    data_channel.send(&coalesced_packet),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => {
+                        return packets.len();
+                    }
+                    Ok(Err(e)) => {
+                        warn!(
+                            "Coalesced packet send error ({} logical packets): {:?}. Falling back to sequential dispatch.",
+                            packets.len(),
+                            e
+                        );
+                    }
+                    Err(_) => {
+                        warn!(
+                            "Coalesced packet send timeout after {}ms ({} logical packets). Falling back to sequential dispatch.",
+                            coalesced_timeout_ms,
+                            packets.len()
+                        );
+                    }
                 }
             }
         }
@@ -6735,6 +7112,44 @@ impl MassiveGameServer {
             }
         }
         max_seq_in_batch
+    }
+}
+
+fn round_metric(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+fn percentile_sorted(values_sorted: &[f64], percentile: f64) -> f64 {
+    if values_sorted.is_empty() {
+        return 0.0;
+    }
+    if values_sorted.len() == 1 {
+        return values_sorted[0];
+    }
+    let clamped = percentile.clamp(0.0, 1.0);
+    let idx = (values_sorted.len() - 1) as f64 * clamped;
+    let lower = idx.floor() as usize;
+    let upper = idx.ceil() as usize;
+    if lower == upper {
+        values_sorted[lower]
+    } else {
+        let weight = idx - lower as f64;
+        values_sorted[lower] + (values_sorted[upper] - values_sorted[lower]) * weight
+    }
+}
+
+fn summarize_join_stage_latencies(values: &[f64]) -> JoinStageLatencyStats {
+    if values.is_empty() {
+        return JoinStageLatencyStats::default();
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|left, right| left.total_cmp(right));
+    let avg = sorted.iter().sum::<f64>() / sorted.len() as f64;
+    JoinStageLatencyStats {
+        count: sorted.len(),
+        avg_ms: round_metric(avg),
+        p95_ms: round_metric(percentile_sorted(&sorted, 0.95)),
+        max_ms: round_metric(*sorted.last().unwrap_or(&0.0)),
     }
 }
 

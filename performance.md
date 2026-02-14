@@ -4,6 +4,83 @@
 - Goal: keep `10v10` stable and clear the remaining `80+` launch-timeout bottleneck.
 - This refresh retested join throughput after the dynamic+deterministic world optimization pass.
 
+## Join Throughput Isolation (2026-02-14 PM)
+- Added runtime-isolation toggles and stage-report wiring:
+  - server toggles: `MGS_JOIN_DISABLE_TAIL_POLICY`, `MGS_JOIN_DISABLE_PACKET_BATCHING`, `MGS_JOIN_DISABLE_SOA_SNAPSHOT`, `MGS_JOIN_DISABLE_ZERO_COPY_SERIALIZATION`
+  - API: `GET /api/ops/join-stages`, `POST /api/ops/join-stages/reset`
+  - runner capture: `scripts/ui_bench/multi_client.js --join-stage-url ... --reset-join-stages`
+- Deterministic `120` A/B matrix (`600000ms` cap, same runner profile):
+  - baseline: `artifacts/scale/multi_client_diag_120_baseline_full_20260214.json`
+    - `88/120`, `connectedRatio=0.7333`, `73+=16/48`, `73+ p95=78430.5`
+  - tail policy off: `artifacts/scale/multi_client_diag_120_tail_off_20260214.json`
+    - `83/120`, `connectedRatio=0.6917`, `73+=11/48`, `73+ p95=103594.5`
+  - packet batching off: `artifacts/scale/multi_client_diag_120_batching_off_20260214.json`
+    - `87/120`, `connectedRatio=0.7250`, `73+=15/48`, `73+ p95=100437.8`
+  - zero-copy off: `artifacts/scale/multi_client_diag_120_zero_copy_off_20260214.json`
+    - `90/120`, `connectedRatio=0.7500`, `73+=18/48`, `73+ p95=101522.3`
+  - SoA snapshot off: `artifacts/scale/multi_client_diag_120_soa_off_20260214.json`
+    - `96/120`, `connectedRatio=0.8000`, `73+=24/48`, `73+ p95=121255.9`
+- Isolation outcome:
+  - tail policy is helping (turning it off is worst in this matrix).
+  - packet batching and zero-copy are not primary regressors in this profile.
+  - SoA snapshot path is the strongest remaining regression suspect (`+10` launched clients vs current regressed baseline `86/120` when disabled).
+  - stage buckets currently report near-zero queue/build/send timings, so they need deeper span coverage before being used as bottleneck truth.
+- Confirmation refresh:
+  - `10v10` validation with chosen setting (`SoA` off):
+    - `artifacts/scale/multi_client_fresh_20_after_soa_off_tail_retest_20260214.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=107570`, `p95=21146.4`
+  - `120` tail validation for chosen setting:
+    - `artifacts/scale/multi_client_diag_120_soa_off_20260214.json`
+    - `96/120`, `connectedRatio=0.8000`, `73+=24/48`
+  - adaptive fallback v1 (tail-only/backlog-heavy trigger):
+    - `artifacts/scale/multi_client_fresh_120_after_soa_adaptive_fallback_20260214.json`
+    - `87/120`, `connectedRatio=0.7250`, `73+=15/48` (not kept)
+  - adaptive fallback v2 (medium+ join-pressure trigger, final):
+    - `artifacts/scale/multi_client_fresh_120_after_soa_adaptive_fallback_v2_20260214.json`
+    - `101/120`, `connectedRatio=0.8417`, `73+=29/48`, `73+ p95=87012`
+  - `10v10` sanity on final adaptive fallback:
+    - `artifacts/scale/multi_client_fresh_20_after_soa_adaptive_fallback_v2_20260214.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=98109`
+
+## Benchmark Refresh (2026-02-14, release retest)
+- Re-ran deterministic multi-client benches after the lock-free/zero-copy/batching pass using release server build.
+- Artifacts:
+  - `artifacts/scale/multi_client_fresh_20_after_20260214_lockfree_zero_copy_batch_release.json`
+  - `artifacts/scale/multi_client_fresh_120_after_20260214_lockfree_zero_copy_batch_release.json`
+
+### 20 clients (10v10) before/after
+- Before:
+  - `artifacts/scale/multi_client_fresh_20_after_dynamic_consistency_opt.json`
+  - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=102680`
+- After:
+  - `artifacts/scale/multi_client_fresh_20_after_20260214_lockfree_zero_copy_batch_release.json`
+  - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=106007`
+  - `connectLatencyMs`: `p50=17370.5`, `p90=20284.3`, `p95=20401.5`, `p99=20500.3`, `max=20525`
+- Delta:
+  - launched/healthy unchanged (`20/20`)
+  - `durationMs: +3327` (`+3.24%`)
+
+### 120 clients (tail join, 600000ms cap) before/after
+- Before (previous best stable run):
+  - `artifacts/scale/multi_client_fresh_120_after_fb_pool_20260214.json`
+  - `clientsLaunched=105`, `clientsHealthyFinal=104/120`, `connectedRatio=0.8667`, `durationMs=712278`
+  - `connectLatencyMs`: `p50=24616.5`, `p95=81188.4`, `max=115036`
+  - `73+`: `count=32/48`, `avg=62741`, `p95=93382.05`, `max=115036`
+- After (new retest):
+  - `artifacts/scale/multi_client_fresh_120_after_20260214_lockfree_zero_copy_batch_release.json`
+  - `clientsLaunched=86`, `clientsHealthyFinal=86/120`, `connectedRatio=0.7167`, `durationMs=650563`
+  - `connectLatencyMs`: `p50=36017.5`, `p95=99564.75`, `max=106510`
+  - `73+`: `count=14/48`, `avg=86878.36`, `p95=103917.15`, `max=106510`
+- Delta (after vs before):
+  - `clientsLaunched: -19` (`105 -> 86`)
+  - `clientsHealthyFinal: -18` (`104 -> 86`)
+  - `connectedRatio: -0.1500` (`0.8667 -> 0.7167`)
+  - `durationMs: -61715` (earlier termination due to more launch failures)
+  - `p50: +11401`, `p95: +18376.35`
+  - `wave_73_plus count: -18` (`32 -> 14`)
+  - `wave_73_plus avg: +24137.36`, `p95: +10535.10`
+- Result: tail-join regression; this pass should not replace the prior best configuration.
+
 ## Incremental Refresh (2026-02-14)
 - Retested the UI render-stress gate with tuned defaults to stop false negatives on headless/GPU-variant runs:
   - `UI_RENDER_STRESS_MIN_FPS_RATIO=0.45` (from `0.6`)
@@ -154,12 +231,19 @@
 
 ## Current Bottleneck
 - `80` clients is no longer timeout-limited under this configuration.
-- `120` clients remains launch-timeout limited (`105/120` at 600000ms cap in latest run).
-- Remaining risk is long-tail join latency in final waves (`73+` wave `avg~62.7s`, `p95~93.4s`, with `32/48` tail slots connected and a `max~115.0s` outlier).
+- `120` clients remains launch-timeout limited.
+- Best known result in this profile is still `clientsLaunched=105`, `clientsHealthyFinal=104/120` (`multi_client_fresh_120_after_fb_pool_20260214.json`).
+- Current recovered candidate after adaptive fallback tuning is `clientsLaunched=101`, `clientsHealthyFinal=101/120`, `73+=29/48` (`multi_client_fresh_120_after_soa_adaptive_fallback_v2_20260214.json`).
+- Gap to prior best is now `-4` launched clients (`101 -> 105`), with final-wave timeout still concentrated in `73+`.
 
 ## Next Step Candidates
-- Tune join pipeline specifically for wave `73+`:
-  - cap pathological retries by introducing per-client initial-send backoff jitter once latency exceeds `~90s`
-  - isolate ultra-slow tail clients from the main launch wave (small reserved retry slice per frame)
-  - keep pooled serialization paths and measure CPU/tick headroom while pushing `connect-concurrency` sensitivity runs
-- Rerun deterministic `120` benchmark after each join-policy tweak and track `connectLatencyByWave.wave_73_plus.count` as the primary success metric.
+- Keep adaptive SoA fallback + tail policy enabled as the current best single-machine profile.
+- Add SoA-vs-map-path timing around snapshot preparation and initial/delta payload construction to reduce the remaining `73+` misses.
+- Expand join-stage instrumentation to include actionable spans:
+  - initial enqueue-to-open-channel wait
+  - snapshot build start/end around full state serialization
+  - send start to completion/error callback timings
+- After each change, rerun deterministic `120` and track:
+  - `clientsLaunched`
+  - `connectLatencyByWave.wave_73_plus.count`
+  - `connectLatencyByWave.wave_73_plus.p95Ms`

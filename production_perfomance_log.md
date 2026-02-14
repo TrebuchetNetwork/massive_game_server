@@ -6,6 +6,45 @@
 - Execute the next join-throughput optimization pass for the remaining `80+` launch timeout.
 - Rebaseline with deterministic world generation and refreshed measurements.
 
+### A/B isolation pass + confirmation (2026-02-14 PM)
+- Added runtime toggles for targeted isolation:
+  - `MGS_JOIN_DISABLE_TAIL_POLICY`
+  - `MGS_JOIN_DISABLE_PACKET_BATCHING`
+  - `MGS_JOIN_DISABLE_SOA_SNAPSHOT`
+  - `MGS_JOIN_DISABLE_ZERO_COPY_SERIALIZATION`
+- Added join-stage report endpoints and runner capture:
+  - `GET /api/ops/join-stages`
+  - `POST /api/ops/join-stages/reset`
+  - `scripts/ui_bench/multi_client.js --join-stage-url ... --reset-join-stages`
+- Deterministic `120` matrix (same profile, `600000ms` cap):
+  - baseline: `artifacts/scale/multi_client_diag_120_baseline_full_20260214.json`
+    - `88/120`, `connectedRatio=0.7333`, `73+=16/48`, `73+ p95=78430.5`
+  - tail policy off: `artifacts/scale/multi_client_diag_120_tail_off_20260214.json`
+    - `83/120`, `connectedRatio=0.6917`, `73+=11/48`, `73+ p95=103594.5`
+  - packet batching off: `artifacts/scale/multi_client_diag_120_batching_off_20260214.json`
+    - `87/120`, `connectedRatio=0.7250`, `73+=15/48`, `73+ p95=100437.8`
+  - zero-copy off: `artifacts/scale/multi_client_diag_120_zero_copy_off_20260214.json`
+    - `90/120`, `connectedRatio=0.7500`, `73+=18/48`, `73+ p95=101522.3`
+  - SoA snapshot off: `artifacts/scale/multi_client_diag_120_soa_off_20260214.json`
+    - `96/120`, `connectedRatio=0.8000`, `73+=24/48`, `73+ p95=121255.9`
+- Isolation conclusion:
+  - tail policy is beneficial; disabling it is the worst result in this matrix.
+  - packet batching / zero-copy toggles are not primary regressors.
+  - SoA snapshot path is the strongest remaining regression suspect (`+10` launched clients vs `86/120` regressed release retest when disabled).
+- Confirmation artifact for `10v10` with chosen setting (SoA off):
+  - `artifacts/scale/multi_client_fresh_20_after_soa_off_tail_retest_20260214.json`
+  - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=107570`, `p95=21146.4`
+- Adaptive fallback tuning on top of SoA isolation:
+  - first adaptive trigger (`tail-only/backlog-heavy`) was not kept:
+    - `artifacts/scale/multi_client_fresh_120_after_soa_adaptive_fallback_20260214.json`
+    - `87/120`, `connectedRatio=0.7250`, `73+=15/48`
+  - tuned adaptive trigger (`medium+ join-pressure`, final):
+    - `artifacts/scale/multi_client_fresh_120_after_soa_adaptive_fallback_v2_20260214.json`
+    - `101/120`, `connectedRatio=0.8417`, `73+=29/48`, `73+ p95=87012`
+  - `10v10` sanity:
+    - `artifacts/scale/multi_client_fresh_20_after_soa_adaptive_fallback_v2_20260214.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=98109`
+
 ### Key code updates in this pass
 - `server/src/world/map_generator.rs`
   - seeded dynamic map generation and player-count scaling.
@@ -135,10 +174,49 @@
     - `49-72`: `count=24/24`, `avg=33062.25`, `p95=50740.5`
     - `73+`: `count=32/48`, `avg=62741`, `p95=93382.05`
 
+### Fresh release retest after lock-free/zero-copy/batching pass (2026-02-14)
+- New artifacts:
+  - `artifacts/scale/multi_client_fresh_20_after_20260214_lockfree_zero_copy_batch_release.json`
+  - `artifacts/scale/multi_client_fresh_120_after_20260214_lockfree_zero_copy_batch_release.json`
+- `10v10` check (`20` clients):
+  - baseline: `artifacts/scale/multi_client_fresh_20_after_dynamic_consistency_opt.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=102680`
+  - retest: `artifacts/scale/multi_client_fresh_20_after_20260214_lockfree_zero_copy_batch_release.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=106007`
+    - `connectLatencyMs`: `p50=17370.5`, `p95=20401.5`, `max=20525`
+  - delta: `durationMs +3327` (`+3.24%`), launch/healthy unchanged.
+- Tail-join check (`120` clients, 600000ms cap):
+  - baseline (previous best): `artifacts/scale/multi_client_fresh_120_after_fb_pool_20260214.json`
+    - `clientsLaunched=105`, `clientsHealthyFinal=104/120`, `connectedRatio=0.8667`, `durationMs=712278`
+    - `connectLatencyMs`: `p50=24616.5`, `p95=81188.4`, `max=115036`
+    - `73+`: `count=32/48`, `avg=62741`, `p95=93382.05`, `max=115036`
+  - retest: `artifacts/scale/multi_client_fresh_120_after_20260214_lockfree_zero_copy_batch_release.json`
+    - `clientsLaunched=86`, `clientsHealthyFinal=86/120`, `connectedRatio=0.7167`, `durationMs=650563`
+    - `connectLatencyMs`: `p50=36017.5`, `p95=99564.75`, `max=106510`
+    - `73+`: `count=14/48`, `avg=86878.36`, `p95=103917.15`, `max=106510`
+  - delta (retest vs baseline):
+    - `clientsLaunched -19` (`105 -> 86`)
+    - `clientsHealthyFinal -18` (`104 -> 86`)
+    - `connectedRatio -0.1500` (`0.8667 -> 0.7167`)
+    - `p50 +11401`, `p95 +18376.35`
+    - `wave_73_plus count -18` (`32 -> 14`)
+    - `wave_73_plus avg +24137.36`, `wave_73_plus p95 +10535.10`
+- Conclusion: regression confirmed in the `73+` tail; this pass is not the new baseline.
+
 ### Updated boundary status
 - `80` clients still clears at `80/80`.
-- `120` clients remains launch-timeout limited; latest rerun improved to `105/120`.
-- Main unresolved bottleneck is still the `73+` wave tail (`32/48` connected) with occasional extreme outliers (max `115s`).
+- `120` clients remains launch-timeout limited.
+- Best known run remains `clientsLaunched=105`, `clientsHealthyFinal=104/120` (`after_fb_pool_20260214`).
+- Current recovered candidate is `clientsLaunched=101`, `clientsHealthyFinal=101/120` with `73+=29/48` (`multi_client_fresh_120_after_soa_adaptive_fallback_v2_20260214.json`).
+
+### What is still missing
+- Close remaining gap to prior best (`101 -> 105`) and push toward target `>=108`.
+- Keep adaptive SoA fallback and further tune tail-wave (`73+`) reliability.
+- Keep tail policy enabled; disabling it regresses both launched count and tail latency.
+- Improve per-stage metrics coverage to include:
+  - enqueue-to-open-channel wait
+  - snapshot build window around initial/delta serialization
+  - send-to-completion/error callback latency
 
 ### Test status
 - `cargo test -p massive_game_server_core --test boundary_stress -- --nocapture` passed.
