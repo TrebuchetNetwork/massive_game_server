@@ -102,6 +102,29 @@ The client can also override ICE servers via URL params:
 * `?turn=turn:...&turn_user=...&turn_pass=...`
 * `?ice=stun:...;turn:...|user|pass`
 
+### Auth Store Redis Cache
+
+Phone/SMS auth profiles can be persisted in Redis (with file fallback still enabled):
+
+* `MGS_REDIS_URL`: Redis connection string (example: `redis://127.0.0.1:6379/`).
+* `MGS_REDIS_AUTH_STORE_KEY`: Redis key for serialized auth store JSON (default: `mgs:auth:persistent_store`).
+
+If Redis is unavailable, the server automatically falls back to local file persistence (`MGS_AUTH_STORE_PATH`).
+
+### Static Assets / CDN-Ready Headers
+
+The static file route now emits long-lived immutable cache headers for JS/CSS/WASM/media assets and no-store for HTML.
+For CDN-specific CORS overrides:
+
+* `MGS_CDN_ORIGIN`: Optional `Access-Control-Allow-Origin` value for static assets.
+
+### Client Background Tab Throttling
+
+`static_client/client.html` now auto-throttles render/update cadence in hidden tabs.
+You can disable it per-client with:
+
+* `?tab_throttle=0`
+
 ## Project Structure
 
 A brief overview of the main directories:

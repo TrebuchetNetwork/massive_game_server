@@ -59,6 +59,10 @@ const INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PLAYERS: usize = 12;
 const INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_WALLS: usize = 72;
 const INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PROJECTILES: usize = 80;
 const INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PICKUPS: usize = 12;
+const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PLAYERS: usize = 14;
+const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_WALLS: usize = 84;
+const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PROJECTILES: usize = 96;
+const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PICKUPS: usize = 14;
 
 #[derive(Clone, Copy, Debug)]
 struct InitialSnapshotCaps {
@@ -88,6 +92,13 @@ impl InitialSnapshotCaps {
         max_walls: INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_WALLS,
         max_projectiles: INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PROJECTILES,
         max_pickups: INITIAL_SNAPSHOT_TAIL_AGGRESSIVE_MAX_PICKUPS,
+    };
+
+    const SINGLE_MACHINE_BACKLOG: Self = Self {
+        max_players: INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PLAYERS,
+        max_walls: INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_WALLS,
+        max_projectiles: INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PROJECTILES,
+        max_pickups: INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PICKUPS,
     };
 }
 
@@ -209,6 +220,23 @@ fn map_core_pickup_to_fb(core_type: &CorePickupType) -> (fb::PickupType, Option<
     }
 }
 
+fn env_bool_value(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|raw| {
+            let normalized = raw.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        })
+        .unwrap_or(false)
+}
+
+fn single_machine_optimization_enabled() -> bool {
+    static SINGLE_MACHINE_OPT: OnceCell<bool> = OnceCell::new();
+    *SINGLE_MACHINE_OPT.get_or_init(|| {
+        env_bool_value("MGS_SINGLE_MACHINE_OPT") || env_bool_value("MGS_SINGLE_MACHINE_MODE")
+    })
+}
+
 #[inline]
 fn fb_safe_str<'b>(
     builder: &mut flatbuffers::FlatBufferBuilder<'b>,
@@ -228,38 +256,87 @@ fn fb_safe_str<'b>(
 fn create_fb_player_state_for_delta<'a>(
     builder: &mut flatbuffers::FlatBufferBuilder<'a>,
     pstate: &PlayerState,
-    _changed_fields: u16, // This can be used if we implement partial updates later
+    changed_fields: u16,
 ) -> flatbuffers::WIPOffset<fb::PlayerState<'a>> {
+    let is_full_state = changed_fields == 0xFFFF || changed_fields == u8::MAX as u16;
+    let has_position_delta = is_full_state || (changed_fields & FIELD_POSITION_ROTATION) != 0;
+    let has_health_delta = is_full_state || (changed_fields & FIELD_HEALTH_ALIVE) != 0;
+    let has_weapon_delta = is_full_state || (changed_fields & FIELD_WEAPON_AMMO) != 0;
+    let has_score_delta = is_full_state || (changed_fields & FIELD_SCORE_STATS) != 0;
+    let has_powerup_delta = is_full_state || (changed_fields & FIELD_POWERUPS) != 0;
+    let has_shield_delta = is_full_state || (changed_fields & FIELD_SHIELD) != 0;
+    let has_flag_delta = is_full_state || (changed_fields & FIELD_FLAG) != 0;
+
     let id_fb = fb_safe_str(builder, pstate.id.as_str());
-    let username_fb = fb_safe_str(builder, &pstate.username);
-    let weapon_fb = map_server_weapon_to_fb(pstate.weapon);
+    let username_fb = if is_full_state || has_score_delta {
+        Some(fb_safe_str(builder, &pstate.username))
+    } else {
+        None
+    };
+    let weapon_fb = if has_weapon_delta {
+        map_server_weapon_to_fb(pstate.weapon)
+    } else {
+        fb::WeaponType::Pistol
+    };
 
     fb::PlayerState::create(
         builder,
         &fb::PlayerStateArgs {
             id: Some(id_fb),
-            username: Some(username_fb),
-            x: pstate.x,
-            y: pstate.y,
-            rotation: pstate.rotation,
-            velocity_x: pstate.velocity_x,
-            velocity_y: pstate.velocity_y,
-            health: pstate.health,
-            max_health: pstate.max_health,
-            alive: pstate.alive,
-            respawn_timer: pstate.respawn_timer.unwrap_or(-1.0),
+            username: username_fb,
+            x: if has_position_delta { pstate.x } else { 0.0 },
+            y: if has_position_delta { pstate.y } else { 0.0 },
+            rotation: if has_position_delta { pstate.rotation } else { 0.0 },
+            velocity_x: if has_position_delta {
+                pstate.velocity_x
+            } else {
+                0.0
+            },
+            velocity_y: if has_position_delta {
+                pstate.velocity_y
+            } else {
+                0.0
+            },
+            health: if has_health_delta { pstate.health } else { 0 },
+            max_health: if has_health_delta { pstate.max_health } else { 0 },
+            alive: if has_health_delta { pstate.alive } else { false },
+            respawn_timer: if has_health_delta {
+                pstate.respawn_timer.unwrap_or(-1.0)
+            } else {
+                0.0
+            },
             weapon: weapon_fb,
-            ammo: pstate.ammo,
-            reload_progress: pstate.reload_progress.unwrap_or(-1.0),
-            score: pstate.score,
-            kills: pstate.kills,
-            deaths: pstate.deaths,
-            team_id: pstate.team_id as i8,
-            speed_boost_remaining: pstate.speed_boost_remaining,
-            damage_boost_remaining: pstate.damage_boost_remaining,
-            shield_current: pstate.shield_current,
-            shield_max: pstate.shield_max,
-            is_carrying_flag_team_id: pstate.is_carrying_flag_team_id as i8,
+            ammo: if has_weapon_delta { pstate.ammo } else { 0 },
+            reload_progress: if has_weapon_delta {
+                pstate.reload_progress.unwrap_or(-1.0)
+            } else {
+                0.0
+            },
+            score: if has_score_delta { pstate.score } else { 0 },
+            kills: if has_score_delta { pstate.kills } else { 0 },
+            deaths: if has_score_delta { pstate.deaths } else { 0 },
+            team_id: if has_score_delta { pstate.team_id as i8 } else { 0 },
+            speed_boost_remaining: if has_powerup_delta {
+                pstate.speed_boost_remaining
+            } else {
+                0.0
+            },
+            damage_boost_remaining: if has_powerup_delta {
+                pstate.damage_boost_remaining
+            } else {
+                0.0
+            },
+            shield_current: if has_shield_delta {
+                pstate.shield_current
+            } else {
+                0
+            },
+            shield_max: if has_shield_delta { pstate.shield_max } else { 0 },
+            is_carrying_flag_team_id: if has_flag_delta {
+                pstate.is_carrying_flag_team_id as i8
+            } else {
+                0
+            },
         },
     )
 }
@@ -348,6 +425,7 @@ struct SharedBroadcastData {
     chat_messages: Vec<ChatMessage>,
     match_info_snapshot: MatchInfoSnapshot,
     kill_feed_snapshot: Vec<ServerKillFeedEntry>,
+    max_delta_events_per_client: usize,
     initial_snapshot_caps: InitialSnapshotCaps,
     tail_join_mode: bool,
     aggressive_tail_join_mode: bool,
@@ -3312,6 +3390,7 @@ impl MassiveGameServer {
         initial_snapshot_caps: InitialSnapshotCaps,
         tail_join_mode: bool,
         aggressive_tail_join_mode: bool,
+        max_delta_events_per_client: usize,
     ) -> SharedBroadcastData {
         let current_timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3416,6 +3495,7 @@ impl MassiveGameServer {
             chat_messages,
             match_info_snapshot,
             kill_feed_snapshot,
+            max_delta_events_per_client,
             initial_snapshot_caps,
             tail_join_mode,
             aggressive_tail_join_mode,
@@ -3754,7 +3834,15 @@ impl MassiveGameServer {
 
             // Build player deltas (only changed or newly visible)
             let mut players_fb_vec = Vec::new();
+            let mut player_fields_mask_vec: Vec<u8> = Vec::new();
             let mut removed_player_ids_vec = Vec::new();
+            let encode_changed_mask = |mask: u16| -> u8 {
+                if mask == 0xFFFF {
+                    u8::MAX
+                } else {
+                    (mask & 0x00FF) as u8
+                }
+            };
 
             // Add self player only if changed or not known yet
             if let Some(self_state) = shared_data.player_states_snapshot.get(&player_id) {
@@ -3770,6 +3858,7 @@ impl MassiveGameServer {
                         &self_state,
                         mask,
                     ));
+                    player_fields_mask_vec.push(encode_changed_mask(mask));
                 }
             }
 
@@ -3789,6 +3878,7 @@ impl MassiveGameServer {
                                 &player_state,
                                 mask,
                             ));
+                            player_fields_mask_vec.push(encode_changed_mask(mask));
                         }
                     }
                 }
@@ -3804,6 +3894,11 @@ impl MassiveGameServer {
             }
 
             let players_fb = builder.create_vector(&players_fb_vec);
+            let changed_player_fields_fb = if !player_fields_mask_vec.is_empty() {
+                Some(builder.create_vector(&player_fields_mask_vec))
+            } else {
+                None
+            };
             let removed_players_fb = builder.create_vector(&removed_player_ids_vec);
 
             // Build projectile deltas
@@ -3888,14 +3983,22 @@ impl MassiveGameServer {
             let pickups_fb = builder.create_vector(&pickups_delta_vec);
             let deactivated_pickups_fb = builder.create_vector(&deactivated_pickup_ids_vec);
 
-            // Build events
-            let events_vec: Vec<_> = shared_data
-                .events
-                .iter()
-                .take(50)
-                .map(|event| build_game_event_fb(&mut builder, event))
-                .collect();
-            let game_events_fb = builder.create_vector(&events_vec);
+            // Build events (single-machine/tail mode can lower per-client event budget).
+            let game_events_fb = if shared_data.max_delta_events_per_client == 0 {
+                None
+            } else {
+                let events_vec: Vec<_> = shared_data
+                    .events
+                    .iter()
+                    .take(shared_data.max_delta_events_per_client)
+                    .map(|event| build_game_event_fb(&mut builder, event))
+                    .collect();
+                if events_vec.is_empty() {
+                    None
+                } else {
+                    Some(builder.create_vector(&events_vec))
+                }
+            };
 
             // Build kill feed
             let kill_feed_vec: Vec<_> = shared_data
@@ -4068,10 +4171,10 @@ impl MassiveGameServer {
                 removed_projectiles: Some(removed_projectiles_fb),
                 pickups: Some(pickups_fb),
                 deactivated_pickup_ids: Some(deactivated_pickups_fb),
-                game_events: Some(game_events_fb),
+                game_events: game_events_fb,
                 timestamp: shared_data.timestamp_ms,
                 last_processed_input_sequence: 0, // Get from player state if needed
-                changed_player_fields: None,
+                changed_player_fields: changed_player_fields_fb,
                 kill_feed: Some(kill_feed_fb),
                 match_info: match_info_fb,
                 destroyed_wall_ids: destroyed_wall_ids_fb,
@@ -4610,9 +4713,22 @@ impl MassiveGameServer {
         const TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME: usize = 2;
         const TAIL_JOIN_AGGRESSIVE_DELTA_SKIP_MODULUS: u64 = 5;
         const TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP: usize = 24;
+        const SINGLE_MACHINE_TAIL_CONNECTED_CLIENTS_MIN: usize = 56;
+        const SINGLE_MACHINE_TAIL_PENDING_INITIAL_OPEN_MIN: usize = 2;
+        const SINGLE_MACHINE_AGGRESSIVE_CONNECTED_CLIENTS_MIN: usize = 64;
+        const SINGLE_MACHINE_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN: usize = 4;
+        const SINGLE_MACHINE_INITIAL_PER_FRAME_BOOST: usize = 36;
+        const SINGLE_MACHINE_MAX_DELTA_PER_FRAME: usize = 4;
+        const SINGLE_MACHINE_DELTA_SKIP_MODULUS: u64 = 4;
+        const SINGLE_MACHINE_CONCURRENCY_CAP: usize = 20;
+        const MAX_DELTA_EVENTS_DEFAULT: usize = 50;
+        const MAX_DELTA_EVENTS_TAIL: usize = 16;
+        const MAX_DELTA_EVENTS_AGGRESSIVE: usize = 8;
+        const MAX_DELTA_EVENTS_SINGLE_MACHINE_BACKLOG: usize = 12;
 
         let current_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
         let last_broadcast = self.last_broadcast_frame.load(AtomicOrdering::Relaxed);
+        let single_machine_opt = single_machine_optimization_enabled();
 
         if current_frame < last_broadcast + BROADCAST_INTERVAL_FRAMES && current_frame != 0 {
             trace!(
@@ -4693,17 +4809,53 @@ impl MassiveGameServer {
 
         let pending_initial_open_count = initial_entries_open.len();
         let pending_initial_total_count = pending_initial_open_count + pending_initial_closed_count;
-        let tail_join_mode = connected_clients >= TAIL_JOIN_CONNECTED_CLIENTS_MIN
-            && pending_initial_open_count >= TAIL_JOIN_PENDING_INITIAL_OPEN_MIN;
-        let aggressive_tail_join_mode =
-            connected_clients >= TAIL_JOIN_AGGRESSIVE_CONNECTED_CLIENTS_MIN
-                && pending_initial_open_count >= TAIL_JOIN_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN;
+        let tail_connected_clients_min = if single_machine_opt {
+            SINGLE_MACHINE_TAIL_CONNECTED_CLIENTS_MIN
+        } else {
+            TAIL_JOIN_CONNECTED_CLIENTS_MIN
+        };
+        let tail_pending_initial_open_min = if single_machine_opt {
+            SINGLE_MACHINE_TAIL_PENDING_INITIAL_OPEN_MIN
+        } else {
+            TAIL_JOIN_PENDING_INITIAL_OPEN_MIN
+        };
+        let aggressive_connected_clients_min = if single_machine_opt {
+            SINGLE_MACHINE_AGGRESSIVE_CONNECTED_CLIENTS_MIN
+        } else {
+            TAIL_JOIN_AGGRESSIVE_CONNECTED_CLIENTS_MIN
+        };
+        let aggressive_pending_initial_open_min = if single_machine_opt {
+            SINGLE_MACHINE_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN
+        } else {
+            TAIL_JOIN_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN
+        };
+
+        let tail_join_mode = connected_clients >= tail_connected_clients_min
+            && pending_initial_open_count >= tail_pending_initial_open_min;
+        let aggressive_tail_join_mode = connected_clients >= aggressive_connected_clients_min
+            && pending_initial_open_count >= aggressive_pending_initial_open_min;
         let initial_snapshot_caps = if aggressive_tail_join_mode {
             InitialSnapshotCaps::TAIL_AGGRESSIVE
         } else if tail_join_mode {
             InitialSnapshotCaps::TAIL
+        } else if single_machine_opt
+            && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+        {
+            InitialSnapshotCaps::SINGLE_MACHINE_BACKLOG
         } else {
             InitialSnapshotCaps::DEFAULT
+        };
+
+        let max_delta_events_per_client = if aggressive_tail_join_mode {
+            MAX_DELTA_EVENTS_AGGRESSIVE
+        } else if tail_join_mode {
+            MAX_DELTA_EVENTS_TAIL
+        } else if single_machine_opt
+            && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+        {
+            MAX_DELTA_EVENTS_SINGLE_MACHINE_BACKLOG
+        } else {
+            MAX_DELTA_EVENTS_DEFAULT
         };
 
         // Keep budget decisions tied to total backlog, but only schedule actionable
@@ -4723,6 +4875,9 @@ impl MassiveGameServer {
         if aggressive_tail_join_mode {
             max_initial_per_frame =
                 max_initial_per_frame.max(TAIL_JOIN_AGGRESSIVE_INITIAL_PER_FRAME_BOOST);
+        }
+        if single_machine_opt && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN {
+            max_initial_per_frame = max_initial_per_frame.max(SINGLE_MACHINE_INITIAL_PER_FRAME_BOOST);
         }
 
         let scheduled_initial_entries =
@@ -4755,10 +4910,17 @@ impl MassiveGameServer {
         if aggressive_tail_join_mode {
             max_delta_per_frame = max_delta_per_frame.min(TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME);
         }
+        if single_machine_opt && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN {
+            max_delta_per_frame = max_delta_per_frame.min(SINGLE_MACHINE_MAX_DELTA_PER_FRAME);
+        }
         let delta_skip_modulus = if aggressive_tail_join_mode {
             TAIL_JOIN_AGGRESSIVE_DELTA_SKIP_MODULUS
         } else if tail_join_mode {
             TAIL_JOIN_DELTA_SKIP_MODULUS
+        } else if single_machine_opt
+            && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+        {
+            SINGLE_MACHINE_DELTA_SKIP_MODULUS
         } else {
             MASS_JOIN_DELTA_SKIP_MODULUS
         };
@@ -4777,16 +4939,18 @@ impl MassiveGameServer {
         }
 
         debug!(
-            "[Frame {}] Join scheduler: pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, tail_join_mode={}, aggressive_tail_join_mode={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, snapshot_caps={{players:{}, walls:{}, projectiles:{}, pickups:{}}}, scheduled_initial={}, scheduled_delta={}",
+            "[Frame {}] Join scheduler: pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, tail_join_mode={}, aggressive_tail_join_mode={}, single_machine_opt={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, delta_event_budget={}, snapshot_caps={{players:{}, walls:{}, projectiles:{}, pickups:{}}}, scheduled_initial={}, scheduled_delta={}",
             current_frame,
             pending_initial_total_count,
             pending_initial_open_count,
             pending_initial_closed_count,
             tail_join_mode,
             aggressive_tail_join_mode,
+            single_machine_opt,
             max_initial_per_frame,
             max_delta_per_frame,
             delta_skip_modulus,
+            max_delta_events_per_client,
             initial_snapshot_caps.max_players,
             initial_snapshot_caps.max_walls,
             initial_snapshot_caps.max_projectiles,
@@ -4804,6 +4968,7 @@ impl MassiveGameServer {
                 initial_snapshot_caps,
                 tail_join_mode,
                 aggressive_tail_join_mode,
+                max_delta_events_per_client,
             )
             .await,
         );
@@ -4826,6 +4991,9 @@ impl MassiveGameServer {
         if aggressive_tail_join_mode {
             broadcast_concurrency =
                 broadcast_concurrency.min(TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP);
+        }
+        if single_machine_opt && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN {
+            broadcast_concurrency = broadcast_concurrency.min(SINGLE_MACHINE_CONCURRENCY_CAP);
         }
 
         let mut fanout_tasks = JoinSet::new();

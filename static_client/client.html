@@ -1320,6 +1320,17 @@
         );
         const DEFAULT_WORKER_CULL_WASM_URL = './workers/entity_cull_kernel.wasm';
         const WORKER_CULL_WASM_URL = String(uiModeParams.get('worker_wasm_url') || '').trim();
+        const WORKER_CULL_MODE = (() => {
+            const raw = String(uiModeParams.get('worker_cull_mode') || 'auto').trim().toLowerCase();
+            if (raw === 'linear' || raw === 'quadtree') {
+                return raw;
+            }
+            return 'auto';
+        })();
+        const WORKER_CULL_QUADTREE_THRESHOLD = Math.max(
+            24,
+            Math.min(5000, Math.floor(Number(uiModeParams.get('worker_cull_quadtree_threshold')) || 96))
+        );
         const PERF_PROFILE_FORCED = uiModeParams.get('perf') === '1' || uiModeParams.get('profile') === '1';
         const ULTRA_MODE_FORCED = uiModeParams.get('mode') === 'ultra' || uiModeParams.get('ultra') === '1';
         const WEBGPU_TEST_MODE = uiModeParams.get('mode') === 'webgpu' || uiModeParams.get('webgpu') === '1' || uiModeParams.get('webgpu_test') === '1';
@@ -1349,6 +1360,8 @@
         const FOG_ENABLED = FOG_TOGGLE.state !== 'off';
         const HYPE_UI_TOGGLE = parseToggleParam(uiModeParams.get('hype_ui'));
         const EXCITEMENT_UI_ENABLED = !BENCH_MODE && HYPE_UI_TOGGLE.state !== 'off';
+        const TAB_THROTTLE_TOGGLE = parseToggleParam(uiModeParams.get('tab_throttle'));
+        const TAB_THROTTLE_ENABLED = TAB_THROTTLE_TOGGLE.state !== 'off';
         const COMBAT_UI_QUALITY_OVERRIDE = (() => {
             const raw = String(
                 uiModeParams.get('combat_ui') ||
@@ -1385,6 +1398,9 @@
         const INPUT_ROTATION_QUANT_STEP = 0.012;
         const INPUT_IDLE_HEARTBEAT_MS = 120;
         const INPUT_MOVEMENT_HEARTBEAT_MS = 66;
+        const BACKGROUND_INPUT_SEND_RATE = 8;
+        const BACKGROUND_INPUT_HEARTBEAT_MS = 240;
+        const BACKGROUND_TAB_MAX_FPS = 20;
         const EFFECTS_PROFILE_PRIORITY = Object.freeze({
             ultra: 0,
             dense: 1,
@@ -1570,6 +1586,7 @@
 
         // UI perf tuning
         let ultraPerformanceMode = ULTRA_MODE_FORCED;
+        let backgroundThrottleActive = false;
         let UI_UPDATE_INTERVAL_MS = 100;
         let MINIMAP_UPDATE_INTERVAL_MS = 200;
         const CONN_STATUS_INTERVAL_MS = 250;
@@ -1658,6 +1675,16 @@
         };
 
         function refreshRuntimePerfIntervals() {
+            if (backgroundThrottleActive) {
+                UI_UPDATE_INTERVAL_MS = 400;
+                MINIMAP_UPDATE_INTERVAL_MS = 1600;
+                STARFIELD_UPDATE_INTERVAL_MS = 600;
+                FOG_UPDATE_INTERVAL_MS = 900;
+                PICKUP_ANIM_INTERVAL_MS = 220;
+                FLAG_ANIM_INTERVAL_MS = 280;
+                EFFECTS_UPDATE_INTERVAL_MS = 500;
+                return;
+            }
             if (BENCH_MODE) {
                 UI_UPDATE_INTERVAL_MS = 250;
                 MINIMAP_UPDATE_INTERVAL_MS = 700;
@@ -1705,6 +1732,36 @@
             PICKUP_ANIM_INTERVAL_MS = 33;
             FLAG_ANIM_INTERVAL_MS = 33;
             EFFECTS_UPDATE_INTERVAL_MS = 33;
+        }
+
+        function getForegroundTickerMaxFps() {
+            return BENCH_MODE ? BENCH_MAX_FPS : 60;
+        }
+
+        function applyBackgroundThrottling(forceHidden = document.hidden) {
+            const shouldThrottle = TAB_THROTTLE_ENABLED && !!forceHidden;
+            if (backgroundThrottleActive === shouldThrottle) {
+                return;
+            }
+
+            backgroundThrottleActive = shouldThrottle;
+            refreshRuntimePerfIntervals();
+
+            if (app?.ticker) {
+                const targetMaxFps = shouldThrottle
+                    ? Math.min(getForegroundTickerMaxFps(), BACKGROUND_TAB_MAX_FPS)
+                    : getForegroundTickerMaxFps();
+                app.ticker.maxFPS = targetMaxFps;
+            }
+
+            if (shouldThrottle && typeof closePingWheel === 'function') {
+                closePingWheel();
+            }
+
+            if (window.__e2e) {
+                window.__e2e.backgroundThrottleActive = shouldThrottle;
+            }
+            log(`Background tab throttling ${shouldThrottle ? 'enabled' : 'disabled'}.`, 'info');
         }
 
         function updateWorldViewBounds() {
@@ -1778,17 +1835,22 @@
                     const projectileIds = Array.isArray(message.projectileIds) ? message.projectileIds : [];
                     const computeMs = Number(message.computeMs) || 0;
                     const roundTripMs = Number(message.roundTripMs) || 0;
+                    const workerCullMode = String(message.cullMode || 'linear');
                     cullWorkerResult = {
                         seq,
                         playerSet: new Set(playerIds),
                         projectileSet: new Set(projectileIds),
                         computeMs,
                         roundTripMs,
+                        cullMode: workerCullMode,
                         generatedAtMs: Number(message.generatedAtMs) || 0
                     };
                     cullWorkerStats.responses += 1;
                     cullWorkerStats.lastComputeMs = computeMs;
                     cullWorkerStats.avgComputeMs = cullWorkerStats.avgComputeMs * 0.85 + computeMs * 0.15;
+                    if (window.__e2e) {
+                        window.__e2e.workerCullMode = workerCullMode;
+                    }
                     return;
                 }
 
@@ -1903,7 +1965,9 @@
                     remotePriorityOverflowCap,
                     projectileRenderCap,
                     localAnchorX,
-                    localAnchorY
+                    localAnchorY,
+                    cullMode: WORKER_CULL_MODE,
+                    quadtreeThreshold: WORKER_CULL_QUADTREE_THRESHOLD
                 },
                 viewBounds: {
                     left: worldViewBounds.left,
@@ -6097,7 +6161,7 @@ void main() {
                 initWebGPUProjectileLayer(pixiContainer, containerRect.width, containerRect.height);
                 initWebGPUPlayerLayer(pixiContainer, containerRect.width, containerRect.height);
 
-                app.ticker.maxFPS = BENCH_MODE ? BENCH_MAX_FPS : 60;
+                app.ticker.maxFPS = getForegroundTickerMaxFps();
 
                 if (!app || !app.stage) {
                     log('CRITICAL ERROR: PIXI Application failed to initialize!', 'error');
@@ -6219,6 +6283,7 @@ void main() {
                 updateRenderResolutionBudget('init');
 
                 app.ticker.add(gameLoop);
+                applyBackgroundThrottling(document.hidden);
                 log('PIXI scene graph initialized and ticker started.', 'info');
             }
 
@@ -8006,7 +8071,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 }
             }
 
-            if (!LOW_OVERHEAD_MODE && !ultraPerformanceMode && starfield && currentTime - lastStarfieldUpdateTime >= STARFIELD_UPDATE_INTERVAL_MS) {
+            if (!backgroundThrottleActive && !LOW_OVERHEAD_MODE && !ultraPerformanceMode && starfield && currentTime - lastStarfieldUpdateTime >= STARFIELD_UPDATE_INTERVAL_MS) {
                 lastStarfieldUpdateTime = currentTime;
                 if (perfEnabled) {
                     const t = perfStart();
@@ -8040,7 +8105,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 }
             }
 
-            if (effectsManager && currentTime - lastEffectsUpdateTime >= EFFECTS_UPDATE_INTERVAL_MS) {
+            if (!backgroundThrottleActive && effectsManager && currentTime - lastEffectsUpdateTime >= EFFECTS_UPDATE_INTERVAL_MS) {
                 lastEffectsUpdateTime = currentTime;
                 if (perfEnabled) {
                     const t = perfStart();
@@ -8050,7 +8115,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     effectsManager.update(app.ticker.deltaMS);
                 }
             }
-            if (!BENCH_MODE && minimap && localPlayerState && (currentTime - lastMinimapUpdateTime >= MINIMAP_UPDATE_INTERVAL_MS)) {
+            if (!backgroundThrottleActive && !BENCH_MODE && minimap && localPlayerState && (currentTime - lastMinimapUpdateTime >= MINIMAP_UPDATE_INTERVAL_MS)) {
                 lastMinimapUpdateTime = currentTime;
                 if (typeof minimap.setPerformanceMode === 'function') {
                     if (ultraPerformanceMode) {
@@ -8084,7 +8149,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             }
             
             // Update fog of war
-            if (FOG_ENABLED && !LOW_OVERHEAD_MODE && !ultraPerformanceMode && fogOfWarMask && localPlayerState && localPlayerState.alive) {
+            if (!backgroundThrottleActive && FOG_ENABLED && !LOW_OVERHEAD_MODE && !ultraPerformanceMode && fogOfWarMask && localPlayerState && localPlayerState.alive) {
                 if (currentTime - lastFogUpdateTime >= FOG_UPDATE_INTERVAL_MS) {
                     lastFogUpdateTime = currentTime;
                     if (perfEnabled) {
@@ -9096,31 +9161,49 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 const incomingPlayers = messageData.players;
                 for (let i = 0; i < incomingPlayers.length; i += 1) {
                     const pData = incomingPlayers[i];
+                    if (!pData || !pData.id) continue;
+                    const existingPlayer = players.get(pData.id);
+                    const forceFullState = isInitial || !existingPlayer;
+                    const changedMask = normalizePlayerDeltaMask(pData.changed_fields, forceFullState);
+                    const resolvedUsername = pData.id === myPlayerId
+                        ? (localPlayerState?.username || existingPlayer?.username || pData.username || '')
+                        : (existingPlayer?.username || pData.username || '');
+
                     if (pData.id === myPlayerId) {
                         if (!localPlayerState) {
-                            localPlayerState = { ...pData };
+                            localPlayerState = existingPlayer || {};
+                        }
+                        const previousPredictedX = Number.isFinite(localPlayerState.x) ? localPlayerState.x : (Number(pData.x) || 0);
+                        const previousPredictedY = Number.isFinite(localPlayerState.y) ? localPlayerState.y : (Number(pData.y) || 0);
+                        const previousPredictedRotation = Number.isFinite(localPlayerState.rotation)
+                            ? localPlayerState.rotation
+                            : (Number(pData.rotation) || 0);
+
+                        assignPlayerStateFromObject(
+                            localPlayerState,
+                            pData,
+                            resolvedUsername,
+                            changedMask,
+                            forceFullState
+                        );
+
+                        const serverX = Number.isFinite(localPlayerState.x) ? localPlayerState.x : previousPredictedX;
+                        const serverY = Number.isFinite(localPlayerState.y) ? localPlayerState.y : previousPredictedY;
+                        const serverRotation = Number.isFinite(localPlayerState.rotation)
+                            ? localPlayerState.rotation
+                            : previousPredictedRotation;
+                        const errorX = serverX - previousPredictedX;
+                        const errorY = serverY - previousPredictedY;
+                        const errorSq = errorX * errorX + errorY * errorY;
+                        if (!localPlayerState.alive || errorSq > (260 * 260)) {
+                            localPlayerState.x = serverX;
+                            localPlayerState.y = serverY;
+                            localPlayerState.rotation = serverRotation;
                         } else {
-                            const previousPredictedX = Number.isFinite(localPlayerState.x) ? localPlayerState.x : pData.x;
-                            const previousPredictedY = Number.isFinite(localPlayerState.y) ? localPlayerState.y : pData.y;
-                            const previousPredictedRotation = Number.isFinite(localPlayerState.rotation)
-                                ? localPlayerState.rotation
-                                : pData.rotation;
-
-                            Object.assign(localPlayerState, pData);
-
-                            const errorX = pData.x - previousPredictedX;
-                            const errorY = pData.y - previousPredictedY;
-                            const errorSq = errorX * errorX + errorY * errorY;
-                            if (!localPlayerState.alive || errorSq > (260 * 260)) {
-                                localPlayerState.x = pData.x;
-                                localPlayerState.y = pData.y;
-                                localPlayerState.rotation = pData.rotation;
-                            } else {
-                                localPlayerState.x = previousPredictedX + (errorX * 0.24);
-                                localPlayerState.y = previousPredictedY + (errorY * 0.24);
-                                const rotError = normalizeAngle(pData.rotation - previousPredictedRotation);
-                                localPlayerState.rotation = normalizeAngle(previousPredictedRotation + (rotError * 0.28));
-                            }
+                            localPlayerState.x = previousPredictedX + (errorX * 0.24);
+                            localPlayerState.y = previousPredictedY + (errorY * 0.24);
+                            const rotError = normalizeAngle(serverRotation - previousPredictedRotation);
+                            localPlayerState.rotation = normalizeAngle(previousPredictedRotation + (rotError * 0.28));
                         }
                         // Client-side prediction reconciliation (if applicable)
                         if (messageData.last_processed_input_sequence !== undefined && messageData.last_processed_input_sequence !== null) {
@@ -9135,11 +9218,15 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         localPlayerState.render_rotation = localPlayerState.rotation;
                         players.set(pData.id, localPlayerState);
                     } else {
-                        const existingPlayer = players.get(pData.id);
-                        if ((!pData.username || pData.username.length === 0) && existingPlayer?.username) {
-                            pData.username = existingPlayer.username;
-                        }
-                        players.set(pData.id, pData);
+                        const remoteState = existingPlayer || {};
+                        assignPlayerStateFromObject(
+                            remoteState,
+                            pData,
+                            resolvedUsername,
+                            changedMask,
+                            forceFullState
+                        );
+                        players.set(pData.id, remoteState);
                     }
                 }
             }
@@ -9259,6 +9346,15 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         const DELTA_SUPPORTS_REMOVED_PLAYER_IDS = typeof GP.DeltaStateMessage.prototype.removedPlayerIdsLength === 'function';
         const DELTA_SUPPORTS_UPDATED_WALLS = typeof GP.DeltaStateMessage.prototype.updatedWallsLength === 'function';
         const DELTA_SUPPORTS_FULL_WALLS = typeof GP.DeltaStateMessage.prototype.wallsLength === 'function';
+        const DELTA_SUPPORTS_CHANGED_PLAYER_FIELDS = typeof GP.DeltaStateMessage.prototype.changedPlayerFieldsLength === 'function';
+        const PLAYER_DELTA_FIELD_POSITION_ROTATION = 1 << 0;
+        const PLAYER_DELTA_FIELD_HEALTH_ALIVE = 1 << 1;
+        const PLAYER_DELTA_FIELD_WEAPON_AMMO = 1 << 2;
+        const PLAYER_DELTA_FIELD_SCORE_STATS = 1 << 3;
+        const PLAYER_DELTA_FIELD_POWERUPS = 1 << 4;
+        const PLAYER_DELTA_FIELD_SHIELD = 1 << 5;
+        const PLAYER_DELTA_FIELD_FLAG = 1 << 6;
+        const PLAYER_DELTA_FULL_MASK = 0xFF;
 
         const flatbufferParseScratch = {
             gameMessage: new GP.GameMessage(),
@@ -9310,30 +9406,123 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             return target;
         }
 
-        function assignPlayerStateFromTable(target, player, resolvedUsername) {
+        function normalizePlayerDeltaMask(rawMask, forceFullState = false) {
+            if (forceFullState) {
+                return PLAYER_DELTA_FULL_MASK;
+            }
+            const parsedMask = Number(rawMask);
+            if (!Number.isFinite(parsedMask)) {
+                return PLAYER_DELTA_FULL_MASK;
+            }
+            const mask = parsedMask & PLAYER_DELTA_FULL_MASK;
+            return mask === 0 ? PLAYER_DELTA_FULL_MASK : mask;
+        }
+
+        function assignPlayerStateFromTable(target, player, resolvedUsername, rawChangedMask, forceFullState = false) {
+            const changedMask = normalizePlayerDeltaMask(rawChangedMask, forceFullState);
+            const hasPositionDelta = (changedMask & PLAYER_DELTA_FIELD_POSITION_ROTATION) !== 0;
+            const hasHealthDelta = (changedMask & PLAYER_DELTA_FIELD_HEALTH_ALIVE) !== 0;
+            const hasWeaponDelta = (changedMask & PLAYER_DELTA_FIELD_WEAPON_AMMO) !== 0;
+            const hasScoreDelta = (changedMask & PLAYER_DELTA_FIELD_SCORE_STATS) !== 0;
+            const hasPowerupDelta = (changedMask & PLAYER_DELTA_FIELD_POWERUPS) !== 0;
+            const hasShieldDelta = (changedMask & PLAYER_DELTA_FIELD_SHIELD) !== 0;
+            const hasFlagDelta = (changedMask & PLAYER_DELTA_FIELD_FLAG) !== 0;
+
             target.id = player.id();
-            target.username = resolvedUsername;
-            target.x = player.x();
-            target.y = player.y();
-            target.rotation = player.rotation();
-            target.velocity_x = player.velocityX();
-            target.velocity_y = player.velocityY();
-            target.health = player.health();
-            target.max_health = player.maxHealth();
-            target.alive = player.alive();
-            target.respawn_timer = player.respawnTimer();
-            target.weapon = player.weapon();
-            target.ammo = player.ammo();
-            target.reload_progress = player.reloadProgress();
-            target.score = player.score();
-            target.kills = player.kills();
-            target.deaths = player.deaths();
-            target.team_id = player.teamId();
-            target.speed_boost_remaining = player.speedBoostRemaining();
-            target.damage_boost_remaining = player.damageBoostRemaining();
-            target.shield_current = player.shieldCurrent();
-            target.shield_max = player.shieldMax();
-            target.is_carrying_flag_team_id = player.isCarryingFlagTeamId();
+            if (hasScoreDelta || !target.username) {
+                target.username = resolvedUsername || target.username || '';
+            }
+            if (hasPositionDelta) {
+                target.x = player.x();
+                target.y = player.y();
+                target.rotation = player.rotation();
+                target.velocity_x = player.velocityX();
+                target.velocity_y = player.velocityY();
+            }
+            if (hasHealthDelta) {
+                target.health = player.health();
+                target.max_health = player.maxHealth();
+                target.alive = player.alive();
+                target.respawn_timer = player.respawnTimer();
+            }
+            if (hasWeaponDelta) {
+                target.weapon = player.weapon();
+                target.ammo = player.ammo();
+                target.reload_progress = player.reloadProgress();
+            }
+            if (hasScoreDelta) {
+                target.score = player.score();
+                target.kills = player.kills();
+                target.deaths = player.deaths();
+                target.team_id = player.teamId();
+            }
+            if (hasPowerupDelta) {
+                target.speed_boost_remaining = player.speedBoostRemaining();
+                target.damage_boost_remaining = player.damageBoostRemaining();
+            }
+            if (hasShieldDelta) {
+                target.shield_current = player.shieldCurrent();
+                target.shield_max = player.shieldMax();
+            }
+            if (hasFlagDelta) {
+                target.is_carrying_flag_team_id = player.isCarryingFlagTeamId();
+            }
+
+            target.__changed_fields = changedMask;
+            return target;
+        }
+
+        function assignPlayerStateFromObject(target, player, resolvedUsername, rawChangedMask, forceFullState = false) {
+            const changedMask = normalizePlayerDeltaMask(rawChangedMask, forceFullState);
+            const hasPositionDelta = (changedMask & PLAYER_DELTA_FIELD_POSITION_ROTATION) !== 0;
+            const hasHealthDelta = (changedMask & PLAYER_DELTA_FIELD_HEALTH_ALIVE) !== 0;
+            const hasWeaponDelta = (changedMask & PLAYER_DELTA_FIELD_WEAPON_AMMO) !== 0;
+            const hasScoreDelta = (changedMask & PLAYER_DELTA_FIELD_SCORE_STATS) !== 0;
+            const hasPowerupDelta = (changedMask & PLAYER_DELTA_FIELD_POWERUPS) !== 0;
+            const hasShieldDelta = (changedMask & PLAYER_DELTA_FIELD_SHIELD) !== 0;
+            const hasFlagDelta = (changedMask & PLAYER_DELTA_FIELD_FLAG) !== 0;
+
+            target.id = player.id;
+            if (hasScoreDelta || !target.username) {
+                target.username = resolvedUsername || target.username || '';
+            }
+            if (hasPositionDelta) {
+                target.x = player.x;
+                target.y = player.y;
+                target.rotation = player.rotation;
+                target.velocity_x = player.velocity_x;
+                target.velocity_y = player.velocity_y;
+            }
+            if (hasHealthDelta) {
+                target.health = player.health;
+                target.max_health = player.max_health;
+                target.alive = player.alive;
+                target.respawn_timer = player.respawn_timer;
+            }
+            if (hasWeaponDelta) {
+                target.weapon = player.weapon;
+                target.ammo = player.ammo;
+                target.reload_progress = player.reload_progress;
+            }
+            if (hasScoreDelta) {
+                target.score = player.score;
+                target.kills = player.kills;
+                target.deaths = player.deaths;
+                target.team_id = player.team_id;
+            }
+            if (hasPowerupDelta) {
+                target.speed_boost_remaining = player.speed_boost_remaining;
+                target.damage_boost_remaining = player.damage_boost_remaining;
+            }
+            if (hasShieldDelta) {
+                target.shield_current = player.shield_current;
+                target.shield_max = player.shield_max;
+            }
+            if (hasFlagDelta) {
+                target.is_carrying_flag_team_id = player.is_carrying_flag_team_id;
+            }
+
+            target.__changed_fields = changedMask;
             return target;
         }
 
@@ -9494,11 +9683,17 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             const playerTable = flatbufferParseScratch.playerState;
             const playerLength = delta.playersLength();
+            const changedPlayerFieldLength = DELTA_SUPPORTS_CHANGED_PLAYER_FIELDS
+                ? delta.changedPlayerFieldsLength()
+                : 0;
             for (let i = 0; i < playerLength; i += 1) {
                 const player = delta.players(i, playerTable);
                 if (!player) continue;
                 const playerId = player.id();
                 const existingPlayer = players.get(playerId);
+                const changedMask = i < changedPlayerFieldLength
+                    ? delta.changedPlayerFields(i)
+                    : PLAYER_DELTA_FULL_MASK;
                 let resolvedUsername = playerId === myPlayerId
                     ? (localPlayerState?.username || existingPlayer?.username || '')
                     : (existingPlayer?.username || '');
@@ -9508,7 +9703,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
                 if (playerId === myPlayerId) {
                     if (!localPlayerState) {
-                        localPlayerState = {};
+                        localPlayerState = existingPlayer || {};
                     }
                     const previousPredictedX = Number.isFinite(localPlayerState.x) ? localPlayerState.x : player.x();
                     const previousPredictedY = Number.isFinite(localPlayerState.y) ? localPlayerState.y : player.y();
@@ -9516,7 +9711,13 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         ? localPlayerState.rotation
                         : player.rotation();
 
-                    assignPlayerStateFromTable(localPlayerState, player, resolvedUsername);
+                    assignPlayerStateFromTable(
+                        localPlayerState,
+                        player,
+                        resolvedUsername,
+                        changedMask,
+                        !existingPlayer
+                    );
 
                     const serverX = localPlayerState.x;
                     const serverY = localPlayerState.y;
@@ -9540,7 +9741,13 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     players.set(playerId, localPlayerState);
                 } else {
                     const remoteState = existingPlayer || {};
-                    assignPlayerStateFromTable(remoteState, player, resolvedUsername);
+                    assignPlayerStateFromTable(
+                        remoteState,
+                        player,
+                        resolvedUsername,
+                        changedMask,
+                        !existingPlayer
+                    );
                     players.set(playerId, remoteState);
                 }
             }
@@ -9960,6 +10167,9 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         const playerTable = flatbufferParseScratch.playerState;
                         const playerLength = delta.playersLength();
                         if (playerLength > 0) {
+                            const changedPlayerFieldLength = DELTA_SUPPORTS_CHANGED_PLAYER_FIELDS
+                                ? delta.changedPlayerFieldsLength()
+                                : 0;
                             const rows = new Array(playerLength);
                             let writeIdx = 0;
                             for (let i = 0; i < playerLength; i += 1) {
@@ -9973,6 +10183,9 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                                 const resolvedUsername = cachedUsername || player.username() || '';
                                 rows[writeIdx++] = {
                                     id: playerId,
+                                    changed_fields: i < changedPlayerFieldLength
+                                        ? delta.changedPlayerFields(i)
+                                        : PLAYER_DELTA_FULL_MASK,
                                     username: resolvedUsername,
                                     x: player.x(),
                                     y: player.y(),
@@ -10459,7 +10672,8 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             if (!dataChannel || dataChannel.readyState !== 'open' || !localPlayerState || !localPlayerState.alive) return;
 
             const now = Date.now();
-            if (now - lastInputSendTime < 1000 / INPUT_SEND_RATE) return;
+            const inputSendRate = backgroundThrottleActive ? BACKGROUND_INPUT_SEND_RATE : INPUT_SEND_RATE;
+            if (now - lastInputSendTime < 1000 / inputSendRate) return;
 
             let effectiveRotation = inputState.rotation;
             if (inputState.shooting) {
@@ -10484,9 +10698,12 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 quantizedRotation !== lastSentInputRotationQuant ||
                 !!inputState.shooting !== !!lastSentInputShooting;
 
-            const heartbeatMs = inputState.shooting
-                ? (1000 / INPUT_SEND_RATE)
+            let heartbeatMs = inputState.shooting
+                ? (1000 / inputSendRate)
                 : (moveMask !== 0 ? INPUT_MOVEMENT_HEARTBEAT_MS : INPUT_IDLE_HEARTBEAT_MS);
+            if (backgroundThrottleActive) {
+                heartbeatMs = Math.max(heartbeatMs, BACKGROUND_INPUT_HEARTBEAT_MS);
+            }
             const sinceLastStateMs = now - lastInputStateSentAt;
             if (!hasOneShotInput && !stickyStateChanged && sinceLastStateMs < heartbeatMs) {
                 return;
@@ -11855,6 +12072,24 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             log(detail, 'warn');
             setConnectionError(detail);
             applyConnectionStatus('error', detail);
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            applyBackgroundThrottling(document.hidden);
+        });
+        window.addEventListener('pagehide', () => {
+            applyBackgroundThrottling(true);
+        });
+        window.addEventListener('pageshow', () => {
+            applyBackgroundThrottling(document.hidden);
+        });
+        window.addEventListener('focus', () => {
+            applyBackgroundThrottling(false);
+        });
+        window.addEventListener('blur', () => {
+            if (document.hidden) {
+                applyBackgroundThrottling(true);
+            }
         });
 
         function resetConnectionUI(options = {}) {
@@ -15737,186 +15972,29 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             }
         }
 
-        // Music Player Implementation
-        class MusicPlayer {
-            constructor() {
-                this.audio = new Audio();
-                this.playlist = [
-                    'music/Untitled.mp3',
-                    'music/Untitled (1).mp3',
-                    'music/Untitled (2).mp3',
-                    'music/Untitled (3).mp3',
-                    'music/Untitled (4).mp3',
-                    'music/Untitled (5).mp3',
-                    'music/Untitled (6).mp3',
-                    'music/Untitled (7).mp3',
-                    'music/Untitled (8).mp3',
-                    'music/Untitled (9).mp3',
-                    'music/Untitled (10).mp3',
-                    'music/Untitled (11).mp3',
-                    'music/Untitled (12).mp3',
-                    'music/Untitled (13).mp3',
-                    'music/cassete.mp3',
-                    'music/cassete (1).mp3'
-                ];
-                this.currentTrackIndex = 0;
-                this.isPlaying = false;
-                
-                // DOM elements
-                this.playerDiv = document.getElementById('musicPlayer');
-                this.playPauseBtn = document.getElementById('playPauseBtn');
-                this.playIcon = document.getElementById('playIcon');
-                this.pauseIcon = document.getElementById('pauseIcon');
-                this.prevBtn = document.getElementById('prevTrack');
-                this.nextBtn = document.getElementById('nextTrack');
-                this.volumeSlider = document.getElementById('volumeSlider');
-                this.volumeValue = document.getElementById('volumeValue');
-                this.progressBar = document.getElementById('progressBar');
-                this.nowPlaying = document.getElementById('nowPlaying');
-                this.closeBtn = document.getElementById('closeMusicPlayer');
-                
-                this.setupEventListeners();
-                this.audio.volume = 0.3;
-                this.volumeSlider.value = 30;
-                
-                // Load first track
-                this.loadTrack(0);
-                
-                // Update progress bar
-                setInterval(() => this.updateProgress(), 100);
-            }
-            
-            setupEventListeners() {
-                this.playPauseBtn.addEventListener('click', () => this.togglePlayPause());
-                this.prevBtn.addEventListener('click', () => this.previousTrack());
-                this.nextBtn.addEventListener('click', () => this.nextTrack());
-                this.volumeSlider.addEventListener('input', (e) => this.updateVolume(e.target.value));
-                this.closeBtn.addEventListener('click', () => this.hide());
-                
-                // Auto play next track when current ends
-                this.audio.addEventListener('ended', () => this.nextTrack());
-                
-                // Update progress bar click
-                const progressContainer = this.progressBar.parentElement;
-                progressContainer.addEventListener('click', (e) => {
-                    const rect = progressContainer.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const percentage = x / rect.width;
-                    if (this.audio.duration) {
-                        this.audio.currentTime = percentage * this.audio.duration;
-                    }
+        async function initMusicPlayerModule() {
+            try {
+                const module = await import('./client_logic/music_player.js');
+                const MusicPlayer = module?.MusicPlayer;
+                if (typeof MusicPlayer !== 'function') {
+                    log('Music player module loaded without MusicPlayer export.', 'warn');
+                    return null;
+                }
+                return new MusicPlayer({
+                    getGameSettings: () => gameSettings,
+                    log: (message, level = 'info') => log(message, level)
                 });
-            }
-            
-            loadTrack(index) {
-                this.currentTrackIndex = index;
-                this.audio.src = this.playlist[index];
-                
-                // Extract track name from filename
-                const trackName = this.playlist[index].split('/').pop().replace('.mp3', '');
-                this.nowPlaying.textContent = `Track: ${trackName}`;
-                
-                // If was playing, continue playing new track
-                if (this.isPlaying) {
-                    this.play();
-                }
-            }
-            
-            play() {
-                this.audio.play().then(() => {
-                    this.isPlaying = true;
-                    this.playIcon.classList.add('hidden');
-                    this.pauseIcon.classList.remove('hidden');
-                }).catch(e => {
-                    console.log('Audio play failed:', e);
-                });
-            }
-            
-            pause() {
-                this.audio.pause();
-                this.isPlaying = false;
-                this.playIcon.classList.remove('hidden');
-                this.pauseIcon.classList.add('hidden');
-            }
-            
-            togglePlayPause() {
-                if (this.isPlaying) {
-                    this.pause();
-                } else {
-                    this.play();
-                }
-            }
-            
-            previousTrack() {
-                this.currentTrackIndex = (this.currentTrackIndex - 1 + this.playlist.length) % this.playlist.length;
-                this.loadTrack(this.currentTrackIndex);
-            }
-            
-            nextTrack() {
-                this.currentTrackIndex = (this.currentTrackIndex + 1) % this.playlist.length;
-                this.loadTrack(this.currentTrackIndex);
-            }
-            
-            updateVolume(value) {
-                this.audio.volume = value / 100;
-                this.volumeValue.textContent = value + '%';
-                
-                // Update volume slider gradient
-                this.volumeSlider.style.background = `linear-gradient(to right, #6366F1 0%, #6366F1 ${value}%, #374151 ${value}%, #374151 100%)`;
-            }
-            
-            updateProgress() {
-                if (this.audio.duration) {
-                    const percentage = (this.audio.currentTime / this.audio.duration) * 100;
-                    this.progressBar.style.width = percentage + '%';
-                }
-            }
-            
-            show() {
-                this.playerDiv.classList.remove('hidden');
-                
-                // Apply music settings
-                if (gameSettings.musicEnabled) {
-                    this.updateVolume(gameSettings.musicVolume * 100);
-                    this.volumeSlider.value = gameSettings.musicVolume * 100;
-                    if (!this.isPlaying) {
-                        this.play();
-                    }
-                } else {
-                    this.pause();
-                }
-            }
-            
-            hide() {
-                this.playerDiv.classList.add('hidden');
-            }
-            
-            setEnabled(enabled) {
-                if (enabled && this.playerDiv.classList.contains('hidden')) {
-                    // Don't auto-show when enabling
-                    return;
-                }
-                
-                if (enabled) {
-                    if (!this.isPlaying) {
-                        this.play();
-                    }
-                } else {
-                    this.pause();
-                }
-            }
-            
-            setVolume(volume) {
-                this.updateVolume(volume * 100);
-                this.volumeSlider.value = volume * 100;
+            } catch (error) {
+                log(`Music player module load failed: ${error?.message || error}`, 'warn');
+                return null;
             }
         }
-        
+
         // Initialize music player
         let musicPlayer;
 
         // Initialize everything when page loads
-        window.addEventListener('load', () => {
+        window.addEventListener('load', async () => {
             // Check if GameProtocol is loaded
             if (typeof GameProtocol === 'undefined' || typeof GP === 'undefined') {
                 log('Error: GameProtocol not loaded! Make sure to generate and include game.js (or game_generated.js)', 'error');
@@ -15947,9 +16025,11 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             initPixi();
             
             // Initialize music player
-            musicPlayer = new MusicPlayer();
-            // Keep music controls visible so users can start/stop tracks without opening Settings.
-            musicPlayer.show();
+            musicPlayer = await initMusicPlayerModule();
+            if (musicPlayer) {
+                // Keep music controls visible so users can start/stop tracks without opening Settings.
+                musicPlayer.show();
+            }
 
             log(`ICE servers configured: ${peerConnectionConfig.iceServers.length}`, 'info');
             if (autoConnectOnLoad) {

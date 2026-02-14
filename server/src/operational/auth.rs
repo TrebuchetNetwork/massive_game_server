@@ -1,7 +1,8 @@
 use crate::core::types::PlayerState;
 use dashmap::DashMap;
-use parking_lot::RwLock;
+use parking_lot::{Mutex as ParkingLotMutex, RwLock};
 use rand::Rng;
+use redis::Commands;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -10,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 use warp::http::StatusCode;
 use warp::{Filter, Reply};
@@ -20,6 +21,7 @@ const DEFAULT_SESSION_TTL_SECONDS: u64 = 60 * 60 * 24 * 30;
 const DEFAULT_RESEND_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_MAX_VERIFY_ATTEMPTS: u32 = 5;
 const DEFAULT_LEADERBOARD_LIMIT: usize = 50;
+const DEFAULT_REDIS_STORE_KEY: &str = "mgs:auth:persistent_store";
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -29,6 +31,7 @@ pub struct AuthService {
 struct AuthInner {
     store_path: PathBuf,
     persistent_store: RwLock<PersistentAuthStore>,
+    redis_cache: Option<AuthRedisCache>,
     otp_challenges: DashMap<String, OtpChallenge>,
     sessions: DashMap<String, SessionRecord>,
     peer_bindings: DashMap<String, String>,
@@ -75,6 +78,11 @@ struct OtpChallenge {
 struct SessionRecord {
     user_id: String,
     expires_at: u64,
+}
+
+struct AuthRedisCache {
+    connection: ParkingLotMutex<redis::Connection>,
+    store_key: String,
 }
 
 #[derive(Debug)]
@@ -222,7 +230,9 @@ impl AuthError {
                 None,
                 None,
             ),
-            AuthError::RateLimited { retry_after_seconds } => (
+            AuthError::RateLimited {
+                retry_after_seconds,
+            } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "rate_limited",
                 "A code was sent recently. Please wait before requesting another code.".to_owned(),
@@ -259,14 +269,15 @@ impl AuthService {
         let store_path = std::env::var("MGS_AUTH_STORE_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("data/auth_store.json"));
-        let otp_ttl_seconds = parse_u64_env("MGS_AUTH_OTP_TTL_SECONDS", DEFAULT_OTP_TTL_SECONDS)
-            .max(60);
+        let otp_ttl_seconds =
+            parse_u64_env("MGS_AUTH_OTP_TTL_SECONDS", DEFAULT_OTP_TTL_SECONDS).max(60);
         let session_ttl_seconds =
-            parse_u64_env("MGS_AUTH_SESSION_TTL_SECONDS", DEFAULT_SESSION_TTL_SECONDS)
-                .max(300);
-        let resend_interval_seconds =
-            parse_u64_env("MGS_AUTH_RESEND_INTERVAL_SECONDS", DEFAULT_RESEND_INTERVAL_SECONDS)
-                .max(5);
+            parse_u64_env("MGS_AUTH_SESSION_TTL_SECONDS", DEFAULT_SESSION_TTL_SECONDS).max(300);
+        let resend_interval_seconds = parse_u64_env(
+            "MGS_AUTH_RESEND_INTERVAL_SECONDS",
+            DEFAULT_RESEND_INTERVAL_SECONDS,
+        )
+        .max(5);
         let max_verify_attempts =
             parse_u32_env("MGS_AUTH_MAX_VERIFY_ATTEMPTS", DEFAULT_MAX_VERIFY_ATTEMPTS).max(1);
 
@@ -276,8 +287,9 @@ impl AuthService {
             .filter(|raw| !raw.is_empty());
         let sms_dev_mode_default = sms_command.is_none();
         let sms_dev_mode = parse_bool_env("MGS_SMS_DEV_MODE", sms_dev_mode_default);
+        let redis_cache = init_redis_cache_from_env();
 
-        let persistent_store = load_persistent_store(&store_path);
+        let persistent_store = load_persistent_store(&store_path, redis_cache.as_ref());
         info!(
             "Auth service initialized. store_path='{}', users={}, sms_dev_mode={}",
             store_path.display(),
@@ -289,6 +301,7 @@ impl AuthService {
             inner: Arc::new(AuthInner {
                 store_path,
                 persistent_store: RwLock::new(persistent_store),
+                redis_cache,
                 otp_challenges: DashMap::new(),
                 sessions: DashMap::new(),
                 peer_bindings: DashMap::new(),
@@ -326,7 +339,9 @@ impl AuthService {
             last_sent_at: now,
             attempts: 0,
         };
-        self.inner.otp_challenges.insert(phone_number.clone(), challenge);
+        self.inner
+            .otp_challenges
+            .insert(phone_number.clone(), challenge);
 
         if let Err(reason) = self.dispatch_sms_code(&phone_number, &code) {
             self.inner.otp_challenges.remove(&phone_number);
@@ -417,33 +432,34 @@ impl AuthService {
         self.inner.otp_challenges.remove(&phone_number);
 
         let mut persistent_guard = self.inner.persistent_store.write();
-        let user_id = if let Some(existing_user_id) = persistent_guard.phone_to_user_id.get(&phone_number) {
-            existing_user_id.clone()
-        } else {
-            let new_user_id = Uuid::new_v4().to_string();
-            let last4 = phone_last4(&phone_number);
-            let display_name = format!("Player{}", last4);
-            let new_user = UserRecord {
-                user_id: new_user_id.clone(),
-                phone_number: phone_number.clone(),
-                phone_last4: last4,
-                display_name,
-                created_at: now,
-                updated_at: now,
-                last_seen_at: now,
-                matches_played: 0,
-                cumulative_score: 0,
-                best_score: 0,
-                total_kills: 0,
-                total_deaths: 0,
-                last_game_username: None,
+        let user_id =
+            if let Some(existing_user_id) = persistent_guard.phone_to_user_id.get(&phone_number) {
+                existing_user_id.clone()
+            } else {
+                let new_user_id = Uuid::new_v4().to_string();
+                let last4 = phone_last4(&phone_number);
+                let display_name = format!("Player{}", last4);
+                let new_user = UserRecord {
+                    user_id: new_user_id.clone(),
+                    phone_number: phone_number.clone(),
+                    phone_last4: last4,
+                    display_name,
+                    created_at: now,
+                    updated_at: now,
+                    last_seen_at: now,
+                    matches_played: 0,
+                    cumulative_score: 0,
+                    best_score: 0,
+                    total_kills: 0,
+                    total_deaths: 0,
+                    last_game_username: None,
+                };
+                persistent_guard
+                    .phone_to_user_id
+                    .insert(phone_number.clone(), new_user_id.clone());
+                persistent_guard.users.insert(new_user_id.clone(), new_user);
+                new_user_id
             };
-            persistent_guard
-                .phone_to_user_id
-                .insert(phone_number.clone(), new_user_id.clone());
-            persistent_guard.users.insert(new_user_id.clone(), new_user);
-            new_user_id
-        };
 
         let profile = if let Some(user) = persistent_guard.users.get_mut(&user_id) {
             user.updated_at = now;
@@ -454,14 +470,14 @@ impl AuthService {
                 "Auth store is inconsistent: user record missing.".to_owned(),
             ));
         };
-        persist_persistent_store(&self.inner.store_path, &persistent_guard);
+        persist_persistent_store(
+            &self.inner.store_path,
+            &persistent_guard,
+            self.inner.redis_cache.as_ref(),
+        );
         drop(persistent_guard);
 
-        let session_token = format!(
-            "mgs_{}{}",
-            Uuid::new_v4().simple(),
-            Uuid::new_v4().simple()
-        );
+        let session_token = format!("mgs_{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let token_expires_at = now.saturating_add(self.inner.session_ttl_seconds);
         self.inner.sessions.insert(
             session_token.clone(),
@@ -508,7 +524,8 @@ impl AuthService {
         let user_id = session_entry.user_id.clone();
         let expires_at = session_entry.expires_at;
         drop(session_entry);
-        self.profile_by_user_id(&user_id).map(|profile| (profile, expires_at))
+        self.profile_by_user_id(&user_id)
+            .map(|profile| (profile, expires_at))
     }
 
     pub fn profile_by_user_id(&self, user_id: &str) -> Option<AuthProfileView> {
@@ -567,14 +584,22 @@ impl AuthService {
             if !player_state.username.trim().is_empty() {
                 user.last_game_username = Some(player_state.username.clone());
             }
-            persist_persistent_store(&self.inner.store_path, &persistent_guard);
+            persist_persistent_store(
+                &self.inner.store_path,
+                &persistent_guard,
+                self.inner.redis_cache.as_ref(),
+            );
         }
     }
 
     pub fn leaderboard(&self, limit: usize) -> Vec<AuthProfileView> {
         let mut profiles: Vec<AuthProfileView> = {
             let persistent_guard = self.inner.persistent_store.read();
-            persistent_guard.users.values().map(to_profile_view).collect()
+            persistent_guard
+                .users
+                .values()
+                .map(to_profile_view)
+                .collect()
         };
 
         profiles.sort_by(|a, b| {
@@ -628,7 +653,10 @@ impl AuthService {
             return Ok(());
         }
 
-        Err("SMS provider is not configured (set MGS_SMS_COMMAND or MGS_SMS_DEV_MODE=1).".to_owned())
+        Err(
+            "SMS provider is not configured (set MGS_SMS_COMMAND or MGS_SMS_DEV_MODE=1)."
+                .to_owned(),
+        )
     }
 }
 
@@ -819,7 +847,13 @@ fn to_profile_view(user: &UserRecord) -> AuthProfileView {
     }
 }
 
-fn load_persistent_store(path: &Path) -> PersistentAuthStore {
+fn load_persistent_store(path: &Path, redis_cache: Option<&AuthRedisCache>) -> PersistentAuthStore {
+    if let Some(cache) = redis_cache {
+        if let Some(store) = cache.load_store() {
+            return store;
+        }
+    }
+
     let raw = match fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(_) => return PersistentAuthStore::default(),
@@ -837,7 +871,15 @@ fn load_persistent_store(path: &Path) -> PersistentAuthStore {
     }
 }
 
-fn persist_persistent_store(path: &Path, store: &PersistentAuthStore) {
+fn persist_persistent_store(
+    path: &Path,
+    store: &PersistentAuthStore,
+    redis_cache: Option<&AuthRedisCache>,
+) {
+    if let Some(cache) = redis_cache {
+        cache.persist_store(store);
+    }
+
     if let Some(parent) = path.parent() {
         if let Err(error) = fs::create_dir_all(parent) {
             error!(
@@ -858,6 +900,99 @@ fn persist_persistent_store(path: &Path, store: &PersistentAuthStore) {
     if let Err(error) = fs::write(path, serialized) {
         error!("Failed to write auth store '{}': {}", path.display(), error);
     }
+}
+
+impl AuthRedisCache {
+    fn load_store(&self) -> Option<PersistentAuthStore> {
+        let mut connection = self.connection.lock();
+        let raw: Option<String> = match connection.get(&self.store_key) {
+            Ok(value) => value,
+            Err(error) => {
+                warn!("Failed to fetch auth store from Redis: {}", error);
+                return None;
+            }
+        };
+        let payload = raw?;
+        match serde_json::from_str::<PersistentAuthStore>(&payload) {
+            Ok(store) => {
+                info!(
+                    "Loaded auth store from Redis key '{}' (users={}).",
+                    self.store_key,
+                    store.users.len()
+                );
+                Some(store)
+            }
+            Err(error) => {
+                warn!(
+                    "Failed to parse auth store from Redis key '{}': {}",
+                    self.store_key, error
+                );
+                None
+            }
+        }
+    }
+
+    fn persist_store(&self, store: &PersistentAuthStore) {
+        let serialized = match serde_json::to_string(store) {
+            Ok(value) => value,
+            Err(error) => {
+                error!("Failed to serialize auth store for Redis: {}", error);
+                return;
+            }
+        };
+
+        let mut connection = self.connection.lock();
+        let result: redis::RedisResult<()> = connection.set(&self.store_key, serialized);
+        if let Err(error) = result {
+            warn!(
+                "Failed to persist auth store to Redis key '{}': {}",
+                self.store_key, error
+            );
+        }
+    }
+}
+
+fn init_redis_cache_from_env() -> Option<AuthRedisCache> {
+    let redis_url = std::env::var("MGS_REDIS_URL")
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|raw| !raw.is_empty())?;
+    let store_key = std::env::var("MGS_REDIS_AUTH_STORE_KEY")
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|raw| !raw.is_empty())
+        .unwrap_or_else(|| DEFAULT_REDIS_STORE_KEY.to_owned());
+
+    let client = match redis::Client::open(redis_url.clone()) {
+        Ok(client) => client,
+        Err(error) => {
+            warn!(
+                "Redis auth cache disabled: invalid MGS_REDIS_URL '{}': {}",
+                redis_url, error
+            );
+            return None;
+        }
+    };
+
+    let connection = match client.get_connection() {
+        Ok(connection) => connection,
+        Err(error) => {
+            warn!(
+                "Redis auth cache disabled: unable to connect to '{}': {}",
+                redis_url, error
+            );
+            return None;
+        }
+    };
+
+    info!(
+        "Redis auth cache enabled. url='{}', key='{}'",
+        redis_url, store_key
+    );
+    Some(AuthRedisCache {
+        connection: ParkingLotMutex::new(connection),
+        store_key,
+    })
 }
 
 fn normalize_phone_number(raw: &str) -> Option<String> {
@@ -922,7 +1057,10 @@ fn mask_phone_number(phone_number: &str) -> String {
 }
 
 fn phone_last4(phone_number: &str) -> String {
-    let digits: String = phone_number.chars().filter(|ch| ch.is_ascii_digit()).collect();
+    let digits: String = phone_number
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect();
     if digits.len() <= 4 {
         return digits;
     }
@@ -941,10 +1079,7 @@ fn parse_bool_env(name: &str, default: bool) -> bool {
         .ok()
         .map(|raw| {
             let normalized = raw.trim().to_ascii_lowercase();
-            normalized == "1"
-                || normalized == "true"
-                || normalized == "yes"
-                || normalized == "on"
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
         })
         .unwrap_or(default)
 }

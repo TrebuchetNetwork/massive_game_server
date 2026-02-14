@@ -95,6 +95,7 @@ aabb-quadtree = "0.2.0"
 
 # Compression
 zstd = "0.13"
+redis = "0.25"
 
 # Make tikv-jemallocator an optional dependency
 [target.'cfg(not(target_env = "msvc"))'.dependencies]

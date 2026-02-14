@@ -21,11 +21,13 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, info, Level};
 use tracing_subscriber::{fmt, EnvFilter};
 use uuid::Uuid;
-use warp::Filter;
+use warp::http::{header, HeaderName, HeaderValue};
+use warp::{Filter, Reply};
 
 fn init_logging() -> anyhow::Result<()> {
     let subscriber = fmt::Subscriber::builder()
@@ -46,6 +48,24 @@ fn init_logging() -> anyhow::Result<()> {
 struct WsAuthQuery {
     auth_token: Option<String>,
     token: Option<String>,
+}
+
+fn static_cache_control_for_path(path: &Path) -> &'static str {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+
+    match extension.as_deref() {
+        Some("html") => "no-cache, no-store, must-revalidate",
+        Some("js") | Some("mjs") | Some("css") | Some("wasm") | Some("png") | Some("jpg")
+        | Some("jpeg") | Some("webp") | Some("gif") | Some("svg") | Some("ico") | Some("woff")
+        | Some("woff2") | Some("ttf") | Some("otf") | Some("mp3") | Some("ogg") | Some("wav") => {
+            "public, max-age=31536000, immutable"
+        }
+        Some("json") | Some("map") => "public, max-age=300",
+        _ => "public, max-age=3600",
+    }
 }
 
 #[tokio::main]
@@ -198,17 +218,45 @@ async fn main() -> anyhow::Result<()> {
             },
         );
 
+    let static_asset_allow_origin = std::env::var("MGS_CDN_ORIGIN")
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|raw| !raw.is_empty());
+    if let Some(origin) = static_asset_allow_origin.as_deref() {
+        info!(
+            "Static asset CORS origin override enabled for CDN/cache distribution: {}",
+            origin
+        );
+    }
+
     let static_files_route =
-        warp::fs::dir("static_client").map(|reply: warp::filters::fs::File| {
-            if reply.path().extension().map_or(false, |ext| ext == "html") {
-                warp::reply::with_header(
-                    reply,
-                    "Cache-Control",
-                    "no-cache, no-store, must-revalidate",
-                )
-            } else {
-                warp::reply::with_header(reply, "Cache-Control", "public, max-age=3600")
+        warp::fs::dir("static_client").map(move |reply: warp::filters::fs::File| {
+            let requested_path = reply.path().to_path_buf();
+            let cache_control = static_cache_control_for_path(&requested_path);
+            let mut response = reply.into_response();
+            let headers = response.headers_mut();
+
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static(cache_control),
+            );
+            headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+            headers.insert(
+                HeaderName::from_static("timing-allow-origin"),
+                HeaderValue::from_static("*"),
+            );
+            headers.insert(
+                HeaderName::from_static("cross-origin-resource-policy"),
+                HeaderValue::from_static("cross-origin"),
+            );
+
+            if let Some(origin) = static_asset_allow_origin.as_deref() {
+                if let Ok(header_value) = HeaderValue::from_str(origin) {
+                    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, header_value);
+                }
             }
+
+            response
         });
 
     let routes = auth_routes.or(signaling_route).or(static_files_route).with(
