@@ -130,18 +130,41 @@ Arena endpoints are now available for model ladder workflows:
 
 * `POST /api/arena/models/register`
 * `POST /api/arena/models/heartbeat`
+* `POST /api/arena/models/upload_wasm`
 * `GET /api/arena/models`
 * `POST /api/arena/matches/queue`
 * `POST /api/arena/matches/queue_round_robin`
 * `POST /api/arena/matches/claim_next`
+* `POST /api/arena/matches/execute_next`
 * `GET /api/arena/matches/pending`
 * `POST /api/arena/matches/report`
 * `GET /api/arena/leaderboard`
 * `GET /api/arena/overview`
+* `POST /api/arena/code/validate`
+* `POST /api/arena/code/generate`
 
 Storage:
 
 * `MGS_ARENA_STORE_PATH`: JSON persistence path (default: `data/arena_store.json`).
+* `MGS_ARENA_WASM_DIR`: directory for per-model wasm files (`<model_id>.wasm`, default: `data/arena_bots`).
+* `MGS_ARENA_BOT_FUEL_PER_TICK`: wasm fuel budget per tick (default: `1000000`).
+* `MGS_ARENA_BOT_MAX_TICKS`: default arena sandbox ticks for `execute_next` (default: `600`).
+* `MGS_ARENA_WASM_MAX_BYTES`: max accepted wasm upload size in bytes (default: `2097152`).
+* `OPENROUTER_API_KEY`: optional API key used by code-generation scaffolding routes.
+* `OPENROUTER_BASE_URL`: optional OpenRouter base URL override.
+* `OPENROUTER_HTTP_REFERER`: optional `HTTP-Referer` header for OpenRouter requests.
+* `OPENROUTER_APP_TITLE`: optional `X-Title` header for OpenRouter requests.
+
+Human-priority slot controls:
+
+* `MGS_HUMAN_PRIORITY_ENABLED`: enable immediate bot eviction for human joins when full (default: `true`).
+* `MGS_RESERVED_HUMAN_SLOTS`: keep this many slots free from bot auto-fill (default: `2`).
+
+Arena worker controls:
+
+* `MGS_ARENA_WORKER_ENABLED`: auto-execute queued arena matches in background loop (default: `false`).
+* `MGS_ARENA_WORKER_INTERVAL_MS`: polling interval for worker loop (default: `1000`).
+* `MGS_ARENA_WORKER_MAX_TICKS`: optional max ticks per worker-executed match.
 
 Web console:
 

@@ -15,6 +15,9 @@ use massive_game_server_core::network::signaling::{
 };
 use massive_game_server_core::operational::arena::{build_arena_routes, ArenaService};
 use massive_game_server_core::operational::auth::{build_auth_routes, AuthService};
+use massive_game_server_core::operational::code_generation::{
+    build_code_generation_routes, CodeGenerationService,
+};
 use massive_game_server_core::operational::feature_flags::{
     build_feature_flag_routes, FeatureFlagService,
 };
@@ -27,7 +30,7 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{error, info, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::{fmt, EnvFilter};
 use uuid::Uuid;
 use warp::http::{header, HeaderName, HeaderValue};
@@ -151,9 +154,12 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     let auth_service = AuthService::new_from_env();
     let arena_service = ArenaService::new_from_env();
+    let arena_service_for_worker = arena_service.clone();
+    let code_generation_service = CodeGenerationService::new_from_env();
     let feature_flag_service = FeatureFlagService::new_from_env();
     let auth_routes = build_auth_routes(auth_service.clone());
-    let arena_routes = build_arena_routes(arena_service);
+    let arena_routes = build_arena_routes(arena_service.clone());
+    let code_generation_routes = build_code_generation_routes(code_generation_service);
     let feature_flag_routes = build_feature_flag_routes(feature_flag_service);
     let server_for_join_stage_report = game_server_instance.clone();
     let join_stage_report_route = warp::path!("api" / "ops" / "join-stages")
@@ -282,6 +288,7 @@ async fn main() -> anyhow::Result<()> {
 
     let routes = auth_routes
         .or(arena_routes)
+        .or(code_generation_routes)
         .or(feature_flag_routes)
         .or(join_stage_report_route)
         .or(join_stage_reset_route)
@@ -309,6 +316,52 @@ async fn main() -> anyhow::Result<()> {
         game_server_for_loop.run_game_loop().await;
         info!("Game loop stopped.");
     });
+
+    let arena_worker_enabled = std::env::var("MGS_ARENA_WORKER_ENABLED")
+        .ok()
+        .map(|raw| {
+            let normalized = raw.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        })
+        .unwrap_or(false);
+    if arena_worker_enabled {
+        let worker_interval_ms = std::env::var("MGS_ARENA_WORKER_INTERVAL_MS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .filter(|value| *value >= 100)
+            .unwrap_or(1000);
+        let worker_max_ticks = std::env::var("MGS_ARENA_WORKER_MAX_TICKS")
+            .ok()
+            .and_then(|raw| raw.parse::<u32>().ok())
+            .filter(|value| *value > 0);
+        tokio::spawn(async move {
+            let mut ticker =
+                tokio::time::interval(std::time::Duration::from_millis(worker_interval_ms));
+            info!(
+                "Arena worker enabled (interval_ms={}, max_ticks={:?}).",
+                worker_interval_ms, worker_max_ticks
+            );
+            loop {
+                ticker.tick().await;
+                match arena_service_for_worker.worker_execute_next(worker_max_ticks, None) {
+                    Ok(Some(executed)) => {
+                        info!(
+                            "Arena worker executed match '{}' (pending {} -> {}, draw={}, winner={:?}, runtimes=({},{}) ).",
+                            executed.report.match_id,
+                            executed.pending_before,
+                            executed.pending_after,
+                            executed.sandbox.draw,
+                            executed.sandbox.winner_model_id,
+                            executed.sandbox.model_a_runtime,
+                            executed.sandbox.model_b_runtime
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(err) => warn!("Arena worker execute_next failed: {}", err),
+                }
+            }
+        });
+    }
 
     let bind_host = std::env::var("MGS_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let bind_port = std::env::var("MGS_PORT")

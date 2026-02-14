@@ -523,6 +523,13 @@ pub async fn handle_signaling_connection(
                 }
             }
 
+            if !server_instance_on_open.ensure_human_join_capacity(&current_peer_id_on_open_cb) {
+                warn!(
+                    "[{}]: server is full and no bot slot could be reclaimed for human priority join.",
+                    current_peer_id_on_open_cb
+                );
+            }
+
             // Fix 2.2: Use RespawnManager for initial spawn
             let player_id_arc_for_spawn = player_manager_on_open
                 .id_pool

@@ -721,6 +721,8 @@ pub struct MassiveGameServer {
     pub bot_players: Arc<DashMap<PlayerID, BotController>>,
     pub target_bot_count: Arc<AtomicU64>,
     pub bot_name_counter: Arc<AtomicU64>,
+    human_priority_enabled: bool,
+    reserved_human_slots: usize,
     pub map_name: String,
 
     pub last_broadcast_frame: Arc<AtomicU64>,
@@ -900,6 +902,30 @@ impl MassiveGameServer {
             .ok()
             .and_then(|raw| raw.parse::<u64>().ok())
             .unwrap_or(20);
+        let human_priority_enabled = std::env::var("MGS_HUMAN_PRIORITY_ENABLED")
+            .ok()
+            .map(|raw| {
+                let normalized = raw.trim().to_ascii_lowercase();
+                normalized == "1"
+                    || normalized == "true"
+                    || normalized == "yes"
+                    || normalized == "on"
+            })
+            .unwrap_or(true);
+        let reserved_human_slots = if human_priority_enabled {
+            std::env::var("MGS_RESERVED_HUMAN_SLOTS")
+                .ok()
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(2)
+                .min(config.max_players_per_match)
+        } else {
+            0
+        };
+
+        info!(
+            "Human-priority slots: enabled={}, reserved_human_slots={}",
+            human_priority_enabled, reserved_human_slots
+        );
 
         let server = MassiveGameServer {
             config,
@@ -932,6 +958,8 @@ impl MassiveGameServer {
             bot_players: Arc::new(DashMap::new()),
             target_bot_count: Arc::new(AtomicU64::new(initial_target_bot_count)),
             bot_name_counter: Arc::new(AtomicU64::new(0)),
+            human_priority_enabled,
+            reserved_human_slots,
             map_name,
             last_broadcast_frame: Arc::new(AtomicU64::new(0)),
             player_last_sync_positions: Arc::new(DashMap::new()),
@@ -4416,11 +4444,12 @@ impl MassiveGameServer {
 
         // Corrected line: Directly use the usize value from config
         let max_players_in_match = self.config.max_players_per_match;
+        let effective_bot_capacity = max_players_in_match.saturating_sub(self.reserved_human_slots);
 
-        let desired_bot_count = if human_player_count >= max_players_in_match {
+        let desired_bot_count = if human_player_count >= effective_bot_capacity {
             0
         } else {
-            (max_players_in_match - human_player_count).min(
+            (effective_bot_capacity - human_player_count).min(
                 self.target_bot_count
                     .load(std::sync::atomic::Ordering::Relaxed) as usize,
             ) // Also consider target_bot_count
@@ -4437,6 +4466,69 @@ impl MassiveGameServer {
                 max_players_in_match, human_player_count, current_bot_count, desired_bot_count, bots_to_add_count);
             self.spawn_additional_bots(bots_to_add_count);
         }
+    }
+
+    pub fn ensure_human_join_capacity(&self, joining_peer_id: &str) -> bool {
+        if !self.human_priority_enabled {
+            return self.player_manager.player_count() < self.config.max_players_per_match;
+        }
+        if self.player_manager.player_count() < self.config.max_players_per_match {
+            return true;
+        }
+        let Some(bot_id) = self.select_lowest_performing_bot() else {
+            warn!(
+                "[Human Priority] No bot available to evict for human '{}'; server remains full.",
+                joining_peer_id
+            );
+            return false;
+        };
+        self.evict_bot_for_human(&bot_id, joining_peer_id)
+    }
+
+    fn select_lowest_performing_bot(&self) -> Option<PlayerID> {
+        let mut worst: Option<(PlayerID, i64)> = None;
+
+        for entry in self.bot_players.iter() {
+            let bot_id = entry.key().clone();
+            let rating = self
+                .player_manager
+                .get_player_state(&bot_id)
+                .map(|state| {
+                    let score = state.score as i64;
+                    let kills = state.kills as i64 * 25;
+                    let deaths_penalty = state.deaths as i64 * 10;
+                    let health_bonus = state.health.max(0) as i64;
+                    score + kills + health_bonus - deaths_penalty
+                })
+                .unwrap_or(i64::MIN);
+
+            let should_replace = worst
+                .as_ref()
+                .map(|(_, current_rating)| rating < *current_rating)
+                .unwrap_or(true);
+            if should_replace {
+                worst = Some((bot_id, rating));
+            }
+        }
+
+        worst.map(|(bot_id, _)| bot_id)
+    }
+
+    fn evict_bot_for_human(&self, bot_id: &PlayerID, joining_peer_id: &str) -> bool {
+        if self.bot_players.remove(bot_id).is_none() {
+            return false;
+        }
+
+        self.player_manager.remove_player(bot_id.as_str());
+        self.data_channels_map.remove(bot_id.as_str());
+        self.client_states_map.write().remove(bot_id.as_str());
+        self.player_aois.remove(bot_id.as_str());
+
+        info!(
+            "[Human Priority] Evicted bot '{}' to free a slot for human '{}'.",
+            bot_id, joining_peer_id
+        );
+        true
     }
 
     fn spawn_additional_bots(&self, count_to_add: usize) {
@@ -4566,24 +4658,14 @@ impl MassiveGameServer {
 
     fn remove_bots(&self, count: usize) {
         let mut removed_count = 0;
-        let bot_keys_to_remove: Vec<PlayerID> = self
-            .bot_players
-            .iter()
-            .map(|entry| entry.key().clone())
-            .take(count)
-            .collect();
-
-        for bot_key in bot_keys_to_remove {
-            if self.bot_players.remove(&bot_key).is_some() {
-                self.player_manager.remove_player(bot_key.as_str());
-                info!(
-                    "[Bot Management] Removed bot {} to adjust match population.",
-                    bot_key
-                );
+        while removed_count < count {
+            let Some(bot_key) = self.select_lowest_performing_bot() else {
+                break;
+            };
+            if self.evict_bot_for_human(&bot_key, "bot_population_manager") {
                 removed_count += 1;
-                if removed_count >= count {
-                    break;
-                }
+            } else {
+                break;
             }
         }
     }

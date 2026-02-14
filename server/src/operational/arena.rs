@@ -1,3 +1,5 @@
+use crate::operational::bot_sandbox::{BotMatchOutcome, BotSandbox};
+use base64::Engine as _;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
@@ -14,6 +16,8 @@ use warp::{Filter, Reply};
 const DEFAULT_ARENA_LEADERBOARD_LIMIT: usize = 25;
 const DEFAULT_ARENA_PENDING_LIMIT: usize = 20;
 const DEFAULT_BASE_ELO: f64 = 1000.0;
+const DEFAULT_ARENA_WASM_DIR: &str = "data/arena_bots";
+const DEFAULT_ARENA_WASM_MAX_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct ArenaService {
@@ -22,6 +26,9 @@ pub struct ArenaService {
 
 struct ArenaInner {
     store_path: PathBuf,
+    bot_sandbox: BotSandbox,
+    wasm_dir: PathBuf,
+    wasm_max_bytes: usize,
     persistent_store: RwLock<PersistentArenaStore>,
     pending_matches: Mutex<VecDeque<QueuedMatch>>,
     in_flight_matches: DashMap<String, QueuedMatch>,
@@ -143,6 +150,22 @@ pub struct ReportMatchResponse {
     pub model_b: ArenaModelView,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ExecuteNextMatchResponse {
+    pub pending_before: usize,
+    pub pending_after: usize,
+    pub report: ReportMatchResponse,
+    pub sandbox: BotMatchOutcome,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UploadModelWasmResponse {
+    pub model_id: String,
+    pub wasm_path: String,
+    pub bytes_written: usize,
+    pub overwritten: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct RegisterModelBody {
     model_id: Option<String>,
@@ -156,6 +179,13 @@ struct RegisterModelBody {
 #[derive(Debug, Clone, Deserialize)]
 struct ModelHeartbeatBody {
     model_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UploadModelWasmBody {
+    model_id: String,
+    wasm_base64: String,
+    overwrite: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -193,6 +223,12 @@ struct LeaderboardQuery {
 #[derive(Debug, Clone, Deserialize, Default)]
 struct PendingQuery {
     limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct ExecuteNextBody {
+    max_ticks: Option<u32>,
+    seed: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -246,12 +282,21 @@ impl ArenaService {
         let store_path = std::env::var("MGS_ARENA_STORE_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("data/arena_store.json"));
+        let wasm_dir = std::env::var("MGS_ARENA_WASM_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(DEFAULT_ARENA_WASM_DIR));
+        let wasm_max_bytes = std::env::var("MGS_ARENA_WASM_MAX_BYTES")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .filter(|value| *value > 1024)
+            .unwrap_or(DEFAULT_ARENA_WASM_MAX_BYTES);
         let persistent_store = load_persistent_store(&store_path);
         let completed_count = persistent_store.completed_matches.len() as u64;
 
         info!(
-            "Arena service initialized. store_path='{}', models={}, completed_matches={}",
+            "Arena service initialized. store_path='{}', wasm_dir='{}', models={}, completed_matches={}",
             store_path.display(),
+            wasm_dir.display(),
             persistent_store.models.len(),
             completed_count
         );
@@ -259,6 +304,9 @@ impl ArenaService {
         Self {
             inner: Arc::new(ArenaInner {
                 store_path,
+                bot_sandbox: BotSandbox::new_from_env(),
+                wasm_dir,
+                wasm_max_bytes,
                 persistent_store: RwLock::new(persistent_store),
                 pending_matches: Mutex::new(VecDeque::new()),
                 in_flight_matches: DashMap::new(),
@@ -366,6 +414,108 @@ impl ArenaService {
 
         self.get_model_view(body.model_id.trim())
             .ok_or_else(|| ArenaError::Internal("heartbeat verification failed".to_owned()))
+    }
+
+    fn upload_model_wasm(
+        &self,
+        body: UploadModelWasmBody,
+    ) -> Result<UploadModelWasmResponse, ArenaError> {
+        let model_id = body.model_id.trim();
+        if model_id.is_empty() {
+            return Err(ArenaError::InvalidInput(
+                "invalid_model_id",
+                "model_id is required".to_owned(),
+            ));
+        }
+        let Some(safe_model_id) = sanitize_model_id(model_id) else {
+            return Err(ArenaError::InvalidInput(
+                "invalid_model_id",
+                "model_id contains unsupported characters".to_owned(),
+            ));
+        };
+
+        {
+            let store = self.inner.persistent_store.read();
+            if !store.models.contains_key(model_id) {
+                return Err(ArenaError::NotFound(
+                    "model_not_found",
+                    format!("model '{}' does not exist", model_id),
+                ));
+            }
+        }
+
+        let wasm_bytes = base64::engine::general_purpose::STANDARD
+            .decode(body.wasm_base64.trim())
+            .map_err(|err| {
+                ArenaError::InvalidInput("invalid_wasm_base64", format!("invalid base64: {}", err))
+            })?;
+        if wasm_bytes.is_empty() {
+            return Err(ArenaError::InvalidInput(
+                "empty_wasm",
+                "decoded wasm payload is empty".to_owned(),
+            ));
+        }
+        if wasm_bytes.len() > self.inner.wasm_max_bytes {
+            return Err(ArenaError::InvalidInput(
+                "wasm_too_large",
+                format!(
+                    "wasm payload exceeds max size ({} > {})",
+                    wasm_bytes.len(),
+                    self.inner.wasm_max_bytes
+                ),
+            ));
+        }
+        if wasm_bytes.len() < 4 || wasm_bytes[..4] != [0, 0x61, 0x73, 0x6d] {
+            return Err(ArenaError::InvalidInput(
+                "invalid_wasm_header",
+                "payload is not a valid wasm module".to_owned(),
+            ));
+        }
+
+        fs::create_dir_all(&self.inner.wasm_dir).map_err(|err| {
+            ArenaError::Internal(format!(
+                "failed to create wasm dir '{}': {}",
+                self.inner.wasm_dir.display(),
+                err
+            ))
+        })?;
+        let wasm_path = self.inner.wasm_dir.join(format!("{}.wasm", safe_model_id));
+        let overwrite = body.overwrite.unwrap_or(false);
+        let existed = wasm_path.exists();
+        if existed && !overwrite {
+            return Err(ArenaError::Conflict(
+                "wasm_exists",
+                format!(
+                    "wasm already exists for model '{}'; set overwrite=true to replace",
+                    model_id
+                ),
+            ));
+        }
+
+        fs::write(&wasm_path, &wasm_bytes).map_err(|err| {
+            ArenaError::Internal(format!(
+                "failed to write wasm file '{}': {}",
+                wasm_path.display(),
+                err
+            ))
+        })?;
+
+        {
+            let now = unix_now();
+            let mut store = self.inner.persistent_store.write();
+            if let Some(model) = store.models.get_mut(model_id) {
+                model.updated_at = now;
+                model.last_seen_at = now;
+            }
+        }
+        self.persist_store().map_err(ArenaError::Internal)?;
+
+        Ok(UploadModelWasmResponse {
+            model_id: model_id.to_owned(),
+            wasm_path: wasm_path.display().to_string(),
+            bytes_written: wasm_bytes.len(),
+            overwritten: existed,
+        })
     }
 
     fn queue_match(&self, body: QueueMatchBody) -> Result<QueueMatchResponse, ArenaError> {
@@ -730,6 +880,59 @@ impl ArenaService {
         })
     }
 
+    fn execute_next_match(
+        &self,
+        body: ExecuteNextBody,
+    ) -> Result<ExecuteNextMatchResponse, ArenaError> {
+        let pending_before = self.inner.pending_matches.lock().len();
+        let claimed = self.claim_next_match();
+        let Some(claimed_match) = claimed.claimed else {
+            return Err(ArenaError::NotFound(
+                "no_pending_match",
+                "no pending arena matches available for execution".to_owned(),
+            ));
+        };
+
+        let seed = body.seed.unwrap_or_else(unix_now);
+        let sandbox_outcome = self.inner.bot_sandbox.execute_duel(
+            &claimed_match.model_a_id,
+            &claimed_match.model_b_id,
+            seed,
+            body.max_ticks,
+        );
+
+        let report = self.report_match(ReportMatchBody {
+            match_id: claimed_match.match_id.clone(),
+            model_a_id: Some(claimed_match.model_a_id.clone()),
+            model_b_id: Some(claimed_match.model_b_id.clone()),
+            winner_model_id: sandbox_outcome.winner_model_id.clone(),
+            draw: Some(sandbox_outcome.draw),
+            model_a_score: Some(sandbox_outcome.model_a_score),
+            model_b_score: Some(sandbox_outcome.model_b_score),
+            duration_ms: Some(sandbox_outcome.duration_ms),
+        })?;
+
+        let pending_after = self.inner.pending_matches.lock().len();
+        Ok(ExecuteNextMatchResponse {
+            pending_before,
+            pending_after,
+            report,
+            sandbox: sandbox_outcome,
+        })
+    }
+
+    pub fn worker_execute_next(
+        &self,
+        max_ticks: Option<u32>,
+        seed: Option<u64>,
+    ) -> Result<Option<ExecuteNextMatchResponse>, String> {
+        match self.execute_next_match(ExecuteNextBody { max_ticks, seed }) {
+            Ok(response) => Ok(Some(response)),
+            Err(ArenaError::NotFound(code, _)) if code == "no_pending_match" => Ok(None),
+            Err(err) => Err(err.message()),
+        }
+    }
+
     fn get_model_view(&self, model_id: &str) -> Option<ArenaModelView> {
         let store = self.inner.persistent_store.read();
         store.models.get(model_id).map(to_model_view)
@@ -836,6 +1039,21 @@ fn to_queued_match_view(entry: &QueuedMatch) -> QueuedMatchView {
     }
 }
 
+fn sanitize_model_id(model_id: &str) -> Option<String> {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed
+        .bytes()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'-' || ch == b'.')
+    {
+        Some(trimmed.to_owned())
+    } else {
+        None
+    }
+}
+
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -926,6 +1144,17 @@ pub fn build_arena_routes(
             },
         );
 
+    let upload_model_wasm = warp::path!("api" / "arena" / "models" / "upload_wasm")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(with_service(service.clone()))
+        .map(
+            |body: UploadModelWasmBody, arena: ArenaService| match arena.upload_model_wasm(body) {
+                Ok(result) => ok_response(result),
+                Err(err) => error_response(err.code(), err.message()),
+            },
+        );
+
     let list_models = warp::path!("api" / "arena" / "models")
         .and(warp::get())
         .and(
@@ -966,6 +1195,21 @@ pub fn build_arena_routes(
         .and(warp::post())
         .and(with_service(service.clone()))
         .map(|arena: ArenaService| ok_response(arena.claim_next_match()));
+
+    let execute_next = warp::path!("api" / "arena" / "matches" / "execute_next")
+        .and(warp::post())
+        .and(
+            warp::body::json::<ExecuteNextBody>()
+                .or(warp::any().map(ExecuteNextBody::default))
+                .unify(),
+        )
+        .and(with_service(service.clone()))
+        .map(
+            |body: ExecuteNextBody, arena: ArenaService| match arena.execute_next_match(body) {
+                Ok(result) => ok_response(result),
+                Err(err) => error_response(err.code(), err.message()),
+            },
+        );
 
     let list_pending = warp::path!("api" / "arena" / "matches" / "pending")
         .and(warp::get())
@@ -1011,10 +1255,12 @@ pub fn build_arena_routes(
 
     register_model
         .or(model_heartbeat)
+        .or(upload_model_wasm)
         .or(list_models)
         .or(queue_match)
         .or(queue_round_robin)
         .or(claim_next)
+        .or(execute_next)
         .or(list_pending)
         .or(report_match)
         .or(leaderboard)
@@ -1040,6 +1286,9 @@ mod tests {
         let service = ArenaService {
             inner: Arc::new(ArenaInner {
                 store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                bot_sandbox: BotSandbox::new_from_env(),
+                wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
+                wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
                 persistent_store: RwLock::new(PersistentArenaStore {
                     models: HashMap::from([
                         (
@@ -1116,5 +1365,138 @@ mod tests {
             })
             .expect("round robin should queue");
         assert_eq!(result.queued_count, 2);
+    }
+
+    #[test]
+    fn execute_next_match_reports_result() {
+        let service = ArenaService {
+            inner: Arc::new(ArenaInner {
+                store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                bot_sandbox: BotSandbox::new_from_env(),
+                wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
+                wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
+                persistent_store: RwLock::new(PersistentArenaStore {
+                    models: HashMap::from([
+                        (
+                            "a".to_owned(),
+                            ArenaModelRecord {
+                                model_id: "a".to_owned(),
+                                model_name: "a".to_owned(),
+                                provider: "x".to_owned(),
+                                version: "1".to_owned(),
+                                active: true,
+                                created_at: 1,
+                                updated_at: 1,
+                                last_seen_at: 1,
+                                elo_rating: 1000.0,
+                                matches_played: 0,
+                                wins: 0,
+                                losses: 0,
+                                draws: 0,
+                                cumulative_score: 0,
+                            },
+                        ),
+                        (
+                            "b".to_owned(),
+                            ArenaModelRecord {
+                                model_id: "b".to_owned(),
+                                model_name: "b".to_owned(),
+                                provider: "x".to_owned(),
+                                version: "1".to_owned(),
+                                active: true,
+                                created_at: 1,
+                                updated_at: 1,
+                                last_seen_at: 1,
+                                elo_rating: 1000.0,
+                                matches_played: 0,
+                                wins: 0,
+                                losses: 0,
+                                draws: 0,
+                                cumulative_score: 0,
+                            },
+                        ),
+                    ]),
+                    completed_matches: Vec::new(),
+                }),
+                pending_matches: Mutex::new(VecDeque::new()),
+                in_flight_matches: DashMap::new(),
+                total_matches_reported: AtomicU64::new(0),
+            }),
+        };
+
+        let queued = service
+            .queue_match(QueueMatchBody {
+                model_a_id: "a".to_owned(),
+                model_b_id: "b".to_owned(),
+                mode: Some("arena".to_owned()),
+                metadata: None,
+            })
+            .expect("queue should succeed");
+        assert_eq!(queued.queued_count, 1);
+
+        let executed = service
+            .execute_next_match(ExecuteNextBody {
+                max_ticks: Some(120),
+                seed: Some(7),
+            })
+            .expect("execute should succeed");
+        assert_eq!(executed.pending_after, 0);
+        assert_eq!(executed.report.model_a.matches_played, 1);
+        assert_eq!(executed.report.model_b.matches_played, 1);
+        assert!(executed.sandbox.ticks_executed > 0);
+        assert!(executed.sandbox.ticks_executed <= 120);
+    }
+
+    #[test]
+    fn worker_execute_next_returns_none_when_queue_empty() {
+        let service = ArenaService::new_from_env();
+        let outcome = service
+            .worker_execute_next(Some(64), Some(1))
+            .expect("worker call should not fail");
+        assert!(outcome.is_none());
+    }
+
+    #[test]
+    fn upload_wasm_rejects_invalid_base64() {
+        let service = ArenaService {
+            inner: Arc::new(ArenaInner {
+                store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                bot_sandbox: BotSandbox::new_from_env(),
+                wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
+                wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
+                persistent_store: RwLock::new(PersistentArenaStore {
+                    models: HashMap::from([(
+                        "model_x".to_owned(),
+                        ArenaModelRecord {
+                            model_id: "model_x".to_owned(),
+                            model_name: "model_x".to_owned(),
+                            provider: "x".to_owned(),
+                            version: "1".to_owned(),
+                            active: true,
+                            created_at: 1,
+                            updated_at: 1,
+                            last_seen_at: 1,
+                            elo_rating: 1000.0,
+                            matches_played: 0,
+                            wins: 0,
+                            losses: 0,
+                            draws: 0,
+                            cumulative_score: 0,
+                        },
+                    )]),
+                    completed_matches: Vec::new(),
+                }),
+                pending_matches: Mutex::new(VecDeque::new()),
+                in_flight_matches: DashMap::new(),
+                total_matches_reported: AtomicU64::new(0),
+            }),
+        };
+
+        let result = service.upload_model_wasm(UploadModelWasmBody {
+            model_id: "model_x".to_owned(),
+            wasm_base64: "!!!not-base64!!!".to_owned(),
+            overwrite: Some(true),
+        });
+        assert!(result.is_err());
     }
 }
