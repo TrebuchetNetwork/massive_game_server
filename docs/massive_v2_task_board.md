@@ -48,11 +48,18 @@
   - full server joins can evict the lowest-performing bot when match is full.
   - team-aware bot eviction bias for balanced joins (`ensure_human_join_capacity_for_team`)
   - explicit eviction announcement enqueued to system chat feed for all human-priority slot reclaim events.
+- Refreshed benchmark artifacts after join policy update:
+  - `artifacts/scale/multi_client_fresh_20_post_team_balanced_20260214_2038.json`
+    - 20/20 launched, connected ratio `1.00`, connect avg `21938.8ms`.
+  - `artifacts/scale/multi_client_fresh_120_post_team_balanced_20260214_2050.json`
+    - 86/120 launched within `300000ms`, connected ratio `0.7167`.
+    - 73+ wave: count `14`, avg `88631.71ms`, p95 `92412.3ms`.
+    - join-stage 73+: `open_channel_wait_ms.avg=356.27` (`p95=1883.85`), `queue_wait_ms.avg=9.33`.
 - Updated server docs:
   - `server/README.md`
 
 ## Next Execution Batch
-1. Wire OpenRouter provider call in `code_generation` service (currently deterministic template fallback).
-2. Add wasm upload/registration API path (`model -> wasm artifact`) and execute round-robin arena workers.
-3. Extend slot manager policy with explicit kill-feed style notification (current rollout emits system chat announcements with team-balance context).
-4. Continue tail-wave join regression isolation with `120` deterministic reruns.
+1. Recover 120-tail launch coverage from `86/120` toward `100+/120` within the same 300s budget.
+2. Target 73+ wave channel-open contention (`open_channel_wait_ms` p95 `1883.85ms`) with join scheduler/backpressure tuning.
+3. Add kill-feed-level explicit slot reclaim message (current behavior is system-chat announcement only).
+4. Continue authoritative ECS ownership migration and full-state zero-copy/batching follow-through.

@@ -34,7 +34,7 @@
 | T1-05 | SIMD physics/collision | SINGLE_SERVER_PURE_RUST_OPTIMIZATIONS 4.1 | In Progress | Projectile-vs-player ray collision now uses SIMD batched target checks; broader physics vectorization remains. |
 | T1-06 | CPU affinity and kernel tuning checklist | IMPLEMENTATION_GUIDE, README_SINGLE_SERVER | In Progress | Affinity + setup scripts exist; ops verification loop continues. |
 | T1-07 | Tail-wave instrumentation (1-24/25-48/49-72/73+) | Prior pass + Kimi guidance | Done | Latency buckets and wave metrics are in benchmark artifacts. |
-| T1-08 | Recover 120-client tail regression | Benchmark refresh findings | In Progress | New release retest dropped from 105 launched to 86; regression isolation pass required. |
+| T1-08 | Recover 120-client tail regression | Benchmark refresh findings | In Progress | Latest rerun still capped at 86/120 launched within 300s budget; 73+ wave completion and launch throughput remain primary bottlenecks. |
 | T2-01 | WebGPU + WebGL2 instanced shader fallback | MEGA_BATTLE_GAME_DESIGN 3.1 | Done | High-player instance rendering path supports non-WebGPU fallback. |
 | T2-02 | Projectile instancing and render culling | massive_game_client_analysis 1.2 | In Progress | Instanced layers in place; ongoing perf tuning with stress suite. |
 | T2-03 | Background tab throttling | TREBUCHET 2.10 | Done | Visibility-driven throttling path implemented. |
@@ -86,8 +86,18 @@
 - Switched join-stage internal timing precision to microseconds (reported in ms).
 - Expanded SIMD projectile-player collision checks with batched target vectors.
 - Routed welcome + match-info join packets through packet coalescing path.
+- Ran fresh benchmark refresh after human-priority balancing pass:
+  - `artifacts/scale/multi_client_fresh_20_post_team_balanced_20260214_2038.json`
+    - 20/20 launched, connected ratio `1.00`, connect avg `21938.8ms` (prior `18487.7ms`).
+  - `artifacts/scale/multi_client_fresh_120_post_team_balanced_20260214_2050.json`
+    - 86/120 launched within `300000ms` cap, connected ratio `0.7167`.
+    - 73+ wave: count `14`, avg `88631.71ms`, p95 `92412.3ms`.
+    - join-stage 73+: `open_channel_wait_ms.avg=356.27` (`p95=1883.85`), `queue_wait_ms.avg=9.33`.
+  - Notes:
+    - A first 120 run with a `420000ms` cap hung without writing an artifact; this is now tracked as tool/runtime instability during extreme tail load.
+    - Tail regression remains unresolved; 120-client launch coverage is still below target.
 
 ## Next Execution Batch
-1. Run refreshed deterministic `120` and `100` suites to quantify tail impact from the new join tracing + coalesced join packet path.
-2. Continue authoritative ownership migration (full ECS writer ownership and state snapshots).
-3. Integrate first runnable WASM bot sandbox skeleton behind `/api/arena`.
+1. Improve 73+ launch coverage under the 300s window from `14/48` to at least `30/48` by tuning open-channel scheduling and connect concurrency policy.
+2. Investigate and clamp 73+ `open_channel_wait_ms` spikes (current p95 `1883.85ms`) with staged channel-open backpressure controls.
+3. Continue authoritative ownership migration (full ECS writer ownership and state snapshots).
