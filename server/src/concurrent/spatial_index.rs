@@ -1,11 +1,12 @@
 // massive_game_server/server/src/concurrent/spatial_index.rs
 
+use crate::core::simd;
 use crate::core::types::{EntityId, PlayerID};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::debug;
 
 #[derive(Debug, Clone)]
 struct SpatialCell {
@@ -166,7 +167,9 @@ impl ImprovedSpatialIndex {
     pub fn query_nearby_players(&self, x: f32, y: f32, radius: f32) -> Vec<PlayerID> {
         let radius_squared = radius * radius;
         let cell_indices = self.get_cells_in_radius(x, y, radius);
-        let mut nearby_players = Vec::new();
+        let mut candidate_ids = Vec::new();
+        let mut candidate_xs = Vec::new();
+        let mut candidate_ys = Vec::new();
         let mut checked_players = HashSet::new();
 
         for cell_idx in cell_indices {
@@ -176,17 +179,31 @@ impl ImprovedSpatialIndex {
                     if checked_players.insert(player_id.clone()) {
                         if let Some(pos_entry) = self.player_positions.get(player_id) {
                             let (px, py) = *pos_entry.value();
-                            let dx = px - x;
-                            let dy = py - y;
-                            if dx * dx + dy * dy <= radius_squared {
-                                nearby_players.push(player_id.clone());
-                            }
+                            candidate_ids.push(player_id.clone());
+                            candidate_xs.push(px);
+                            candidate_ys.push(py);
                         }
                     }
                 }
             }
         }
 
+        let mut matched_indices = Vec::with_capacity(candidate_ids.len());
+        simd::filter_indices_within_radius(
+            &candidate_xs,
+            &candidate_ys,
+            x,
+            y,
+            radius_squared,
+            &mut matched_indices,
+        );
+
+        let mut nearby_players = Vec::with_capacity(matched_indices.len());
+        for idx in matched_indices {
+            if let Some(player_id) = candidate_ids.get(idx) {
+                nearby_players.push(player_id.clone());
+            }
+        }
         nearby_players
     }
 
@@ -238,7 +255,9 @@ impl ImprovedSpatialIndex {
     pub fn query_nearby_projectiles(&self, x: f32, y: f32, radius: f32) -> Vec<EntityId> {
         let radius_squared = radius * radius;
         let cell_indices = self.get_cells_in_radius(x, y, radius);
-        let mut nearby_projectiles = Vec::new();
+        let mut candidate_ids = Vec::new();
+        let mut candidate_xs = Vec::new();
+        let mut candidate_ys = Vec::new();
         let mut checked_projectiles = HashSet::new();
 
         for cell_idx in cell_indices {
@@ -248,17 +267,31 @@ impl ImprovedSpatialIndex {
                     if checked_projectiles.insert(*proj_id) {
                         if let Some(pos_entry) = self.projectile_positions.get(proj_id) {
                             let (px, py) = *pos_entry.value();
-                            let dx = px - x;
-                            let dy = py - y;
-                            if dx * dx + dy * dy <= radius_squared {
-                                nearby_projectiles.push(*proj_id);
-                            }
+                            candidate_ids.push(*proj_id);
+                            candidate_xs.push(px);
+                            candidate_ys.push(py);
                         }
                     }
                 }
             }
         }
 
+        let mut matched_indices = Vec::with_capacity(candidate_ids.len());
+        simd::filter_indices_within_radius(
+            &candidate_xs,
+            &candidate_ys,
+            x,
+            y,
+            radius_squared,
+            &mut matched_indices,
+        );
+
+        let mut nearby_projectiles = Vec::with_capacity(matched_indices.len());
+        for idx in matched_indices {
+            if let Some(projectile_id) = candidate_ids.get(idx) {
+                nearby_projectiles.push(*projectile_id);
+            }
+        }
         nearby_projectiles
     }
 

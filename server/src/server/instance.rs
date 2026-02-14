@@ -1,4 +1,5 @@
 // massive_game_server/server/src/server/instance.rs
+use crate::concurrent::atomic_snapshot::{AtomicPlayerSnapshot, PlayerSoASnapshot};
 use crate::concurrent::event_queue::PriorityEventQueue;
 use crate::concurrent::spatial_index::ImprovedSpatialIndex;
 use crate::concurrent::thread_pools::ThreadPoolSystem;
@@ -6,6 +7,7 @@ use crate::concurrent::wall_spatial_index::WallSpatialIndex;
 use crate::core::config::ServerConfig;
 use crate::core::constants::*; // Import all constants, including MIN_PLAYERS_TO_START
 use crate::core::error::ServerError;
+use crate::core::simd;
 use crate::core::types::*;
 use crate::core::types::{CorePickupType, EntityId, MatchState, PlayerID};
 use crate::entities::player::ImprovedPlayerManager;
@@ -23,8 +25,8 @@ use crate::world::partition::WorldPartitionManager; // Removed unused ImprovedWo
 use flatbuffers::FlatBufferBuilder;
 use futures::executor;
 use parking_lot::RwLockReadGuard;
-use std::cell::RefCell;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use tokio::task::JoinError;
 use webrtc::data_channel::data_channel_state::RTCDataChannelState;
 
@@ -33,8 +35,8 @@ use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 use parking_lot::RwLock as ParkingLotRwLock;
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
@@ -63,6 +65,12 @@ const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PLAYERS: usize = 14;
 const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_WALLS: usize = 84;
 const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PROJECTILES: usize = 96;
 const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PICKUPS: usize = 14;
+const PACKET_BATCH_MAGIC: [u8; 4] = *b"MGSB";
+const PACKET_BATCH_VERSION: u8 = 1;
+const PACKET_BATCH_HEADER_BYTES: usize = 7; // magic (4) + version (1) + packet count (u16)
+const PACKET_BATCH_ENTRY_HEADER_BYTES: usize = 4; // per-packet payload length (u32)
+const MAX_COALESCED_PACKET_BYTES: usize = 256 * 1024;
+const MAX_CHAT_PER_BATCH: usize = 10;
 
 #[derive(Clone, Copy, Debug)]
 struct InitialSnapshotCaps {
@@ -286,7 +294,11 @@ fn create_fb_player_state_for_delta<'a>(
             username: username_fb,
             x: if has_position_delta { pstate.x } else { 0.0 },
             y: if has_position_delta { pstate.y } else { 0.0 },
-            rotation: if has_position_delta { pstate.rotation } else { 0.0 },
+            rotation: if has_position_delta {
+                pstate.rotation
+            } else {
+                0.0
+            },
             velocity_x: if has_position_delta {
                 pstate.velocity_x
             } else {
@@ -298,8 +310,16 @@ fn create_fb_player_state_for_delta<'a>(
                 0.0
             },
             health: if has_health_delta { pstate.health } else { 0 },
-            max_health: if has_health_delta { pstate.max_health } else { 0 },
-            alive: if has_health_delta { pstate.alive } else { false },
+            max_health: if has_health_delta {
+                pstate.max_health
+            } else {
+                0
+            },
+            alive: if has_health_delta {
+                pstate.alive
+            } else {
+                false
+            },
             respawn_timer: if has_health_delta {
                 pstate.respawn_timer.unwrap_or(-1.0)
             } else {
@@ -315,7 +335,11 @@ fn create_fb_player_state_for_delta<'a>(
             score: if has_score_delta { pstate.score } else { 0 },
             kills: if has_score_delta { pstate.kills } else { 0 },
             deaths: if has_score_delta { pstate.deaths } else { 0 },
-            team_id: if has_score_delta { pstate.team_id as i8 } else { 0 },
+            team_id: if has_score_delta {
+                pstate.team_id as i8
+            } else {
+                0
+            },
             speed_boost_remaining: if has_powerup_delta {
                 pstate.speed_boost_remaining
             } else {
@@ -331,7 +355,11 @@ fn create_fb_player_state_for_delta<'a>(
             } else {
                 0
             },
-            shield_max: if has_shield_delta { pstate.shield_max } else { 0 },
+            shield_max: if has_shield_delta {
+                pstate.shield_max
+            } else {
+                0
+            },
             is_carrying_flag_team_id: if has_flag_delta {
                 pstate.is_carrying_flag_team_id as i8
             } else {
@@ -342,42 +370,83 @@ fn create_fb_player_state_for_delta<'a>(
 }
 
 fn build_chat_game_message_bytes(chat_entry: &ChatMessage) -> Bytes {
-    thread_local! {
-        static CHAT_BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
-            RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(256));
+    let mut chat_builder = flatbuffers::FlatBufferBuilder::with_capacity(256);
+
+    let player_id_fb = chat_builder.create_string(chat_entry.player_id.as_str());
+    let username_fb = chat_builder.create_string(&chat_entry.username);
+    let message_fb = chat_builder.create_string(&chat_entry.message);
+
+    let chat_payload_offset = fb::ChatMessage::create(
+        &mut chat_builder,
+        &fb::ChatMessageArgs {
+            seq: chat_entry.seq,
+            player_id: Some(player_id_fb),
+            username: Some(username_fb),
+            message: Some(message_fb),
+            timestamp: chat_entry.timestamp,
+        },
+    );
+
+    let game_message_offset = fb::GameMessage::create(
+        &mut chat_builder,
+        &fb::GameMessageArgs {
+            msg_type: fb::MessageType::Chat,
+            actual_message_type: fb::MessagePayload::ChatMessage,
+            actual_message: Some(chat_payload_offset.as_union_value()),
+        },
+    );
+
+    chat_builder.finish(game_message_offset, None);
+    let (buffer, root_index) = chat_builder.collapse();
+    Bytes::from(buffer).slice(root_index..)
+}
+
+fn build_coalesced_packet_batch(packets: &[Bytes]) -> Option<Bytes> {
+    if packets.len() <= 1 || packets.len() > u16::MAX as usize {
+        return None;
     }
 
-    CHAT_BUILDER.with(|builder_cell| {
-        let mut chat_builder = builder_cell.borrow_mut();
-        chat_builder.reset();
+    let payload_bytes = packets.iter().map(|packet| packet.len()).sum::<usize>();
+    let header_bytes =
+        PACKET_BATCH_HEADER_BYTES + packets.len().saturating_mul(PACKET_BATCH_ENTRY_HEADER_BYTES);
+    let total_bytes = header_bytes.saturating_add(payload_bytes);
+    if total_bytes > MAX_COALESCED_PACKET_BYTES {
+        return None;
+    }
 
-        let player_id_fb = chat_builder.create_string(chat_entry.player_id.as_str());
-        let username_fb = chat_builder.create_string(&chat_entry.username);
-        let message_fb = chat_builder.create_string(&chat_entry.message);
+    let mut out = Vec::with_capacity(total_bytes);
+    out.extend_from_slice(&PACKET_BATCH_MAGIC);
+    out.push(PACKET_BATCH_VERSION);
+    out.extend_from_slice(&(packets.len() as u16).to_le_bytes());
 
-        let chat_payload_offset = fb::ChatMessage::create(
-            &mut chat_builder,
-            &fb::ChatMessageArgs {
-                seq: chat_entry.seq,
-                player_id: Some(player_id_fb),
-                username: Some(username_fb),
-                message: Some(message_fb),
-                timestamp: chat_entry.timestamp,
-            },
-        );
+    for packet in packets {
+        let packet_len = packet.len();
+        if packet_len > u32::MAX as usize {
+            return None;
+        }
+        out.extend_from_slice(&(packet_len as u32).to_le_bytes());
+        out.extend_from_slice(packet.as_ref());
+    }
 
-        let game_message_offset = fb::GameMessage::create(
-            &mut chat_builder,
-            &fb::GameMessageArgs {
-                msg_type: fb::MessageType::Chat,
-                actual_message_type: fb::MessagePayload::ChatMessage,
-                actual_message: Some(chat_payload_offset.as_union_value()),
-            },
-        );
+    Some(Bytes::from(out))
+}
 
-        chat_builder.finish(game_message_offset, None);
-        Bytes::from(chat_builder.finished_data().to_vec())
-    })
+fn collect_pending_chat_packets(
+    last_seq_sent: u64,
+    chat_packets: &[SerializedChatPacket],
+) -> Vec<SerializedChatPacket> {
+    chat_packets
+        .iter()
+        .filter(|packet| packet.seq > last_seq_sent)
+        .take(MAX_CHAT_PER_BATCH)
+        .cloned()
+        .collect()
+}
+
+#[derive(Clone)]
+struct SerializedChatPacket {
+    seq: u64,
+    bytes: Bytes,
 }
 
 fn build_game_event_fb<'a>(
@@ -419,10 +488,12 @@ struct SharedBroadcastData {
     updated_walls: HashMap<EntityId, Wall>,
     active_walls_by_id: HashMap<EntityId, Wall>,
     active_walls_snapshot: Vec<Wall>,
+    player_soa_snapshot: Arc<PlayerSoASnapshot>,
     player_states_snapshot: HashMap<PlayerID, PlayerState>,
     projectiles_snapshot: HashMap<EntityId, Projectile>,
     pickups_snapshot: HashMap<EntityId, Pickup>,
     chat_messages: Vec<ChatMessage>,
+    chat_packets: Vec<SerializedChatPacket>,
     match_info_snapshot: MatchInfoSnapshot,
     kill_feed_snapshot: Vec<ServerKillFeedEntry>,
     max_delta_events_per_client: usize,
@@ -484,6 +555,7 @@ pub struct MassiveGameServer {
 
     pub last_broadcast_frame: Arc<AtomicU64>,
     pub player_last_sync_positions: Arc<DashMap<PlayerID, (f32, f32)>>,
+    pub player_soa_snapshot: Arc<AtomicPlayerSnapshot>,
 }
 
 const MAX_KILL_FEED_HISTORY: usize = 10;
@@ -523,7 +595,10 @@ impl MassiveGameServer {
             .ok()
             .map(|raw| {
                 let normalized = raw.trim().to_ascii_lowercase();
-                normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+                normalized == "1"
+                    || normalized == "true"
+                    || normalized == "yes"
+                    || normalized == "on"
             })
             .unwrap_or(false);
         let map_target_players = std::env::var("MGS_MAP_TARGET_PLAYERS")
@@ -686,6 +761,7 @@ impl MassiveGameServer {
             map_name,
             last_broadcast_frame: Arc::new(AtomicU64::new(0)),
             player_last_sync_positions: Arc::new(DashMap::new()),
+            player_soa_snapshot: Arc::new(AtomicPlayerSnapshot::new()),
         };
 
         info!("MassiveGameServer initialized successfully.");
@@ -760,7 +836,11 @@ impl MassiveGameServer {
 
         for i in 0..desired_pickups {
             let base_pos = spawn_anchors[i % spawn_anchors.len()];
-            let jitter = if i < strategic_anchor_count { 50.0 } else { 110.0 };
+            let jitter = if i < strategic_anchor_count {
+                50.0
+            } else {
+                110.0
+            };
             let mut placed = false;
             for _attempt in 0..24 {
                 let x_offset = rng.gen_range(-jitter..jitter);
@@ -967,7 +1047,7 @@ impl MassiveGameServer {
 
             // Debug logging for bot movement
             if player_state.username.starts_with("Bot") {
-                trace!("Bot {} velocity set to ({:.1}, {:.1}) from input forward={:.1} strafe={:.1} rot={:.2}", 
+                trace!("Bot {} velocity set to ({:.1}, {:.1}) from input forward={:.1} strafe={:.1} rot={:.2}",
                     player_state.username, player_state.velocity_x, player_state.velocity_y, forward_intent, strafe_intent, player_state.rotation);
             }
         } else {
@@ -1487,7 +1567,8 @@ impl MassiveGameServer {
                 .iter()
                 .take(snapshot_caps.max_players.saturating_sub(1))
             {
-                if let Some(pstate_guard) = shared_data.player_states_snapshot.get(visible_player_id)
+                if let Some(pstate_guard) =
+                    shared_data.player_states_snapshot.get(visible_player_id)
                 {
                     client_state
                         .last_known_player_states
@@ -1503,11 +1584,7 @@ impl MassiveGameServer {
                 .take(snapshot_caps.max_projectiles)
                 .copied()
                 .collect();
-            for pickup_id in p_aoi
-                .visible_pickups
-                .iter()
-                .take(snapshot_caps.max_pickups)
-            {
+            for pickup_id in p_aoi.visible_pickups.iter().take(snapshot_caps.max_pickups) {
                 if let Some(pickup) = shared_data.pickups_snapshot.get(pickup_id) {
                     client_state.last_known_pickup_states.insert(
                         *pickup_id,
@@ -1677,7 +1754,7 @@ impl MassiveGameServer {
         client_states_map: &ClientStatesMap,
         frame_num: u64,
     ) {
-        trace!("[Frame {}] Client {}: Preparing to update ClientState in RwLock<HashMap> (delta). Last seq sent: {}", 
+        trace!("[Frame {}] Client {}: Preparing to update ClientState in RwLock<HashMap> (delta). Last seq sent: {}",
             frame_num, peer_id_str, client_state.last_chat_message_seq_sent);
 
         // Update the state
@@ -2066,11 +2143,18 @@ impl MassiveGameServer {
                         let ray_length =
                             ((proj.x - old_x).powi(2) + (proj.y - old_y).powi(2)).sqrt();
                         let ray_steps = (ray_length / 5.0).ceil() as usize; // Check every 5 units
-
-                        'wall_check: for step in 0..=ray_steps {
+                        let ray_sample_count = ray_steps.saturating_add(1);
+                        let mut ray_sample_xs = Vec::with_capacity(ray_sample_count);
+                        let mut ray_sample_ys = Vec::with_capacity(ray_sample_count);
+                        for step in 0..=ray_steps {
                             let t = step as f32 / ray_steps.max(1) as f32;
-                            let check_x = old_x + (proj.x - old_x) * t;
-                            let check_y = old_y + (proj.y - old_y) * t;
+                            ray_sample_xs.push(old_x + (proj.x - old_x) * t);
+                            ray_sample_ys.push(old_y + (proj.y - old_y) * t);
+                        }
+
+                        'wall_check: for sample_idx in 0..ray_sample_xs.len() {
+                            let check_x = ray_sample_xs[sample_idx];
+                            let check_y = ray_sample_ys[sample_idx];
 
                             // Check walls in current position
                             for wall_entry in partition.all_walls_in_partition.iter() {
@@ -2127,26 +2211,16 @@ impl MassiveGameServer {
                                         continue;
                                     }
 
-                                    // More accurate collision using ray casting
-                                    let mut hit = false;
-                                    for step in 0..=ray_steps {
-                                        let t = step as f32 / ray_steps.max(1) as f32;
-                                        let check_x = old_x + (proj.x - old_x) * t;
-                                        let check_y = old_y + (proj.y - old_y) * t;
-
-                                        let dx = target_state.x - check_x;
-                                        let dy = target_state.y - check_y;
-                                        let dist_sq = dx * dx + dy * dy;
-
-                                        if dist_sq <= PLAYER_RADIUS * PLAYER_RADIUS {
-                                            proj.x = check_x;
-                                            proj.y = check_y;
-                                            hit = true;
-                                            break;
-                                        }
-                                    }
-
-                                    if hit {
+                                    let radius_sq = PLAYER_RADIUS * PLAYER_RADIUS;
+                                    if let Some(hit_idx) = simd::first_index_within_radius(
+                                        &ray_sample_xs,
+                                        &ray_sample_ys,
+                                        target_state.x,
+                                        target_state.y,
+                                        radius_sq,
+                                    ) {
+                                        proj.x = ray_sample_xs[hit_idx];
+                                        proj.y = ray_sample_ys[hit_idx];
                                         local_results.hits.push((
                                             proj.owner_id.clone(),
                                             target_id.clone(),
@@ -2358,7 +2432,7 @@ impl MassiveGameServer {
                                         .entry(attacker_team)
                                         .or_insert(0);
                                     *team_score += 1;
-                                    info!("Team {} scored! New score: {} (kill by player on victim from team {})", 
+                                    info!("Team {} scored! New score: {} (kill by player on victim from team {})",
                                           attacker_team, *team_score, victim_team);
                                 }
                             }
@@ -2418,7 +2492,7 @@ impl MassiveGameServer {
                                     EventPriority::High,
                                 );
 
-                                info!("(Projectile Kill) Flag of team {} dropped at ({:.1}, {:.1}) by {} killing {}", 
+                                info!("(Projectile Kill) Flag of team {} dropped at ({:.1}, {:.1}) by {} killing {}",
                                       victim_was_carrying_flag_id, target_pos.x, target_pos.y, killer_username, victim_username);
                             }
                         }
@@ -2929,7 +3003,7 @@ impl MassiveGameServer {
                 .map(|cs_state_ref| cs_state_ref.clone()) // Clone the ClientState from the &ClientState
                 .unwrap_or_else(|| {
                     warn!("[Frame {}] ClientState not found for {} during delta build, using default. This might indicate a logic issue.", server.frame_counter.load(AtomicOrdering::Relaxed), peer_id_str);
-                    ClientState::default() 
+                    ClientState::default()
                 });
             let delta_result = server
                 .build_delta_state_optimized(peer_id_str, &client_state_snapshot, shared_data)
@@ -2958,17 +3032,36 @@ impl MassiveGameServer {
         };
 
         trace!(
-            "[Frame {}] Sending {} bytes to client {}",
+            "[Frame {}] Prepared state payload {} bytes for client {}",
             frame,
             bytes_to_send.len(),
             peer_id_str
+        );
+
+        let mut pending_chat_packets_for_delta: Vec<SerializedChatPacket> = Vec::new();
+        if !client_info.needs_initial_state {
+            let last_chat_seq_sent = client_state_for_delta
+                .as_ref()
+                .map(|state| state.last_chat_message_seq_sent)
+                .unwrap_or_default();
+            pending_chat_packets_for_delta =
+                collect_pending_chat_packets(last_chat_seq_sent, &shared_data.chat_packets);
+        }
+
+        let mut outbound_packets: Vec<Bytes> =
+            Vec::with_capacity(1 + pending_chat_packets_for_delta.len());
+        outbound_packets.push(bytes_to_send.clone());
+        outbound_packets.extend(
+            pending_chat_packets_for_delta
+                .iter()
+                .map(|packet| packet.bytes.clone()),
         );
 
         const DELTA_SEND_TIMEOUT_MS: u64 = 50;
         const INITIAL_SEND_TIMEOUT_MS: u64 = 200;
         const INITIAL_SEND_TIMEOUT_TAIL_MS: u64 = 320;
         const INITIAL_SEND_TIMEOUT_AGGRESSIVE_TAIL_MS: u64 = 420;
-        let send_timeout_ms = if client_info.needs_initial_state {
+        let base_send_timeout_ms = if client_info.needs_initial_state {
             if shared_data.aggressive_tail_join_mode {
                 INITIAL_SEND_TIMEOUT_AGGRESSIVE_TAIL_MS
             } else if shared_data.tail_join_mode {
@@ -2979,33 +3072,34 @@ impl MassiveGameServer {
         } else {
             DELTA_SEND_TIMEOUT_MS
         };
-        let mut send_succeeded = false;
-        match tokio::time::timeout(
-            Duration::from_millis(send_timeout_ms),
-            client_info.data_channel.send(&bytes_to_send),
-        )
-        .await
-        {
-            Ok(Ok(_)) => {
-                send_succeeded = true;
-                trace!(
-                    "[Frame {}] Data sent successfully to {}",
-                    frame,
-                    peer_id_str
-                );
-            }
-            Ok(Err(e)) => {
-                warn!(
-                    "[Frame {}] Send error for client {}: {:?}",
-                    frame, peer_id_str, e
-                );
-            }
-            Err(_) => {
-                warn!(
-                    "[Frame {}] Send timeout for client {} after {}ms",
-                    frame, peer_id_str, send_timeout_ms
-                );
-            }
+        let send_timeout_ms = base_send_timeout_ms.saturating_add(
+            ((outbound_packets.len().saturating_sub(1) as u64) * 12)
+                .min(INITIAL_SEND_TIMEOUT_MS),
+        );
+
+        let sent_packets = server
+            .send_packet_batch_optimized(&client_info.data_channel, &outbound_packets, send_timeout_ms)
+            .await;
+        let send_succeeded = sent_packets > 0;
+        let sent_chat_packets_count = sent_packets
+            .saturating_sub(1)
+            .min(pending_chat_packets_for_delta.len());
+
+        if !send_succeeded {
+            warn!(
+                "[Frame {}] Send failed for client {} (timeout {}ms, batch packets {}).",
+                frame,
+                peer_id_str,
+                send_timeout_ms,
+                outbound_packets.len()
+            );
+        } else {
+            trace!(
+                "[Frame {}] Sent {} packet(s) to client {} in one dispatch path.",
+                frame,
+                sent_packets,
+                peer_id_str
+            );
         }
 
         if client_info.needs_initial_state && !send_succeeded {
@@ -3024,6 +3118,14 @@ impl MassiveGameServer {
             );
             return Ok(());
         }
+        if !client_info.needs_initial_state && !send_succeeded {
+            trace!(
+                "[Frame {}] Delta state send did not complete for {}; preserving previous snapshot.",
+                frame,
+                peer_id_str
+            );
+            return Ok(());
+        }
 
         trace!(
             "[Frame {}] Updating client state for {}",
@@ -3034,14 +3136,29 @@ impl MassiveGameServer {
             server.update_client_state_after_initial(peer_id_str, shared_data);
         } else {
             let mut client_state = client_state_for_delta.unwrap_or_default();
-            let last_chat_seq_sent = server
-                .send_chat_messages_optimized(
-                    &client_info.data_channel,
-                    client_state.last_chat_message_seq_sent,
-                    &shared_data.chat_messages,
-                )
-                .await;
-            client_state.last_chat_message_seq_sent = last_chat_seq_sent;
+
+            if sent_chat_packets_count > 0 {
+                let mut max_sent_seq = client_state.last_chat_message_seq_sent;
+                for packet in pending_chat_packets_for_delta
+                    .iter()
+                    .take(sent_chat_packets_count)
+                {
+                    if packet.seq > max_sent_seq {
+                        max_sent_seq = packet.seq;
+                    }
+                }
+                client_state.last_chat_message_seq_sent = max_sent_seq;
+            }
+            if sent_chat_packets_count < pending_chat_packets_for_delta.len() {
+                let last_chat_seq_sent = server
+                    .send_chat_messages_optimized(
+                        &client_info.data_channel,
+                        client_state.last_chat_message_seq_sent,
+                        &shared_data.chat_packets,
+                    )
+                    .await;
+                client_state.last_chat_message_seq_sent = last_chat_seq_sent;
+            }
 
             server.update_client_state_after_delta(&mut client_state, &player_id_arc, shared_data);
             server.update_client_state_after_delta_with_shared(&mut client_state, shared_data);
@@ -3153,7 +3270,7 @@ impl MassiveGameServer {
                                 continue; // Outside melee arc
                             }
 
-                            info!("[Melee] {} attempting to hit {} (dist_sq: {:.1}, angle_diff: {:.2} rad).", 
+                            info!("[Melee] {} attempting to hit {} (dist_sq: {:.1}, angle_diff: {:.2} rad).",
                                   attacker_id.as_str(), target_id_arc_nearby.as_str(), dist_sq, angle_diff);
 
                             // Apply damage and collect necessary data
@@ -3226,7 +3343,7 @@ impl MassiveGameServer {
                                     {
                                         // Friendly fire: double negative score
                                         attacker_mut_state.score -= 200;
-                                        info!("Friendly fire penalty (melee): {} killed teammate {}, -200 score", 
+                                        info!("Friendly fire penalty (melee): {} killed teammate {}, -200 score",
                                               attacker_username, target_username);
                                     } else {
                                         // Normal kill: positive score
@@ -3281,7 +3398,7 @@ impl MassiveGameServer {
                                             .entry(attacker_state_for_score.team_id)
                                             .or_insert(0);
                                         *team_score_mut_ref += 1;
-                                        info!("Team {} scored +1 via melee kill on flag carrier by {}", 
+                                        info!("Team {} scored +1 via melee kill on flag carrier by {}",
                                               attacker_state_for_score.team_id, attacker_id.as_str());
                                     }
                                 }
@@ -3433,11 +3550,17 @@ impl MassiveGameServer {
         // Snapshot all player states once per tick (reused by initial/delta serialization).
         let player_states_snapshot = {
             let mut by_id = HashMap::with_capacity(self.player_manager.player_count());
-            self.player_manager.for_each_player(|player_id, player_state| {
-                by_id.insert(player_id.clone(), player_state.clone());
-            });
+            self.player_manager
+                .for_each_player(|player_id, player_state| {
+                    by_id.insert(player_id.clone(), player_state.clone());
+                });
             by_id
         };
+        let player_soa_snapshot = Arc::new(PlayerSoASnapshot::from_player_states_map(
+            &player_states_snapshot,
+        ));
+        self.player_soa_snapshot
+            .publish_arc(player_soa_snapshot.clone());
 
         // Snapshot projectiles once per tick (reused for all client delta builds).
         let projectiles_snapshot = {
@@ -3460,12 +3583,19 @@ impl MassiveGameServer {
         };
 
         // Snapshot chat messages
-        let chat_messages = self
+        let chat_messages: Vec<ChatMessage> = self
             .chat_messages_queue
             .read()
             .await
             .iter()
             .cloned()
+            .collect();
+        let chat_packets = chat_messages
+            .iter()
+            .map(|chat_entry| SerializedChatPacket {
+                seq: chat_entry.seq,
+                bytes: build_chat_game_message_bytes(chat_entry),
+            })
             .collect();
 
         // Snapshot match info (read once)
@@ -3489,10 +3619,12 @@ impl MassiveGameServer {
             updated_walls,
             active_walls_by_id,
             active_walls_snapshot,
+            player_soa_snapshot,
             player_states_snapshot,
             projectiles_snapshot,
             pickups_snapshot,
             chat_messages,
+            chat_packets,
             match_info_snapshot,
             kill_feed_snapshot,
             max_delta_events_per_client,
@@ -3809,21 +3941,11 @@ impl MassiveGameServer {
         client_state: &ClientState,
         shared_data: &SharedBroadcastData,
     ) -> Result<Bytes, Box<dyn std::error::Error + Send + Sync>> {
-        use std::cell::RefCell;
+        let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(16384);
+        let build_start = Instant::now();
+        let player_id = self.player_manager.id_pool.get_or_create(peer_id_str);
 
-        thread_local! {
-            static BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
-                RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(16384));
-        }
-
-        BUILDER.with(|builder_cell| {
-            let mut builder = builder_cell.borrow_mut();
-            builder.reset();
-
-            let build_start = Instant::now();
-            let player_id = self.player_manager.id_pool.get_or_create(peer_id_str);
-
-            trace!("[{}] DeltaBuilder: Started", peer_id_str);
+        trace!("[{}] DeltaBuilder: Started", peer_id_str);
 
             // Get player's current AoI
             let player_aoi = self
@@ -3845,7 +3967,7 @@ impl MassiveGameServer {
             };
 
             // Add self player only if changed or not known yet
-            if let Some(self_state) = shared_data.player_states_snapshot.get(&player_id) {
+            if let Some(self_state) = shared_data.player_soa_snapshot.get_state(&player_id) {
                 let is_new = !client_state.last_known_players.contains(&player_id);
                 if is_new || self_state.changed_fields > 0 {
                     let mask = if is_new {
@@ -3865,7 +3987,9 @@ impl MassiveGameServer {
             // Add visible players only if changed or newly visible
             for visible_player_id in &player_aoi.visible_players {
                 if visible_player_id != &player_id {
-                    if let Some(player_state) = shared_data.player_states_snapshot.get(visible_player_id) {
+                    if let Some(player_state) =
+                        shared_data.player_soa_snapshot.get_state(visible_player_id)
+                    {
                         let is_new = !client_state.last_known_players.contains(visible_player_id);
                         if is_new || player_state.changed_fields > 0 {
                             let mask = if is_new {
@@ -4195,16 +4319,16 @@ impl MassiveGameServer {
                 },
             );
 
-            builder.finish(game_msg, None);
-            let bytes = Bytes::from(builder.finished_data().to_vec());
+        builder.finish(game_msg, None);
+        let (buffer, root_index) = builder.collapse();
+        let bytes = Bytes::from(buffer).slice(root_index..);
 
-            trace!(
-                "[{}] DeltaBuilder: Completed in {:?}",
-                peer_id_str,
-                build_start.elapsed()
-            );
-            Ok(bytes)
-        })
+        trace!(
+            "[{}] DeltaBuilder: Completed in {:?}",
+            peer_id_str,
+            build_start.elapsed()
+        );
+        Ok(bytes)
     }
 
     // 1. Fix build_projectile_deltas_optimized - add the missing method
@@ -4862,12 +4986,12 @@ impl MassiveGameServer {
         // initial sends (open data channels).
         let mut max_initial_per_frame =
             if pending_initial_total_count >= MASS_JOIN_HEAVY_PENDING_INITIAL_MIN {
-            MASS_JOIN_INITIAL_PER_FRAME_HEAVY
-        } else if pending_initial_total_count >= MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN {
-            MASS_JOIN_INITIAL_PER_FRAME_MEDIUM
-        } else {
-            MASS_JOIN_INITIAL_PER_FRAME_LIGHT
-        };
+                MASS_JOIN_INITIAL_PER_FRAME_HEAVY
+            } else if pending_initial_total_count >= MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN {
+                MASS_JOIN_INITIAL_PER_FRAME_MEDIUM
+            } else {
+                MASS_JOIN_INITIAL_PER_FRAME_LIGHT
+            };
         if tail_join_mode {
             // 70+ client wave: allocate more slots to initial delivery to drain backlog sooner.
             max_initial_per_frame = max_initial_per_frame.max(TAIL_JOIN_INITIAL_PER_FRAME_BOOST);
@@ -4876,8 +5000,11 @@ impl MassiveGameServer {
             max_initial_per_frame =
                 max_initial_per_frame.max(TAIL_JOIN_AGGRESSIVE_INITIAL_PER_FRAME_BOOST);
         }
-        if single_machine_opt && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN {
-            max_initial_per_frame = max_initial_per_frame.max(SINGLE_MACHINE_INITIAL_PER_FRAME_BOOST);
+        if single_machine_opt
+            && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+        {
+            max_initial_per_frame =
+                max_initial_per_frame.max(SINGLE_MACHINE_INITIAL_PER_FRAME_BOOST);
         }
 
         let scheduled_initial_entries =
@@ -4896,21 +5023,23 @@ impl MassiveGameServer {
         let include_active_walls_snapshot = !scheduled_initial_entries.is_empty();
         let throttle_delta_broadcasts =
             tail_join_mode || pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN;
-        let mut max_delta_per_frame = if pending_initial_total_count >= MASS_JOIN_HEAVY_PENDING_INITIAL_MIN
-        {
-            MASS_JOIN_MAX_DELTA_PER_FRAME_HEAVY
-        } else if pending_initial_total_count >= MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN {
-            MASS_JOIN_MAX_DELTA_PER_FRAME_MEDIUM
-        } else {
-            usize::MAX
-        };
+        let mut max_delta_per_frame =
+            if pending_initial_total_count >= MASS_JOIN_HEAVY_PENDING_INITIAL_MIN {
+                MASS_JOIN_MAX_DELTA_PER_FRAME_HEAVY
+            } else if pending_initial_total_count >= MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN {
+                MASS_JOIN_MAX_DELTA_PER_FRAME_MEDIUM
+            } else {
+                usize::MAX
+            };
         if tail_join_mode {
             max_delta_per_frame = max_delta_per_frame.min(TAIL_JOIN_MAX_DELTA_PER_FRAME);
         }
         if aggressive_tail_join_mode {
             max_delta_per_frame = max_delta_per_frame.min(TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME);
         }
-        if single_machine_opt && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN {
+        if single_machine_opt
+            && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+        {
             max_delta_per_frame = max_delta_per_frame.min(SINGLE_MACHINE_MAX_DELTA_PER_FRAME);
         }
         let delta_skip_modulus = if aggressive_tail_join_mode {
@@ -4972,7 +5101,7 @@ impl MassiveGameServer {
             )
             .await,
         );
-        trace!("[Frame {}] Prepared shared broadcast data. Events: {}, Destroyed Walls: {}, Chat: {}, KF: {}", 
+        trace!("[Frame {}] Prepared shared broadcast data. Events: {}, Destroyed Walls: {}, Chat: {}, KF: {}",
             current_frame, shared_broadcast_data.events.len(), shared_broadcast_data.destroyed_wall_ids.len(),
             shared_broadcast_data.chat_messages.len(), shared_broadcast_data.kill_feed_snapshot.len());
 
@@ -4989,10 +5118,11 @@ impl MassiveGameServer {
             broadcast_concurrency = broadcast_concurrency.min(TAIL_JOIN_CONCURRENCY_CAP);
         }
         if aggressive_tail_join_mode {
-            broadcast_concurrency =
-                broadcast_concurrency.min(TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP);
+            broadcast_concurrency = broadcast_concurrency.min(TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP);
         }
-        if single_machine_opt && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN {
+        if single_machine_opt
+            && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+        {
             broadcast_concurrency = broadcast_concurrency.min(SINGLE_MACHINE_CONCURRENCY_CAP);
         }
 
@@ -5061,30 +5191,25 @@ impl MassiveGameServer {
         peer_id_str: &str,
         shared_data: &SharedBroadcastData, // Used for timestamp, match_info, kill_feed
     ) -> Result<Bytes, Box<dyn std::error::Error + Send + Sync>> {
-        const MAX_INITIAL_EVENTS: usize = 30;
-        const MAX_INITIAL_KILL_FEED: usize = 10;
         const MAX_MESSAGE_SIZE_BYTES: usize = 160000; // Slightly less than 64KB
 
-        thread_local! {
-            static BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
-                RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(32768)); // Increased capacity
-        }
+        let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(32768);
+        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+        let snapshot_caps = shared_data.initial_snapshot_caps;
+        info!(
+            "[Frame {}] Client {}: Building InitialStateMessage.",
+            frame, peer_id_str
+        );
 
-        BUILDER.with(|builder_cell| {
-            let mut builder = builder_cell.borrow_mut();
-            builder.reset();
-            let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-            let snapshot_caps = shared_data.initial_snapshot_caps;
-            info!("[Frame {}] Client {}: Building InitialStateMessage.", frame, peer_id_str);
-
-            let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
+        let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
 
             // 1. Walls: Reuse per-broadcast active wall snapshot when available.
-            let active_walls_to_send: Cow<'_, [Wall]> = if shared_data.active_walls_snapshot.is_empty() {
-                Cow::Owned(self.collect_active_walls_optimized())
-            } else {
-                Cow::Borrowed(shared_data.active_walls_snapshot.as_slice())
-            };
+            let active_walls_to_send: Cow<'_, [Wall]> =
+                if shared_data.active_walls_snapshot.is_empty() {
+                    Cow::Owned(self.collect_active_walls_optimized())
+                } else {
+                    Cow::Borrowed(shared_data.active_walls_snapshot.as_slice())
+                };
 
             info!(
                 "[Frame {} Client {}] InitialState: Collected {} active walls.",
@@ -5097,41 +5222,80 @@ impl MassiveGameServer {
                 Vec::with_capacity(active_walls_to_send.len().min(snapshot_caps.max_walls));
             for wall_data in active_walls_to_send.iter().take(snapshot_caps.max_walls) {
                 let id_fb = fb_safe_str(&mut builder, &wall_data.id.to_string());
-                walls_fb_vec.push(fb::Wall::create(&mut builder, &fb::WallArgs{
-                    id: Some(id_fb), x: wall_data.x, y: wall_data.y, width: wall_data.width, height: wall_data.height,
-                    is_destructible: wall_data.is_destructible,
-                    current_health: wall_data.current_health,
-                    max_health: wall_data.max_health,
-                }));
+                walls_fb_vec.push(fb::Wall::create(
+                    &mut builder,
+                    &fb::WallArgs {
+                        id: Some(id_fb),
+                        x: wall_data.x,
+                        y: wall_data.y,
+                        width: wall_data.width,
+                        height: wall_data.height,
+                        is_destructible: wall_data.is_destructible,
+                        current_health: wall_data.current_health,
+                        max_health: wall_data.max_health,
+                    },
+                ));
             }
             let walls_fb = builder.create_vector(&walls_fb_vec);
-            info!("[Frame {} Client {}] InitialState: Serialized {} walls.", frame, peer_id_str, walls_fb_vec.len());
+            info!(
+                "[Frame {} Client {}] InitialState: Serialized {} walls.",
+                frame,
+                peer_id_str,
+                walls_fb_vec.len()
+            );
 
             // 2. Player States (Self + AoI)
             let mut players_fb_vec = Vec::new();
             let mut player_aoi_data_for_initial_state = Self::get_empty_player_aoi(); // Default empty
 
-            if let Some(self_pstate_guard) = shared_data.player_states_snapshot.get(&self_player_id_arc) {
-                players_fb_vec.push(create_fb_player_state_for_delta(&mut builder, self_pstate_guard, 0xFFFF));
+            if let Some(self_pstate_guard) = shared_data
+                .player_soa_snapshot
+                .get_state(&self_player_id_arc)
+            {
+                players_fb_vec.push(create_fb_player_state_for_delta(
+                    &mut builder,
+                    self_pstate_guard,
+                    0xFFFF,
+                ));
                 // Fetch AoI based on self's current position for other entities
-                player_aoi_data_for_initial_state = self.get_player_aoi_data_fast(&self_player_id_arc);
+                player_aoi_data_for_initial_state =
+                    self.get_player_aoi_data_fast(&self_player_id_arc);
             } else {
-                warn!("[Frame {} Client {}] InitialState: Self player state not found!", frame, peer_id_str);
+                warn!(
+                    "[Frame {} Client {}] InitialState: Self player state not found!",
+                    frame, peer_id_str
+                );
             }
 
             for visible_player_id in player_aoi_data_for_initial_state
                 .visible_players
                 .iter()
-                .take(snapshot_caps.max_players.saturating_sub(players_fb_vec.len()))
+                .take(
+                    snapshot_caps
+                        .max_players
+                        .saturating_sub(players_fb_vec.len()),
+                )
             {
-                if visible_player_id != &self_player_id_arc { // Already added self
-                    if let Some(pstate_guard) = shared_data.player_states_snapshot.get(visible_player_id) {
-                        players_fb_vec.push(create_fb_player_state_for_delta(&mut builder, pstate_guard, 0xFFFF));
+                if visible_player_id != &self_player_id_arc {
+                    // Already added self
+                    if let Some(pstate_guard) =
+                        shared_data.player_soa_snapshot.get_state(visible_player_id)
+                    {
+                        players_fb_vec.push(create_fb_player_state_for_delta(
+                            &mut builder,
+                            pstate_guard,
+                            0xFFFF,
+                        ));
                     }
                 }
             }
             let players_fb = builder.create_vector(&players_fb_vec);
-            info!("[Frame {} Client {}] InitialState: Serialized {} player states.", frame, peer_id_str, players_fb_vec.len());
+            info!(
+                "[Frame {} Client {}] InitialState: Serialized {} player states.",
+                frame,
+                peer_id_str,
+                players_fb_vec.len()
+            );
 
             // 3. Projectiles (from AoI)
             let mut projectiles_fb_vec = Vec::new();
@@ -5143,15 +5307,27 @@ impl MassiveGameServer {
                 if let Some(proj) = shared_data.projectiles_snapshot.get(proj_id) {
                     let id_fb = fb_safe_str(&mut builder, &proj.id.to_string());
                     let owner_id_fb = fb_safe_str(&mut builder, proj.owner_id.as_str());
-                    projectiles_fb_vec.push(fb::ProjectileState::create(&mut builder, &fb::ProjectileStateArgs{
-                        id: Some(id_fb), x: proj.x, y: proj.y, owner_id: Some(owner_id_fb),
-                        weapon_type: map_server_weapon_to_fb(proj.weapon_type),
-                        velocity_x: proj.velocity_x, velocity_y: proj.velocity_y,
-                    }));
+                    projectiles_fb_vec.push(fb::ProjectileState::create(
+                        &mut builder,
+                        &fb::ProjectileStateArgs {
+                            id: Some(id_fb),
+                            x: proj.x,
+                            y: proj.y,
+                            owner_id: Some(owner_id_fb),
+                            weapon_type: map_server_weapon_to_fb(proj.weapon_type),
+                            velocity_x: proj.velocity_x,
+                            velocity_y: proj.velocity_y,
+                        },
+                    ));
                 }
             }
             let projectiles_fb = builder.create_vector(&projectiles_fb_vec);
-            info!("[Frame {} Client {}] InitialState: Serialized {} projectiles.", frame, peer_id_str, projectiles_fb_vec.len());
+            info!(
+                "[Frame {} Client {}] InitialState: Serialized {} projectiles.",
+                frame,
+                peer_id_str,
+                projectiles_fb_vec.len()
+            );
 
             // 4. Pickups (Active ones from AoI)
             let mut pickups_fb_vec = Vec::new();
@@ -5161,45 +5337,90 @@ impl MassiveGameServer {
                 .take(snapshot_caps.max_pickups)
             {
                 if let Some(pickup) = shared_data.pickups_snapshot.get(pickup_id) {
-                    if pickup.is_active { // Only send active pickups
-                        let (fb_pickup_type, fb_weapon_type_opt) = map_core_pickup_to_fb(&pickup.pickup_type);
+                    if pickup.is_active {
+                        // Only send active pickups
+                        let (fb_pickup_type, fb_weapon_type_opt) =
+                            map_core_pickup_to_fb(&pickup.pickup_type);
                         let id_fb = fb_safe_str(&mut builder, &pickup.id.to_string());
-                        pickups_fb_vec.push(fb::Pickup::create(&mut builder, &fb::PickupArgs {
-                            id: Some(id_fb), x: pickup.x, y: pickup.y, pickup_type: fb_pickup_type,
-                            weapon_type: fb_weapon_type_opt.unwrap_or(fb::WeaponType::Pistol),
-                            is_active: pickup.is_active,
-                        }));
+                        pickups_fb_vec.push(fb::Pickup::create(
+                            &mut builder,
+                            &fb::PickupArgs {
+                                id: Some(id_fb),
+                                x: pickup.x,
+                                y: pickup.y,
+                                pickup_type: fb_pickup_type,
+                                weapon_type: fb_weapon_type_opt.unwrap_or(fb::WeaponType::Pistol),
+                                is_active: pickup.is_active,
+                            },
+                        ));
                     }
                 }
             }
             let pickups_fb = builder.create_vector(&pickups_fb_vec);
-            info!("[Frame {} Client {}] InitialState: Serialized {} active pickups.", frame, peer_id_str, pickups_fb_vec.len());
+            info!(
+                "[Frame {} Client {}] InitialState: Serialized {} active pickups.",
+                frame,
+                peer_id_str,
+                pickups_fb_vec.len()
+            );
 
             // 5. Match Info (from shared_data snapshot)
             let match_snapshot = &shared_data.match_info_snapshot;
-            let fb_team_scores_vec: Vec<_> = match_snapshot.team_scores.iter().map(|(team_id, score)| {
-                fb::TeamScoreEntry::create(&mut builder, &fb::TeamScoreEntryArgs { team_id: *team_id as i8, score: *score })
-            }).collect();
+            let fb_team_scores_vec: Vec<_> = match_snapshot
+                .team_scores
+                .iter()
+                .map(|(team_id, score)| {
+                    fb::TeamScoreEntry::create(
+                        &mut builder,
+                        &fb::TeamScoreEntryArgs {
+                            team_id: *team_id as i8,
+                            score: *score,
+                        },
+                    )
+                })
+                .collect();
             let team_scores_fb = builder.create_vector(&fb_team_scores_vec);
 
-            let match_info_fb = fb::MatchInfo::create(&mut builder, &fb::MatchInfoArgs {
-                time_remaining: match_snapshot.time_remaining,
-                match_state: match_snapshot.match_state,
-                winner_id: None, // Typically not known at initial state
-                winner_name: None,
-                game_mode: match_snapshot.game_mode,
-                team_scores: Some(team_scores_fb),
-            });
+            let match_info_fb = fb::MatchInfo::create(
+                &mut builder,
+                &fb::MatchInfoArgs {
+                    time_remaining: match_snapshot.time_remaining,
+                    match_state: match_snapshot.match_state,
+                    winner_id: None, // Typically not known at initial state
+                    winner_name: None,
+                    game_mode: match_snapshot.game_mode,
+                    team_scores: Some(team_scores_fb),
+                },
+            );
 
             // 6. Flag States (from shared_data snapshot)
-            let fb_flag_states_vec: Vec<_> = match_snapshot.flag_states.values().map(|fs| {
-                let carrier_id_fb = fs.carrier_id.as_ref().map(|id| fb_safe_str(&mut builder, id.as_str()));
-                let pos_fb = fb::Vec2::create(&mut builder, &fb::Vec2Args{ x: fs.position.x, y: fs.position.y });
-                fb::FlagState::create(&mut builder, &fb::FlagStateArgs {
-                    team_id: fs.team_id as i8, status: fs.status, position: Some(pos_fb),
-                    carrier_id: carrier_id_fb, respawn_timer: fs.respawn_timer,
+            let fb_flag_states_vec: Vec<_> = match_snapshot
+                .flag_states
+                .values()
+                .map(|fs| {
+                    let carrier_id_fb = fs
+                        .carrier_id
+                        .as_ref()
+                        .map(|id| fb_safe_str(&mut builder, id.as_str()));
+                    let pos_fb = fb::Vec2::create(
+                        &mut builder,
+                        &fb::Vec2Args {
+                            x: fs.position.x,
+                            y: fs.position.y,
+                        },
+                    );
+                    fb::FlagState::create(
+                        &mut builder,
+                        &fb::FlagStateArgs {
+                            team_id: fs.team_id as i8,
+                            status: fs.status,
+                            position: Some(pos_fb),
+                            carrier_id: carrier_id_fb,
+                            respawn_timer: fs.respawn_timer,
+                        },
+                    )
                 })
-            }).collect();
+                .collect();
             let flag_states_fb = builder.create_vector(&fb_flag_states_vec);
 
             // 7. Map Name
@@ -5223,7 +5444,8 @@ impl MassiveGameServer {
                 timestamp: timestamp_initial,
                 map_name: Some(map_name_fb),
             };
-            let initial_state_msg = fb::InitialStateMessage::create(&mut builder, &initial_state_args);
+            let initial_state_msg =
+                fb::InitialStateMessage::create(&mut builder, &initial_state_args);
 
             // Wrap in GameMessage
             let game_msg_args = fb::GameMessageArgs {
@@ -5234,15 +5456,18 @@ impl MassiveGameServer {
             let game_msg = fb::GameMessage::create(&mut builder, &game_msg_args);
             builder.finish(game_msg, None);
 
-            let finished_data = builder.finished_data();
-            info!("[Frame {} Client {}] InitialStateMessage built. Size: {} bytes.", frame, peer_id_str, finished_data.len());
+        let finished_len = builder.finished_data().len();
+        info!(
+            "[Frame {} Client {}] InitialStateMessage built. Size: {} bytes.",
+            frame, peer_id_str, finished_len
+        );
 
-            if finished_data.len() > MAX_MESSAGE_SIZE_BYTES {
-                return Err("Initial state too large".into());
-            }
-            
-            Ok(Bytes::from(finished_data.to_vec()))
-        })
+        if finished_len > MAX_MESSAGE_SIZE_BYTES {
+            return Err("Initial state too large".into());
+        }
+
+        let (buffer, root_index) = builder.collapse();
+        Ok(Bytes::from(buffer).slice(root_index..))
     }
 
     pub(crate) fn send_initial_state_to_client(
@@ -6399,7 +6624,7 @@ impl MassiveGameServer {
                     ?frame,
                     ms = total_tick_processing_elapsed.as_micros() as f64 / 1000.0,
                     target = TARGET_TICK_MS,
-                    "Tick processing WORK exceeded hard budget (game_loop will log wall-clock overrun)" 
+                    "Tick processing WORK exceeded hard budget (game_loop will log wall-clock overrun)"
                 );
             }
         }
@@ -6414,30 +6639,101 @@ impl MassiveGameServer {
             .collect()
     }
 
+    async fn send_packet_batch_optimized(
+        &self,
+        data_channel: &Arc<crate::core::types::RTCDataChannel>,
+        packets: &[Bytes],
+        timeout_ms: u64,
+    ) -> usize {
+        if packets.is_empty() {
+            return 0;
+        }
+
+        if let Some(coalesced_packet) = build_coalesced_packet_batch(packets) {
+            let coalesced_timeout_ms =
+                timeout_ms.saturating_add((packets.len() as u64).saturating_mul(4));
+            match tokio::time::timeout(
+                Duration::from_millis(coalesced_timeout_ms),
+                data_channel.send(&coalesced_packet),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {
+                    return packets.len();
+                }
+                Ok(Err(e)) => {
+                    warn!(
+                        "Coalesced packet send error ({} logical packets): {:?}. Falling back to sequential dispatch.",
+                        packets.len(),
+                        e
+                    );
+                }
+                Err(_) => {
+                    warn!(
+                        "Coalesced packet send timeout after {}ms ({} logical packets). Falling back to sequential dispatch.",
+                        coalesced_timeout_ms,
+                        packets.len()
+                    );
+                }
+            }
+        }
+
+        let mut sent_packets = 0usize;
+        for packet in packets {
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), data_channel.send(packet))
+                .await
+            {
+                Ok(Ok(_)) => {
+                    sent_packets += 1;
+                }
+                Ok(Err(e)) => {
+                    warn!("Chat/data packet send error during batch dispatch: {:?}", e);
+                    break;
+                }
+                Err(_) => {
+                    warn!(
+                        "Chat/data packet send timeout during batch dispatch after {}ms",
+                        timeout_ms
+                    );
+                    break;
+                }
+            }
+        }
+        sent_packets
+    }
+
     async fn send_chat_messages_optimized(
         &self,
         data_channel: &Arc<crate::core::types::RTCDataChannel>,
         last_seq_sent: u64,
-        chat_messages: &[ChatMessage],
+        chat_packets: &[SerializedChatPacket],
     ) -> u64 {
-        let mut max_seq_in_batch = last_seq_sent;
+        const CHAT_PACKET_TIMEOUT_MS: u64 = 30;
 
-        let messages_to_send: Vec<&ChatMessage> = chat_messages
+        let packets_to_send: Vec<&SerializedChatPacket> = chat_packets
             .iter()
-            .filter(|msg| msg.seq > last_seq_sent)
-            .take(10)
+            .filter(|packet| packet.seq > last_seq_sent)
+            .take(MAX_CHAT_PER_BATCH)
             .collect();
-
-        for chat_entry in messages_to_send {
-            let chat_msg_bytes = build_chat_game_message_bytes(chat_entry);
-
-            let _ = data_channel.send(&chat_msg_bytes).await;
-
-            if chat_entry.seq > max_seq_in_batch {
-                max_seq_in_batch = chat_entry.seq;
-            }
+        if packets_to_send.is_empty() {
+            return last_seq_sent;
         }
 
+        // Bytes clones are ref-counted and avoid re-serializing chat payloads per client.
+        let serialized_packets: Vec<Bytes> = packets_to_send
+            .iter()
+            .map(|packet| packet.bytes.clone())
+            .collect();
+        let sent_packets = self
+            .send_packet_batch_optimized(data_channel, &serialized_packets, CHAT_PACKET_TIMEOUT_MS)
+            .await;
+
+        let mut max_seq_in_batch = last_seq_sent;
+        for packet in packets_to_send.iter().take(sent_packets) {
+            if packet.seq > max_seq_in_batch {
+                max_seq_in_batch = packet.seq;
+            }
+        }
         max_seq_in_batch
     }
 }

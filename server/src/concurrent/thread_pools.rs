@@ -3,6 +3,7 @@ use crate::core::config::{CoreAllocation, ServerConfig};
 use crate::core::error::{ServerError, ServerResult};
 use core_affinity::CoreId;
 use rayon::{ThreadPool, ThreadPoolBuilder};
+use std::env;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -77,6 +78,105 @@ impl ThreadPoolSystem {
     }*/
 
     pub fn new(config: Arc<ServerConfig>) -> Result<Self, anyhow::Error> {
+        let affinity_enabled = env_bool("MGS_CPU_AFFINITY");
+        if !affinity_enabled {
+            let network_pool = ThreadPoolBuilder::new()
+                .num_threads(config.thread_pools.networking_threads)
+                .build()?;
+            let ai_pool = ThreadPoolBuilder::new()
+                .num_threads(config.thread_pools.ai_threads)
+                .build()?;
+            let physics_pool = ThreadPoolBuilder::new()
+                .num_threads(config.thread_pools.physics_threads)
+                .build()?;
+            let game_logic_pool = ThreadPoolBuilder::new()
+                .num_threads(config.thread_pools.game_logic_threads)
+                .build()?;
+            let io_pool = ThreadPoolBuilder::new()
+                .num_threads(config.thread_pools.io_threads)
+                .build()?;
+
+            return Ok(Self {
+                network_pool: Arc::new(network_pool),
+                ai_pool: Arc::new(ai_pool),
+                physics_pool: Arc::new(physics_pool),
+                game_logic_pool: Arc::new(game_logic_pool),
+                io_pool: Arc::new(io_pool),
+            });
+        }
+
+        let core_alloc = CoreAllocation::new(&config.thread_pools);
+        let all_core_ids_arc: Arc<Option<Vec<CoreId>>> = Arc::new(core_affinity::get_core_ids());
+
+        if all_core_ids_arc.is_none() {
+            warn!(
+                "MGS_CPU_AFFINITY=1 but core IDs are unavailable. Falling back to unpinned pools."
+            );
+            return Self::new_without_affinity(config);
+        }
+
+        let available_cores = all_core_ids_arc
+            .as_ref()
+            .as_ref()
+            .map_or(0usize, |ids| ids.len());
+        let total_requested_cores = config.thread_pools.physics_threads
+            + config.thread_pools.networking_threads
+            + config.thread_pools.game_logic_threads
+            + config.thread_pools.ai_threads
+            + config.thread_pools.io_threads;
+        if total_requested_cores > available_cores {
+            warn!(
+                "CPU affinity requested {} threads but only {} cores are visible. Some pools will share cores.",
+                total_requested_cores, available_cores
+            );
+        }
+
+        info!(
+            "Thread pools using CPU affinity (available_cores={}, requested_threads={})",
+            available_cores, total_requested_cores
+        );
+
+        let physics_pool = Self::create_pool(
+            "physics",
+            config.thread_pools.physics_threads,
+            core_alloc.physics_cores_indices.clone(),
+            all_core_ids_arc.clone(),
+        )?;
+        let network_pool = Self::create_pool(
+            "network",
+            config.thread_pools.networking_threads,
+            core_alloc.networking_cores_indices.clone(),
+            all_core_ids_arc.clone(),
+        )?;
+        let game_logic_pool = Self::create_pool(
+            "game_logic",
+            config.thread_pools.game_logic_threads,
+            core_alloc.game_logic_cores_indices.clone(),
+            all_core_ids_arc.clone(),
+        )?;
+        let ai_pool = Self::create_pool(
+            "ai",
+            config.thread_pools.ai_threads,
+            core_alloc.ai_cores_indices.clone(),
+            all_core_ids_arc.clone(),
+        )?;
+        let io_pool = Self::create_pool(
+            "io",
+            config.thread_pools.io_threads,
+            core_alloc.io_cores_indices.clone(),
+            all_core_ids_arc,
+        )?;
+
+        Ok(Self {
+            network_pool: Arc::new(network_pool),
+            ai_pool: Arc::new(ai_pool),
+            physics_pool: Arc::new(physics_pool),
+            game_logic_pool: Arc::new(game_logic_pool),
+            io_pool: Arc::new(io_pool),
+        })
+    }
+
+    fn new_without_affinity(config: Arc<ServerConfig>) -> Result<Self, anyhow::Error> {
         let network_pool = ThreadPoolBuilder::new()
             .num_threads(config.thread_pools.networking_threads)
             .build()?;
@@ -169,4 +269,14 @@ impl ThreadPoolSystem {
             .build()
             .map_err(|e| ServerError::ThreadingError(format!("Failed to build {} pool: {}", name_str, e)))
     }
+}
+
+fn env_bool(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .map(|raw| {
+            let normalized = raw.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        })
+        .unwrap_or(false)
 }

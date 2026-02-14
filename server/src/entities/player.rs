@@ -1,6 +1,7 @@
 // massive_game_server/server/src/entities/player.rs
 use crate::concurrent::spatial_index::ImprovedSpatialIndex;
 use crate::core::types::{PlayerID, PlayerState};
+use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use seahash;
 use std::sync::Arc;
@@ -44,9 +45,166 @@ impl Default for PlayerIdPool {
 // Improved Player Manager
 pub struct ImprovedPlayerManager {
     pub id_pool: Arc<PlayerIdPool>,
-    shards: Vec<Arc<DashMap<PlayerID, PlayerState>>>,
+    shards: Vec<Arc<DashMap<PlayerID, Arc<ArcSwap<PlayerState>>>>>,
     num_shards: usize,
     spatial_index: Arc<ImprovedSpatialIndex>,
+}
+
+fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, updated: &PlayerState) {
+    if original.id != updated.id {
+        base.id = updated.id.clone();
+    }
+    if original.username != updated.username {
+        base.username = updated.username.clone();
+    }
+    if original.x != updated.x {
+        base.x = updated.x;
+    }
+    if original.y != updated.y {
+        base.y = updated.y;
+    }
+    if original.velocity_x != updated.velocity_x {
+        base.velocity_x = updated.velocity_x;
+    }
+    if original.velocity_y != updated.velocity_y {
+        base.velocity_y = updated.velocity_y;
+    }
+    if original.rotation != updated.rotation {
+        base.rotation = updated.rotation;
+    }
+    if original.health != updated.health {
+        base.health = updated.health;
+    }
+    if original.max_health != updated.max_health {
+        base.max_health = updated.max_health;
+    }
+    if original.alive != updated.alive {
+        base.alive = updated.alive;
+    }
+    if original.last_processed_input_sequence != updated.last_processed_input_sequence {
+        base.last_processed_input_sequence = updated.last_processed_input_sequence;
+    }
+    if original.input_queue != updated.input_queue {
+        base.input_queue = updated.input_queue.clone();
+    }
+    if original.score != updated.score {
+        base.score = updated.score;
+    }
+    if original.kills != updated.kills {
+        base.kills = updated.kills;
+    }
+    if original.deaths != updated.deaths {
+        base.deaths = updated.deaths;
+    }
+    if original.team_id != updated.team_id {
+        base.team_id = updated.team_id;
+    }
+    if original.last_update_timestamp != updated.last_update_timestamp {
+        base.last_update_timestamp = updated.last_update_timestamp;
+    }
+    if original.weapon != updated.weapon {
+        base.weapon = updated.weapon;
+    }
+    if original.ammo != updated.ammo {
+        base.ammo = updated.ammo;
+    }
+    if original.respawn_timer != updated.respawn_timer {
+        base.respawn_timer = updated.respawn_timer;
+    }
+    if original.reload_progress != updated.reload_progress {
+        base.reload_progress = updated.reload_progress;
+    }
+    if original.last_shot_time != updated.last_shot_time {
+        base.last_shot_time = updated.last_shot_time;
+    }
+    if original.speed_boost_remaining != updated.speed_boost_remaining {
+        base.speed_boost_remaining = updated.speed_boost_remaining;
+    }
+    if original.damage_boost_remaining != updated.damage_boost_remaining {
+        base.damage_boost_remaining = updated.damage_boost_remaining;
+    }
+    if original.shield_current != updated.shield_current {
+        base.shield_current = updated.shield_current;
+    }
+    if original.shield_max != updated.shield_max {
+        base.shield_max = updated.shield_max;
+    }
+    if original.is_carrying_flag_team_id != updated.is_carrying_flag_team_id {
+        base.is_carrying_flag_team_id = updated.is_carrying_flag_team_id;
+    }
+    if original.last_valid_position != updated.last_valid_position {
+        base.last_valid_position = updated.last_valid_position;
+    }
+    if original.violation_count != updated.violation_count {
+        base.violation_count = updated.violation_count;
+    }
+    if original.changed_fields != updated.changed_fields {
+        base.changed_fields = updated.changed_fields;
+    }
+}
+
+pub struct PlayerStateReadGuard {
+    snapshot: Arc<PlayerState>,
+}
+
+impl std::ops::Deref for PlayerStateReadGuard {
+    type Target = PlayerState;
+
+    fn deref(&self) -> &Self::Target {
+        self.snapshot.as_ref()
+    }
+}
+
+pub struct PlayerStateWriteGuard {
+    cell: Arc<ArcSwap<PlayerState>>,
+    original: Arc<PlayerState>,
+    working: PlayerState,
+}
+
+impl PlayerStateWriteGuard {
+    fn new(cell: Arc<ArcSwap<PlayerState>>) -> Self {
+        let original = cell.load_full();
+        let working = (*original).clone();
+        Self {
+            cell,
+            original,
+            working,
+        }
+    }
+}
+
+impl std::ops::Deref for PlayerStateWriteGuard {
+    type Target = PlayerState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.working
+    }
+}
+
+impl std::ops::DerefMut for PlayerStateWriteGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.working
+    }
+}
+
+impl Drop for PlayerStateWriteGuard {
+    fn drop(&mut self) {
+        if self.working == *self.original {
+            return;
+        }
+
+        let original = self.original.clone();
+        let updated = self.working.clone();
+        self.cell.rcu(|current| {
+            if Arc::ptr_eq(current, &original) {
+                Arc::new(updated.clone())
+            } else {
+                let mut merged = (**current).clone();
+                merge_player_state_delta(&mut merged, original.as_ref(), &updated);
+                Arc::new(merged)
+            }
+        });
+    }
 }
 
 impl ImprovedPlayerManager {
@@ -117,7 +275,10 @@ impl ImprovedPlayerManager {
             return None;
         }
 
-        self.shards[shard_idx].insert(player_arc_id.clone(), player_state);
+        self.shards[shard_idx].insert(
+            player_arc_id.clone(),
+            Arc::new(ArcSwap::from_pointee(player_state)),
+        );
         self.spatial_index
             .update_player_position(player_arc_id.clone(), initial_x, initial_y);
         Some(player_arc_id)
@@ -159,34 +320,41 @@ impl ImprovedPlayerManager {
     pub fn update_player_position(&self, player_id: &PlayerID, new_x: f32, new_y: f32) {
         let shard_idx = self.get_shard_index(player_id.as_str());
         if shard_idx < self.shards.len() {
-            if let Some(mut player_state_entry) = self.shards[shard_idx].get_mut(player_id) {
-                player_state_entry.x = new_x;
-                player_state_entry.y = new_y;
+            if let Some(player_state_cell) = self.shards[shard_idx]
+                .get(player_id)
+                .map(|entry| entry.value().clone())
+            {
+                player_state_cell.rcu(|current| {
+                    let mut next = (**current).clone();
+                    next.x = new_x;
+                    next.y = new_y;
+                    Arc::new(next)
+                });
             }
             self.spatial_index
                 .update_player_position(player_id.clone(), new_x, new_y);
         }
     }
 
-    pub fn get_player_state(
-        &self,
-        player_id: &PlayerID,
-    ) -> Option<impl std::ops::Deref<Target = PlayerState> + '_> {
+    pub fn get_player_state(&self, player_id: &PlayerID) -> Option<PlayerStateReadGuard> {
         let shard_idx = self.get_shard_index(player_id.as_str());
         if shard_idx < self.shards.len() {
-            self.shards[shard_idx].get(player_id)
+            self.shards[shard_idx]
+                .get(player_id)
+                .map(|entry| PlayerStateReadGuard {
+                    snapshot: entry.value().load_full(),
+                })
         } else {
             None
         }
     }
 
-    pub fn get_player_state_mut(
-        &self,
-        player_id: &PlayerID,
-    ) -> Option<impl std::ops::DerefMut<Target = PlayerState> + '_> {
+    pub fn get_player_state_mut(&self, player_id: &PlayerID) -> Option<PlayerStateWriteGuard> {
         let shard_idx = self.get_shard_index(player_id.as_str());
         if shard_idx < self.shards.len() {
-            self.shards[shard_idx].get_mut(player_id)
+            self.shards[shard_idx]
+                .get(player_id)
+                .map(|entry| PlayerStateWriteGuard::new(entry.value().clone()))
         } else {
             None
         }
@@ -198,7 +366,8 @@ impl ImprovedPlayerManager {
     {
         for shard in &self.shards {
             for entry in shard.iter() {
-                func(entry.key(), entry.value());
+                let snapshot = entry.value().load_full();
+                func(entry.key(), snapshot.as_ref());
             }
         }
     }
@@ -208,10 +377,10 @@ impl ImprovedPlayerManager {
         F: FnMut(&PlayerID, &mut PlayerState),
     {
         for shard_arc in &self.shards {
-            for mut entry in shard_arc.iter_mut() {
+            for entry in shard_arc.iter() {
                 let key_clone = entry.key().clone();
-                let value_mut = entry.value_mut();
-                func(&key_clone, value_mut);
+                let mut guard = PlayerStateWriteGuard::new(entry.value().clone());
+                func(&key_clone, &mut guard);
             }
         }
     }

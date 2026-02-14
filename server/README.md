@@ -84,6 +84,19 @@ Key parameters include:
 
 These are set to default values optimized for a 12-core development machine but should be tuned for your specific hardware and load requirements.
 
+### Single-Machine Performance Profile
+
+For high-density runs on one host, enable:
+
+* `MGS_SINGLE_MACHINE_OPT=1`: Enables tighter join/broadcast budgets for backlog control.
+* `MGS_CPU_AFFINITY=1`: Pins server thread pools to CPU cores.
+
+Linux kernel/hugepage checklist and scripts:
+
+* `docs/single_machine_optimization_checklist.md`
+* `scripts/setup-system.sh --check` (or `--apply` as root)
+* `scripts/monitor.sh <pid>`
+
 ### Internet/Mobile WebRTC Connectivity (ICE/TURN)
 
 For real internet play (especially mobile networks), configure ICE/TURN explicitly:

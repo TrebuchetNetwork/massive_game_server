@@ -9376,22 +9376,81 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         const FAST_DELTA_APPLY_ENABLED = true;
         const flatbufferByteBufferScratch = new flatbuffers.ByteBuffer(new Uint8Array(0));
         let fastDeltaPathErrorCount = 0;
+        const COALESCED_PACKET_MAGIC_0 = 0x4d; // M
+        const COALESCED_PACKET_MAGIC_1 = 0x47; // G
+        const COALESCED_PACKET_MAGIC_2 = 0x53; // S
+        const COALESCED_PACKET_MAGIC_3 = 0x42; // B
+        const COALESCED_PACKET_VERSION = 1;
+        const COALESCED_PACKET_HEADER_BYTES = 7; // magic (4) + version (1) + packet count (u16)
+        const COALESCED_PACKET_ENTRY_HEADER_BYTES = 4; // packet length (u32)
+
+        function toBinaryView(data) {
+            if (data instanceof Uint8Array) {
+                return data;
+            }
+            if (data instanceof ArrayBuffer) {
+                return new Uint8Array(data);
+            }
+            if (ArrayBuffer.isView(data) && data.buffer instanceof ArrayBuffer) {
+                return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            }
+            return null;
+        }
 
         function bindFlatBufferData(data) {
-            let bytes = null;
-            if (data instanceof Uint8Array) {
-                bytes = data;
-            } else if (data instanceof ArrayBuffer) {
-                bytes = new Uint8Array(data);
-            } else if (ArrayBuffer.isView(data) && data.buffer instanceof ArrayBuffer) {
-                bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-            }
+            const bytes = toBinaryView(data);
             if (!bytes) {
                 return null;
             }
             flatbufferByteBufferScratch.bytes_ = bytes;
             flatbufferByteBufferScratch.position_ = 0;
             return flatbufferByteBufferScratch;
+        }
+
+        function unpackCoalescedPackets(data) {
+            const bytes = toBinaryView(data);
+            if (!bytes) {
+                return null;
+            }
+            if (bytes.byteLength < COALESCED_PACKET_HEADER_BYTES) {
+                return [bytes];
+            }
+            if (
+                bytes[0] !== COALESCED_PACKET_MAGIC_0 ||
+                bytes[1] !== COALESCED_PACKET_MAGIC_1 ||
+                bytes[2] !== COALESCED_PACKET_MAGIC_2 ||
+                bytes[3] !== COALESCED_PACKET_MAGIC_3
+            ) {
+                return [bytes];
+            }
+            if (bytes[4] !== COALESCED_PACKET_VERSION) {
+                return [bytes];
+            }
+
+            const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            const packetCount = view.getUint16(5, true);
+            if (packetCount <= 0) {
+                return [bytes];
+            }
+
+            const packets = new Array(packetCount);
+            let cursor = COALESCED_PACKET_HEADER_BYTES;
+            for (let i = 0; i < packetCount; i += 1) {
+                if (cursor + COALESCED_PACKET_ENTRY_HEADER_BYTES > bytes.byteLength) {
+                    return [bytes];
+                }
+                const packetLength = view.getUint32(cursor, true);
+                cursor += COALESCED_PACKET_ENTRY_HEADER_BYTES;
+                if (packetLength <= 0 || cursor + packetLength > bytes.byteLength) {
+                    return [bytes];
+                }
+                packets[i] = bytes.subarray(cursor, cursor + packetLength);
+                cursor += packetLength;
+            }
+            if (cursor !== bytes.byteLength) {
+                return [bytes];
+            }
+            return packets;
         }
 
         function assignWallStateFromTable(target, wall) {
@@ -12416,56 +12475,59 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                         pingStartTime = Date.now(); // Reset for next measurement
                     }
 
-                    if (!(event.data instanceof ArrayBuffer)) {
+                    const packetFrames = unpackCoalescedPackets(event.data);
+                    if (!packetFrames) {
                         log('Received non-binary message on DataChannel.', 'error');
                         return;
                     }
 
                     const e2e = window.__e2e;
-                    if (tryProcessDeltaMessageFast(event.data, e2e)) {
-                        return;
-                    }
+                    for (const packetData of packetFrames) {
+                        if (tryProcessDeltaMessageFast(packetData, e2e)) {
+                            continue;
+                        }
 
-                    const parsed = parseFlatBufferMessage(event.data);
-                    if (!parsed) return;
+                        const parsed = parseFlatBufferMessage(packetData);
+                        if (!parsed) continue;
 
-                    switch (parsed.type) {
-                        case 'welcome':
-                            myPlayerId = parsed.playerId;
-                            log(`Welcome! Your ID: ${myPlayerId}. Server Tick: ${parsed.serverTickRate}Hz`, 'success');
-                            break;
-                        case 'initial':
-                        case 'delta':
-                            processServerUpdate(parsed.data, parsed.type === 'initial');
-                            if (e2e) {
-                                e2e.lastStateUpdate = performance.now();
-                            }
-                            if (parsed.type === 'initial') {
-                                log(`Initial game state received. Map: ${parsed.data.map_name}`, 'info');
-                            }
-                            break;
-                        case 'chat':
-                            if (parsed.data) {
-                                chatMessages.push({
-                                    seq: parsed.data.seq,
-                                    player_id: parsed.data.player_id,
-                                    username: parsed.data.username,
-                                    message: parsed.data.message,
-                                    timestamp: parsed.data.timestamp
-                                });
-                                if (chatMessages.length > 50) chatMessages.shift();
-                                updateChatDisplay();
-                                if (audioManager && gameSettings.soundEnabled) {
-                                    audioManager.playSound('chatMessage', null, 0.3);
+                        switch (parsed.type) {
+                            case 'welcome':
+                                myPlayerId = parsed.playerId;
+                                log(`Welcome! Your ID: ${myPlayerId}. Server Tick: ${parsed.serverTickRate}Hz`, 'success');
+                                break;
+                            case 'initial':
+                            case 'delta':
+                                processServerUpdate(parsed.data, parsed.type === 'initial');
+                                if (e2e) {
+                                    e2e.lastStateUpdate = performance.now();
                                 }
-                            }
-                            break;
-                        case 'match_update': // Handle explicit match updates if server sends them separately
-                            if (parsed.data) {
-                                matchInfo = parsed.data;
-                                refreshMatchInfoUi(true);
-                            }
-                            break;
+                                if (parsed.type === 'initial') {
+                                    log(`Initial game state received. Map: ${parsed.data.map_name}`, 'info');
+                                }
+                                break;
+                            case 'chat':
+                                if (parsed.data) {
+                                    chatMessages.push({
+                                        seq: parsed.data.seq,
+                                        player_id: parsed.data.player_id,
+                                        username: parsed.data.username,
+                                        message: parsed.data.message,
+                                        timestamp: parsed.data.timestamp
+                                    });
+                                    if (chatMessages.length > 50) chatMessages.shift();
+                                    updateChatDisplay();
+                                    if (audioManager && gameSettings.soundEnabled) {
+                                        audioManager.playSound('chatMessage', null, 0.3);
+                                    }
+                                }
+                                break;
+                            case 'match_update': // Handle explicit match updates if server sends them separately
+                                if (parsed.data) {
+                                    matchInfo = parsed.data;
+                                    refreshMatchInfoUi(true);
+                                }
+                                break;
+                        }
                     }
                 } catch (e) {
                     console.error("DC Message Error:", e);
