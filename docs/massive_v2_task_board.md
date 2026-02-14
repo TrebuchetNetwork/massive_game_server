@@ -47,7 +47,7 @@
   - `server/src/network/signaling.rs`
   - full server joins can evict the lowest-performing bot when match is full.
   - team-aware bot eviction bias for balanced joins (`ensure_human_join_capacity_for_team`)
-  - explicit eviction announcement enqueued to system chat feed for all human-priority slot reclaim events.
+  - explicit eviction announcements now emit to both system chat and kill feed for all human-priority slot reclaim events.
 - Refreshed benchmark artifacts after join policy update:
   - `artifacts/scale/multi_client_fresh_20_post_team_balanced_20260214_2038.json`
     - 20/20 launched, connected ratio `1.00`, connect avg `21938.8ms`.
@@ -55,11 +55,14 @@
     - 86/120 launched within `300000ms`, connected ratio `0.7167`.
     - 73+ wave: count `14`, avg `88631.71ms`, p95 `92412.3ms`.
     - join-stage 73+: `open_channel_wait_ms.avg=356.27` (`p95=1883.85`), `queue_wait_ms.avg=9.33`.
+  - `artifacts/scale/multi_client_fresh_120_tail_tuned_v2_20260214_2247.json`
+    - 87/120 launched within `300000ms`, connected ratio `0.725` (delta `+1` launched).
+    - 73+ wave: count `15`, avg `79709.27ms`, p95 `83942.1ms`.
+    - join-stage 73+: `open_channel_wait_ms.avg=253.99` (`p95=1178.84`) after tail-policy tuning.
 - Updated server docs:
   - `server/README.md`
 
 ## Next Execution Batch
-1. Recover 120-tail launch coverage from `86/120` toward `100+/120` within the same 300s budget.
-2. Target 73+ wave channel-open contention (`open_channel_wait_ms` p95 `1883.85ms`) with join scheduler/backpressure tuning.
-3. Add kill-feed-level explicit slot reclaim message (current behavior is system-chat announcement only).
-4. Continue authoritative ECS ownership migration and full-state zero-copy/batching follow-through.
+1. Recover 120-tail launch coverage from `87/120` toward `100+/120` within the same 300s budget.
+2. Continue reducing 73+ wave channel-open contention (`open_channel_wait_ms` p95 `1178.84ms`) with join scheduler/backpressure tuning.
+3. Continue authoritative ECS ownership migration and full-state zero-copy/batching follow-through.

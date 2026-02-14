@@ -96,8 +96,15 @@
   - Notes:
     - A first 120 run with a `420000ms` cap hung without writing an artifact; this is now tracked as tool/runtime instability during extreme tail load.
     - Tail regression remains unresolved; 120-client launch coverage is still below target.
+- Added kill-feed slot reclaim visibility for human-priority joins:
+  - slot reclaim now emits both system chat and kill-feed entries.
+- Applied a tuned 70+ tail scheduler pass and reran `120`:
+  - `artifacts/scale/multi_client_fresh_120_tail_tuned_v2_20260214_2247.json`
+    - launched `87/120` (from `86/120`), connected ratio `0.725`.
+    - 73+ wave avg `79709.27ms` (from `88631.71ms`), p95 `83942.1ms` (from `92412.3ms`).
+    - 73+ `open_channel_wait_ms`: avg `253.99` (from `356.27`), p95 `1178.84` (from `1883.85`).
 
 ## Next Execution Batch
-1. Improve 73+ launch coverage under the 300s window from `14/48` to at least `30/48` by tuning open-channel scheduling and connect concurrency policy.
-2. Investigate and clamp 73+ `open_channel_wait_ms` spikes (current p95 `1883.85ms`) with staged channel-open backpressure controls.
+1. Improve 73+ launch coverage under the 300s window from `15/48` to at least `30/48` by tuning open-channel scheduling and connect concurrency policy.
+2. Investigate and clamp 73+ `open_channel_wait_ms` spikes (current p95 `1178.84ms`) with staged channel-open backpressure controls.
 3. Continue authoritative ownership migration (full ECS writer ownership and state snapshots).

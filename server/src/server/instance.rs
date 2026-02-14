@@ -2722,17 +2722,11 @@ impl MassiveGameServer {
                             .get_player_state(&attacker_id)
                             .map_or_else(|| "World".to_string(), |p| p.username.clone());
 
-                        let mut kill_feed_guard = self.kill_feed.write();
-                        kill_feed_guard.push_back(ServerKillFeedEntry {
-                            killer_name: killer_username.clone(),
-                            victim_name: victim_username.clone(),
+                        self.push_kill_feed_entry(
+                            killer_username.clone(),
+                            victim_username.clone(),
                             weapon,
-                            timestamp: self.frame_counter.load(AtomicOrdering::Relaxed),
-                        });
-                        if kill_feed_guard.len() > MAX_KILL_FEED_HISTORY {
-                            kill_feed_guard.pop_front();
-                        }
-                        drop(kill_feed_guard);
+                        );
 
                         // Handle flag dropping if victim was carrying a flag
                         if victim_was_carrying_flag_id != 0 {
@@ -4003,20 +3997,11 @@ impl MassiveGameServer {
                             );
 
                             // Update kill feed
-                            {
-                                let mut kill_feed_guard = self.kill_feed.write();
-                                kill_feed_guard.push_back(ServerKillFeedEntry {
-                                    killer_name: attacker_username.clone(),
-                                    victim_name: target_username,
-                                    weapon: ServerWeaponType::Melee,
-                                    timestamp: self
-                                        .frame_counter
-                                        .load(std::sync::atomic::Ordering::Relaxed),
-                                });
-                                if kill_feed_guard.len() > MAX_KILL_FEED_HISTORY {
-                                    kill_feed_guard.pop_front();
-                                }
-                            }
+                            self.push_kill_feed_entry(
+                                attacker_username.clone(),
+                                target_username,
+                                ServerWeaponType::Melee,
+                            );
 
                             // Handle flag dropping if victim was carrying a flag
                             if victim_was_carrying_flag_id != 0 {
@@ -4614,6 +4599,24 @@ impl MassiveGameServer {
         }
     }
 
+    fn push_kill_feed_entry(
+        &self,
+        killer_name: String,
+        victim_name: String,
+        weapon: ServerWeaponType,
+    ) {
+        let mut kill_feed_guard = self.kill_feed.write();
+        kill_feed_guard.push_back(ServerKillFeedEntry {
+            killer_name,
+            victim_name,
+            weapon,
+            timestamp: self.frame_counter.load(AtomicOrdering::Relaxed),
+        });
+        if kill_feed_guard.len() > MAX_KILL_FEED_HISTORY {
+            kill_feed_guard.pop_front();
+        }
+    }
+
     fn evict_bot_for_human(
         &self,
         bot_id: &PlayerID,
@@ -4656,6 +4659,12 @@ impl MassiveGameServer {
                 }
             }
             self.enqueue_system_chat_message(announcement);
+            let joiner_short = &joining_peer_id[..joining_peer_id.len().min(6)];
+            self.push_kill_feed_entry(
+                format!("Human {}", joiner_short),
+                bot_name,
+                ServerWeaponType::Melee,
+            );
         }
 
         true
@@ -5697,17 +5706,17 @@ impl MassiveGameServer {
         const MASS_JOIN_MAX_DELTA_PER_FRAME_HEAVY: usize = 10;
         const MASS_JOIN_CONCURRENCY_CAP: usize = 48;
         const TAIL_JOIN_CONNECTED_CLIENTS_MIN: usize = 70;
-        const TAIL_JOIN_PENDING_INITIAL_OPEN_MIN: usize = 4;
-        const TAIL_JOIN_INITIAL_PER_FRAME_BOOST: usize = 28;
-        const TAIL_JOIN_MAX_DELTA_PER_FRAME: usize = 6;
-        const TAIL_JOIN_DELTA_SKIP_MODULUS: u64 = 3;
-        const TAIL_JOIN_CONCURRENCY_CAP: usize = 32;
-        const TAIL_JOIN_AGGRESSIVE_CONNECTED_CLIENTS_MIN: usize = 73;
-        const TAIL_JOIN_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN: usize = 8;
-        const TAIL_JOIN_AGGRESSIVE_INITIAL_PER_FRAME_BOOST: usize = 40;
-        const TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME: usize = 2;
-        const TAIL_JOIN_AGGRESSIVE_DELTA_SKIP_MODULUS: u64 = 5;
-        const TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP: usize = 24;
+        const TAIL_JOIN_PENDING_INITIAL_OPEN_MIN: usize = 3;
+        const TAIL_JOIN_INITIAL_PER_FRAME_BOOST: usize = 32;
+        const TAIL_JOIN_MAX_DELTA_PER_FRAME: usize = 4;
+        const TAIL_JOIN_DELTA_SKIP_MODULUS: u64 = 4;
+        const TAIL_JOIN_CONCURRENCY_CAP: usize = 36;
+        const TAIL_JOIN_AGGRESSIVE_CONNECTED_CLIENTS_MIN: usize = 70;
+        const TAIL_JOIN_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN: usize = 6;
+        const TAIL_JOIN_AGGRESSIVE_INITIAL_PER_FRAME_BOOST: usize = 56;
+        const TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME: usize = 1;
+        const TAIL_JOIN_AGGRESSIVE_DELTA_SKIP_MODULUS: u64 = 7;
+        const TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP: usize = 28;
         const SINGLE_MACHINE_TAIL_CONNECTED_CLIENTS_MIN: usize = 56;
         const SINGLE_MACHINE_TAIL_PENDING_INITIAL_OPEN_MIN: usize = 2;
         const SINGLE_MACHINE_AGGRESSIVE_CONNECTED_CLIENTS_MIN: usize = 64;
@@ -5717,8 +5726,8 @@ impl MassiveGameServer {
         const SINGLE_MACHINE_DELTA_SKIP_MODULUS: u64 = 4;
         const SINGLE_MACHINE_CONCURRENCY_CAP: usize = 20;
         const MAX_DELTA_EVENTS_DEFAULT: usize = 50;
-        const MAX_DELTA_EVENTS_TAIL: usize = 16;
-        const MAX_DELTA_EVENTS_AGGRESSIVE: usize = 8;
+        const MAX_DELTA_EVENTS_TAIL: usize = 12;
+        const MAX_DELTA_EVENTS_AGGRESSIVE: usize = 6;
         const MAX_DELTA_EVENTS_SINGLE_MACHINE_BACKLOG: usize = 12;
 
         let current_frame = self.frame_counter.load(AtomicOrdering::Relaxed);

@@ -555,7 +555,7 @@ pub async fn handle_signaling_connection(
                 current_peer_id_on_open_cb, initial_spawn_pos.x, initial_spawn_pos.y
             );
 
-            let _player_id_arc = player_manager_on_open
+            let new_player_id_arc_for_team = player_manager_on_open
                 .add_player(
                     current_peer_id_on_open_cb.clone(),
                     username.clone(),
@@ -572,11 +572,6 @@ pub async fn handle_signaling_connection(
                         .get_or_create(&current_peer_id_on_open_cb)
                 });
 
-            let new_player_id_arc_for_team = player_manager_on_open
-                .id_pool
-                .get_or_create(&current_peer_id_on_open_cb);
-            // let team_to_assign = player_manager_on_open.assign_team_to_new_player(); // Moved up
-
             if let Some(mut p_state_entry) =
                 player_manager_on_open.get_player_state_mut(&new_player_id_arc_for_team)
             {
@@ -592,16 +587,7 @@ pub async fn handle_signaling_connection(
             if let Some(player_state) =
                 player_manager_on_open.get_player_state(&new_player_id_arc_for_team)
             {
-                // Update spatial index with player's position
-                server_instance_on_open
-                    .spatial_index
-                    .update_player_position(
-                        new_player_id_arc_for_team.clone(),
-                        player_state.x,
-                        player_state.y,
-                    );
-
-                // Update player's AoI
+                // add_player already updated spatial index; only AoI needs explicit initialization.
                 server_instance_on_open.update_player_aoi(
                     &new_player_id_arc_for_team,
                     player_state.x,
