@@ -1,11 +1,18 @@
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use warp::{Filter, Reply};
+use wasmtime::{Config, Engine, ExternType, Module, ValType};
 
 const DEFAULT_MAX_SOURCE_BYTES: usize = 64 * 1024;
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 const DEFAULT_OPENROUTER_APP_TITLE: &str = "massive_game_server";
+const DEFAULT_ARENA_WASM_DIR: &str = "data/arena_bots";
+const DEFAULT_ARENA_SOURCE_DIR: &str = "data/arena_sources";
+const DEFAULT_OPENROUTER_MAX_TOKENS: u32 = 700;
 
 #[derive(Clone)]
 pub struct CodeGenerationService {
@@ -19,6 +26,8 @@ struct CodeGenerationInner {
     openrouter_app_title: String,
     openrouter_http_referrer: Option<String>,
     max_source_bytes: usize,
+    source_dir: PathBuf,
+    wasm_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -32,6 +41,15 @@ struct GenerateBotCodeBody {
     model: String,
     objective: Option<String>,
     prompt_style: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GenerateAndCompileBotCodeBody {
+    model_id: String,
+    model: String,
+    objective: Option<String>,
+    prompt_style: Option<String>,
+    overwrite: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,6 +68,24 @@ struct GenerateBotCodeResponse {
     source_code: String,
     simulated: bool,
     warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CompileBotCodeResponse {
+    model_id: String,
+    source_path: String,
+    wasm_path: Option<String>,
+    compiled: bool,
+    bytes_written: usize,
+    compiler_stdout: String,
+    compiler_stderr: String,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GenerateAndCompileBotCodeResponse {
+    generated: GenerateBotCodeResponse,
+    compile: CompileBotCodeResponse,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -124,6 +160,12 @@ impl CodeGenerationService {
             .and_then(|raw| raw.parse::<usize>().ok())
             .filter(|value| *value > 1024)
             .unwrap_or(DEFAULT_MAX_SOURCE_BYTES);
+        let source_dir = std::env::var("MGS_ARENA_SOURCE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(DEFAULT_ARENA_SOURCE_DIR));
+        let wasm_dir = std::env::var("MGS_ARENA_WASM_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(DEFAULT_ARENA_WASM_DIR));
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -137,71 +179,18 @@ impl CodeGenerationService {
                 openrouter_app_title,
                 openrouter_http_referrer,
                 max_source_bytes,
+                source_dir,
+                wasm_dir,
             }),
         }
     }
 
     fn validate_source(&self, body: ValidateBotCodeBody) -> CodeValidationResponse {
-        let language = body
-            .language
-            .as_deref()
-            .unwrap_or("rust")
-            .trim()
-            .to_ascii_lowercase();
-
-        let mut errors = Vec::new();
-        let mut warnings = Vec::new();
-        let source = body.source_code;
-        let source_len = source.len();
-        if source_len == 0 {
-            errors.push("source_code cannot be empty".to_owned());
-            return CodeValidationResponse {
-                valid: false,
-                errors,
-                warnings,
-            };
-        }
-        if source_len > self.inner.max_source_bytes {
-            errors.push(format!(
-                "source_code exceeds max size ({} > {} bytes)",
-                source_len, self.inner.max_source_bytes
-            ));
-        }
-
-        let lowered = source.to_ascii_lowercase();
-        let forbidden_patterns = [
-            "unsafe",
-            "std::fs",
-            "std::process",
-            "std::net",
-            "libc::",
-            "asm!(",
-            "thread::spawn",
-            "tokio::spawn",
-            "extern \"c\"",
-        ];
-        for pattern in forbidden_patterns {
-            if lowered.contains(pattern) {
-                errors.push(format!("forbidden pattern detected: '{}'", pattern));
-            }
-        }
-
-        if language == "rust" && !lowered.contains("fn bot_tick") {
-            errors.push("required function `fn bot_tick` is missing".to_owned());
-        }
-
-        if !lowered.contains("const") {
-            warnings.push("bot code has no constants; consider bounded config values".to_owned());
-        }
-        if !lowered.contains("match ") {
-            warnings.push("bot code has no match-based decision branch".to_owned());
-        }
-
-        CodeValidationResponse {
-            valid: errors.is_empty(),
-            errors,
-            warnings,
-        }
+        validate_source_impl(
+            self.inner.max_source_bytes,
+            &body.source_code,
+            body.language.as_deref(),
+        )
     }
 
     async fn generate_bot_code(
@@ -257,14 +246,15 @@ impl CodeGenerationService {
             self.build_local_template(&objective, &prompt_style)
         };
 
-        let validation = self.validate_source(ValidateBotCodeBody {
-            source_code: source_code.clone(),
-            language: Some("rust".to_owned()),
-        });
+        let validation =
+            validate_source_impl(self.inner.max_source_bytes, &source_code, Some("rust"));
         if !validation.valid {
             return Err(ApiErrorBody {
                 code: "generated_code_invalid",
-                message: format!("generated source failed validation: {}", validation.errors.join("; ")),
+                message: format!(
+                    "generated source failed validation: {}",
+                    validation.errors.join("; ")
+                ),
             });
         }
         warnings.extend(validation.warnings);
@@ -280,6 +270,69 @@ impl CodeGenerationService {
         })
     }
 
+    async fn generate_and_compile(
+        &self,
+        body: GenerateAndCompileBotCodeBody,
+    ) -> Result<GenerateAndCompileBotCodeResponse, ApiErrorBody> {
+        let model_id = body.model_id.trim();
+        if model_id.is_empty() {
+            return Err(ApiErrorBody {
+                code: "invalid_model_id",
+                message: "model_id is required".to_owned(),
+            });
+        }
+
+        let generated = self
+            .generate_bot_code(GenerateBotCodeBody {
+                model: body.model,
+                objective: body.objective,
+                prompt_style: body.prompt_style,
+            })
+            .await?;
+
+        let compile = self
+            .compile_generated_code_best_effort(
+                model_id.to_owned(),
+                generated.source_code.clone(),
+                body.overwrite.unwrap_or(false),
+            )
+            .await;
+
+        Ok(GenerateAndCompileBotCodeResponse { generated, compile })
+    }
+
+    async fn compile_generated_code_best_effort(
+        &self,
+        model_id: String,
+        source_code: String,
+        overwrite: bool,
+    ) -> CompileBotCodeResponse {
+        let max_source_bytes = self.inner.max_source_bytes;
+        let source_dir = self.inner.source_dir.clone();
+        let wasm_dir = self.inner.wasm_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            compile_generated_code_impl(
+                model_id,
+                source_code,
+                overwrite,
+                max_source_bytes,
+                source_dir,
+                wasm_dir,
+            )
+        })
+        .await
+        .unwrap_or_else(|err| CompileBotCodeResponse {
+            model_id: "unknown".to_owned(),
+            source_path: String::new(),
+            wasm_path: None,
+            compiled: false,
+            bytes_written: 0,
+            compiler_stdout: String::new(),
+            compiler_stderr: format!("compile task join error: {}", err),
+            warnings: vec!["failed to run compile task".to_owned()],
+        })
+    }
+
     async fn generate_via_openrouter(
         &self,
         api_key: &str,
@@ -287,10 +340,11 @@ impl CodeGenerationService {
         objective: &str,
         prompt_style: &str,
     ) -> Result<String, String> {
-        let system_prompt = "You generate safe deterministic Rust bot code for a wasm arena. Return Rust code only.";
+        let system_prompt =
+            "You generate deterministic Rust bot code for a wasm arena. Return code only.";
         let user_prompt = format!(
-            "Generate Rust code with exactly one public function:\n\
-pub fn bot_tick(self_health: i32, enemy_health: i32, self_score: i32, tick: i32) -> i32\n\
+            "Generate Rust with exactly one exported function:\n\
+#[no_mangle]\npub extern \"C\" fn bot_tick(self_health: i32, enemy_health: i32, self_score: i32, tick: i32) -> i32\n\
 Action encoding: 0=idle, 1=attack, 2=defend, 3=charge.\n\
 Constraints: no unsafe, no IO, no networking, no threads, no external crates.\n\
 Style: {}.\nObjective: {}.\nReturn only code.",
@@ -310,7 +364,7 @@ Style: {}.\nObjective: {}.\nReturn only code.",
                 },
             ],
             temperature: 0.2,
-            max_tokens: 700,
+            max_tokens: DEFAULT_OPENROUTER_MAX_TOKENS,
         };
 
         let endpoint = format!("{}/chat/completions", self.inner.openrouter_base_url);
@@ -361,7 +415,7 @@ Style: {}.\nObjective: {}.\nReturn only code.",
 
     fn build_local_template(&self, objective: &str, prompt_style: &str) -> String {
         format!(
-            "pub fn bot_tick(self_health: i32, enemy_health: i32, self_score: i32, tick: i32) -> i32 {{
+            "#[no_mangle]\npub extern \"C\" fn bot_tick(self_health: i32, enemy_health: i32, self_score: i32, tick: i32) -> i32 {{
     // objective: {}
     // style: {}
     if self_health < 25 {{
@@ -378,6 +432,271 @@ Style: {}.\nObjective: {}.\nReturn only code.",
             objective, prompt_style
         )
     }
+}
+
+fn compile_generated_code_impl(
+    model_id: String,
+    source_code: String,
+    overwrite: bool,
+    max_source_bytes: usize,
+    source_dir: PathBuf,
+    wasm_dir: PathBuf,
+) -> CompileBotCodeResponse {
+    let Some(safe_model_id) = sanitize_model_id(&model_id) else {
+        return CompileBotCodeResponse {
+            model_id,
+            source_path: String::new(),
+            wasm_path: None,
+            compiled: false,
+            bytes_written: 0,
+            compiler_stdout: String::new(),
+            compiler_stderr: "invalid model_id".to_owned(),
+            warnings: vec!["model_id contains unsupported characters".to_owned()],
+        };
+    };
+
+    let source_path = source_dir.join(format!("{}.rs", safe_model_id));
+    let wasm_path = wasm_dir.join(format!("{}.wasm", safe_model_id));
+    let mut warnings = Vec::new();
+
+    if source_code.len() > max_source_bytes {
+        warnings.push(format!(
+            "source exceeds configured max ({} > {})",
+            source_code.len(),
+            max_source_bytes
+        ));
+    }
+
+    if let Err(err) = fs::create_dir_all(&source_dir) {
+        return CompileBotCodeResponse {
+            model_id,
+            source_path: source_path.display().to_string(),
+            wasm_path: None,
+            compiled: false,
+            bytes_written: 0,
+            compiler_stdout: String::new(),
+            compiler_stderr: format!("failed creating source dir: {}", err),
+            warnings,
+        };
+    }
+    if let Err(err) = fs::create_dir_all(&wasm_dir) {
+        return CompileBotCodeResponse {
+            model_id,
+            source_path: source_path.display().to_string(),
+            wasm_path: None,
+            compiled: false,
+            bytes_written: 0,
+            compiler_stdout: String::new(),
+            compiler_stderr: format!("failed creating wasm dir: {}", err),
+            warnings,
+        };
+    }
+    if wasm_path.exists() && !overwrite {
+        warnings.push("existing wasm kept because overwrite=false".to_owned());
+        return CompileBotCodeResponse {
+            model_id,
+            source_path: source_path.display().to_string(),
+            wasm_path: Some(wasm_path.display().to_string()),
+            compiled: false,
+            bytes_written: 0,
+            compiler_stdout: String::new(),
+            compiler_stderr: "wasm already exists".to_owned(),
+            warnings,
+        };
+    }
+
+    if let Err(err) = fs::write(&source_path, source_code.as_bytes()) {
+        return CompileBotCodeResponse {
+            model_id,
+            source_path: source_path.display().to_string(),
+            wasm_path: None,
+            compiled: false,
+            bytes_written: 0,
+            compiler_stdout: String::new(),
+            compiler_stderr: format!("failed writing source: {}", err),
+            warnings,
+        };
+    }
+
+    let output = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg("--crate-type=cdylib")
+        .arg("--target=wasm32-unknown-unknown")
+        .arg("-O")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&wasm_path)
+        .output();
+
+    let Ok(output) = output else {
+        return CompileBotCodeResponse {
+            model_id,
+            source_path: source_path.display().to_string(),
+            wasm_path: None,
+            compiled: false,
+            bytes_written: 0,
+            compiler_stdout: String::new(),
+            compiler_stderr:
+                "failed to execute rustc. Ensure rustc is installed and wasm target is available."
+                    .to_owned(),
+            warnings,
+        };
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        return CompileBotCodeResponse {
+            model_id,
+            source_path: source_path.display().to_string(),
+            wasm_path: None,
+            compiled: false,
+            bytes_written: 0,
+            compiler_stdout: truncate_for_api(&stdout, 4000),
+            compiler_stderr: truncate_for_api(&stderr, 4000),
+            warnings,
+        };
+    }
+
+    if let Err(err) = validate_compiled_wasm_export(&wasm_path) {
+        warnings.push(format!("compiled wasm failed export validation: {}", err));
+        return CompileBotCodeResponse {
+            model_id,
+            source_path: source_path.display().to_string(),
+            wasm_path: Some(wasm_path.display().to_string()),
+            compiled: false,
+            bytes_written: 0,
+            compiler_stdout: truncate_for_api(&stdout, 4000),
+            compiler_stderr: truncate_for_api(&stderr, 4000),
+            warnings,
+        };
+    }
+
+    let bytes_written = fs::metadata(&wasm_path)
+        .ok()
+        .map(|meta| meta.len() as usize)
+        .unwrap_or(0);
+    CompileBotCodeResponse {
+        model_id,
+        source_path: source_path.display().to_string(),
+        wasm_path: Some(wasm_path.display().to_string()),
+        compiled: true,
+        bytes_written,
+        compiler_stdout: truncate_for_api(&stdout, 4000),
+        compiler_stderr: truncate_for_api(&stderr, 4000),
+        warnings,
+    }
+}
+
+fn validate_compiled_wasm_export(path: &Path) -> Result<(), String> {
+    let mut config = Config::new();
+    config.consume_fuel(true);
+    let engine = Engine::new(&config).map_err(|err| err.to_string())?;
+    let module = Module::from_file(&engine, path).map_err(|err| err.to_string())?;
+    let Some(export) = module.get_export("bot_tick") else {
+        return Err("missing 'bot_tick' export".to_owned());
+    };
+    let ExternType::Func(func) = export else {
+        return Err("'bot_tick' export is not a function".to_owned());
+    };
+    if func.params().len() != 4 || func.results().len() != 1 {
+        return Err("bot_tick signature must be (i32, i32, i32, i32) -> i32".to_owned());
+    }
+    if !func.params().all(|param| matches!(param, ValType::I32)) {
+        return Err("bot_tick parameters must be i32".to_owned());
+    }
+    if !matches!(func.results().next(), Some(ValType::I32)) {
+        return Err("bot_tick return type must be i32".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_source_impl(
+    max_source_bytes: usize,
+    source: &str,
+    language: Option<&str>,
+) -> CodeValidationResponse {
+    let language = language.unwrap_or("rust").trim().to_ascii_lowercase();
+
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let source_len = source.len();
+    if source_len == 0 {
+        errors.push("source_code cannot be empty".to_owned());
+        return CodeValidationResponse {
+            valid: false,
+            errors,
+            warnings,
+        };
+    }
+    if source_len > max_source_bytes {
+        errors.push(format!(
+            "source_code exceeds max size ({} > {} bytes)",
+            source_len, max_source_bytes
+        ));
+    }
+
+    let lowered = source.to_ascii_lowercase();
+    let forbidden_patterns = [
+        "unsafe",
+        "std::fs",
+        "std::process",
+        "std::net",
+        "libc::",
+        "asm!(",
+        "thread::spawn",
+        "tokio::spawn",
+        "extern \"c\" fn main",
+    ];
+    for pattern in forbidden_patterns {
+        if lowered.contains(pattern) {
+            errors.push(format!("forbidden pattern detected: '{}'", pattern));
+        }
+    }
+
+    if language == "rust" && !lowered.contains("fn bot_tick") {
+        errors.push("required function `bot_tick` is missing".to_owned());
+    }
+
+    if !lowered.contains("#[no_mangle]") {
+        warnings.push("export marker #[no_mangle] not detected".to_owned());
+    }
+    if !lowered.contains("extern \"c\"") {
+        warnings.push("extern \"C\" not detected; wasm export may be mangled".to_owned());
+    }
+    if !lowered.contains("match ") {
+        warnings.push("bot code has no match-based decision branch".to_owned());
+    }
+
+    CodeValidationResponse {
+        valid: errors.is_empty(),
+        errors,
+        warnings,
+    }
+}
+
+fn sanitize_model_id(model_id: &str) -> Option<String> {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed
+        .bytes()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'-' || ch == b'.')
+    {
+        Some(trimmed.to_owned())
+    } else {
+        None
+    }
+}
+
+fn truncate_for_api(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+    let mut out = value[..max_bytes].to_owned();
+    out.push_str("...<truncated>");
+    out
 }
 
 fn extract_content_string(content: &serde_json::Value) -> Option<String> {
@@ -448,14 +767,16 @@ pub fn build_code_generation_routes(
         .and(warp::post())
         .and(warp::body::json())
         .and(with_service(service.clone()))
-        .map(|body: ValidateBotCodeBody, service: CodeGenerationService| {
-            ok_response(service.validate_source(body))
-        });
+        .map(
+            |body: ValidateBotCodeBody, service: CodeGenerationService| {
+                ok_response(service.validate_source(body))
+            },
+        );
 
     let generate = warp::path!("api" / "arena" / "code" / "generate")
         .and(warp::post())
         .and(warp::body::json())
-        .and(with_service(service))
+        .and(with_service(service.clone()))
         .and_then(
             |body: GenerateBotCodeBody, service: CodeGenerationService| async move {
                 let reply = match service.generate_bot_code(body).await {
@@ -466,7 +787,21 @@ pub fn build_code_generation_routes(
             },
         );
 
-    validate.or(generate)
+    let generate_and_compile = warp::path!("api" / "arena" / "code" / "generate_and_compile")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(with_service(service))
+        .and_then(
+            |body: GenerateAndCompileBotCodeBody, service: CodeGenerationService| async move {
+                let reply = match service.generate_and_compile(body).await {
+                    Ok(response) => ok_response(response),
+                    Err(err) => error_response(err.code, err.message),
+                };
+                Ok::<_, warp::Rejection>(reply)
+            },
+        );
+
+    validate.or(generate).or(generate_and_compile)
 }
 
 #[cfg(test)]
@@ -501,6 +836,12 @@ mod tests {
             })
             .await
             .expect("generation should work");
-        assert!(response.source_code.contains("fn bot_tick"));
+        assert!(response.source_code.contains("bot_tick"));
+    }
+
+    #[test]
+    fn sanitize_model_id_rejects_path_traversal() {
+        assert!(sanitize_model_id("../bot").is_none());
+        assert!(sanitize_model_id("bot_alpha-1").is_some());
     }
 }

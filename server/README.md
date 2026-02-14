@@ -140,8 +140,10 @@ Arena endpoints are now available for model ladder workflows:
 * `POST /api/arena/matches/report`
 * `GET /api/arena/leaderboard`
 * `GET /api/arena/overview`
+* `GET /api/arena/worker/stats`
 * `POST /api/arena/code/validate`
 * `POST /api/arena/code/generate`
+* `POST /api/arena/code/generate_and_compile`
 
 Storage:
 

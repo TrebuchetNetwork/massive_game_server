@@ -35,9 +35,11 @@
 - Arena wasm upload + worker scaffolding:
   - `POST /api/arena/models/upload_wasm`
   - `MGS_ARENA_WORKER_ENABLED` background queue executor in `server/src/main.rs`
+  - `GET /api/arena/worker/stats` for worker run/executed/idle/failure counters
 - Added code generation/validator operational routes:
   - `POST /api/arena/code/validate`
   - `POST /api/arena/code/generate`
+  - `POST /api/arena/code/generate_and_compile`
   - module: `server/src/operational/code_generation.rs`
   - OpenRouter request path implemented with deterministic template fallback on provider failure/unset key.
 - Added human-priority slot logic:

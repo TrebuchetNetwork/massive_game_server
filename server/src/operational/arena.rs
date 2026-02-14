@@ -33,6 +33,13 @@ struct ArenaInner {
     pending_matches: Mutex<VecDeque<QueuedMatch>>,
     in_flight_matches: DashMap<String, QueuedMatch>,
     total_matches_reported: AtomicU64,
+    worker_runs: AtomicU64,
+    worker_executed: AtomicU64,
+    worker_idle: AtomicU64,
+    worker_failures: AtomicU64,
+    worker_last_success_at: AtomicU64,
+    worker_last_failure_at: AtomicU64,
+    worker_last_error: RwLock<Option<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -156,6 +163,20 @@ pub struct ExecuteNextMatchResponse {
     pub pending_after: usize,
     pub report: ReportMatchResponse,
     pub sandbox: BotMatchOutcome,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ArenaWorkerStatsResponse {
+    pub generated_at: u64,
+    pub pending_matches: usize,
+    pub in_flight_matches: usize,
+    pub runs: u64,
+    pub executed: u64,
+    pub idle: u64,
+    pub failures: u64,
+    pub last_success_at: Option<u64>,
+    pub last_failure_at: Option<u64>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -311,6 +332,13 @@ impl ArenaService {
                 pending_matches: Mutex::new(VecDeque::new()),
                 in_flight_matches: DashMap::new(),
                 total_matches_reported: AtomicU64::new(completed_count),
+                worker_runs: AtomicU64::new(0),
+                worker_executed: AtomicU64::new(0),
+                worker_idle: AtomicU64::new(0),
+                worker_failures: AtomicU64::new(0),
+                worker_last_success_at: AtomicU64::new(0),
+                worker_last_failure_at: AtomicU64::new(0),
+                worker_last_error: RwLock::new(None),
             }),
         }
     }
@@ -926,10 +954,46 @@ impl ArenaService {
         max_ticks: Option<u32>,
         seed: Option<u64>,
     ) -> Result<Option<ExecuteNextMatchResponse>, String> {
+        self.inner.worker_runs.fetch_add(1, Ordering::Relaxed);
         match self.execute_next_match(ExecuteNextBody { max_ticks, seed }) {
-            Ok(response) => Ok(Some(response)),
-            Err(ArenaError::NotFound(code, _)) if code == "no_pending_match" => Ok(None),
-            Err(err) => Err(err.message()),
+            Ok(response) => {
+                self.inner.worker_executed.fetch_add(1, Ordering::Relaxed);
+                self.inner
+                    .worker_last_success_at
+                    .store(unix_now(), Ordering::Relaxed);
+                *self.inner.worker_last_error.write() = None;
+                Ok(Some(response))
+            }
+            Err(ArenaError::NotFound(code, _)) if code == "no_pending_match" => {
+                self.inner.worker_idle.fetch_add(1, Ordering::Relaxed);
+                Ok(None)
+            }
+            Err(err) => {
+                self.inner.worker_failures.fetch_add(1, Ordering::Relaxed);
+                self.inner
+                    .worker_last_failure_at
+                    .store(unix_now(), Ordering::Relaxed);
+                let message = err.message();
+                *self.inner.worker_last_error.write() = Some(message.clone());
+                Err(message)
+            }
+        }
+    }
+
+    pub fn worker_stats(&self) -> ArenaWorkerStatsResponse {
+        let last_success_raw = self.inner.worker_last_success_at.load(Ordering::Relaxed);
+        let last_failure_raw = self.inner.worker_last_failure_at.load(Ordering::Relaxed);
+        ArenaWorkerStatsResponse {
+            generated_at: unix_now(),
+            pending_matches: self.inner.pending_matches.lock().len(),
+            in_flight_matches: self.inner.in_flight_matches.len(),
+            runs: self.inner.worker_runs.load(Ordering::Relaxed),
+            executed: self.inner.worker_executed.load(Ordering::Relaxed),
+            idle: self.inner.worker_idle.load(Ordering::Relaxed),
+            failures: self.inner.worker_failures.load(Ordering::Relaxed),
+            last_success_at: (last_success_raw > 0).then_some(last_success_raw),
+            last_failure_at: (last_failure_raw > 0).then_some(last_failure_raw),
+            last_error: self.inner.worker_last_error.read().clone(),
         }
     }
 
@@ -1148,12 +1212,12 @@ pub fn build_arena_routes(
         .and(warp::post())
         .and(warp::body::json())
         .and(with_service(service.clone()))
-        .map(
-            |body: UploadModelWasmBody, arena: ArenaService| match arena.upload_model_wasm(body) {
+        .map(|body: UploadModelWasmBody, arena: ArenaService| {
+            match arena.upload_model_wasm(body) {
                 Ok(result) => ok_response(result),
                 Err(err) => error_response(err.code(), err.message()),
-            },
-        );
+            }
+        });
 
     let list_models = warp::path!("api" / "arena" / "models")
         .and(warp::get())
@@ -1250,8 +1314,13 @@ pub fn build_arena_routes(
 
     let overview = warp::path!("api" / "arena" / "overview")
         .and(warp::get())
-        .and(with_service(service))
+        .and(with_service(service.clone()))
         .map(|arena: ArenaService| ok_response(arena.overview()));
+
+    let worker_stats = warp::path!("api" / "arena" / "worker" / "stats")
+        .and(warp::get())
+        .and(with_service(service))
+        .map(|arena: ArenaService| ok_response(arena.worker_stats()));
 
     register_model
         .or(model_heartbeat)
@@ -1265,6 +1334,7 @@ pub fn build_arena_routes(
         .or(report_match)
         .or(leaderboard)
         .or(overview)
+        .or(worker_stats)
 }
 
 #[cfg(test)]
@@ -1354,6 +1424,13 @@ mod tests {
                 pending_matches: Mutex::new(VecDeque::new()),
                 in_flight_matches: DashMap::new(),
                 total_matches_reported: AtomicU64::new(0),
+                worker_runs: AtomicU64::new(0),
+                worker_executed: AtomicU64::new(0),
+                worker_idle: AtomicU64::new(0),
+                worker_failures: AtomicU64::new(0),
+                worker_last_success_at: AtomicU64::new(0),
+                worker_last_failure_at: AtomicU64::new(0),
+                worker_last_error: RwLock::new(None),
             }),
         };
 
@@ -1421,6 +1498,13 @@ mod tests {
                 pending_matches: Mutex::new(VecDeque::new()),
                 in_flight_matches: DashMap::new(),
                 total_matches_reported: AtomicU64::new(0),
+                worker_runs: AtomicU64::new(0),
+                worker_executed: AtomicU64::new(0),
+                worker_idle: AtomicU64::new(0),
+                worker_failures: AtomicU64::new(0),
+                worker_last_success_at: AtomicU64::new(0),
+                worker_last_failure_at: AtomicU64::new(0),
+                worker_last_error: RwLock::new(None),
             }),
         };
 
@@ -1454,6 +1538,9 @@ mod tests {
             .worker_execute_next(Some(64), Some(1))
             .expect("worker call should not fail");
         assert!(outcome.is_none());
+        let stats = service.worker_stats();
+        assert_eq!(stats.runs, 1);
+        assert_eq!(stats.idle, 1);
     }
 
     #[test]
@@ -1489,6 +1576,13 @@ mod tests {
                 pending_matches: Mutex::new(VecDeque::new()),
                 in_flight_matches: DashMap::new(),
                 total_matches_reported: AtomicU64::new(0),
+                worker_runs: AtomicU64::new(0),
+                worker_executed: AtomicU64::new(0),
+                worker_idle: AtomicU64::new(0),
+                worker_failures: AtomicU64::new(0),
+                worker_last_success_at: AtomicU64::new(0),
+                worker_last_failure_at: AtomicU64::new(0),
+                worker_last_error: RwLock::new(None),
             }),
         };
 
