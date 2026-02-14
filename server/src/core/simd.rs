@@ -95,6 +95,45 @@ pub fn first_index_within_radius(
 }
 
 #[inline]
+pub fn first_index_aabb_containing_point(
+    min_xs: &[f32],
+    max_xs: &[f32],
+    min_ys: &[f32],
+    max_ys: &[f32],
+    point_x: f32,
+    point_y: f32,
+) -> Option<usize> {
+    let len = min_xs.len();
+    if len == 0 || max_xs.len() != len || min_ys.len() != len || max_ys.len() != len {
+        return None;
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if std::is_x86_feature_detected!("avx2") {
+            return unsafe {
+                first_index_aabb_containing_point_avx2(
+                    min_xs, max_xs, min_ys, max_ys, point_x, point_y,
+                )
+            };
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if std::arch::is_aarch64_feature_detected!("neon") {
+            return unsafe {
+                first_index_aabb_containing_point_neon(
+                    min_xs, max_xs, min_ys, max_ys, point_x, point_y,
+                )
+            };
+        }
+    }
+
+    first_index_aabb_containing_point_scalar(min_xs, max_xs, min_ys, max_ys, point_x, point_y)
+}
+
+#[inline]
 fn filter_indices_within_radius_scalar(
     xs: &[f32],
     ys: &[f32],
@@ -124,6 +163,27 @@ fn first_index_within_radius_scalar(
         let dx = xs[idx] - center_x;
         let dy = ys[idx] - center_y;
         if dx * dx + dy * dy <= radius_squared {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+#[inline]
+fn first_index_aabb_containing_point_scalar(
+    min_xs: &[f32],
+    max_xs: &[f32],
+    min_ys: &[f32],
+    max_ys: &[f32],
+    point_x: f32,
+    point_y: f32,
+) -> Option<usize> {
+    for idx in 0..min_xs.len() {
+        if point_x >= min_xs[idx]
+            && point_x <= max_xs[idx]
+            && point_y >= min_ys[idx]
+            && point_y <= max_ys[idx]
+        {
             return Some(idx);
         }
     }
@@ -212,6 +272,54 @@ unsafe fn first_index_within_radius_avx2(
         let dx = xs[tail_idx] - center_x;
         let dy = ys[tail_idx] - center_y;
         if dx * dx + dy * dy <= radius_squared {
+            return Some(tail_idx);
+        }
+    }
+    None
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn first_index_aabb_containing_point_avx2(
+    min_xs: &[f32],
+    max_xs: &[f32],
+    min_ys: &[f32],
+    max_ys: &[f32],
+    point_x: f32,
+    point_y: f32,
+) -> Option<usize> {
+    let point_x_v = x86_arch::_mm256_set1_ps(point_x);
+    let point_y_v = x86_arch::_mm256_set1_ps(point_y);
+
+    let mut idx = 0usize;
+    while idx + 8 <= min_xs.len() {
+        let min_x_v = x86_arch::_mm256_loadu_ps(min_xs.as_ptr().add(idx));
+        let max_x_v = x86_arch::_mm256_loadu_ps(max_xs.as_ptr().add(idx));
+        let min_y_v = x86_arch::_mm256_loadu_ps(min_ys.as_ptr().add(idx));
+        let max_y_v = x86_arch::_mm256_loadu_ps(max_ys.as_ptr().add(idx));
+
+        let ge_min_x = x86_arch::_mm256_cmp_ps(point_x_v, min_x_v, x86_arch::_CMP_GE_OQ);
+        let le_max_x = x86_arch::_mm256_cmp_ps(point_x_v, max_x_v, x86_arch::_CMP_LE_OQ);
+        let ge_min_y = x86_arch::_mm256_cmp_ps(point_y_v, min_y_v, x86_arch::_CMP_GE_OQ);
+        let le_max_y = x86_arch::_mm256_cmp_ps(point_y_v, max_y_v, x86_arch::_CMP_LE_OQ);
+
+        let inside_x = x86_arch::_mm256_and_ps(ge_min_x, le_max_x);
+        let inside_y = x86_arch::_mm256_and_ps(ge_min_y, le_max_y);
+        let inside = x86_arch::_mm256_and_ps(inside_x, inside_y);
+
+        let mask = x86_arch::_mm256_movemask_ps(inside) as u32;
+        if mask != 0 {
+            return Some(idx + mask.trailing_zeros() as usize);
+        }
+        idx += 8;
+    }
+
+    for tail_idx in idx..min_xs.len() {
+        if point_x >= min_xs[tail_idx]
+            && point_x <= max_xs[tail_idx]
+            && point_y >= min_ys[tail_idx]
+            && point_y <= max_ys[tail_idx]
+        {
             return Some(tail_idx);
         }
     }
@@ -310,9 +418,62 @@ unsafe fn first_index_within_radius_neon(
     None
 }
 
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn first_index_aabb_containing_point_neon(
+    min_xs: &[f32],
+    max_xs: &[f32],
+    min_ys: &[f32],
+    max_ys: &[f32],
+    point_x: f32,
+    point_y: f32,
+) -> Option<usize> {
+    let point_x_v = neon_arch::vdupq_n_f32(point_x);
+    let point_y_v = neon_arch::vdupq_n_f32(point_y);
+
+    let mut idx = 0usize;
+    while idx + 4 <= min_xs.len() {
+        let min_x_v = neon_arch::vld1q_f32(min_xs.as_ptr().add(idx));
+        let max_x_v = neon_arch::vld1q_f32(max_xs.as_ptr().add(idx));
+        let min_y_v = neon_arch::vld1q_f32(min_ys.as_ptr().add(idx));
+        let max_y_v = neon_arch::vld1q_f32(max_ys.as_ptr().add(idx));
+
+        let ge_min_x = neon_arch::vcgeq_f32(point_x_v, min_x_v);
+        let le_max_x = neon_arch::vcleq_f32(point_x_v, max_x_v);
+        let ge_min_y = neon_arch::vcgeq_f32(point_y_v, min_y_v);
+        let le_max_y = neon_arch::vcleq_f32(point_y_v, max_y_v);
+
+        let inside_x = neon_arch::vandq_u32(ge_min_x, le_max_x);
+        let inside_y = neon_arch::vandq_u32(ge_min_y, le_max_y);
+        let inside = neon_arch::vandq_u32(inside_x, inside_y);
+
+        let mut cmp_arr = [0u32; 4];
+        neon_arch::vst1q_u32(cmp_arr.as_mut_ptr(), inside);
+        for lane in 0..4usize {
+            if cmp_arr[lane] != 0 {
+                return Some(idx + lane);
+            }
+        }
+        idx += 4;
+    }
+
+    for tail_idx in idx..min_xs.len() {
+        if point_x >= min_xs[tail_idx]
+            && point_x <= max_xs[tail_idx]
+            && point_y >= min_ys[tail_idx]
+            && point_y <= max_ys[tail_idx]
+        {
+            return Some(tail_idx);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{filter_indices_within_radius, first_index_within_radius};
+    use super::{
+        filter_indices_within_radius, first_index_aabb_containing_point, first_index_within_radius,
+    };
 
     #[test]
     fn simd_filter_matches_expected_indices() {
@@ -328,6 +489,17 @@ mod tests {
         let xs = [8.0, 7.0, 1.0, 4.0];
         let ys = [8.0, 7.0, 1.0, 4.0];
         let idx = first_index_within_radius(&xs, &ys, 0.0, 0.0, 5.0);
+        assert_eq!(idx, Some(2));
+    }
+
+    #[test]
+    fn simd_first_index_aabb_returns_first_match() {
+        let min_xs = [10.0, -5.0, 0.0];
+        let max_xs = [20.0, -1.0, 2.0];
+        let min_ys = [10.0, -5.0, 0.0];
+        let max_ys = [20.0, -1.0, 2.0];
+        let idx =
+            first_index_aabb_containing_point(&min_xs, &max_xs, &min_ys, &max_ys, 1.5, 1.5);
         assert_eq!(idx, Some(2));
     }
 }

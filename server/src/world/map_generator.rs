@@ -1,8 +1,8 @@
 // massive_game_server/server/src/world/map_generator.rs
 use crate::core::constants::*;
 use crate::core::types::{Vec2, Wall}; // Removed unused EntityId
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use uuid::Uuid;
 
 pub struct MapGenerator;
@@ -30,7 +30,11 @@ impl MapGenerator {
         (walls, map_name)
     }
 
-    fn generate_map_with_density(seed: u64, cover_points: usize, destructible_nodes: usize) -> Vec<Wall> {
+    fn generate_map_with_density(
+        seed: u64,
+        cover_points: usize,
+        destructible_nodes: usize,
+    ) -> Vec<Wall> {
         let mut walls = Vec::new();
         let mut rng = StdRng::seed_from_u64(seed);
 
@@ -287,7 +291,10 @@ impl MapGenerator {
         walls
     }
 
-    fn create_strategic_cover_sparse(rng: &mut impl Rng, number_of_cover_points: usize) -> Vec<Wall> {
+    fn create_strategic_cover_sparse(
+        rng: &mut impl Rng,
+        number_of_cover_points: usize,
+    ) -> Vec<Wall> {
         let mut walls = Vec::new();
         let cover_health = 120;
 

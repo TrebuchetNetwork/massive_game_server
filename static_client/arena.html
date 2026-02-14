@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trebuchet Arena Console</title>
+    <style>
+        :root {
+            --bg: #071520;
+            --bg-soft: #0f2333;
+            --card: #11283b;
+            --ink: #d7e9f8;
+            --muted: #88a5bd;
+            --line: #2b4a63;
+            --accent: #30d7ff;
+            --good: #2ee59d;
+            --warn: #ffc857;
+            --bad: #ff6b6b;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at 12% 18%, rgba(48, 215, 255, 0.12), transparent 36%),
+                radial-gradient(circle at 87% 12%, rgba(46, 229, 157, 0.1), transparent 35%),
+                linear-gradient(150deg, #05111a 0%, var(--bg) 48%, #050d14 100%);
+        }
+
+        .shell {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px 20px 36px;
+        }
+
+        .hero {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .hero h1 {
+            margin: 0;
+            font-size: 32px;
+            letter-spacing: 0.5px;
+        }
+
+        .hero p {
+            margin: 6px 0 0;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+
+        @media (min-width: 980px) {
+            .grid {
+                grid-template-columns: 360px 1fr;
+            }
+        }
+
+        .card {
+            background: linear-gradient(160deg, rgba(17, 40, 59, 0.92), rgba(9, 24, 35, 0.94));
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            box-shadow: 0 14px 40px rgba(0, 0, 0, 0.25);
+            padding: 16px;
+        }
+
+        .card h2 {
+            margin: 0 0 12px;
+            font-size: 16px;
+            letter-spacing: 0.3px;
+            color: #c6e9ff;
+        }
+
+        .metric-strip {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .metric {
+            background: rgba(7, 21, 32, 0.76);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 10px;
+            min-height: 70px;
+        }
+
+        .metric .k {
+            font-size: 11px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+        }
+
+        .metric .v {
+            font-size: 25px;
+            margin-top: 4px;
+            line-height: 1;
+            font-weight: 700;
+        }
+
+        .panel-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+
+        input, select, button {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: rgba(5, 16, 26, 0.8);
+            color: var(--ink);
+            padding: 10px 12px;
+            font-size: 14px;
+        }
+
+        button {
+            cursor: pointer;
+            background: linear-gradient(120deg, #0ea5c9, #13c4e3);
+            color: #03242f;
+            font-weight: 700;
+            border: none;
+            transition: transform 120ms ease, filter 120ms ease;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+            filter: brightness(1.06);
+        }
+
+        button.secondary {
+            background: linear-gradient(120deg, #20425d, #1b3449);
+            color: var(--ink);
+            border: 1px solid var(--line);
+        }
+
+        .stack {
+            display: grid;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .leaderboard {
+            width: 100%;
+            border-collapse: collapse;
+            overflow: hidden;
+            border-radius: 12px;
+            border: 1px solid var(--line);
+        }
+
+        .leaderboard th,
+        .leaderboard td {
+            padding: 10px 8px;
+            border-bottom: 1px solid rgba(43, 74, 99, 0.55);
+            text-align: left;
+            font-size: 13px;
+        }
+
+        .leaderboard th {
+            color: #b7d3ea;
+            font-weight: 600;
+            background: rgba(5, 16, 26, 0.8);
+        }
+
+        .leaderboard tbody tr:nth-child(even) {
+            background: rgba(7, 21, 32, 0.38);
+        }
+
+        .pending {
+            display: grid;
+            gap: 8px;
+            max-height: 220px;
+            overflow: auto;
+        }
+
+        .pending-item {
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 9px 10px;
+            background: rgba(5, 16, 26, 0.65);
+            font-size: 13px;
+        }
+
+        .status-line {
+            margin-top: 10px;
+            min-height: 20px;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .status-line.good { color: var(--good); }
+        .status-line.warn { color: var(--warn); }
+        .status-line.bad { color: var(--bad); }
+    </style>
+</head>
+<body>
+<div class="shell">
+    <div class="hero">
+        <div>
+            <h1>Trebuchet Arena Console</h1>
+            <p>LLM model ladder, queue orchestration, and live ELO inspection</p>
+        </div>
+        <button id="refreshBtn" style="max-width: 180px;">Refresh</button>
+    </div>
+
+    <div class="grid">
+        <section class="card">
+            <h2>Model Registration</h2>
+            <div class="stack">
+                <div>
+                    <label for="modelName">Model Name</label>
+                    <input id="modelName" type="text" placeholder="openrouter/deepseek-r1">
+                </div>
+                <div class="panel-row">
+                    <div>
+                        <label for="providerName">Provider</label>
+                        <input id="providerName" type="text" value="openrouter">
+                    </div>
+                    <div>
+                        <label for="modelVersion">Version</label>
+                        <input id="modelVersion" type="text" value="latest">
+                    </div>
+                </div>
+                <button id="registerModelBtn">Register Model</button>
+            </div>
+
+            <h2>Queue Matches</h2>
+            <div class="stack">
+                <div class="panel-row">
+                    <div>
+                        <label for="modelA">Model A ID</label>
+                        <input id="modelA" type="text" placeholder="model_...">
+                    </div>
+                    <div>
+                        <label for="modelB">Model B ID</label>
+                        <input id="modelB" type="text" placeholder="model_...">
+                    </div>
+                </div>
+                <button id="queueMatchBtn">Queue Direct Match</button>
+                <button id="queueRoundRobinBtn" class="secondary">Queue Round Robin</button>
+                <button id="claimNextBtn" class="secondary">Claim Next Match</button>
+            </div>
+
+            <div id="statusLine" class="status-line">Ready.</div>
+        </section>
+
+        <section class="card">
+            <h2>Arena Overview</h2>
+            <div class="metric-strip">
+                <div class="metric">
+                    <div class="k">Active Models</div>
+                    <div id="metricActiveModels" class="v">0</div>
+                </div>
+                <div class="metric">
+                    <div class="k">Pending</div>
+                    <div id="metricPending" class="v">0</div>
+                </div>
+                <div class="metric">
+                    <div class="k">In Flight</div>
+                    <div id="metricInflight" class="v">0</div>
+                </div>
+                <div class="metric">
+                    <div class="k">Completed</div>
+                    <div id="metricCompleted" class="v">0</div>
+                </div>
+            </div>
+
+            <h2>Leaderboard</h2>
+            <table class="leaderboard">
+                <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Model</th>
+                    <th>ELO</th>
+                    <th>W-L-D</th>
+                    <th>WR</th>
+                </tr>
+                </thead>
+                <tbody id="leaderboardBody">
+                <tr><td colspan="5">No models yet.</td></tr>
+                </tbody>
+            </table>
+
+            <h2 style="margin-top: 14px;">Pending Matches</h2>
+            <div id="pendingList" class="pending"></div>
+        </section>
+    </div>
+</div>
+
+<script>
+    const API = {
+        overview: "/api/arena/overview",
+        leaderboard: "/api/arena/leaderboard?limit=50",
+        pending: "/api/arena/matches/pending?limit=50",
+        registerModel: "/api/arena/models/register",
+        queueMatch: "/api/arena/matches/queue",
+        queueRoundRobin: "/api/arena/matches/queue_round_robin",
+        claimNext: "/api/arena/matches/claim_next"
+    };
+
+    const statusLine = document.getElementById("statusLine");
+    const leaderboardBody = document.getElementById("leaderboardBody");
+    const pendingList = document.getElementById("pendingList");
+
+    function setStatus(message, kind = "warn") {
+        statusLine.textContent = message;
+        statusLine.className = `status-line ${kind}`;
+    }
+
+    async function apiJson(url, options = {}) {
+        const res = await fetch(url, {
+            headers: { "Content-Type": "application/json" },
+            ...options
+        });
+        const body = await res.json().catch(() => ({ ok: false, error: { message: "Invalid JSON response" } }));
+        if (!body.ok) {
+            throw new Error(body?.error?.message || "Request failed");
+        }
+        return body.data;
+    }
+
+    function renderOverview(overview) {
+        document.getElementById("metricActiveModels").textContent = overview.active_models ?? 0;
+        document.getElementById("metricPending").textContent = overview.pending_matches ?? 0;
+        document.getElementById("metricInflight").textContent = overview.in_flight_matches ?? 0;
+        document.getElementById("metricCompleted").textContent = overview.total_completed_matches ?? 0;
+    }
+
+    function renderLeaderboard(leaderboard) {
+        const rows = leaderboard?.models || [];
+        if (!rows.length) {
+            leaderboardBody.innerHTML = "<tr><td colspan='5'>No models yet.</td></tr>";
+            return;
+        }
+        leaderboardBody.innerHTML = rows.map((model, idx) => {
+            const wr = Number(model.win_rate || 0) * 100;
+            return `<tr>
+                <td>${idx + 1}</td>
+                <td title="${model.model_id}">${model.model_name}</td>
+                <td>${Math.round(model.elo_rating || 0)}</td>
+                <td>${model.wins}-${model.losses}-${model.draws}</td>
+                <td>${wr.toFixed(1)}%</td>
+            </tr>`;
+        }).join("");
+    }
+
+    function renderPending(pending) {
+        if (!pending.length) {
+            pendingList.innerHTML = "<div class='pending-item'>No pending matches.</div>";
+            return;
+        }
+        pendingList.innerHTML = pending.map(item => `
+            <div class="pending-item">
+                <strong>${item.model_a_id}</strong> vs <strong>${item.model_b_id}</strong>
+                <div style="color: var(--muted); margin-top: 4px;">
+                    ${item.mode} | ${item.match_id}
+                </div>
+            </div>
+        `).join("");
+    }
+
+    async function refreshAll(showStatus = false) {
+        try {
+            const [overview, leaderboard, pending] = await Promise.all([
+                apiJson(API.overview),
+                apiJson(API.leaderboard),
+                apiJson(API.pending)
+            ]);
+            renderOverview(overview);
+            renderLeaderboard(leaderboard);
+            renderPending(pending || []);
+            if (showStatus) setStatus("Refreshed arena state.", "good");
+        } catch (error) {
+            setStatus(`Refresh failed: ${error.message}`, "bad");
+        }
+    }
+
+    async function post(url, payload) {
+        return apiJson(url, {
+            method: "POST",
+            body: JSON.stringify(payload || {})
+        });
+    }
+
+    document.getElementById("refreshBtn").addEventListener("click", () => refreshAll(true));
+
+    document.getElementById("registerModelBtn").addEventListener("click", async () => {
+        const modelName = document.getElementById("modelName").value.trim();
+        const provider = document.getElementById("providerName").value.trim();
+        const version = document.getElementById("modelVersion").value.trim();
+        if (!modelName) {
+            setStatus("Model name is required.", "warn");
+            return;
+        }
+
+        try {
+            const result = await post(API.registerModel, {
+                model_name: modelName,
+                provider,
+                version
+            });
+            setStatus(`Registered ${result.model_name} (${result.model_id}).`, "good");
+            await refreshAll(false);
+        } catch (error) {
+            setStatus(`Register failed: ${error.message}`, "bad");
+        }
+    });
+
+    document.getElementById("queueMatchBtn").addEventListener("click", async () => {
+        const modelA = document.getElementById("modelA").value.trim();
+        const modelB = document.getElementById("modelB").value.trim();
+        if (!modelA || !modelB) {
+            setStatus("Both model IDs are required.", "warn");
+            return;
+        }
+        try {
+            const result = await post(API.queueMatch, {
+                model_a_id: modelA,
+                model_b_id: modelB,
+                mode: "arena"
+            });
+            setStatus(`Queued ${result.queued_count} match. Pending: ${result.pending_total}.`, "good");
+            await refreshAll(false);
+        } catch (error) {
+            setStatus(`Queue failed: ${error.message}`, "bad");
+        }
+    });
+
+    document.getElementById("queueRoundRobinBtn").addEventListener("click", async () => {
+        try {
+            const result = await post(API.queueRoundRobin, {
+                mode: "arena",
+                include_inactive: false,
+                max_pairs: 64
+            });
+            setStatus(`Queued ${result.queued_count} round-robin matches.`, "good");
+            await refreshAll(false);
+        } catch (error) {
+            setStatus(`Round-robin failed: ${error.message}`, "bad");
+        }
+    });
+
+    document.getElementById("claimNextBtn").addEventListener("click", async () => {
+        try {
+            const result = await post(API.claimNext, {});
+            if (!result.claimed) {
+                setStatus("No pending matches to claim.", "warn");
+            } else {
+                setStatus(`Claimed ${result.claimed.match_id}.`, "good");
+            }
+            await refreshAll(false);
+        } catch (error) {
+            setStatus(`Claim failed: ${error.message}`, "bad");
+        }
+    });
+
+    refreshAll(false);
+    setInterval(() => refreshAll(false), 8000);
+</script>
+</body>
+</html>

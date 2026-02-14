@@ -21,7 +21,6 @@ use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -142,33 +141,29 @@ fn parse_csv(raw: &str) -> Vec<String> {
 }
 
 fn build_welcome_message_bytes(player_id: &str, server_tick_rate: u16) -> Bytes {
-    thread_local! {
-        static WELCOME_BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
-            RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(256));
+    let mut builder_welcome = flatbuffers::FlatBufferBuilder::with_capacity(256);
+    let player_id_fb_welcome = builder_welcome.create_string(player_id);
+    let welcome_text_fb = builder_welcome.create_string("Welcome to MassiveGameServer!");
+    let welcome_msg_args = fb::WelcomeMessageArgs {
+        player_id: Some(player_id_fb_welcome),
+        message: Some(welcome_text_fb),
+        server_tick_rate,
+    };
+    let welcome_msg = fb::WelcomeMessage::create(&mut builder_welcome, &welcome_msg_args);
+    let game_msg_welcome_args = fb::GameMessageArgs {
+        msg_type: fb::MessageType::Welcome,
+        actual_message_type: fb::MessagePayload::WelcomeMessage,
+        actual_message: Some(welcome_msg.as_union_value()),
+    };
+    let game_msg_welcome = fb::GameMessage::create(&mut builder_welcome, &game_msg_welcome_args);
+    builder_welcome.finish(game_msg_welcome, None);
+
+    if !env_bool("MGS_JOIN_DISABLE_ZERO_COPY_SERIALIZATION") {
+        let (buffer, root_index) = builder_welcome.collapse();
+        Bytes::from(buffer).slice(root_index..)
+    } else {
+        Bytes::copy_from_slice(builder_welcome.finished_data())
     }
-
-    WELCOME_BUILDER.with(|builder_cell| {
-        let mut builder_welcome = builder_cell.borrow_mut();
-        builder_welcome.reset();
-
-        let player_id_fb_welcome = builder_welcome.create_string(player_id);
-        let welcome_text_fb = builder_welcome.create_string("Welcome to MassiveGameServer!");
-        let welcome_msg_args = fb::WelcomeMessageArgs {
-            player_id: Some(player_id_fb_welcome),
-            message: Some(welcome_text_fb),
-            server_tick_rate,
-        };
-        let welcome_msg = fb::WelcomeMessage::create(&mut builder_welcome, &welcome_msg_args);
-        let game_msg_welcome_args = fb::GameMessageArgs {
-            msg_type: fb::MessageType::Welcome,
-            actual_message_type: fb::MessagePayload::WelcomeMessage,
-            actual_message: Some(welcome_msg.as_union_value()),
-        };
-        let game_msg_welcome = fb::GameMessage::create(&mut builder_welcome, &game_msg_welcome_args);
-        builder_welcome.finish(game_msg_welcome, None);
-
-        Bytes::from(builder_welcome.finished_data().to_vec())
-    })
 }
 
 fn parse_ice_servers_env(raw: &str) -> Vec<RTCIceServer> {
@@ -281,6 +276,7 @@ pub async fn handle_signaling_connection(
     auth_user_id: Option<String>,
 ) {
     info!("[{}]: New WebSocket connection for signaling.", peer_id_str);
+    server_instance.note_join_enqueued(&peer_id_str);
 
     let (mut ws_tx, mut ws_rx) = ws.split();
     let (client_signaling_tx, mut client_signaling_rx) = mpsc::unbounded_channel();
@@ -484,6 +480,7 @@ pub async fn handle_signaling_connection(
                 current_peer_id_on_open_cb, current_dc_label_on_open_cb
             );
             let dc_for_async_block = Arc::clone(&dc_for_closure);
+            server_instance_on_open.note_join_channel_open(&current_peer_id_on_open_cb);
 
             let core_dc = Arc::new(crate::core::types::RTCDataChannel::new(Arc::clone(
                 &dc_for_async_block,
@@ -509,16 +506,6 @@ pub async fn handle_signaling_connection(
                 current_peer_id_on_open_cb,
                 client_states_map_on_open.read().len()
             );
-
-            // Kick a match_info-only delta immediately so the client UI doesn't wait.
-            let server_clone_for_match_info = server_instance_on_open.clone();
-            let peer_id_for_match_info = current_peer_id_on_open_cb.clone();
-            let dc_for_match_info = core_dc.clone();
-            tokio::spawn(async move {
-                server_clone_for_match_info
-                    .send_match_info_only(&peer_id_for_match_info, &dc_for_match_info)
-                    .await;
-            });
 
             let mut username = format!(
                 "Player_{}",
@@ -616,25 +603,51 @@ pub async fn handle_signaling_connection(
 
             // Send welcome immediately; initial world snapshot is sent by broadcast pipeline.
             let config_for_welcome = config_on_open.clone();
+            let server_for_join_packets = server_instance_on_open.clone();
+            let core_dc_for_join_packets = core_dc.clone();
 
             Box::pin(async move {
                 let welcome_bytes = build_welcome_message_bytes(
                     &current_peer_id_on_open_cb,
                     config_for_welcome.tick_rate as u16,
                 );
+                let match_info_bytes = server_for_join_packets.build_match_info_only_bytes();
+                let outbound_packets = [welcome_bytes, match_info_bytes];
+                let sent_packets = server_for_join_packets
+                    .send_packet_batch_optimized(&core_dc_for_join_packets, &outbound_packets, 100)
+                    .await;
 
-                if let Err(e) = dc_for_async_block
-                    .send(&welcome_bytes)
-                    .await
-                {
-                    handle_dc_send_error(
-                        &e.to_string(),
-                        &current_peer_id_on_open_cb,
-                        "welcome message",
+                if sent_packets < outbound_packets.len() {
+                    warn!(
+                        "[{}]: Initial join packet batch partial send ({}/{} packets).",
+                        current_peer_id_on_open_cb,
+                        sent_packets,
+                        outbound_packets.len()
                     );
+                    // Fallback: re-attempt welcome using the same batched transport path.
+                    let fallback_sent = server_for_join_packets
+                        .send_packet_batch_optimized(
+                            &core_dc_for_join_packets,
+                            &outbound_packets[..1],
+                            100,
+                        )
+                        .await;
+                    if fallback_sent == 0 {
+                        handle_dc_send_error(
+                            "send timeout/failure",
+                            &current_peer_id_on_open_cb,
+                            "welcome message fallback",
+                        );
+                    }
+                    server_for_join_packets
+                        .send_match_info_only(
+                            &current_peer_id_on_open_cb,
+                            &core_dc_for_join_packets,
+                        )
+                        .await;
                 } else {
                     info!(
-                        "[{}]: Sent WelcomeMessage. Initial state will be sent by broadcast pipeline.",
+                        "[{}]: Sent welcome + match-info batch. Initial state will be sent by broadcast pipeline.",
                         current_peer_id_on_open_cb
                     );
                 }

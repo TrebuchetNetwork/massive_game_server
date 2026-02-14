@@ -21,6 +21,8 @@ function parseArgs(argv) {
     minConnectedRatio: 0.9,
     maxErrorClients: 2,
     maxTotalMs: 0,
+    joinStageUrl: null,
+    resetJoinStages: false,
     headless: true,
     outPath: path.resolve(process.cwd(), "artifacts", "scale", "multi_client.json"),
   };
@@ -41,6 +43,8 @@ function parseArgs(argv) {
     else if (arg === "--min-connected-ratio") args.minConnectedRatio = Number(argv[++i]);
     else if (arg === "--max-error-clients") args.maxErrorClients = Number(argv[++i]);
     else if (arg === "--max-total-ms") args.maxTotalMs = Number(argv[++i]);
+    else if (arg === "--join-stage-url") args.joinStageUrl = argv[++i];
+    else if (arg === "--reset-join-stages") args.resetJoinStages = true;
     else if (arg === "--headed") args.headless = false;
     else if (arg === "--out") args.outPath = path.resolve(process.cwd(), argv[++i]);
     else if (arg === "--help") {
@@ -68,6 +72,8 @@ function printHelp() {
   --min-connected-ratio <0-1>  Minimum required connected ratio (default: 0.9)
   --max-error-clients <count>  Max clients allowed in error state (default: 2)
   --max-total-ms <ms>          Hard timeout for full benchmark (default: auto)
+  --join-stage-url <url>       Optional server join-stage report endpoint
+  --reset-join-stages          Reset join-stage metrics before launch (requires endpoint)
   --headed                     Show browser UI
   --out <path>                 Output JSON path (default: artifacts/scale/multi_client.json)
   --help                       Show help
@@ -337,6 +343,18 @@ async function main() {
   let timedOutDuringLaunch = false;
   let timedOutDuringSampling = false;
 
+  if (args.joinStageUrl && args.resetJoinStages) {
+    const resetUrl = args.joinStageUrl.endsWith("/reset")
+      ? args.joinStageUrl
+      : `${args.joinStageUrl.replace(/\/$/, "")}/reset`;
+    try {
+      await fetch(resetUrl, { method: "POST" });
+      console.log(`[multi] reset join-stage metrics via ${resetUrl}`);
+    } catch (err) {
+      console.warn(`[multi] failed to reset join-stage metrics: ${String(err?.message || err)}`);
+    }
+  }
+
   console.log(
     `[multi] start clients=${args.clients} concurrency=${effectiveConcurrency} durationMs=${args.durationMs} timeoutMs=${maxTotalMs}`
   );
@@ -525,6 +543,19 @@ async function main() {
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - startedMs,
     };
+
+    if (args.joinStageUrl) {
+      try {
+        const response = await fetch(args.joinStageUrl);
+        if (response.ok) {
+          result.serverJoinStages = await response.json();
+        } else {
+          result.serverJoinStagesError = `HTTP ${response.status}`;
+        }
+      } catch (err) {
+        result.serverJoinStagesError = String(err?.message || err);
+      }
+    }
 
     fs.mkdirSync(path.dirname(args.outPath), { recursive: true });
     fs.writeFileSync(args.outPath, JSON.stringify(result, null, 2));

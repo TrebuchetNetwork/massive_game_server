@@ -124,6 +124,42 @@ Phone/SMS auth profiles can be persisted in Redis (with file fallback still enab
 
 If Redis is unavailable, the server automatically falls back to local file persistence (`MGS_AUTH_STORE_PATH`).
 
+### LLM Arena API (New)
+
+Arena endpoints are now available for model ladder workflows:
+
+* `POST /api/arena/models/register`
+* `POST /api/arena/models/heartbeat`
+* `GET /api/arena/models`
+* `POST /api/arena/matches/queue`
+* `POST /api/arena/matches/queue_round_robin`
+* `POST /api/arena/matches/claim_next`
+* `GET /api/arena/matches/pending`
+* `POST /api/arena/matches/report`
+* `GET /api/arena/leaderboard`
+* `GET /api/arena/overview`
+
+Storage:
+
+* `MGS_ARENA_STORE_PATH`: JSON persistence path (default: `data/arena_store.json`).
+
+Web console:
+
+* `http://<host>:<port>/arena.html`
+
+### Feature Flags / A-B Controls
+
+Operational feature flag endpoints:
+
+* `GET /api/ops/feature-flags`
+* `POST /api/ops/feature-flags/set`
+* `POST /api/ops/feature-flags/evaluate`
+
+Configuration:
+
+* `MGS_FEATURE_FLAGS`: bootstrap flags from env (example: `exp_new_ui=1,exp_tail_policy=0`).
+* `MGS_FEATURE_FLAG_STORE_PATH`: persistent JSON path (default: `data/feature_flags.json`).
+
 ### Static Assets / CDN-Ready Headers
 
 The static file route now emits long-lived immutable cache headers for JS/CSS/WASM/media assets and no-store for HTML.

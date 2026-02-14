@@ -4,6 +4,20 @@
 - Goal: keep `10v10` stable and clear the remaining `80+` launch-timeout bottleneck.
 - This refresh retested join throughput after the dynamic+deterministic world optimization pass.
 
+## Fresh Benchmarks (2026-02-14 evening)
+- Server target: `target/release/massive_game_server_core` on `127.0.0.1:18084`.
+- New artifacts:
+  - `artifacts/scale/multi_client_fresh_20_after_ecs_rest_20260214_131633.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=85583`, `p95=22862.3`
+  - `artifacts/scale/multi_client_fresh_100_after_ecs_rest_20260214_134211_fastsample.json`
+    - `100/100`, `connectedRatio=1.0`, `timedOutDuringLaunch=false`
+    - `73+`: `count=28/28`, `avg=135188`, `p95=154371.4`, `max=156030`
+  - `artifacts/scale/multi_client_fresh_120_after_ecs_rest_20260214_133241_fastsample.json`
+    - `103/120`, `connectedRatio=0.85`, `timedOutDuringLaunch=true`
+    - `73+`: `count=30/48`, `avg=133160.67`, `p95=166463.7`, `max=182012`
+- Runner note:
+  - tail reruns (`100`/`120`) used `--state-read-timeout-ms 250` to avoid long sequential sample stalls; use launch and per-wave latency numbers as primary comparison metrics.
+
 ## Join Throughput Isolation (2026-02-14 PM)
 - Added runtime-isolation toggles and stage-report wiring:
   - server toggles: `MGS_JOIN_DISABLE_TAIL_POLICY`, `MGS_JOIN_DISABLE_PACKET_BATCHING`, `MGS_JOIN_DISABLE_SOA_SNAPSHOT`, `MGS_JOIN_DISABLE_ZERO_COPY_SERIALIZATION`
@@ -24,7 +38,7 @@
   - tail policy is helping (turning it off is worst in this matrix).
   - packet batching and zero-copy are not primary regressors in this profile.
   - SoA snapshot path is the strongest remaining regression suspect (`+10` launched clients vs current regressed baseline `86/120` when disabled).
-  - stage buckets currently report near-zero queue/build/send timings, so they need deeper span coverage before being used as bottleneck truth.
+  - join-stage spans were upgraded in this pass with enqueue/open/send-result coverage and microsecond timing precision.
 - Confirmation refresh:
   - `10v10` validation with chosen setting (`SoA` off):
     - `artifacts/scale/multi_client_fresh_20_after_soa_off_tail_retest_20260214.json`
@@ -41,6 +55,19 @@
   - `10v10` sanity on final adaptive fallback:
     - `artifacts/scale/multi_client_fresh_20_after_soa_adaptive_fallback_v2_20260214.json`
     - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=98109`
+
+## Join-Stage Instrumentation Refresh (2026-02-14 late PM)
+- Added server-side stage hooks at signaling enqueue and data-channel open.
+- Added per-wave `open_channel_wait_ms` and `send_result_ms` to `/api/ops/join-stages`.
+- Internal stage timestamps now use microseconds and are normalized back to milliseconds in reports.
+- Smoke validation:
+  - `artifacts/scale/multi_client_smoke_20_jointrace_us_v2_20260214.json`
+  - `20/20`, `connectedRatio=1.0`
+  - `serverJoinStages.wave_1_24`:
+    - `open_channel_wait_ms avg=101.65, p95=197.75`
+    - `queue_wait_ms avg=111.2, p95=215.7`
+    - `snapshot_build_ms avg=0.1, p95=1.0`
+    - `send_result_ms` is now captured with microsecond internal timing (this smoke run still reports `0` at millisecond resolution output).
 
 ## Benchmark Refresh (2026-02-14, release retest)
 - Re-ran deterministic multi-client benches after the lock-free/zero-copy/batching pass using release server build.

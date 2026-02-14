@@ -30,6 +30,10 @@ declare -A TARGET_SYSCTL=(
   ["net.ipv4.udp_rmem_min"]="16384"
   ["net.ipv4.udp_wmem_min"]="16384"
   ["net.ipv4.udp_mem"]="262144 524288 1048576"
+  ["net.ipv4.ip_local_port_range"]="10000 65535"
+  ["net.ipv4.tcp_fin_timeout"]="15"
+  ["net.ipv4.tcp_tw_reuse"]="1"
+  ["kernel.numa_balancing"]="0"
   ["vm.max_map_count"]="1048576"
   ["vm.swappiness"]="1"
   ["fs.file-max"]="2097152"
@@ -117,6 +121,61 @@ check_cpu_governor() {
   echo "[applied] cpu_governor=performance"
 }
 
+check_irqbalance() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "[skip] systemctl unavailable; cannot verify irqbalance"
+    return
+  fi
+  local status
+  status="$(systemctl is-active irqbalance 2>/dev/null || true)"
+  if [[ "$status" == "active" ]]; then
+    echo "[ok] irqbalance=active"
+  elif [[ "$MODE" == "apply" ]]; then
+    if systemctl enable --now irqbalance >/dev/null 2>&1; then
+      echo "[applied] irqbalance enabled and started"
+    else
+      echo "[todo] unable to enable irqbalance automatically"
+    fi
+  else
+    echo "[todo] irqbalance status='$status' (target: active)"
+  fi
+}
+
+check_hugetlb_mount() {
+  if grep -qE '\s/dev/hugepages\s' /proc/mounts 2>/dev/null; then
+    echo "[ok] hugetlbfs mounted at /dev/hugepages"
+    return
+  fi
+  if [[ "$MODE" == "apply" ]]; then
+    mkdir -p /dev/hugepages
+    if mount -t hugetlbfs nodev /dev/hugepages >/dev/null 2>&1; then
+      echo "[applied] mounted hugetlbfs at /dev/hugepages"
+    else
+      echo "[todo] failed to mount hugetlbfs at /dev/hugepages"
+    fi
+  else
+    echo "[todo] hugetlbfs not mounted at /dev/hugepages"
+  fi
+}
+
+check_numa() {
+  if ! command -v numactl >/dev/null 2>&1; then
+    echo "[skip] numactl not installed"
+    return
+  fi
+  local nodes
+  nodes="$(numactl --hardware 2>/dev/null | awk '/available:/ {print $2}' | head -n 1 || true)"
+  if [[ -z "$nodes" ]]; then
+    echo "[skip] unable to query NUMA topology"
+    return
+  fi
+  if [[ "$nodes" -gt 1 ]]; then
+    echo "[info] numa_nodes=$nodes (recommend --cpunodebind/--membind launch pinning)"
+  else
+    echo "[ok] numa_nodes=$nodes"
+  fi
+}
+
 check_limits() {
   local nofile_soft
   nofile_soft="$(ulimit -n || true)"
@@ -151,5 +210,8 @@ done
 check_hugepages
 check_thp
 check_cpu_governor
+check_irqbalance
+check_hugetlb_mount
+check_numa
 check_limits
 print_runtime_hints

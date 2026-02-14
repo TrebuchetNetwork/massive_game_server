@@ -461,14 +461,14 @@ impl WorldPartitionManager {
         out: &mut Vec<usize>,
     ) {
         let max_index = self.grid_dim.saturating_sub(1) as isize;
-        let grid_min_x =
-            (((min_x - self.world_min_x) / self.partition_width).floor() as isize).clamp(0, max_index);
-        let grid_max_x =
-            (((max_x - self.world_min_x) / self.partition_width).floor() as isize).clamp(0, max_index);
-        let grid_min_y =
-            (((min_y - self.world_min_y) / self.partition_height).floor() as isize).clamp(0, max_index);
-        let grid_max_y =
-            (((max_y - self.world_min_y) / self.partition_height).floor() as isize).clamp(0, max_index);
+        let grid_min_x = (((min_x - self.world_min_x) / self.partition_width).floor() as isize)
+            .clamp(0, max_index);
+        let grid_max_x = (((max_x - self.world_min_x) / self.partition_width).floor() as isize)
+            .clamp(0, max_index);
+        let grid_min_y = (((min_y - self.world_min_y) / self.partition_height).floor() as isize)
+            .clamp(0, max_index);
+        let grid_max_y = (((max_y - self.world_min_y) / self.partition_height).floor() as isize)
+            .clamp(0, max_index);
 
         out.clear();
         out.reserve(((grid_max_x - grid_min_x + 1) * (grid_max_y - grid_min_y + 1)) as usize);

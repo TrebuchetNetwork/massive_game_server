@@ -6,6 +6,41 @@
 - Execute the next join-throughput optimization pass for the remaining `80+` launch timeout.
 - Rebaseline with deterministic world generation and refreshed measurements.
 
+### Fresh run artifacts (2026-02-14 evening)
+- `artifacts/scale/multi_client_fresh_20_after_ecs_rest_20260214_131633.json`
+  - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=85583`, `p95=22862.3`
+- `artifacts/scale/multi_client_fresh_100_after_ecs_rest_20260214_134211_fastsample.json`
+  - `100/100`, `connectedRatio=1.0`, `timedOutDuringLaunch=false`
+  - `73+`: `count=28/28`, `avg=135188`, `p95=154371.4`, `max=156030`
+- `artifacts/scale/multi_client_fresh_120_after_ecs_rest_20260214_133241_fastsample.json`
+  - `103/120`, `connectedRatio=0.85`, `timedOutDuringLaunch=true`
+  - `73+`: `count=30/48`, `avg=133160.67`, `p95=166463.7`, `max=182012`
+- Runner caveat:
+  - `100`/`120` used `--state-read-timeout-ms 250` to keep sampling deterministic; treat launch counts and `connectLatencyByWave` as the primary signal.
+
+### Phase-2 backend hardening pass (2026-02-14 late PM)
+- Lock-free SoA migration expanded to entity snapshots:
+  - `server/src/concurrent/atomic_snapshot.rs`
+  - added `ProjectileSoASnapshot`/`PickupSoASnapshot` and atomic publishers.
+  - broadcast serializers now consume shared entity snapshots through unified lookup helpers.
+- Join-stage tracing coverage improved:
+  - signaling enqueue + channel-open hooks (`note_join_enqueued`, `note_join_channel_open`).
+  - new per-wave metrics: `open_channel_wait_ms`, `send_result_ms`.
+  - trace timing moved to microsecond precision internally (reported as ms), removing prior `0ms` quantization for fast paths.
+- Join packet transport path tightened:
+  - welcome + match-info now sent through the packet batch/coalescing path when data channel opens.
+  - match-info serialization now uses zero-copy collapse path when enabled.
+- SIMD collision pass expanded:
+  - projectile-to-player ray checks now batch candidate target positions and SIMD-test sample points against packed target vectors.
+- Smoke artifact after this pass:
+  - `artifacts/scale/multi_client_smoke_20_jointrace_us_v2_20260214.json`
+  - `20/20`, `connectedRatio=1.0`.
+  - `serverJoinStages.wave_1_24`:
+    - `open_channel_wait_ms avg=101.65, p95=197.75`
+    - `queue_wait_ms avg=111.2, p95=215.7`
+    - `snapshot_build_ms avg=0.1, p95=1.0`
+    - `send_result_ms` is now measured with microsecond precision (still `0` in this low-load run).
+
 ### A/B isolation pass + confirmation (2026-02-14 PM)
 - Added runtime toggles for targeted isolation:
   - `MGS_JOIN_DISABLE_TAIL_POLICY`
@@ -213,10 +248,8 @@
 - Close remaining gap to prior best (`101 -> 105`) and push toward target `>=108`.
 - Keep adaptive SoA fallback and further tune tail-wave (`73+`) reliability.
 - Keep tail policy enabled; disabling it regresses both launched count and tail latency.
-- Improve per-stage metrics coverage to include:
-  - enqueue-to-open-channel wait
-  - snapshot build window around initial/delta serialization
-  - send-to-completion/error callback latency
+- Drive new stage metrics (`open_channel_wait_ms`, `queue_wait_ms`, `snapshot_build_ms`, `send_result_ms`) through refreshed `120` tail runs and correlate with launch failures.
+- If `send_result_ms` remains near-zero in heavy runs, add deeper transport callback instrumentation around data-channel buffered amount / lower-level send completion.
 
 ### Test status
 - `cargo test -p massive_game_server_core --test boundary_stress -- --nocapture` passed.

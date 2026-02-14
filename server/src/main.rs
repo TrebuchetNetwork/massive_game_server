@@ -13,7 +13,11 @@ use massive_game_server_core::network::signaling::{
     SignalingPeers,
     WorldPartitionManagerRef,
 };
+use massive_game_server_core::operational::arena::{build_arena_routes, ArenaService};
 use massive_game_server_core::operational::auth::{build_auth_routes, AuthService};
+use massive_game_server_core::operational::feature_flags::{
+    build_feature_flag_routes, FeatureFlagService,
+};
 use massive_game_server_core::server::instance::MassiveGameServer;
 
 use parking_lot::RwLock as ParkingLotRwLock;
@@ -146,7 +150,24 @@ async fn main() -> anyhow::Result<()> {
     let signaling_peers_state: SignalingPeers =
         Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     let auth_service = AuthService::new_from_env();
+    let arena_service = ArenaService::new_from_env();
+    let feature_flag_service = FeatureFlagService::new_from_env();
     let auth_routes = build_auth_routes(auth_service.clone());
+    let arena_routes = build_arena_routes(arena_service);
+    let feature_flag_routes = build_feature_flag_routes(feature_flag_service);
+    let server_for_join_stage_report = game_server_instance.clone();
+    let join_stage_report_route = warp::path!("api" / "ops" / "join-stages")
+        .and(warp::get())
+        .and(warp::any().map(move || server_for_join_stage_report.clone()))
+        .map(|server_inst: ServerInstanceRef| warp::reply::json(&server_inst.join_stage_report()));
+    let server_for_join_stage_reset = game_server_instance.clone();
+    let join_stage_reset_route = warp::path!("api" / "ops" / "join-stages" / "reset")
+        .and(warp::post())
+        .and(warp::any().map(move || server_for_join_stage_reset.clone()))
+        .map(|server_inst: ServerInstanceRef| {
+            server_inst.reset_join_stage_report();
+            warp::reply::json(&serde_json::json!({ "ok": true }))
+        });
 
     let config_for_ws = config.clone();
     let signaling_peers_for_ws = signaling_peers_state.clone();
@@ -259,21 +280,28 @@ async fn main() -> anyhow::Result<()> {
             response
         });
 
-    let routes = auth_routes.or(signaling_route).or(static_files_route).with(
-        warp::cors()
-            .allow_any_origin()
-            .allow_methods(vec!["GET", "POST", "OPTIONS"])
-            .allow_headers(vec![
-                "Content-Type",
-                "Authorization",
-                "User-Agent",
-                "Sec-WebSocket-Key",
-                "Sec-WebSocket-Version",
-                "Sec-WebSocket-Extensions",
-                "Upgrade",
-                "Connection",
-            ]),
-    );
+    let routes = auth_routes
+        .or(arena_routes)
+        .or(feature_flag_routes)
+        .or(join_stage_report_route)
+        .or(join_stage_reset_route)
+        .or(signaling_route)
+        .or(static_files_route)
+        .with(
+            warp::cors()
+                .allow_any_origin()
+                .allow_methods(vec!["GET", "POST", "OPTIONS"])
+                .allow_headers(vec![
+                    "Content-Type",
+                    "Authorization",
+                    "User-Agent",
+                    "Sec-WebSocket-Key",
+                    "Sec-WebSocket-Version",
+                    "Sec-WebSocket-Extensions",
+                    "Upgrade",
+                    "Connection",
+                ]),
+        );
 
     let game_server_for_loop = Arc::clone(&game_server_instance); // Use the renamed variable
     tokio::spawn(async move {

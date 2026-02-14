@@ -133,8 +133,8 @@ impl MassiveGameServer {
         let mut players_to_update = Vec::with_capacity(self.player_manager.player_count());
         self.player_manager
             .for_each_player(|player_id, player_state| {
-                let is_connected_client =
-                    update_aoi_this_frame && self.data_channels_map.contains_key(player_id.as_str());
+                let is_connected_client = update_aoi_this_frame
+                    && self.data_channels_map.contains_key(player_id.as_str());
                 let mut needs_full_aoi_update = false;
 
                 if is_connected_client {
@@ -171,7 +171,9 @@ impl MassiveGameServer {
                 ));
             });
 
-        for (player_id, x, y, partition_idx, is_connected_client, needs_full_aoi_update) in players_to_update {
+        for (player_id, x, y, partition_idx, is_connected_client, needs_full_aoi_update) in
+            players_to_update
+        {
             if let Some(partition) = self.world_partition_manager.get_partition(partition_idx) {
                 let is_newly_entered_partition = !partition.local_players.contains(&player_id);
                 partition.update_player_status(&player_id, x, y, is_newly_entered_partition);
@@ -246,12 +248,8 @@ impl MassiveGameServer {
 
         // Candidate partitions for map/items within this AoI.
         let mut candidate_partition_indices = Vec::with_capacity(64);
-        self.world_partition_manager.collect_partition_indices_for_aoi(
-            x,
-            y,
-            AOI_RADIUS,
-            &mut candidate_partition_indices,
-        );
+        self.world_partition_manager
+            .collect_partition_indices_for_aoi(x, y, AOI_RADIUS, &mut candidate_partition_indices);
 
         // 3. Update visible pickups via partition dynamic object index.
         let mut candidate_pickups = 0usize;
