@@ -735,6 +735,18 @@
         .settings-menu .cancel-btn:hover { background-color: #6B7280; }
         
         .fps-counter { position: absolute; top: 10px; right: 10px; background-color: rgba(31, 41, 55, 0.9); padding: 5px 10px; border-radius: 6px; color: #D1D5DB; font-size: 12px; font-family: monospace; }
+        .network-profiler {
+            margin-top: 8px;
+            border: 1px solid rgba(71, 85, 105, 0.65);
+            border-radius: 8px;
+            padding: 8px 10px;
+            background: rgba(15, 23, 42, 0.6);
+            color: #CBD5E1;
+            font-size: 11px;
+            line-height: 1.35;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            white-space: pre-line;
+        }
 
         .connection-status {
             position: absolute;
@@ -1195,6 +1207,7 @@
                         </div>
                         <div id="powerupStatus" class="mt-2 space-y-1"></div>
                         <div id="networkQualityIndicator" class="mt-2"></div>
+                        <div id="networkProfiler" class="network-profiler hidden"></div>
                     </div>
                 </div>
 
@@ -1260,6 +1273,7 @@
             <label><input type="checkbox" id="particleEffects" checked> Particle Effects</label>
             <label><input type="checkbox" id="screenShake" checked> Screen Shake</label>
             <label><input type="checkbox" id="showFPS"> Show FPS</label>
+            <label><input type="checkbox" id="showNetworkProfiler" checked> Show Network Profiler</label>
             <label>Combat UI Quality:
                 <select id="combatUiQuality">
                     <option value="auto" selected>Auto</option>
@@ -1552,6 +1566,7 @@
         const minimapContainerDiv = document.getElementById('minimapContainer');
         const pingDisplay = document.getElementById('pingDisplay');
         const networkQualityIndicatorDiv = document.getElementById('networkQualityIndicator');
+        const networkProfilerDiv = document.getElementById('networkProfiler');
         const settingsButton = document.getElementById('settingsButton');
         const settingsMenuDiv = document.getElementById('settingsMenu');
         const saveSettingsButton = document.getElementById('saveSettingsButton');
@@ -1594,6 +1609,7 @@
         const deathRecapDistanceDiv = document.getElementById('deathRecapDistance');
         const deathRecapListDiv = document.getElementById('deathRecapList');
         const combatUiQualitySelect = document.getElementById('combatUiQuality');
+        const showNetworkProfilerCheckbox = document.getElementById('showNetworkProfiler');
         const mobileStickyFireCheckbox = document.getElementById('mobileStickyFire');
         const mobileAutoFireAimCheckbox = document.getElementById('mobileAutoFireAim');
         const mobileHapticsCheckbox = document.getElementById('mobileHaptics');
@@ -2476,6 +2492,7 @@
             powerupsHtml: null,
             playerCount: null,
             ping: null,
+            networkProfilerText: null,
             killFeedSignature: null,
             chatSignature: null,
             matchInfoSignature: null,
@@ -5897,6 +5914,18 @@ void main() {
         let lastSnapshotArrivalTime = 0;
         let snapshotIntervalEma = INTERPOLATION_SNAPSHOT_INTERVAL_MS;
         let snapshotJitterEma = 0;
+        const NETWORK_PROFILER_WINDOW_MS = 1000;
+        let networkProfilerWindowStartMs = performance.now();
+        let networkProfilerIncomingBytes = 0;
+        let networkProfilerIncomingMessages = 0;
+        let networkProfilerIncomingPackets = 0;
+        let networkProfilerStateUpdates = 0;
+        let networkProfilerFastDeltaPackets = 0;
+        let networkProfilerFullParsePackets = 0;
+        let networkProfilerBps = 0;
+        let networkProfilerPps = 0;
+        let networkProfilerMps = 0;
+        let networkProfilerUpdateHz = 0;
 
         // Input state
         let inputState = {
@@ -5944,6 +5973,7 @@ void main() {
             graphicsQuality: LOW_OVERHEAD_MODE ? 'low' : 'medium',
             combatUiQuality: COMBAT_UI_QUALITY_OVERRIDE || (LOW_OVERHEAD_MODE ? 'low' : 'auto'),
             showFPS: false,
+            showNetworkProfiler: !BENCH_MODE,
             sensitivity: 1.0,
             particleEffects: !LOW_OVERHEAD_MODE,
             screenShake: !LOW_OVERHEAD_MODE,
@@ -5996,6 +6026,7 @@ void main() {
             gameSettings.particleEffects = false;
             gameSettings.screenShake = false;
             gameSettings.showFPS = false;
+            gameSettings.showNetworkProfiler = false;
             gameSettings.sensitivity = Math.min(gameSettings.sensitivity || 1, 0.9);
             gameSettings.mobileAutoFireAim = gameSettings.mobileAutoFireAim !== false;
             gameSettings.mobileHaptics = gameSettings.mobileHaptics !== false;
@@ -6014,6 +6045,7 @@ void main() {
             gameSettings.particleEffects = false;
             gameSettings.screenShake = false;
             gameSettings.showFPS = false;
+            gameSettings.showNetworkProfiler = false;
             gameSettings.mobileHaptics = false;
             activeEffectsProfileName = 'ultra';
             setControlsPanelHidden(true);
@@ -6026,6 +6058,7 @@ void main() {
             gameSettings.particleEffects = false;
             gameSettings.screenShake = false;
             gameSettings.showFPS = false;
+            gameSettings.showNetworkProfiler = false;
             activeEffectsProfileName = 'ultra';
             setFocusMode(false);
         }
@@ -6039,6 +6072,7 @@ void main() {
             gameSettings.particleEffects = true;
             gameSettings.screenShake = false;
             gameSettings.showFPS = true;
+            gameSettings.showNetworkProfiler = true;
             activeEffectsProfileName = 'dense';
         }
 
@@ -12111,6 +12145,61 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             matchInfoDiv.innerHTML = content;
         }
 
+        function updateNetworkProfilerUi(currentTimeMs) {
+            if (!networkProfilerDiv) return;
+
+            const elapsedMs = Math.max(1, currentTimeMs - networkProfilerWindowStartMs);
+            if (elapsedMs >= NETWORK_PROFILER_WINDOW_MS) {
+                const elapsedSec = elapsedMs / 1000;
+                networkProfilerBps = networkProfilerIncomingBytes / elapsedSec;
+                networkProfilerPps = networkProfilerIncomingPackets / elapsedSec;
+                networkProfilerMps = networkProfilerIncomingMessages / elapsedSec;
+                networkProfilerUpdateHz = networkProfilerStateUpdates / elapsedSec;
+                networkProfilerWindowStartMs = currentTimeMs;
+                networkProfilerIncomingBytes = 0;
+                networkProfilerIncomingMessages = 0;
+                networkProfilerIncomingPackets = 0;
+                networkProfilerStateUpdates = 0;
+                networkProfilerFastDeltaPackets = 0;
+                networkProfilerFullParsePackets = 0;
+            }
+
+            const shouldShow = !!gameSettings.showNetworkProfiler;
+            networkProfilerDiv.classList.toggle('hidden', !shouldShow);
+            if (!shouldShow) return;
+
+            const snapshotHz = snapshotIntervalEma > 0 ? (1000 / snapshotIntervalEma) : 0;
+            const channelBuffered = (dataChannel && dataChannel.readyState === 'open')
+                ? dataChannel.bufferedAmount
+                : 0;
+            const text = [
+                `rx ${(networkProfilerBps / 1024).toFixed(1)} KB/s  pkts ${networkProfilerPps.toFixed(1)}/s  msgs ${networkProfilerMps.toFixed(1)}/s`,
+                `state ${networkProfilerUpdateHz.toFixed(1)}/s  fastΔ ${networkProfilerFastDeltaPackets}  parseΔ ${networkProfilerFullParsePackets}`,
+                `snapshot ${snapshotHz.toFixed(1)}Hz  jitter ${snapshotJitterEma.toFixed(1)}ms  interp ${adaptiveInterpolationDelayMs.toFixed(1)}ms`,
+                `dc buffered ${channelBuffered}B`
+            ].join('\n');
+
+            if (window.__e2e) {
+                window.__e2e.networkProfiler = {
+                    rxBytesPerSec: Number(networkProfilerBps.toFixed(2)),
+                    packetsPerSec: Number(networkProfilerPps.toFixed(2)),
+                    messagesPerSec: Number(networkProfilerMps.toFixed(2)),
+                    stateUpdatesPerSec: Number(networkProfilerUpdateHz.toFixed(2)),
+                    snapshotHz: Number(snapshotHz.toFixed(2)),
+                    snapshotJitterMs: Number(snapshotJitterEma.toFixed(2)),
+                    interpolationDelayMs: Number(adaptiveInterpolationDelayMs.toFixed(2)),
+                    dataChannelBufferedBytes: channelBuffered,
+                    fastDeltaPackets: networkProfilerFastDeltaPackets,
+                    fullParsePackets: networkProfilerFullParsePackets
+                };
+            }
+
+            if (uiCache.networkProfilerText !== text) {
+                uiCache.networkProfilerText = text;
+                networkProfilerDiv.textContent = text;
+            }
+        }
+
         function updateGameStatsUI() {
             if (myPlayerId && localPlayerState) {
                 setTextIfChanged(myPlayerIdSpan, myPlayerId.substring(0, 8), 'myPlayerId');
@@ -12155,6 +12244,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             setTextIfChanged(playerCountSpan, players.size, 'playerCount');
             setTextIfChanged(pingDisplay, Math.round(ping), 'ping');
             if (networkIndicator) networkIndicator.update(ping);
+            updateNetworkProfilerUi(performance.now());
 
             if (healthVignette && localPlayerState) {
                 const healthPercent = localPlayerState.health / localPlayerState.max_health;
@@ -12353,6 +12443,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             gameSettings.particleEffects = document.getElementById('particleEffects').checked;
             gameSettings.screenShake = document.getElementById('screenShake').checked;
             gameSettings.showFPS = document.getElementById('showFPS').checked;
+            gameSettings.showNetworkProfiler = !!showNetworkProfilerCheckbox?.checked;
             gameSettings.combatUiQuality = normalizeCombatUiQuality(combatUiQualitySelect?.value);
             gameSettings.sensitivity = parseFloat(document.getElementById('sensitivity').value);
             gameSettings.mobileStickyFire = !!mobileStickyFireCheckbox?.checked;
@@ -12436,6 +12527,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             document.getElementById('particleEffects').checked = gameSettings.particleEffects;
             document.getElementById('screenShake').checked = gameSettings.screenShake;
             document.getElementById('showFPS').checked = gameSettings.showFPS;
+            if (showNetworkProfilerCheckbox) {
+                showNetworkProfilerCheckbox.checked = !!gameSettings.showNetworkProfiler;
+            }
             if (combatUiQualitySelect) combatUiQualitySelect.value = normalizeCombatUiQuality(gameSettings.combatUiQuality);
             document.getElementById('sensitivity').value = gameSettings.sensitivity;
             document.getElementById('sensitivityValue').textContent = gameSettings.sensitivity.toFixed(1);
@@ -12496,6 +12590,12 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
         });
         document.getElementById('showFPS').addEventListener('change', (e) => {
             fpsCounterDiv.classList.toggle('hidden', !e.target.checked);
+        });
+        showNetworkProfilerCheckbox?.addEventListener('change', (e) => {
+            gameSettings.showNetworkProfiler = !!e.target.checked;
+            if (!gameSettings.showNetworkProfiler) {
+                networkProfilerDiv?.classList.add('hidden');
+            }
         });
         authRequestCodeButton?.addEventListener('click', () => {
             requestPhoneCode();
@@ -12868,6 +12968,22 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             lastSnapshotArrivalTime = 0;
             snapshotIntervalEma = INTERPOLATION_SNAPSHOT_INTERVAL_MS;
             snapshotJitterEma = 0;
+            networkProfilerWindowStartMs = performance.now();
+            networkProfilerIncomingBytes = 0;
+            networkProfilerIncomingMessages = 0;
+            networkProfilerIncomingPackets = 0;
+            networkProfilerStateUpdates = 0;
+            networkProfilerFastDeltaPackets = 0;
+            networkProfilerFullParsePackets = 0;
+            networkProfilerBps = 0;
+            networkProfilerPps = 0;
+            networkProfilerMps = 0;
+            networkProfilerUpdateHz = 0;
+            uiCache.networkProfilerText = null;
+            if (networkProfilerDiv) {
+                networkProfilerDiv.textContent = '';
+                networkProfilerDiv.classList.toggle('hidden', !gameSettings.showNetworkProfiler);
+            }
             inputSequence = 0;
             lastInputSendTime = 0;
             lastInputStateSentAt = 0;
@@ -13010,6 +13126,10 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
 
             dcInstance.onmessage = (event) => {
                 try {
+                    networkProfilerIncomingMessages += 1;
+                    if (event?.data && Number.isFinite(event.data.byteLength)) {
+                        networkProfilerIncomingBytes += Number(event.data.byteLength) || 0;
+                    }
                     markJoinTimingStage('firstPacketAtMs');
                     if (pingStartTime > 10) { // Calculate ping on message receipt
                         ping = Date.now() - pingStartTime;
@@ -13021,12 +13141,16 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                         log('Received non-binary message on DataChannel.', 'error');
                         return;
                     }
+                    networkProfilerIncomingPackets += packetFrames.length;
 
                     const e2e = window.__e2e;
                     for (const packetData of packetFrames) {
                         if (tryProcessDeltaMessageFast(packetData, e2e)) {
+                            networkProfilerFastDeltaPackets += 1;
+                            networkProfilerStateUpdates += 1;
                             continue;
                         }
+                        networkProfilerFullParsePackets += 1;
 
                         const parsed = parseFlatBufferMessage(packetData);
                         if (!parsed) continue;
@@ -13040,6 +13164,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                             case 'delta':
                                 processServerUpdate(parsed.data, parsed.type === 'initial');
                                 markJoinTimingStage('firstStateAtMs');
+                                networkProfilerStateUpdates += 1;
                                 if (e2e) {
                                     e2e.lastStateUpdate = performance.now();
                                 }

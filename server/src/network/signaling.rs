@@ -329,8 +329,8 @@ fn join_rate_limiter() -> Option<&'static Mutex<JoinRateLimiter>> {
                 return None;
             }
 
-            let burst = env_u32("MGS_JOIN_RATE_LIMIT_BURST", DEFAULT_JOIN_RATE_LIMIT_BURST)
-                .max(per_sec);
+            let burst =
+                env_u32("MGS_JOIN_RATE_LIMIT_BURST", DEFAULT_JOIN_RATE_LIMIT_BURST).max(per_sec);
             info!(
                 "Join rate limiter enabled: {} joins/sec with burst {}.",
                 per_sec, burst

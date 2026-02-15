@@ -27,6 +27,54 @@
   - `73+ avg 176286.55 -> 70950.63` (`-105335.92ms`)
   - caveat: prior run used `maxTotalMs=300000`, current run used `600000` for fuller tail-wave coverage.
 
+### V4 extreme-tail scheduler pass refresh (2026-02-15 evening)
+- Added pass artifacts:
+  - `artifacts/scale/multi_client_20_v4_extreme_tail_20260215_155005.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=77758`
+    - `connectLatency avg=23996.75ms`, `p95=26731.25ms`
+    - join timing: `firstState avg=289.94ms`, `p95=891.36ms`
+  - `artifacts/scale/multi_client_120_v4_extreme_tail_20260215_160243.json`
+    - `92/120`, `connectedRatio=0.7667`, `passed=false`
+    - timed out at `maxTotalMs=360000` (`timedOutDuringLaunch=true`, `timedOutDuringSampling=true`)
+    - `connectLatency avg=57840.65ms`, `p95=111832.5ms`
+    - `73+`: `count=20/48`, `avg=108059.6ms`, `p95=112109.9ms`
+    - join timing (`73+ firstState`): `avg=2545.88ms`, `p95=5748.42ms`
+    - server join-stage (`73+`): `open_channel_wait avg=1509.01ms`, `p95=5717.25ms`; `queue_wait avg=9.33ms`
+- Direct comparison vs prior V4 baseline (`artifacts/scale/multi_client_120_v4_join_timing_20260215_141725.json`):
+  - launched `96 -> 92` (`-4`)
+  - `connectLatency avg 37166.77 -> 57840.65` (`+20673.88ms`)
+  - `73+ avg 70950.63 -> 108059.6` (`+37108.97ms`)
+  - `73+ open_channel_wait avg 238.54 -> 1509.01` (`+1270.47ms`)
+- Measurement caveat:
+  - this run used `maxTotalMs=360000` for deterministic completion after repeated teardown hangs in longer runs.
+  - a like-for-like `600000ms` rerun progressed through clients `93-96` but hung in teardown before JSON write.
+  - runner stabilization has now been patched in `scripts/ui_bench/multi_client.js` (global-timeout-aware in-flight draining + best-effort close timeouts), validated by:
+    - `artifacts/scale/multi_client_timeout_smoke_20260215_162455.json`
+    - forced-timeout smoke (`maxTotalMs=15000`) still writes complete JSON output and exits deterministically.
+
+### V4 strict rerun after runner stabilization (2026-02-15 late evening)
+- Added strict artifacts:
+  - `artifacts/scale/multi_client_20_v4_extreme_tail_stable_20260215_163624.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=82750`
+    - `connectLatency avg=18157.6ms`, `p95=22214.65ms`
+    - `firstState avg=686.73ms`, `p95=1462.31ms`
+  - `artifacts/scale/multi_client_120_v4_extreme_tail_stable_20260215_162613.json`
+    - `96/120`, `connectedRatio=0.8`, `passed=false`, `durationMs=600804`
+    - timed out at `maxTotalMs=600000` (`timedOutDuringLaunch=true`, `timedOutDuringSampling=true`)
+    - `connectLatency avg=73541.72ms`, `p95=145529.25ms`
+    - `73+`: `count=24/48`, `avg=136711.38ms`, `p95=151533.65ms`
+    - `73+ firstState`: `avg=4574.68ms`, `p95=11524.76ms`
+    - server join-stage (`73+ open_channel_wait`): `avg=2538.7ms`, `p95=8463.82ms`
+- Strict comparison vs prior V4 baseline (`artifacts/scale/multi_client_120_v4_join_timing_20260215_141725.json`):
+  - launched: `96 -> 96` (no throughput gain)
+  - `connectLatency avg`: `37166.77 -> 73541.72` (`+36374.95ms`)
+  - `73+ avg`: `70950.63 -> 136711.38` (`+65760.75ms`)
+  - `73+ firstState avg`: `627.95 -> 4574.68` (`+3946.73ms`)
+  - `73+ open_channel_wait avg`: `238.54 -> 2538.7` (`+2300.16ms`)
+- Conclusion:
+  - extreme-tail scheduling changes did not improve launch count under strict conditions and introduced substantial tail-latency regression.
+  - next optimization target is signaling/open-channel pressure in `wave_73_plus` rather than further initial/delta scheduler aggressiveness.
+
 ### Fresh refresh run artifacts (2026-02-15)
 - `artifacts/arena/arena_10v10_20260215_043820.json`
   - arena simulation: `10v10`, `3` rounds, `30` engagements, `durationMs=204`

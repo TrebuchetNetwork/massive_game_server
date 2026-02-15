@@ -40,14 +40,14 @@
 | T2-03 | Background tab throttling | TREBUCHET 2.10 | Done | Visibility-driven throttling path implemented. |
 | T2-04 | Mobile control polish (sticky/autofire/adaptive) | massive_game_client_analysis 5.x | In Progress | Mobile UX improvements partially integrated; additional tuning queued. |
 | T2-05 | Combat clarity UI (hitmarkers/streak/radial/objective) | MEGA_BATTLE_EXECUTIVE_SUMMARY | In Progress | Multiple cues integrated; polish/consistency pass remains. |
-| T2-06 | Performance overlay and network profiler | massive_game_client_analysis 8.x | Planned | Expand current FPS/debug overlay to include network metrics. |
+| T2-06 | Performance overlay and network profiler | massive_game_client_analysis 8.x | Done | Added live network profiler overlay with rx throughput, packet/message rate, state update cadence, snapshot jitter/interpolation delay, DC buffer pressure, settings toggle, and e2e metric exposure. |
 | T2-07 | Code splitting and asset streaming | massive_game_client_analysis 6.x | Planned | Monolithic client split remains future architecture item. |
 | T3-01 | LLM model registry API | LLM_BOT_ARENA_IMPLEMENTATION 1.x | Done | `/api/arena/models/register`, `/api/arena/models`, heartbeat. |
 | T3-02 | Match queue + round-robin scheduler API | LLM_BOT_ARENA_IMPLEMENTATION 5.x | Done | `/api/arena/matches/queue`, `/queue_round_robin`, `/claim_next`, `/pending`. |
 | T3-03 | ELO leaderboard pipeline | LLM_BOT_ARENA_IMPLEMENTATION 4.x | Done | `/api/arena/leaderboard`, `/api/arena/matches/report` updates ratings. |
 | T3-04 | Arena persistent store | LLM_BOT_ARENA_IMPLEMENTATION 6.x | Done | JSON persistence at `data/arena_store.json` (`MGS_ARENA_STORE_PATH` override). |
-| T3-05 | WASM bot sandbox runtime | LLM_BOT_ARENA_IMPLEMENTATION 2.x | Planned | No execution sandbox yet; API and ranking foundation now available. |
-| T3-06 | Code generation/validator integration | LLM_BOT_ARENA_IMPLEMENTATION 1.x, 3.x | Planned | Add provider gateway + safety validator in next phase. |
+| T3-05 | WASM bot sandbox runtime | LLM_BOT_ARENA_IMPLEMENTATION 2.x | Done | `bot_sandbox.rs` executes deterministic WASM matches with fuel limits, fallback runtime, and per-tick replay capture hooks. |
+| T3-06 | Code generation/validator integration | LLM_BOT_ARENA_IMPLEMENTATION 1.x, 3.x | Done | `code_generation.rs` ships validate/generate/generate+compile APIs with OpenRouter integration and deterministic fallback templates. |
 | T4-01 | Redis cache expansion beyond auth | TREBUCHET 3.4 | Planned | Auth path uses Redis; gameplay caching layer pending. |
 | T4-02 | Feature flags + A/B experimentation controls | scalability_analysis_part2 18 | Done | Runtime flag service and deterministic rollout evaluator added via `/api/ops/feature-flags/*`. |
 | T4-03 | Match sharding/world partition authority | scalability_analysis 1-2 | Planned | Current focus remains single-machine optimization. |

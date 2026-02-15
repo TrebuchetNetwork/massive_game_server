@@ -256,6 +256,24 @@ function withTimeout(promise, timeoutMs, message) {
   });
 }
 
+async function closePageSafely(page, timeoutMs = 2000) {
+  if (!page || page.isClosed()) return;
+  try {
+    await withTimeout(page.close({ runBeforeUnload: false }), timeoutMs, "page close timeout");
+  } catch (_) {
+    // Best effort close only.
+  }
+}
+
+async function closeBrowserSafely(browser, timeoutMs = 15000) {
+  if (!browser) return;
+  try {
+    await withTimeout(browser.close(), timeoutMs, "browser close timeout");
+  } catch (_) {
+    // Best effort close only.
+  }
+}
+
 async function readClientState(page, args, clientId) {
   return withTimeout(
     page.evaluate(() => {
@@ -514,6 +532,27 @@ async function main() {
     };
 
     const inFlight = new Set();
+    const waitForInFlightToSettle = async (label) => {
+      if (inFlight.size === 0) return true;
+      const remainingMs = maxTotalMs - (Date.now() - startedMs);
+      if (remainingMs <= 0) {
+        timedOutDuringLaunch = true;
+        return false;
+      }
+      try {
+        await withTimeout(
+          Promise.allSettled(Array.from(inFlight)),
+          remainingMs + 500,
+          `launch timeout while ${label}`
+        );
+        return true;
+      } catch (err) {
+        timedOutDuringLaunch = true;
+        console.warn(`[multi] ${String(err?.message || err)}; continuing with partial client set`);
+        return false;
+      }
+    };
+
     for (let i = 0; i < args.clients; i += 1) {
       if (timedOutDuringLaunch) {
         break;
@@ -524,23 +563,62 @@ async function main() {
       inFlight.add(task);
 
       if (inFlight.size >= effectiveConcurrency) {
-        await Promise.race(inFlight);
+        const remainingMs = maxTotalMs - (Date.now() - startedMs);
+        if (remainingMs <= 0) {
+          timedOutDuringLaunch = true;
+          break;
+        }
+        try {
+          await withTimeout(
+            Promise.race(Array.from(inFlight)),
+            remainingMs + 250,
+            "launch timeout waiting for in-flight client slot"
+          );
+        } catch (err) {
+          timedOutDuringLaunch = true;
+          console.warn(`[multi] ${String(err?.message || err)}; continuing with partial client set`);
+          break;
+        }
       }
+
       if (args.spawnDelayMs > 0) {
-        await sleep(args.spawnDelayMs);
+        const remainingMs = maxTotalMs - (Date.now() - startedMs);
+        if (remainingMs <= 0) {
+          timedOutDuringLaunch = true;
+          break;
+        }
+        await sleep(Math.min(args.spawnDelayMs, remainingMs));
       }
+
       if (waveBatchSize > 0 && (i + 1) < args.clients && (i + 1) % waveBatchSize === 0) {
-        if (inFlight.size > 0) {
-          await Promise.all(Array.from(inFlight));
+        const settled = await waitForInFlightToSettle("waiting for wave batch to settle");
+        if (!settled) {
+          break;
         }
         if (waveBatchDelayMs > 0) {
-          await sleep(waveBatchDelayMs);
+          const remainingMs = maxTotalMs - (Date.now() - startedMs);
+          if (remainingMs <= 0) {
+            timedOutDuringLaunch = true;
+            break;
+          }
+          await sleep(Math.min(waveBatchDelayMs, remainingMs));
         }
       }
     }
+
     if (inFlight.size > 0) {
-      await Promise.all(Array.from(inFlight));
+      const settled = await waitForInFlightToSettle("waiting for launch queue to settle");
+      if (!settled) {
+        const nonConnectedClients = clients.filter((client) => client && !client.connectedAtLeastOnce);
+        await Promise.allSettled(nonConnectedClients.map((client) => closePageSafely(client.page)));
+        await withTimeout(
+          Promise.allSettled(Array.from(inFlight)),
+          5000,
+          "launch cleanup timeout after global timeout"
+        ).catch(() => {});
+      }
     }
+
     if (timedOutDuringLaunch) {
       console.warn(`[multi] launch window exceeded maxTotalMs=${maxTotalMs}; continuing with partial client set`);
     }
@@ -694,12 +772,12 @@ async function main() {
     fs.writeFileSync(args.outPath, JSON.stringify(result, null, 2));
     console.log(JSON.stringify(result, null, 2));
 
-    await browser.close();
+    await closeBrowserSafely(browser);
     if (!result.passed) {
       process.exit(2);
     }
   } catch (err) {
-    await browser.close();
+    await closeBrowserSafely(browser);
     throw err;
   }
 }
