@@ -4,6 +4,28 @@
 - Goal: keep `10v10` stable and clear the remaining `80+` launch-timeout bottleneck.
 - This refresh retested join throughput after the dynamic+deterministic world optimization pass.
 
+## V4 Join Controls Refresh (2026-02-15 afternoon)
+- Server target: `target/release/massive_game_server_core` on `127.0.0.1:18083`.
+- New artifacts:
+  - `artifacts/scale/multi_client_20_v4_join_timing_20260215_141555.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=79441`
+    - `connectLatency avg=13553.95ms`, `p95=15849.55ms`
+    - new client join-stage telemetry: `firstState avg=424.72ms`, `p95=1357.14ms`
+  - `artifacts/scale/multi_client_120_v4_join_timing_20260215_141725.json`
+    - `96/120`, `connectedRatio=0.8`, `passed=false`
+    - timed out at `maxTotalMs=600000` (`timedOutDuringLaunch=true`)
+    - `connectLatency avg=37166.77ms`, `p95=79299.25ms`
+    - `73+`: `count=24/48`, `avg=70950.63ms`, `p95=82774.75ms`
+    - new client join-stage telemetry:
+      - global `firstState avg=365.03ms`, `p95=1757.58ms`
+      - `73+ firstState avg=627.95ms`, `p95=2568.59ms`
+    - server join-stage (`73+`): `open_channel_wait avg=238.54ms`, `queue_wait avg=8.93ms`, `snapshot_build avg=0.05ms`, `send_result avg=0ms`
+- Delta vs previous `120` refresh (`artifacts/scale/multi_client_120_v3_refresh_20260215_043833.json`):
+  - launched `92 -> 96` (`+4`)
+  - `connectLatency avg 88365.68 -> 37166.77` (`-51198.91ms`)
+  - `73+ avg 176286.55 -> 70950.63` (`-105335.92ms`)
+  - note: this V4 run used a longer timeout budget (`600000ms` vs `300000ms`) to expose full tail-wave behavior.
+
 ## Fresh Benchmark Refresh (2026-02-15)
 - Server target: `target/debug/massive_game_server_core` on `127.0.0.1:18082`.
 - New artifacts:
