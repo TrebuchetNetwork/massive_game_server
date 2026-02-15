@@ -697,7 +697,6 @@ struct SharedBroadcastData {
     pickups_soa_snapshot: Arc<PickupSoASnapshot>,
     projectiles_snapshot: Arc<HashMap<EntityId, Projectile>>,
     pickups_snapshot: Arc<HashMap<EntityId, Pickup>>,
-    chat_messages: Vec<ChatMessage>,
     chat_packets: Vec<SerializedChatPacket>,
     match_info_snapshot: MatchInfoSnapshot,
     kill_feed_snapshot: Vec<ServerKillFeedEntry>,
@@ -1869,38 +1868,32 @@ impl MassiveGameServer {
         trace!("[Frame {}] Client {}: SUCCESSFULLY INSERTED initial ClientState into client_states_map. Key: {}", frame_num, peer_id_str, key_for_insert);
     }
 
-    pub(crate) async fn send_chat_messages_static(
-        _peer_id_str: &str,
+    async fn send_chat_packets_static(
         data_channel: &Arc<crate::core::types::RTCDataChannel>,
-        client_state: &mut ClientState,
-        chat_messages: &[ChatMessage],
-        _chat_messages_queue: &ChatMessagesQueue,
-    ) {
+        last_seq_sent: u64,
+        chat_packets: &[SerializedChatPacket],
+    ) -> u64 {
         const CHAT_PACKET_TIMEOUT_MS: u64 = 30;
-        let last_seq_sent = client_state.last_chat_message_seq_sent;
-        let mut max_seq_in_batch = last_seq_sent;
+        let packets_to_send = collect_pending_chat_packets(last_seq_sent, chat_packets);
+        if packets_to_send.is_empty() {
+            return last_seq_sent;
+        }
 
-        let messages_to_send: Vec<&ChatMessage> = chat_messages
+        let outbound_packets: Vec<Bytes> = packets_to_send
             .iter()
-            .filter(|msg| msg.seq > last_seq_sent)
-            .take(10) // Limit messages per update
-            .collect();
-
-        let outbound_packets: Vec<Bytes> = messages_to_send
-            .iter()
-            .map(|chat_entry| build_chat_game_message_bytes(chat_entry))
+            .map(|packet| packet.bytes.clone())
             .collect();
         let sent_packets =
             send_packet_batch_over_channel(data_channel, &outbound_packets, CHAT_PACKET_TIMEOUT_MS)
                 .await;
+        let mut max_seq_in_batch = last_seq_sent;
 
-        for chat_entry in messages_to_send.into_iter().take(sent_packets) {
-            if chat_entry.seq > max_seq_in_batch {
-                max_seq_in_batch = chat_entry.seq;
+        for packet in packets_to_send.into_iter().take(sent_packets) {
+            if packet.seq > max_seq_in_batch {
+                max_seq_in_batch = packet.seq;
             }
         }
-
-        client_state.last_chat_message_seq_sent = max_seq_in_batch;
+        max_seq_in_batch
     }
 
     fn update_client_state_after_delta(
@@ -4362,15 +4355,11 @@ impl MassiveGameServer {
             }
         };
 
-        // Snapshot chat messages
-        let chat_messages: Vec<ChatMessage> = self
+        // Snapshot serialized chat packets once per broadcast.
+        let chat_packets = self
             .chat_messages_queue
             .read()
             .await
-            .iter()
-            .cloned()
-            .collect();
-        let chat_packets = chat_messages
             .iter()
             .map(|chat_entry| SerializedChatPacket {
                 seq: chat_entry.seq,
@@ -4406,7 +4395,6 @@ impl MassiveGameServer {
             pickups_soa_snapshot,
             projectiles_snapshot,
             pickups_snapshot,
-            chat_messages,
             chat_packets,
             match_info_snapshot,
             kill_feed_snapshot,
@@ -4488,7 +4476,6 @@ impl MassiveGameServer {
         _pickups: &Arc<ParkingLotRwLock<Vec<Pickup>>>,
         projectiles: &Arc<ParkingLotRwLock<Vec<Projectile>>>,
         kill_feed: &Arc<ParkingLotRwLock<VecDeque<ServerKillFeedEntry>>>,
-        chat_messages_queue: &ChatMessagesQueue,
         frame_num: u64,
     ) {
         let mut client_state_copy = client_states_map
@@ -4514,25 +4501,61 @@ impl MassiveGameServer {
         )
         .await;
 
-        if let Ok(bytes) = message_result {
-            let sent_packets = send_packet_batch_over_channel(&data_channel, &[bytes], 50).await;
-            if sent_packets == 0 {
+        let pending_chat_packets = collect_pending_chat_packets(
+            client_state_copy.last_chat_message_seq_sent,
+            &shared_data.chat_packets,
+        );
+        let mut outbound_packets: Vec<Bytes> = Vec::with_capacity(1 + pending_chat_packets.len());
+        let mut state_packet_queued = false;
+        match message_result {
+            Ok(bytes) => {
+                outbound_packets.push(bytes);
+                state_packet_queued = true;
+            }
+            Err(e) => {
+                warn!(
+                    "[Frame {}] Failed to build static delta state for {}: {:?}",
+                    frame_num, peer_id_str, e
+                );
+            }
+        }
+        outbound_packets.extend(
+            pending_chat_packets
+                .iter()
+                .map(|packet| packet.bytes.clone()),
+        );
+
+        if !outbound_packets.is_empty() {
+            const STATIC_SEND_TIMEOUT_MS: u64 = 50;
+            let sent_packets =
+                send_packet_batch_over_channel(&data_channel, &outbound_packets, STATIC_SEND_TIMEOUT_MS)
+                    .await;
+            if state_packet_queued && sent_packets == 0 {
                 handle_dc_send_error(
                     "send timeout/failure",
                     &peer_id_str,
                     "delta state (static path)",
                 );
             }
-        }
 
-        Self::send_chat_messages_static(
-            &peer_id_str,
-            &data_channel,
-            &mut client_state_copy,
-            &shared_data.chat_messages,
-            chat_messages_queue,
-        )
-        .await;
+            let sent_chat_packets_count = sent_packets
+                .saturating_sub(usize::from(state_packet_queued))
+                .min(pending_chat_packets.len());
+            if sent_chat_packets_count > 0 {
+                for packet in pending_chat_packets.iter().take(sent_chat_packets_count) {
+                    client_state_copy.last_chat_message_seq_sent =
+                        client_state_copy.last_chat_message_seq_sent.max(packet.seq);
+                }
+            }
+            if sent_chat_packets_count < pending_chat_packets.len() {
+                client_state_copy.last_chat_message_seq_sent = Self::send_chat_packets_static(
+                    &data_channel,
+                    client_state_copy.last_chat_message_seq_sent,
+                    &shared_data.chat_packets,
+                )
+                .await;
+            }
+        }
 
         Self::update_client_state_after_delta_static(
             &peer_id_str,
@@ -6108,9 +6131,9 @@ impl MassiveGameServer {
             )
             .await,
         );
-        trace!("[Frame {}] Prepared shared broadcast data. Events: {}, Destroyed Walls: {}, Chat: {}, KF: {}, use_soa_snapshot={}, use_entity_soa_snapshot={}, soa_fallback_active={}",
+        trace!("[Frame {}] Prepared shared broadcast data. Events: {}, Destroyed Walls: {}, ChatPackets: {}, KF: {}, use_soa_snapshot={}, use_entity_soa_snapshot={}, soa_fallback_active={}",
             current_frame, shared_broadcast_data.events.len(), shared_broadcast_data.destroyed_wall_ids.len(),
-            shared_broadcast_data.chat_messages.len(), shared_broadcast_data.kill_feed_snapshot.len(),
+            shared_broadcast_data.chat_packets.len(), shared_broadcast_data.kill_feed_snapshot.len(),
             shared_broadcast_data.use_soa_snapshot, shared_broadcast_data.use_entity_soa_snapshot, shared_broadcast_data.soa_fallback_active);
 
         let mut broadcast_concurrency = (self
