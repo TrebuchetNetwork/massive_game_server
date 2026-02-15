@@ -59,6 +59,13 @@
 | T5-04 | Battle pass/challenges/progression economy | massive_game_server_improvements 2,13,14 | Planned | Use auth profile as starting anchor. |
 
 ## Implemented In This Pass
+- Reduced signaling hot-path setup overhead for large launch waves:
+  - `server/src/network/signaling.rs`
+  - introduced shared global WebRTC `API` initialization (`OnceLock`) so MediaEngine/default codec setup is reused instead of rebuilt per signaling connection.
+- Fresh strict artifacts for this pass:
+  - `artifacts/scale/multi_client_20_v4_shared_api_20260215_171122.json`
+  - `artifacts/scale/multi_client_120_v4_shared_api_20260215_171301.json`
+  - result: `120` run remains `96/120` but recovers major tail-latency regression (`73+ open_channel_wait avg 2538.7 -> 1413.62` vs prior strict run).
 - Added arena operational module and routes:
   - `server/src/operational/arena.rs`
   - `server/src/operational/mod.rs`

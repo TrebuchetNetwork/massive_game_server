@@ -30,7 +30,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use warp::ws::{Message, WebSocket};
 use webrtc::{
-    api::{media_engine::MediaEngine, APIBuilder},
+    api::{media_engine::MediaEngine, APIBuilder, API},
     data_channel::{data_channel_message::DataChannelMessage, RTCDataChannel},
     ice_transport::{
         ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
@@ -61,9 +61,27 @@ pub struct ChatMessage {
 }
 pub type ChatMessagesQueue = Arc<RwLock<VecDeque<ChatMessage>>>;
 static NEXT_CHAT_MESSAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static SHARED_WEBRTC_API: OnceLock<Result<Arc<API>, String>> = OnceLock::new();
 
 pub fn next_chat_message_seq() -> u64 {
     NEXT_CHAT_MESSAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn shared_webrtc_api() -> Result<Arc<API>, String> {
+    match SHARED_WEBRTC_API.get_or_init(|| {
+        let mut media_engine = MediaEngine::default();
+        media_engine
+            .register_default_codecs()
+            .map_err(|e| format!("register_default_codecs failed: {e}"))?;
+        Ok(Arc::new(
+            APIBuilder::new()
+                .with_media_engine(media_engine)
+                .build(),
+        ))
+    }) {
+        Ok(api) => Ok(Arc::clone(api)),
+        Err(err) => Err(err.clone()),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -422,25 +440,25 @@ pub async fn handle_signaling_connection(
         info!("[{}]: Signaling forwarder task ended.", peer_id_fwd);
     });
 
-    let mut m = MediaEngine::default();
-    if let Err(e) = m.register_default_codecs() {
-        error!(
-            "[{}]: Failed to register default codecs: {}",
-            peer_id_str, e
-        );
-        cleanup_connection(
-            &peer_id_str,
-            &signaling_peers,
-            &player_manager,
-            &data_channels_map,
-            &client_states_map,
-            &player_aois,
-            &auth_service,
-        );
-        return;
-    }
-
-    let api = APIBuilder::new().with_media_engine(m).build();
+    let api = match shared_webrtc_api() {
+        Ok(api) => api,
+        Err(e) => {
+            error!(
+                "[{}]: Failed to initialize shared WebRTC API: {}",
+                peer_id_str, e
+            );
+            cleanup_connection(
+                &peer_id_str,
+                &signaling_peers,
+                &player_manager,
+                &data_channels_map,
+                &client_states_map,
+                &player_aois,
+                &auth_service,
+            );
+            return;
+        }
+    };
     let ice_servers = build_ice_servers();
     info!(
         "[{}]: Using {} ICE server(s) for WebRTC negotiation.",

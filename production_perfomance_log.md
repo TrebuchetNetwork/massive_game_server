@@ -75,6 +75,38 @@
   - extreme-tail scheduling changes did not improve launch count under strict conditions and introduced substantial tail-latency regression.
   - next optimization target is signaling/open-channel pressure in `wave_73_plus` rather than further initial/delta scheduler aggressiveness.
 
+### V4 signaling API reuse pass (2026-02-15 night)
+- Code path update:
+  - `server/src/network/signaling.rs`
+  - Added shared global WebRTC `API` initialization (`OnceLock`) so MediaEngine/default codecs are built once and reused across signaling connections.
+- Added pass artifacts:
+  - `artifacts/scale/multi_client_20_v4_shared_api_20260215_171122.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=86606`
+    - `connectLatency avg=18745.05ms`, `p95=20925.8ms`
+    - `wave_1_24 open_channel_wait avg=146.33ms`, `p95=468.43ms`
+  - `artifacts/scale/multi_client_120_v4_shared_api_20260215_171301.json`
+    - `96/120`, `connectedRatio=0.8`, `passed=false`, `durationMs=600798`
+    - timed out at `maxTotalMs=600000` (`timedOutDuringLaunch=true`, `timedOutDuringSampling=true`)
+    - `connectLatency avg=51185.6ms`, `p95=81338.25ms`
+    - `73+`: `count=24/48`, `avg=80321.33ms`, `p95=96044.5ms`
+    - `73+ firstState`: `avg=1588.64ms`, `p95=3033.32ms`
+    - server join-stage (`73+ open_channel_wait`): `avg=1413.62ms`, `p95=2970.24ms`
+- Delta vs prior strict regressed run (`artifacts/scale/multi_client_120_v4_extreme_tail_stable_20260215_162613.json`):
+  - launch count: `96 -> 96` (no change)
+  - `connectLatency avg`: `73541.72 -> 51185.6` (`-22356.12ms`)
+  - `connectLatency p95`: `145529.25 -> 81338.25` (`-64191ms`)
+  - `73+ avg`: `136711.38 -> 80321.33` (`-56390.05ms`)
+  - `73+ firstState avg`: `4574.68 -> 1588.64` (`-2986.04ms`)
+  - `73+ open_channel_wait avg`: `2538.7 -> 1413.62` (`-1125.08ms`)
+- Delta vs V4 baseline (`artifacts/scale/multi_client_120_v4_join_timing_20260215_141725.json`):
+  - launch count remains `96/120` (same)
+  - `connectLatency avg`: `37166.77 -> 51185.6` (`+14018.83ms`)
+  - `73+ avg`: `70950.63 -> 80321.33` (`+9370.7ms`)
+  - `73+ open_channel_wait avg`: `238.54 -> 1413.62` (`+1175.08ms`)
+- Conclusion:
+  - API reuse materially recovers most of the strict-run regression while preserving throughput.
+  - Remaining gap is concentrated in `73+` signaling/open-channel wait; next pass should target negotiation concurrency/backpressure rather than broadcast scheduler aggression.
+
 ### Fresh refresh run artifacts (2026-02-15)
 - `artifacts/arena/arena_10v10_20260215_043820.json`
   - arena simulation: `10v10`, `3` rounds, `30` engagements, `durationMs=204`

@@ -16,7 +16,7 @@
 ## Current Remaining Items
 | ID | Item | Status | Notes |
 |---|---|---|---|
-| V4-R1 | `120` launch target closure | In Progress | Strict rerun with stabilized runner captured `96/120` (`artifacts/scale/multi_client_120_v4_extreme_tail_stable_20260215_162613.json`) matching baseline launch count (`96/120`, `artifacts/scale/multi_client_120_v4_join_timing_20260215_141725.json`) but with worse tail latency/open-channel wait. Next pass should target `wave_73_plus open_channel_wait` regression before further scheduler tuning. |
+| V4-R1 | `120` launch target closure | In Progress | Shared signaling WebRTC API pass (`artifacts/scale/multi_client_120_v4_shared_api_20260215_171301.json`) kept launch count at `96/120` and reduced tail regression vs prior strict run (`connect avg 73541.72 -> 51185.6`, `73+ avg 136711.38 -> 80321.33`, `73+ open_channel_wait avg 2538.7 -> 1413.62`), but throughput is still capped below `100+`. |
 | V4-R2 | Full authoritative ECS writer ownership migration | In Progress | Broadcast read path is snapshot-owned; mutation ownership is still partially split in `server/src/server/instance.rs`. |
 | V4-R3 | Full-state zero-copy follow-through | In Progress | Main delta/initial paths are collapse-based, but broader serialization construction and legacy paths still need full migration/audit. |
 | V4-R4 | Broader SIMD physics coverage | In Progress | Projectile collision SIMD path is active; broader movement/collision vectorization is still pending. |
@@ -26,4 +26,4 @@
 1. Re-run deterministic `10v10` and `120` tail benchmarks and capture fresh artifacts at the same timeout window (`600000ms`) for strict comparability.
 2. Compare `wave_73_plus` launched count, `connectLatency avg/p95`, and client `firstState` timing.
 3. Update `/Users/ivo/massive_game_server/production_perfomance_log.md` with before/after deltas.
-4. Profile and reduce `wave_73_plus open_channel_wait` regression before additional extreme-tail scheduling changes.
+4. Continue reducing `wave_73_plus open_channel_wait` and recover launch count from `96/120` to `100+` under strict `600000ms` runs.
