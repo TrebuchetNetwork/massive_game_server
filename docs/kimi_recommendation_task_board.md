@@ -27,10 +27,10 @@
 ## Task Matrix
 | ID | Task | Source | Status | Notes |
 |---|---|---|---|---|
-| T1-01 | Lock-free ECS + SoA migration | IMPLEMENTATION_GUIDE, SINGLE_SERVER_PURE_RUST_OPTIMIZATIONS | In Progress | Core snapshots/SoA landed; authoritative AoI snapshot path is now default-on (`MGS_JOIN_DISABLE_AUTHORITATIVE_AOI_SNAPSHOT=1` to opt out), full writer ownership migration still open. |
+| T1-01 | Lock-free ECS + SoA migration | IMPLEMENTATION_GUIDE, SINGLE_SERVER_PURE_RUST_OPTIMIZATIONS | In Progress | Core SoA snapshots plus lock-free AoI snapshot publication are wired into broadcast reads; full writer ownership migration still open. |
 | T1-02 | SIMD spatial/AOI path | IMPLEMENTATION_GUIDE, TREBUCHET 1.3 | In Progress | SIMD filter + spatial index path exists; keep expanding AOI usage coverage. |
-| T1-03 | Zero-copy serialization | IMPLEMENTATION_GUIDE, TREBUCHET 1.9 | In Progress | Chat/welcome/match-info paths use zero-copy bytes; full authoritative snapshot construction still partially copying. |
-| T1-04 | Priority packet batching/coalescing | TREBUCHET 1.6 | In Progress | Coalesced batch path now includes join-time welcome+match-info dispatch; tail wave tuning still required. |
+| T1-03 | Zero-copy serialization | IMPLEMENTATION_GUIDE, TREBUCHET 1.9 | In Progress | Chat/welcome/match-info paths use zero-copy bytes; initial/delta build path now caches retry payloads and removes async serializer overhead, but full authoritative snapshot construction still partially copying. |
+| T1-04 | Priority packet batching/coalescing | TREBUCHET 1.6 | In Progress | Coalesced batch path now applies a unified envelope format for single and multi-packet outbound dispatch; tail wave tuning still required. |
 | T1-05 | SIMD physics/collision | SINGLE_SERVER_PURE_RUST_OPTIMIZATIONS 4.1 | In Progress | Projectile-vs-player ray collision now uses SIMD batched target checks; broader physics vectorization remains. |
 | T1-06 | CPU affinity and kernel tuning checklist | IMPLEMENTATION_GUIDE, README_SINGLE_SERVER | In Progress | Affinity + setup scripts exist; ops verification loop continues. |
 | T1-07 | Tail-wave instrumentation (1-24/25-48/49-72/73+) | Prior pass + Kimi guidance | Done | Latency buckets and wave metrics are in benchmark artifacts. |
@@ -109,6 +109,16 @@
   - broadcast admission checks now rely on shared snapshot player visibility.
 - Unified packet batching follow-through:
   - `process_client_broadcast` now applies the same pending chat packet batching/resend follow-through for both initial and delta sends.
+- Added lock-free AoI snapshot publication + unified outbound envelope follow-through:
+  - `server/src/concurrent/atomic_snapshot.rs`
+  - `server/src/server/instance.rs`
+  - AoI scheduled fanout reads now use authoritative lock-free snapshot publication (`AtomicPlayerAoISnapshot`).
+  - AoI snapshot publish runs after `synchronize_state` to keep broadcast reads frame-aligned.
+  - Packet coalescing now supports single-packet envelopes, unifying outbound transport shape.
+  - Initial snapshot bytes are cached immediately on build for retry reuse without re-serialization.
+- Tightened authoritative snapshot ownership on active broadcast path:
+  - Removed fanout-time SoA/AoI snapshot rebuild fallback from live world structures when snapshots are empty.
+  - Initial-state wall fallback now uses shared per-broadcast wall snapshots (`active_walls_by_id`) instead of live collection.
 - Fresh benchmark artifacts for this pass:
   - `artifacts/scale/multi_client_fresh_20_aoi_snapshot_20260214_2310.json`
     - 20/20 launched, connected ratio `1.00`, connect avg `21001.65ms`.
@@ -133,8 +143,13 @@
     - 95/120 launched, connected ratio `0.7917`.
   - `artifacts/scale/multi_client_fresh_120_missingpass_aoi_on_20260215_0035.json`
     - 100/120 launched, connected ratio `0.8333` (phase target met).
+  - `artifacts/scale/multi_client_fresh_120_phase2_20260214_195643.json`
+    - 100/120 launched, connected ratio `0.8333` after lock-free AoI snapshot + unified envelope pass.
+  - `artifacts/scale/multi_client_fresh_120_phase2_complete_20260214_210222.json`
+    - 100/120 launched, connected ratio `0.8333` after strict snapshot-only broadcast pass.
+    - connect avg `61116.58ms` (from `63885.71ms` in prior phase2 run).
 
 ## Next Execution Batch
 1. Stabilize `100/120`+ coverage across repeated runs (reduce variance and improve p95 consistency).
 2. Investigate wave `1-48` `open_channel_wait_ms` multi-second p95 spikes and tune signaling/open-channel backpressure.
-3. Continue authoritative ownership migration (full ECS writer ownership and state snapshots) and finish full-state zero-copy/batching follow-through cleanup.
+3. Continue writer-side authoritative ownership migration (full ECS mutation boundaries) and remove remaining full-state serialization copy points.

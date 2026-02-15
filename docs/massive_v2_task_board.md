@@ -21,7 +21,7 @@
 - `T3-05 WASM bot sandbox`: Started and implemented MVP.
 - `T3-06 code generation/validator`: Started with operational API scaffolding.
 - `Human priority slot management`: Implemented in join flow with lowest-performing bot eviction.
-- `T1-01 authoritative ECS ownership migration`: In progress, previous SoA/snapshot work retained.
+- `T1-01 authoritative ECS ownership migration`: In progress, lock-free AoI + SoA snapshots now wired into broadcast reads; full writer-only ownership remains.
 - `T1-08 120-client tail regression`: Reached 100/120 launch threshold in latest pass; stabilization continues.
 
 ## Implemented In This Pass
@@ -64,6 +64,15 @@
   - now default-on (`MGS_JOIN_DISABLE_AUTHORITATIVE_AOI_SNAPSHOT=1` to opt out).
   - `process_client_broadcast` now gates player existence from the per-broadcast shared snapshot view.
   - unified chat packet follow-through for both initial and delta dispatch paths (single batched send path + residual resend path).
+- Extended single-machine ownership and transport follow-through:
+  - `server/src/concurrent/atomic_snapshot.rs`
+  - `server/src/server/instance.rs`
+  - Added lock-free `PlayerAoISnapshot`/`AtomicPlayerAoISnapshot` and switched scheduled broadcast AoI lookup to authoritative snapshot reads.
+  - AoI snapshot publish now runs after `synchronize_state` to keep broadcast on latest frame visibility.
+  - Initial/delta state serializers are sync-path (no async state machine allocation) and initial bytes are cached on build for retry reuse.
+  - Packet coalescing now supports single-packet envelopes so all outbound packets use the same transport batch format.
+  - Active broadcast snapshot path no longer rebuilds empty SoA/AoI snapshots from live world structures during fanout preparation (strict snapshot-owned read path).
+  - Initial-state wall fallback now resolves from shared broadcast snapshots instead of live world collection.
 - Fresh benchmark artifacts from this pass:
   - `artifacts/scale/multi_client_fresh_20_aoi_snapshot_20260214_2310.json`
     - 20/20 launched, connected ratio `1.00`, connect avg `21001.65ms`.
@@ -88,10 +97,15 @@
     - 95/120 launched, connected ratio `0.7917`.
   - `artifacts/scale/multi_client_fresh_120_missingpass_aoi_on_20260215_0035.json`
     - 100/120 launched, connected ratio `0.8333` (threshold target met for this phase).
+  - `artifacts/scale/multi_client_fresh_120_phase2_20260214_195643.json`
+    - 100/120 launched, connected ratio `0.8333` after lock-free AoI snapshot + unified envelope pass.
+  - `artifacts/scale/multi_client_fresh_120_phase2_complete_20260214_210222.json`
+    - 100/120 launched, connected ratio `0.8333` after strict snapshot-only broadcast read pass.
+    - connect avg `61116.58ms` (improved from `63885.71ms` in prior phase2 run).
 - Updated server docs:
   - `server/README.md`
 
 ## Next Execution Batch
 1. Stabilize `100/120`+ launch coverage across repeated runs (reduce variance between 95-100 results).
 2. Continue reducing wave `1-48` `open_channel_wait_ms` spikes via signaling/open-channel backpressure tuning.
-3. Continue authoritative ECS ownership migration beyond broadcast read snapshots and finish full-state zero-copy/batching cleanup follow-through.
+3. Continue writer-side authoritative ECS migration (mutation ownership boundaries) and reduce remaining full-state serialization copy points.

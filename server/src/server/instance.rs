@@ -1,7 +1,7 @@
 // massive_game_server/server/src/server/instance.rs
 use crate::concurrent::atomic_snapshot::{
-    AtomicPickupSnapshot, AtomicPlayerSnapshot, AtomicProjectileSnapshot, PickupSoASnapshot,
-    PlayerSoASnapshot, ProjectileSoASnapshot,
+    AtomicPickupSnapshot, AtomicPlayerAoISnapshot, AtomicPlayerSnapshot, AtomicProjectileSnapshot,
+    PickupSoASnapshot, PlayerAoISnapshot, PlayerSoASnapshot, ProjectileSoASnapshot,
 };
 use crate::concurrent::event_queue::PriorityEventQueue;
 use crate::concurrent::spatial_index::ImprovedSpatialIndex;
@@ -511,7 +511,7 @@ fn build_chat_game_message_bytes(chat_entry: &ChatMessage) -> Bytes {
 }
 
 fn build_coalesced_packet_batch(packets: &[Bytes]) -> Option<Bytes> {
-    if packets.len() <= 1 || packets.len() > u16::MAX as usize {
+    if packets.is_empty() || packets.len() > u16::MAX as usize {
         return None;
     }
 
@@ -616,6 +616,43 @@ fn collect_pending_chat_packets(
         .take(MAX_CHAT_PER_BATCH)
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod packet_batch_tests {
+    use super::*;
+
+    #[test]
+    fn coalesced_batch_supports_single_packet() {
+        let packets = vec![Bytes::from_static(b"single-payload")];
+        let coalesced = build_coalesced_packet_batch(&packets).expect("coalesced packet");
+
+        assert_eq!(&coalesced[..4], PACKET_BATCH_MAGIC.as_slice());
+        assert_eq!(coalesced[4], PACKET_BATCH_VERSION);
+
+        let packet_count = u16::from_le_bytes([coalesced[5], coalesced[6]]);
+        assert_eq!(packet_count, 1);
+
+        let payload_len =
+            u32::from_le_bytes([coalesced[7], coalesced[8], coalesced[9], coalesced[10]]) as usize;
+        assert_eq!(payload_len, packets[0].len());
+        assert_eq!(&coalesced[11..], packets[0].as_ref());
+    }
+
+    #[test]
+    fn collect_pending_chat_packets_applies_seq_filter_and_cap() {
+        let chat_packets: Vec<SerializedChatPacket> = (1..=64)
+            .map(|seq| SerializedChatPacket {
+                seq,
+                bytes: Bytes::from_static(b"x"),
+            })
+            .collect();
+
+        let pending = collect_pending_chat_packets(24, &chat_packets);
+        assert_eq!(pending.len(), MAX_CHAT_PER_BATCH);
+        assert_eq!(pending.first().map(|p| p.seq), Some(25));
+        assert_eq!(pending.last().map(|p| p.seq), Some(34));
+    }
 }
 
 #[derive(Clone)]
@@ -740,6 +777,7 @@ pub struct MassiveGameServer {
     pub last_broadcast_frame: Arc<AtomicU64>,
     pub player_last_sync_positions: Arc<DashMap<PlayerID, (f32, f32)>>,
     pub player_soa_snapshot: Arc<AtomicPlayerSnapshot>,
+    pub player_aoi_snapshot: Arc<AtomicPlayerAoISnapshot>,
     pub projectile_soa_snapshot: Arc<AtomicProjectileSnapshot>,
     pub pickup_soa_snapshot: Arc<AtomicPickupSnapshot>,
     join_stage_traces: Arc<DashMap<String, JoinStageTrace>>,
@@ -977,6 +1015,7 @@ impl MassiveGameServer {
             last_broadcast_frame: Arc::new(AtomicU64::new(0)),
             player_last_sync_positions: Arc::new(DashMap::new()),
             player_soa_snapshot: Arc::new(AtomicPlayerSnapshot::new()),
+            player_aoi_snapshot: Arc::new(AtomicPlayerAoISnapshot::new()),
             projectile_soa_snapshot: Arc::new(AtomicProjectileSnapshot::new()),
             pickup_soa_snapshot: Arc::new(AtomicPickupSnapshot::new()),
             join_stage_traces: Arc::new(DashMap::new()),
@@ -3231,9 +3270,24 @@ impl MassiveGameServer {
             .publish(PickupSoASnapshot::from_pickups_slice(&pickups_guard));
     }
 
+    fn publish_player_aoi_snapshot_if_enabled(&self) {
+        if !join_authoritative_aoi_snapshot_enabled() {
+            return;
+        }
+
+        let mut owned_aois = Vec::with_capacity(self.player_aois.len());
+        for aoi_entry in self.player_aois.iter() {
+            let player_id = self.player_manager.id_pool.get_or_create(aoi_entry.key());
+            owned_aois.push((player_id, aoi_entry.value().clone()));
+        }
+        self.player_aoi_snapshot
+            .publish(PlayerAoISnapshot::from_owned_player_aois(owned_aois));
+    }
+
     fn publish_authoritative_lock_free_snapshots(&self) {
         self.publish_player_soa_snapshot_if_enabled();
         self.publish_entity_soa_snapshots_if_enabled();
+        self.publish_player_aoi_snapshot_if_enabled();
     }
 
     async fn process_client_broadcast(
@@ -3279,7 +3333,6 @@ impl MassiveGameServer {
         }
 
         let mut client_state_for_delta: Option<ClientState> = None;
-        let mut used_cached_initial_state = false;
         let mut last_chat_message_seq_sent = server
             .client_states_map
             .read()
@@ -3294,7 +3347,6 @@ impl MassiveGameServer {
                 .and_then(|state| state.pending_initial_state_bytes.clone());
 
             if let Some(cached_bytes) = cached_initial_state {
-                used_cached_initial_state = true;
                 trace!(
                     "[Frame {}] Reusing cached initial state for {} ({} bytes)",
                     frame,
@@ -3309,11 +3361,16 @@ impl MassiveGameServer {
                     frame,
                     peer_id_str
                 );
-                let initial_result = server
-                    .build_initial_state_optimized(peer_id_str, shared_data)
-                    .await;
-                if initial_result.is_ok() {
+                let initial_result = server.build_initial_state_optimized(peer_id_str, shared_data);
+                if let Ok(initial_bytes) = initial_result.as_ref() {
                     server.mark_join_build_done(peer_id_str);
+                    // Cache built initial bytes immediately so retries avoid re-serialization.
+                    let mut client_states = server.client_states_map.write();
+                    let state_entry = client_states
+                        .entry(peer_id_str.to_string())
+                        .or_insert_with(ClientState::default);
+                    state_entry.pending_initial_state_bytes = Some(initial_bytes.clone());
+                    state_entry.known_walls_sent = false;
                 }
                 initial_result
             }
@@ -3327,9 +3384,11 @@ impl MassiveGameServer {
                     warn!("[Frame {}] ClientState not found for {} during delta build, using default. This might indicate a logic issue.", server.frame_counter.load(AtomicOrdering::Relaxed), peer_id_str);
                     ClientState::default()
                 });
-            let delta_result = server
-                .build_delta_state_optimized(peer_id_str, &client_state_snapshot, shared_data)
-                .await;
+            let delta_result = server.build_delta_state_optimized(
+                peer_id_str,
+                &client_state_snapshot,
+                shared_data,
+            );
             last_chat_message_seq_sent = client_state_snapshot.last_chat_message_seq_sent;
             client_state_for_delta = Some(client_state_snapshot);
             delta_result
@@ -3365,7 +3424,11 @@ impl MassiveGameServer {
             collect_pending_chat_packets(last_chat_message_seq_sent, &shared_data.chat_packets);
         let mut outbound_packets: Vec<Bytes> = Vec::with_capacity(1 + pending_chat_packets.len());
         outbound_packets.push(bytes_to_send.clone());
-        outbound_packets.extend(pending_chat_packets.iter().map(|packet| packet.bytes.clone()));
+        outbound_packets.extend(
+            pending_chat_packets
+                .iter()
+                .map(|packet| packet.bytes.clone()),
+        );
 
         const DELTA_SEND_TIMEOUT_MS: u64 = 50;
         const INITIAL_SEND_TIMEOUT_MS: u64 = 200;
@@ -3438,14 +3501,6 @@ impl MassiveGameServer {
 
         if client_info.needs_initial_state && !send_succeeded {
             server.mark_join_send_failure(peer_id_str);
-            if !used_cached_initial_state {
-                let mut client_states = server.client_states_map.write();
-                let state_entry = client_states
-                    .entry(peer_id_str.to_string())
-                    .or_insert_with(ClientState::default);
-                state_entry.pending_initial_state_bytes = Some(bytes_to_send.clone());
-                state_entry.known_walls_sent = false;
-            }
             trace!(
                 "[Frame {}] Initial state send not completed for {}, retrying on next broadcast.",
                 frame,
@@ -4180,15 +4235,25 @@ impl MassiveGameServer {
 
         let use_aoi_snapshot = join_authoritative_aoi_snapshot_enabled();
         let player_aois_snapshot = if use_aoi_snapshot {
-            // Optional authoritative AoI ownership snapshot for broadcast fanout.
-            let mut player_aois_snapshot = HashMap::with_capacity(scheduled_peer_ids.len());
+            // Resolve AoI from authoritative lock-free snapshot and only keep entries
+            // for peers scheduled this frame.
+            let authoritative_aoi_snapshot = self.player_aoi_snapshot.load();
+            if authoritative_aoi_snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
+                debug!(
+                    "[Frame {}] Authoritative AoI snapshot is empty while {} peers are scheduled.",
+                    frame,
+                    scheduled_peer_ids.len()
+                );
+            }
+
+            let mut scheduled_aoi_snapshot = HashMap::with_capacity(scheduled_peer_ids.len());
             for peer_id in scheduled_peer_ids {
-                if let Some(aoi_entry) = self.player_aois.get(peer_id.as_str()) {
-                    let player_id = self.player_manager.id_pool.get_or_create(peer_id);
-                    player_aois_snapshot.insert(player_id, aoi_entry.value().clone());
+                let player_id = self.player_manager.id_pool.get_or_create(peer_id);
+                if let Some(aoi) = authoritative_aoi_snapshot.get_aoi(&player_id) {
+                    scheduled_aoi_snapshot.insert(player_id, aoi.clone());
                 }
             }
-            Arc::new(player_aois_snapshot)
+            Arc::new(scheduled_aoi_snapshot)
         } else {
             Arc::new(HashMap::new())
         };
@@ -4198,18 +4263,14 @@ impl MassiveGameServer {
         let soa_fallback_active = configured_soa_snapshot && !use_soa_snapshot;
         let (player_soa_snapshot, player_states_snapshot) = if use_soa_snapshot {
             let snapshot = self.player_soa_snapshot.load();
-            if snapshot.is_empty() {
-                let mut owned_states = Vec::with_capacity(self.player_manager.player_count());
-                self.player_manager
-                    .for_each_player(|player_id, player_state| {
-                        owned_states.push((player_id.clone(), player_state.clone()));
-                    });
-                let rebuilt = Arc::new(PlayerSoASnapshot::from_owned_player_states(owned_states));
-                self.player_soa_snapshot.publish_arc(rebuilt.clone());
-                (rebuilt, HashMap::new())
-            } else {
-                (snapshot, HashMap::new())
+            if snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
+                debug!(
+                    "[Frame {}] Player SoA snapshot is empty while {} peers are scheduled.",
+                    frame,
+                    scheduled_peer_ids.len()
+                );
             }
+            (snapshot, HashMap::new())
         } else {
             let mut by_id = HashMap::with_capacity(self.player_manager.player_count());
             self.player_manager
@@ -4227,16 +4288,14 @@ impl MassiveGameServer {
         let (projectiles_soa_snapshot, projectiles_snapshot) = {
             if use_entity_soa_snapshot {
                 let snapshot = self.projectile_soa_snapshot.load();
-                if snapshot.is_empty() {
-                    let projectiles_guard = self.projectiles.read();
-                    let rebuilt = Arc::new(ProjectileSoASnapshot::from_projectiles_slice(
-                        &projectiles_guard,
-                    ));
-                    self.projectile_soa_snapshot.publish_arc(rebuilt.clone());
-                    (rebuilt, Arc::new(HashMap::new()))
-                } else {
-                    (snapshot, Arc::new(HashMap::new()))
+                if snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
+                    debug!(
+                        "[Frame {}] Projectile SoA snapshot is empty while {} peers are scheduled.",
+                        frame,
+                        scheduled_peer_ids.len()
+                    );
                 }
+                (snapshot, Arc::new(HashMap::new()))
             } else {
                 let projectiles_guard = self.projectiles.read();
                 let mut by_id = HashMap::with_capacity(projectiles_guard.len());
@@ -4250,14 +4309,14 @@ impl MassiveGameServer {
         let (pickups_soa_snapshot, pickups_snapshot) = {
             if use_entity_soa_snapshot {
                 let snapshot = self.pickup_soa_snapshot.load();
-                if snapshot.is_empty() {
-                    let pickups_guard = self.pickups.read();
-                    let rebuilt = Arc::new(PickupSoASnapshot::from_pickups_slice(&pickups_guard));
-                    self.pickup_soa_snapshot.publish_arc(rebuilt.clone());
-                    (rebuilt, Arc::new(HashMap::new()))
-                } else {
-                    (snapshot, Arc::new(HashMap::new()))
+                if snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
+                    debug!(
+                        "[Frame {}] Pickup SoA snapshot is empty while {} peers are scheduled.",
+                        frame,
+                        scheduled_peer_ids.len()
+                    );
                 }
+                (snapshot, Arc::new(HashMap::new()))
             } else {
                 let pickups_guard = self.pickups.read();
                 let mut by_id = HashMap::with_capacity(pickups_guard.len());
@@ -4836,7 +4895,7 @@ impl MassiveGameServer {
 
     // Complete replacement for build_delta_state_optimized method:
     // In server/src/server/instance.rs
-    pub async fn build_delta_state_optimized(
+    fn build_delta_state_optimized(
         &self,
         peer_id_str: &str,
         client_state: &ClientState,
@@ -6092,7 +6151,7 @@ impl MassiveGameServer {
         );
     }
 
-    async fn build_initial_state_optimized(
+    fn build_initial_state_optimized(
         &self,
         peer_id_str: &str,
         shared_data: &SharedBroadcastData, // Used for timestamp, match_info, kill_feed
@@ -6112,7 +6171,10 @@ impl MassiveGameServer {
         // 1. Walls: Reuse per-broadcast active wall snapshot when available.
         let active_walls_to_send: Cow<'_, [Wall]> = if shared_data.active_walls_snapshot.is_empty()
         {
-            Cow::Owned(self.collect_active_walls_optimized())
+            let mut fallback_walls: Vec<Wall> =
+                shared_data.active_walls_by_id.values().cloned().collect();
+            fallback_walls.sort_by_key(|wall| wall.id);
+            Cow::Owned(fallback_walls)
         } else {
             Cow::Borrowed(shared_data.active_walls_snapshot.as_slice())
         };
@@ -7465,6 +7527,9 @@ impl MassiveGameServer {
 
         let sync_start = Instant::now();
         self.synchronize_state(has_connected_clients).await;
+        // AoI is refreshed during synchronize_state, so publish its snapshot afterwards to keep
+        // broadcast reads on the latest authoritative frame.
+        self.publish_player_aoi_snapshot_if_enabled();
         let sync_elapsed = sync_start.elapsed();
         trace!(
             "[Frame {}] State synchronization took: {:?}",

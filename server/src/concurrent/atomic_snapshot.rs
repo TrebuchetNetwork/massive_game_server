@@ -2,7 +2,7 @@
 //
 // Lock-free snapshots used by AOI/broadcast read paths.
 
-use crate::core::types::{EntityId, Pickup, PlayerID, PlayerState, Projectile};
+use crate::core::types::{EntityId, Pickup, PlayerAoI, PlayerID, PlayerState, Projectile};
 use arc_swap::ArcSwap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -121,6 +121,75 @@ impl AtomicPlayerSnapshot {
 }
 
 impl Default for AtomicPlayerSnapshot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct PlayerAoISnapshot {
+    aois_by_player: HashMap<PlayerID, PlayerAoI>,
+}
+
+impl PlayerAoISnapshot {
+    pub fn from_player_aois_map(player_aois: &HashMap<PlayerID, PlayerAoI>) -> Self {
+        Self {
+            aois_by_player: player_aois.clone(),
+        }
+    }
+
+    pub fn from_owned_player_aois(player_aois: Vec<(PlayerID, PlayerAoI)>) -> Self {
+        let mut aois_by_player = HashMap::with_capacity(player_aois.len());
+        for (player_id, player_aoi) in player_aois {
+            aois_by_player.insert(player_id, player_aoi);
+        }
+        Self { aois_by_player }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.aois_by_player.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.aois_by_player.is_empty()
+    }
+
+    #[inline]
+    pub fn get_aoi(&self, player_id: &PlayerID) -> Option<&PlayerAoI> {
+        self.aois_by_player.get(player_id)
+    }
+}
+
+pub struct AtomicPlayerAoISnapshot {
+    current: ArcSwap<PlayerAoISnapshot>,
+}
+
+impl AtomicPlayerAoISnapshot {
+    pub fn new() -> Self {
+        Self {
+            current: ArcSwap::from_pointee(PlayerAoISnapshot::default()),
+        }
+    }
+
+    #[inline]
+    pub fn load(&self) -> Arc<PlayerAoISnapshot> {
+        self.current.load_full()
+    }
+
+    #[inline]
+    pub fn publish(&self, snapshot: PlayerAoISnapshot) {
+        self.current.store(Arc::new(snapshot));
+    }
+
+    #[inline]
+    pub fn publish_arc(&self, snapshot: Arc<PlayerAoISnapshot>) {
+        self.current.store(snapshot);
+    }
+}
+
+impl Default for AtomicPlayerAoISnapshot {
     fn default() -> Self {
         Self::new()
     }
