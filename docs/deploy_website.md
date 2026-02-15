@@ -30,6 +30,15 @@ Stop:
 docker compose -f docker/docker-compose.yml down
 ```
 
+Or use helper script:
+
+```bash
+DEPLOY_MODE=docker ./scripts/deploy.sh up
+DEPLOY_MODE=docker ./scripts/deploy.sh status
+DEPLOY_MODE=docker ./scripts/deploy.sh logs
+DEPLOY_MODE=docker ./scripts/deploy.sh down
+```
+
 ## Option 2: Native Binary
 
 Build:
@@ -47,6 +56,12 @@ MGS_DISABLE_STUN=1 \
 MGS_TARGET_BOT_COUNT=0 \
 RUST_LOG=massive_game_server_core=warn,warp=warn,webrtc=warn \
 ./target/release/massive_game_server_core
+```
+
+Or use helper script:
+
+```bash
+DEPLOY_MODE=native MGS_PORT=8080 ./scripts/deploy.sh up
 ```
 
 ## Production Notes

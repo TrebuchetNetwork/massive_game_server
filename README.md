@@ -84,6 +84,12 @@ Deploy the full website + game server stack:
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
+or:
+
+```bash
+DEPLOY_MODE=docker ./scripts/deploy.sh up
+```
+
 Then open:
 - `http://<host>:8080/` (landing website)
 - `http://<host>:8080/client.html` (game client)
