@@ -4407,6 +4407,8 @@ void main() {
         let reconnectTimerId = null;
         let connectAttemptInFlight = false;
         let activeSignalingUrl = '';
+        let joinTimingAttemptSeq = 0;
+        let joinTimingState = null;
         const AUTH_SESSION_TOKEN_KEY = 'mgs_auth_session_token';
         let authSessionToken = '';
         let authProfile = null;
@@ -4521,6 +4523,131 @@ void main() {
             resetReconnectState();
             return startConnectionAttempt({ isRetry: true });
         };
+
+        function createJoinTimingState(source = 'manual') {
+            joinTimingAttemptSeq += 1;
+            return {
+                attemptId: joinTimingAttemptSeq,
+                source: String(source || 'manual'),
+                attemptStartAtMs: 0,
+                signalingOpenAtMs: 0,
+                offerCreatedAtMs: 0,
+                localDescriptionAtMs: 0,
+                answerReceivedAtMs: 0,
+                remoteDescriptionAtMs: 0,
+                firstIceCandidateAtMs: 0,
+                dataChannelOpenAtMs: 0,
+                firstPacketAtMs: 0,
+                firstStateAtMs: 0,
+                firstRenderAtMs: 0,
+                completed: false,
+                abortedAtMs: 0,
+                abortedReason: ''
+            };
+        }
+
+        function toRelativeJoinMs(targetAtMs, startAtMs) {
+            if (!Number.isFinite(targetAtMs) || !Number.isFinite(startAtMs) || startAtMs <= 0) {
+                return null;
+            }
+            return Number(Math.max(0, targetAtMs - startAtMs).toFixed(2));
+        }
+
+        function summarizeJoinTiming(timing) {
+            if (!timing || !Number.isFinite(timing.attemptStartAtMs) || timing.attemptStartAtMs <= 0) {
+                return null;
+            }
+
+            const startAtMs = timing.attemptStartAtMs;
+            const completedAtMs = Number.isFinite(timing.firstRenderAtMs) && timing.firstRenderAtMs > 0
+                ? timing.firstRenderAtMs
+                : (Number.isFinite(timing.firstStateAtMs) && timing.firstStateAtMs > 0
+                    ? timing.firstStateAtMs
+                    : (Number.isFinite(timing.firstPacketAtMs) && timing.firstPacketAtMs > 0
+                        ? timing.firstPacketAtMs
+                        : null));
+
+            return {
+                signalingOpenMs: toRelativeJoinMs(timing.signalingOpenAtMs, startAtMs),
+                offerCreatedMs: toRelativeJoinMs(timing.offerCreatedAtMs, startAtMs),
+                localDescriptionMs: toRelativeJoinMs(timing.localDescriptionAtMs, startAtMs),
+                answerReceivedMs: toRelativeJoinMs(timing.answerReceivedAtMs, startAtMs),
+                remoteDescriptionMs: toRelativeJoinMs(timing.remoteDescriptionAtMs, startAtMs),
+                firstIceCandidateMs: toRelativeJoinMs(timing.firstIceCandidateAtMs, startAtMs),
+                dataChannelOpenMs: toRelativeJoinMs(timing.dataChannelOpenAtMs, startAtMs),
+                firstPacketMs: toRelativeJoinMs(timing.firstPacketAtMs, startAtMs),
+                firstStateMs: toRelativeJoinMs(timing.firstStateAtMs, startAtMs),
+                firstRenderMs: toRelativeJoinMs(timing.firstRenderAtMs, startAtMs),
+                totalMs: toRelativeJoinMs(completedAtMs, startAtMs)
+            };
+        }
+
+        function buildJoinTimingSnapshot(timing) {
+            const currentTiming = timing || createJoinTimingState('unknown');
+            return {
+                attemptId: currentTiming.attemptId,
+                source: currentTiming.source,
+                attemptStartAtMs: currentTiming.attemptStartAtMs,
+                signalingOpenAtMs: currentTiming.signalingOpenAtMs,
+                offerCreatedAtMs: currentTiming.offerCreatedAtMs,
+                localDescriptionAtMs: currentTiming.localDescriptionAtMs,
+                answerReceivedAtMs: currentTiming.answerReceivedAtMs,
+                remoteDescriptionAtMs: currentTiming.remoteDescriptionAtMs,
+                firstIceCandidateAtMs: currentTiming.firstIceCandidateAtMs,
+                dataChannelOpenAtMs: currentTiming.dataChannelOpenAtMs,
+                firstPacketAtMs: currentTiming.firstPacketAtMs,
+                firstStateAtMs: currentTiming.firstStateAtMs,
+                firstRenderAtMs: currentTiming.firstRenderAtMs,
+                completed: !!currentTiming.completed,
+                abortedAtMs: currentTiming.abortedAtMs,
+                abortedReason: currentTiming.abortedReason || '',
+                summary: summarizeJoinTiming(currentTiming)
+            };
+        }
+
+        function publishJoinTiming() {
+            if (!window.__e2e) return;
+            window.__e2e.joinTiming = buildJoinTimingSnapshot(joinTimingState);
+        }
+
+        function startJoinTimingAttempt(source = 'manual') {
+            if (window.__e2e?.joinTiming) {
+                window.__e2e.lastJoinTiming = window.__e2e.joinTiming;
+            }
+            joinTimingState = createJoinTimingState(source);
+            joinTimingState.attemptStartAtMs = performance.now();
+            publishJoinTiming();
+        }
+
+        function markJoinTimingStage(stageKey, stageNowMs = performance.now()) {
+            if (!joinTimingState) {
+                joinTimingState = createJoinTimingState('implicit');
+            }
+            if (!Object.prototype.hasOwnProperty.call(joinTimingState, stageKey)) return;
+            if (Number.isFinite(joinTimingState[stageKey]) && joinTimingState[stageKey] > 0) return;
+            joinTimingState[stageKey] = Number(stageNowMs) || performance.now();
+            if (stageKey === 'firstRenderAtMs' || stageKey === 'firstStateAtMs') {
+                joinTimingState.completed = true;
+            }
+            publishJoinTiming();
+        }
+
+        function markJoinTimingAborted(reason = '') {
+            if (!joinTimingState || joinTimingState.completed) {
+                return;
+            }
+            if (!Number.isFinite(joinTimingState.abortedAtMs) || joinTimingState.abortedAtMs <= 0) {
+                joinTimingState.abortedAtMs = performance.now();
+            }
+            if (reason) {
+                joinTimingState.abortedReason = String(reason);
+            }
+            publishJoinTiming();
+        }
+
+        joinTimingState = createJoinTimingState('idle');
+        publishJoinTiming();
+        window.__e2e.lastJoinTiming = null;
         const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
         let touchControlsInitialized = false;
 
@@ -7961,6 +8088,15 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             if (e2e) {
                 e2e.renderFrames += 1;
                 e2e.lastRenderTime = performance.now();
+                if (
+                    joinTimingState &&
+                    Number.isFinite(joinTimingState.firstStateAtMs) &&
+                    joinTimingState.firstStateAtMs > 0 &&
+                    (!Number.isFinite(joinTimingState.firstRenderAtMs) || joinTimingState.firstRenderAtMs <= 0) &&
+                    (localPlayerState || players.size > 0)
+                ) {
+                    markJoinTimingStage('firstRenderAtMs');
+                }
 
                 if ((currentTime - lastE2EStatsUpdateTime) >= E2E_STATS_UPDATE_INTERVAL_MS) {
                     lastE2EStatsUpdateTime = currentTime;
@@ -12116,11 +12252,13 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             if (!canStartConnectionAttempt()) {
                 return false;
             }
+            startJoinTimingAttempt(isRetry ? 'retry' : 'manual');
 
             const normalized = normalizeSignalingUrl(wsUrlInput.value);
             if (!normalized.ok) {
                 log(normalized.error, 'error');
                 setConnectionError(normalized.error);
+                markJoinTimingAborted(normalized.error);
                 if (isRetry) {
                     scheduleAutoReconnect('Invalid signaling URL');
                 }
@@ -12147,6 +12285,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
 
             signalingSocket.onopen = () => {
                 connectAttemptInFlight = false;
+                markJoinTimingStage('signalingOpenAtMs');
                 log('Connected to signaling server.', 'success');
                 applyConnectionStatus('negotiating', 'Establishing peer connection...');
                 connectButton.disabled = true;
@@ -12159,19 +12298,34 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
 
             signalingSocket.onmessage = async (event) => {
                 const msg = JSON.parse(event.data);
+                if (msg.error) {
+                    const detail = String(msg.detail || msg.error || 'Server rejected join request');
+                    log(detail, 'warn');
+                    setConnectionError(detail);
+                    markJoinTimingAborted(detail);
+                    applyConnectionStatus('error', detail);
+                    return;
+                }
+
                 if (msg.sdp) {
                     try {
+                        if (msg.sdp.type === 'answer') {
+                            markJoinTimingStage('answerReceivedAtMs');
+                        }
                         await peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                        markJoinTimingStage('remoteDescriptionAtMs');
                         if (msg.sdp.type === 'offer') {
                             log('Server sent offer, creating answer...', 'info');
                             const answer = await peerConnection.createAnswer();
                             await peerConnection.setLocalDescription(answer);
+                            markJoinTimingStage('localDescriptionAtMs');
                             signalingSocket.send(JSON.stringify({ 'sdp': peerConnection.localDescription }));
                         }
                     } catch (e) {
                         log(`Error setting remote desc: ${e}`, 'error');
                     }
                 } else if (msg.ice) {
+                    markJoinTimingStage('firstIceCandidateAtMs');
                     try {
                         await peerConnection.addIceCandidate(new RTCIceCandidate(msg.ice));
                     } catch (e) {
@@ -12186,6 +12340,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 const detail = summarizeSignalingError(e, signalingSocket, url);
                 log(detail, 'error');
                 setConnectionError(detail);
+                markJoinTimingAborted(detail);
                 resetConnectionUI({ allowReconnect: true, reconnectReason: detail });
             };
 
@@ -12197,6 +12352,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 const detail = `Signaling closed (${clean}, code=${closeCode}${closeReason})`;
                 log(detail, 'error');
                 setConnectionError(detail);
+                markJoinTimingAborted(detail);
                 resetConnectionUI({ allowReconnect: true, reconnectReason: detail });
             };
 
@@ -12246,6 +12402,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             const allowReconnect = options.allowReconnect === true;
             const reconnectReason = String(options.reconnectReason || '').trim();
             connectAttemptInFlight = false;
+            markJoinTimingAborted(reconnectReason || connectionErrorDetail || 'connection reset');
             connectButton.disabled = false;
             connectButton.textContent = 'Connect';
             connectButton.classList.replace('bg-gray-500', 'bg-indigo-600');
@@ -12409,6 +12566,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 window.__e2e.workerCullKernel = cullWorkerStats.wasmKernelLabel;
                 window.__e2e.workerCullResultSeq = cullWorkerResultSeq;
                 window.__e2e.projectileRawMode = false;
+                window.__e2e.joinTiming = buildJoinTimingSnapshot(joinTimingState);
             }
             cullWorkerBusy = false;
             cullWorkerResult = null;
@@ -12526,7 +12684,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             try {
                 log('Creating offer...');
                 const offer = await peerConnection.createOffer();
+                markJoinTimingStage('offerCreatedAtMs');
                 await peerConnection.setLocalDescription(offer);
+                markJoinTimingStage('localDescriptionAtMs');
                 signalingSocket.send(JSON.stringify({ 'sdp': peerConnection.localDescription }));
             } catch (e) {
                 log(`Error creating offer: ${e}`, 'error');
@@ -12538,6 +12698,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
 
             dcInstance.onopen = () => {
                 log(`DataChannel "${dcInstance.label}" OPENED.`, 'success');
+                markJoinTimingStage('dataChannelOpenAtMs');
                 resetReconnectState();
                 controlsDiv.classList.remove('hidden');
                 setupInputHandlers();
@@ -12561,6 +12722,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
 
             dcInstance.onmessage = (event) => {
                 try {
+                    markJoinTimingStage('firstPacketAtMs');
                     if (pingStartTime > 10) { // Calculate ping on message receipt
                         ping = Date.now() - pingStartTime;
                         pingStartTime = Date.now(); // Reset for next measurement
@@ -12589,6 +12751,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                             case 'initial':
                             case 'delta':
                                 processServerUpdate(parsed.data, parsed.type === 'initial');
+                                markJoinTimingStage('firstStateAtMs');
                                 if (e2e) {
                                     e2e.lastStateUpdate = performance.now();
                                 }

@@ -35,6 +35,8 @@ Run outputs include:
 - `RUN_E2E=0`: skip Playwright E2E stage
 - `SCALE_CLIENTS=40`: number of browser clients for multi-client run
 - `SCALE_DURATION=60`: multi-client sample duration (seconds)
+- `SCALE_WAVE_BATCH_SIZE=24`: launch clients in waves (set `0` to disable wave batching)
+- `SCALE_WAVE_BATCH_DELAY_MS=500`: delay between launch waves
 - `STRESS_TICKS=240`: backend stress iterations
 - `STRESS_BOTS=300`: bots spawned during backend stress test
 - `STRESS_TARGET_BOT_COUNT=300`: target bot population during stress

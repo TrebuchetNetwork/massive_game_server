@@ -21,6 +21,8 @@ function parseArgs(argv) {
     minConnectedRatio: 0.9,
     maxErrorClients: 2,
     maxTotalMs: 0,
+    waveBatchSize: 24,
+    waveBatchDelayMs: 500,
     joinStageUrl: null,
     resetJoinStages: false,
     headless: true,
@@ -43,6 +45,8 @@ function parseArgs(argv) {
     else if (arg === "--min-connected-ratio") args.minConnectedRatio = Number(argv[++i]);
     else if (arg === "--max-error-clients") args.maxErrorClients = Number(argv[++i]);
     else if (arg === "--max-total-ms") args.maxTotalMs = Number(argv[++i]);
+    else if (arg === "--wave-batch-size") args.waveBatchSize = Number(argv[++i]);
+    else if (arg === "--wave-batch-delay-ms") args.waveBatchDelayMs = Number(argv[++i]);
     else if (arg === "--join-stage-url") args.joinStageUrl = argv[++i];
     else if (arg === "--reset-join-stages") args.resetJoinStages = true;
     else if (arg === "--headed") args.headless = false;
@@ -72,6 +76,8 @@ function printHelp() {
   --min-connected-ratio <0-1>  Minimum required connected ratio (default: 0.9)
   --max-error-clients <count>  Max clients allowed in error state (default: 2)
   --max-total-ms <ms>          Hard timeout for full benchmark (default: auto)
+  --wave-batch-size <count>    Optional launch wave size (default: 24, 0 disables)
+  --wave-batch-delay-ms <ms>   Delay between launch waves (default: 500)
   --join-stage-url <url>       Optional server join-stage report endpoint
   --reset-join-stages          Reset join-stage metrics before launch (requires endpoint)
   --headed                     Show browser UI
@@ -95,6 +101,20 @@ const CONNECT_LATENCY_WAVES = [
   { key: "wave_73_plus", label: "73+", startClientId: 73, endClientId: null },
 ];
 
+const JOIN_TIMING_FIELDS = [
+  { key: "signalingOpenMs", label: "signaling-open" },
+  { key: "offerCreatedMs", label: "offer-created" },
+  { key: "localDescriptionMs", label: "local-description" },
+  { key: "answerReceivedMs", label: "answer-received" },
+  { key: "remoteDescriptionMs", label: "remote-description" },
+  { key: "firstIceCandidateMs", label: "first-ice-candidate" },
+  { key: "dataChannelOpenMs", label: "datachannel-open" },
+  { key: "firstPacketMs", label: "first-packet" },
+  { key: "firstStateMs", label: "first-state" },
+  { key: "firstRenderMs", label: "first-render" },
+  { key: "totalMs", label: "total" },
+];
+
 function percentileFromSorted(values, percentile) {
   if (!values.length) return 0;
   if (values.length === 1) return values[0];
@@ -107,8 +127,11 @@ function percentileFromSorted(values, percentile) {
   return values[lower] + (values[upper] - values[lower]) * weight;
 }
 
-function summarizeConnectLatency(connectLatencyEvents) {
-  if (!connectLatencyEvents.length) {
+function summarizeNumericDurations(rawDurations) {
+  const durations = rawDurations
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((a, b) => a - b);
+  if (!durations.length) {
     return {
       count: 0,
       minMs: 0,
@@ -118,17 +141,28 @@ function summarizeConnectLatency(connectLatencyEvents) {
       p90Ms: 0,
       p95Ms: 0,
       p99Ms: 0,
-      slowestClients: [],
     };
   }
 
-  const durations = connectLatencyEvents
-    .map((event) => event.durationMs)
-    .filter((value) => Number.isFinite(value) && value >= 0)
-    .sort((a, b) => a - b);
-
   const avgMs =
     durations.reduce((sum, value) => sum + value, 0) / durations.length;
+
+  return {
+    count: durations.length,
+    minMs: Number(durations[0].toFixed(2)),
+    avgMs: Number(avgMs.toFixed(2)),
+    maxMs: Number(durations[durations.length - 1].toFixed(2)),
+    p50Ms: Number(percentileFromSorted(durations, 0.5).toFixed(2)),
+    p90Ms: Number(percentileFromSorted(durations, 0.9).toFixed(2)),
+    p95Ms: Number(percentileFromSorted(durations, 0.95).toFixed(2)),
+    p99Ms: Number(percentileFromSorted(durations, 0.99).toFixed(2)),
+  };
+}
+
+function summarizeConnectLatency(connectLatencyEvents) {
+  const summary = summarizeNumericDurations(
+    connectLatencyEvents.map((event) => event.durationMs)
+  );
 
   const slowestClients = connectLatencyEvents
     .slice()
@@ -141,14 +175,7 @@ function summarizeConnectLatency(connectLatencyEvents) {
     }));
 
   return {
-    count: durations.length,
-    minMs: Number(durations[0].toFixed(2)),
-    avgMs: Number(avgMs.toFixed(2)),
-    maxMs: Number(durations[durations.length - 1].toFixed(2)),
-    p50Ms: Number(percentileFromSorted(durations, 0.5).toFixed(2)),
-    p90Ms: Number(percentileFromSorted(durations, 0.9).toFixed(2)),
-    p95Ms: Number(percentileFromSorted(durations, 0.95).toFixed(2)),
-    p99Ms: Number(percentileFromSorted(durations, 0.99).toFixed(2)),
+    ...summary,
     slowestClients,
   };
 }
@@ -182,6 +209,39 @@ function summarizeConnectLatencyByWave(connectLatencyEvents, clientsRequested) {
   return summaryByWave;
 }
 
+function summarizeJoinTiming(connectLatencyEvents) {
+  const summary = {};
+  for (const field of JOIN_TIMING_FIELDS) {
+    const durations = connectLatencyEvents
+      .map((event) => Number(event?.joinTimingSummary?.[field.key]))
+      .filter((value) => Number.isFinite(value) && value >= 0);
+    summary[field.key] = {
+      label: field.label,
+      ...summarizeNumericDurations(durations),
+    };
+  }
+  return summary;
+}
+
+function summarizeJoinTimingByWave(connectLatencyEvents, clientsRequested) {
+  const summaryByWave = {};
+  for (const wave of CONNECT_LATENCY_WAVES) {
+    const waveEvents = connectLatencyEvents.filter((event) => {
+      if (event.clientId < wave.startClientId) return false;
+      if (!Number.isFinite(wave.endClientId)) return true;
+      return event.clientId <= wave.endClientId;
+    });
+    summaryByWave[wave.key] = {
+      label: wave.label,
+      startClientId: wave.startClientId,
+      endClientId: Number.isFinite(wave.endClientId) ? wave.endClientId : null,
+      requestedSlots: requestedSlotsForWave(clientsRequested, wave),
+      metrics: summarizeJoinTiming(waveEvents),
+    };
+  }
+  return summaryByWave;
+}
+
 function withTimeout(promise, timeoutMs, message) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return promise;
@@ -203,12 +263,18 @@ async function readClientState(page, args, clientId) {
       const detailText = window.__e2e?.connectionStatus?.detailText ?? "";
       const playerCountRaw = document.getElementById("playerCount")?.textContent ?? "0";
       const playerCount = Number.parseInt(playerCountRaw, 10);
+      const joinTiming = window.__e2e?.joinTiming ?? null;
+      const joinTimingSummary =
+        joinTiming && joinTiming.summary && typeof joinTiming.summary === "object"
+          ? joinTiming.summary
+          : null;
       return {
         statusKey,
         detailText,
         playerCount: Number.isFinite(playerCount) ? playerCount : 0,
         matchInfoReady: Boolean(window.__e2e?.matchInfoReady),
         renderFrames: Number(window.__e2e?.renderFrames ?? 0),
+        joinTimingSummary,
       };
     }),
     args.stateReadTimeoutMs,
@@ -325,10 +391,43 @@ function resolveLaunchOptions(args) {
   return launchOptions;
 }
 
+function shouldReplaceJoinTimingSummary(currentSummary, candidateSummary) {
+  if (!candidateSummary || typeof candidateSummary !== "object") return false;
+  if (!currentSummary || typeof currentSummary !== "object") return true;
+
+  const currentFirstRender = Number(currentSummary.firstRenderMs);
+  const candidateFirstRender = Number(candidateSummary.firstRenderMs);
+  if (!Number.isFinite(currentFirstRender) && Number.isFinite(candidateFirstRender)) {
+    return true;
+  }
+
+  const currentFirstState = Number(currentSummary.firstStateMs);
+  const candidateFirstState = Number(candidateSummary.firstStateMs);
+  if (!Number.isFinite(currentFirstState) && Number.isFinite(candidateFirstState)) {
+    return true;
+  }
+
+  const currentTotal = Number(currentSummary.totalMs);
+  const candidateTotal = Number(candidateSummary.totalMs);
+  if (!Number.isFinite(currentTotal) && Number.isFinite(candidateTotal)) {
+    return true;
+  }
+  if (Number.isFinite(candidateTotal) && Number.isFinite(currentTotal) && candidateTotal >= currentTotal) {
+    return true;
+  }
+  return false;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const startedAt = new Date();
   const effectiveConcurrency = Math.max(1, Math.min(args.clients, Math.floor(args.connectConcurrency)));
+  const waveBatchSize = Number.isFinite(args.waveBatchSize)
+    ? Math.max(0, Math.floor(args.waveBatchSize))
+    : 0;
+  const waveBatchDelayMs = Number.isFinite(args.waveBatchDelayMs)
+    ? Math.max(0, Math.floor(args.waveBatchDelayMs))
+    : 0;
   const maxTotalMs = calculateMaxTotalMs({ ...args, connectConcurrency: effectiveConcurrency });
 
   const browser = await chromium.launch(resolveLaunchOptions(args));
@@ -356,7 +455,7 @@ async function main() {
   }
 
   console.log(
-    `[multi] start clients=${args.clients} concurrency=${effectiveConcurrency} durationMs=${args.durationMs} timeoutMs=${maxTotalMs}`
+    `[multi] start clients=${args.clients} concurrency=${effectiveConcurrency} waveBatchSize=${waveBatchSize} waveBatchDelayMs=${waveBatchDelayMs} durationMs=${args.durationMs} timeoutMs=${maxTotalMs}`
   );
 
   try {
@@ -377,6 +476,7 @@ async function main() {
         page,
         connectedAtLeastOnce: false,
         connectDurationMs: null,
+        joinTimingSummary: null,
         lastState: null,
         stateSamples: 0,
         playerCountSamples: 0,
@@ -391,10 +491,12 @@ async function main() {
         client.connectedAtLeastOnce = true;
         client.connectDurationMs = connectDurationMs;
         client.lastState = initialState;
+        client.joinTimingSummary = initialState.joinTimingSummary || null;
         connectLatencyEvents.push({
           clientId: client.id,
           durationMs: connectDurationMs,
           statusKey: initialState.statusKey,
+          joinTimingSummary: client.joinTimingSummary,
         });
         connectedAtLeastOnce += 1;
         console.log(
@@ -426,6 +528,14 @@ async function main() {
       }
       if (args.spawnDelayMs > 0) {
         await sleep(args.spawnDelayMs);
+      }
+      if (waveBatchSize > 0 && (i + 1) < args.clients && (i + 1) % waveBatchSize === 0) {
+        if (inFlight.size > 0) {
+          await Promise.all(Array.from(inFlight));
+        }
+        if (waveBatchDelayMs > 0) {
+          await sleep(waveBatchDelayMs);
+        }
       }
     }
     if (inFlight.size > 0) {
@@ -459,6 +569,9 @@ async function main() {
         try {
           const state = await readClientState(client.page, args, client.id);
           client.lastState = state;
+          if (shouldReplaceJoinTimingSummary(client.joinTimingSummary, state.joinTimingSummary)) {
+            client.joinTimingSummary = state.joinTimingSummary;
+          }
           client.stateSamples += 1;
           client.playerCountSamples += 1;
           client.playerCountTotal += state.playerCount;
@@ -512,9 +625,21 @@ async function main() {
     if (timedOutDuringSampling) {
       failures.push(`Timed out during sampling after ${maxTotalMs}ms`);
     }
-    const connectLatencyMs = summarizeConnectLatency(connectLatencyEvents);
+    const connectLatencyEventsWithJoinTiming = connectLatencyEvents.map((event) => {
+      const client = clients[event.clientId - 1];
+      return {
+        ...event,
+        joinTimingSummary: client?.joinTimingSummary || event.joinTimingSummary || null,
+      };
+    });
+    const connectLatencyMs = summarizeConnectLatency(connectLatencyEventsWithJoinTiming);
     const connectLatencyByWave = summarizeConnectLatencyByWave(
-      connectLatencyEvents,
+      connectLatencyEventsWithJoinTiming,
+      args.clients
+    );
+    const joinTimingMs = summarizeJoinTiming(connectLatencyEventsWithJoinTiming);
+    const joinTimingByWave = summarizeJoinTimingByWave(
+      connectLatencyEventsWithJoinTiming,
       args.clients
     );
 
@@ -529,11 +654,19 @@ async function main() {
       averagePlayerCountPerClient: Number(avgPlayerCount.toFixed(2)),
       connectLatencyMs,
       connectLatencyByWave,
+      joinTimingMs,
+      joinTimingByWave,
       launchFailures,
       errorClientIds: Array.from(errorClientsObserved).sort((a, b) => a - b),
       thresholds: {
         minConnectedRatio: args.minConnectedRatio,
         maxErrorClients: args.maxErrorClients,
+      },
+      launchPolicy: {
+        connectConcurrency: effectiveConcurrency,
+        spawnDelayMs: args.spawnDelayMs,
+        waveBatchSize,
+        waveBatchDelayMs,
       },
       timedOutDuringLaunch,
       timedOutDuringSampling,

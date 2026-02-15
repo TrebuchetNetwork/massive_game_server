@@ -142,6 +142,18 @@ function toMarkdown(summary) {
     lines.push(
       `- Multi-Client: connectedRatio=${m.connectedRatio}, healthyFinal=${m.clientsHealthyFinal}/${m.clientsRequested}, passed=${m.passed}`
     );
+    const joinFirstState = m.joinTimingMs?.firstStateMs;
+    if (joinFirstState && joinFirstState.count > 0) {
+      lines.push(
+        `- Multi-Client Join(first-state): avg=${joinFirstState.avgMs}ms, p95=${joinFirstState.p95Ms}ms`
+      );
+    }
+    const tailFirstState = m.joinTimingByWave?.wave_73_plus?.metrics?.firstStateMs;
+    if (tailFirstState && tailFirstState.count > 0) {
+      lines.push(
+        `- Multi-Client 73+ Join(first-state): avg=${tailFirstState.avgMs}ms, p95=${tailFirstState.p95Ms}ms`
+      );
+    }
   } else {
     lines.push("- Multi-Client: unavailable");
   }

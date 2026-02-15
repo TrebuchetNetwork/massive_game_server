@@ -22,8 +22,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
@@ -264,6 +264,97 @@ fn map_server_weapon_to_fb(server_weapon: ServerWeaponType) -> fb::WeaponType {
     }
 }
 
+const DEFAULT_JOIN_RATE_LIMIT_PER_SEC: u32 = 30;
+const DEFAULT_JOIN_RATE_LIMIT_BURST: u32 = 50;
+const JOIN_RATE_LIMIT_THROTTLED_MESSAGE: &str = "Server busy handling joins, retry shortly.";
+
+#[derive(Debug)]
+struct JoinRateLimiter {
+    refill_per_sec: f64,
+    capacity: f64,
+    available_tokens: f64,
+    last_refill_at: Instant,
+}
+
+impl JoinRateLimiter {
+    fn new(refill_per_sec: u32, capacity: u32) -> Self {
+        let refill = refill_per_sec.max(1) as f64;
+        let cap = capacity.max(1) as f64;
+        Self {
+            refill_per_sec: refill,
+            capacity: cap,
+            available_tokens: cap,
+            last_refill_at: Instant::now(),
+        }
+    }
+
+    fn try_acquire(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now
+            .checked_duration_since(self.last_refill_at)
+            .unwrap_or(Duration::from_millis(0))
+            .as_secs_f64();
+        if elapsed > 0.0 {
+            self.available_tokens =
+                (self.available_tokens + (elapsed * self.refill_per_sec)).min(self.capacity);
+            self.last_refill_at = now;
+        }
+
+        if self.available_tokens >= 1.0 {
+            self.available_tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn env_u32(name: &str, default_value: u32) -> u32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .unwrap_or(default_value)
+}
+
+fn join_rate_limiter() -> Option<&'static Mutex<JoinRateLimiter>> {
+    static JOIN_RATE_LIMITER: OnceLock<Option<Mutex<JoinRateLimiter>>> = OnceLock::new();
+    JOIN_RATE_LIMITER
+        .get_or_init(|| {
+            let per_sec = env_u32(
+                "MGS_JOIN_RATE_LIMIT_PER_SEC",
+                DEFAULT_JOIN_RATE_LIMIT_PER_SEC,
+            );
+            if per_sec == 0 {
+                info!("Join rate limiter disabled (MGS_JOIN_RATE_LIMIT_PER_SEC=0).");
+                return None;
+            }
+
+            let burst = env_u32("MGS_JOIN_RATE_LIMIT_BURST", DEFAULT_JOIN_RATE_LIMIT_BURST)
+                .max(per_sec);
+            info!(
+                "Join rate limiter enabled: {} joins/sec with burst {}.",
+                per_sec, burst
+            );
+            Some(Mutex::new(JoinRateLimiter::new(per_sec, burst)))
+        })
+        .as_ref()
+}
+
+fn try_acquire_join_rate_limit_token() -> bool {
+    let Some(rate_limiter) = join_rate_limiter() else {
+        return true;
+    };
+
+    let mut limiter_guard = match rate_limiter.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            warn!("Join rate limiter mutex poisoned; continuing with recovered state.");
+            poisoned.into_inner()
+        }
+    };
+    limiter_guard.try_acquire()
+}
+
 pub async fn handle_signaling_connection(
     ws: WebSocket,
     peer_id_str: String,
@@ -279,6 +370,22 @@ pub async fn handle_signaling_connection(
     auth_service: AuthService,
     auth_user_id: Option<String>,
 ) {
+    if !try_acquire_join_rate_limit_token() {
+        warn!(
+            "[{}]: Join attempt throttled by join rate limiter.",
+            peer_id_str
+        );
+        let (mut throttled_ws_tx, _) = ws.split();
+        let throttled_payload = serde_json::json!({
+            "error": "join_rate_limited",
+            "detail": JOIN_RATE_LIMIT_THROTTLED_MESSAGE,
+        })
+        .to_string();
+        let _ = throttled_ws_tx.send(Message::text(throttled_payload)).await;
+        let _ = throttled_ws_tx.send(Message::close()).await;
+        return;
+    }
+
     info!("[{}]: New WebSocket connection for signaling.", peer_id_str);
     server_instance.note_join_enqueued(&peer_id_str);
 
