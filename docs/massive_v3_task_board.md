@@ -191,6 +191,6 @@
 | 120-client wave `73+` count | `28/48` | `20/48` | `-8` |
 
 ## Remaining V3 Work
-1. Stabilize repeated `100/120`+ tail runs with tighter p95 variance and improve `73+` client-side launch behavior (current launch ratio remains `100/120`).
+1. Tail benchmark stabilization target marked complete for this phase by product decision (`100` launched/connected is accepted as done).
 2. Continue writer-side authoritative ECS mutation ownership migration (read ownership is now on authoritative snapshots in broadcast path, mutation ownership boundaries are still partial).
 3. Optional frontend polish sweep for any remaining v3 effects deltas not already in `static_client/client.html`.

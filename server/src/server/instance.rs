@@ -2301,6 +2301,144 @@ impl MassiveGameServer {
         }
     }
 
+    fn drain_queued_projectiles_to_authoritative_state(&self) {
+        let mut queued_projectiles = Vec::new();
+        while let Some(proj) = self.projectiles_to_add.pop() {
+            queued_projectiles.push(proj);
+        }
+        if queued_projectiles.is_empty() {
+            return;
+        }
+
+        let mut projectiles_guard = self.projectiles.write();
+        projectiles_guard.extend(queued_projectiles);
+    }
+
+    fn take_authoritative_projectiles_for_processing(&self) -> Vec<Projectile> {
+        let mut guard = self.projectiles.write();
+        std::mem::take(&mut *guard)
+    }
+
+    fn commit_authoritative_projectile_state(
+        &self,
+        kept_projectiles: Vec<Projectile>,
+        removed_ids: &[EntityId],
+    ) {
+        for proj_id in removed_ids {
+            self.spatial_index.remove_projectile(proj_id);
+        }
+
+        let mut guard = self.projectiles.write();
+        *guard = kept_projectiles;
+    }
+
+    fn process_pickup_respawns_authoritative(&self, pickups: &mut [Pickup], delta_time: f32) {
+        for pickup in pickups.iter_mut() {
+            if !pickup.is_active {
+                if let Some(timer) = &mut pickup.respawn_timer {
+                    *timer -= delta_time;
+                    if *timer <= 0.0 {
+                        pickup.is_active = true;
+                        pickup.respawn_timer = None;
+                        self.upsert_pickup_in_partition_index(pickup);
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_pickup_collection_authoritative(&self, pickups: &mut [Pickup]) {
+        self.player_manager
+            .for_each_player_mut(|player_id_arc_for_pickup, player_state_for_pickup| {
+                if !player_state_for_pickup.alive {
+                    return;
+                }
+
+                for pickup_idx in 0..pickups.len() {
+                    if pickups[pickup_idx].is_active {
+                        let pickup_ref = &pickups[pickup_idx];
+                        let dx = player_state_for_pickup.x - pickup_ref.x;
+                        let dy = player_state_for_pickup.y - pickup_ref.y;
+
+                        if (dx * dx + dy * dy)
+                            < (PICKUP_COLLECTION_RADIUS * PICKUP_COLLECTION_RADIUS)
+                        {
+                            let mut collected = false;
+                            let pickup_pos = Vec2::new(pickup_ref.x, pickup_ref.y);
+                            let pickup_id_event = pickup_ref.id;
+                            let pickup_type_event = pickup_ref.pickup_type.clone();
+                            let mut_pickup = &mut pickups[pickup_idx];
+
+                            match &mut mut_pickup.pickup_type {
+                                CorePickupType::Health => {
+                                    if player_state_for_pickup.health
+                                        < player_state_for_pickup.max_health
+                                    {
+                                        player_state_for_pickup.health =
+                                            (player_state_for_pickup.health + 50)
+                                                .min(player_state_for_pickup.max_health);
+                                        player_state_for_pickup
+                                            .mark_field_changed(FIELD_HEALTH_ALIVE);
+                                        collected = true;
+                                    }
+                                }
+                                CorePickupType::Ammo => {
+                                    player_state_for_pickup.ammo =
+                                        PlayerState::get_max_ammo_for_weapon(
+                                            player_state_for_pickup.weapon,
+                                        );
+                                    player_state_for_pickup.mark_field_changed(FIELD_WEAPON_AMMO);
+                                    collected = true;
+                                }
+                                CorePickupType::WeaponCrate(weapon) => {
+                                    player_state_for_pickup.weapon = *weapon;
+                                    player_state_for_pickup.ammo =
+                                        PlayerState::get_max_ammo_for_weapon(*weapon);
+                                    player_state_for_pickup.reload_progress = None;
+                                    player_state_for_pickup.mark_field_changed(FIELD_WEAPON_AMMO);
+                                    collected = true;
+                                }
+                                CorePickupType::SpeedBoost => {
+                                    player_state_for_pickup.speed_boost_remaining = 10.0;
+                                    player_state_for_pickup.mark_field_changed(FIELD_POWERUPS);
+                                    collected = true;
+                                }
+                                CorePickupType::DamageBoost => {
+                                    player_state_for_pickup.damage_boost_remaining = 10.0;
+                                    player_state_for_pickup.mark_field_changed(FIELD_POWERUPS);
+                                    collected = true;
+                                }
+                                CorePickupType::Shield => {
+                                    player_state_for_pickup.shield_max = 50;
+                                    player_state_for_pickup.shield_current =
+                                        player_state_for_pickup.shield_max;
+                                    player_state_for_pickup.mark_field_changed(FIELD_SHIELD);
+                                    collected = true;
+                                }
+                            }
+
+                            if collected {
+                                mut_pickup.is_active = false;
+                                mut_pickup.respawn_timer = Some(mut_pickup.get_respawn_duration());
+                                let pickup_partition_state = mut_pickup.clone();
+                                self.upsert_pickup_in_partition_index(&pickup_partition_state);
+                                self.global_game_events.push(
+                                    GameEvent::PowerupCollected {
+                                        player_id: player_id_arc_for_pickup.clone(),
+                                        pickup_id: pickup_id_event,
+                                        pickup_type: pickup_type_event,
+                                        position: pickup_pos,
+                                    },
+                                    EventPriority::Normal,
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+    }
+
     // In massive_game_server/server/src/server/instance.rs
 
     async fn process_projectiles_optimized(
@@ -2322,11 +2460,8 @@ impl MassiveGameServer {
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
         trace!("[Frame {}] Starting optimized projectile processing", frame);
 
-        // Get all projectiles as a vector for parallel processing
-        let mut all_projectiles = {
-            let mut guard = self.projectiles.write();
-            std::mem::take(&mut *guard)
-        };
+        // Take authoritative projectile state for parallel processing.
+        let mut all_projectiles = self.take_authoritative_projectiles_for_processing();
 
         let total_projectiles = all_projectiles.len();
         trace!(
@@ -2560,13 +2695,7 @@ impl MassiveGameServer {
             }
         }
 
-        // Clean up spatial index for removed projectiles
-        for proj_id in &removed_ids {
-            self.spatial_index.remove_projectile(proj_id);
-        }
-
-        // Put remaining projectiles back
-        *self.projectiles.write() = kept_projectiles;
+        self.commit_authoritative_projectile_state(kept_projectiles, &removed_ids);
 
         // Process wall damage
         let mut wall_damage_by_id: HashMap<EntityId, i32> = HashMap::new();
@@ -2783,18 +2912,7 @@ impl MassiveGameServer {
 
     async fn process_pickup_respawns(&self, delta_time: f32) {
         let mut pickups_guard = self.pickups.write();
-        for pickup in pickups_guard.iter_mut() {
-            if !pickup.is_active {
-                if let Some(timer) = &mut pickup.respawn_timer {
-                    *timer -= delta_time;
-                    if *timer <= 0.0 {
-                        pickup.is_active = true;
-                        pickup.respawn_timer = None;
-                        self.upsert_pickup_in_partition_index(pickup);
-                    }
-                }
-            }
-        }
+        self.process_pickup_respawns_authoritative(pickups_guard.as_mut_slice(), delta_time);
     }
 
     fn get_enemy_positions_for_team(&self, team_id: u8) -> Vec<(Vec2, PlayerID)> {
@@ -2823,15 +2941,8 @@ impl MassiveGameServer {
     }
 
     pub async fn run_game_logic_update(&self, delta_time: f32) {
-        // Process queued projectile spawns in one lock acquisition.
-        let mut queued_projectiles = Vec::new();
-        while let Some(proj) = self.projectiles_to_add.pop() {
-            queued_projectiles.push(proj);
-        }
-        if !queued_projectiles.is_empty() {
-            let mut projectiles_guard = self.projectiles.write();
-            projectiles_guard.extend(queued_projectiles);
-        }
+        // Drain projectile ingress queue into authoritative projectile state.
+        self.drain_queued_projectiles_to_authoritative_state();
 
         // Update match state (timer, transitions)
         {
@@ -2904,99 +3015,11 @@ impl MassiveGameServer {
             }
         }
 
-        // Player pickup collection logic
-        let mut pickups_guard = self.pickups.write();
-        self.player_manager.for_each_player_mut(
-            |player_id_arc_for_pickup, player_state_for_pickup| {
-                if !player_state_for_pickup.alive {
-                    return;
-                }
-
-                for pickup_idx in 0..pickups_guard.len() {
-                    if pickups_guard[pickup_idx].is_active {
-                        let pickup_ref = &pickups_guard[pickup_idx];
-                        let dx = player_state_for_pickup.x - pickup_ref.x;
-                        let dy = player_state_for_pickup.y - pickup_ref.y;
-
-                        if (dx * dx + dy * dy)
-                            < (PICKUP_COLLECTION_RADIUS * PICKUP_COLLECTION_RADIUS)
-                        {
-                            let mut collected = false;
-                            let pickup_pos = Vec2::new(pickup_ref.x, pickup_ref.y);
-                            let pickup_id_event = pickup_ref.id;
-                            let pickup_type_event = pickup_ref.pickup_type.clone();
-                            let mut_pickup = &mut pickups_guard[pickup_idx];
-
-                            match &mut_pickup.pickup_type {
-                                CorePickupType::Health => {
-                                    if player_state_for_pickup.health
-                                        < player_state_for_pickup.max_health
-                                    {
-                                        player_state_for_pickup.health =
-                                            (player_state_for_pickup.health + 50)
-                                                .min(player_state_for_pickup.max_health);
-                                        player_state_for_pickup
-                                            .mark_field_changed(FIELD_HEALTH_ALIVE);
-                                        collected = true;
-                                    }
-                                }
-                                CorePickupType::Ammo => {
-                                    player_state_for_pickup.ammo =
-                                        PlayerState::get_max_ammo_for_weapon(
-                                            player_state_for_pickup.weapon,
-                                        );
-                                    player_state_for_pickup.mark_field_changed(FIELD_WEAPON_AMMO);
-                                    collected = true;
-                                }
-                                CorePickupType::WeaponCrate(weapon) => {
-                                    player_state_for_pickup.weapon = *weapon;
-                                    player_state_for_pickup.ammo =
-                                        PlayerState::get_max_ammo_for_weapon(*weapon);
-                                    player_state_for_pickup.reload_progress = None;
-                                    player_state_for_pickup.mark_field_changed(FIELD_WEAPON_AMMO);
-                                    collected = true;
-                                }
-                                CorePickupType::SpeedBoost => {
-                                    player_state_for_pickup.speed_boost_remaining = 10.0;
-                                    player_state_for_pickup.mark_field_changed(FIELD_POWERUPS);
-                                    collected = true;
-                                }
-                                CorePickupType::DamageBoost => {
-                                    player_state_for_pickup.damage_boost_remaining = 10.0;
-                                    player_state_for_pickup.mark_field_changed(FIELD_POWERUPS);
-                                    collected = true;
-                                }
-                                CorePickupType::Shield => {
-                                    player_state_for_pickup.shield_max = 50;
-                                    player_state_for_pickup.shield_current =
-                                        player_state_for_pickup.shield_max;
-                                    player_state_for_pickup.mark_field_changed(FIELD_SHIELD);
-                                    collected = true;
-                                }
-                            }
-
-                            if collected {
-                                mut_pickup.is_active = false;
-                                mut_pickup.respawn_timer = Some(mut_pickup.get_respawn_duration());
-                                let pickup_partition_state = mut_pickup.clone();
-                                self.upsert_pickup_in_partition_index(&pickup_partition_state);
-                                self.global_game_events.push(
-                                    GameEvent::PowerupCollected {
-                                        player_id: player_id_arc_for_pickup.clone(),
-                                        pickup_id: pickup_id_event,
-                                        pickup_type: pickup_type_event,
-                                        position: pickup_pos,
-                                    },
-                                    EventPriority::Normal,
-                                );
-                                break;
-                            }
-                        }
-                    }
-                }
-            },
-        );
-        drop(pickups_guard);
+        // Player pickup collection mutates authoritative pickup state in one write scope.
+        {
+            let mut pickups_guard = self.pickups.write();
+            self.process_pickup_collection_authoritative(pickups_guard.as_mut_slice());
+        }
 
         // CTF Logic
         let mut match_info_write_guard = self.match_info.write();

@@ -212,7 +212,7 @@
             inset: 0;
             opacity: 0;
             background:
-                radial-gradient(circle at 50% 50%, rgba(239, 68, 68, 0) 28%, rgba(239, 68, 68, 0.2) 65%, rgba(153, 27, 27, 0.66) 100%);
+                radial-gradient(circle at 50% 50%, rgba(239, 68, 68, 0) 34%, rgba(248, 113, 113, 0.16) 64%, rgba(185, 28, 28, 0.34) 100%);
             mix-blend-mode: screen;
             transition: opacity 90ms linear;
         }
@@ -479,12 +479,14 @@
             border-color: rgba(248, 113, 113, 0.75);
             color: #FEE2E2;
             box-shadow: 0 0 16px rgba(248, 113, 113, 0.35);
+            animation: objectiveUrgencyPulse 920ms ease-in-out infinite;
         }
 
         .objective-urgency--positive {
             border-color: rgba(52, 211, 153, 0.72);
             color: #D1FAE5;
             box-shadow: 0 0 16px rgba(16, 185, 129, 0.34);
+            animation: none;
         }
 
         .radial-hud {
@@ -638,16 +640,58 @@
 
         .death-recap__list {
             margin: 6px 0 0;
-            padding-left: 14px;
+            padding: 0;
             color: #CBD5E1;
             font-size: 11px;
             line-height: 1.4;
+            list-style: none;
+        }
+
+        .death-recap__item {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 3px 0;
+            border-top: 1px solid rgba(148, 163, 184, 0.16);
+        }
+
+        .death-recap__item:first-child {
+            border-top: none;
+        }
+
+        .death-recap__item--primary .death-recap__source {
+            color: #FCA5A5;
+            font-weight: 700;
+        }
+
+        .death-recap__item--empty {
+            border-top: none;
+            color: #94A3B8;
+            justify-content: flex-start;
+        }
+
+        .death-recap__source {
+            color: #E2E8F0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 60%;
+        }
+
+        .death-recap__meta {
+            color: #94A3B8;
+            white-space: nowrap;
         }
 
         @keyframes combatBannerPop {
             0% { transform: translateX(-50%) translateY(-10px) scale(0.86); }
             65% { transform: translateX(-50%) translateY(0) scale(1.03); }
             100% { transform: translateX(-50%) translateY(0) scale(1); }
+        }
+
+        @keyframes objectiveUrgencyPulse {
+            0%, 100% { transform: translateX(-50%) scale(1); }
+            45% { transform: translateX(-50%) scale(1.02); }
         }
 
         .chat-display { position: absolute; bottom: 10px; left: 10px; width: 350px; background-color: rgba(31, 41, 55, 0.8); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 -2px 5px rgba(0,0,0,0.2); z-index: 30; }
@@ -860,7 +904,7 @@
         .mobile-controls__buttons {
             position: absolute;
             right: 16px;
-            bottom: 24px;
+            bottom: var(--mobile-buttons-bottom, 24px);
             display: flex;
             flex-direction: column;
             gap: 10px;
@@ -5021,8 +5065,36 @@ void main() {
             if (!mobileControlsDiv) return;
             const shortestSide = Math.max(280, Math.min(window.innerWidth, window.innerHeight));
             const scale = clamp(shortestSide / 420, 0.9, 1.26);
+            const baseBottom = Math.round(24 * Math.min(scale, 1.15));
+            let adaptiveBottom = baseBottom;
+            if (mobileActionReachSamples >= 3) {
+                const desiredBottom = clamp(
+                    Math.round(mobileActionReachPx - (52 * scale)),
+                    12,
+                    Math.round(window.innerHeight * 0.34)
+                );
+                adaptiveBottom = Math.round((baseBottom * 0.68) + (desiredBottom * 0.32));
+            }
             mobileControlsDiv.style.setProperty('--mobile-button-width', `${Math.round(110 * scale)}px`);
             mobileControlsDiv.style.setProperty('--mobile-button-height', `${Math.round(48 * scale)}px`);
+            mobileControlsDiv.style.setProperty('--mobile-buttons-bottom', `${adaptiveBottom}px`);
+        }
+
+        function recordMobileActionReachSample(touch) {
+            if (!touch || !Number.isFinite(touch.clientY)) return;
+            const fromBottom = clamp(window.innerHeight - touch.clientY, 0, window.innerHeight);
+            if (fromBottom <= 0) return;
+            mobileActionReachPx = mobileActionReachSamples === 0
+                ? fromBottom
+                : ((mobileActionReachPx * 0.8) + (fromBottom * 0.2));
+            mobileActionReachSamples = Math.min(240, mobileActionReachSamples + 1);
+            const now = (typeof performance !== 'undefined' && performance.now)
+                ? performance.now()
+                : Date.now();
+            if ((now - mobileLastAdaptiveSizingAt) >= 120) {
+                mobileLastAdaptiveSizingAt = now;
+                updateMobileButtonSizing();
+            }
         }
 
         function closePingWheel() {
@@ -5160,6 +5232,7 @@ void main() {
                 const touch = event.changedTouches[0];
                 aimTouchId = touch.identifier;
                 mobileAimActive = true;
+                recordMobileActionReachSample(touch);
                 updateAimFromTouch(touch);
                 if (gameSettings.mobileAutoFireAim) {
                     inputState.shooting = true;
@@ -5171,6 +5244,7 @@ void main() {
                 if (aimTouchId === null) return;
                 for (const touch of event.changedTouches) {
                     if (touch.identifier === aimTouchId) {
+                        recordMobileActionReachSample(touch);
                         updateAimFromTouch(touch);
                         if (gameSettings.mobileAutoFireAim) {
                             inputState.shooting = true;
@@ -5213,6 +5287,7 @@ void main() {
                 const touch = event.changedTouches[0];
                 fireTouchId = touch.identifier;
                 mobileFireTouchActive = true;
+                recordMobileActionReachSample(touch);
 
                 const now = Date.now();
                 if (now <= fireButtonTapWindowUntil) {
@@ -5247,6 +5322,7 @@ void main() {
             mobileFireButton?.addEventListener('touchcancel', endFire, { passive: true });
 
             mobileReloadButton?.addEventListener('touchstart', (event) => {
+                recordMobileActionReachSample(event.changedTouches[0]);
                 if (localPlayerState && localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo < getMaxAmmoForWeaponClient(localPlayerState.weapon) && localPlayerState.reload_progress === -1) {
                     inputState.reload = true;
                     if (reloadPromptSpan) reloadPromptSpan.textContent = ' (Reloading...)';
@@ -5257,6 +5333,7 @@ void main() {
             }, { passive: false });
 
             mobileMeleeButton?.addEventListener('touchstart', (event) => {
+                recordMobileActionReachSample(event.changedTouches[0]);
                 inputState.melee_attack = true;
                 triggerHaptic(8);
                 event.preventDefault();
@@ -5593,6 +5670,9 @@ void main() {
         let mobileAimActive = false;
         let mobileStickyFireArmed = false;
         let mobileFireTouchActive = false;
+        let mobileActionReachPx = 0;
+        let mobileActionReachSamples = 0;
+        let mobileLastAdaptiveSizingAt = 0;
         let fireButtonTapCount = 0;
         let fireButtonTapWindowUntil = 0;
 
@@ -11063,14 +11143,22 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 .filter((row) => (Date.now() - row.at) <= 10000)
                 .slice(-4)
                 .reverse();
-            const rows = recent.map((row) => {
-                const name = row.name || 'Unknown';
-                const dmg = Number(row.damage) || 0;
-                const weaponLabelInner = weaponNames[row.weapon] || 'Unknown';
-                return `${name} - ${dmg} (${weaponLabelInner})`;
-            });
-            combatUiState.deathRecapRows = rows;
-            deathRecapListDiv.innerHTML = rows.map((row) => `<li>${escapeHtml(row)}</li>`).join('');
+            const rows = recent.map((row) => ({
+                name: row.name || 'Unknown',
+                damage: Math.max(0, Math.round(Number(row.damage) || 0)),
+                weaponLabelInner: weaponNames[row.weapon] || 'Unknown'
+            }));
+            const totalDamage = rows.reduce((sum, row) => sum + row.damage, 0);
+            combatUiState.deathRecapRows = rows.map((row) => `${row.name} - ${row.damage} (${row.weaponLabelInner})`);
+            if (rows.length === 0) {
+                deathRecapListDiv.innerHTML = '<li class="death-recap__item death-recap__item--empty">No recent damage data</li>';
+            } else {
+                deathRecapListDiv.innerHTML = rows.map((row, idx) => {
+                    const pct = totalDamage > 0 ? Math.round((row.damage / totalDamage) * 100) : 0;
+                    const rowClass = idx === 0 ? 'death-recap__item death-recap__item--primary' : 'death-recap__item';
+                    return `<li class="${rowClass}"><span class="death-recap__source">${escapeHtml(row.name)}</span><span class="death-recap__meta">${row.damage} (${pct}%) · ${escapeHtml(row.weaponLabelInner)}</span></li>`;
+                }).join('');
+            }
 
             combatUiState.deathRecapText = deathRecapMainDiv.textContent;
             combatUiState.deathRecapDistanceText = deathRecapDistanceDiv.textContent;
@@ -11306,7 +11394,10 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             combatComboChipSpan.classList.toggle('combat-chip--active', combo > 1);
             combatMomentumDiv.classList.toggle('combat-momentum--hot', momentumValue >= 0.68);
 
-            const damageOpacity = localPlayerState.alive ? (combatUiState.damagePulse * 0.82) : 0;
+            const lowHealthBias = clamp(1 - (healthNow / maxHealth), 0, 1) * 0.14;
+            const damageOpacity = localPlayerState.alive
+                ? clamp((combatUiState.damagePulse * 0.48) + lowHealthBias, 0, 0.66)
+                : 0;
             const speedOpacity = localPlayerState.alive
                 ? clamp(combatUiState.speedPulse * 0.56 + momentumValue * 0.18, 0, 0.78)
                 : 0;
