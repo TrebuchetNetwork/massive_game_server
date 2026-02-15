@@ -2113,6 +2113,60 @@
             return PLAYER_RENDER_CAP_DEFAULT;
         }
 
+        function createLodSummaryCounter() {
+            return {
+                full: 0,
+                medium: 0,
+                low: 0,
+                dot: 0
+            };
+        }
+
+        function countLodTier(counter, tier) {
+            if (!counter) return;
+            if (tier === 'medium' || tier === 'low' || tier === 'dot') {
+                counter[tier] += 1;
+                return;
+            }
+            counter.full += 1;
+        }
+
+        function computeRenderLodScale() {
+            let scale = 1;
+            if (ultraPerformanceMode) {
+                scale *= 0.58;
+            } else if (STABLE_MODE_FORCED) {
+                scale *= 0.74;
+            }
+            if (smoothedFrameMs >= 28) {
+                scale *= 0.72;
+            } else if (smoothedFrameMs >= 24) {
+                scale *= 0.84;
+            }
+            if (players.size > HIGH_POPULATION_PLAYER_COUNT) {
+                scale *= 0.8;
+            } else if (players.size >= 56) {
+                scale *= 0.9;
+            }
+            return clamp(scale, 0.44, 1);
+        }
+
+        function resolveRenderLodTier(distanceSq, mediumDistanceSq, lowDistanceSq, dotDistanceSq, options = {}) {
+            if (options.isLocal || options.isPriority) return 'full';
+            const lodScale = Number.isFinite(options.lodScale) ? options.lodScale : computeRenderLodScale();
+            const scaleSq = lodScale * lodScale;
+            if (distanceSq <= mediumDistanceSq * scaleSq) return 'full';
+            if (distanceSq <= lowDistanceSq * scaleSq) return 'medium';
+            if (distanceSq <= dotDistanceSq * scaleSq) return 'low';
+            return 'dot';
+        }
+
+        function getProjectileDotCullStride() {
+            if (ultraPerformanceMode) return 4;
+            if (STABLE_MODE_FORCED || smoothedFrameMs >= 24) return 3;
+            return 2;
+        }
+
         function getRemotePlayerSpriteUpdateStride() {
             if (!SPRITE_CADENCE_ENABLED) return 1;
             const mobileCadence = mobileDynamicsEnabled || forceMobileClient;
@@ -4473,6 +4527,17 @@ void main() {
         window.__e2e.projectileCount = 0;
         window.__e2e.visibleProjectileCount = 0;
         window.__e2e.projectileRenderCap = 1400;
+        window.__e2e.renderLodScale = 1;
+        window.__e2e.playerLodSummary = { full: 0, medium: 0, low: 0, dot: 0 };
+        window.__e2e.projectileLodSummary = { full: 0, medium: 0, low: 0, dot: 0 };
+        window.__e2e.projectileSpritePool = {
+            size: 0,
+            created: 0,
+            reused: 0,
+            released: 0,
+            destroyed: 0,
+            reuseRate: 0
+        };
         window.__e2e.syntheticProjectileCount = 0;
         window.__e2e.activeEffectCount = 0;
         window.__e2e.fullFxMode = false;
@@ -5650,6 +5715,12 @@ void main() {
         const PROJECTILE_RENDER_CAP_ULTRA_SOFT = 240;
         const PROJECTILE_RENDER_CAP_ULTRA_RECOVERY = 160;
         const PROJECTILE_RENDER_CAP_ULTRA_EMERGENCY = 96;
+        const PLAYER_LOD_MEDIUM_DISTANCE_SQ = 480 * 480;
+        const PLAYER_LOD_LOW_DISTANCE_SQ = 860 * 860;
+        const PLAYER_LOD_DOT_DISTANCE_SQ = 1260 * 1260;
+        const PROJECTILE_LOD_MEDIUM_DISTANCE_SQ = 360 * 360;
+        const PROJECTILE_LOD_LOW_DISTANCE_SQ = 640 * 640;
+        const PROJECTILE_LOD_DOT_DISTANCE_SQ = 980 * 980;
         const webgpuPlayerMinCountParam = Number.parseInt(uiModeParams.get('webgpu_player_min_count') || '', 10);
         const webgpuProjectileMinCountParam = Number.parseInt(uiModeParams.get('webgpu_projectile_min_count') || '', 10);
         const webgpuFramePressureParam = Number.parseFloat(uiModeParams.get('webgpu_frame_pressure_ms') || '');
@@ -5676,6 +5747,9 @@ void main() {
         let lastPlayerRenderCap = PLAYER_RENDER_CAP_DEFAULT;
         let lastVisibleProjectiles = 0;
         let lastProjectileRenderCap = PROJECTILE_RENDER_CAP_DEFAULT;
+        let lastPlayerLodSummary = { full: 0, medium: 0, low: 0, dot: 0 };
+        let lastProjectileLodSummary = { full: 0, medium: 0, low: 0, dot: 0 };
+        let lastRenderLodScale = 1;
         let lastRemotePlayerUpdateStride = 1;
         let lastProjectileSpriteUpdateStride = 1;
         let fxStressIntervalId = null;
@@ -5701,6 +5775,12 @@ void main() {
             lastComputeMs: 0,
             wasmKernelActive: false,
             wasmKernelLabel: 'js'
+        };
+        const projectileSpritePoolStats = {
+            created: 0,
+            reused: 0,
+            released: 0,
+            destroyed: 0
         };
         const renderAssetCache = {
             initialized: false,
@@ -6657,7 +6737,10 @@ void main() {
     const totalPlayerCount = updateContext.totalPlayerCount;
     const denseVisualMode = updateContext.denseVisualMode;
     const detailTickDivisor = updateContext.detailTickDivisor;
-    const hideRemoteFxByDensity = !isLocalSprite && (denseVisualMode || !!sprite._lightweightRemote);
+    const playerLodTier = updateContext.playerLodTier || 'full';
+    const lowLodTier = playerLodTier === 'low' || playerLodTier === 'dot';
+    sprite._lightweightRemote = !isLocalSprite && lowLodTier;
+    const hideRemoteFxByDensity = !isLocalSprite && (denseVisualMode || lowLodTier || !!sprite._lightweightRemote);
     if (!isLocalSprite && !skipVisibilityCheck && !isWorldPointVisible(targetX, targetY, PLAYER_CULL_MARGIN_WORLD)) {
         hidePlayerSprite(sprite);
         return;
@@ -6728,9 +6811,39 @@ void main() {
 
     const playerVisible = player.alive || (player.respawn_timer !== undefined && player.respawn_timer > 0);
     if (sprite.visible !== playerVisible) sprite.visible = playerVisible;
-    const playerAlpha = player.alive ? 1 : 0.55;
+    let playerAlpha = player.alive ? 1 : 0.55;
+    if (!isLocalSprite) {
+        if (playerLodTier === 'dot') {
+            playerAlpha = player.alive ? 0.68 : 0.44;
+        } else if (playerLodTier === 'low') {
+            playerAlpha = player.alive ? 0.82 : 0.5;
+        } else if (playerLodTier === 'medium') {
+            playerAlpha = player.alive ? 0.92 : 0.54;
+        }
+    }
     if (Math.abs(sprite.alpha - playerAlpha) > ALPHA_EPSILON) {
         sprite.alpha = playerAlpha;
+    }
+    if (!isLocalSprite) {
+        let spriteScale = 1;
+        if (playerLodTier === 'dot') {
+            spriteScale = 0.46;
+        } else if (playerLodTier === 'low') {
+            spriteScale = 0.7;
+        } else if (playerLodTier === 'medium') {
+            spriteScale = 0.88;
+        }
+        if (
+            Math.abs((sprite.scale.x || 1) - spriteScale) > TRANSFORM_EPSILON ||
+            Math.abs((sprite.scale.y || 1) - spriteScale) > TRANSFORM_EPSILON
+        ) {
+            sprite.scale.set(spriteScale, spriteScale);
+        }
+    } else if (
+        Math.abs((sprite.scale.x || 1) - 1) > TRANSFORM_EPSILON ||
+        Math.abs((sprite.scale.y || 1) - 1) > TRANSFORM_EPSILON
+    ) {
+        sprite.scale.set(1, 1);
     }
 
     const localX = Number.isFinite(localAnchorX) ? localAnchorX : targetX;
@@ -6740,6 +6853,7 @@ void main() {
     const farDetailMode =
         ultraPerformanceMode ||
         totalPlayerCount > HIGH_POPULATION_PLAYER_COUNT ||
+        lowLodTier ||
         ((STABLE_MODE_FORCED && !isLocalSprite) || ((dx * dx + dy * dy) > FAR_DETAIL_DISTANCE_SQ));
 
     if (sprite._lastFarDetail !== farDetailMode || sprite._lastDenseVisualMode !== hideRemoteFxByDensity) {
@@ -6998,16 +7112,28 @@ function writeWebGPUPlayerInstance(buffer, offset, player, worldX, worldY) {
     const renderRotation = Number(
         player.render_rotation !== undefined ? player.render_rotation : player.rotation
     ) || 0;
+    const lodTier = player._renderLodTier || 'full';
     const alive = !!player.alive;
     const tint = alive
         ? (teamColors[player.team_id] || teamColors[0])
         : 0x6B7280;
-    const alpha = alive ? 1 : 0.55;
+    let alpha = alive ? 1 : 0.55;
+    let size = WEBGPU_PLAYER_BASE_SIZE;
+    if (lodTier === 'medium') {
+        alpha = Math.min(alpha, alive ? 0.92 : 0.54);
+        size *= 0.88;
+    } else if (lodTier === 'low') {
+        alpha = Math.min(alpha, alive ? 0.82 : 0.5);
+        size *= 0.72;
+    } else if (lodTier === 'dot') {
+        alpha = Math.min(alpha, alive ? 0.68 : 0.44);
+        size *= 0.5;
+    }
 
     buffer[offset] = worldX;
     buffer[offset + 1] = worldY;
     buffer[offset + 2] = renderRotation;
-    buffer[offset + 3] = WEBGPU_PLAYER_BASE_SIZE;
+    buffer[offset + 3] = Math.max(5.5, size);
     buffer[offset + 4] = ((tint >> 16) & 0xFF) / 255;
     buffer[offset + 5] = ((tint >> 8) & 0xFF) / 255;
     buffer[offset + 6] = (tint & 0xFF) / 255;
@@ -7018,6 +7144,7 @@ function writeWebGPUPlayerInstance(buffer, offset, player, worldX, worldY) {
 function writeWebGPUProjectileInstance(buffer, offset, projectile, worldX, worldY) {
     const weaponType = projectile.weapon_type ?? GP.WeaponType.Pistol;
     const tint = weaponColors[weaponType] || 0xFFFFFF;
+    const lodTier = projectile._renderLodTier || 'full';
     const denseVisualMode =
         ultraPerformanceMode ||
         STABLE_MODE_FORCED ||
@@ -7032,10 +7159,25 @@ function writeWebGPUProjectileInstance(buffer, offset, projectile, worldX, world
         const idSeed = typeof projectileId === 'string' ? projectileId.length : (Number(projectileId) || 0);
         alpha = Math.sin(frameNowMs * 0.02 + idSeed) * 0.08 + 0.92;
     }
+    if (lodTier === 'medium') {
+        alpha = Math.min(alpha, 0.84);
+    } else if (lodTier === 'low') {
+        alpha = Math.min(alpha, 0.74);
+    } else if (lodTier === 'dot') {
+        alpha = Math.min(alpha, 0.62);
+    }
+    let projectileSize = getWebGPUProjectileSize(weaponType);
+    if (lodTier === 'medium') {
+        projectileSize *= 0.86;
+    } else if (lodTier === 'low') {
+        projectileSize *= 0.72;
+    } else if (lodTier === 'dot') {
+        projectileSize *= 0.54;
+    }
 
     buffer[offset] = worldX;
     buffer[offset + 1] = worldY;
-    buffer[offset + 2] = getWebGPUProjectileSize(weaponType);
+    buffer[offset + 2] = Math.max(2.4, projectileSize);
     buffer[offset + 3] = ((tint >> 16) & 0xFF) / 255;
     buffer[offset + 4] = ((tint >> 8) & 0xFF) / 255;
     buffer[offset + 5] = (tint & 0xFF) / 255;
@@ -7047,7 +7189,13 @@ function writeWebGPUProjectileInstance(buffer, offset, projectile, worldX, world
 function createProjectileSprite(projectile) {
     const weaponType = projectile.weapon_type ?? GP.WeaponType.Pistol;
     const texture = renderAssetCache.projectileTextures.get(weaponType) || renderAssetCache.projectileTextures.get(GP.WeaponType.Pistol);
-    const sprite = projectileSpritePool.length > 0 ? projectileSpritePool.pop() : new PIXI.Sprite(texture);
+    const reusedFromPool = projectileSpritePool.length > 0;
+    const sprite = reusedFromPool ? projectileSpritePool.pop() : new PIXI.Sprite(texture);
+    if (reusedFromPool) {
+        projectileSpritePoolStats.reused += 1;
+    } else {
+        projectileSpritePoolStats.created += 1;
+    }
     if (sprite.texture !== texture) {
         sprite.texture = texture;
     }
@@ -7064,6 +7212,7 @@ function createProjectileSprite(projectile) {
 
 function releaseProjectileSprite(sprite) {
     if (!sprite) return;
+    projectileSpritePoolStats.released += 1;
     sprite.visible = false;
     sprite.projectileId = null;
     sprite.weaponType = GP.WeaponType.Pistol;
@@ -7078,12 +7227,21 @@ function releaseProjectileSprite(sprite) {
     if (projectileSpritePool.length < PROJECTILE_SPRITE_POOL_LIMIT) {
         projectileSpritePool.push(sprite);
     } else {
+        projectileSpritePoolStats.destroyed += 1;
         sprite.destroy({ children: true });
     }
 }
 
 
-function updateProjectileSprite(sprite, projectile, px = null, py = null, skipVisibilityCheck = false, denseVisualMode = false) {
+function updateProjectileSprite(
+    sprite,
+    projectile,
+    px = null,
+    py = null,
+    skipVisibilityCheck = false,
+    denseVisualMode = false,
+    lodTier = 'full'
+) {
     const worldX = px !== null ? px : (projectile.render_x !== undefined ? projectile.render_x : projectile.x);
     const worldY = py !== null ? py : (projectile.render_y !== undefined ? projectile.render_y : projectile.y);
     if (sprite.position.x !== worldX) sprite.position.x = worldX;
@@ -7106,16 +7264,54 @@ function updateProjectileSprite(sprite, projectile, px = null, py = null, skipVi
     }
 
     const desiredBlendMode =
-        !denseVisualMode && sprite.weaponType === GP.WeaponType.Sniper
+        !denseVisualMode && lodTier === 'full' && sprite.weaponType === GP.WeaponType.Sniper
             ? PIXI.BLEND_MODES.ADD
             : PIXI.BLEND_MODES.NORMAL;
     if (sprite.blendMode !== desiredBlendMode) {
         sprite.blendMode = desiredBlendMode;
     }
 
+    const dotLod = lodTier === 'dot';
+    const lowLod = lodTier === 'low';
+    const mediumLod = lodTier === 'medium';
+    let targetScale = 1;
+    if (dotLod) {
+        targetScale = 0.54;
+    } else if (lowLod) {
+        targetScale = 0.72;
+    } else if (mediumLod) {
+        targetScale = 0.86;
+    }
+    if (
+        Math.abs((sprite.scale.x || 1) - targetScale) > TRANSFORM_EPSILON ||
+        Math.abs((sprite.scale.y || 1) - targetScale) > TRANSFORM_EPSILON
+    ) {
+        sprite.scale.set(targetScale, targetScale);
+    }
+
     if (ultraPerformanceMode || STABLE_MODE_FORCED || denseVisualMode) {
-        if (Math.abs(sprite.alpha - 0.88) > ALPHA_EPSILON) {
-            sprite.alpha = 0.88;
+        const denseAlpha = dotLod ? 0.6 : (lowLod ? 0.74 : (mediumLod ? 0.82 : 0.88));
+        if (Math.abs(sprite.alpha - denseAlpha) > ALPHA_EPSILON) {
+            sprite.alpha = denseAlpha;
+        }
+        return true;
+    }
+
+    if (dotLod) {
+        if (Math.abs(sprite.alpha - 0.62) > ALPHA_EPSILON) {
+            sprite.alpha = 0.62;
+        }
+        return true;
+    }
+    if (lowLod) {
+        if (Math.abs(sprite.alpha - 0.74) > ALPHA_EPSILON) {
+            sprite.alpha = 0.74;
+        }
+        return true;
+    }
+    if (mediumLod) {
+        if (Math.abs(sprite.alpha - 0.84) > ALPHA_EPSILON) {
+            sprite.alpha = 0.84;
         }
         return true;
     }
@@ -8123,6 +8319,24 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     e2e.projectileCount = projectiles.size;
                     e2e.visibleProjectileCount = lastVisibleProjectiles;
                     e2e.projectileRenderCap = lastProjectileRenderCap;
+                    e2e.renderLodScale = Number(lastRenderLodScale.toFixed(3));
+                    e2e.playerLodSummary = { ...lastPlayerLodSummary };
+                    e2e.projectileLodSummary = { ...lastProjectileLodSummary };
+                    {
+                        const totalProjectileSpriteAcquires =
+                            projectileSpritePoolStats.created + projectileSpritePoolStats.reused;
+                        const reuseRate = totalProjectileSpriteAcquires > 0
+                            ? (projectileSpritePoolStats.reused / totalProjectileSpriteAcquires)
+                            : 0;
+                        e2e.projectileSpritePool = {
+                            size: projectileSpritePool.length,
+                            created: projectileSpritePoolStats.created,
+                            reused: projectileSpritePoolStats.reused,
+                            released: projectileSpritePoolStats.released,
+                            destroyed: projectileSpritePoolStats.destroyed,
+                            reuseRate: Number(reuseRate.toFixed(3))
+                        };
+                    }
                     e2e.mobileDynamicsEnabled = mobileDynamicsEnabled;
                     e2e.spriteCadenceEnabled = SPRITE_CADENCE_ENABLED;
                     e2e.remotePlayerUpdateStride = lastRemotePlayerUpdateStride;
@@ -8798,8 +9012,12 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             const playerUpdateContext = {
                 totalPlayerCount,
                 denseVisualMode: playerDenseVisualMode,
-                detailTickDivisor: ultraPerformanceMode ? 4 : (STABLE_MODE_FORCED ? 3 : 2)
+                detailTickDivisor: ultraPerformanceMode ? 4 : (STABLE_MODE_FORCED ? 3 : 2),
+                playerLodTier: 'full'
             };
+            const lodScale = computeRenderLodScale();
+            lastRenderLodScale = lodScale;
+            const playerLodSummary = createLodSummaryCounter();
             const remoteRenderCap = Math.max(0, playerRenderCap - ((myPlayerId && players.has(myPlayerId)) ? 1 : 0));
             const remotePriorityOverflowCap = remoteRenderCap > 0
                 ? Math.max(4, Math.floor(remoteRenderCap * 0.1))
@@ -8861,7 +9079,15 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 const py = player.render_y !== undefined ? player.render_y : player.y;
                 const dxToLocal = px - localAnchorX;
                 const dyToLocal = py - localAnchorY;
-                const isPriorityPlayer = !isLocal && ((dxToLocal * dxToLocal + dyToLocal * dyToLocal) <= PLAYER_PRIORITY_DISTANCE_SQ);
+                const distanceSqToLocal = (dxToLocal * dxToLocal) + (dyToLocal * dyToLocal);
+                const isPriorityPlayer = !isLocal && (distanceSqToLocal <= PLAYER_PRIORITY_DISTANCE_SQ);
+                const playerLodTier = resolveRenderLodTier(
+                    distanceSqToLocal,
+                    PLAYER_LOD_MEDIUM_DISTANCE_SQ,
+                    PLAYER_LOD_LOW_DISTANCE_SQ,
+                    PLAYER_LOD_DOT_DISTANCE_SQ,
+                    { isLocal, isPriority: isPriorityPlayer, lodScale }
+                );
                 let sprite = playerSprites.get(playerId);
                 if (!isLocal) {
                     if (workerPlayerSet) {
@@ -8909,12 +9135,15 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             const effectiveRotation = (player.render_rotation !== undefined ? player.render_rotation : player.rotation) + (Math.PI / 2);
                             if (sprite.rotation !== effectiveRotation) sprite.rotation = effectiveRotation;
                             if (!sprite.visible) sprite.visible = true;
+                            countLodTier(playerLodSummary, playerLodTier);
                             visiblePlayers += 1;
                             continue;
                         }
                     }
 
                     if (useWebGPUPlayers) {
+                        player._renderLodTier = playerLodTier;
+                        countLodTier(playerLodSummary, playerLodTier);
                         playerInstanceOffset = writeWebGPUPlayerInstance(
                             playerInstanceBuffer,
                             playerInstanceOffset,
@@ -8935,13 +9164,16 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     }
                 }
 
+                playerUpdateContext.playerLodTier = playerLodTier;
                 updatePlayerSprite(sprite, player, localAnchorX, localAnchorY, playerUpdateContext, true);
                 if (sprite.visible) {
+                    countLodTier(playerLodSummary, playerLodTier);
                     visiblePlayers += 1;
                 }
             }
             lastVisiblePlayers = visiblePlayers;
             lastPlayerRenderCap = playerRenderCap;
+            lastPlayerLodSummary = playerLodSummary;
 
             if (useWebGPUPlayers) {
                 try {
@@ -9022,6 +9254,8 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             const projectileCullBottom = worldViewBounds.bottom + PROJECTILE_CULL_MARGIN_WORLD;
             let projectileInstanceBuffer = null;
             let projectileInstanceOffset = 0;
+            const projectileLodSummary = createLodSummaryCounter();
+            const projectileDotCullStride = getProjectileDotCullStride();
             if (useWebGPUProjectiles) {
                 const projectedCount = workerProjectileSet
                     ? Math.min(projectiles.size, Math.max(projectileRenderCap, workerProjectileSet.size))
@@ -9043,6 +9277,17 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     Number.isFinite(projectile.render_x) ? projectile.render_x : projectile.x;
                 const py =
                     Number.isFinite(projectile.render_y) ? projectile.render_y : projectile.y;
+                const pdxToLocal = px - localAnchorX;
+                const pdyToLocal = py - localAnchorY;
+                const projectileDistanceSq = (pdxToLocal * pdxToLocal) + (pdyToLocal * pdyToLocal);
+                const isPriorityProjectile = projectileDistanceSq <= PROJECTILE_PRIORITY_DISTANCE_SQ;
+                const projectileLodTier = resolveRenderLodTier(
+                    projectileDistanceSq,
+                    PROJECTILE_LOD_MEDIUM_DISTANCE_SQ,
+                    PROJECTILE_LOD_LOW_DISTANCE_SQ,
+                    PROJECTILE_LOD_DOT_DISTANCE_SQ,
+                    { isPriority: isPriorityProjectile, lodScale }
+                );
                 const inView =
                     px >= projectileCullLeft &&
                     px <= projectileCullRight &&
@@ -9069,8 +9314,20 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     }
                     continue;
                 }
+                if (
+                    projectileLodTier === 'dot' &&
+                    !isPriorityProjectile &&
+                    ((frameCounter + getEntityCadenceBucket(projectileId)) % projectileDotCullStride) !== 0
+                ) {
+                    if (sprite && !useWebGPUProjectiles) {
+                        sprite.visible = false;
+                    }
+                    continue;
+                }
+                projectile._renderLodTier = projectileLodTier;
 
                 if (useWebGPUProjectiles) {
+                    countLodTier(projectileLodSummary, projectileLodTier);
                     projectileInstanceOffset = writeWebGPUProjectileInstance(
                         projectileInstanceBuffer,
                         projectileInstanceOffset,
@@ -9088,9 +9345,6 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     projectileContainer.addChild(sprite);
                 }
                 if (!useWebGPUProjectiles && projectileSpriteUpdateStride > 1) {
-                    const pdx = px - localAnchorX;
-                    const pdy = py - localAnchorY;
-                    const isPriorityProjectile = (pdx * pdx + pdy * pdy) <= PROJECTILE_PRIORITY_DISTANCE_SQ;
                     if (!isPriorityProjectile) {
                         const cadenceBucket = getEntityCadenceBucket(projectileId);
                         const shouldUpdateProjectileSprite = ((frameCounter + cadenceBucket) % projectileSpriteUpdateStride) === 0;
@@ -9098,17 +9352,30 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             if (sprite.position.x !== px) sprite.position.x = px;
                             if (sprite.position.y !== py) sprite.position.y = py;
                             if (!sprite.visible) sprite.visible = true;
+                            countLodTier(projectileLodSummary, projectileLodTier);
                             visibleProjectiles += 1;
                             continue;
                         }
                     }
                 }
-                if (updateProjectileSprite(sprite, projectile, px, py, true, projectileDenseVisualMode)) {
+                if (
+                    updateProjectileSprite(
+                        sprite,
+                        projectile,
+                        px,
+                        py,
+                        true,
+                        projectileDenseVisualMode,
+                        projectileLodTier
+                    )
+                ) {
+                    countLodTier(projectileLodSummary, projectileLodTier);
                     visibleProjectiles += 1;
                 }
             }
             lastVisibleProjectiles = visibleProjectiles;
             lastProjectileRenderCap = projectileRenderCap;
+            lastProjectileLodSummary = projectileLodSummary;
 
             if (useWebGPUProjectiles) {
                 try {
@@ -12528,6 +12795,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             cachedMinimapFlags = [];
             minimapWallsCacheDirty = true;
             minimapFlagsCacheDirty = true;
+            lastPlayerLodSummary = { full: 0, medium: 0, low: 0, dot: 0 };
+            lastProjectileLodSummary = { full: 0, medium: 0, low: 0, dot: 0 };
+            lastRenderLodScale = 1;
             if (window.__e2e) {
                 window.__e2e.matchInfoReady = false;
                 window.__e2e.playerCount = 0;
@@ -12536,6 +12806,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 window.__e2e.projectileCount = 0;
                 window.__e2e.visibleProjectileCount = 0;
                 window.__e2e.projectileRenderCap = PROJECTILE_RENDER_CAP_DEFAULT;
+                window.__e2e.renderLodScale = 1;
+                window.__e2e.playerLodSummary = { full: 0, medium: 0, low: 0, dot: 0 };
+                window.__e2e.projectileLodSummary = { full: 0, medium: 0, low: 0, dot: 0 };
                 window.__e2e.syntheticProjectileCount = 0;
                 window.__e2e.activeEffectCount = 0;
                 window.__e2e.effectsProfile = activeEffectsProfileName;
@@ -12566,6 +12839,21 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 window.__e2e.workerCullKernel = cullWorkerStats.wasmKernelLabel;
                 window.__e2e.workerCullResultSeq = cullWorkerResultSeq;
                 window.__e2e.projectileRawMode = false;
+                {
+                    const totalProjectileSpriteAcquires =
+                        projectileSpritePoolStats.created + projectileSpritePoolStats.reused;
+                    const reuseRate = totalProjectileSpriteAcquires > 0
+                        ? projectileSpritePoolStats.reused / totalProjectileSpriteAcquires
+                        : 0;
+                    window.__e2e.projectileSpritePool = {
+                        size: projectileSpritePool.length,
+                        created: projectileSpritePoolStats.created,
+                        reused: projectileSpritePoolStats.reused,
+                        released: projectileSpritePoolStats.released,
+                        destroyed: projectileSpritePoolStats.destroyed,
+                        reuseRate: Number(reuseRate.toFixed(3))
+                    };
+                }
                 window.__e2e.joinTiming = buildJoinTimingSnapshot(joinTimingState);
             }
             cullWorkerBusy = false;

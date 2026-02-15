@@ -36,7 +36,7 @@
 | T1-07 | Tail-wave instrumentation (1-24/25-48/49-72/73+) | Prior pass + Kimi guidance | Done | Latency buckets and wave metrics are in benchmark artifacts. |
 | T1-08 | Recover 120-client tail regression | Benchmark refresh findings | Done (target met) | Latest run reached 100/120 within 300s (`100 is fine` target met); stability and wave 1-48 latency variance tuning remain follow-ups. |
 | T2-01 | WebGPU + WebGL2 instanced shader fallback | MEGA_BATTLE_GAME_DESIGN 3.1 | Done | High-player instance rendering path supports non-WebGPU fallback. |
-| T2-02 | Projectile instancing and render culling | massive_game_client_analysis 1.2 | In Progress | Instanced layers in place; ongoing perf tuning with stress suite. |
+| T2-02 | Projectile instancing and render culling | massive_game_client_analysis 1.2 | In Progress | Instanced layers in place; explicit distance LOD tiers, far-dot culling stride, and projectile pool telemetry are now wired for stress validation. |
 | T2-03 | Background tab throttling | TREBUCHET 2.10 | Done | Visibility-driven throttling path implemented. |
 | T2-04 | Mobile control polish (sticky/autofire/adaptive) | massive_game_client_analysis 5.x | In Progress | Mobile UX improvements partially integrated; additional tuning queued. |
 | T2-05 | Combat clarity UI (hitmarkers/streak/radial/objective) | MEGA_BATTLE_EXECUTIVE_SUMMARY | In Progress | Multiple cues integrated; polish/consistency pass remains. |
@@ -55,7 +55,7 @@
 | T4-05 | Multi-region + DR + chaos testing | scalability_analysis 8,13,20 | Planned | Phase after stable regional baseline. |
 | T5-01 | Multi-mode/ranked/tournament systems | massive_game_server_improvements 1,8,9 | Planned | Requires durable profile/match history hardening first. |
 | T5-02 | Social systems (friends/party/clan) | massive_game_server_improvements 5,6,15 | Planned | API scaffolding follows identity/stats expansion. |
-| T5-03 | Spectator/replay pipeline | massive_game_server_improvements 10 | Planned | Needs event sourcing and stream transport hardening. |
+| T5-03 | Spectator/replay pipeline | massive_game_server_improvements 10 | In Progress | Arena replay-lite feed is available via `/api/arena/replays/recent`; full spectator stream/event sourcing remains pending. |
 | T5-04 | Battle pass/challenges/progression economy | massive_game_server_improvements 2,13,14 | Planned | Use auth profile as starting anchor. |
 
 ## Implemented In This Pass

@@ -17,9 +17,13 @@ use warp::{Filter, Reply};
 
 const DEFAULT_ARENA_LEADERBOARD_LIMIT: usize = 25;
 const DEFAULT_ARENA_PENDING_LIMIT: usize = 20;
+const DEFAULT_ARENA_RECENT_REPLAY_LIMIT: usize = 20;
 const DEFAULT_BASE_ELO: f64 = 1000.0;
 const DEFAULT_ARENA_WASM_DIR: &str = "data/arena_bots";
 const DEFAULT_ARENA_WASM_MAX_BYTES: usize = 2 * 1024 * 1024;
+const DEFAULT_ARENA_REPLAY_HISTORY_CAP: usize = 256;
+const MAX_ARENA_REPLAY_HISTORY_CAP: usize = 4096;
+const MAX_ARENA_REPLAY_WARNINGS: usize = 24;
 
 #[derive(Clone)]
 pub struct ArenaService {
@@ -42,6 +46,19 @@ struct ArenaInner {
     worker_last_success_at: AtomicU64,
     worker_last_failure_at: AtomicU64,
     worker_last_error: RwLock<Option<String>>,
+    worker_total_duration_ms: AtomicU64,
+    worker_total_ticks: AtomicU64,
+    worker_warning_matches: AtomicU64,
+    worker_runtime_fallback_matches: AtomicU64,
+    worker_trap_warnings: AtomicU64,
+    worker_timeout_warnings: AtomicU64,
+    worker_draw_matches: AtomicU64,
+    worker_max_duration_ms: AtomicU64,
+    worker_min_duration_ms: AtomicU64,
+    worker_model_win_distribution: RwLock<HashMap<String, u64>>,
+    replay_sequence: AtomicU64,
+    replay_history_capacity: usize,
+    recent_replays: Mutex<VecDeque<ArenaReplayView>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -174,6 +191,35 @@ pub struct SimulateTeamBattleResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ArenaReplayView {
+    pub replay_id: String,
+    pub match_id: String,
+    pub executed_at: u64,
+    pub mode: String,
+    pub model_a_id: String,
+    pub model_b_id: String,
+    pub winner_model_id: Option<String>,
+    pub draw: bool,
+    pub model_a_score: i32,
+    pub model_b_score: i32,
+    pub objective_label: String,
+    pub objective_a: i32,
+    pub objective_b: i32,
+    pub model_a_runtime: String,
+    pub model_b_runtime: String,
+    pub ticks_executed: u32,
+    pub duration_ms: u64,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ArenaReplayListResponse {
+    pub generated_at: u64,
+    pub total_replays: usize,
+    pub replays: Vec<ArenaReplayView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ArenaWorkerStatsResponse {
     pub generated_at: u64,
     pub pending_matches: usize,
@@ -185,6 +231,18 @@ pub struct ArenaWorkerStatsResponse {
     pub last_success_at: Option<u64>,
     pub last_failure_at: Option<u64>,
     pub last_error: Option<String>,
+    pub total_match_duration_ms: u64,
+    pub avg_match_duration_ms: f64,
+    pub max_match_duration_ms: u64,
+    pub min_match_duration_ms: Option<u64>,
+    pub total_ticks_executed: u64,
+    pub avg_ticks_executed: f64,
+    pub warning_matches: u64,
+    pub runtime_fallback_matches: u64,
+    pub trap_warnings: u64,
+    pub timeout_warnings: u64,
+    pub draw_matches: u64,
+    pub model_win_distribution: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -251,6 +309,11 @@ struct LeaderboardQuery {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct PendingQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct ReplayQuery {
     limit: Option<usize>,
 }
 
@@ -330,15 +393,21 @@ impl ArenaService {
             .and_then(|raw| raw.parse::<usize>().ok())
             .filter(|value| *value > 1024)
             .unwrap_or(DEFAULT_ARENA_WASM_MAX_BYTES);
+        let replay_history_capacity = std::env::var("MGS_ARENA_REPLAY_HISTORY_CAP")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_ARENA_REPLAY_HISTORY_CAP)
+            .clamp(16, MAX_ARENA_REPLAY_HISTORY_CAP);
         let persistent_store = load_persistent_store(&store_path);
         let completed_count = persistent_store.completed_matches.len() as u64;
 
         info!(
-            "Arena service initialized. store_path='{}', wasm_dir='{}', models={}, completed_matches={}",
+            "Arena service initialized. store_path='{}', wasm_dir='{}', models={}, completed_matches={}, replay_history_capacity={}",
             store_path.display(),
             wasm_dir.display(),
             persistent_store.models.len(),
-            completed_count
+            completed_count,
+            replay_history_capacity
         );
 
         Self {
@@ -358,6 +427,19 @@ impl ArenaService {
                 worker_last_success_at: AtomicU64::new(0),
                 worker_last_failure_at: AtomicU64::new(0),
                 worker_last_error: RwLock::new(None),
+                worker_total_duration_ms: AtomicU64::new(0),
+                worker_total_ticks: AtomicU64::new(0),
+                worker_warning_matches: AtomicU64::new(0),
+                worker_runtime_fallback_matches: AtomicU64::new(0),
+                worker_trap_warnings: AtomicU64::new(0),
+                worker_timeout_warnings: AtomicU64::new(0),
+                worker_draw_matches: AtomicU64::new(0),
+                worker_max_duration_ms: AtomicU64::new(0),
+                worker_min_duration_ms: AtomicU64::new(0),
+                worker_model_win_distribution: RwLock::new(HashMap::new()),
+                replay_sequence: AtomicU64::new(0),
+                replay_history_capacity,
+                recent_replays: Mutex::new(VecDeque::new()),
             }),
         }
     }
@@ -954,6 +1036,35 @@ impl ArenaService {
             duration_ms: Some(sandbox_outcome.duration_ms),
         })?;
 
+        self.push_recent_replay(ArenaReplayView {
+            replay_id: format!(
+                "replay_{:016x}",
+                self.inner.replay_sequence.fetch_add(1, Ordering::Relaxed) + 1
+            ),
+            match_id: claimed_match.match_id.clone(),
+            executed_at: report.completed_at,
+            mode: sandbox_outcome.mode.clone(),
+            model_a_id: claimed_match.model_a_id.clone(),
+            model_b_id: claimed_match.model_b_id.clone(),
+            winner_model_id: sandbox_outcome.winner_model_id.clone(),
+            draw: sandbox_outcome.draw,
+            model_a_score: sandbox_outcome.model_a_score,
+            model_b_score: sandbox_outcome.model_b_score,
+            objective_label: sandbox_outcome.objective_label.clone(),
+            objective_a: sandbox_outcome.objective_a,
+            objective_b: sandbox_outcome.objective_b,
+            model_a_runtime: sandbox_outcome.model_a_runtime.clone(),
+            model_b_runtime: sandbox_outcome.model_b_runtime.clone(),
+            ticks_executed: sandbox_outcome.ticks_executed,
+            duration_ms: sandbox_outcome.duration_ms,
+            warnings: sandbox_outcome
+                .warnings
+                .iter()
+                .take(MAX_ARENA_REPLAY_WARNINGS)
+                .cloned()
+                .collect(),
+        });
+
         let pending_after = self.inner.pending_matches.lock().len();
         Ok(ExecuteNextMatchResponse {
             pending_before,
@@ -1030,6 +1141,7 @@ impl ArenaService {
         match self.execute_next_match(ExecuteNextBody { max_ticks, seed }) {
             Ok(response) => {
                 self.inner.worker_executed.fetch_add(1, Ordering::Relaxed);
+                self.record_worker_success_metrics(&response);
                 self.inner
                     .worker_last_success_at
                     .store(unix_now(), Ordering::Relaxed);
@@ -1055,17 +1167,112 @@ impl ArenaService {
     pub fn worker_stats(&self) -> ArenaWorkerStatsResponse {
         let last_success_raw = self.inner.worker_last_success_at.load(Ordering::Relaxed);
         let last_failure_raw = self.inner.worker_last_failure_at.load(Ordering::Relaxed);
+        let executed = self.inner.worker_executed.load(Ordering::Relaxed);
+        let total_duration_ms = self.inner.worker_total_duration_ms.load(Ordering::Relaxed);
+        let total_ticks = self.inner.worker_total_ticks.load(Ordering::Relaxed);
+        let min_duration_raw = self.inner.worker_min_duration_ms.load(Ordering::Relaxed);
         ArenaWorkerStatsResponse {
             generated_at: unix_now(),
             pending_matches: self.inner.pending_matches.lock().len(),
             in_flight_matches: self.inner.in_flight_matches.len(),
             runs: self.inner.worker_runs.load(Ordering::Relaxed),
-            executed: self.inner.worker_executed.load(Ordering::Relaxed),
+            executed,
             idle: self.inner.worker_idle.load(Ordering::Relaxed),
             failures: self.inner.worker_failures.load(Ordering::Relaxed),
             last_success_at: (last_success_raw > 0).then_some(last_success_raw),
             last_failure_at: (last_failure_raw > 0).then_some(last_failure_raw),
             last_error: self.inner.worker_last_error.read().clone(),
+            total_match_duration_ms: total_duration_ms,
+            avg_match_duration_ms: safe_average(total_duration_ms, executed),
+            max_match_duration_ms: self.inner.worker_max_duration_ms.load(Ordering::Relaxed),
+            min_match_duration_ms: (min_duration_raw > 0).then_some(min_duration_raw),
+            total_ticks_executed: total_ticks,
+            avg_ticks_executed: safe_average(total_ticks, executed),
+            warning_matches: self.inner.worker_warning_matches.load(Ordering::Relaxed),
+            runtime_fallback_matches: self
+                .inner
+                .worker_runtime_fallback_matches
+                .load(Ordering::Relaxed),
+            trap_warnings: self.inner.worker_trap_warnings.load(Ordering::Relaxed),
+            timeout_warnings: self.inner.worker_timeout_warnings.load(Ordering::Relaxed),
+            draw_matches: self.inner.worker_draw_matches.load(Ordering::Relaxed),
+            model_win_distribution: self.inner.worker_model_win_distribution.read().clone(),
+        }
+    }
+
+    fn recent_replays(&self, limit: usize) -> ArenaReplayListResponse {
+        let bounded = limit.clamp(1, 200);
+        let history = self.inner.recent_replays.lock();
+        let replays = history.iter().rev().take(bounded).cloned().collect();
+        ArenaReplayListResponse {
+            generated_at: unix_now(),
+            total_replays: history.len(),
+            replays,
+        }
+    }
+
+    fn push_recent_replay(&self, replay: ArenaReplayView) {
+        let mut history = self.inner.recent_replays.lock();
+        while history.len() >= self.inner.replay_history_capacity {
+            history.pop_front();
+        }
+        history.push_back(replay);
+    }
+
+    fn record_worker_success_metrics(&self, response: &ExecuteNextMatchResponse) {
+        let sandbox = &response.sandbox;
+        let duration_ms = sandbox.duration_ms;
+        let ticks = sandbox.ticks_executed as u64;
+
+        self.inner
+            .worker_total_duration_ms
+            .fetch_add(duration_ms, Ordering::Relaxed);
+        self.inner
+            .worker_total_ticks
+            .fetch_add(ticks, Ordering::Relaxed);
+        atomic_update_max(&self.inner.worker_max_duration_ms, duration_ms);
+        atomic_update_min_nonzero(&self.inner.worker_min_duration_ms, duration_ms);
+
+        if !sandbox.warnings.is_empty() {
+            self.inner
+                .worker_warning_matches
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        if sandbox.draw {
+            self.inner
+                .worker_draw_matches
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        if sandbox.model_a_runtime == "fallback" || sandbox.model_b_runtime == "fallback" {
+            self.inner
+                .worker_runtime_fallback_matches
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        if let Some(winner) = sandbox.winner_model_id.as_ref() {
+            let mut distribution = self.inner.worker_model_win_distribution.write();
+            *distribution.entry(winner.clone()).or_insert(0) += 1;
+        }
+
+        let mut trap_warnings = 0u64;
+        let mut timeout_warnings = 0u64;
+        for warning in &sandbox.warnings {
+            let normalized = warning.to_ascii_lowercase();
+            if normalized.contains("trap") {
+                trap_warnings = trap_warnings.saturating_add(1);
+            }
+            if normalized.contains("timeout") || normalized.contains("fuel") {
+                timeout_warnings = timeout_warnings.saturating_add(1);
+            }
+        }
+        if trap_warnings > 0 {
+            self.inner
+                .worker_trap_warnings
+                .fetch_add(trap_warnings, Ordering::Relaxed);
+        }
+        if timeout_warnings > 0 {
+            self.inner
+                .worker_timeout_warnings
+                .fetch_add(timeout_warnings, Ordering::Relaxed);
         }
     }
 
@@ -1104,6 +1311,47 @@ impl MatchResult {
             MatchResult::Win => MatchResult::Loss,
             MatchResult::Loss => MatchResult::Win,
             MatchResult::Draw => MatchResult::Draw,
+        }
+    }
+}
+
+fn safe_average(total: u64, count: u64) -> f64 {
+    if count == 0 {
+        0.0
+    } else {
+        total as f64 / count as f64
+    }
+}
+
+fn atomic_update_max(counter: &AtomicU64, value: u64) {
+    loop {
+        let current = counter.load(Ordering::Relaxed);
+        if value <= current {
+            return;
+        }
+        if counter
+            .compare_exchange(current, value, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return;
+        }
+    }
+}
+
+fn atomic_update_min_nonzero(counter: &AtomicU64, value: u64) {
+    if value == 0 {
+        return;
+    }
+    loop {
+        let current = counter.load(Ordering::Relaxed);
+        if current != 0 && value >= current {
+            return;
+        }
+        if counter
+            .compare_exchange(current, value, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return;
         }
     }
 }
@@ -1392,6 +1640,19 @@ pub fn build_arena_routes(
             ok_response(arena.list_pending_matches(limit))
         });
 
+    let recent_replays = warp::path!("api" / "arena" / "replays" / "recent")
+        .and(warp::get())
+        .and(
+            warp::query::<ReplayQuery>()
+                .or(warp::any().map(ReplayQuery::default))
+                .unify(),
+        )
+        .and(with_service(service.clone()))
+        .map(|query: ReplayQuery, arena: ArenaService| {
+            let limit = query.limit.unwrap_or(DEFAULT_ARENA_RECENT_REPLAY_LIMIT);
+            ok_response(arena.recent_replays(limit))
+        });
+
     let report_match = warp::path!("api" / "arena" / "matches" / "report")
         .and(warp::post())
         .and(warp::body::json())
@@ -1436,6 +1697,7 @@ pub fn build_arena_routes(
         .or(execute_next)
         .or(simulate_team_battle)
         .or(list_pending)
+        .or(recent_replays)
         .or(report_match)
         .or(leaderboard)
         .or(overview)
@@ -1536,6 +1798,19 @@ mod tests {
                 worker_last_success_at: AtomicU64::new(0),
                 worker_last_failure_at: AtomicU64::new(0),
                 worker_last_error: RwLock::new(None),
+                worker_total_duration_ms: AtomicU64::new(0),
+                worker_total_ticks: AtomicU64::new(0),
+                worker_warning_matches: AtomicU64::new(0),
+                worker_runtime_fallback_matches: AtomicU64::new(0),
+                worker_trap_warnings: AtomicU64::new(0),
+                worker_timeout_warnings: AtomicU64::new(0),
+                worker_draw_matches: AtomicU64::new(0),
+                worker_max_duration_ms: AtomicU64::new(0),
+                worker_min_duration_ms: AtomicU64::new(0),
+                worker_model_win_distribution: RwLock::new(HashMap::new()),
+                replay_sequence: AtomicU64::new(0),
+                replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
+                recent_replays: Mutex::new(VecDeque::new()),
             }),
         };
 
@@ -1614,6 +1889,19 @@ mod tests {
                 worker_last_success_at: AtomicU64::new(0),
                 worker_last_failure_at: AtomicU64::new(0),
                 worker_last_error: RwLock::new(None),
+                worker_total_duration_ms: AtomicU64::new(0),
+                worker_total_ticks: AtomicU64::new(0),
+                worker_warning_matches: AtomicU64::new(0),
+                worker_runtime_fallback_matches: AtomicU64::new(0),
+                worker_trap_warnings: AtomicU64::new(0),
+                worker_timeout_warnings: AtomicU64::new(0),
+                worker_draw_matches: AtomicU64::new(0),
+                worker_max_duration_ms: AtomicU64::new(0),
+                worker_min_duration_ms: AtomicU64::new(0),
+                worker_model_win_distribution: RwLock::new(HashMap::new()),
+                replay_sequence: AtomicU64::new(0),
+                replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
+                recent_replays: Mutex::new(VecDeque::new()),
             }),
         };
 
@@ -1640,6 +1928,11 @@ mod tests {
         assert!(executed.sandbox.ticks_executed <= 120);
         assert_eq!(executed.sandbox.mode, "ctf");
         assert_eq!(executed.sandbox.objective_label, "captures");
+
+        let replays = service.recent_replays(5);
+        assert_eq!(replays.total_replays, 1);
+        assert_eq!(replays.replays.len(), 1);
+        assert_eq!(replays.replays[0].match_id, executed.report.match_id);
     }
 
     #[test]
@@ -1652,6 +1945,119 @@ mod tests {
         let stats = service.worker_stats();
         assert_eq!(stats.runs, 1);
         assert_eq!(stats.idle, 1);
+        assert_eq!(stats.executed, 0);
+        assert_eq!(stats.avg_match_duration_ms, 0.0);
+        assert_eq!(stats.model_win_distribution.len(), 0);
+    }
+
+    #[test]
+    fn worker_stats_track_extended_metrics() {
+        let service = ArenaService {
+            inner: Arc::new(ArenaInner {
+                store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                bot_sandbox: BotSandbox::new_from_env(),
+                wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
+                wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
+                persistent_store: RwLock::new(PersistentArenaStore {
+                    models: HashMap::from([
+                        (
+                            "a".to_owned(),
+                            ArenaModelRecord {
+                                model_id: "a".to_owned(),
+                                model_name: "a".to_owned(),
+                                provider: "x".to_owned(),
+                                version: "1".to_owned(),
+                                active: true,
+                                created_at: 1,
+                                updated_at: 1,
+                                last_seen_at: 1,
+                                elo_rating: 1000.0,
+                                matches_played: 0,
+                                wins: 0,
+                                losses: 0,
+                                draws: 0,
+                                cumulative_score: 0,
+                            },
+                        ),
+                        (
+                            "b".to_owned(),
+                            ArenaModelRecord {
+                                model_id: "b".to_owned(),
+                                model_name: "b".to_owned(),
+                                provider: "x".to_owned(),
+                                version: "1".to_owned(),
+                                active: true,
+                                created_at: 1,
+                                updated_at: 1,
+                                last_seen_at: 1,
+                                elo_rating: 1000.0,
+                                matches_played: 0,
+                                wins: 0,
+                                losses: 0,
+                                draws: 0,
+                                cumulative_score: 0,
+                            },
+                        ),
+                    ]),
+                    completed_matches: Vec::new(),
+                }),
+                pending_matches: Mutex::new(VecDeque::new()),
+                in_flight_matches: DashMap::new(),
+                total_matches_reported: AtomicU64::new(0),
+                worker_runs: AtomicU64::new(0),
+                worker_executed: AtomicU64::new(0),
+                worker_idle: AtomicU64::new(0),
+                worker_failures: AtomicU64::new(0),
+                worker_last_success_at: AtomicU64::new(0),
+                worker_last_failure_at: AtomicU64::new(0),
+                worker_last_error: RwLock::new(None),
+                worker_total_duration_ms: AtomicU64::new(0),
+                worker_total_ticks: AtomicU64::new(0),
+                worker_warning_matches: AtomicU64::new(0),
+                worker_runtime_fallback_matches: AtomicU64::new(0),
+                worker_trap_warnings: AtomicU64::new(0),
+                worker_timeout_warnings: AtomicU64::new(0),
+                worker_draw_matches: AtomicU64::new(0),
+                worker_max_duration_ms: AtomicU64::new(0),
+                worker_min_duration_ms: AtomicU64::new(0),
+                worker_model_win_distribution: RwLock::new(HashMap::new()),
+                replay_sequence: AtomicU64::new(0),
+                replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
+                recent_replays: Mutex::new(VecDeque::new()),
+            }),
+        };
+
+        service
+            .queue_match(QueueMatchBody {
+                model_a_id: "a".to_owned(),
+                model_b_id: "b".to_owned(),
+                mode: Some("tdm".to_owned()),
+                metadata: None,
+            })
+            .expect("queue should succeed");
+        let outcome = service
+            .worker_execute_next(Some(120), Some(42))
+            .expect("worker execute should succeed")
+            .expect("match should execute");
+
+        let stats = service.worker_stats();
+        assert_eq!(stats.runs, 1);
+        assert_eq!(stats.executed, 1);
+        assert!(stats.total_match_duration_ms >= outcome.sandbox.duration_ms);
+        assert!(stats.avg_ticks_executed > 0.0);
+        assert!(stats.max_match_duration_ms >= stats.min_match_duration_ms.unwrap_or(0));
+        if let Some(winner) = outcome.sandbox.winner_model_id {
+            assert_eq!(
+                stats
+                    .model_win_distribution
+                    .get(&winner)
+                    .copied()
+                    .unwrap_or(0),
+                1
+            );
+        } else {
+            assert_eq!(stats.draw_matches, 1);
+        }
     }
 
     #[test]
@@ -1694,6 +2100,19 @@ mod tests {
                 worker_last_success_at: AtomicU64::new(0),
                 worker_last_failure_at: AtomicU64::new(0),
                 worker_last_error: RwLock::new(None),
+                worker_total_duration_ms: AtomicU64::new(0),
+                worker_total_ticks: AtomicU64::new(0),
+                worker_warning_matches: AtomicU64::new(0),
+                worker_runtime_fallback_matches: AtomicU64::new(0),
+                worker_trap_warnings: AtomicU64::new(0),
+                worker_timeout_warnings: AtomicU64::new(0),
+                worker_draw_matches: AtomicU64::new(0),
+                worker_max_duration_ms: AtomicU64::new(0),
+                worker_min_duration_ms: AtomicU64::new(0),
+                worker_model_win_distribution: RwLock::new(HashMap::new()),
+                replay_sequence: AtomicU64::new(0),
+                replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
+                recent_replays: Mutex::new(VecDeque::new()),
             }),
         };
 
@@ -1766,6 +2185,19 @@ mod tests {
                 worker_last_success_at: AtomicU64::new(0),
                 worker_last_failure_at: AtomicU64::new(0),
                 worker_last_error: RwLock::new(None),
+                worker_total_duration_ms: AtomicU64::new(0),
+                worker_total_ticks: AtomicU64::new(0),
+                worker_warning_matches: AtomicU64::new(0),
+                worker_runtime_fallback_matches: AtomicU64::new(0),
+                worker_trap_warnings: AtomicU64::new(0),
+                worker_timeout_warnings: AtomicU64::new(0),
+                worker_draw_matches: AtomicU64::new(0),
+                worker_max_duration_ms: AtomicU64::new(0),
+                worker_min_duration_ms: AtomicU64::new(0),
+                worker_model_win_distribution: RwLock::new(HashMap::new()),
+                replay_sequence: AtomicU64::new(0),
+                replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
+                recent_replays: Mutex::new(VecDeque::new()),
             }),
         };
 
