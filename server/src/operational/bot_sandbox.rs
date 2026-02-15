@@ -8,9 +8,11 @@ use wasmtime::{Config, Engine, ExternType, Module, Store, TypedFunc, ValType};
 const DEFAULT_WASM_DIR: &str = "data/arena_bots";
 const DEFAULT_FUEL_PER_TICK: u64 = 1_000_000;
 const DEFAULT_MAX_TICKS: u32 = 600;
+const DEFAULT_REPLAY_MAX_FRAMES: usize = 1024;
 const MAX_ALLOWED_TICKS: u32 = 5_000;
 const MAX_TEAM_BATTLE_SIZE: u32 = 20;
 const MAX_TEAM_BATTLE_ROUNDS: u32 = 32;
+const MAX_REPLAY_FRAMES: usize = 8_192;
 const BOT_TICK_EXPORT: &str = "bot_tick";
 const DEFAULT_RESPAWNS_NON_ARENA: i32 = 3;
 
@@ -20,6 +22,7 @@ pub struct BotSandbox {
     wasm_dir: PathBuf,
     fuel_per_tick: u64,
     default_max_ticks: u32,
+    replay_max_frames: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -82,6 +85,39 @@ pub struct BotMatchOutcome {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct BotReplayFrame {
+    pub tick: u32,
+    pub action_model_a: String,
+    pub action_model_b: String,
+    pub health_model_a: i32,
+    pub health_model_b: i32,
+    pub score_model_a: i32,
+    pub score_model_b: i32,
+    pub objective_a: i32,
+    pub objective_b: i32,
+    pub respawns_model_a: i32,
+    pub respawns_model_b: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BotMatchReplay {
+    pub mode: String,
+    pub objective_label: String,
+    pub seed: u64,
+    pub max_ticks: u32,
+    pub captured_frames: usize,
+    pub total_ticks_executed: u32,
+    pub truncated: bool,
+    pub frames: Vec<BotReplayFrame>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BotMatchExecution {
+    pub outcome: BotMatchOutcome,
+    pub replay: BotMatchReplay,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct TeamBattleRoundOutcome {
     pub round: u32,
     pub engagements: u32,
@@ -132,6 +168,15 @@ impl BotAction {
             2 => Self::Defend,
             3 => Self::Charge,
             _ => Self::Idle,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Attack => "attack",
+            Self::Defend => "defend",
+            Self::Charge => "charge",
         }
     }
 }
@@ -190,6 +235,11 @@ impl BotSandbox {
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_MAX_TICKS)
             .min(MAX_ALLOWED_TICKS);
+        let replay_max_frames = std::env::var("MGS_ARENA_REPLAY_MAX_FRAMES")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_REPLAY_MAX_FRAMES)
+            .clamp(64, MAX_REPLAY_FRAMES);
 
         let mut config = Config::new();
         config.consume_fuel(true);
@@ -200,11 +250,32 @@ impl BotSandbox {
             wasm_dir,
             fuel_per_tick,
             default_max_ticks,
+            replay_max_frames,
         }
     }
 
     pub fn default_max_ticks(&self) -> u32 {
         self.default_max_ticks
+    }
+
+    pub fn replay_max_frames(&self) -> usize {
+        self.replay_max_frames
+    }
+
+    pub fn execute_duel_with_replay(
+        &self,
+        model_a_id: &str,
+        model_b_id: &str,
+        seed: u64,
+        requested_ticks: Option<u32>,
+    ) -> BotMatchExecution {
+        self.execute_match_internal(
+            model_a_id,
+            model_b_id,
+            ArenaMatchMode::Arena,
+            seed,
+            requested_ticks,
+        )
     }
 
     pub fn execute_duel(
@@ -214,13 +285,14 @@ impl BotSandbox {
         seed: u64,
         requested_ticks: Option<u32>,
     ) -> BotMatchOutcome {
-        self.execute_match(
+        self.execute_match_internal(
             model_a_id,
             model_b_id,
             ArenaMatchMode::Arena,
             seed,
             requested_ticks,
         )
+        .outcome
     }
 
     pub fn execute_match(
@@ -231,12 +303,39 @@ impl BotSandbox {
         seed: u64,
         requested_ticks: Option<u32>,
     ) -> BotMatchOutcome {
+        self.execute_match_internal(model_a_id, model_b_id, mode, seed, requested_ticks)
+            .outcome
+    }
+
+    pub fn execute_match_with_replay(
+        &self,
+        model_a_id: &str,
+        model_b_id: &str,
+        mode: ArenaMatchMode,
+        seed: u64,
+        requested_ticks: Option<u32>,
+    ) -> BotMatchExecution {
+        self.execute_match_internal(model_a_id, model_b_id, mode, seed, requested_ticks)
+    }
+
+    fn execute_match_internal(
+        &self,
+        model_a_id: &str,
+        model_b_id: &str,
+        mode: ArenaMatchMode,
+        seed: u64,
+        requested_ticks: Option<u32>,
+    ) -> BotMatchExecution {
         let started_at = Instant::now();
         let mut warnings = Vec::new();
         let max_ticks = requested_ticks
             .unwrap_or(self.default_max_ticks)
             .max(1)
             .min(MAX_ALLOWED_TICKS);
+        let replay_capacity = self
+            .replay_max_frames
+            .min(max_ticks as usize)
+            .min(MAX_REPLAY_FRAMES);
 
         let program_a = self.load_program(model_a_id);
         let program_b = self.load_program(model_b_id);
@@ -266,6 +365,8 @@ impl BotSandbox {
             respawns_remaining: default_respawns,
         };
         let mut objectives = MatchObjectiveState::default();
+        let mut replay_frames = Vec::with_capacity(replay_capacity);
+        let mut replay_truncated = false;
 
         let mut ticks_executed = 0u32;
         for tick in 0..max_ticks {
@@ -306,6 +407,25 @@ impl BotSandbox {
                 &mut objectives,
                 tick,
             );
+
+            let (tick_objective_a, tick_objective_b) = objective_values(mode, &objectives, &a, &b);
+            if replay_frames.len() < replay_capacity {
+                replay_frames.push(BotReplayFrame {
+                    tick: tick + 1,
+                    action_model_a: action_a.as_str().to_owned(),
+                    action_model_b: action_b.as_str().to_owned(),
+                    health_model_a: a.health,
+                    health_model_b: b.health,
+                    score_model_a: a.score,
+                    score_model_b: b.score,
+                    objective_a: tick_objective_a,
+                    objective_b: tick_objective_b,
+                    respawns_model_a: a.respawns_remaining,
+                    respawns_model_b: b.respawns_remaining,
+                });
+            } else {
+                replay_truncated = true;
+            }
 
             let a_eliminated = prev_a_health > 0 && a.health <= 0;
             let b_eliminated = prev_b_health > 0 && b.health <= 0;
@@ -383,7 +503,7 @@ impl BotSandbox {
         );
 
         let duration_ms = started_at.elapsed().as_millis() as u64;
-        BotMatchOutcome {
+        let outcome = BotMatchOutcome {
             winner_model_id,
             draw,
             mode: mode.as_str().to_owned(),
@@ -397,7 +517,18 @@ impl BotSandbox {
             ticks_executed,
             duration_ms,
             warnings,
-        }
+        };
+        let replay = BotMatchReplay {
+            mode: mode.as_str().to_owned(),
+            objective_label: mode.objective_label().to_owned(),
+            seed,
+            max_ticks,
+            captured_frames: replay_frames.len(),
+            total_ticks_executed: ticks_executed,
+            truncated: replay_truncated,
+            frames: replay_frames,
+        };
+        BotMatchExecution { outcome, replay }
     }
 
     pub fn execute_team_battle(
@@ -1086,5 +1217,30 @@ mod tests {
         assert_eq!(outcome.mode, "tdm");
         assert_eq!(outcome.rounds_detail.len(), 3);
         assert!(outcome.duration_ms <= 30_000);
+    }
+
+    #[test]
+    fn execute_match_with_replay_captures_tick_frames() {
+        let sandbox = BotSandbox::new_from_env();
+        let execution = sandbox.execute_match_with_replay(
+            "model_a",
+            "model_b",
+            ArenaMatchMode::TeamDeathmatch,
+            121,
+            Some(180),
+        );
+        assert_eq!(execution.outcome.mode, "tdm");
+        assert_eq!(execution.replay.mode, "tdm");
+        assert_eq!(
+            execution.replay.total_ticks_executed,
+            execution.outcome.ticks_executed
+        );
+        assert_eq!(
+            execution.replay.captured_frames,
+            execution.replay.frames.len()
+        );
+        assert!(!execution.replay.frames.is_empty());
+        assert!(execution.replay.captured_frames <= sandbox.replay_max_frames());
+        assert_eq!(execution.replay.frames[0].tick, 1);
     }
 }

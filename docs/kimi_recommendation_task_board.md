@@ -55,7 +55,7 @@
 | T4-05 | Multi-region + DR + chaos testing | scalability_analysis 8,13,20 | Planned | Phase after stable regional baseline. |
 | T5-01 | Multi-mode/ranked/tournament systems | massive_game_server_improvements 1,8,9 | Planned | Requires durable profile/match history hardening first. |
 | T5-02 | Social systems (friends/party/clan) | massive_game_server_improvements 5,6,15 | Planned | API scaffolding follows identity/stats expansion. |
-| T5-03 | Spectator/replay pipeline | massive_game_server_improvements 10 | In Progress | Arena replay-lite feed is available via `/api/arena/replays/recent`; full spectator stream/event sourcing remains pending. |
+| T5-03 | Spectator/replay pipeline | massive_game_server_improvements 10 | Done | Event-sourced arena replay pipeline now includes per-tick replay capture, bounded replay event history, per-match event retrieval (`/api/arena/replays/{match_id}/events`), recent event feed (`/api/arena/replays/events/recent`), and live SSE stream (`/api/arena/replays/stream`). |
 | T5-04 | Battle pass/challenges/progression economy | massive_game_server_improvements 2,13,14 | Planned | Use auth profile as starting anchor. |
 
 ## Implemented In This Pass

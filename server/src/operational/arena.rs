@@ -1,16 +1,21 @@
 use crate::operational::bot_sandbox::{
-    ArenaMatchMode, BotMatchOutcome, BotSandbox, TeamBattleOutcome,
+    ArenaMatchMode, BotMatchExecution, BotMatchOutcome, BotMatchReplay, BotSandbox,
+    TeamBattleOutcome,
 };
 use base64::Engine as _;
 use dashmap::DashMap;
+use futures_util::stream::{self, StreamExt};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::convert::Infallible;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
 use tracing::{info, warn};
 use uuid::Uuid;
 use warp::{Filter, Reply};
@@ -22,8 +27,17 @@ const DEFAULT_BASE_ELO: f64 = 1000.0;
 const DEFAULT_ARENA_WASM_DIR: &str = "data/arena_bots";
 const DEFAULT_ARENA_WASM_MAX_BYTES: usize = 2 * 1024 * 1024;
 const DEFAULT_ARENA_REPLAY_HISTORY_CAP: usize = 256;
+const DEFAULT_ARENA_REPLAY_EVENT_HISTORY_CAP: usize = 4_096;
+const DEFAULT_ARENA_REPLAY_MATCH_HISTORY_CAP: usize = 256;
+const DEFAULT_ARENA_REPLAY_EVENTS_LIMIT: usize = 256;
+const DEFAULT_ARENA_REPLAY_STREAM_BACKLOG: usize = 64;
+const DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP: usize = 1_024;
 const MAX_ARENA_REPLAY_HISTORY_CAP: usize = 4096;
+const MAX_ARENA_REPLAY_EVENT_HISTORY_CAP: usize = 32_768;
+const MAX_ARENA_REPLAY_MATCH_HISTORY_CAP: usize = 4_096;
+const MAX_ARENA_REPLAY_EVENTS_LIMIT: usize = 2_048;
 const MAX_ARENA_REPLAY_WARNINGS: usize = 24;
+const MAX_ARENA_STREAM_BACKLOG: usize = 2_048;
 
 #[derive(Clone)]
 pub struct ArenaService {
@@ -59,6 +73,13 @@ struct ArenaInner {
     replay_sequence: AtomicU64,
     replay_history_capacity: usize,
     recent_replays: Mutex<VecDeque<ArenaReplayView>>,
+    replay_event_sequence: AtomicU64,
+    replay_event_history_capacity: usize,
+    replay_match_history_capacity: usize,
+    replay_events: Mutex<VecDeque<ArenaReplayEvent>>,
+    replay_match_order: Mutex<VecDeque<String>>,
+    replay_matches: RwLock<HashMap<String, ArenaMatchReplayRecord>>,
+    replay_event_tx: broadcast::Sender<ArenaReplayEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -106,6 +127,25 @@ struct QueuedMatch {
     mode: String,
     queued_at: u64,
     metadata: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+struct ArenaMatchReplayRecord {
+    match_id: String,
+    mode: String,
+    model_a_id: String,
+    model_b_id: String,
+    seed: u64,
+    max_ticks: u32,
+    ticks_executed: u32,
+    duration_ms: u64,
+    winner_model_id: Option<String>,
+    draw: bool,
+    warnings: Vec<String>,
+    truncated: bool,
+    total_frames: usize,
+    completed_at: u64,
+    events: Vec<ArenaReplayEvent>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -220,6 +260,58 @@ pub struct ArenaReplayListResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ArenaReplayEvent {
+    pub sequence: u64,
+    pub emitted_at: u64,
+    pub match_id: String,
+    pub mode: String,
+    pub event_type: String,
+    pub tick: Option<u32>,
+    pub action_model_a: Option<String>,
+    pub action_model_b: Option<String>,
+    pub health_model_a: Option<i32>,
+    pub health_model_b: Option<i32>,
+    pub score_model_a: Option<i32>,
+    pub score_model_b: Option<i32>,
+    pub objective_a: Option<i32>,
+    pub objective_b: Option<i32>,
+    pub winner_model_id: Option<String>,
+    pub draw: Option<bool>,
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ArenaReplayEventFeedResponse {
+    pub generated_at: u64,
+    pub total_events: usize,
+    pub returned_events: usize,
+    pub newest_sequence: Option<u64>,
+    pub events: Vec<ArenaReplayEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ArenaMatchReplayResponse {
+    pub generated_at: u64,
+    pub match_id: String,
+    pub mode: String,
+    pub model_a_id: String,
+    pub model_b_id: String,
+    pub seed: u64,
+    pub max_ticks: u32,
+    pub ticks_executed: u32,
+    pub duration_ms: u64,
+    pub winner_model_id: Option<String>,
+    pub draw: bool,
+    pub truncated: bool,
+    pub total_frames: usize,
+    pub total_events: usize,
+    pub returned_events: usize,
+    pub completed_at: u64,
+    pub warnings: Vec<String>,
+    pub events: Vec<ArenaReplayEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ArenaWorkerStatsResponse {
     pub generated_at: u64,
     pub pending_matches: usize,
@@ -318,6 +410,18 @@ struct ReplayQuery {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+struct ReplayEventsQuery {
+    limit: Option<usize>,
+    after_sequence: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct ReplayStreamQuery {
+    after_sequence: Option<u64>,
+    backlog: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 struct ExecuteNextBody {
     max_ticks: Option<u32>,
     seed: Option<u64>,
@@ -398,16 +502,35 @@ impl ArenaService {
             .and_then(|raw| raw.parse::<usize>().ok())
             .unwrap_or(DEFAULT_ARENA_REPLAY_HISTORY_CAP)
             .clamp(16, MAX_ARENA_REPLAY_HISTORY_CAP);
+        let replay_event_history_capacity = std::env::var("MGS_ARENA_REPLAY_EVENT_HISTORY_CAP")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_ARENA_REPLAY_EVENT_HISTORY_CAP)
+            .clamp(128, MAX_ARENA_REPLAY_EVENT_HISTORY_CAP);
+        let replay_match_history_capacity = std::env::var("MGS_ARENA_REPLAY_MATCH_HISTORY_CAP")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_ARENA_REPLAY_MATCH_HISTORY_CAP)
+            .clamp(16, MAX_ARENA_REPLAY_MATCH_HISTORY_CAP);
+        let replay_stream_channel_cap = std::env::var("MGS_ARENA_REPLAY_STREAM_CHANNEL_CAP")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP)
+            .clamp(64, 65_536);
+        let (replay_event_tx, _) = broadcast::channel(replay_stream_channel_cap);
         let persistent_store = load_persistent_store(&store_path);
         let completed_count = persistent_store.completed_matches.len() as u64;
 
         info!(
-            "Arena service initialized. store_path='{}', wasm_dir='{}', models={}, completed_matches={}, replay_history_capacity={}",
+            "Arena service initialized. store_path='{}', wasm_dir='{}', models={}, completed_matches={}, replay_history_capacity={}, replay_event_history_capacity={}, replay_match_history_capacity={}, replay_stream_channel_cap={}",
             store_path.display(),
             wasm_dir.display(),
             persistent_store.models.len(),
             completed_count,
-            replay_history_capacity
+            replay_history_capacity,
+            replay_event_history_capacity,
+            replay_match_history_capacity,
+            replay_stream_channel_cap
         );
 
         Self {
@@ -440,6 +563,13 @@ impl ArenaService {
                 replay_sequence: AtomicU64::new(0),
                 replay_history_capacity,
                 recent_replays: Mutex::new(VecDeque::new()),
+                replay_event_sequence: AtomicU64::new(0),
+                replay_event_history_capacity,
+                replay_match_history_capacity,
+                replay_events: Mutex::new(VecDeque::new()),
+                replay_match_order: Mutex::new(VecDeque::new()),
+                replay_matches: RwLock::new(HashMap::new()),
+                replay_event_tx,
             }),
         }
     }
@@ -1017,7 +1147,10 @@ impl ArenaService {
                 format!("unsupported match mode '{}'", claimed_match.mode),
             )
         })?;
-        let sandbox_outcome = self.inner.bot_sandbox.execute_match(
+        let BotMatchExecution {
+            outcome: sandbox_outcome,
+            replay: sandbox_replay,
+        } = self.inner.bot_sandbox.execute_match_with_replay(
             &claimed_match.model_a_id,
             &claimed_match.model_b_id,
             mode,
@@ -1064,6 +1197,13 @@ impl ArenaService {
                 .cloned()
                 .collect(),
         });
+        self.record_match_replay_events(
+            &claimed_match,
+            seed,
+            report.completed_at,
+            &sandbox_outcome,
+            &sandbox_replay,
+        );
 
         let pending_after = self.inner.pending_matches.lock().len();
         Ok(ExecuteNextMatchResponse {
@@ -1217,6 +1357,264 @@ impl ArenaService {
             history.pop_front();
         }
         history.push_back(replay);
+    }
+
+    fn next_replay_event_sequence(&self) -> u64 {
+        self.inner
+            .replay_event_sequence
+            .fetch_add(1, Ordering::Relaxed)
+            + 1
+    }
+
+    fn push_replay_event(&self, event: ArenaReplayEvent) {
+        {
+            let mut replay_events = self.inner.replay_events.lock();
+            while replay_events.len() >= self.inner.replay_event_history_capacity {
+                replay_events.pop_front();
+            }
+            replay_events.push_back(event.clone());
+        }
+        let _ = self.inner.replay_event_tx.send(event);
+    }
+
+    fn record_match_replay_events(
+        &self,
+        queued_match: &QueuedMatchView,
+        seed: u64,
+        completed_at: u64,
+        outcome: &BotMatchOutcome,
+        replay: &BotMatchReplay,
+    ) {
+        let mut events = Vec::with_capacity(replay.frames.len().saturating_add(2));
+        let start_event = ArenaReplayEvent {
+            sequence: self.next_replay_event_sequence(),
+            emitted_at: completed_at,
+            match_id: queued_match.match_id.clone(),
+            mode: outcome.mode.clone(),
+            event_type: "match_start".to_owned(),
+            tick: Some(0),
+            action_model_a: None,
+            action_model_b: None,
+            health_model_a: None,
+            health_model_b: None,
+            score_model_a: Some(0),
+            score_model_b: Some(0),
+            objective_a: Some(0),
+            objective_b: Some(0),
+            winner_model_id: None,
+            draw: None,
+            duration_ms: None,
+        };
+        self.push_replay_event(start_event.clone());
+        events.push(start_event);
+
+        for frame in &replay.frames {
+            let tick_event = ArenaReplayEvent {
+                sequence: self.next_replay_event_sequence(),
+                emitted_at: completed_at,
+                match_id: queued_match.match_id.clone(),
+                mode: outcome.mode.clone(),
+                event_type: "tick".to_owned(),
+                tick: Some(frame.tick),
+                action_model_a: Some(frame.action_model_a.clone()),
+                action_model_b: Some(frame.action_model_b.clone()),
+                health_model_a: Some(frame.health_model_a),
+                health_model_b: Some(frame.health_model_b),
+                score_model_a: Some(frame.score_model_a),
+                score_model_b: Some(frame.score_model_b),
+                objective_a: Some(frame.objective_a),
+                objective_b: Some(frame.objective_b),
+                winner_model_id: None,
+                draw: None,
+                duration_ms: None,
+            };
+            self.push_replay_event(tick_event.clone());
+            events.push(tick_event);
+        }
+
+        let completed_event = ArenaReplayEvent {
+            sequence: self.next_replay_event_sequence(),
+            emitted_at: completed_at,
+            match_id: queued_match.match_id.clone(),
+            mode: outcome.mode.clone(),
+            event_type: if outcome.draw {
+                "match_draw".to_owned()
+            } else {
+                "match_end".to_owned()
+            },
+            tick: Some(outcome.ticks_executed),
+            action_model_a: None,
+            action_model_b: None,
+            health_model_a: None,
+            health_model_b: None,
+            score_model_a: Some(outcome.model_a_score),
+            score_model_b: Some(outcome.model_b_score),
+            objective_a: Some(outcome.objective_a),
+            objective_b: Some(outcome.objective_b),
+            winner_model_id: outcome.winner_model_id.clone(),
+            draw: Some(outcome.draw),
+            duration_ms: Some(outcome.duration_ms),
+        };
+        self.push_replay_event(completed_event.clone());
+        events.push(completed_event);
+
+        let replay_record = ArenaMatchReplayRecord {
+            match_id: queued_match.match_id.clone(),
+            mode: outcome.mode.clone(),
+            model_a_id: queued_match.model_a_id.clone(),
+            model_b_id: queued_match.model_b_id.clone(),
+            seed,
+            max_ticks: replay.max_ticks,
+            ticks_executed: outcome.ticks_executed,
+            duration_ms: outcome.duration_ms,
+            winner_model_id: outcome.winner_model_id.clone(),
+            draw: outcome.draw,
+            warnings: outcome
+                .warnings
+                .iter()
+                .take(MAX_ARENA_REPLAY_WARNINGS)
+                .cloned()
+                .collect(),
+            truncated: replay.truncated,
+            total_frames: replay.total_ticks_executed as usize,
+            completed_at,
+            events,
+        };
+
+        let mut replay_match_order = self.inner.replay_match_order.lock();
+        let mut replay_matches = self.inner.replay_matches.write();
+        if !replay_matches.contains_key(&queued_match.match_id) {
+            replay_match_order.push_back(queued_match.match_id.clone());
+        }
+        replay_matches.insert(queued_match.match_id.clone(), replay_record);
+        while replay_match_order.len() > self.inner.replay_match_history_capacity {
+            if let Some(evicted_match_id) = replay_match_order.pop_front() {
+                replay_matches.remove(&evicted_match_id);
+            }
+        }
+    }
+
+    fn recent_replay_events(
+        &self,
+        limit: usize,
+        after_sequence: Option<u64>,
+    ) -> ArenaReplayEventFeedResponse {
+        let bounded_limit = limit.clamp(1, MAX_ARENA_REPLAY_EVENTS_LIMIT);
+        let after = after_sequence.unwrap_or(0);
+        let replay_events = self.inner.replay_events.lock();
+        let mut filtered: Vec<ArenaReplayEvent> = replay_events
+            .iter()
+            .filter(|event| event.sequence > after)
+            .cloned()
+            .collect();
+        if filtered.len() > bounded_limit {
+            let truncate_from = filtered.len() - bounded_limit;
+            filtered.drain(0..truncate_from);
+        }
+        let newest_sequence = filtered.last().map(|event| event.sequence);
+        ArenaReplayEventFeedResponse {
+            generated_at: unix_now(),
+            total_events: replay_events.len(),
+            returned_events: filtered.len(),
+            newest_sequence,
+            events: filtered,
+        }
+    }
+
+    fn replay_events_for_match(
+        &self,
+        match_id: &str,
+        limit: usize,
+        after_sequence: Option<u64>,
+    ) -> Result<ArenaMatchReplayResponse, ArenaError> {
+        let bounded_limit = limit.clamp(1, MAX_ARENA_REPLAY_EVENTS_LIMIT);
+        let after = after_sequence.unwrap_or(0);
+        let record = self
+            .inner
+            .replay_matches
+            .read()
+            .get(match_id)
+            .cloned()
+            .ok_or_else(|| {
+                ArenaError::NotFound(
+                    "replay_not_found",
+                    format!("replay for match '{}' was not found", match_id),
+                )
+            })?;
+
+        let mut filtered: Vec<ArenaReplayEvent> = record
+            .events
+            .iter()
+            .filter(|event| event.sequence > after)
+            .cloned()
+            .collect();
+        if filtered.len() > bounded_limit {
+            let truncate_from = filtered.len() - bounded_limit;
+            filtered.drain(0..truncate_from);
+        }
+        let returned_events = filtered.len();
+
+        Ok(ArenaMatchReplayResponse {
+            generated_at: unix_now(),
+            match_id: record.match_id,
+            mode: record.mode,
+            model_a_id: record.model_a_id,
+            model_b_id: record.model_b_id,
+            seed: record.seed,
+            max_ticks: record.max_ticks,
+            ticks_executed: record.ticks_executed,
+            duration_ms: record.duration_ms,
+            winner_model_id: record.winner_model_id,
+            draw: record.draw,
+            truncated: record.truncated,
+            total_frames: record.total_frames,
+            total_events: record.events.len(),
+            returned_events,
+            completed_at: record.completed_at,
+            warnings: record.warnings,
+            events: filtered,
+        })
+    }
+
+    fn replay_stream(&self, query: ReplayStreamQuery) -> impl Reply {
+        let after_sequence = query.after_sequence.unwrap_or(0);
+        let backlog_limit = query
+            .backlog
+            .unwrap_or(DEFAULT_ARENA_REPLAY_STREAM_BACKLOG)
+            .clamp(0, MAX_ARENA_STREAM_BACKLOG);
+        let backlog_events = if backlog_limit == 0 {
+            Vec::new()
+        } else {
+            self.recent_replay_events(backlog_limit, Some(after_sequence))
+                .events
+        };
+        let receiver = self.inner.replay_event_tx.subscribe();
+        let backlog_stream = stream::iter(
+            backlog_events
+                .into_iter()
+                .map(arena_replay_event_to_sse_result),
+        );
+        let live_stream = BroadcastStream::new(receiver).filter_map(move |result| async move {
+            match result {
+                Ok(event) if event.sequence > after_sequence => {
+                    Some(arena_replay_event_to_sse_result(event))
+                }
+                Ok(_) => None,
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(skipped)) => {
+                    let lag_event = warp::sse::Event::default()
+                        .event("lagged")
+                        .data(format!("lagged:{}", skipped));
+                    Some(Ok(lag_event))
+                }
+            }
+        });
+        let event_stream = backlog_stream.chain(live_stream);
+        warp::sse::reply(
+            warp::sse::keep_alive()
+                .interval(Duration::from_secs(10))
+                .text("keepalive")
+                .stream(event_stream),
+        )
     }
 
     fn record_worker_success_metrics(&self, response: &ExecuteNextMatchResponse) {
@@ -1495,6 +1893,24 @@ fn persist_store(path: &Path, store: &PersistentArenaStore) -> Result<(), String
     Ok(())
 }
 
+fn arena_replay_event_to_sse_result(
+    event: ArenaReplayEvent,
+) -> Result<warp::sse::Event, Infallible> {
+    let event_name = event.event_type.clone();
+    let event_id = event.sequence.to_string();
+    let sse_event = match warp::sse::Event::default()
+        .id(event_id)
+        .event(event_name)
+        .json_data(&event)
+    {
+        Ok(sse_event) => sse_event,
+        Err(_) => warp::sse::Event::default()
+            .event("encode_error")
+            .data("{\"error\":\"failed to encode replay event\"}"),
+    };
+    Ok(sse_event)
+}
+
 fn ok_response<T>(data: T) -> warp::reply::Json
 where
     T: Serialize,
@@ -1653,6 +2069,47 @@ pub fn build_arena_routes(
             ok_response(arena.recent_replays(limit))
         });
 
+    let replay_events_recent = warp::path!("api" / "arena" / "replays" / "events" / "recent")
+        .and(warp::get())
+        .and(
+            warp::query::<ReplayEventsQuery>()
+                .or(warp::any().map(ReplayEventsQuery::default))
+                .unify(),
+        )
+        .and(with_service(service.clone()))
+        .map(|query: ReplayEventsQuery, arena: ArenaService| {
+            let limit = query.limit.unwrap_or(DEFAULT_ARENA_REPLAY_EVENTS_LIMIT);
+            ok_response(arena.recent_replay_events(limit, query.after_sequence))
+        });
+
+    let replay_events_for_match = warp::path!("api" / "arena" / "replays" / String / "events")
+        .and(warp::get())
+        .and(
+            warp::query::<ReplayEventsQuery>()
+                .or(warp::any().map(ReplayEventsQuery::default))
+                .unify(),
+        )
+        .and(with_service(service.clone()))
+        .map(
+            |match_id: String, query: ReplayEventsQuery, arena: ArenaService| {
+                let limit = query.limit.unwrap_or(DEFAULT_ARENA_REPLAY_EVENTS_LIMIT);
+                match arena.replay_events_for_match(&match_id, limit, query.after_sequence) {
+                    Ok(response) => ok_response(response),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
+            },
+        );
+
+    let replay_stream = warp::path!("api" / "arena" / "replays" / "stream")
+        .and(warp::get())
+        .and(
+            warp::query::<ReplayStreamQuery>()
+                .or(warp::any().map(ReplayStreamQuery::default))
+                .unify(),
+        )
+        .and(with_service(service.clone()))
+        .map(|query: ReplayStreamQuery, arena: ArenaService| arena.replay_stream(query));
+
     let report_match = warp::path!("api" / "arena" / "matches" / "report")
         .and(warp::post())
         .and(warp::body::json())
@@ -1698,6 +2155,9 @@ pub fn build_arena_routes(
         .or(simulate_team_battle)
         .or(list_pending)
         .or(recent_replays)
+        .or(replay_events_recent)
+        .or(replay_events_for_match)
+        .or(replay_stream)
         .or(report_match)
         .or(leaderboard)
         .or(overview)
@@ -1811,6 +2271,13 @@ mod tests {
                 replay_sequence: AtomicU64::new(0),
                 replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
                 recent_replays: Mutex::new(VecDeque::new()),
+                replay_event_sequence: AtomicU64::new(0),
+                replay_event_history_capacity: DEFAULT_ARENA_REPLAY_EVENT_HISTORY_CAP,
+                replay_match_history_capacity: DEFAULT_ARENA_REPLAY_MATCH_HISTORY_CAP,
+                replay_events: Mutex::new(VecDeque::new()),
+                replay_match_order: Mutex::new(VecDeque::new()),
+                replay_matches: RwLock::new(HashMap::new()),
+                replay_event_tx: broadcast::channel(DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP).0,
             }),
         };
 
@@ -1902,6 +2369,13 @@ mod tests {
                 replay_sequence: AtomicU64::new(0),
                 replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
                 recent_replays: Mutex::new(VecDeque::new()),
+                replay_event_sequence: AtomicU64::new(0),
+                replay_event_history_capacity: DEFAULT_ARENA_REPLAY_EVENT_HISTORY_CAP,
+                replay_match_history_capacity: DEFAULT_ARENA_REPLAY_MATCH_HISTORY_CAP,
+                replay_events: Mutex::new(VecDeque::new()),
+                replay_match_order: Mutex::new(VecDeque::new()),
+                replay_matches: RwLock::new(HashMap::new()),
+                replay_event_tx: broadcast::channel(DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP).0,
             }),
         };
 
@@ -1933,6 +2407,33 @@ mod tests {
         assert_eq!(replays.total_replays, 1);
         assert_eq!(replays.replays.len(), 1);
         assert_eq!(replays.replays[0].match_id, executed.report.match_id);
+
+        let recent_events = service.recent_replay_events(128, None);
+        assert!(recent_events.total_events >= 3);
+        assert_eq!(recent_events.returned_events, recent_events.events.len());
+        assert!(recent_events.newest_sequence.is_some());
+
+        let match_events = service
+            .replay_events_for_match(&executed.report.match_id, 512, None)
+            .expect("match replay events should exist");
+        assert_eq!(match_events.match_id, executed.report.match_id);
+        assert!(match_events.total_events >= 3);
+        assert_eq!(match_events.returned_events, match_events.events.len());
+        assert!(match_events
+            .events
+            .iter()
+            .any(|event| event.event_type == "tick"));
+        assert!(match_events
+            .events
+            .iter()
+            .any(|event| { event.event_type == "match_end" || event.event_type == "match_draw" }));
+
+        let from_newest = service.replay_events_for_match(
+            &executed.report.match_id,
+            16,
+            recent_events.newest_sequence,
+        );
+        assert!(from_newest.expect("query should succeed").events.is_empty());
     }
 
     #[test]
@@ -2024,6 +2525,13 @@ mod tests {
                 replay_sequence: AtomicU64::new(0),
                 replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
                 recent_replays: Mutex::new(VecDeque::new()),
+                replay_event_sequence: AtomicU64::new(0),
+                replay_event_history_capacity: DEFAULT_ARENA_REPLAY_EVENT_HISTORY_CAP,
+                replay_match_history_capacity: DEFAULT_ARENA_REPLAY_MATCH_HISTORY_CAP,
+                replay_events: Mutex::new(VecDeque::new()),
+                replay_match_order: Mutex::new(VecDeque::new()),
+                replay_matches: RwLock::new(HashMap::new()),
+                replay_event_tx: broadcast::channel(DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP).0,
             }),
         };
 
@@ -2113,6 +2621,13 @@ mod tests {
                 replay_sequence: AtomicU64::new(0),
                 replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
                 recent_replays: Mutex::new(VecDeque::new()),
+                replay_event_sequence: AtomicU64::new(0),
+                replay_event_history_capacity: DEFAULT_ARENA_REPLAY_EVENT_HISTORY_CAP,
+                replay_match_history_capacity: DEFAULT_ARENA_REPLAY_MATCH_HISTORY_CAP,
+                replay_events: Mutex::new(VecDeque::new()),
+                replay_match_order: Mutex::new(VecDeque::new()),
+                replay_matches: RwLock::new(HashMap::new()),
+                replay_event_tx: broadcast::channel(DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP).0,
             }),
         };
 
@@ -2198,6 +2713,13 @@ mod tests {
                 replay_sequence: AtomicU64::new(0),
                 replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
                 recent_replays: Mutex::new(VecDeque::new()),
+                replay_event_sequence: AtomicU64::new(0),
+                replay_event_history_capacity: DEFAULT_ARENA_REPLAY_EVENT_HISTORY_CAP,
+                replay_match_history_capacity: DEFAULT_ARENA_REPLAY_MATCH_HISTORY_CAP,
+                replay_events: Mutex::new(VecDeque::new()),
+                replay_match_order: Mutex::new(VecDeque::new()),
+                replay_matches: RwLock::new(HashMap::new()),
+                replay_event_tx: broadcast::channel(DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP).0,
             }),
         };
 
