@@ -76,6 +76,21 @@ Follow these steps to get the server up and running:
     * Open the `http://localhost:8080/client.html` file (located in the root of the cloned repository, e.g., `massive_game_server/static_client/client.html`) in a modern web browser.
     * The client should provide an interface to connect to the WebSocket URL logged by the server (default: `ws://localhost:8080/ws`).
 
+## Deploy Website (Docker)
+
+Deploy the full website + game server stack:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d --build
+```
+
+Then open:
+- `http://<host>:8080/` (landing website)
+- `http://<host>:8080/client.html` (game client)
+
+Full deployment guide:
+- `docs/deploy_website.md`
+
 ## Scale Validation
 
 Run the full backend + frontend scale suite:

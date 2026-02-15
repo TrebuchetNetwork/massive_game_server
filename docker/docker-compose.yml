@@ -1,0 +1,25 @@
+services:
+  massive-game-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: massive-game-server:latest
+    container_name: massive-game-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      MGS_HOST: "0.0.0.0"
+      MGS_PORT: "8080"
+      MGS_DISABLE_STUN: "1"
+      MGS_TARGET_BOT_COUNT: "0"
+      RUST_LOG: "massive_game_server_core=warn,warp=warn,webrtc=warn"
+      # Set for real provider code generation in arena endpoints.
+      # OPENROUTER_API_KEY: "..."
+    volumes:
+      - mgs_data:/app/data
+      - mgs_artifacts:/app/artifacts
+
+volumes:
+  mgs_data:
+  mgs_artifacts:

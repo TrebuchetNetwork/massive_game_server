@@ -1,0 +1,11 @@
+.git
+.github
+.vscode
+target
+artifacts
+panic.log
+*.zip
+*.log
+.DS_Store
+scripts/e2e/node_modules
+scripts/ui_bench/node_modules

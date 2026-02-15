@@ -33,7 +33,7 @@ use std::sync::Arc;
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::{fmt, EnvFilter};
 use uuid::Uuid;
-use warp::http::{header, HeaderName, HeaderValue};
+use warp::http::{header, HeaderName, HeaderValue, Uri};
 use warp::{Filter, Reply};
 
 fn init_logging() -> anyhow::Result<()> {
@@ -256,6 +256,17 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    let root_route = warp::path::end()
+        .and(warp::get())
+        .map(|| warp::redirect::temporary(Uri::from_static("/index.html")));
+
+    let healthz_route = warp::path("healthz")
+        .and(warp::path::end())
+        .and(warp::get())
+        .map(|| {
+            warp::reply::json(&serde_json::json!({ "ok": true, "service": "massive_game_server" }))
+        });
+
     let static_files_route =
         warp::fs::dir("static_client").map(move |reply: warp::filters::fs::File| {
             let requested_path = reply.path().to_path_buf();
@@ -293,6 +304,8 @@ async fn main() -> anyhow::Result<()> {
         .or(join_stage_report_route)
         .or(join_stage_reset_route)
         .or(signaling_route)
+        .or(root_route)
+        .or(healthz_route)
         .or(static_files_route)
         .with(
             warp::cors()
