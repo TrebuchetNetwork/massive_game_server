@@ -22,6 +22,10 @@ const DEFAULT_RESEND_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_MAX_VERIFY_ATTEMPTS: u32 = 5;
 const DEFAULT_LEADERBOARD_LIMIT: usize = 50;
 const DEFAULT_REDIS_STORE_KEY: &str = "mgs:auth:persistent_store";
+const PROGRESSION_BASE_XP_PER_MATCH: u64 = 50;
+const PROGRESSION_XP_PER_KILL: u64 = 30;
+const PROGRESSION_BASE_CREDITS_PER_MATCH: u64 = 20;
+const PROGRESSION_CREDITS_PER_KILL: u64 = 8;
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -64,6 +68,10 @@ struct UserRecord {
     total_kills: u64,
     total_deaths: u64,
     last_game_username: Option<String>,
+    #[serde(default)]
+    experience_points: u64,
+    #[serde(default)]
+    credits: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +120,10 @@ pub struct AuthProfileView {
     pub total_kills: u64,
     pub total_deaths: u64,
     pub last_game_username: Option<String>,
+    pub experience_points: u64,
+    pub credits: u64,
+    pub level: u32,
+    pub next_level_experience: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -453,6 +465,8 @@ impl AuthService {
                     total_kills: 0,
                     total_deaths: 0,
                     last_game_username: None,
+                    experience_points: 0,
+                    credits: 0,
                 };
                 persistent_guard
                     .phone_to_user_id
@@ -579,6 +593,9 @@ impl AuthService {
             user.total_deaths = user
                 .total_deaths
                 .saturating_add(player_state.deaths.max(0) as u64);
+            let (xp_gain, credits_gain) = progression_reward_from_match(player_state);
+            user.experience_points = user.experience_points.saturating_add(xp_gain);
+            user.credits = user.credits.saturating_add(credits_gain);
             user.last_seen_at = now;
             user.updated_at = now;
             if !player_state.username.trim().is_empty() {
@@ -832,6 +849,7 @@ fn parse_bearer_token(authorization_header: Option<&str>) -> Option<String> {
 }
 
 fn to_profile_view(user: &UserRecord) -> AuthProfileView {
+    let level = level_from_experience(user.experience_points);
     AuthProfileView {
         user_id: user.user_id.clone(),
         display_name: user.display_name.clone(),
@@ -844,6 +862,51 @@ fn to_profile_view(user: &UserRecord) -> AuthProfileView {
         total_kills: user.total_kills,
         total_deaths: user.total_deaths,
         last_game_username: user.last_game_username.clone(),
+        experience_points: user.experience_points,
+        credits: user.credits,
+        level,
+        next_level_experience: experience_for_level(level.saturating_add(1)),
+    }
+}
+
+fn progression_reward_from_match(player_state: &PlayerState) -> (u64, u64) {
+    let score = player_state.score.max(0) as u64;
+    let kills = player_state.kills.max(0) as u64;
+    let deaths = player_state.deaths.max(0) as u64;
+    let score_xp = score / 2;
+    let score_credits = score / 10;
+    let performance_bonus_xp = if kills >= deaths && kills > 0 { 20 } else { 0 };
+    let performance_bonus_credits = if kills >= deaths && kills > 0 { 10 } else { 0 };
+    let xp_gain = PROGRESSION_BASE_XP_PER_MATCH
+        .saturating_add(score_xp)
+        .saturating_add(kills.saturating_mul(PROGRESSION_XP_PER_KILL))
+        .saturating_add(performance_bonus_xp);
+    let credits_gain = PROGRESSION_BASE_CREDITS_PER_MATCH
+        .saturating_add(score_credits)
+        .saturating_add(kills.saturating_mul(PROGRESSION_CREDITS_PER_KILL))
+        .saturating_add(performance_bonus_credits);
+    (xp_gain, credits_gain)
+}
+
+fn experience_for_level(level: u32) -> u64 {
+    if level <= 1 {
+        return 0;
+    }
+    // Smoothly rising curve: sum_{i=1..level-1} (100 + 25*(i-1))
+    let n = (level - 1) as u64;
+    n.saturating_mul(100)
+        .saturating_add(25u64.saturating_mul(n.saturating_sub(1)).saturating_mul(n) / 2)
+}
+
+fn level_from_experience(experience_points: u64) -> u32 {
+    let mut level = 1u32;
+    loop {
+        let next_level = level.saturating_add(1);
+        let required = experience_for_level(next_level);
+        if experience_points < required || next_level == u32::MAX {
+            return level;
+        }
+        level = next_level;
     }
 }
 
@@ -1082,6 +1145,37 @@ fn parse_bool_env(name: &str, default: bool) -> bool {
             normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
         })
         .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn level_curve_is_monotonic() {
+        assert_eq!(level_from_experience(0), 1);
+        assert_eq!(level_from_experience(99), 1);
+        assert_eq!(level_from_experience(100), 2);
+        assert!(experience_for_level(5) > experience_for_level(4));
+    }
+
+    #[test]
+    fn progression_rewards_increase_with_performance() {
+        let mut low = PlayerState::new("u1".to_owned(), "low".to_owned(), 0.0, 0.0);
+        low.score = 20;
+        low.kills = 1;
+        low.deaths = 4;
+
+        let mut high = PlayerState::new("u2".to_owned(), "high".to_owned(), 0.0, 0.0);
+        high.score = 220;
+        high.kills = 8;
+        high.deaths = 2;
+
+        let (low_xp, low_credits) = progression_reward_from_match(&low);
+        let (high_xp, high_credits) = progression_reward_from_match(&high);
+        assert!(high_xp > low_xp);
+        assert!(high_credits > low_credits);
+    }
 }
 
 fn parse_u64_env(name: &str, default: u64) -> u64 {

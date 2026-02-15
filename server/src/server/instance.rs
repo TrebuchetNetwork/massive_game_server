@@ -2458,11 +2458,12 @@ impl MassiveGameServer {
 
                         if !hit_wall {
                             // Check player collisions using spatial index
-                            let nearby_players = self.spatial_index.query_nearby_players_with_positions(
-                                proj.x,
-                                proj.y,
-                                PLAYER_RADIUS + 20.0, // Small buffer for fast projectiles
-                            );
+                            let nearby_players =
+                                self.spatial_index.query_nearby_players_with_positions(
+                                    proj.x,
+                                    proj.y,
+                                    PLAYER_RADIUS + 20.0, // Small buffer for fast projectiles
+                                );
                             target_ids.clear();
                             target_xs.clear();
                             target_ys.clear();
@@ -5493,8 +5494,8 @@ impl MassiveGameServer {
                     event_instigator_id(event).map(|id| builder.create_string(id.as_str()));
                 let target_id_fb =
                     event_target_id(event).map(|id_str| builder.create_string(&id_str));
-                let weapon_type_fb =
-                    event_weapon_type(event).map_or(fb::WeaponType::Pistol, map_server_weapon_to_fb);
+                let weapon_type_fb = event_weapon_type(event)
+                    .map_or(fb::WeaponType::Pistol, map_server_weapon_to_fb);
                 fb::GameEvent::create(
                     &mut builder,
                     &fb::GameEventArgs {

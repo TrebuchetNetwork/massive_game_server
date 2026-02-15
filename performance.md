@@ -1,8 +1,39 @@
-# Performance Status (2026-02-14)
+# Performance Status (2026-02-15)
 
 ## Scope
 - Goal: keep `10v10` stable and clear the remaining `80+` launch-timeout bottleneck.
 - This refresh retested join throughput after the dynamic+deterministic world optimization pass.
+
+## Fresh Benchmark Refresh (2026-02-15)
+- Server target: `target/debug/massive_game_server_core` on `127.0.0.1:18082`.
+- New artifacts:
+  - `artifacts/arena/arena_10v10_20260215_043820.json`
+    - team arena simulation: `10v10`, `3` rounds, `30` engagements, `durationMs=204`
+  - `artifacts/scale/multi_client_20_v3_refresh_20260215_044634.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`
+    - `connectLatency avg=17288.45ms`, `p95=20413.5ms`, `durationMs=101275`
+  - `artifacts/scale/multi_client_120_v3_refresh_20260215_043833.json`
+    - `92/120`, `connectedRatio=0.7667`, `passed=false`
+    - timed out at `maxTotalMs=300000`
+    - `connectLatency avg=88365.68ms`, `p95=191396.3ms`, `durationMs=471444`
+    - `73+`: `count=20/48`, `avg=176286.55ms`, `p95=195925.6ms`
+    - server join-stage (`73+`): `open_channel_wait avg=390.52ms`, `queue_wait avg=15.79ms`, `snapshot_build avg=0.36ms`, `send_result avg=0.06ms`
+- Note:
+  - Arena codegen bench was run in fallback mode (`ARENA_REQUIRE_REAL_PROVIDER=0`) because `OPENROUTER_API_KEY` was not present in process env.
+
+### Before/After vs v3 pass2
+- Baseline artifacts:
+  - `artifacts/scale/multi_client_20_v3_pass2.json`
+  - `artifacts/scale/multi_client_120_v3_pass2.json`
+- Delta:
+  - `20` clients:
+    - connect avg `22615.95 -> 17288.45` (`-5327.50ms`)
+    - connect p95 `27604.3 -> 20413.5` (`-7190.8ms`)
+  - `120` clients:
+    - launched `100 -> 92` (`-8`)
+    - connect avg `74128.03 -> 88365.68` (`+14237.65ms`)
+    - `73+` avg `137587.86 -> 176286.55` (`+38698.69ms`)
+    - `73+` count `28 -> 20` (`-8`)
 
 ## Fresh Benchmarks (2026-02-14 evening)
 - Server target: `target/release/massive_game_server_core` on `127.0.0.1:18084`.

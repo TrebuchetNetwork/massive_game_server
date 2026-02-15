@@ -498,8 +498,7 @@ mod tests {
         let max_xs = [20.0, -1.0, 2.0];
         let min_ys = [10.0, -5.0, 0.0];
         let max_ys = [20.0, -1.0, 2.0];
-        let idx =
-            first_index_aabb_containing_point(&min_xs, &max_xs, &min_ys, &max_ys, 1.5, 1.5);
+        let idx = first_index_aabb_containing_point(&min_xs, &max_xs, &min_ys, &max_ys, 1.5, 1.5);
         assert_eq!(idx, Some(2));
     }
 }

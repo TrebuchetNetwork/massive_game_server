@@ -1,10 +1,32 @@
-# Production Performance Log (Refreshed 2026-02-14)
+# Production Performance Log (Refreshed 2026-02-15)
 
 ## Join-Throughput Pass Summary
 
 ### Pass objective
 - Execute the next join-throughput optimization pass for the remaining `80+` launch timeout.
 - Rebaseline with deterministic world generation and refreshed measurements.
+
+### Fresh refresh run artifacts (2026-02-15)
+- `artifacts/arena/arena_10v10_20260215_043820.json`
+  - arena simulation: `10v10`, `3` rounds, `30` engagements, `durationMs=204`
+- `artifacts/scale/multi_client_20_v3_refresh_20260215_044634.json`
+  - `20/20`, `connectedRatio=1.0`, `passed=true`
+  - `connectLatency avg=17288.45ms`, `p95=20413.5ms`, `durationMs=101275`
+- `artifacts/scale/multi_client_120_v3_refresh_20260215_043833.json`
+  - `92/120`, `connectedRatio=0.7667`, `passed=false`
+  - timed out at `maxTotalMs=300000`
+  - `connectLatency avg=88365.68ms`, `p95=191396.3ms`, `durationMs=471444`
+  - `73+`: `count=20/48`, `avg=176286.55ms`, `p95=195925.6ms`
+  - `serverJoinStages.wave_73_plus`: `open_channel_wait avg=390.52ms`, `queue_wait avg=15.79ms`, `snapshot_build avg=0.36ms`, `send_result avg=0.06ms`
+- Baseline for comparison:
+  - `artifacts/scale/multi_client_20_v3_pass2.json`
+  - `artifacts/scale/multi_client_120_v3_pass2.json`
+- Delta summary vs baseline:
+  - `20` clients: connect avg improved `22615.95 -> 17288.45` (`-5327.50ms`), p95 improved `27604.3 -> 20413.5` (`-7190.8ms`)
+  - `120` clients: launched `100 -> 92` (`-8`), connect avg `74128.03 -> 88365.68` (`+14237.65ms`)
+  - `120` tail `73+`: avg `137587.86 -> 176286.55` (`+38698.69ms`), count `28 -> 20` (`-8`)
+- Arena provider mode note:
+  - run used `ARENA_REQUIRE_REAL_PROVIDER=0` fallback because `OPENROUTER_API_KEY` was not present in process env.
 
 ### Fresh run artifacts (2026-02-14 evening)
 - `artifacts/scale/multi_client_fresh_20_after_ecs_rest_20260214_131633.json`

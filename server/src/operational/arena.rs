@@ -1,4 +1,6 @@
-use crate::operational::bot_sandbox::{ArenaMatchMode, BotMatchOutcome, BotSandbox};
+use crate::operational::bot_sandbox::{
+    ArenaMatchMode, BotMatchOutcome, BotSandbox, TeamBattleOutcome,
+};
 use base64::Engine as _;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
@@ -166,6 +168,12 @@ pub struct ExecuteNextMatchResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SimulateTeamBattleResponse {
+    pub generated_at: u64,
+    pub simulation: TeamBattleOutcome,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ArenaWorkerStatsResponse {
     pub generated_at: u64,
     pub pending_matches: usize,
@@ -248,6 +256,17 @@ struct PendingQuery {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct ExecuteNextBody {
+    max_ticks: Option<u32>,
+    seed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct SimulateTeamBattleBody {
+    model_a_id: String,
+    model_b_id: String,
+    mode: Option<String>,
+    team_size: Option<u32>,
+    rounds: Option<u32>,
     max_ticks: Option<u32>,
     seed: Option<u64>,
 }
@@ -944,6 +963,64 @@ impl ArenaService {
         })
     }
 
+    fn simulate_team_battle(
+        &self,
+        body: SimulateTeamBattleBody,
+    ) -> Result<SimulateTeamBattleResponse, ArenaError> {
+        let model_a_id = body.model_a_id.trim();
+        let model_b_id = body.model_b_id.trim();
+        if model_a_id.is_empty() || model_b_id.is_empty() {
+            return Err(ArenaError::InvalidInput(
+                "invalid_model_id",
+                "model_a_id and model_b_id are required".to_owned(),
+            ));
+        }
+        if model_a_id == model_b_id {
+            return Err(ArenaError::InvalidInput(
+                "invalid_matchup",
+                "model_a_id and model_b_id must be different".to_owned(),
+            ));
+        }
+
+        let store = self.inner.persistent_store.read();
+        if !store.models.contains_key(model_a_id) {
+            return Err(ArenaError::NotFound(
+                "model_not_found",
+                format!("model '{}' does not exist", model_a_id),
+            ));
+        }
+        if !store.models.contains_key(model_b_id) {
+            return Err(ArenaError::NotFound(
+                "model_not_found",
+                format!("model '{}' does not exist", model_b_id),
+            ));
+        }
+        drop(store);
+
+        let mode = normalize_match_mode(body.mode.as_deref())?;
+        let mode = ArenaMatchMode::parse(&mode).ok_or_else(|| {
+            ArenaError::InvalidInput("invalid_mode", format!("unsupported match mode '{}'", mode))
+        })?;
+        let team_size = body.team_size.unwrap_or(10);
+        let rounds = body.rounds.unwrap_or(1);
+        let seed = body.seed.unwrap_or_else(unix_now);
+
+        let simulation = self.inner.bot_sandbox.execute_team_battle(
+            model_a_id,
+            model_b_id,
+            mode,
+            team_size,
+            rounds,
+            seed,
+            body.max_ticks,
+        );
+
+        Ok(SimulateTeamBattleResponse {
+            generated_at: unix_now(),
+            simulation,
+        })
+    }
+
     pub fn worker_execute_next(
         &self,
         max_ticks: Option<u32>,
@@ -1287,6 +1364,21 @@ pub fn build_arena_routes(
             },
         );
 
+    let simulate_team_battle = warp::path!("api" / "arena" / "matches" / "simulate_team_battle")
+        .and(warp::post())
+        .and(
+            warp::body::json::<SimulateTeamBattleBody>()
+                .or(warp::any().map(SimulateTeamBattleBody::default))
+                .unify(),
+        )
+        .and(with_service(service.clone()))
+        .map(|body: SimulateTeamBattleBody, arena: ArenaService| {
+            match arena.simulate_team_battle(body) {
+                Ok(result) => ok_response(result),
+                Err(err) => error_response(err.code(), err.message()),
+            }
+        });
+
     let list_pending = warp::path!("api" / "arena" / "matches" / "pending")
         .and(warp::get())
         .and(
@@ -1342,6 +1434,7 @@ pub fn build_arena_routes(
         .or(queue_round_robin)
         .or(claim_next)
         .or(execute_next)
+        .or(simulate_team_battle)
         .or(list_pending)
         .or(report_match)
         .or(leaderboard)
@@ -1610,5 +1703,87 @@ mod tests {
             overwrite: Some(true),
         });
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn simulate_team_battle_runs_10v10() {
+        let service = ArenaService {
+            inner: Arc::new(ArenaInner {
+                store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                bot_sandbox: BotSandbox::new_from_env(),
+                wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
+                wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
+                persistent_store: RwLock::new(PersistentArenaStore {
+                    models: HashMap::from([
+                        (
+                            "a".to_owned(),
+                            ArenaModelRecord {
+                                model_id: "a".to_owned(),
+                                model_name: "a".to_owned(),
+                                provider: "x".to_owned(),
+                                version: "1".to_owned(),
+                                active: true,
+                                created_at: 1,
+                                updated_at: 1,
+                                last_seen_at: 1,
+                                elo_rating: 1000.0,
+                                matches_played: 0,
+                                wins: 0,
+                                losses: 0,
+                                draws: 0,
+                                cumulative_score: 0,
+                            },
+                        ),
+                        (
+                            "b".to_owned(),
+                            ArenaModelRecord {
+                                model_id: "b".to_owned(),
+                                model_name: "b".to_owned(),
+                                provider: "x".to_owned(),
+                                version: "1".to_owned(),
+                                active: true,
+                                created_at: 1,
+                                updated_at: 1,
+                                last_seen_at: 1,
+                                elo_rating: 1000.0,
+                                matches_played: 0,
+                                wins: 0,
+                                losses: 0,
+                                draws: 0,
+                                cumulative_score: 0,
+                            },
+                        ),
+                    ]),
+                    completed_matches: Vec::new(),
+                }),
+                pending_matches: Mutex::new(VecDeque::new()),
+                in_flight_matches: DashMap::new(),
+                total_matches_reported: AtomicU64::new(0),
+                worker_runs: AtomicU64::new(0),
+                worker_executed: AtomicU64::new(0),
+                worker_idle: AtomicU64::new(0),
+                worker_failures: AtomicU64::new(0),
+                worker_last_success_at: AtomicU64::new(0),
+                worker_last_failure_at: AtomicU64::new(0),
+                worker_last_error: RwLock::new(None),
+            }),
+        };
+
+        let result = service
+            .simulate_team_battle(SimulateTeamBattleBody {
+                model_a_id: "a".to_owned(),
+                model_b_id: "b".to_owned(),
+                mode: Some("tdm".to_owned()),
+                team_size: Some(10),
+                rounds: Some(2),
+                max_ticks: Some(120),
+                seed: Some(11),
+            })
+            .expect("team simulation should succeed");
+        assert_eq!(result.simulation.team_size, 10);
+        assert_eq!(result.simulation.rounds, 2);
+        assert_eq!(result.simulation.total_engagements, 20);
+        assert_eq!(result.simulation.mode, "tdm");
+        assert_eq!(result.simulation.rounds_detail.len(), 2);
     }
 }

@@ -9,6 +9,8 @@ const DEFAULT_WASM_DIR: &str = "data/arena_bots";
 const DEFAULT_FUEL_PER_TICK: u64 = 1_000_000;
 const DEFAULT_MAX_TICKS: u32 = 600;
 const MAX_ALLOWED_TICKS: u32 = 5_000;
+const MAX_TEAM_BATTLE_SIZE: u32 = 20;
+const MAX_TEAM_BATTLE_ROUNDS: u32 = 32;
 const BOT_TICK_EXPORT: &str = "bot_tick";
 const DEFAULT_RESPAWNS_NON_ARENA: i32 = 3;
 
@@ -76,6 +78,42 @@ pub struct BotMatchOutcome {
     pub model_b_runtime: String,
     pub ticks_executed: u32,
     pub duration_ms: u64,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TeamBattleRoundOutcome {
+    pub round: u32,
+    pub engagements: u32,
+    pub draws: u32,
+    pub team_a_objective: i32,
+    pub team_b_objective: i32,
+    pub team_a_score: i32,
+    pub team_b_score: i32,
+    pub winner_model_id: Option<String>,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TeamBattleOutcome {
+    pub mode: String,
+    pub model_a_id: String,
+    pub model_b_id: String,
+    pub team_size: u32,
+    pub rounds: u32,
+    pub max_ticks: u32,
+    pub team_a_round_wins: u32,
+    pub team_b_round_wins: u32,
+    pub round_draws: u32,
+    pub total_engagements: u32,
+    pub total_team_a_objective: i64,
+    pub total_team_b_objective: i64,
+    pub total_team_a_score: i64,
+    pub total_team_b_score: i64,
+    pub winner_model_id: Option<String>,
+    pub draw: bool,
+    pub duration_ms: u64,
+    pub rounds_detail: Vec<TeamBattleRoundOutcome>,
     pub warnings: Vec<String>,
 }
 
@@ -359,6 +397,149 @@ impl BotSandbox {
             ticks_executed,
             duration_ms,
             warnings,
+        }
+    }
+
+    pub fn execute_team_battle(
+        &self,
+        model_a_id: &str,
+        model_b_id: &str,
+        mode: ArenaMatchMode,
+        team_size: u32,
+        rounds: u32,
+        seed: u64,
+        requested_ticks: Option<u32>,
+    ) -> TeamBattleOutcome {
+        let started_at = Instant::now();
+        let normalized_team_size = team_size.clamp(1, MAX_TEAM_BATTLE_SIZE);
+        let normalized_rounds = rounds.clamp(1, MAX_TEAM_BATTLE_ROUNDS);
+        let max_ticks = requested_ticks
+            .unwrap_or(self.default_max_ticks)
+            .max(1)
+            .min(MAX_ALLOWED_TICKS);
+
+        let mut team_a_round_wins = 0u32;
+        let mut team_b_round_wins = 0u32;
+        let mut round_draws = 0u32;
+        let mut total_team_a_objective = 0i64;
+        let mut total_team_b_objective = 0i64;
+        let mut total_team_a_score = 0i64;
+        let mut total_team_b_score = 0i64;
+        let mut all_warnings = Vec::new();
+        let mut rounds_detail = Vec::with_capacity(normalized_rounds as usize);
+
+        for round in 0..normalized_rounds {
+            let round_started_at = Instant::now();
+            let mut round_draw_count = 0u32;
+            let mut round_team_a_objective = 0i64;
+            let mut round_team_b_objective = 0i64;
+            let mut round_team_a_score = 0i64;
+            let mut round_team_b_score = 0i64;
+
+            for slot in 0..normalized_team_size {
+                let battle_seed = seed
+                    ^ ((round as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
+                    ^ ((slot as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+                let engagement =
+                    self.execute_match(model_a_id, model_b_id, mode, battle_seed, Some(max_ticks));
+
+                round_team_a_objective += engagement.objective_a as i64;
+                round_team_b_objective += engagement.objective_b as i64;
+                round_team_a_score += engagement.model_a_score as i64;
+                round_team_b_score += engagement.model_b_score as i64;
+                if engagement.draw {
+                    round_draw_count = round_draw_count.saturating_add(1);
+                }
+
+                if all_warnings.len() < 256 {
+                    for warning in engagement.warnings {
+                        all_warnings.push(format!(
+                            "round={} slot={}: {}",
+                            round + 1,
+                            slot + 1,
+                            warning
+                        ));
+                        if all_warnings.len() >= 256 {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            total_team_a_objective += round_team_a_objective;
+            total_team_b_objective += round_team_b_objective;
+            total_team_a_score += round_team_a_score;
+            total_team_b_score += round_team_b_score;
+
+            let round_winner = compare_team_round(
+                model_a_id,
+                model_b_id,
+                round_team_a_objective,
+                round_team_b_objective,
+                round_team_a_score,
+                round_team_b_score,
+            );
+            match round_winner.as_deref() {
+                Some(winner) if winner == model_a_id => {
+                    team_a_round_wins = team_a_round_wins.saturating_add(1);
+                }
+                Some(winner) if winner == model_b_id => {
+                    team_b_round_wins = team_b_round_wins.saturating_add(1);
+                }
+                _ => {
+                    round_draws = round_draws.saturating_add(1);
+                }
+            }
+
+            rounds_detail.push(TeamBattleRoundOutcome {
+                round: round + 1,
+                engagements: normalized_team_size,
+                draws: round_draw_count,
+                team_a_objective: saturating_i64_to_i32(round_team_a_objective),
+                team_b_objective: saturating_i64_to_i32(round_team_b_objective),
+                team_a_score: saturating_i64_to_i32(round_team_a_score),
+                team_b_score: saturating_i64_to_i32(round_team_b_score),
+                winner_model_id: round_winner,
+                duration_ms: round_started_at.elapsed().as_millis() as u64,
+            });
+        }
+
+        let winner_model_id = if team_a_round_wins > team_b_round_wins {
+            Some(model_a_id.to_owned())
+        } else if team_b_round_wins > team_a_round_wins {
+            Some(model_b_id.to_owned())
+        } else {
+            compare_team_round(
+                model_a_id,
+                model_b_id,
+                total_team_a_objective,
+                total_team_b_objective,
+                total_team_a_score,
+                total_team_b_score,
+            )
+        };
+        let draw = winner_model_id.is_none();
+
+        TeamBattleOutcome {
+            mode: mode.as_str().to_owned(),
+            model_a_id: model_a_id.to_owned(),
+            model_b_id: model_b_id.to_owned(),
+            team_size: normalized_team_size,
+            rounds: normalized_rounds,
+            max_ticks,
+            team_a_round_wins,
+            team_b_round_wins,
+            round_draws,
+            total_engagements: normalized_team_size.saturating_mul(normalized_rounds),
+            total_team_a_objective,
+            total_team_b_objective,
+            total_team_a_score,
+            total_team_b_score,
+            winner_model_id,
+            draw,
+            duration_ms: started_at.elapsed().as_millis() as u64,
+            rounds_detail,
+            warnings: all_warnings,
         }
     }
 
@@ -696,6 +877,35 @@ fn determine_winner(
     }
 }
 
+fn compare_team_round(
+    model_a_id: &str,
+    model_b_id: &str,
+    objective_a: i64,
+    objective_b: i64,
+    score_a: i64,
+    score_b: i64,
+) -> Option<String> {
+    use std::cmp::Ordering;
+    match objective_a
+        .cmp(&objective_b)
+        .then_with(|| score_a.cmp(&score_b))
+    {
+        Ordering::Greater => Some(model_a_id.to_owned()),
+        Ordering::Less => Some(model_b_id.to_owned()),
+        Ordering::Equal => None,
+    }
+}
+
+fn saturating_i64_to_i32(value: i64) -> i32 {
+    if value > i32::MAX as i64 {
+        i32::MAX
+    } else if value < i32::MIN as i64 {
+        i32::MIN
+    } else {
+        value as i32
+    }
+}
+
 fn outgoing_damage(action: BotAction, seed: u64, tick: u32) -> i32 {
     let base = match action {
         BotAction::Idle => 0,
@@ -856,5 +1066,25 @@ mod tests {
     fn sanitize_model_id_rejects_path_traversal() {
         assert!(sanitize_model_id("../etc/passwd").is_none());
         assert!(sanitize_model_id("bot-alpha_1").is_some());
+    }
+
+    #[test]
+    fn team_battle_simulates_10v10_with_rounds() {
+        let sandbox = BotSandbox::new_from_env();
+        let outcome = sandbox.execute_team_battle(
+            "model_a",
+            "model_b",
+            ArenaMatchMode::TeamDeathmatch,
+            10,
+            3,
+            91,
+            Some(120),
+        );
+        assert_eq!(outcome.team_size, 10);
+        assert_eq!(outcome.rounds, 3);
+        assert_eq!(outcome.total_engagements, 30);
+        assert_eq!(outcome.mode, "tdm");
+        assert_eq!(outcome.rounds_detail.len(), 3);
+        assert!(outcome.duration_ms <= 30_000);
     }
 }
