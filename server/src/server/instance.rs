@@ -282,7 +282,10 @@ fn join_zero_copy_serialization_enabled() -> bool {
 
 fn join_authoritative_aoi_snapshot_enabled() -> bool {
     static ENABLED: OnceCell<bool> = OnceCell::new();
-    *ENABLED.get_or_init(|| env_bool_value("MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT"))
+    *ENABLED.get_or_init(|| {
+        !env_bool_value("MGS_JOIN_DISABLE_AUTHORITATIVE_AOI_SNAPSHOT")
+            || env_bool_value("MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT")
+    })
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1747,6 +1750,7 @@ impl MassiveGameServer {
         &self, // Assuming this is part of MassiveGameServer impl
         peer_id_str: &str,
         shared_data: &SharedBroadcastData,
+        last_chat_message_seq_sent: u64,
     ) {
         let frame_num = self.frame_counter.load(AtomicOrdering::Relaxed);
         trace!(
@@ -1757,6 +1761,7 @@ impl MassiveGameServer {
         let mut client_state = ClientState::default(); // Create new state
         client_state.known_walls_sent = true; // Mark walls as sent
         client_state.last_update_sent_time = Instant::now();
+        client_state.last_chat_message_seq_sent = last_chat_message_seq_sent;
 
         client_state.last_known_match_state = Some(shared_data.match_info_snapshot.match_state);
         client_state.last_known_match_time_remaining =
@@ -3246,15 +3251,16 @@ impl MassiveGameServer {
         );
 
         let player_id_arc = server.player_manager.id_pool.get_or_create(peer_id_str);
-        let player_exists = server
-            .player_manager
-            .get_player_state(&player_id_arc)
-            .is_some();
+        // Use the authoritative per-broadcast snapshot view to decide whether this
+        // client can be serialized in this frame.
+        let player_exists =
+            Self::lookup_player_state_from_shared(shared_data, &player_id_arc).is_some();
 
         if !player_exists {
-            warn!(
-                "[Frame {}] Player {} not found, skipping broadcast for this client.",
-                frame, peer_id_str
+            trace!(
+                "[Frame {}] Player {} absent from shared snapshot, deferring broadcast.",
+                frame,
+                peer_id_str
             );
             return Ok(());
         }
@@ -3274,7 +3280,12 @@ impl MassiveGameServer {
 
         let mut client_state_for_delta: Option<ClientState> = None;
         let mut used_cached_initial_state = false;
-        let packet_batching_enabled = join_packet_batching_enabled();
+        let mut last_chat_message_seq_sent = server
+            .client_states_map
+            .read()
+            .get(peer_id_str)
+            .map(|state| state.last_chat_message_seq_sent)
+            .unwrap_or_default();
         let state_result = if client_info.needs_initial_state {
             let cached_initial_state = server
                 .client_states_map
@@ -3319,6 +3330,7 @@ impl MassiveGameServer {
             let delta_result = server
                 .build_delta_state_optimized(peer_id_str, &client_state_snapshot, shared_data)
                 .await;
+            last_chat_message_seq_sent = client_state_snapshot.last_chat_message_seq_sent;
             client_state_for_delta = Some(client_state_snapshot);
             delta_result
         };
@@ -3349,31 +3361,11 @@ impl MassiveGameServer {
             peer_id_str
         );
 
-        let mut pending_chat_packets_for_delta: Vec<SerializedChatPacket> = Vec::new();
-        if !client_info.needs_initial_state {
-            let last_chat_seq_sent = client_state_for_delta
-                .as_ref()
-                .map(|state| state.last_chat_message_seq_sent)
-                .unwrap_or_default();
-            pending_chat_packets_for_delta =
-                collect_pending_chat_packets(last_chat_seq_sent, &shared_data.chat_packets);
-        }
-
-        let mut outbound_packets: Vec<Bytes> = Vec::with_capacity(
-            1 + if packet_batching_enabled {
-                pending_chat_packets_for_delta.len()
-            } else {
-                0
-            },
-        );
+        let pending_chat_packets =
+            collect_pending_chat_packets(last_chat_message_seq_sent, &shared_data.chat_packets);
+        let mut outbound_packets: Vec<Bytes> = Vec::with_capacity(1 + pending_chat_packets.len());
         outbound_packets.push(bytes_to_send.clone());
-        if packet_batching_enabled {
-            outbound_packets.extend(
-                pending_chat_packets_for_delta
-                    .iter()
-                    .map(|packet| packet.bytes.clone()),
-            );
-        }
+        outbound_packets.extend(pending_chat_packets.iter().map(|packet| packet.bytes.clone()));
 
         const DELTA_SEND_TIMEOUT_MS: u64 = 50;
         const INITIAL_SEND_TIMEOUT_MS: u64 = 200;
@@ -3407,7 +3399,25 @@ impl MassiveGameServer {
         let send_succeeded = sent_packets > 0;
         let sent_chat_packets_count = sent_packets
             .saturating_sub(1)
-            .min(pending_chat_packets_for_delta.len());
+            .min(pending_chat_packets.len());
+
+        let mut final_chat_message_seq_sent = last_chat_message_seq_sent;
+        if sent_chat_packets_count > 0 {
+            for packet in pending_chat_packets.iter().take(sent_chat_packets_count) {
+                if packet.seq > final_chat_message_seq_sent {
+                    final_chat_message_seq_sent = packet.seq;
+                }
+            }
+        }
+        if sent_chat_packets_count < pending_chat_packets.len() {
+            final_chat_message_seq_sent = server
+                .send_chat_messages_optimized(
+                    &client_info.data_channel,
+                    final_chat_message_seq_sent,
+                    &shared_data.chat_packets,
+                )
+                .await;
+        }
 
         if !send_succeeded {
             warn!(
@@ -3462,32 +3472,14 @@ impl MassiveGameServer {
             peer_id_str
         );
         if client_info.needs_initial_state {
-            server.update_client_state_after_initial(peer_id_str, shared_data);
+            server.update_client_state_after_initial(
+                peer_id_str,
+                shared_data,
+                final_chat_message_seq_sent,
+            );
         } else {
             let mut client_state = client_state_for_delta.unwrap_or_default();
-
-            if sent_chat_packets_count > 0 {
-                let mut max_sent_seq = client_state.last_chat_message_seq_sent;
-                for packet in pending_chat_packets_for_delta
-                    .iter()
-                    .take(sent_chat_packets_count)
-                {
-                    if packet.seq > max_sent_seq {
-                        max_sent_seq = packet.seq;
-                    }
-                }
-                client_state.last_chat_message_seq_sent = max_sent_seq;
-            }
-            if sent_chat_packets_count < pending_chat_packets_for_delta.len() {
-                let last_chat_seq_sent = server
-                    .send_chat_messages_optimized(
-                        &client_info.data_channel,
-                        client_state.last_chat_message_seq_sent,
-                        &shared_data.chat_packets,
-                    )
-                    .await;
-                client_state.last_chat_message_seq_sent = last_chat_seq_sent;
-            }
+            client_state.last_chat_message_seq_sent = final_chat_message_seq_sent;
 
             server.update_client_state_after_delta(&mut client_state, &player_id_arc, shared_data);
             server.update_client_state_after_delta_with_shared(&mut client_state, shared_data);

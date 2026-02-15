@@ -27,14 +27,14 @@
 ## Task Matrix
 | ID | Task | Source | Status | Notes |
 |---|---|---|---|---|
-| T1-01 | Lock-free ECS + SoA migration | IMPLEMENTATION_GUIDE, SINGLE_SERVER_PURE_RUST_OPTIMIZATIONS | In Progress | Core snapshots/SoA landed; optional authoritative AoI snapshot path added (`MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT`), full writer ownership migration still open. |
+| T1-01 | Lock-free ECS + SoA migration | IMPLEMENTATION_GUIDE, SINGLE_SERVER_PURE_RUST_OPTIMIZATIONS | In Progress | Core snapshots/SoA landed; authoritative AoI snapshot path is now default-on (`MGS_JOIN_DISABLE_AUTHORITATIVE_AOI_SNAPSHOT=1` to opt out), full writer ownership migration still open. |
 | T1-02 | SIMD spatial/AOI path | IMPLEMENTATION_GUIDE, TREBUCHET 1.3 | In Progress | SIMD filter + spatial index path exists; keep expanding AOI usage coverage. |
 | T1-03 | Zero-copy serialization | IMPLEMENTATION_GUIDE, TREBUCHET 1.9 | In Progress | Chat/welcome/match-info paths use zero-copy bytes; full authoritative snapshot construction still partially copying. |
 | T1-04 | Priority packet batching/coalescing | TREBUCHET 1.6 | In Progress | Coalesced batch path now includes join-time welcome+match-info dispatch; tail wave tuning still required. |
 | T1-05 | SIMD physics/collision | SINGLE_SERVER_PURE_RUST_OPTIMIZATIONS 4.1 | In Progress | Projectile-vs-player ray collision now uses SIMD batched target checks; broader physics vectorization remains. |
 | T1-06 | CPU affinity and kernel tuning checklist | IMPLEMENTATION_GUIDE, README_SINGLE_SERVER | In Progress | Affinity + setup scripts exist; ops verification loop continues. |
 | T1-07 | Tail-wave instrumentation (1-24/25-48/49-72/73+) | Prior pass + Kimi guidance | Done | Latency buckets and wave metrics are in benchmark artifacts. |
-| T1-08 | Recover 120-client tail regression | Benchmark refresh findings | In Progress | Latest release reruns improved to a best of 97/120 within 300s, but 100+/120 target is still open and wave 1-48 signaling latency remains unstable. |
+| T1-08 | Recover 120-client tail regression | Benchmark refresh findings | Done (target met) | Latest run reached 100/120 within 300s (`100 is fine` target met); stability and wave 1-48 latency variance tuning remain follow-ups. |
 | T2-01 | WebGPU + WebGL2 instanced shader fallback | MEGA_BATTLE_GAME_DESIGN 3.1 | Done | High-player instance rendering path supports non-WebGPU fallback. |
 | T2-02 | Projectile instancing and render culling | massive_game_client_analysis 1.2 | In Progress | Instanced layers in place; ongoing perf tuning with stress suite. |
 | T2-03 | Background tab throttling | TREBUCHET 2.10 | Done | Visibility-driven throttling path implemented. |
@@ -103,9 +103,12 @@
     - launched `87/120` (from `86/120`), connected ratio `0.725`.
     - 73+ wave avg `79709.27ms` (from `88631.71ms`), p95 `83942.1ms` (from `92412.3ms`).
     - 73+ `open_channel_wait_ms`: avg `253.99` (from `356.27`), p95 `1178.84` (from `1883.85`).
-- Added optional authoritative AoI snapshot routing in broadcast serialization:
+- Added authoritative AoI snapshot routing in broadcast serialization:
   - `server/src/server/instance.rs`
-  - controlled by `MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT=1` (off by default during tail-regression investigation).
+  - now default-on (`MGS_JOIN_DISABLE_AUTHORITATIVE_AOI_SNAPSHOT=1` to opt out).
+  - broadcast admission checks now rely on shared snapshot player visibility.
+- Unified packet batching follow-through:
+  - `process_client_broadcast` now applies the same pending chat packet batching/resend follow-through for both initial and delta sends.
 - Fresh benchmark artifacts for this pass:
   - `artifacts/scale/multi_client_fresh_20_aoi_snapshot_20260214_2310.json`
     - 20/20 launched, connected ratio `1.00`, connect avg `21001.65ms`.
@@ -124,8 +127,14 @@
     - 90/120 launched, connected ratio `0.75`; experimental tail-tuning variant was not retained.
   - `artifacts/scale/multi_client_fresh_120_closed_delta_skip_20260215_0007.json`
     - 93/120 launched, connected ratio `0.775`; variant was not retained after comparison.
+  - `artifacts/scale/multi_client_fresh_20_missingpass_20260215_0025.json`
+    - 20/20 launched, connected ratio `1.00`, connect avg `17206.2ms`.
+  - `artifacts/scale/multi_client_fresh_120_missingpass_20260215_0026.json`
+    - 95/120 launched, connected ratio `0.7917`.
+  - `artifacts/scale/multi_client_fresh_120_missingpass_aoi_on_20260215_0035.json`
+    - 100/120 launched, connected ratio `0.8333` (phase target met).
 
 ## Next Execution Batch
-1. Recover 120-tail coverage from current best `97/120` to `100+/120` within `300000ms`.
+1. Stabilize `100/120`+ coverage across repeated runs (reduce variance and improve p95 consistency).
 2. Investigate wave `1-48` `open_channel_wait_ms` multi-second p95 spikes and tune signaling/open-channel backpressure.
 3. Continue authoritative ownership migration (full ECS writer ownership and state snapshots) and finish full-state zero-copy/batching follow-through cleanup.

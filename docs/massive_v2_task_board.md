@@ -22,7 +22,7 @@
 - `T3-06 code generation/validator`: Started with operational API scaffolding.
 - `Human priority slot management`: Implemented in join flow with lowest-performing bot eviction.
 - `T1-01 authoritative ECS ownership migration`: In progress, previous SoA/snapshot work retained.
-- `T1-08 120-client tail regression`: In progress, retained benchmark instrumentation paths.
+- `T1-08 120-client tail regression`: Reached 100/120 launch threshold in latest pass; stabilization continues.
 
 ## Implemented In This Pass
 - Added wasm sandbox runtime:
@@ -59,9 +59,11 @@
     - 87/120 launched within `300000ms`, connected ratio `0.725` (delta `+1` launched).
     - 73+ wave: count `15`, avg `79709.27ms`, p95 `83942.1ms`.
     - join-stage 73+: `open_channel_wait_ms.avg=253.99` (`p95=1178.84`) after tail-policy tuning.
-- Added optional authoritative AoI ownership path in broadcast serialization:
+- Added authoritative AoI ownership path in broadcast serialization:
   - `server/src/server/instance.rs`
-  - gated by `MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT=1` (default off for now while tail throughput retuning continues).
+  - now default-on (`MGS_JOIN_DISABLE_AUTHORITATIVE_AOI_SNAPSHOT=1` to opt out).
+  - `process_client_broadcast` now gates player existence from the per-broadcast shared snapshot view.
+  - unified chat packet follow-through for both initial and delta dispatch paths (single batched send path + residual resend path).
 - Fresh benchmark artifacts from this pass:
   - `artifacts/scale/multi_client_fresh_20_aoi_snapshot_20260214_2310.json`
     - 20/20 launched, connected ratio `1.00`, connect avg `21001.65ms`.
@@ -80,10 +82,16 @@
     - 90/120 launched, connected ratio `0.75`; experimental scheduler tuning underperformed and was rolled back.
   - `artifacts/scale/multi_client_fresh_120_closed_delta_skip_20260215_0007.json`
     - 93/120 launched, connected ratio `0.775`; variant was not retained after comparison.
+  - `artifacts/scale/multi_client_fresh_20_missingpass_20260215_0025.json`
+    - 20/20 launched, connected ratio `1.00`, connect avg `17206.2ms`.
+  - `artifacts/scale/multi_client_fresh_120_missingpass_20260215_0026.json`
+    - 95/120 launched, connected ratio `0.7917`.
+  - `artifacts/scale/multi_client_fresh_120_missingpass_aoi_on_20260215_0035.json`
+    - 100/120 launched, connected ratio `0.8333` (threshold target met for this phase).
 - Updated server docs:
   - `server/README.md`
 
 ## Next Execution Batch
-1. Recover 120-tail launch coverage from current best `97/120` to `100+/120` within the same `300000ms` budget.
-2. Reduce wave `1-48` `open_channel_wait_ms` spikes (often multi-second p95 in weaker reruns) via signaling/open-channel backpressure tuning.
+1. Stabilize `100/120`+ launch coverage across repeated runs (reduce variance between 95-100 results).
+2. Continue reducing wave `1-48` `open_channel_wait_ms` spikes via signaling/open-channel backpressure tuning.
 3. Continue authoritative ECS ownership migration beyond broadcast read snapshots and finish full-state zero-copy/batching cleanup follow-through.
