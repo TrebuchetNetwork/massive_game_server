@@ -346,12 +346,16 @@ async fn main() -> anyhow::Result<()> {
                 match arena_service_for_worker.worker_execute_next(worker_max_ticks, None) {
                     Ok(Some(executed)) => {
                         info!(
-                            "Arena worker executed match '{}' (pending {} -> {}, draw={}, winner={:?}, runtimes=({},{}) ).",
+                            "Arena worker executed match '{}' mode={} (pending {} -> {}, draw={}, winner={:?}, objective {}:{}-{}, runtimes=({},{}) ).",
                             executed.report.match_id,
+                            executed.sandbox.mode,
                             executed.pending_before,
                             executed.pending_after,
                             executed.sandbox.draw,
                             executed.sandbox.winner_model_id,
+                            executed.sandbox.objective_label,
+                            executed.sandbox.objective_a,
+                            executed.sandbox.objective_b,
                             executed.sandbox.model_a_runtime,
                             executed.sandbox.model_b_runtime
                         );

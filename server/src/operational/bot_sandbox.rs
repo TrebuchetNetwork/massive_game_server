@@ -10,6 +10,7 @@ const DEFAULT_FUEL_PER_TICK: u64 = 1_000_000;
 const DEFAULT_MAX_TICKS: u32 = 600;
 const MAX_ALLOWED_TICKS: u32 = 5_000;
 const BOT_TICK_EXPORT: &str = "bot_tick";
+const DEFAULT_RESPAWNS_NON_ARENA: i32 = 3;
 
 #[derive(Clone)]
 pub struct BotSandbox {
@@ -19,10 +20,56 @@ pub struct BotSandbox {
     default_max_ticks: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArenaMatchMode {
+    Arena,
+    Ctf,
+    Koth,
+    TeamDeathmatch,
+}
+
+impl ArenaMatchMode {
+    pub fn parse(raw: &str) -> Option<Self> {
+        let normalized = raw.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "" | "arena" | "duel" | "classic" => Some(Self::Arena),
+            "ctf" | "capture_the_flag" | "capture-the-flag" => Some(Self::Ctf),
+            "koth" | "king_of_the_hill" | "king-of-the-hill" => Some(Self::Koth),
+            "tdm" | "team_deathmatch" | "team-deathmatch" | "teamdeathmatch" => {
+                Some(Self::TeamDeathmatch)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Arena => "arena",
+            Self::Ctf => "ctf",
+            Self::Koth => "koth",
+            Self::TeamDeathmatch => "tdm",
+        }
+    }
+
+    fn objective_label(&self) -> &'static str {
+        match self {
+            Self::Arena => "score",
+            Self::Ctf => "captures",
+            Self::Koth => "hill_control",
+            Self::TeamDeathmatch => "eliminations",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BotMatchOutcome {
     pub winner_model_id: Option<String>,
     pub draw: bool,
+    pub mode: String,
+    pub objective_label: String,
+    pub objective_a: i32,
+    pub objective_b: i32,
     pub model_a_score: i32,
     pub model_b_score: i32,
     pub model_a_runtime: String,
@@ -52,8 +99,13 @@ impl BotAction {
 }
 
 enum BotProgram {
-    Wasm { module: Module, source_path: PathBuf },
-    Fallback { reason: String },
+    Wasm {
+        module: Module,
+        source_path: PathBuf,
+    },
+    Fallback {
+        reason: String,
+    },
 }
 
 enum BotRuntime {
@@ -69,6 +121,19 @@ enum BotRuntime {
 struct FighterState {
     health: i32,
     score: i32,
+    respawns_remaining: i32,
+}
+
+#[derive(Default)]
+struct MatchObjectiveState {
+    ctf_progress_a: i32,
+    ctf_progress_b: i32,
+    ctf_captures_a: i32,
+    ctf_captures_b: i32,
+    koth_control_a: i32,
+    koth_control_b: i32,
+    tdm_elims_a: i32,
+    tdm_elims_b: i32,
 }
 
 impl BotSandbox {
@@ -111,6 +176,23 @@ impl BotSandbox {
         seed: u64,
         requested_ticks: Option<u32>,
     ) -> BotMatchOutcome {
+        self.execute_match(
+            model_a_id,
+            model_b_id,
+            ArenaMatchMode::Arena,
+            seed,
+            requested_ticks,
+        )
+    }
+
+    pub fn execute_match(
+        &self,
+        model_a_id: &str,
+        model_b_id: &str,
+        mode: ArenaMatchMode,
+        seed: u64,
+        requested_ticks: Option<u32>,
+    ) -> BotMatchOutcome {
         let started_at = Instant::now();
         let mut warnings = Vec::new();
         let max_ticks = requested_ticks
@@ -121,20 +203,31 @@ impl BotSandbox {
         let program_a = self.load_program(model_a_id);
         let program_b = self.load_program(model_b_id);
 
-        let mut runtime_a = self.build_runtime(program_a, seed ^ 0xA5A5_A5A5_A5A5_A5A5, &mut warnings);
-        let mut runtime_b = self.build_runtime(program_b, seed ^ 0x5A5A_5A5A_5A5A_5A5A, &mut warnings);
+        let mut runtime_a =
+            self.build_runtime(program_a, seed ^ 0xA5A5_A5A5_A5A5_A5A5, &mut warnings);
+        let mut runtime_b =
+            self.build_runtime(program_b, seed ^ 0x5A5A_5A5A_5A5A_5A5A, &mut warnings);
 
         let runtime_a_name = runtime_a.runtime_name().to_owned();
         let runtime_b_name = runtime_b.runtime_name().to_owned();
 
+        let default_respawns = if matches!(mode, ArenaMatchMode::Arena) {
+            0
+        } else {
+            DEFAULT_RESPAWNS_NON_ARENA
+        };
+
         let mut a = FighterState {
             health: 100,
             score: 0,
+            respawns_remaining: default_respawns,
         };
         let mut b = FighterState {
             health: 100,
             score: 0,
+            respawns_remaining: default_respawns,
         };
+        let mut objectives = MatchObjectiveState::default();
 
         let mut ticks_executed = 0u32;
         for tick in 0..max_ticks {
@@ -144,7 +237,9 @@ impl BotSandbox {
                 a.health,
                 b.health,
                 a.score,
+                a.score - b.score,
                 tick,
+                mode,
                 &mut warnings,
                 "model_a",
             );
@@ -153,51 +248,110 @@ impl BotSandbox {
                 b.health,
                 a.health,
                 b.score,
+                b.score - a.score,
                 tick,
+                mode,
                 &mut warnings,
                 "model_b",
             );
 
-            resolve_combat_tick(
+            let prev_a_health = a.health;
+            let prev_b_health = b.health;
+
+            resolve_combat_tick(&mut a, &mut b, action_a, action_b, seed, tick);
+            apply_mode_objectives(
+                mode,
                 &mut a,
                 &mut b,
                 action_a,
                 action_b,
-                seed,
+                &mut objectives,
                 tick,
             );
 
-            if a.health <= 0 || b.health <= 0 {
+            let a_eliminated = prev_a_health > 0 && a.health <= 0;
+            let b_eliminated = prev_b_health > 0 && b.health <= 0;
+
+            if matches!(mode, ArenaMatchMode::TeamDeathmatch) {
+                if a_eliminated {
+                    objectives.tdm_elims_b += 1;
+                    b.score += 40;
+                }
+                if b_eliminated {
+                    objectives.tdm_elims_a += 1;
+                    a.score += 40;
+                }
+            }
+
+            if matches!(mode, ArenaMatchMode::Arena) {
+                if a.health <= 0 || b.health <= 0 {
+                    break;
+                }
+                continue;
+            }
+
+            if a_eliminated {
+                a.score = a.score.saturating_sub(4);
+                if a.respawns_remaining > 0 {
+                    a.respawns_remaining -= 1;
+                    a.health = 100;
+                }
+            }
+            if b_eliminated {
+                b.score = b.score.saturating_sub(4);
+                if b.respawns_remaining > 0 {
+                    b.respawns_remaining -= 1;
+                    b.health = 100;
+                }
+            }
+
+            let a_permanently_out = a.health <= 0 && a.respawns_remaining <= 0;
+            let b_permanently_out = b.health <= 0 && b.respawns_remaining <= 0;
+            if a_permanently_out || b_permanently_out {
+                break;
+            }
+
+            if matches!(mode, ArenaMatchMode::Ctf)
+                && (objectives.ctf_captures_a >= 3 || objectives.ctf_captures_b >= 3)
+            {
+                break;
+            }
+            if matches!(mode, ArenaMatchMode::Koth)
+                && (objectives.koth_control_a >= 160 || objectives.koth_control_b >= 160)
+            {
                 break;
             }
         }
 
-        let (winner_model_id, draw) = if a.health <= 0 && b.health <= 0 {
-            (None, true)
-        } else if a.health <= 0 {
-            a.score -= 10;
-            b.score += 50;
-            (Some(model_b_id.to_owned()), false)
-        } else if b.health <= 0 {
-            b.score -= 10;
-            a.score += 50;
-            (Some(model_a_id.to_owned()), false)
-        } else if a.score > b.score {
-            (Some(model_a_id.to_owned()), false)
-        } else if b.score > a.score {
-            (Some(model_b_id.to_owned()), false)
-        } else if a.health > b.health {
-            (Some(model_a_id.to_owned()), false)
-        } else if b.health > a.health {
-            (Some(model_b_id.to_owned()), false)
-        } else {
-            (None, true)
-        };
+        if matches!(mode, ArenaMatchMode::Arena) {
+            if a.health <= 0 && b.health > 0 {
+                a.score -= 10;
+                b.score += 50;
+            } else if b.health <= 0 && a.health > 0 {
+                b.score -= 10;
+                a.score += 50;
+            }
+        }
+
+        let (objective_a, objective_b) = objective_values(mode, &objectives, &a, &b);
+        let (winner_model_id, draw) = determine_winner(
+            mode,
+            model_a_id,
+            model_b_id,
+            &a,
+            &b,
+            objective_a,
+            objective_b,
+        );
 
         let duration_ms = started_at.elapsed().as_millis() as u64;
         BotMatchOutcome {
             winner_model_id,
             draw,
+            mode: mode.as_str().to_owned(),
+            objective_label: mode.objective_label().to_owned(),
+            objective_a,
+            objective_b,
             model_a_score: a.score.max(0),
             model_b_score: b.score.max(0),
             model_a_runtime: runtime_a_name,
@@ -275,7 +429,10 @@ impl BotSandbox {
     fn load_program(&self, model_id: &str) -> BotProgram {
         let Some(safe_model_id) = sanitize_model_id(model_id) else {
             return BotProgram::Fallback {
-                reason: format!("model '{}' has invalid id format; fallback runtime used", model_id),
+                reason: format!(
+                    "model '{}' has invalid id format; fallback runtime used",
+                    model_id
+                ),
             };
         };
 
@@ -336,13 +493,16 @@ impl BotRuntime {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn next_action(
         &mut self,
         fuel_per_tick: u64,
         self_health: i32,
         enemy_health: i32,
         self_score: i32,
+        score_delta: i32,
         tick: u32,
+        mode: ArenaMatchMode,
         warnings: &mut Vec<String>,
         side: &str,
     ) -> BotAction {
@@ -352,10 +512,8 @@ impl BotRuntime {
                     warnings.push(format!("{}: failed to set wasm fuel: {}", side, err));
                     0
                 } else {
-                    match tick_fn.call(
-                        store,
-                        (self_health, enemy_health, self_score, tick as i32),
-                    ) {
+                    match tick_fn.call(store, (self_health, enemy_health, self_score, tick as i32))
+                    {
                         Ok(value) => value,
                         Err(err) => {
                             warnings.push(format!("{}: wasm bot_tick trapped: {}", side, err));
@@ -364,7 +522,14 @@ impl BotRuntime {
                     }
                 }
             }
-            BotRuntime::Fallback { prng_state } => fallback_action(*prng_state, tick, self_health, enemy_health),
+            BotRuntime::Fallback { prng_state } => fallback_action(
+                *prng_state,
+                tick,
+                self_health,
+                enemy_health,
+                score_delta,
+                mode,
+            ),
         };
 
         if let BotRuntime::Fallback { prng_state } = self {
@@ -411,6 +576,126 @@ fn resolve_combat_tick(
     b.health -= damage_to_b.max(0);
 }
 
+fn apply_mode_objectives(
+    mode: ArenaMatchMode,
+    a: &mut FighterState,
+    b: &mut FighterState,
+    action_a: BotAction,
+    action_b: BotAction,
+    objectives: &mut MatchObjectiveState,
+    tick: u32,
+) {
+    match mode {
+        ArenaMatchMode::Arena => {}
+        ArenaMatchMode::Ctf => {
+            let push_a = match action_a {
+                BotAction::Charge => 4,
+                BotAction::Attack => 2,
+                BotAction::Defend => 1,
+                BotAction::Idle => 0,
+            };
+            let push_b = match action_b {
+                BotAction::Charge => 4,
+                BotAction::Attack => 2,
+                BotAction::Defend => 1,
+                BotAction::Idle => 0,
+            };
+            let block_a = if action_a == BotAction::Defend { 3 } else { 0 };
+            let block_b = if action_b == BotAction::Defend { 3 } else { 0 };
+
+            objectives.ctf_progress_a = (objectives.ctf_progress_a + push_a - block_b).max(0);
+            objectives.ctf_progress_b = (objectives.ctf_progress_b + push_b - block_a).max(0);
+
+            if objectives.ctf_progress_a >= 14 {
+                objectives.ctf_captures_a += 1;
+                objectives.ctf_progress_a = 0;
+                a.score += 70;
+            }
+            if objectives.ctf_progress_b >= 14 {
+                objectives.ctf_captures_b += 1;
+                objectives.ctf_progress_b = 0;
+                b.score += 70;
+            }
+
+            if tick % 24 == 0 {
+                objectives.ctf_progress_a = objectives.ctf_progress_a.saturating_sub(1);
+                objectives.ctf_progress_b = objectives.ctf_progress_b.saturating_sub(1);
+            }
+        }
+        ArenaMatchMode::Koth => {
+            let presence_a = action_zone_presence(action_a);
+            let presence_b = action_zone_presence(action_b);
+            if presence_a > presence_b {
+                let gain = presence_a - presence_b;
+                objectives.koth_control_a += gain;
+                a.score += 1 + gain / 2;
+            } else if presence_b > presence_a {
+                let gain = presence_b - presence_a;
+                objectives.koth_control_b += gain;
+                b.score += 1 + gain / 2;
+            }
+            if tick % 10 == 0 {
+                if objectives.koth_control_a > objectives.koth_control_b {
+                    a.score += 2;
+                } else if objectives.koth_control_b > objectives.koth_control_a {
+                    b.score += 2;
+                }
+            }
+        }
+        ArenaMatchMode::TeamDeathmatch => {}
+    }
+}
+
+fn action_zone_presence(action: BotAction) -> i32 {
+    match action {
+        BotAction::Idle => 0,
+        BotAction::Attack => 2,
+        BotAction::Defend => 3,
+        BotAction::Charge => 2,
+    }
+}
+
+fn objective_values(
+    mode: ArenaMatchMode,
+    objectives: &MatchObjectiveState,
+    a: &FighterState,
+    b: &FighterState,
+) -> (i32, i32) {
+    match mode {
+        ArenaMatchMode::Arena => (a.score.max(0), b.score.max(0)),
+        ArenaMatchMode::Ctf => (objectives.ctf_captures_a, objectives.ctf_captures_b),
+        ArenaMatchMode::Koth => (objectives.koth_control_a, objectives.koth_control_b),
+        ArenaMatchMode::TeamDeathmatch => (objectives.tdm_elims_a, objectives.tdm_elims_b),
+    }
+}
+
+fn determine_winner(
+    mode: ArenaMatchMode,
+    model_a_id: &str,
+    model_b_id: &str,
+    a: &FighterState,
+    b: &FighterState,
+    objective_a: i32,
+    objective_b: i32,
+) -> (Option<String>, bool) {
+    let mut ordering = objective_a.cmp(&objective_b);
+    if ordering == std::cmp::Ordering::Equal {
+        ordering = a.score.cmp(&b.score);
+    }
+    if ordering == std::cmp::Ordering::Equal {
+        ordering = a.health.cmp(&b.health);
+    }
+    if ordering == std::cmp::Ordering::Equal && !matches!(mode, ArenaMatchMode::Arena) {
+        ordering = a.respawns_remaining.cmp(&b.respawns_remaining);
+    }
+
+    match ordering {
+        std::cmp::Ordering::Greater => (Some(model_a_id.to_owned()), false),
+        std::cmp::Ordering::Less => (Some(model_b_id.to_owned()), false),
+        std::cmp::Ordering::Equal => (None, true),
+    }
+}
+
 fn outgoing_damage(action: BotAction, seed: u64, tick: u32) -> i32 {
     let base = match action {
         BotAction::Idle => 0,
@@ -425,13 +710,54 @@ fn outgoing_damage(action: BotAction, seed: u64, tick: u32) -> i32 {
     (base + jitter).max(1)
 }
 
-fn fallback_action(prng_state: u64, tick: u32, self_health: i32, enemy_health: i32) -> i32 {
-    if self_health < 25 {
+fn fallback_action(
+    prng_state: u64,
+    tick: u32,
+    self_health: i32,
+    enemy_health: i32,
+    score_delta: i32,
+    mode: ArenaMatchMode,
+) -> i32 {
+    if self_health < 20 {
         return BotAction::Defend as i32;
     }
-    if enemy_health < 18 {
-        return BotAction::Attack as i32;
+
+    match mode {
+        ArenaMatchMode::Arena | ArenaMatchMode::TeamDeathmatch => {
+            if enemy_health < 16 {
+                return BotAction::Attack as i32;
+            }
+            if score_delta <= -28 && self_health > 48 {
+                return BotAction::Charge as i32;
+            }
+            if score_delta >= 24 && self_health < 56 {
+                return BotAction::Defend as i32;
+            }
+        }
+        ArenaMatchMode::Ctf => {
+            if score_delta < 0 && self_health > 40 {
+                return BotAction::Charge as i32;
+            }
+            if tick % 4 == 0 {
+                return BotAction::Defend as i32;
+            }
+            if enemy_health < 30 {
+                return BotAction::Attack as i32;
+            }
+        }
+        ArenaMatchMode::Koth => {
+            if score_delta > 12 {
+                return BotAction::Defend as i32;
+            }
+            if tick % 3 == 0 {
+                return BotAction::Defend as i32;
+            }
+            if score_delta < -8 {
+                return BotAction::Charge as i32;
+            }
+        }
     }
+
     (next_prng(prng_state ^ tick as u64) & 0b11) as i32
 }
 
@@ -456,10 +782,7 @@ fn validate_bot_tick_export(module: &Module) -> Result<(), String> {
             BOT_TICK_EXPORT
         ));
     }
-    if !func
-        .params()
-        .all(|param| matches!(param, ValType::I32))
-    {
+    if !func.params().all(|param| matches!(param, ValType::I32)) {
         return Err(format!("'{}' params must be i32", BOT_TICK_EXPORT));
     }
     if !matches!(func.results().next(), Some(ValType::I32)) {
@@ -495,9 +818,38 @@ mod tests {
         assert!(outcome.model_a_score >= 0);
         assert!(outcome.model_b_score >= 0);
         assert!(outcome.duration_ms <= 5_000);
-        assert!(
-            outcome.model_a_runtime == "fallback" || outcome.model_b_runtime == "fallback"
+        assert!(outcome.model_a_runtime == "fallback" || outcome.model_b_runtime == "fallback");
+    }
+
+    #[test]
+    fn fallback_modes_execute_and_report_objective() {
+        let sandbox = BotSandbox::new_from_env();
+        for mode in [
+            ArenaMatchMode::Arena,
+            ArenaMatchMode::Ctf,
+            ArenaMatchMode::Koth,
+            ArenaMatchMode::TeamDeathmatch,
+        ] {
+            let outcome = sandbox.execute_match("model_a", "model_b", mode, 7, Some(160));
+            assert_eq!(outcome.mode, mode.as_str());
+            assert_eq!(outcome.objective_label, mode.objective_label());
+            assert!(outcome.ticks_executed > 0);
+        }
+    }
+
+    #[test]
+    fn parse_mode_accepts_aliases() {
+        assert_eq!(ArenaMatchMode::parse("arena"), Some(ArenaMatchMode::Arena));
+        assert_eq!(ArenaMatchMode::parse("ctf"), Some(ArenaMatchMode::Ctf));
+        assert_eq!(
+            ArenaMatchMode::parse("king-of-the-hill"),
+            Some(ArenaMatchMode::Koth)
         );
+        assert_eq!(
+            ArenaMatchMode::parse("team_deathmatch"),
+            Some(ArenaMatchMode::TeamDeathmatch)
+        );
+        assert_eq!(ArenaMatchMode::parse("unknown"), None);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::operational::bot_sandbox::{BotMatchOutcome, BotSandbox};
+use crate::operational::bot_sandbox::{ArenaMatchMode, BotMatchOutcome, BotSandbox};
 use base64::Engine as _;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
@@ -577,13 +577,7 @@ impl ArenaService {
         }
         drop(store);
 
-        let mode = body
-            .mode
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("arena")
-            .to_owned();
+        let mode = normalize_match_mode(body.mode.as_deref())?;
         let metadata = body.metadata.unwrap_or_default();
         let queued = QueuedMatch {
             match_id: format!("match_{}", Uuid::new_v4().simple()),
@@ -611,13 +605,7 @@ impl ArenaService {
         body: QueueRoundRobinBody,
     ) -> Result<QueueMatchResponse, ArenaError> {
         let include_inactive = body.include_inactive.unwrap_or(false);
-        let mode = body
-            .mode
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("arena")
-            .to_owned();
+        let mode = normalize_match_mode(body.mode.as_deref())?;
         let max_pairs = body.max_pairs.unwrap_or(512).max(1);
 
         let mut model_ids: Vec<String> = {
@@ -922,9 +910,16 @@ impl ArenaService {
         };
 
         let seed = body.seed.unwrap_or_else(unix_now);
-        let sandbox_outcome = self.inner.bot_sandbox.execute_duel(
+        let mode = ArenaMatchMode::parse(&claimed_match.mode).ok_or_else(|| {
+            ArenaError::InvalidInput(
+                "invalid_mode",
+                format!("unsupported match mode '{}'", claimed_match.mode),
+            )
+        })?;
+        let sandbox_outcome = self.inner.bot_sandbox.execute_match(
             &claimed_match.model_a_id,
             &claimed_match.model_b_id,
+            mode,
             seed,
             body.max_ticks,
         );
@@ -1101,6 +1096,23 @@ fn to_queued_match_view(entry: &QueuedMatch) -> QueuedMatchView {
         mode: entry.mode.clone(),
         queued_at: entry.queued_at,
     }
+}
+
+fn normalize_match_mode(raw_mode: Option<&str>) -> Result<String, ArenaError> {
+    let value = raw_mode
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("arena");
+    let Some(mode) = ArenaMatchMode::parse(value) else {
+        return Err(ArenaError::InvalidInput(
+            "invalid_mode",
+            format!(
+                "unsupported mode '{}'; expected one of: arena, ctf, koth, tdm",
+                value
+            ),
+        ));
+    };
+    Ok(mode.as_str().to_owned())
 }
 
 fn sanitize_model_id(model_id: &str) -> Option<String> {
@@ -1436,12 +1448,16 @@ mod tests {
 
         let result = service
             .queue_round_robin(QueueRoundRobinBody {
-                mode: Some("arena".to_owned()),
+                mode: Some("TEAM_DEATHMATCH".to_owned()),
                 include_inactive: Some(false),
                 max_pairs: Some(2),
             })
             .expect("round robin should queue");
         assert_eq!(result.queued_count, 2);
+        assert!(result
+            .queued_matches
+            .iter()
+            .all(|entry| entry.mode == "tdm"));
     }
 
     #[test]
@@ -1512,7 +1528,7 @@ mod tests {
             .queue_match(QueueMatchBody {
                 model_a_id: "a".to_owned(),
                 model_b_id: "b".to_owned(),
-                mode: Some("arena".to_owned()),
+                mode: Some("ctf".to_owned()),
                 metadata: None,
             })
             .expect("queue should succeed");
@@ -1529,6 +1545,8 @@ mod tests {
         assert_eq!(executed.report.model_b.matches_played, 1);
         assert!(executed.sandbox.ticks_executed > 0);
         assert!(executed.sandbox.ticks_executed <= 120);
+        assert_eq!(executed.sandbox.mode, "ctf");
+        assert_eq!(executed.sandbox.objective_label, "captures");
     }
 
     #[test]

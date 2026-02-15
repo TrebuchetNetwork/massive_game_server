@@ -2400,6 +2400,9 @@ impl MassiveGameServer {
             .map(|(chunk_idx, chunk)| {
                 let mut local_results = ProjectileChunkResults::default();
                 let chunk_start_idx = chunk_idx * chunk_size;
+                let mut target_ids: Vec<PlayerID> = Vec::with_capacity(32);
+                let mut target_xs: Vec<f32> = Vec::with_capacity(32);
+                let mut target_ys: Vec<f32> = Vec::with_capacity(32);
 
                 for (local_idx, proj) in chunk.iter_mut().enumerate() {
                     let global_idx = chunk_start_idx + local_idx;
@@ -2441,18 +2444,12 @@ impl MassiveGameServer {
                         let ray_length =
                             ((proj.x - old_x).powi(2) + (proj.y - old_y).powi(2)).sqrt();
                         let ray_steps = (ray_length / 5.0).ceil() as usize; // Check every 5 units
-                        let ray_sample_count = ray_steps.saturating_add(1);
-                        let mut ray_sample_xs = Vec::with_capacity(ray_sample_count);
-                        let mut ray_sample_ys = Vec::with_capacity(ray_sample_count);
-                        for step in 0..=ray_steps {
-                            let t = step as f32 / ray_steps.max(1) as f32;
-                            ray_sample_xs.push(old_x + (proj.x - old_x) * t);
-                            ray_sample_ys.push(old_y + (proj.y - old_y) * t);
-                        }
+                        let ray_den = ray_steps.max(1) as f32;
 
-                        'wall_check: for sample_idx in 0..ray_sample_xs.len() {
-                            let check_x = ray_sample_xs[sample_idx];
-                            let check_y = ray_sample_ys[sample_idx];
+                        'wall_check: for step in 0..=ray_steps {
+                            let t = step as f32 / ray_den;
+                            let check_x = old_x + (proj.x - old_x) * t;
+                            let check_y = old_y + (proj.y - old_y) * t;
 
                             if let Some(wall_idx) = simd::first_index_aabb_containing_point(
                                 &wall_cache.min_xs,
@@ -2489,9 +2486,9 @@ impl MassiveGameServer {
                                 proj.y,
                                 PLAYER_RADIUS + 20.0, // Small buffer for fast projectiles
                             );
-                            let mut target_ids = Vec::new();
-                            let mut target_xs = Vec::new();
-                            let mut target_ys = Vec::new();
+                            target_ids.clear();
+                            target_xs.clear();
+                            target_ys.clear();
 
                             for target_id in nearby_players {
                                 if target_id == proj.owner_id {
@@ -2510,26 +2507,27 @@ impl MassiveGameServer {
                             if !target_ids.is_empty() {
                                 let radius_sq = PLAYER_RADIUS * PLAYER_RADIUS;
                                 let mut hit_target_idx = None;
-                                let mut hit_sample_idx = 0usize;
+                                let mut hit_x = proj.x;
+                                let mut hit_y = proj.y;
 
-                                for sample_idx in 0..ray_sample_xs.len() {
+                                for step in 0..=ray_steps {
+                                    let t = step as f32 / ray_den;
+                                    let sample_x = old_x + (proj.x - old_x) * t;
+                                    let sample_y = old_y + (proj.y - old_y) * t;
                                     if let Some(target_idx) = simd::first_index_within_radius(
-                                        &target_xs,
-                                        &target_ys,
-                                        ray_sample_xs[sample_idx],
-                                        ray_sample_ys[sample_idx],
-                                        radius_sq,
+                                        &target_xs, &target_ys, sample_x, sample_y, radius_sq,
                                     ) {
                                         hit_target_idx = Some(target_idx);
-                                        hit_sample_idx = sample_idx;
+                                        hit_x = sample_x;
+                                        hit_y = sample_y;
                                         break;
                                     }
                                 }
 
                                 if let Some(target_idx) = hit_target_idx {
                                     if let Some(target_id) = target_ids.get(target_idx) {
-                                        proj.x = ray_sample_xs[hit_sample_idx];
-                                        proj.y = ray_sample_ys[hit_sample_idx];
+                                        proj.x = hit_x;
+                                        proj.y = hit_y;
                                         local_results.hits.push((
                                             proj.owner_id.clone(),
                                             target_id.clone(),
@@ -2571,12 +2569,18 @@ impl MassiveGameServer {
             .batch_update_projectiles(&merged_results.spatial_updates);
 
         // Remove dead projectiles
-        let to_remove_set: HashSet<_> = merged_results.to_remove.into_iter().collect();
+        merged_results.to_remove.sort_unstable();
+        merged_results.to_remove.dedup();
+        let mut remove_iter = merged_results.to_remove.into_iter().peekable();
         let mut kept_projectiles = Vec::with_capacity(all_projectiles.len());
         let mut removed_ids = Vec::new();
 
         for (idx, proj) in all_projectiles.into_iter().enumerate() {
-            if to_remove_set.contains(&idx) {
+            if remove_iter
+                .peek()
+                .is_some_and(|remove_idx| *remove_idx == idx)
+            {
+                let _ = remove_iter.next();
                 removed_ids.push(proj.id);
             } else {
                 kept_projectiles.push(proj);
