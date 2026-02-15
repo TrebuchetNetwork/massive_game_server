@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  rust-check-and-web-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install FlatBuffers compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatbuffers-compiler
+
+      - name: Cargo check
+        run: cargo check -p massive_game_server_core
+
+      - name: Build debug binary
+        run: cargo build -p massive_game_server_core --bin massive_game_server_core
+
+      - name: Website route smoke test
+        run: |
+          set -euo pipefail
+          MGS_HOST=0.0.0.0 \
+          MGS_PORT=18080 \
+          MGS_DISABLE_STUN=1 \
+          MGS_TARGET_BOT_COUNT=0 \
+          RUST_LOG=massive_game_server_core=warn,warp=warn,webrtc=warn \
+            ./target/debug/massive_game_server_core > /tmp/mgs_ci_server.log 2>&1 &
+          pid=$!
+          trap 'kill $pid >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS -D /tmp/root_headers -o /tmp/root_body http://127.0.0.1:18080/ >/dev/null
+          grep -qi '^location: /index.html' /tmp/root_headers
+          curl -fsS http://127.0.0.1:18080/healthz | grep -q '"ok":true'
+          curl -fsS http://127.0.0.1:18080/index.html >/dev/null
+          curl -fsS http://127.0.0.1:18080/client.html >/dev/null
