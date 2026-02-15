@@ -30,7 +30,6 @@ use flatbuffers::FlatBufferBuilder;
 use futures::executor;
 use parking_lot::RwLockReadGuard;
 use std::borrow::Cow;
-use std::cell::RefCell;
 use tokio::task::JoinError;
 use webrtc::data_channel::data_channel_state::RTCDataChannelState;
 
@@ -275,11 +274,6 @@ fn join_entity_soa_snapshot_enabled() -> bool {
     *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_ENTITY_SOA_SNAPSHOT"))
 }
 
-fn join_zero_copy_serialization_enabled() -> bool {
-    static ENABLED: OnceCell<bool> = OnceCell::new();
-    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_ZERO_COPY_SERIALIZATION"))
-}
-
 fn join_authoritative_aoi_snapshot_enabled() -> bool {
     static ENABLED: OnceCell<bool> = OnceCell::new();
     *ENABLED.get_or_init(|| {
@@ -502,12 +496,8 @@ fn build_chat_game_message_bytes(chat_entry: &ChatMessage) -> Bytes {
     );
 
     chat_builder.finish(game_message_offset, None);
-    if join_zero_copy_serialization_enabled() {
-        let (buffer, root_index) = chat_builder.collapse();
-        Bytes::from(buffer).slice(root_index..)
-    } else {
-        Bytes::copy_from_slice(chat_builder.finished_data())
-    }
+    let (buffer, root_index) = chat_builder.collapse();
+    Bytes::from(buffer).slice(root_index..)
 }
 
 fn build_coalesced_packet_batch(packets: &[Bytes]) -> Option<Bytes> {
@@ -2354,18 +2344,6 @@ impl MassiveGameServer {
             };
         }
 
-        // Snapshot alive player positions once for this tick to avoid repeated per-hit lock lookups.
-        let player_collision_snapshot: Arc<HashMap<PlayerID, (f32, f32)>> = {
-            let mut by_id = HashMap::with_capacity(self.player_manager.player_count());
-            self.player_manager
-                .for_each_player(|player_id, player_state| {
-                    if player_state.alive {
-                        by_id.insert(player_id.clone(), (player_state.x, player_state.y));
-                    }
-                });
-            Arc::new(by_id)
-        };
-
         // Build per-partition wall AABB caches once per tick and share across rayon workers.
         let partition_wall_caches: Arc<Vec<PartitionWallAabbCache>> = {
             let partitions = self.world_partition_manager.get_partitions_for_processing();
@@ -2392,7 +2370,6 @@ impl MassiveGameServer {
         // Process projectiles in parallel chunks
         let chunk_size = 50.max(total_projectiles / rayon::current_num_threads());
 
-        let player_collision_snapshot_ref = Arc::clone(&player_collision_snapshot);
         let partition_wall_caches_ref = Arc::clone(&partition_wall_caches);
         let chunk_results: Vec<ProjectileChunkResults> = all_projectiles
             .par_chunks_mut(chunk_size)
@@ -2481,7 +2458,7 @@ impl MassiveGameServer {
 
                         if !hit_wall {
                             // Check player collisions using spatial index
-                            let nearby_players = self.spatial_index.query_nearby_players(
+                            let nearby_players = self.spatial_index.query_nearby_players_with_positions(
                                 proj.x,
                                 proj.y,
                                 PLAYER_RADIUS + 20.0, // Small buffer for fast projectiles
@@ -2490,18 +2467,13 @@ impl MassiveGameServer {
                             target_xs.clear();
                             target_ys.clear();
 
-                            for target_id in nearby_players {
+                            for (target_id, target_x, target_y) in nearby_players {
                                 if target_id == proj.owner_id {
                                     continue;
                                 }
-
-                                if let Some((target_x, target_y)) =
-                                    player_collision_snapshot_ref.get(&target_id)
-                                {
-                                    target_ids.push(target_id);
-                                    target_xs.push(*target_x);
-                                    target_ys.push(*target_y);
-                                }
+                                target_ids.push(target_id);
+                                target_xs.push(target_x);
+                                target_ys.push(target_y);
                             }
 
                             if !target_ids.is_empty() {
@@ -3292,6 +3264,37 @@ impl MassiveGameServer {
         self.publish_player_soa_snapshot_if_enabled();
         self.publish_entity_soa_snapshots_if_enabled();
         self.publish_player_aoi_snapshot_if_enabled();
+    }
+
+    fn rebuild_player_soa_snapshot_from_authoritative_state(&self) -> Arc<PlayerSoASnapshot> {
+        let mut owned_states = Vec::with_capacity(self.player_manager.player_count());
+        self.player_manager
+            .for_each_player(|player_id, player_state| {
+                owned_states.push((player_id.clone(), player_state.clone()));
+            });
+        let snapshot = Arc::new(PlayerSoASnapshot::from_owned_player_states(owned_states));
+        self.player_soa_snapshot.publish_arc(snapshot.clone());
+        snapshot
+    }
+
+    fn rebuild_projectile_soa_snapshot_from_authoritative_state(
+        &self,
+    ) -> Arc<ProjectileSoASnapshot> {
+        let projectiles_guard = self.projectiles.read();
+        let snapshot = Arc::new(ProjectileSoASnapshot::from_projectiles_slice(
+            &projectiles_guard,
+        ));
+        drop(projectiles_guard);
+        self.projectile_soa_snapshot.publish_arc(snapshot.clone());
+        snapshot
+    }
+
+    fn rebuild_pickup_soa_snapshot_from_authoritative_state(&self) -> Arc<PickupSoASnapshot> {
+        let pickups_guard = self.pickups.read();
+        let snapshot = Arc::new(PickupSoASnapshot::from_pickups_slice(&pickups_guard));
+        drop(pickups_guard);
+        self.pickup_soa_snapshot.publish_arc(snapshot.clone());
+        snapshot
     }
 
     async fn process_client_broadcast(
@@ -4195,7 +4198,7 @@ impl MassiveGameServer {
         initial_snapshot_caps: InitialSnapshotCaps,
         tail_join_mode: bool,
         aggressive_tail_join_mode: bool,
-        disable_soa_snapshot_for_backlog: bool,
+        _disable_soa_snapshot_for_backlog: bool,
         max_delta_events_per_client: usize,
         scheduled_peer_ids: &[String],
     ) -> SharedBroadcastData {
@@ -4263,16 +4266,18 @@ impl MassiveGameServer {
         };
 
         let configured_soa_snapshot = join_soa_snapshot_enabled();
-        let use_soa_snapshot = configured_soa_snapshot && !disable_soa_snapshot_for_backlog;
-        let soa_fallback_active = configured_soa_snapshot && !use_soa_snapshot;
+        let use_soa_snapshot = configured_soa_snapshot;
+        let mut soa_fallback_active = false;
         let (player_soa_snapshot, player_states_snapshot) = if use_soa_snapshot {
-            let snapshot = self.player_soa_snapshot.load();
+            let mut snapshot = self.player_soa_snapshot.load();
             if snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
                 debug!(
                     "[Frame {}] Player SoA snapshot is empty while {} peers are scheduled.",
                     frame,
                     scheduled_peer_ids.len()
                 );
+                snapshot = self.rebuild_player_soa_snapshot_from_authoritative_state();
+                soa_fallback_active = true;
             }
             (snapshot, HashMap::new())
         } else {
@@ -4286,18 +4291,19 @@ impl MassiveGameServer {
 
         // Snapshot projectiles/pickups once per tick (reused for all client delta builds).
         let configured_entity_soa_snapshot = join_entity_soa_snapshot_enabled();
-        let use_entity_soa_snapshot =
-            configured_entity_soa_snapshot && !disable_soa_snapshot_for_backlog;
+        let use_entity_soa_snapshot = configured_entity_soa_snapshot;
 
         let (projectiles_soa_snapshot, projectiles_snapshot) = {
             if use_entity_soa_snapshot {
-                let snapshot = self.projectile_soa_snapshot.load();
+                let mut snapshot = self.projectile_soa_snapshot.load();
                 if snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
                     debug!(
                         "[Frame {}] Projectile SoA snapshot is empty while {} peers are scheduled.",
                         frame,
                         scheduled_peer_ids.len()
                     );
+                    snapshot = self.rebuild_projectile_soa_snapshot_from_authoritative_state();
+                    soa_fallback_active = true;
                 }
                 (snapshot, Arc::new(HashMap::new()))
             } else {
@@ -4312,13 +4318,15 @@ impl MassiveGameServer {
 
         let (pickups_soa_snapshot, pickups_snapshot) = {
             if use_entity_soa_snapshot {
-                let snapshot = self.pickup_soa_snapshot.load();
+                let mut snapshot = self.pickup_soa_snapshot.load();
                 if snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
                     debug!(
                         "[Frame {}] Pickup SoA snapshot is empty while {} peers are scheduled.",
                         frame,
                         scheduled_peer_ids.len()
                     );
+                    snapshot = self.rebuild_pickup_soa_snapshot_from_authoritative_state();
+                    soa_fallback_active = true;
                 }
                 (snapshot, Arc::new(HashMap::new()))
             } else {
@@ -5281,12 +5289,8 @@ impl MassiveGameServer {
         );
 
         builder.finish(game_msg, None);
-        let bytes = if join_zero_copy_serialization_enabled() {
-            let (buffer, root_index) = builder.collapse();
-            Bytes::from(buffer).slice(root_index..)
-        } else {
-            Bytes::copy_from_slice(builder.finished_data())
-        };
+        let (buffer, root_index) = builder.collapse();
+        let bytes = Bytes::from(buffer).slice(root_index..);
 
         trace!(
             "[{}] DeltaBuilder: Completed in {:?}",
@@ -5406,159 +5410,150 @@ impl MassiveGameServer {
         _projectiles: &Arc<ParkingLotRwLock<Vec<Projectile>>>,
         _kill_feed: &Arc<ParkingLotRwLock<VecDeque<ServerKillFeedEntry>>>,
     ) -> Result<Bytes, ()> {
-        thread_local! {
-            static BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
-                RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(16384));
+        let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(16384);
+
+        let self_player_id = player_manager.id_pool.get_or_create(peer_id_str);
+        let mut last_processed_input_for_client = 0;
+
+        // Build player deltas
+        let mut players_delta_fb_vec = Vec::new();
+        let mut player_fields_mask_fb_vec = Vec::new();
+
+        // Process self player
+        if let Some(self_player_state_guard) = player_manager.get_player_state(&self_player_id) {
+            let self_player_state = &*self_player_state_guard;
+            last_processed_input_for_client = self_player_state.last_processed_input_sequence;
+            if self_player_state.changed_fields > 0 {
+                players_delta_fb_vec.push(create_fb_player_state_for_delta(
+                    &mut builder,
+                    self_player_state,
+                    self_player_state.changed_fields,
+                ));
+                player_fields_mask_fb_vec.push(self_player_state.changed_fields as u8);
+            }
         }
 
-        BUILDER.with(|builder_cell| {
-            let mut builder = builder_cell.borrow_mut();
-            builder.reset();
-
-            let self_player_id = player_manager.id_pool.get_or_create(peer_id_str);
-            let mut last_processed_input_for_client = 0;
-
-            // Build player deltas
-            let mut players_delta_fb_vec = Vec::new();
-            let mut player_fields_mask_fb_vec = Vec::new();
-
-            // Process self player
-            if let Some(self_player_state_guard) = player_manager.get_player_state(&self_player_id)
-            {
-                let self_player_state = &*self_player_state_guard;
-                last_processed_input_for_client = self_player_state.last_processed_input_sequence;
-                if self_player_state.changed_fields > 0 {
-                    players_delta_fb_vec.push(create_fb_player_state_for_delta(
-                        &mut builder,
-                        self_player_state,
-                        self_player_state.changed_fields,
-                    ));
-                    player_fields_mask_fb_vec.push(self_player_state.changed_fields as u8);
+        // Process visible players from AoI
+        if let Some(aoi_entry) = player_aois.get(peer_id_str) {
+            let p_aoi = aoi_entry.value();
+            for visible_player_id in p_aoi.visible_players.iter() {
+                if visible_player_id == &self_player_id {
+                    continue;
                 }
-            }
 
-            // Process visible players from AoI
-            if let Some(aoi_entry) = player_aois.get(peer_id_str) {
-                let p_aoi = aoi_entry.value();
-                for visible_player_id in p_aoi.visible_players.iter() {
-                    if visible_player_id == &self_player_id {
-                        continue;
-                    }
-
-                    if let Some(other_pstate_guard) =
-                        player_manager.get_player_state(visible_player_id)
+                if let Some(other_pstate_guard) = player_manager.get_player_state(visible_player_id)
+                {
+                    let other_pstate = &*other_pstate_guard;
+                    if other_pstate.changed_fields > 0
+                        || client_state
+                            .last_known_player_states
+                            .get(visible_player_id)
+                            .map_or(true, |old_ps| *old_ps != *other_pstate)
                     {
-                        let other_pstate = &*other_pstate_guard;
-                        if other_pstate.changed_fields > 0
-                            || client_state
-                                .last_known_player_states
-                                .get(visible_player_id)
-                                .map_or(true, |old_ps| *old_ps != *other_pstate)
-                        {
-                            players_delta_fb_vec.push(create_fb_player_state_for_delta(
-                                &mut builder,
-                                other_pstate,
-                                other_pstate.changed_fields,
-                            ));
-                            player_fields_mask_fb_vec.push(other_pstate.changed_fields as u8);
-                        }
+                        players_delta_fb_vec.push(create_fb_player_state_for_delta(
+                            &mut builder,
+                            other_pstate,
+                            other_pstate.changed_fields,
+                        ));
+                        player_fields_mask_fb_vec.push(other_pstate.changed_fields as u8);
                     }
                 }
             }
+        }
 
-            let players_fb = builder.create_vector(&players_delta_fb_vec);
-            let player_fields_mask_fb = builder.create_vector(&player_fields_mask_fb_vec);
+        let players_fb = builder.create_vector(&players_delta_fb_vec);
+        let player_fields_mask_fb = builder.create_vector(&player_fields_mask_fb_vec);
 
-            // Build empty vectors for simplified example
-            let empty_projectiles: Vec<flatbuffers::WIPOffset<fb::ProjectileState>> = Vec::new();
-            let projectiles_fb = builder.create_vector(&empty_projectiles);
+        // Build empty vectors for simplified example
+        let empty_projectiles: Vec<flatbuffers::WIPOffset<fb::ProjectileState>> = Vec::new();
+        let projectiles_fb = builder.create_vector(&empty_projectiles);
 
-            let empty_strings: Vec<flatbuffers::WIPOffset<&str>> = Vec::new();
-            let removed_projectiles_fb = builder.create_vector(&empty_strings);
+        let empty_strings: Vec<flatbuffers::WIPOffset<&str>> = Vec::new();
+        let removed_projectiles_fb = builder.create_vector(&empty_strings);
 
-            let empty_pickups: Vec<flatbuffers::WIPOffset<fb::Pickup>> = Vec::new();
-            let pickups_delta_fb = builder.create_vector(&empty_pickups);
-            let deactivated_pickups_fb = builder.create_vector(&empty_strings);
+        let empty_pickups: Vec<flatbuffers::WIPOffset<fb::Pickup>> = Vec::new();
+        let pickups_delta_fb = builder.create_vector(&empty_pickups);
+        let deactivated_pickups_fb = builder.create_vector(&empty_strings);
 
-            // Build events
-            let game_events_fb_vec: Vec<_> = shared_data
-                .events
-                .iter()
-                .take(50)
-                .map(|event| {
-                    let event_pos = event_position(event);
-                    let pos_fb_offset = fb::Vec2::create(
-                        &mut builder,
-                        &fb::Vec2Args {
-                            x: event_pos.x,
-                            y: event_pos.y,
-                        },
-                    );
-                    let instigator_id_fb =
-                        event_instigator_id(event).map(|id| builder.create_string(id.as_str()));
-                    let target_id_fb =
-                        event_target_id(event).map(|id_str| builder.create_string(&id_str));
-                    let weapon_type_fb = event_weapon_type(event)
-                        .map_or(fb::WeaponType::Pistol, map_server_weapon_to_fb);
-                    fb::GameEvent::create(
-                        &mut builder,
-                        &fb::GameEventArgs {
-                            event_type: map_game_event_type_to_fb(event),
-                            position: Some(pos_fb_offset),
-                            instigator_id: instigator_id_fb,
-                            target_id: target_id_fb,
-                            weapon_type: weapon_type_fb,
-                            value: event_value(event).unwrap_or(0.0),
-                        },
-                    )
-                })
-                .collect();
-            let game_events_fb = builder.create_vector(&game_events_fb_vec);
+        // Build events
+        let game_events_fb_vec: Vec<_> = shared_data
+            .events
+            .iter()
+            .take(50)
+            .map(|event| {
+                let event_pos = event_position(event);
+                let pos_fb_offset = fb::Vec2::create(
+                    &mut builder,
+                    &fb::Vec2Args {
+                        x: event_pos.x,
+                        y: event_pos.y,
+                    },
+                );
+                let instigator_id_fb =
+                    event_instigator_id(event).map(|id| builder.create_string(id.as_str()));
+                let target_id_fb =
+                    event_target_id(event).map(|id_str| builder.create_string(&id_str));
+                let weapon_type_fb =
+                    event_weapon_type(event).map_or(fb::WeaponType::Pistol, map_server_weapon_to_fb);
+                fb::GameEvent::create(
+                    &mut builder,
+                    &fb::GameEventArgs {
+                        event_type: map_game_event_type_to_fb(event),
+                        position: Some(pos_fb_offset),
+                        instigator_id: instigator_id_fb,
+                        target_id: target_id_fb,
+                        weapon_type: weapon_type_fb,
+                        value: event_value(event).unwrap_or(0.0),
+                    },
+                )
+            })
+            .collect();
+        let game_events_fb = builder.create_vector(&game_events_fb_vec);
 
-            // Build destroyed wall IDs
-            let destroyed_walls_fb_vec: Vec<_> = shared_data
-                .destroyed_wall_ids
-                .iter()
-                .take(20)
-                .map(|wall_id| builder.create_string(&wall_id.to_string()))
-                .collect();
-            let destroyed_walls_fb = if !destroyed_walls_fb_vec.is_empty() {
-                Some(builder.create_vector(&destroyed_walls_fb_vec))
-            } else {
-                None
-            };
+        // Build destroyed wall IDs
+        let destroyed_walls_fb_vec: Vec<_> = shared_data
+            .destroyed_wall_ids
+            .iter()
+            .take(20)
+            .map(|wall_id| builder.create_string(&wall_id.to_string()))
+            .collect();
+        let destroyed_walls_fb = if !destroyed_walls_fb_vec.is_empty() {
+            Some(builder.create_vector(&destroyed_walls_fb_vec))
+        } else {
+            None
+        };
 
-            let delta_state_args = fb::DeltaStateMessageArgs {
-                players: Some(players_fb),
-                projectiles: Some(projectiles_fb),
-                removed_projectiles: Some(removed_projectiles_fb),
-                pickups: Some(pickups_delta_fb),
-                deactivated_pickup_ids: Some(deactivated_pickups_fb),
-                game_events: Some(game_events_fb),
-                timestamp: shared_data.timestamp_ms,
-                last_processed_input_sequence: last_processed_input_for_client,
-                changed_player_fields: Some(player_fields_mask_fb),
-                kill_feed: None,
-                match_info: None,
-                destroyed_wall_ids: destroyed_walls_fb,
-                flag_states: None,
-                removed_player_ids: None,
-                updated_walls: None,
-            };
+        let delta_state_args = fb::DeltaStateMessageArgs {
+            players: Some(players_fb),
+            projectiles: Some(projectiles_fb),
+            removed_projectiles: Some(removed_projectiles_fb),
+            pickups: Some(pickups_delta_fb),
+            deactivated_pickup_ids: Some(deactivated_pickups_fb),
+            game_events: Some(game_events_fb),
+            timestamp: shared_data.timestamp_ms,
+            last_processed_input_sequence: last_processed_input_for_client,
+            changed_player_fields: Some(player_fields_mask_fb),
+            kill_feed: None,
+            match_info: None,
+            destroyed_wall_ids: destroyed_walls_fb,
+            flag_states: None,
+            removed_player_ids: None,
+            updated_walls: None,
+        };
 
-            let delta_state_msg = fb::DeltaStateMessage::create(&mut builder, &delta_state_args);
-            let game_msg = fb::GameMessage::create(
-                &mut builder,
-                &fb::GameMessageArgs {
-                    msg_type: fb::MessageType::DeltaState,
-                    actual_message_type: fb::MessagePayload::DeltaStateMessage,
-                    actual_message: Some(delta_state_msg.as_union_value()),
-                },
-            );
+        let delta_state_msg = fb::DeltaStateMessage::create(&mut builder, &delta_state_args);
+        let game_msg = fb::GameMessage::create(
+            &mut builder,
+            &fb::GameMessageArgs {
+                msg_type: fb::MessageType::DeltaState,
+                actual_message_type: fb::MessagePayload::DeltaStateMessage,
+                actual_message: Some(delta_state_msg.as_union_value()),
+            },
+        );
 
-            builder.finish(game_msg, None);
-            Ok(Bytes::copy_from_slice(builder.finished_data()))
-        })
+        builder.finish(game_msg, None);
+        let (buffer, root_index) = builder.collapse();
+        Ok(Bytes::from(buffer).slice(root_index..))
     }
 
     /*fn build_projectile_deltas_optimized(
@@ -5787,6 +5782,13 @@ impl MassiveGameServer {
         const TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME: usize = 1;
         const TAIL_JOIN_AGGRESSIVE_DELTA_SKIP_MODULUS: u64 = 7;
         const TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP: usize = 28;
+        // Dedicated policy for the 70+ tail wave where join timeout risk is highest.
+        const TAIL_WAVE_70_PLUS_CLIENTS_MIN: usize = 70;
+        const TAIL_WAVE_70_PLUS_PENDING_INITIAL_OPEN_MIN: usize = 2;
+        const TAIL_WAVE_70_PLUS_INITIAL_PER_FRAME_BOOST: usize = 72;
+        const TAIL_WAVE_70_PLUS_MAX_DELTA_PER_FRAME: usize = 1;
+        const TAIL_WAVE_70_PLUS_DELTA_SKIP_MODULUS: u64 = 9;
+        const TAIL_WAVE_70_PLUS_CONCURRENCY_CAP: usize = 24;
         const SINGLE_MACHINE_TAIL_CONNECTED_CLIENTS_MIN: usize = 56;
         const SINGLE_MACHINE_TAIL_PENDING_INITIAL_OPEN_MIN: usize = 2;
         const SINGLE_MACHINE_AGGRESSIVE_CONNECTED_CLIENTS_MIN: usize = 64;
@@ -5912,6 +5914,9 @@ impl MassiveGameServer {
         let aggressive_tail_join_mode = tail_policy_enabled
             && connected_clients >= aggressive_connected_clients_min
             && pending_initial_open_count >= aggressive_pending_initial_open_min;
+        let tail_wave_70_plus_mode = tail_policy_enabled
+            && connected_clients >= TAIL_WAVE_70_PLUS_CLIENTS_MIN
+            && pending_initial_open_count >= TAIL_WAVE_70_PLUS_PENDING_INITIAL_OPEN_MIN;
         let initial_snapshot_caps = if aggressive_tail_join_mode {
             InitialSnapshotCaps::TAIL_AGGRESSIVE
         } else if tail_join_mode {
@@ -5959,6 +5964,10 @@ impl MassiveGameServer {
             max_initial_per_frame =
                 max_initial_per_frame.max(TAIL_JOIN_AGGRESSIVE_INITIAL_PER_FRAME_BOOST);
         }
+        if tail_wave_70_plus_mode {
+            max_initial_per_frame =
+                max_initial_per_frame.max(TAIL_WAVE_70_PLUS_INITIAL_PER_FRAME_BOOST);
+        }
         if single_machine_opt
             && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
         {
@@ -5980,8 +5989,9 @@ impl MassiveGameServer {
             };
 
         let include_active_walls_snapshot = !scheduled_initial_entries.is_empty();
-        let throttle_delta_broadcasts =
-            tail_join_mode || pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN;
+        let throttle_delta_broadcasts = tail_join_mode
+            || tail_wave_70_plus_mode
+            || pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN;
         let mut max_delta_per_frame =
             if pending_initial_total_count >= MASS_JOIN_HEAVY_PENDING_INITIAL_MIN {
                 MASS_JOIN_MAX_DELTA_PER_FRAME_HEAVY
@@ -5996,12 +6006,17 @@ impl MassiveGameServer {
         if aggressive_tail_join_mode {
             max_delta_per_frame = max_delta_per_frame.min(TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME);
         }
+        if tail_wave_70_plus_mode {
+            max_delta_per_frame = max_delta_per_frame.min(TAIL_WAVE_70_PLUS_MAX_DELTA_PER_FRAME);
+        }
         if single_machine_opt
             && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
         {
             max_delta_per_frame = max_delta_per_frame.min(SINGLE_MACHINE_MAX_DELTA_PER_FRAME);
         }
-        let delta_skip_modulus = if aggressive_tail_join_mode {
+        let delta_skip_modulus = if tail_wave_70_plus_mode {
+            TAIL_WAVE_70_PLUS_DELTA_SKIP_MODULUS
+        } else if aggressive_tail_join_mode {
             TAIL_JOIN_AGGRESSIVE_DELTA_SKIP_MODULUS
         } else if tail_join_mode {
             TAIL_JOIN_DELTA_SKIP_MODULUS
@@ -6027,7 +6042,7 @@ impl MassiveGameServer {
         }
 
         debug!(
-            "[Frame {}] Join scheduler: pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, tail_policy_enabled={}, tail_join_mode={}, aggressive_tail_join_mode={}, single_machine_opt={}, soa_fallback_active={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, delta_event_budget={}, snapshot_caps={{players:{}, walls:{}, projectiles:{}, pickups:{}}}, scheduled_initial={}, scheduled_delta={}",
+            "[Frame {}] Join scheduler: pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, tail_policy_enabled={}, tail_join_mode={}, aggressive_tail_join_mode={}, tail_wave_70_plus_mode={}, single_machine_opt={}, soa_fallback_active={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, delta_event_budget={}, snapshot_caps={{players:{}, walls:{}, projectiles:{}, pickups:{}}}, scheduled_initial={}, scheduled_delta={}",
             current_frame,
             pending_initial_total_count,
             pending_initial_open_count,
@@ -6035,6 +6050,7 @@ impl MassiveGameServer {
             tail_policy_enabled,
             tail_join_mode,
             aggressive_tail_join_mode,
+            tail_wave_70_plus_mode,
             single_machine_opt,
             soa_adaptive_fallback_active,
             max_initial_per_frame,
@@ -6088,6 +6104,9 @@ impl MassiveGameServer {
         }
         if aggressive_tail_join_mode {
             broadcast_concurrency = broadcast_concurrency.min(TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP);
+        }
+        if tail_wave_70_plus_mode {
+            broadcast_concurrency = broadcast_concurrency.min(TAIL_WAVE_70_PLUS_CONCURRENCY_CAP);
         }
         if single_machine_opt
             && pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
@@ -6435,12 +6454,8 @@ impl MassiveGameServer {
             return Err("Initial state too large".into());
         }
 
-        if join_zero_copy_serialization_enabled() {
-            let (buffer, root_index) = builder.collapse();
-            Ok(Bytes::from(buffer).slice(root_index..))
-        } else {
-            Ok(Bytes::copy_from_slice(builder.finished_data()))
-        }
+        let (buffer, root_index) = builder.collapse();
+        Ok(Bytes::from(buffer).slice(root_index..))
     }
 
     pub(crate) fn send_initial_state_to_client(
@@ -6651,12 +6666,8 @@ impl MassiveGameServer {
         let game_msg = fb::GameMessage::create(&mut builder, &game_msg_args);
         builder.finish(game_msg, None);
 
-        let data_bytes = if join_zero_copy_serialization_enabled() {
-            let (buffer, root_index) = builder.collapse();
-            Bytes::from(buffer).slice(root_index..)
-        } else {
-            Bytes::copy_from_slice(builder.finished_data())
-        };
+        let (buffer, root_index) = builder.collapse();
+        let data_bytes = Bytes::from(buffer).slice(root_index..);
         let dc_clone = Arc::clone(data_channel);
         let peer_id_clone = peer_id_str.to_string();
         tokio::spawn(async move {
@@ -7282,12 +7293,8 @@ impl MassiveGameServer {
         let game_msg = fb::GameMessage::create(&mut builder, &game_msg_args);
         builder.finish(game_msg, None);
 
-        let data_bytes = if join_zero_copy_serialization_enabled() {
-            let (buffer, root_index) = builder.collapse();
-            Bytes::from(buffer).slice(root_index..)
-        } else {
-            Bytes::copy_from_slice(builder.finished_data())
-        };
+        let (buffer, root_index) = builder.collapse();
+        let data_bytes = Bytes::from(buffer).slice(root_index..);
         let dc_clone = Arc::clone(data_channel);
         let peer_id_clone = peer_id_str.to_string();
         tokio::spawn(async move {
@@ -7396,12 +7403,8 @@ impl MassiveGameServer {
             },
         );
         builder.finish(game_msg, None);
-        if join_zero_copy_serialization_enabled() {
-            let (buffer, root_index) = builder.collapse();
-            Bytes::from(buffer).slice(root_index..)
-        } else {
-            Bytes::copy_from_slice(builder.finished_data())
-        }
+        let (buffer, root_index) = builder.collapse();
+        Bytes::from(buffer).slice(root_index..)
     }
 
     pub(crate) async fn send_match_info_only(

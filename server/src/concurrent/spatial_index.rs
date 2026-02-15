@@ -207,6 +207,60 @@ impl ImprovedSpatialIndex {
         nearby_players
     }
 
+    /// Returns nearby players together with their cached positions from the spatial index.
+    /// This avoids a second map lookup in hot collision paths.
+    pub fn query_nearby_players_with_positions(
+        &self,
+        x: f32,
+        y: f32,
+        radius: f32,
+    ) -> Vec<(PlayerID, f32, f32)> {
+        let radius_squared = radius * radius;
+        let cell_indices = self.get_cells_in_radius(x, y, radius);
+        let mut candidate_ids = Vec::new();
+        let mut candidate_xs = Vec::new();
+        let mut candidate_ys = Vec::new();
+        let mut checked_players = HashSet::new();
+
+        for cell_idx in cell_indices {
+            if let Some(cell) = self.cells.get(cell_idx) {
+                let cell_guard = cell.read();
+                for player_id in &cell_guard.player_ids {
+                    if checked_players.insert(player_id.clone()) {
+                        if let Some(pos_entry) = self.player_positions.get(player_id) {
+                            let (px, py) = *pos_entry.value();
+                            candidate_ids.push(player_id.clone());
+                            candidate_xs.push(px);
+                            candidate_ys.push(py);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut matched_indices = Vec::with_capacity(candidate_ids.len());
+        simd::filter_indices_within_radius(
+            &candidate_xs,
+            &candidate_ys,
+            x,
+            y,
+            radius_squared,
+            &mut matched_indices,
+        );
+
+        let mut nearby_players = Vec::with_capacity(matched_indices.len());
+        for idx in matched_indices {
+            if let (Some(player_id), Some(px), Some(py)) = (
+                candidate_ids.get(idx),
+                candidate_xs.get(idx),
+                candidate_ys.get(idx),
+            ) {
+                nearby_players.push((player_id.clone(), *px, *py));
+            }
+        }
+        nearby_players
+    }
+
     // Projectile methods
     pub fn update_projectile_position(&self, proj_id: EntityId, x: f32, y: f32) {
         let new_cell_idx = self.get_cell_index(x, y);
@@ -334,4 +388,38 @@ pub struct SpatialIndexStats {
     pub occupied_cells: usize,
     pub total_cells: usize,
     pub max_entities_per_cell: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ImprovedSpatialIndex;
+    use crate::core::types::PlayerID;
+    use std::sync::Arc;
+
+    fn pid(raw: &str) -> PlayerID {
+        Arc::new(raw.to_string())
+    }
+
+    #[test]
+    fn query_nearby_players_with_positions_returns_positions() {
+        let index = ImprovedSpatialIndex::new(1024.0, 1024.0, 0.0, 0.0, 64.0);
+        let p1 = pid("p1");
+        let p2 = pid("p2");
+        let p3 = pid("p3");
+
+        index.update_player_position(p1.clone(), 10.0, 10.0);
+        index.update_player_position(p2.clone(), 28.0, 24.0);
+        index.update_player_position(p3, 420.0, 400.0);
+
+        let mut nearby = index.query_nearby_players_with_positions(12.0, 12.0, 30.0);
+        nearby.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+
+        assert_eq!(nearby.len(), 2);
+        assert_eq!(nearby[0].0.as_str(), "p1");
+        assert_eq!(nearby[0].1, 10.0);
+        assert_eq!(nearby[0].2, 10.0);
+        assert_eq!(nearby[1].0.as_str(), "p2");
+        assert_eq!(nearby[1].1, 28.0);
+        assert_eq!(nearby[1].2, 24.0);
+    }
 }

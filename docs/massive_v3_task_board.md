@@ -60,6 +60,25 @@
   - Reused per-chunk target buffers (`target_ids`, `target_xs`, `target_ys`) instead of reallocating per projectile.
   - Replaced hash-set based projectile removal with sorted linear filtering (`sort_unstable` + `dedup` + single pass).
 
+## Implemented In This Continuation Pass
+- Completed hot-path spatial query follow-through for projectile collision checks:
+  - `server/src/concurrent/spatial_index.rs`
+  - Added `query_nearby_players_with_positions(...) -> Vec<(PlayerID, f32, f32)>`
+  - Added unit test `query_nearby_players_with_positions_returns_positions`
+  - `server/src/server/instance.rs` now uses direct `(id,x,y)` tuples in projectile ray-hit checks, removing extra per-tick position map lookup overhead.
+- Completed zero-copy serialization follow-through in remaining delta static path:
+  - `server/src/server/instance.rs`
+  - `build_delta_state_static(...)` now uses `FlatBufferBuilder::collapse()` + `Bytes::from(buffer).slice(root_index..)` instead of `Bytes::copy_from_slice(...)`.
+- Strengthened authoritative snapshot ownership for broadcast read paths:
+  - `server/src/server/instance.rs`
+  - Added snapshot rebuild/publish helpers:
+    - `rebuild_player_soa_snapshot_from_authoritative_state`
+    - `rebuild_projectile_soa_snapshot_from_authoritative_state`
+    - `rebuild_pickup_soa_snapshot_from_authoritative_state`
+  - Backlog mode no longer switches broadcast data reads to live-map clone fallback; SoA snapshot path remains authoritative and lock-free for reads.
+- Tail policy tuning for 70+ wave remains active in scheduler:
+  - `TAIL_WAVE_70_PLUS_*` limits continue to enforce initial-priority + stronger delta throttling in `broadcast_world_updates_optimized`.
+
 ## Validation
 - `cargo test -p massive_game_server_core operational::bot_sandbox::tests:: -- --nocapture`
   - Passed (`4` tests)
@@ -67,9 +86,49 @@
   - Passed (`5` tests)
 - `cargo check -p massive_game_server_core`
   - Passed
+- `cargo test -p massive_game_server_core concurrent::spatial_index::tests:: -- --nocapture`
+  - Passed (`1` test, including new `query_nearby_players_with_positions_returns_positions`)
+
+## Fresh Benchmark Artifacts (2026-02-15)
+- `artifacts/scale/multi_client_20_v3_pass2.json`
+- `artifacts/scale/multi_client_120_v3_pass2.json`
+- `artifacts/scale/render_stress_v3_pass2.json`
+
+### 10v10-style (20 clients)
+- `20/20` connected at least once (`connectedRatio=1.0`)
+- `connectLatency avg=22615.95ms`, `p95=27604.3ms`
+
+### 120-client tail
+- `100/120` launched and connected at least once (`connectedRatio=0.8333`)
+- timed out at launch/sampling ceiling (`maxTotalMs=300000`)
+- `connectLatency avg=74128.03ms`, `p95=172426ms`
+- wave buckets:
+  - `1-24 avg=28830.54ms`
+  - `25-48 avg=47163.54ms`
+  - `49-72 avg=72353.54ms`
+  - `73+ avg=137587.86ms`, `p95=176268.4ms`
+- server join-stage instrumentation for `73+` still shows low server-side build/send cost:
+  - `open_channel_wait avg=116.17ms`
+  - `snapshot_build avg=0.02ms`
+  - indicates client/browser tail behavior remains dominant in this run.
+
+### Render stress
+- baseline fps: `114.35`
+- max sustainable synthetic objects: `400`
+- first failing stage: `499`
+- max observed visible projectiles: `616`
+- min stress fps: `28.37`
+
+## Before/After Snapshot (Previous v3 -> pass2 retest)
+| Scenario | Previous Artifact | New Artifact | Delta |
+|---|---|---|---|
+| 20-client connect avg | `multi_client_20_v3.json`: `22249.05ms` | `multi_client_20_v3_pass2.json`: `22615.95ms` | `+366.90ms` |
+| 120-client connect avg | `multi_client_120_v3.json`: `70675.21ms` | `multi_client_120_v3_pass2.json`: `74128.03ms` | `+3452.82ms` |
+| 120-client wave `73+` avg | `118024.93ms` | `137587.86ms` | `+19562.93ms` |
+| Render baseline fps | `render_stress_v3.json`: `95.57` | `render_stress_v3_pass2.json`: `114.35` | `+18.78` |
+| Render max sustainable objects | `400` | `400` | `0` |
 
 ## Remaining V3 Work
-1. Stabilize repeated `100/120`+ tail runs with tighter p95 variance (especially early wave `open_channel_wait_ms` spikes).
-2. Continue writer-side authoritative ECS ownership migration (full mutation ownership boundaries).
-3. Reduce remaining full-state serialization copy points for larger launch waves.
-4. Optional frontend polish sweep for any remaining v3 effects deltas not already in `static_client/client.html`.
+1. Stabilize repeated `100/120`+ tail runs with tighter p95 variance and improve `73+` client-side launch behavior (current launch ratio remains `100/120`).
+2. Continue writer-side authoritative ECS mutation ownership migration (read ownership is now on authoritative snapshots in broadcast path, mutation ownership boundaries are still partial).
+3. Optional frontend polish sweep for any remaining v3 effects deltas not already in `static_client/client.html`.
