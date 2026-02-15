@@ -2940,88 +2940,75 @@ impl MassiveGameServer {
         all_walls
     }
 
-    pub async fn run_game_logic_update(&self, delta_time: f32) {
-        // Drain projectile ingress queue into authoritative projectile state.
-        self.drain_queued_projectiles_to_authoritative_state();
+    fn update_match_state_authoritative(&self, delta_time: f32) {
+        let mut match_info_guard = self.match_info.write();
+        let player_count = self.player_manager.player_count();
 
-        // Update match state (timer, transitions)
-        {
-            let mut match_info_guard = self.match_info.write();
-            let player_count = self.player_manager.player_count();
-
-            match match_info_guard.match_state {
-                fb::MatchStateType::Waiting => {
-                    if player_count >= MIN_PLAYERS_TO_START {
-                        match_info_guard.match_state = fb::MatchStateType::Active;
-                        match_info_guard.time_remaining = 300.0;
-                        info!("Match starting! Mode: {:?}", match_info_guard.game_mode);
-                        if match_info_guard.game_mode == fb::GameModeType::CaptureTheFlag {
-                            self.initialize_ctf_flags(&mut match_info_guard);
-                        }
-                        self.player_manager.for_each_player_mut(|_id, p_state| {
-                            p_state.score = 0;
-                            p_state.kills = 0;
-                            p_state.deaths = 0;
-                            p_state.is_carrying_flag_team_id = 0;
-                            p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
-                        });
-                        self.kill_feed.write().clear();
+        match match_info_guard.match_state {
+            fb::MatchStateType::Waiting => {
+                if player_count >= MIN_PLAYERS_TO_START {
+                    match_info_guard.match_state = fb::MatchStateType::Active;
+                    match_info_guard.time_remaining = 300.0;
+                    info!("Match starting! Mode: {:?}", match_info_guard.game_mode);
+                    if match_info_guard.game_mode == fb::GameModeType::CaptureTheFlag {
+                        self.initialize_ctf_flags(&mut match_info_guard);
                     }
+                    self.player_manager.for_each_player_mut(|_id, p_state| {
+                        p_state.score = 0;
+                        p_state.kills = 0;
+                        p_state.deaths = 0;
+                        p_state.is_carrying_flag_team_id = 0;
+                        p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
+                    });
+                    self.kill_feed.write().clear();
                 }
-                fb::MatchStateType::Active => {
-                    match_info_guard.time_remaining -= delta_time;
-                    if match_info_guard.time_remaining <= 0.0 {
-                        match_info_guard.match_state = fb::MatchStateType::Ended;
-                        info!("Match ended! (Time up)");
-                        if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch
-                            || match_info_guard.game_mode == fb::GameModeType::CaptureTheFlag
-                        {
-                            let team1_score =
-                                match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
-                            let team2_score =
-                                match_info_guard.team_scores.get(&2).cloned().unwrap_or(0);
-
-                            // Determine and announce the winner
-                            if team1_score > team2_score {
-                                info!(
-                                    "Team 1 wins with {} points vs Team 2's {} points!",
-                                    team1_score, team2_score
-                                );
-                            } else if team2_score > team1_score {
-                                info!(
-                                    "Team 2 wins with {} points vs Team 1's {} points!",
-                                    team2_score, team1_score
-                                );
-                            } else if team1_score == team2_score && team1_score > 0 {
-                                info!(
-                                    "Match ended in a draw! Both teams scored {} points.",
-                                    team1_score
-                                );
-                            } else {
-                                info!("Match ended with no winner (0-0).");
-                            }
-                        }
-                    }
-                }
-                fb::MatchStateType::Ended => {
-                    match_info_guard.time_remaining -= delta_time;
-                    if match_info_guard.time_remaining <= -10.0 {
-                        match_info_guard.match_state = fb::MatchStateType::Waiting;
-                        self.reset_match_state(&mut match_info_guard);
-                        info!("Match reset to Waiting.");
-                    }
-                }
-                _ => {}
             }
-        }
+            fb::MatchStateType::Active => {
+                match_info_guard.time_remaining -= delta_time;
+                if match_info_guard.time_remaining <= 0.0 {
+                    match_info_guard.match_state = fb::MatchStateType::Ended;
+                    info!("Match ended! (Time up)");
+                    if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch
+                        || match_info_guard.game_mode == fb::GameModeType::CaptureTheFlag
+                    {
+                        let team1_score = match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
+                        let team2_score = match_info_guard.team_scores.get(&2).cloned().unwrap_or(0);
 
-        // Player pickup collection mutates authoritative pickup state in one write scope.
-        {
-            let mut pickups_guard = self.pickups.write();
-            self.process_pickup_collection_authoritative(pickups_guard.as_mut_slice());
+                        // Determine and announce the winner
+                        if team1_score > team2_score {
+                            info!(
+                                "Team 1 wins with {} points vs Team 2's {} points!",
+                                team1_score, team2_score
+                            );
+                        } else if team2_score > team1_score {
+                            info!(
+                                "Team 2 wins with {} points vs Team 1's {} points!",
+                                team2_score, team1_score
+                            );
+                        } else if team1_score == team2_score && team1_score > 0 {
+                            info!(
+                                "Match ended in a draw! Both teams scored {} points.",
+                                team1_score
+                            );
+                        } else {
+                            info!("Match ended with no winner (0-0).");
+                        }
+                    }
+                }
+            }
+            fb::MatchStateType::Ended => {
+                match_info_guard.time_remaining -= delta_time;
+                if match_info_guard.time_remaining <= -10.0 {
+                    match_info_guard.match_state = fb::MatchStateType::Waiting;
+                    self.reset_match_state(&mut match_info_guard);
+                    info!("Match reset to Waiting.");
+                }
+            }
+            _ => {}
         }
+    }
 
-        // CTF Logic
+    fn process_ctf_logic_authoritative(&self, delta_time: f32) {
         let mut match_info_write_guard = self.match_info.write();
         if match_info_write_guard.game_mode == fb::GameModeType::CaptureTheFlag
             && match_info_write_guard.match_state == fb::MatchStateType::Active
@@ -3108,8 +3095,7 @@ impl MassiveGameServer {
                                 {
                                     // Own team returning flag
                                     flag_state.status = fb::FlagStatus::AtBase;
-                                    flag_state.position =
-                                        Self::get_flag_base_position(flag_state.team_id);
+                                    flag_state.position = Self::get_flag_base_position(flag_state.team_id);
                                     flag_state.carrier_id = None;
                                     flag_state.respawn_timer = 0.0;
                                     self.global_game_events.push(
@@ -3209,7 +3195,20 @@ impl MassiveGameServer {
                 }
             }
         }
-        drop(match_info_write_guard);
+    }
+
+    pub async fn run_game_logic_update(&self, delta_time: f32) {
+        // Drain projectile ingress queue into authoritative projectile state.
+        self.drain_queued_projectiles_to_authoritative_state();
+        self.update_match_state_authoritative(delta_time);
+
+        // Player pickup collection mutates authoritative pickup state in one write scope.
+        {
+            let mut pickups_guard = self.pickups.write();
+            self.process_pickup_collection_authoritative(pickups_guard.as_mut_slice());
+        }
+
+        self.process_ctf_logic_authoritative(delta_time);
 
         // Melee Event Processing - Fix 1 (drain dedicated queue only)
         let mut melee_hit_events_to_process = Vec::with_capacity(32);
