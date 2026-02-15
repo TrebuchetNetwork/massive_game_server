@@ -280,6 +280,11 @@ fn join_zero_copy_serialization_enabled() -> bool {
     *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_ZERO_COPY_SERIALIZATION"))
 }
 
+fn join_authoritative_aoi_snapshot_enabled() -> bool {
+    static ENABLED: OnceCell<bool> = OnceCell::new();
+    *ENABLED.get_or_init(|| env_bool_value("MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT"))
+}
+
 #[derive(Clone, Debug, Default)]
 struct JoinStageTrace {
     join_sequence: u64,
@@ -655,6 +660,7 @@ struct SharedBroadcastData {
     updated_walls: HashMap<EntityId, Wall>,
     active_walls_by_id: HashMap<EntityId, Wall>,
     active_walls_snapshot: Vec<Wall>,
+    player_aois_snapshot: Arc<HashMap<PlayerID, PlayerAoI>>,
     player_soa_snapshot: Arc<PlayerSoASnapshot>,
     player_states_snapshot: HashMap<PlayerID, PlayerState>,
     projectiles_soa_snapshot: Arc<ProjectileSoASnapshot>,
@@ -669,6 +675,7 @@ struct SharedBroadcastData {
     initial_snapshot_caps: InitialSnapshotCaps,
     tail_join_mode: bool,
     aggressive_tail_join_mode: bool,
+    use_aoi_snapshot: bool,
     soa_fallback_active: bool,
     use_soa_snapshot: bool,
     use_entity_soa_snapshot: bool,
@@ -1770,57 +1777,55 @@ impl MassiveGameServer {
                 .insert(self_player_id_arc.clone());
         }
 
-        if let Some(aoi_entry) = self.player_aois.get(peer_id_str) {
-            let p_aoi = aoi_entry.value();
-            for visible_player_id in p_aoi
-                .visible_players
-                .iter()
-                .take(snapshot_caps.max_players.saturating_sub(1))
+        let p_aoi = self.resolve_player_aoi_for_player(shared_data, &self_player_id_arc);
+        for visible_player_id in p_aoi
+            .visible_players
+            .iter()
+            .take(snapshot_caps.max_players.saturating_sub(1))
+        {
+            if let Some(pstate_guard) =
+                Self::lookup_player_state_from_shared(shared_data, visible_player_id)
             {
-                if let Some(pstate_guard) =
-                    Self::lookup_player_state_from_shared(shared_data, visible_player_id)
-                {
-                    client_state
-                        .last_known_player_states
-                        .insert(visible_player_id.clone(), pstate_guard.clone());
-                }
                 client_state
-                    .last_known_players
-                    .insert(visible_player_id.clone());
+                    .last_known_player_states
+                    .insert(visible_player_id.clone(), pstate_guard.clone());
             }
-            client_state.last_known_projectile_ids = p_aoi
-                .visible_projectiles
-                .iter()
-                .take(snapshot_caps.max_projectiles)
-                .copied()
-                .collect();
-            for pickup_id in p_aoi.visible_pickups.iter().take(snapshot_caps.max_pickups) {
-                if let Some(pickup) = Self::lookup_pickup_from_shared(shared_data, pickup_id) {
-                    client_state.last_known_pickup_states.insert(
-                        *pickup_id,
-                        PickupState {
-                            is_active: pickup.is_active,
-                        },
-                    );
-                }
-            }
-
-            for wall_id in p_aoi.visible_walls.iter().take(AOI_MAX_VISIBLE_WALLS) {
-                if let Some(wall_data) = shared_data.active_walls_by_id.get(wall_id) {
-                    client_state
-                        .last_known_wall_states
-                        .insert(*wall_id, (wall_data.current_health, wall_data.max_health));
-                }
-            }
-            client_state.last_known_wall_ids = Some(
-                p_aoi
-                    .visible_walls
-                    .iter()
-                    .take(AOI_MAX_VISIBLE_WALLS)
-                    .copied()
-                    .collect(),
-            );
+            client_state
+                .last_known_players
+                .insert(visible_player_id.clone());
         }
+        client_state.last_known_projectile_ids = p_aoi
+            .visible_projectiles
+            .iter()
+            .take(snapshot_caps.max_projectiles)
+            .copied()
+            .collect();
+        for pickup_id in p_aoi.visible_pickups.iter().take(snapshot_caps.max_pickups) {
+            if let Some(pickup) = Self::lookup_pickup_from_shared(shared_data, pickup_id) {
+                client_state.last_known_pickup_states.insert(
+                    *pickup_id,
+                    PickupState {
+                        is_active: pickup.is_active,
+                    },
+                );
+            }
+        }
+
+        for wall_id in p_aoi.visible_walls.iter().take(AOI_MAX_VISIBLE_WALLS) {
+            if let Some(wall_data) = shared_data.active_walls_by_id.get(wall_id) {
+                client_state
+                    .last_known_wall_states
+                    .insert(*wall_id, (wall_data.current_health, wall_data.max_health));
+            }
+        }
+        client_state.last_known_wall_ids = Some(
+            p_aoi
+                .visible_walls
+                .iter()
+                .take(AOI_MAX_VISIBLE_WALLS)
+                .copied()
+                .collect(),
+        );
 
         let key_for_insert = peer_id_str.to_string();
         trace!("[Frame {}] Client {}: ABOUT TO INSERT initial ClientState into client_states_map. Key: {}", frame_num, peer_id_str, key_for_insert);
@@ -1871,16 +1876,7 @@ impl MassiveGameServer {
         shared_data: &SharedBroadcastData,
     ) {
         // Get the player's current AoI
-        let player_aoi = match self.player_aois.get(player_id.as_str()) {
-            Some(aoi_entry) => aoi_entry.clone(),
-            None => {
-                debug!(
-                    "No AoI found for player {} when updating client state",
-                    player_id.as_str()
-                );
-                return;
-            }
-        };
+        let player_aoi = self.resolve_player_aoi_for_player(shared_data, player_id);
 
         // Update last broadcast frame
         client_state.last_broadcast_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
@@ -3522,6 +3518,25 @@ impl MassiveGameServer {
         self.get_server_timestamp_us() / 1000
     }
 
+    fn resolve_player_aoi_for_player(
+        &self,
+        shared_data: &SharedBroadcastData,
+        player_id: &PlayerID,
+    ) -> PlayerAoI {
+        if shared_data.use_aoi_snapshot {
+            shared_data
+                .player_aois_snapshot
+                .get(player_id)
+                .cloned()
+                .unwrap_or_else(Self::get_empty_player_aoi)
+        } else {
+            self.player_aois
+                .get(player_id.as_str())
+                .map(|entry| entry.value().clone())
+                .unwrap_or_else(Self::get_empty_player_aoi)
+        }
+    }
+
     #[inline]
     fn lookup_player_state_from_shared<'a>(
         shared_data: &'a SharedBroadcastData,
@@ -4131,6 +4146,7 @@ impl MassiveGameServer {
         aggressive_tail_join_mode: bool,
         disable_soa_snapshot_for_backlog: bool,
         max_delta_events_per_client: usize,
+        scheduled_peer_ids: &[String],
     ) -> SharedBroadcastData {
         let current_timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -4168,6 +4184,21 @@ impl MassiveGameServer {
             active_walls_cached.iter().cloned().collect()
         } else {
             Vec::new()
+        };
+
+        let use_aoi_snapshot = join_authoritative_aoi_snapshot_enabled();
+        let player_aois_snapshot = if use_aoi_snapshot {
+            // Optional authoritative AoI ownership snapshot for broadcast fanout.
+            let mut player_aois_snapshot = HashMap::with_capacity(scheduled_peer_ids.len());
+            for peer_id in scheduled_peer_ids {
+                if let Some(aoi_entry) = self.player_aois.get(peer_id.as_str()) {
+                    let player_id = self.player_manager.id_pool.get_or_create(peer_id);
+                    player_aois_snapshot.insert(player_id, aoi_entry.value().clone());
+                }
+            }
+            Arc::new(player_aois_snapshot)
+        } else {
+            Arc::new(HashMap::new())
         };
 
         let configured_soa_snapshot = join_soa_snapshot_enabled();
@@ -4282,6 +4313,7 @@ impl MassiveGameServer {
             updated_walls,
             active_walls_by_id,
             active_walls_snapshot,
+            player_aois_snapshot,
             player_soa_snapshot,
             player_states_snapshot,
             projectiles_soa_snapshot,
@@ -4296,6 +4328,7 @@ impl MassiveGameServer {
             initial_snapshot_caps,
             tail_join_mode,
             aggressive_tail_join_mode,
+            use_aoi_snapshot,
             soa_fallback_active,
             use_soa_snapshot,
             use_entity_soa_snapshot,
@@ -4823,12 +4856,9 @@ impl MassiveGameServer {
 
         trace!("[{}] DeltaBuilder: Started", peer_id_str);
 
-        // Get player's current AoI
-        let player_aoi = self
-            .player_aois
-            .get(peer_id_str)
-            .map(|entry| entry.value().clone())
-            .unwrap_or_else(|| PlayerAoI::new());
+        // Resolve AoI from authoritative per-frame snapshot when enabled, otherwise
+        // use the legacy live AoI map path.
+        let player_aoi = self.resolve_player_aoi_for_player(shared_data, &player_id);
 
         // Build player deltas (only changed or newly visible)
         let mut players_fb_vec = Vec::new();
@@ -5476,21 +5506,6 @@ impl MassiveGameServer {
         })
     }
 
-    // Fast AoI data retrieval with minimal locking
-    fn get_player_aoi_data_fast(&self, player_id: &PlayerID) -> PlayerAoI {
-        if let Some(aoi_entry) = self.player_aois.get(player_id.as_str()) {
-            PlayerAoI {
-                visible_players: aoi_entry.visible_players.clone(),
-                visible_projectiles: aoi_entry.visible_projectiles.clone(),
-                visible_pickups: aoi_entry.visible_pickups.clone(),
-                visible_walls: aoi_entry.visible_walls.clone(),
-                last_update: aoi_entry.last_update.clone(), //Instant::now(),
-            }
-        } else {
-            Self::get_empty_player_aoi()
-        }
-    }
-
     /*fn build_projectile_deltas_optimized(
         &self,
         builder: &mut FlatBufferBuilder,
@@ -5982,6 +5997,11 @@ impl MassiveGameServer {
             scheduled_delta_count
         );
 
+        let scheduled_peer_ids: Vec<String> = scheduled_client_entries
+            .iter()
+            .map(|(peer_id, _, _)| peer_id.clone())
+            .collect();
+
         let shared_broadcast_data = Arc::new(
             self.prepare_shared_broadcast_data(
                 include_active_walls_snapshot,
@@ -5990,6 +6010,7 @@ impl MassiveGameServer {
                 aggressive_tail_join_mode,
                 soa_adaptive_fallback_active,
                 max_delta_events_per_client,
+                &scheduled_peer_ids,
             )
             .await,
         );
@@ -6139,7 +6160,7 @@ impl MassiveGameServer {
 
         // 2. Player States (Self + AoI)
         let mut players_fb_vec = Vec::new();
-        let mut player_aoi_data_for_initial_state = Self::get_empty_player_aoi(); // Default empty
+        let mut player_aoi_data_for_initial_state = Self::get_empty_player_aoi();
 
         if let Some(self_pstate_guard) =
             Self::lookup_player_state_from_shared(shared_data, &self_player_id_arc)
@@ -6149,8 +6170,8 @@ impl MassiveGameServer {
                 self_pstate_guard,
                 0xFFFF,
             ));
-            // Fetch AoI based on self's current position for other entities
-            player_aoi_data_for_initial_state = self.get_player_aoi_data_fast(&self_player_id_arc);
+            player_aoi_data_for_initial_state =
+                self.resolve_player_aoi_for_player(shared_data, &self_player_id_arc);
         } else {
             warn!(
                 "[Frame {} Client {}] InitialState: Self player state not found!",

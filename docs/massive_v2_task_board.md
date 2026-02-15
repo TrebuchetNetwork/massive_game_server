@@ -59,10 +59,31 @@
     - 87/120 launched within `300000ms`, connected ratio `0.725` (delta `+1` launched).
     - 73+ wave: count `15`, avg `79709.27ms`, p95 `83942.1ms`.
     - join-stage 73+: `open_channel_wait_ms.avg=253.99` (`p95=1178.84`) after tail-policy tuning.
+- Added optional authoritative AoI ownership path in broadcast serialization:
+  - `server/src/server/instance.rs`
+  - gated by `MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT=1` (default off for now while tail throughput retuning continues).
+- Fresh benchmark artifacts from this pass:
+  - `artifacts/scale/multi_client_fresh_20_aoi_snapshot_20260214_2310.json`
+    - 20/20 launched, connected ratio `1.00`, connect avg `21001.65ms`.
+  - `artifacts/scale/multi_client_fresh_120_aoi_snapshot_20260214_2311.json`
+    - 73/120 launched, connected ratio `0.6083`, 73+ wave count `1`.
+  - `artifacts/scale/multi_client_fresh_120_aoi_snapshot_fresh_20260214_2318.json`
+    - 73/120 launched, connected ratio `0.6083`, 73+ wave count `1`.
+  - `artifacts/scale/multi_client_fresh_120_aoi_snapshot_disabled_default_20260214_2329.json`
+    - 72/120 launched, connected ratio `0.60`, 73+ wave count `0`.
+- Revalidated release-binary benchmarks and compared tail variants:
+  - `artifacts/scale/multi_client_fresh_20_release_20260214_2342.json`
+    - 20/20 launched, connected ratio `1.00`, connect avg `20654.9ms`.
+  - `artifacts/scale/multi_client_fresh_120_release_recheck_20260214_2344.json`
+    - 97/120 launched, connected ratio `0.8083`, 73+ wave count `25` (best in this recheck batch).
+  - `artifacts/scale/multi_client_fresh_120_tail_tune3_20260214_2356.json`
+    - 90/120 launched, connected ratio `0.75`; experimental scheduler tuning underperformed and was rolled back.
+  - `artifacts/scale/multi_client_fresh_120_closed_delta_skip_20260215_0007.json`
+    - 93/120 launched, connected ratio `0.775`; variant was not retained after comparison.
 - Updated server docs:
   - `server/README.md`
 
 ## Next Execution Batch
-1. Recover 120-tail launch coverage from `87/120` toward `100+/120` within the same 300s budget.
-2. Continue reducing 73+ wave channel-open contention (`open_channel_wait_ms` p95 `1178.84ms`) with join scheduler/backpressure tuning.
-3. Continue authoritative ECS ownership migration and full-state zero-copy/batching follow-through.
+1. Recover 120-tail launch coverage from current best `97/120` to `100+/120` within the same `300000ms` budget.
+2. Reduce wave `1-48` `open_channel_wait_ms` spikes (often multi-second p95 in weaker reruns) via signaling/open-channel backpressure tuning.
+3. Continue authoritative ECS ownership migration beyond broadcast read snapshots and finish full-state zero-copy/batching cleanup follow-through.
