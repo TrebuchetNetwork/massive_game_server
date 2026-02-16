@@ -2014,8 +2014,10 @@ impl MassiveGameServer {
         }
 
         // Anti-cheat validation
-        let max_dist =
-            PLAYER_BASE_SPEED * MAX_PLAYER_SPEED_MULTIPLIER * delta_time + MAX_POSITION_DELTA_SLACK;
+        let max_speed_dist = PLAYER_BASE_SPEED * MAX_PLAYER_SPEED_MULTIPLIER * delta_time;
+        // Fixed slack per tick allowed excessive burst distance; scale with expected movement instead.
+        let adaptive_slack = (max_speed_dist * 0.35).clamp(1.0, MAX_POSITION_DELTA_SLACK);
+        let max_dist = max_speed_dist + adaptive_slack;
         let actual_dist = ((player_state.x - player_state.last_valid_position.0).powi(2)
             + (player_state.y - player_state.last_valid_position.1).powi(2))
         .sqrt();
