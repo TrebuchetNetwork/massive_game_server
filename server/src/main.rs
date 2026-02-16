@@ -22,9 +22,11 @@ use massive_game_server_core::operational::feature_flags::{
     build_feature_flag_routes, FeatureFlagService,
 };
 use massive_game_server_core::server::instance::MassiveGameServer;
+use massive_game_server_core::server::lifecycle;
 
 use parking_lot::RwLock as ParkingLotRwLock;
 use serde::Deserialize;
+use std::convert::Infallible;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -33,7 +35,7 @@ use std::sync::Arc;
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::{fmt, EnvFilter};
 use uuid::Uuid;
-use warp::http::{header, HeaderName, HeaderValue, Uri};
+use warp::http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use warp::{Filter, Reply};
 
 fn init_logging() -> anyhow::Result<()> {
@@ -55,6 +57,222 @@ fn init_logging() -> anyhow::Result<()> {
 struct WsAuthQuery {
     auth_token: Option<String>,
     token: Option<String>,
+}
+
+#[derive(Clone, Default)]
+struct AdminAuthConfig {
+    bearer_token: Option<Arc<String>>,
+}
+
+impl AdminAuthConfig {
+    fn from_env() -> Self {
+        let bearer_token = std::env::var("MGS_ADMIN_BEARER_TOKEN")
+            .or_else(|_| std::env::var("MGS_ADMIN_TOKEN"))
+            .ok()
+            .map(|raw| raw.trim().to_owned())
+            .filter(|raw| !raw.is_empty())
+            .map(Arc::new);
+
+        if bearer_token.is_some() {
+            info!("Admin bearer auth enabled for /api/ops/* and /api/arena/* routes.");
+        } else {
+            warn!(
+                "Admin bearer auth token is not configured. Protected routes will reject requests \
+                (set MGS_ADMIN_BEARER_TOKEN)."
+            );
+        }
+
+        Self { bearer_token }
+    }
+}
+
+#[derive(Debug)]
+struct AdminAuthRejection {
+    status: StatusCode,
+    code: &'static str,
+    message: String,
+}
+
+impl AdminAuthRejection {
+    fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            code: "admin_auth_required",
+            message: message.into(),
+        }
+    }
+
+    fn service_unavailable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "admin_auth_unconfigured",
+            message: message.into(),
+        }
+    }
+}
+
+impl warp::reject::Reject for AdminAuthRejection {}
+
+fn parse_bearer_token(authorization_header: Option<&str>) -> Option<String> {
+    let raw = authorization_header?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let token = raw
+        .strip_prefix("Bearer ")
+        .or_else(|| raw.strip_prefix("bearer "))?
+        .trim();
+    if token.is_empty() {
+        return None;
+    }
+    Some(token.to_owned())
+}
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.as_bytes()
+        .iter()
+        .zip(right.as_bytes())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
+
+fn is_admin_protected_path(path: &str) -> bool {
+    let normalized = path.trim_end_matches('/');
+    normalized == "/api/ops"
+        || normalized.starts_with("/api/ops/")
+        || normalized == "/api/arena"
+        || normalized.starts_with("/api/arena/")
+}
+
+fn parse_list_env(var_name: &str) -> Vec<String> {
+    std::env::var(var_name)
+        .ok()
+        .into_iter()
+        .flat_map(|raw| raw.split(',').map(str::trim).map(str::to_owned).collect::<Vec<_>>())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn requires_admin_auth(
+    config: AdminAuthConfig,
+) -> impl Filter<Extract = ((),), Error = warp::Rejection> + Clone {
+    warp::method()
+        .and(warp::path::full())
+        .and(warp::header::optional::<String>("authorization"))
+        .and_then(
+            move |method: Method,
+                  full_path: warp::path::FullPath,
+                  authorization: Option<String>| {
+                let config = config.clone();
+                async move {
+                    let path = full_path.as_str();
+                    if !is_admin_protected_path(path) {
+                        return Err(warp::reject::not_found());
+                    }
+                    if method == Method::OPTIONS {
+                        return Ok(());
+                    }
+
+                    let Some(expected_token) = config.bearer_token.as_ref() else {
+                        return Err(warp::reject::custom(AdminAuthRejection::service_unavailable(
+                            "Admin routes are disabled until MGS_ADMIN_BEARER_TOKEN is configured.",
+                        )));
+                    };
+
+                    let Some(provided_token) = parse_bearer_token(authorization.as_deref()) else {
+                        return Err(warp::reject::custom(AdminAuthRejection::unauthorized(
+                            "Missing Authorization bearer token.",
+                        )));
+                    };
+
+                    if !constant_time_eq(expected_token.as_str(), provided_token.as_str()) {
+                        return Err(warp::reject::custom(AdminAuthRejection::unauthorized(
+                            "Invalid admin bearer token.",
+                        )));
+                    }
+
+                    Ok(())
+                }
+            },
+        )
+}
+
+async fn handle_route_rejection(
+    rejection: warp::Rejection,
+) -> Result<impl Reply, Infallible> {
+    if let Some(admin_rejection) = rejection.find::<AdminAuthRejection>() {
+        let body = warp::reply::json(&serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": admin_rejection.code,
+                "message": admin_rejection.message
+            }
+        }));
+        return Ok(warp::reply::with_status(body, admin_rejection.status));
+    }
+
+    if rejection.is_not_found() {
+        let body = warp::reply::json(&serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "not_found",
+                "message": "Route not found."
+            }
+        }));
+        return Ok(warp::reply::with_status(body, StatusCode::NOT_FOUND));
+    }
+
+    if rejection.find::<warp::reject::MethodNotAllowed>().is_some() {
+        let body = warp::reply::json(&serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "method_not_allowed",
+                "message": "Method not allowed."
+            }
+        }));
+        return Ok(warp::reply::with_status(
+            body,
+            StatusCode::METHOD_NOT_ALLOWED,
+        ));
+    }
+
+    if let Some(err) = rejection.find::<warp::filters::body::BodyDeserializeError>() {
+        let body = warp::reply::json(&serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "invalid_json",
+                "message": err.to_string()
+            }
+        }));
+        return Ok(warp::reply::with_status(body, StatusCode::BAD_REQUEST));
+    }
+
+    if let Some(err) = rejection.find::<warp::reject::InvalidQuery>() {
+        let body = warp::reply::json(&serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "invalid_query",
+                "message": err.to_string()
+            }
+        }));
+        return Ok(warp::reply::with_status(body, StatusCode::BAD_REQUEST));
+    }
+
+    error!("Unhandled route rejection: {:?}", rejection);
+    let body = warp::reply::json(&serde_json::json!({
+        "ok": false,
+        "error": {
+            "code": "internal_error",
+            "message": "Unhandled server rejection."
+        }
+    }));
+    Ok(warp::reply::with_status(
+        body,
+        StatusCode::INTERNAL_SERVER_ERROR,
+    ))
 }
 
 fn static_cache_control_for_path(path: &Path) -> &'static str {
@@ -297,39 +515,63 @@ async fn main() -> anyhow::Result<()> {
             response
         });
 
-    let routes = auth_routes
-        .or(arena_routes)
+    let admin_auth_config = AdminAuthConfig::from_env();
+    let protected_routes = requires_admin_auth(admin_auth_config)
+        .and(
+            arena_routes
+                .or(feature_flag_routes)
+                .or(join_stage_report_route)
+                .or(join_stage_reset_route),
+        )
+        .map(|(), reply| reply);
+    let public_routes = auth_routes
         .or(code_generation_routes)
-        .or(feature_flag_routes)
-        .or(join_stage_report_route)
-        .or(join_stage_reset_route)
         .or(signaling_route)
         .or(root_route)
         .or(healthz_route)
-        .or(static_files_route)
-        .with(
-            warp::cors()
-                .allow_any_origin()
-                .allow_methods(vec!["GET", "POST", "OPTIONS"])
-                .allow_headers(vec![
-                    "Content-Type",
-                    "Authorization",
-                    "User-Agent",
-                    "Sec-WebSocket-Key",
-                    "Sec-WebSocket-Version",
-                    "Sec-WebSocket-Extensions",
-                    "Upgrade",
-                    "Connection",
-                ]),
+        .or(static_files_route);
+
+    let allowed_cors_origins = parse_list_env("MGS_ALLOWED_ORIGINS");
+    let base_routes = protected_routes.or(public_routes).recover(handle_route_rejection);
+    let routes = if allowed_cors_origins.is_empty() {
+        info!(
+            "No cross-origin API origins configured (set MGS_ALLOWED_ORIGINS for explicit allowlist)."
         );
+        base_routes
+            .map(warp::reply::Reply::into_response)
+            .boxed()
+    } else {
+        for origin in &allowed_cors_origins {
+            info!("Allowing API CORS origin: {}", origin);
+        }
+        base_routes
+            .with(
+                warp::cors()
+                    .allow_origins(allowed_cors_origins.iter().map(String::as_str))
+                    .allow_methods(vec!["GET", "POST", "OPTIONS"])
+                    .allow_headers(vec![
+                        "Content-Type",
+                        "Authorization",
+                        "User-Agent",
+                        "Sec-WebSocket-Key",
+                        "Sec-WebSocket-Version",
+                        "Sec-WebSocket-Extensions",
+                        "Upgrade",
+                        "Connection",
+                    ]),
+            )
+            .map(warp::reply::Reply::into_response)
+            .boxed()
+    };
 
     let game_server_for_loop = Arc::clone(&game_server_instance); // Use the renamed variable
-    tokio::spawn(async move {
+    let game_loop_handle = tokio::spawn(async move {
         info!("Starting game loop...");
         game_server_for_loop.run_game_loop().await;
         info!("Game loop stopped.");
     });
 
+    let arena_worker_shutdown_server = game_server_instance.clone();
     let arena_worker_enabled = std::env::var("MGS_ARENA_WORKER_ENABLED")
         .ok()
         .map(|raw| {
@@ -356,6 +598,10 @@ async fn main() -> anyhow::Result<()> {
             );
             loop {
                 ticker.tick().await;
+                if arena_worker_shutdown_server.is_shutdown_requested() {
+                    info!("Arena worker shutdown requested; stopping worker loop.");
+                    break;
+                }
                 match arena_service_for_worker.worker_execute_next(worker_max_ticks, None) {
                     Ok(Some(executed)) => {
                         info!(
@@ -377,6 +623,7 @@ async fn main() -> anyhow::Result<()> {
                     Err(err) => warn!("Arena worker execute_next failed: {}", err),
                 }
             }
+            info!("Arena worker stopped.");
         });
     }
 
@@ -394,7 +641,21 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Signaling server listening on ws://{}/ws", server_address);
     info!("Client files served from http://{}/", server_address);
-    warp::serve(routes).run(server_address).await;
+
+    let server_for_shutdown = game_server_instance.clone();
+    let (_bound_address, server) =
+        warp::serve(routes).bind_with_graceful_shutdown(server_address, async move {
+            match tokio::signal::ctrl_c().await {
+                Ok(()) => info!("Shutdown signal received."),
+                Err(err) => warn!("Failed to listen for shutdown signal: {}", err),
+            }
+            lifecycle::request_shutdown(&server_for_shutdown);
+        });
+    server.await;
+
+    if let Err(err) = game_loop_handle.await {
+        error!("Game loop task join failed: {}", err);
+    }
 
     info!("Massive Game Server shut down.");
     Ok(())

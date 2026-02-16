@@ -67,8 +67,12 @@ impl MassiveGameServer {
         );
 
         loop {
-            let frame_start_time = Instant::now();
             tick_timer.tick().await;
+            if crate::server::lifecycle::is_shutdown_requested(self.as_ref()) {
+                info!("Shutdown requested; exiting game loop.");
+                break;
+            }
+            let frame_start_time = Instant::now();
 
             let current_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
 
@@ -103,6 +107,8 @@ impl MassiveGameServer {
                 warn!("Frame {} took too long: {:?}", current_frame, frame_time);
             }
         }
+
+        info!("Game loop stopped.");
     }
 
     /*pub async fn synchronize_state(&self) {

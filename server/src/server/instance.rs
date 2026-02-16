@@ -942,6 +942,14 @@ impl MassiveGameServer {
         server
     }
 
+    pub fn request_shutdown(&self) {
+        self.is_shutting_down.store(true, AtomicOrdering::SeqCst);
+    }
+
+    pub fn is_shutdown_requested(&self) -> bool {
+        self.is_shutting_down.load(AtomicOrdering::Acquire)
+    }
+
     fn sync_pickups_to_partition_index(
         world_partition_manager: &Arc<WorldPartitionManager>,
         pickups: &[Pickup],
@@ -1048,7 +1056,7 @@ impl MassiveGameServer {
 
                     let pickup_type = pickup_types[i % pickup_types.len()].clone();
                     pickups.push(Pickup::new(
-                        Uuid::new_v4().as_u128() as u64,
+                        generate_entity_id(),
                         x,
                         y,
                         pickup_type,

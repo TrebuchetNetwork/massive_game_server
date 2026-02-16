@@ -1,9 +1,8 @@
 // massive_game_server/server/src/world/map_generator.rs
 use crate::core::constants::*;
-use crate::core::types::{Vec2, Wall}; // Removed unused EntityId
+use crate::core::types::{generate_entity_id, Vec2, Wall};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use uuid::Uuid;
 
 pub struct MapGenerator;
 
@@ -56,7 +55,7 @@ impl MapGenerator {
         let thickness = 20.0;
 
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: WORLD_MIN_X,
             y: WORLD_MIN_Y,
             width: WORLD_MAX_X - WORLD_MIN_X,
@@ -66,7 +65,7 @@ impl MapGenerator {
             max_health: 1000,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: WORLD_MIN_X,
             y: WORLD_MAX_Y - thickness,
             width: WORLD_MAX_X - WORLD_MIN_X,
@@ -76,7 +75,7 @@ impl MapGenerator {
             max_health: 1000,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: WORLD_MIN_X,
             y: WORLD_MIN_Y,
             width: thickness,
@@ -86,7 +85,7 @@ impl MapGenerator {
             max_health: 1000,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: WORLD_MAX_X - thickness,
             y: WORLD_MIN_Y,
             width: thickness,
@@ -110,7 +109,7 @@ impl MapGenerator {
         let offset = arena_radius - pillar_size / 2.0;
 
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: center_x - offset - pillar_size / 2.0,
             y: center_y - offset - pillar_size / 2.0,
             width: pillar_size,
@@ -120,7 +119,7 @@ impl MapGenerator {
             max_health: 500,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: center_x - offset - pillar_size / 2.0,
             y: center_y - offset - pillar_size / 2.0,
             width: wall_thickness,
@@ -131,7 +130,7 @@ impl MapGenerator {
         });
 
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: center_x + offset - pillar_size / 2.0,
             y: center_y - offset - pillar_size / 2.0,
             width: pillar_size,
@@ -141,7 +140,7 @@ impl MapGenerator {
             max_health: 500,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: center_x + offset + pillar_size / 2.0 - wall_thickness,
             y: center_y - offset - pillar_size / 2.0,
             width: wall_thickness,
@@ -152,7 +151,7 @@ impl MapGenerator {
         });
 
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: center_x - offset - pillar_size / 2.0,
             y: center_y + offset + pillar_size / 2.0 - wall_thickness,
             width: pillar_size,
@@ -162,7 +161,7 @@ impl MapGenerator {
             max_health: 500,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: center_x - offset - pillar_size / 2.0,
             y: center_y + offset - pillar_size / 2.0,
             width: wall_thickness,
@@ -173,7 +172,7 @@ impl MapGenerator {
         });
 
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: center_x + offset - pillar_size / 2.0,
             y: center_y + offset + pillar_size / 2.0 - wall_thickness,
             width: pillar_size,
@@ -183,7 +182,7 @@ impl MapGenerator {
             max_health: 500,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: center_x + offset + pillar_size / 2.0 - wall_thickness,
             y: center_y + offset - pillar_size / 2.0,
             width: wall_thickness,
@@ -205,7 +204,7 @@ impl MapGenerator {
         let t1_base_x = WORLD_MIN_X + wall_thickness;
         let t1_base_y_center = 0.0;
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: t1_base_x,
             y: t1_base_y_center - base_width / 2.0,
             width: wall_thickness,
@@ -215,7 +214,7 @@ impl MapGenerator {
             max_health: 1000,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: t1_base_x,
             y: t1_base_y_center - base_width / 2.0,
             width: base_depth * 0.6,
@@ -225,7 +224,7 @@ impl MapGenerator {
             max_health: 700,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: t1_base_x,
             y: t1_base_y_center + base_width / 2.0 - wall_thickness,
             width: base_depth * 0.6,
@@ -235,7 +234,7 @@ impl MapGenerator {
             max_health: 700,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: t1_base_x + base_depth * 0.3,
             y: t1_base_y_center - 50.0,
             width: 60.0,
@@ -248,7 +247,7 @@ impl MapGenerator {
         let t2_base_x = WORLD_MAX_X - base_depth - wall_thickness;
         let t2_base_y_center = 0.0;
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: WORLD_MAX_X - wall_thickness * 2.0,
             y: t2_base_y_center - base_width / 2.0,
             width: wall_thickness,
@@ -258,7 +257,7 @@ impl MapGenerator {
             max_health: 1000,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: t2_base_x + base_depth * 0.4 - wall_thickness,
             y: t2_base_y_center - base_width / 2.0,
             width: base_depth * 0.6,
@@ -268,7 +267,7 @@ impl MapGenerator {
             max_health: 700,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: t2_base_x + base_depth * 0.4 - wall_thickness,
             y: t2_base_y_center + base_width / 2.0 - wall_thickness,
             width: base_depth * 0.6,
@@ -278,7 +277,7 @@ impl MapGenerator {
             max_health: 700,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: t2_base_x + base_depth * 0.7 - 60.0,
             y: t2_base_y_center + 50.0,
             width: 60.0,
@@ -312,7 +311,7 @@ impl MapGenerator {
             let width = rng.gen_range(40.0..80.0);
             let height = rng.gen_range(15.0..30.0);
             walls.push(Wall {
-                id: Uuid::new_v4().as_u128() as u64,
+                id: generate_entity_id(),
                 x,
                 y,
                 width,
@@ -339,7 +338,7 @@ impl MapGenerator {
 
             let size = rng.gen_range(50.0..70.0);
             walls.push(Wall {
-                id: Uuid::new_v4().as_u128() as u64,
+                id: generate_entity_id(),
                 x,
                 y,
                 width: size,
@@ -360,7 +359,7 @@ impl MapGenerator {
 
         let top_y_divider = WORLD_MIN_Y / 3.0;
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: WORLD_MIN_X + 300.0,
             y: top_y_divider,
             width: 400.0,
@@ -370,7 +369,7 @@ impl MapGenerator {
             max_health: lane_wall_health,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: WORLD_MAX_X - 700.0,
             y: top_y_divider,
             width: 400.0,
@@ -382,7 +381,7 @@ impl MapGenerator {
 
         let bottom_y_divider = WORLD_MAX_Y / 3.0;
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: WORLD_MIN_X + 300.0,
             y: bottom_y_divider,
             width: 400.0,
@@ -392,7 +391,7 @@ impl MapGenerator {
             max_health: lane_wall_health,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: WORLD_MAX_X - 700.0,
             y: bottom_y_divider,
             width: 400.0,
@@ -405,7 +404,7 @@ impl MapGenerator {
         let mid_x1 = -200.0;
         let mid_x2 = 200.0;
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: mid_x1,
             y: WORLD_MIN_Y + 100.0,
             width: wall_thickness,
@@ -415,7 +414,7 @@ impl MapGenerator {
             max_health: 500,
         });
         walls.push(Wall {
-            id: Uuid::new_v4().as_u128() as u64,
+            id: generate_entity_id(),
             x: mid_x2,
             y: WORLD_MAX_Y - 250.0,
             width: wall_thickness,

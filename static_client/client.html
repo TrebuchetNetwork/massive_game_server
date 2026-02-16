@@ -6196,7 +6196,7 @@ void main() {
                 .filter((value) => value.length > 0);
         }
 
-        function parseIceServerSpec(rawSpec) {
+        function parseIceServerSpec(rawSpec, options = {}) {
             if (!rawSpec) return null;
             const parts = String(rawSpec)
                 .split('|')
@@ -6208,14 +6208,48 @@ void main() {
             const server = {
                 urls: urls.length === 1 ? urls[0] : urls
             };
-            if (parts[1]) server.username = parts[1];
-            if (parts[2]) server.credential = parts[2];
+            if (options.includeCredentials === true) {
+                if (parts[1]) server.username = parts[1];
+                if (parts[2]) server.credential = parts[2];
+            }
             return server;
+        }
+
+        function resolveTurnCredentials() {
+            const runtimeConfig = window.__MGS_TURN_CONFIG;
+            if (runtimeConfig && typeof runtimeConfig === 'object') {
+                const username = String(runtimeConfig.username || runtimeConfig.user || '').trim();
+                const credential = String(
+                    runtimeConfig.credential || runtimeConfig.password || runtimeConfig.pass || ''
+                ).trim();
+                if (username || credential) {
+                    return { username, credential };
+                }
+            }
+
+            let username = '';
+            let credential = '';
+            try {
+                username = String(
+                    sessionStorage.getItem('mgs_turn_username')
+                    || localStorage.getItem('mgs_turn_username')
+                    || ''
+                ).trim();
+                credential = String(
+                    sessionStorage.getItem('mgs_turn_credential')
+                    || localStorage.getItem('mgs_turn_credential')
+                    || ''
+                ).trim();
+            } catch (_err) {
+                // Ignore storage access errors (e.g., privacy mode restrictions).
+            }
+            return { username, credential };
         }
 
         function buildPeerConnectionConfig() {
             const disableClientStun = uiModeParams.get('disable_stun') === '1' || uiModeParams.get('nostun') === '1';
             const servers = [];
+            let ignoredUrlIceCredentials = false;
 
             const addServer = (server) => {
                 if (!server || !server.urls) return;
@@ -6240,19 +6274,44 @@ void main() {
             }
             genericIceSpecs.forEach((rawSpec) => {
                 splitNonEmptyValues(rawSpec, ';').forEach((entry) => {
+                    const parts = String(entry).split('|');
+                    const urlEmbeddedUser = String(parts[1] || '').trim();
+                    const urlEmbeddedCredential = String(parts[2] || '').trim();
+                    if (urlEmbeddedUser || urlEmbeddedCredential) {
+                        ignoredUrlIceCredentials = true;
+                    }
                     addServer(parseIceServerSpec(entry));
                 });
             });
+            if (ignoredUrlIceCredentials) {
+                log(
+                    'Ignoring ICE credentials in URL query params for security. '
+                    + 'Use window.__MGS_TURN_CONFIG or storage keys instead.',
+                    'warn'
+                );
+            }
 
             const turnUrls = splitNonEmptyValues(uiModeParams.get('turn'), ',');
             if (turnUrls.length) {
                 const turnServer = {
                     urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls
                 };
-                const turnUser = String(uiModeParams.get('turn_user') || uiModeParams.get('turn_username') || '').trim();
-                const turnCredential = String(uiModeParams.get('turn_pass') || uiModeParams.get('turn_credential') || '').trim();
-                if (turnUser) turnServer.username = turnUser;
-                if (turnCredential) turnServer.credential = turnCredential;
+                const legacyTurnUser = String(
+                    uiModeParams.get('turn_user') || uiModeParams.get('turn_username') || ''
+                ).trim();
+                const legacyTurnCredential = String(
+                    uiModeParams.get('turn_pass') || uiModeParams.get('turn_credential') || ''
+                ).trim();
+                if (legacyTurnUser || legacyTurnCredential) {
+                    log(
+                        'Ignoring TURN credentials in URL query params for security. '
+                        + 'Use window.__MGS_TURN_CONFIG or storage keys instead.',
+                        'warn'
+                    );
+                }
+                const turnCredentials = resolveTurnCredentials();
+                if (turnCredentials.username) turnServer.username = turnCredentials.username;
+                if (turnCredentials.credential) turnServer.credential = turnCredentials.credential;
                 addServer(turnServer);
             }
 
@@ -12058,7 +12117,14 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 const player = players.get(msg.player_id);
                 const nameColor = player ? (teamColors[player.team_id] || teamColors[0]) : teamColors[0];
                 const hexColor = '#' + nameColor.toString(16).padStart(6, '0');
-                div.innerHTML = `<span class="username" style="color:${hexColor};">${msg.username || 'System'}:</span> ${escapeHtml(msg.message)}`;
+                const username = document.createElement('span');
+                username.className = 'username';
+                username.style.color = hexColor;
+                username.textContent = `${msg.username || 'System'}:`;
+
+                const messageText = document.createTextNode(` ${msg.message || ''}`);
+                div.appendChild(username);
+                div.appendChild(messageText);
                 chatDisplayDiv.appendChild(div);
             });
             chatDisplayDiv.scrollTop = chatDisplayDiv.scrollHeight;
@@ -13174,11 +13240,17 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                                 break;
                             case 'chat':
                                 if (parsed.data) {
+                                    const username = typeof parsed.data.username === 'string'
+                                        ? parsed.data.username
+                                        : 'System';
+                                    const message = typeof parsed.data.message === 'string'
+                                        ? parsed.data.message
+                                        : String(parsed.data.message ?? '');
                                     chatMessages.push({
                                         seq: parsed.data.seq,
                                         player_id: parsed.data.player_id,
-                                        username: parsed.data.username,
-                                        message: parsed.data.message,
+                                        username,
+                                        message,
                                         timestamp: parsed.data.timestamp
                                     });
                                     if (chatMessages.length > 50) chatMessages.shift();

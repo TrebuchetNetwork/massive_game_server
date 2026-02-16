@@ -27,6 +27,9 @@ jobs:
       - name: Build debug binary
         run: cargo build -p massive_game_server_core --bin massive_game_server_core
 
+      - name: Build release binary
+        run: cargo build -p massive_game_server_core --release --bin massive_game_server_core
+
       - name: Website route smoke test
         run: |
           set -euo pipefail

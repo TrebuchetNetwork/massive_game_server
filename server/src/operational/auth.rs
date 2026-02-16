@@ -4,6 +4,8 @@ use parking_lot::{Mutex as ParkingLotMutex, RwLock};
 use rand::Rng;
 use redis::Commands;
 use serde::{Deserialize, Serialize};
+use shell_escape::escape as shell_escape;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fs;
@@ -642,9 +644,11 @@ impl AuthService {
         );
 
         if let Some(command_template) = &self.inner.sms_command {
+            let escaped_phone = shell_escape(Cow::Borrowed(phone_number));
+            let escaped_message = shell_escape(Cow::Borrowed(message.as_str()));
             let rendered = command_template
-                .replace("{phone}", phone_number)
-                .replace("{message}", &message);
+                .replace("{phone}", escaped_phone.as_ref())
+                .replace("{message}", escaped_message.as_ref());
             match Command::new("sh").arg("-c").arg(&rendered).status() {
                 Ok(status) if status.success() => {
                     info!("SMS command delivered code to {}", phone_number);

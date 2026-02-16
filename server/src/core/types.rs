@@ -5,10 +5,14 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant; // Removed unused Duration
-use uuid::Uuid;
 
 pub type PlayerID = Arc<String>;
 pub type EntityId = u64;
+static ENTITY_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+pub fn generate_entity_id() -> EntityId {
+    ENTITY_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst)
+}
 
 // --- Server-Side Enums ---
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -389,7 +393,7 @@ impl Projectile {
         direction_y: f32,
         damage_multiplier: f32,
     ) -> Self {
-        let id = Uuid::new_v4().as_u128() as u64;
+        let id = generate_entity_id();
 
         // Get speed and lifetime for weapon
         let (speed, lifetime) = match weapon_type {
