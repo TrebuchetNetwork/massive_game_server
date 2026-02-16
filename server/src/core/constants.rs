@@ -44,6 +44,11 @@ pub const SHOTGUN_SPREAD_ANGLE_RAD: f32 = 0.4;
 // Other game constants
 pub const DEFAULT_RESPAWN_DURATION_SECS: f32 = 5.0;
 pub const MAX_INPUT_QUEUE_SIZE_PER_PLAYER: usize = 32;
+pub const GAME_PROTOCOL_VERSION: u32 = 1;
+
+pub const DEFAULT_INPUT_RATE_LIMIT_PER_SEC: u32 = 240;
+pub const DEFAULT_INPUT_RATE_LIMIT_BURST: u32 = 360;
+pub const INPUT_RATE_LIMIT_THROTTLE_LOG_INTERVAL_SECS: u64 = 5;
 
 pub const SAFE_SPAWN_RADIUS_FROM_ENEMY: f32 = 300.0; // Example value, adjust as needed
 

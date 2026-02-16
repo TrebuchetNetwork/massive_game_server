@@ -270,6 +270,7 @@ union MessagePayload {
 table GameMessage {
     msg_type: MessageType;          // This field indicates which type in the union is actually present
     actual_message: MessagePayload; // Use the named union as the type for this field.
+    protocol_version: uint = 1;    // Protocol compatibility/version gate for clients and server
     // actual_message_type is added automatically by FlatBuffers for union types
 }
 

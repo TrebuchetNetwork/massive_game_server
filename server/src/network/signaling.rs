@@ -44,8 +44,7 @@ use webrtc::{
 // Removed: use rand::Rng; // Not directly used here after spawn logic change
 
 // Type Aliases
-pub type SignalingPeers =
-    Arc<DashMap<String, mpsc::UnboundedSender<Result<Message, warp::Error>>>>;
+pub type SignalingPeers = Arc<DashMap<String, mpsc::UnboundedSender<Result<Message, warp::Error>>>>;
 pub type PlayerManagerRef = Arc<ImprovedPlayerManager>;
 pub type DataChannelsMap = Arc<DashMap<String, Arc<CoreRTCDataChannel>>>;
 pub type WorldPartitionManagerRef = Arc<WorldPartitionManager>;
@@ -74,9 +73,7 @@ fn shared_webrtc_api() -> Result<Arc<API>, String> {
             .register_default_codecs()
             .map_err(|e| format!("register_default_codecs failed: {e}"))?;
         Ok(Arc::new(
-            APIBuilder::new()
-                .with_media_engine(media_engine)
-                .build(),
+            APIBuilder::new().with_media_engine(media_engine).build(),
         ))
     }) {
         Ok(api) => Ok(Arc::clone(api)),
@@ -176,6 +173,7 @@ fn build_welcome_message_bytes(player_id: &str, server_tick_rate: u16) -> Bytes 
         msg_type: fb::MessageType::Welcome,
         actual_message_type: fb::MessagePayload::WelcomeMessage,
         actual_message: Some(welcome_msg.as_union_value()),
+        protocol_version: GAME_PROTOCOL_VERSION,
     };
     let game_msg_welcome = fb::GameMessage::create(&mut builder_welcome, &game_msg_welcome_args);
     builder_welcome.finish(game_msg_welcome, None);
@@ -286,6 +284,12 @@ const MAX_SIGNALING_ICE_CANDIDATE_BYTES: usize = 4 * 1024;
 const MAX_SIGNALING_ICE_SDP_MID_BYTES: usize = 256;
 const MAX_SIGNALING_ICE_USERNAME_FRAGMENT_BYTES: usize = 256;
 
+#[derive(Clone, Copy, Debug)]
+struct InputRateLimitConfig {
+    per_sec: u32,
+    burst: u32,
+}
+
 #[derive(Debug)]
 struct JoinRateLimiter {
     refill_per_sec: f64,
@@ -327,6 +331,67 @@ impl JoinRateLimiter {
     }
 }
 
+#[derive(Debug)]
+struct InputRateLimiter {
+    refill_per_sec: f64,
+    capacity: f64,
+    available_tokens: f64,
+    last_refill_at: Instant,
+    last_drop_log_at: Instant,
+}
+
+impl InputRateLimiter {
+    fn new(refill_per_sec: u32, capacity: u32) -> Self {
+        let refill = refill_per_sec.max(1) as f64;
+        let cap = capacity.max(1) as f64;
+        Self {
+            refill_per_sec: refill,
+            capacity: cap,
+            available_tokens: cap,
+            last_refill_at: Instant::now(),
+            last_drop_log_at: Instant::now()
+                .checked_sub(Duration::from_secs(
+                    INPUT_RATE_LIMIT_THROTTLE_LOG_INTERVAL_SECS,
+                ))
+                .unwrap_or_else(Instant::now),
+        }
+    }
+
+    fn try_acquire(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now
+            .checked_duration_since(self.last_refill_at)
+            .unwrap_or(Duration::from_millis(0))
+            .as_secs_f64();
+        if elapsed > 0.0 {
+            self.available_tokens =
+                (self.available_tokens + (elapsed * self.refill_per_sec)).min(self.capacity);
+            self.last_refill_at = now;
+        }
+
+        if self.available_tokens >= 1.0 {
+            self.available_tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn should_log_throttle(&mut self) -> bool {
+        let now = Instant::now();
+        if now
+            .checked_duration_since(self.last_drop_log_at)
+            .unwrap_or(Duration::from_millis(0))
+            >= Duration::from_secs(INPUT_RATE_LIMIT_THROTTLE_LOG_INTERVAL_SECS)
+        {
+            self.last_drop_log_at = now;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 fn env_u32(name: &str, default_value: u32) -> u32 {
     std::env::var(name)
         .ok()
@@ -356,6 +421,31 @@ fn join_rate_limiter() -> Option<&'static Mutex<JoinRateLimiter>> {
             Some(Mutex::new(JoinRateLimiter::new(per_sec, burst)))
         })
         .as_ref()
+}
+
+fn input_rate_limit_config() -> Option<InputRateLimitConfig> {
+    static INPUT_RATE_LIMIT_CONFIG: OnceLock<Option<InputRateLimitConfig>> = OnceLock::new();
+    INPUT_RATE_LIMIT_CONFIG
+        .get_or_init(|| {
+            let per_sec = env_u32(
+                "MGS_INPUT_RATE_LIMIT_PER_SEC",
+                DEFAULT_INPUT_RATE_LIMIT_PER_SEC,
+            );
+            if per_sec == 0 {
+                info!("Input rate limiter disabled (MGS_INPUT_RATE_LIMIT_PER_SEC=0).");
+                return None;
+            }
+
+            let burst =
+                env_u32("MGS_INPUT_RATE_LIMIT_BURST", DEFAULT_INPUT_RATE_LIMIT_BURST).max(per_sec);
+            info!(
+                "Input rate limiter enabled: {} inputs/sec with burst {}.",
+                per_sec, burst
+            );
+            Some(InputRateLimitConfig { per_sec, burst })
+        })
+        .as_ref()
+        .copied()
 }
 
 fn try_acquire_join_rate_limit_token() -> bool {
@@ -813,16 +903,50 @@ pub async fn handle_signaling_connection(
         let peer_id_on_message = current_peer_id_on_dc.clone();
         let player_manager_on_message = player_manager_for_dc_event.clone();
         let chat_q_on_message = chat_messages_queue_for_dc_event.clone();
+        let input_rate_limiter = input_rate_limit_config()
+            .map(|cfg| Arc::new(Mutex::new(InputRateLimiter::new(cfg.per_sec, cfg.burst))));
 
         dc_on_message_arc.on_message(Box::new(move |msg: DataChannelMessage| {
             let pid_msg_inner_str = peer_id_on_message.clone();
             let players_map_on_msg = player_manager_on_message.clone();
             let chat_q_on_msg = chat_q_on_message.clone();
+            let input_rate_limiter_on_msg = input_rate_limiter.clone();
 
             Box::pin(async move {
                 if let Ok(game_msg_root) = fb::root_as_game_message(&msg.data) {
+                    let protocol_version = game_msg_root.protocol_version();
+                    if protocol_version != GAME_PROTOCOL_VERSION {
+                        warn!(
+                            "[{}]: Dropping message with protocol_version={} (server expects {}).",
+                            pid_msg_inner_str, protocol_version, GAME_PROTOCOL_VERSION
+                        );
+                        return;
+                    }
+
                     match game_msg_root.msg_type() {
                         fb::MessageType::Input => {
+                            if let Some(rate_limiter) = input_rate_limiter_on_msg.as_ref() {
+                                let mut limiter_guard = match rate_limiter.lock() {
+                                    Ok(guard) => guard,
+                                    Err(poisoned) => {
+                                        warn!(
+                                            "[{}]: Input rate limiter mutex poisoned; continuing with recovered state.",
+                                            pid_msg_inner_str
+                                        );
+                                        poisoned.into_inner()
+                                    }
+                                };
+                                if !limiter_guard.try_acquire() {
+                                    if limiter_guard.should_log_throttle() {
+                                        warn!(
+                                            "[{}]: Dropping input due to per-connection input rate limit.",
+                                            pid_msg_inner_str
+                                        );
+                                    }
+                                    return;
+                                }
+                            }
+
                             if game_msg_root.actual_message_type()
                                 == fb::MessagePayload::PlayerInput
                             {

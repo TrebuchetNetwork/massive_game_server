@@ -217,6 +217,65 @@ struct ProjectileChunkResults {
     wall_impacts: Vec<GameEvent>,
 }
 
+#[inline]
+fn segment_first_hit_fraction_with_aabb(
+    start_x: f32,
+    start_y: f32,
+    end_x: f32,
+    end_y: f32,
+    min_x: f32,
+    max_x: f32,
+    min_y: f32,
+    max_y: f32,
+) -> Option<f32> {
+    let dx = end_x - start_x;
+    let dy = end_y - start_y;
+    let mut t_min = 0.0f32;
+    let mut t_max = 1.0f32;
+
+    if dx.abs() < f32::EPSILON {
+        if start_x < min_x || start_x > max_x {
+            return None;
+        }
+    } else {
+        let inv_dx = 1.0 / dx;
+        let mut t1 = (min_x - start_x) * inv_dx;
+        let mut t2 = (max_x - start_x) * inv_dx;
+        if t1 > t2 {
+            std::mem::swap(&mut t1, &mut t2);
+        }
+        t_min = t_min.max(t1);
+        t_max = t_max.min(t2);
+        if t_min > t_max {
+            return None;
+        }
+    }
+
+    if dy.abs() < f32::EPSILON {
+        if start_y < min_y || start_y > max_y {
+            return None;
+        }
+    } else {
+        let inv_dy = 1.0 / dy;
+        let mut t1 = (min_y - start_y) * inv_dy;
+        let mut t2 = (max_y - start_y) * inv_dy;
+        if t1 > t2 {
+            std::mem::swap(&mut t1, &mut t2);
+        }
+        t_min = t_min.max(t1);
+        t_max = t_max.min(t2);
+        if t_min > t_max {
+            return None;
+        }
+    }
+
+    if t_max < 0.0 || t_min > 1.0 {
+        return None;
+    }
+
+    Some(t_min.clamp(0.0, 1.0))
+}
+
 #[derive(Debug)]
 struct PlayerPhysicsResults {
     players_to_respawn: Vec<(PlayerID, u8)>, // (player_id, team_id)
@@ -517,6 +576,7 @@ fn build_chat_game_message_bytes(chat_entry: &ChatMessage) -> Bytes {
             msg_type: fb::MessageType::Chat,
             actual_message_type: fb::MessagePayload::ChatMessage,
             actual_message: Some(chat_payload_offset.as_union_value()),
+            protocol_version: GAME_PROTOCOL_VERSION,
         },
     );
 
@@ -568,6 +628,18 @@ mod packet_batch_tests {
         assert_eq!(pending.len(), MAX_CHAT_PER_BATCH);
         assert_eq!(pending.first().map(|p| p.seq), Some(25));
         assert_eq!(pending.last().map(|p| p.seq), Some(34));
+    }
+
+    #[test]
+    fn segment_first_hit_fraction_detects_entry_time() {
+        let hit_t = segment_first_hit_fraction_with_aabb(0.0, 0.0, 10.0, 0.0, 4.0, 6.0, -1.0, 1.0);
+        assert_eq!(hit_t, Some(0.4));
+    }
+
+    #[test]
+    fn segment_first_hit_fraction_returns_none_for_miss() {
+        let hit_t = segment_first_hit_fraction_with_aabb(0.0, 0.0, 3.0, 0.0, 4.0, 6.0, -1.0, 1.0);
+        assert_eq!(hit_t, None);
     }
 }
 
@@ -1055,12 +1127,7 @@ impl MassiveGameServer {
                     }
 
                     let pickup_type = pickup_types[i % pickup_types.len()].clone();
-                    pickups.push(Pickup::new(
-                        generate_entity_id(),
-                        x,
-                        y,
-                        pickup_type,
-                    ));
+                    pickups.push(Pickup::new(generate_entity_id(), x, y, pickup_type));
                     placed = true;
                     break;
                 }
@@ -2351,6 +2418,7 @@ impl MassiveGameServer {
                 let mut target_ids: Vec<PlayerID> = Vec::with_capacity(32);
                 let mut target_xs: Vec<f32> = Vec::with_capacity(32);
                 let mut target_ys: Vec<f32> = Vec::with_capacity(32);
+                let mut candidate_partition_indices: Vec<usize> = Vec::with_capacity(16);
 
                 for (local_idx, proj) in chunk.iter_mut().enumerate() {
                     let global_idx = chunk_start_idx + local_idx;
@@ -2381,106 +2449,123 @@ impl MassiveGameServer {
                         continue;
                     }
 
-                    // Optimize wall collision by checking partition
-                    let partition_idx = self
-                        .world_partition_manager
-                        .get_partition_index_for_point(proj.x, proj.y);
-                    if let Some(wall_cache) = partition_wall_caches_ref.get(partition_idx) {
-                        let mut hit_wall = false;
+                    // Continuous wall collision detection across all partitions touched by
+                    // the projectile segment this tick.
+                    candidate_partition_indices.clear();
+                    self.world_partition_manager
+                        .collect_partition_indices_for_bounds(
+                            old_x.min(proj.x),
+                            old_x.max(proj.x),
+                            old_y.min(proj.y),
+                            old_y.max(proj.y),
+                            &mut candidate_partition_indices,
+                        );
 
-                        // Use ray casting for better collision detection
-                        let ray_length =
-                            ((proj.x - old_x).powi(2) + (proj.y - old_y).powi(2)).sqrt();
-                        let ray_steps = (ray_length / 5.0).ceil() as usize; // Check every 5 units
-                        let ray_den = ray_steps.max(1) as f32;
+                    let mut earliest_wall_hit_t: Option<f32> = None;
+                    let mut earliest_wall_id: EntityId = 0;
+                    let mut earliest_wall_destructible = false;
 
-                        'wall_check: for step in 0..=ray_steps {
-                            let t = step as f32 / ray_den;
-                            let check_x = old_x + (proj.x - old_x) * t;
-                            let check_y = old_y + (proj.y - old_y) * t;
+                    for partition_idx in &candidate_partition_indices {
+                        let Some(wall_cache) = partition_wall_caches_ref.get(*partition_idx) else {
+                            continue;
+                        };
 
-                            if let Some(wall_idx) = simd::first_index_aabb_containing_point(
-                                &wall_cache.min_xs,
-                                &wall_cache.max_xs,
-                                &wall_cache.min_ys,
-                                &wall_cache.max_ys,
-                                check_x,
-                                check_y,
-                            ) {
-                                // Set projectile position to collision point
-                                proj.x = check_x;
-                                proj.y = check_y;
+                        for wall_idx in 0..wall_cache.ids.len() {
+                            let Some(hit_t) = segment_first_hit_fraction_with_aabb(
+                                old_x,
+                                old_y,
+                                proj.x,
+                                proj.y,
+                                wall_cache.min_xs[wall_idx],
+                                wall_cache.max_xs[wall_idx],
+                                wall_cache.min_ys[wall_idx],
+                                wall_cache.max_ys[wall_idx],
+                            ) else {
+                                continue;
+                            };
 
-                                let wall_id = wall_cache.ids[wall_idx];
-                                if wall_cache.destructible[wall_idx] {
-                                    local_results.wall_hits.push((wall_id, proj.damage));
-                                    local_results.wall_impacts.push(GameEvent::WallImpact {
-                                        position: Vec2::new(check_x, check_y),
-                                        wall_id,
-                                        damage: proj.damage,
-                                    });
-                                }
-
-                                local_results.to_remove.push(global_idx);
-                                hit_wall = true;
-                                break 'wall_check;
+                            let is_earlier_hit = match earliest_wall_hit_t {
+                                Some(existing_t) => hit_t < existing_t,
+                                None => true,
+                            };
+                            if is_earlier_hit {
+                                earliest_wall_hit_t = Some(hit_t);
+                                earliest_wall_id = wall_cache.ids[wall_idx];
+                                earliest_wall_destructible = wall_cache.destructible[wall_idx];
                             }
                         }
+                    }
 
-                        if !hit_wall {
-                            // Check player collisions using spatial index
-                            let nearby_players =
-                                self.spatial_index.query_nearby_players_with_positions(
-                                    proj.x,
-                                    proj.y,
-                                    PLAYER_RADIUS + 20.0, // Small buffer for fast projectiles
-                                );
-                            target_ids.clear();
-                            target_xs.clear();
-                            target_ys.clear();
+                    if let Some(hit_t) = earliest_wall_hit_t {
+                        let hit_x = old_x + (proj.x - old_x) * hit_t;
+                        let hit_y = old_y + (proj.y - old_y) * hit_t;
+                        proj.x = hit_x;
+                        proj.y = hit_y;
 
-                            for (target_id, target_x, target_y) in nearby_players {
-                                if target_id == proj.owner_id {
-                                    continue;
-                                }
-                                target_ids.push(target_id);
-                                target_xs.push(target_x);
-                                target_ys.push(target_y);
-                            }
+                        if earliest_wall_destructible {
+                            local_results
+                                .wall_hits
+                                .push((earliest_wall_id, proj.damage));
+                            local_results.wall_impacts.push(GameEvent::WallImpact {
+                                position: Vec2::new(hit_x, hit_y),
+                                wall_id: earliest_wall_id,
+                                damage: proj.damage,
+                            });
+                        }
 
-                            if !target_ids.is_empty() {
-                                let radius_sq = PLAYER_RADIUS * PLAYER_RADIUS;
-                                if let Some(target_idx) = simd::first_index_within_segment_radius(
-                                    &target_xs, &target_ys, old_x, old_y, proj.x, proj.y, radius_sq,
-                                ) {
-                                    if let Some(target_id) = target_ids.get(target_idx) {
-                                        let seg_dx = proj.x - old_x;
-                                        let seg_dy = proj.y - old_y;
-                                        let seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy;
-                                        let target_x = target_xs[target_idx];
-                                        let target_y = target_ys[target_idx];
-                                        let t = if seg_len_sq > f32::EPSILON {
-                                            (((target_x - old_x) * seg_dx
-                                                + (target_y - old_y) * seg_dy)
-                                                / seg_len_sq)
-                                                .clamp(0.0, 1.0)
-                                        } else {
-                                            0.0
-                                        };
-                                        let hit_x = old_x + seg_dx * t;
-                                        let hit_y = old_y + seg_dy * t;
+                        local_results.to_remove.push(global_idx);
+                        continue;
+                    }
 
-                                        proj.x = hit_x;
-                                        proj.y = hit_y;
-                                        local_results.hits.push((
-                                            proj.owner_id.clone(),
-                                            target_id.clone(),
-                                            proj.damage,
-                                            proj.weapon_type,
-                                        ));
-                                        local_results.to_remove.push(global_idx);
-                                    }
-                                }
+                    // Check player collisions using spatial index.
+                    let nearby_players = self.spatial_index.query_nearby_players_with_positions(
+                        proj.x,
+                        proj.y,
+                        PLAYER_RADIUS + 20.0, // Small buffer for fast projectiles
+                    );
+                    target_ids.clear();
+                    target_xs.clear();
+                    target_ys.clear();
+
+                    for (target_id, target_x, target_y) in nearby_players {
+                        if target_id == proj.owner_id {
+                            continue;
+                        }
+                        target_ids.push(target_id);
+                        target_xs.push(target_x);
+                        target_ys.push(target_y);
+                    }
+
+                    if !target_ids.is_empty() {
+                        let radius_sq = PLAYER_RADIUS * PLAYER_RADIUS;
+                        if let Some(target_idx) = simd::first_index_within_segment_radius(
+                            &target_xs, &target_ys, old_x, old_y, proj.x, proj.y, radius_sq,
+                        ) {
+                            if let Some(target_id) = target_ids.get(target_idx) {
+                                let seg_dx = proj.x - old_x;
+                                let seg_dy = proj.y - old_y;
+                                let seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy;
+                                let target_x = target_xs[target_idx];
+                                let target_y = target_ys[target_idx];
+                                let t = if seg_len_sq > f32::EPSILON {
+                                    (((target_x - old_x) * seg_dx + (target_y - old_y) * seg_dy)
+                                        / seg_len_sq)
+                                        .clamp(0.0, 1.0)
+                                } else {
+                                    0.0
+                                };
+                                let hit_x = old_x + seg_dx * t;
+                                let hit_y = old_y + seg_dy * t;
+
+                                proj.x = hit_x;
+                                proj.y = hit_y;
+                                local_results.hits.push((
+                                    proj.owner_id.clone(),
+                                    target_id.clone(),
+                                    proj.damage,
+                                    proj.weapon_type,
+                                ));
+                                local_results.to_remove.push(global_idx);
                             }
                         }
                     }
@@ -5125,6 +5210,7 @@ impl MassiveGameServer {
                 msg_type: fb::MessageType::DeltaState,
                 actual_message_type: fb::MessagePayload::DeltaStateMessage,
                 actual_message: Some(delta_state.as_union_value()),
+                protocol_version: GAME_PROTOCOL_VERSION,
             },
         );
 
@@ -5954,6 +6040,7 @@ impl MassiveGameServer {
             msg_type: fb::MessageType::InitialState,
             actual_message_type: fb::MessagePayload::InitialStateMessage,
             actual_message: Some(initial_state_msg.as_union_value()),
+            protocol_version: GAME_PROTOCOL_VERSION,
         };
         let game_msg = fb::GameMessage::create(&mut builder, &game_msg_args);
         builder.finish(game_msg, None);
@@ -6029,6 +6116,7 @@ impl MassiveGameServer {
                 msg_type: fb::MessageType::DeltaState,
                 actual_message_type: fb::MessagePayload::DeltaStateMessage,
                 actual_message: Some(delta_state_msg.as_union_value()),
+                protocol_version: GAME_PROTOCOL_VERSION,
             },
         );
         builder.finish(game_msg, None);
