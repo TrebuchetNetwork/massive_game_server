@@ -25,10 +25,11 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{Arc, Mutex, OnceLock},
+    net::IpAddr,
+    sync::{Arc, Mutex as StdMutex, OnceLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex as AsyncMutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use warp::ws::{Message, WebSocket};
@@ -280,6 +281,8 @@ fn map_server_weapon_to_fb(server_weapon: ServerWeaponType) -> fb::WeaponType {
 
 const DEFAULT_JOIN_RATE_LIMIT_PER_SEC: u32 = 30;
 const DEFAULT_JOIN_RATE_LIMIT_BURST: u32 = 50;
+const DEFAULT_IP_RATE_LIMIT_PER_SEC: u32 = 20;
+const DEFAULT_IP_RATE_LIMIT_BURST: u32 = 40;
 const JOIN_RATE_LIMIT_THROTTLED_MESSAGE: &str = "Server busy handling joins, retry shortly.";
 const MAX_SIGNALING_TEXT_BYTES: usize = 128 * 1024;
 const MAX_SIGNALING_SDP_BYTES: usize = 120 * 1024;
@@ -289,6 +292,12 @@ const MAX_SIGNALING_ICE_USERNAME_FRAGMENT_BYTES: usize = 256;
 
 #[derive(Clone, Copy, Debug)]
 struct InputRateLimitConfig {
+    per_sec: u32,
+    burst: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IpRateLimitConfig {
     per_sec: u32,
     burst: u32,
 }
@@ -402,8 +411,8 @@ fn env_u32(name: &str, default_value: u32) -> u32 {
         .unwrap_or(default_value)
 }
 
-fn join_rate_limiter() -> Option<&'static Mutex<JoinRateLimiter>> {
-    static JOIN_RATE_LIMITER: OnceLock<Option<Mutex<JoinRateLimiter>>> = OnceLock::new();
+fn join_rate_limiter() -> Option<&'static StdMutex<JoinRateLimiter>> {
+    static JOIN_RATE_LIMITER: OnceLock<Option<StdMutex<JoinRateLimiter>>> = OnceLock::new();
     JOIN_RATE_LIMITER
         .get_or_init(|| {
             let per_sec = env_u32(
@@ -421,9 +430,30 @@ fn join_rate_limiter() -> Option<&'static Mutex<JoinRateLimiter>> {
                 "Join rate limiter enabled: {} joins/sec with burst {}.",
                 per_sec, burst
             );
-            Some(Mutex::new(JoinRateLimiter::new(per_sec, burst)))
+            Some(StdMutex::new(JoinRateLimiter::new(per_sec, burst)))
         })
         .as_ref()
+}
+
+fn ip_rate_limit_config() -> Option<IpRateLimitConfig> {
+    static IP_RATE_LIMIT_CONFIG: OnceLock<Option<IpRateLimitConfig>> = OnceLock::new();
+    IP_RATE_LIMIT_CONFIG
+        .get_or_init(|| {
+            let per_sec = env_u32("MGS_IP_RATE_LIMIT_PER_SEC", DEFAULT_IP_RATE_LIMIT_PER_SEC);
+            if per_sec == 0 {
+                info!("IP rate limiter disabled (MGS_IP_RATE_LIMIT_PER_SEC=0).");
+                return None;
+            }
+
+            let burst = env_u32("MGS_IP_RATE_LIMIT_BURST", DEFAULT_IP_RATE_LIMIT_BURST).max(per_sec);
+            info!(
+                "IP rate limiter enabled: {} connects/sec per source IP with burst {}.",
+                per_sec, burst
+            );
+            Some(IpRateLimitConfig { per_sec, burst })
+        })
+        .as_ref()
+        .copied()
 }
 
 fn input_rate_limit_config() -> Option<InputRateLimitConfig> {
@@ -464,6 +494,19 @@ fn try_acquire_join_rate_limit_token() -> bool {
         }
     };
     limiter_guard.try_acquire()
+}
+
+fn try_acquire_ip_rate_limit_token(client_ip: &IpAddr) -> bool {
+    let Some(cfg) = ip_rate_limit_config() else {
+        return true;
+    };
+
+    static IP_RATE_LIMITERS: OnceLock<DashMap<IpAddr, JoinRateLimiter>> = OnceLock::new();
+    let limiters = IP_RATE_LIMITERS.get_or_init(DashMap::new);
+    let mut limiter = limiters
+        .entry(*client_ip)
+        .or_insert_with(|| JoinRateLimiter::new(cfg.per_sec, cfg.burst));
+    limiter.try_acquire()
 }
 
 fn validate_signaling_payload(payload: &SignalingMessageJson) -> Result<(), &'static str> {
@@ -514,6 +557,7 @@ pub async fn handle_signaling_connection(
     server_instance: ServerInstanceRef, // Added server instance for initial spawn
     auth_service: AuthService,
     auth_user_id: Option<String>,
+    remote_ip: Option<IpAddr>,
 ) {
     shared_connection_manager().upsert(ConnectionInfo::new(
         peer_id_str.clone(),
@@ -535,6 +579,24 @@ pub async fn handle_signaling_connection(
         let _ = throttled_ws_tx.send(Message::close()).await;
         let _ = shared_connection_manager().remove(&peer_id_str);
         return;
+    }
+    if let Some(client_ip) = remote_ip {
+        if !try_acquire_ip_rate_limit_token(&client_ip) {
+            warn!(
+                "[{}]: Join attempt throttled by IP rate limiter (ip={}).",
+                peer_id_str, client_ip
+            );
+            let (mut throttled_ws_tx, _) = ws.split();
+            let throttled_payload = serde_json::json!({
+                "error": "ip_rate_limited",
+                "detail": "Too many signaling connections from this IP. Retry shortly.",
+            })
+            .to_string();
+            let _ = throttled_ws_tx.send(Message::text(throttled_payload)).await;
+            let _ = throttled_ws_tx.send(Message::close()).await;
+            let _ = shared_connection_manager().remove(&peer_id_str);
+            return;
+        }
     }
 
     info!("[{}]: New WebSocket connection for signaling.", peer_id_str);
@@ -914,7 +976,7 @@ pub async fn handle_signaling_connection(
         let player_manager_on_message = player_manager_for_dc_event.clone();
         let chat_q_on_message = chat_messages_queue_for_dc_event.clone();
         let input_rate_limiter = input_rate_limit_config()
-            .map(|cfg| Arc::new(Mutex::new(InputRateLimiter::new(cfg.per_sec, cfg.burst))));
+            .map(|cfg| Arc::new(AsyncMutex::new(InputRateLimiter::new(cfg.per_sec, cfg.burst))));
 
         dc_on_message_arc.on_message(Box::new(move |msg: DataChannelMessage| {
             let pid_msg_inner_str = peer_id_on_message.clone();
@@ -936,16 +998,7 @@ pub async fn handle_signaling_connection(
                     match game_msg_root.msg_type() {
                         fb::MessageType::Input => {
                             if let Some(rate_limiter) = input_rate_limiter_on_msg.as_ref() {
-                                let mut limiter_guard = match rate_limiter.lock() {
-                                    Ok(guard) => guard,
-                                    Err(poisoned) => {
-                                        warn!(
-                                            "[{}]: Input rate limiter mutex poisoned; continuing with recovered state.",
-                                            pid_msg_inner_str
-                                        );
-                                        poisoned.into_inner()
-                                    }
-                                };
+                                let mut limiter_guard = rate_limiter.lock().await;
                                 if !limiter_guard.try_acquire() {
                                     if limiter_guard.should_log_throttle() {
                                         warn!(
@@ -1205,6 +1258,11 @@ pub fn cleanup_connection(
     let _ = shared_connection_manager().remove(peer_id_str);
     // Remove signaling sender first; duplicate cleanups are expected under concurrent callbacks.
     let removed_signaling_entry = signaling_peers.remove(peer_id_str).is_some();
+    // Maintain a single lock acquisition order for lifecycle paths:
+    // client state first, then player manager operations.
+    client_states_map.write().remove(peer_id_str);
+    data_channels_map.remove(peer_id_str);
+    player_aois.remove(peer_id_str);
 
     let player_state_snapshot = {
         let player_id_lookup: PlayerID = Arc::new(peer_id_str.to_owned());
@@ -1232,9 +1290,6 @@ pub fn cleanup_connection(
     if player_state_snapshot.is_some() {
         player_manager.remove_player(peer_id_str);
     }
-    data_channels_map.remove(peer_id_str);
-    client_states_map.write().remove(peer_id_str);
-    player_aois.remove(peer_id_str);
     info!("[{}]: Player AoI data removed.", peer_id_str);
 }
 

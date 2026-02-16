@@ -39,7 +39,7 @@ pub const POSITION_VALIDATION_VIOLATION_THRESHOLD: u32 = 5;
 
 // Weapon specific constants (can be moved to a dedicated module later)
 pub const SHOTGUN_PELLET_COUNT: i32 = 8;
-pub const SHOTGUN_SPREAD_ANGLE_RAD: f32 = 0.4;
+pub const SHOTGUN_SPREAD_ANGLE_RAD: f32 = 0.25;
 
 // Other game constants
 pub const DEFAULT_RESPAWN_DURATION_SECS: f32 = 5.0;
@@ -68,7 +68,7 @@ pub const AI_UPDATE_STRIDE: u64 = 2; // run AI every N frames (≈ 30 Hz) - more
 
 // Placeholder constants for projectile speeds (define these in your core::constants.rs)
 pub const PISTOL_PROJECTILE_SPEED: f32 = 450.0;
-pub const SHOTGUN_PROJECTILE_SPEED: f32 = 400.0;
+pub const SHOTGUN_PROJECTILE_SPEED: f32 = 450.0;
 pub const RIFLE_PROJECTILE_SPEED: f32 = 600.0;
 pub const SNIPER_PROJECTILE_SPEED: f32 = 800.0;
 

@@ -189,7 +189,7 @@ impl PlayerState {
     pub fn get_weapon_fire_rate_seconds(weapon_type: ServerWeaponType) -> f32 {
         match weapon_type {
             ServerWeaponType::Pistol => 0.6,
-            ServerWeaponType::Shotgun => 0.8,
+            ServerWeaponType::Shotgun => 0.6,
             ServerWeaponType::Rifle => 0.1,
             ServerWeaponType::Sniper => 1.2,
             ServerWeaponType::Melee => 0.5,
@@ -209,7 +209,7 @@ impl PlayerState {
     pub fn get_weapon_damage(weapon_type: ServerWeaponType, damage_boost_active: bool) -> i32 {
         let base_damage = match weapon_type {
             ServerWeaponType::Pistol => 8,
-            ServerWeaponType::Shotgun => 7,
+            ServerWeaponType::Shotgun => 12,
             ServerWeaponType::Rifle => 10,
             ServerWeaponType::Sniper => 50,
             ServerWeaponType::Melee => 30,

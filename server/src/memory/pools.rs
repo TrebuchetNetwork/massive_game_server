@@ -1,7 +1,8 @@
 // massive_game_server/server/src/memory/pools.rs
 
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub struct ObjectPool<T> {
     free: Mutex<Vec<T>>,
@@ -27,13 +28,13 @@ impl<T> ObjectPool<T> {
     }
 
     pub fn acquire(&self) -> T {
-        let mut free = self.free.lock().expect("object pool mutex poisoned");
+        let mut free = self.free.lock();
         self.in_use.fetch_add(1, Ordering::Relaxed);
         free.pop().unwrap_or_else(|| (self.factory)())
     }
 
     pub fn release(&self, value: T) {
-        let mut free = self.free.lock().expect("object pool mutex poisoned");
+        let mut free = self.free.lock();
         free.push(value);
         self.in_use.fetch_sub(1, Ordering::Relaxed);
     }
@@ -43,7 +44,7 @@ impl<T> ObjectPool<T> {
     }
 
     pub fn free_count(&self) -> usize {
-        self.free.lock().expect("object pool mutex poisoned").len()
+        self.free.lock().len()
     }
 }
 

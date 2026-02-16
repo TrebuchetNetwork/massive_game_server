@@ -41,7 +41,7 @@ impl AoiMembership {
         let enter_sq = config.enter_radius * config.enter_radius;
         let exit_sq = config.exit_radius * config.exit_radius;
 
-        let mut retained = HashSet::with_capacity(config.max_visible_entities);
+        let mut candidates = Vec::with_capacity(entities.len());
 
         for &(id, x, y) in entities {
             let dist_sq = squared_distance_2d(observer_x, observer_y, x, y);
@@ -52,11 +52,15 @@ impl AoiMembership {
                 dist_sq <= enter_sq
             };
             if should_be_visible {
-                retained.insert(id);
-                if retained.len() >= config.max_visible_entities {
-                    break;
-                }
+                candidates.push((id, dist_sq));
             }
+        }
+
+        candidates.sort_by(|left, right| left.1.total_cmp(&right.1));
+
+        let mut retained = HashSet::with_capacity(config.max_visible_entities);
+        for (id, _) in candidates.into_iter().take(config.max_visible_entities) {
+            retained.insert(id);
         }
 
         self.visible = retained;
@@ -80,5 +84,24 @@ mod tests {
 
         membership.recompute(0.0, 0.0, &[(1, 11.0, 0.0)], config);
         assert!(membership.visible().contains(&1));
+    }
+
+    #[test]
+    fn prioritizes_nearest_entities_when_capped() {
+        let config = AoiConfig {
+            enter_radius: 100.0,
+            exit_radius: 100.0,
+            max_visible_entities: 2,
+        };
+        let mut membership = AoiMembership::default();
+        membership.recompute(
+            0.0,
+            0.0,
+            &[(10, 90.0, 0.0), (20, 5.0, 0.0), (30, 15.0, 0.0)],
+            config,
+        );
+        assert!(membership.visible().contains(&20));
+        assert!(membership.visible().contains(&30));
+        assert!(!membership.visible().contains(&10));
     }
 }

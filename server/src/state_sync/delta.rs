@@ -9,9 +9,8 @@ pub fn changed_players<'a>(
 ) -> Vec<&'a PlayerState> {
     let mut changed = Vec::new();
     for (player_id, current_state) in current {
-        match previous.get(player_id) {
-            Some(prev_state) if prev_state == current_state => {}
-            _ => changed.push(current_state),
+        if !previous.contains_key(player_id) || current_state.changed_fields != 0 {
+            changed.push(current_state);
         }
     }
     changed

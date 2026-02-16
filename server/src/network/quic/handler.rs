@@ -9,6 +9,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use quinn::{Connecting, Endpoint, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -143,13 +144,21 @@ pub fn start_quic_runtime(
 ) -> Result<QuicRuntime> {
     validate_quic_config(config)?;
 
-    let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
-        .context("failed to generate self-signed QUIC certificate")?;
-    let cert_der = certified_key.cert.der().to_vec();
-    let key_der = certified_key.key_pair.serialize_der();
-
-    let key = rustls::PrivateKey(key_der);
-    let cert_chain = vec![rustls::Certificate(cert_der)];
+    let (cert_chain, key) = match load_quic_identity_from_env()
+        .context("failed loading QUIC certificate/key from configured paths")?
+    {
+        Some(identity) => identity,
+        None => {
+            let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
+                .context("failed to generate self-signed QUIC certificate")?;
+            let cert_der = certified_key.cert.der().to_vec();
+            let key_der = certified_key.key_pair.serialize_der();
+            (
+                vec![rustls::Certificate(cert_der)],
+                rustls::PrivateKey(key_der),
+            )
+        }
+    };
 
     let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key)
         .context("failed to create QUIC server config")?;
@@ -190,6 +199,40 @@ pub fn start_quic_runtime(
         endpoint,
         local_addr,
     })
+}
+
+fn load_quic_identity_from_env() -> Result<Option<(Vec<rustls::Certificate>, rustls::PrivateKey)>> {
+    let cert_path = std::env::var("MGS_QUIC_CERT_PATH")
+        .or_else(|_| std::env::var("QUIC_CERT_PATH"))
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|raw| !raw.is_empty());
+    let key_path = std::env::var("MGS_QUIC_KEY_PATH")
+        .or_else(|_| std::env::var("QUIC_KEY_PATH"))
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|raw| !raw.is_empty());
+
+    match (cert_path, key_path) {
+        (None, None) => Ok(None),
+        (Some(_), None) | (None, Some(_)) => Err(anyhow!(
+            "both MGS_QUIC_CERT_PATH and MGS_QUIC_KEY_PATH must be set"
+        )),
+        (Some(cert_path), Some(key_path)) => {
+            let cert_der = fs::read(&cert_path)
+                .with_context(|| format!("failed reading QUIC cert path {}", cert_path))?;
+            let key_der = fs::read(&key_path)
+                .with_context(|| format!("failed reading QUIC key path {}", key_path))?;
+            info!(
+                "Loaded QUIC TLS identity from files cert='{}' key='{}'.",
+                cert_path, key_path
+            );
+            Ok(Some((
+                vec![rustls::Certificate(cert_der)],
+                rustls::PrivateKey(key_der),
+            )))
+        }
+    }
 }
 
 pub fn start_quic_runtime_from_env(default_bind_addr: SocketAddr) -> Result<Option<QuicRuntime>> {

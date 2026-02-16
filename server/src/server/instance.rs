@@ -2834,6 +2834,29 @@ impl MassiveGameServer {
             }
         }
 
+        // Prevent player stacking by rejecting moves that overlap nearby players.
+        let min_player_distance = PLAYER_RADIUS * 2.0;
+        let min_player_distance_sq = min_player_distance * min_player_distance;
+        let nearby_players = self.spatial_index.query_nearby_players_with_positions(
+            player_state.x,
+            player_state.y,
+            min_player_distance + 8.0,
+        );
+        for (other_player_id, other_x, other_y) in nearby_players {
+            if other_player_id == player_state.id {
+                continue;
+            }
+            let dist_sq = (player_state.x - other_x).powi(2) + (player_state.y - other_y).powi(2);
+            if dist_sq < min_player_distance_sq {
+                player_state.x = old_x;
+                player_state.y = old_y;
+                player_state.velocity_x = 0.0;
+                player_state.velocity_y = 0.0;
+                player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+                return;
+            }
+        }
+
         // Anti-cheat validation
         let max_speed_dist = PLAYER_BASE_SPEED * MAX_PLAYER_SPEED_MULTIPLIER * delta_time;
         // Fixed slack per tick allowed excessive burst distance; scale with expected movement instead.

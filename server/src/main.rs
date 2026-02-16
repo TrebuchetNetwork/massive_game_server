@@ -35,7 +35,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, info, warn, Instrument};
@@ -357,6 +357,13 @@ fn static_cache_control_for_path(path: &Path) -> &'static str {
     }
 }
 
+fn parse_forwarded_for_ip(raw: &str) -> Option<IpAddr> {
+    raw.split(',')
+        .map(str::trim)
+        .find(|candidate| !candidate.is_empty())
+        .and_then(|candidate| candidate.parse::<IpAddr>().ok())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // MUST be the very first line
@@ -543,6 +550,7 @@ async fn main() -> anyhow::Result<()> {
                 .unify(),
         )
         .and(warp::header::headers_cloned())
+        .and(warp::addr::remote())
         .and(warp::any().map(move || signaling_peers_for_ws.clone()))
         .and(warp::any().map(move || player_manager_for_ws.clone()))
         .and(warp::any().map(move || world_partition_manager_for_ws.clone()))
@@ -557,6 +565,7 @@ async fn main() -> anyhow::Result<()> {
             |ws: warp::ws::Ws,
              ws_auth_query: WsAuthQuery,
              request_headers: HeaderMap,
+             remote_addr: Option<SocketAddr>,
              s_peers: SignalingPeers,
              p_manager: PlayerManagerRef,
              w_p_manager: WorldPartitionManagerRef,
@@ -574,6 +583,17 @@ async fn main() -> anyhow::Result<()> {
                     .or(ws_auth_query.token)
                     .unwrap_or_default();
                 let auth_user_id = auth_service.resolve_user_id_from_token(&auth_token);
+                let forwarded_ip = request_headers
+                    .get("x-forwarded-for")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(parse_forwarded_for_ip);
+                let real_ip = request_headers
+                    .get("x-real-ip")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.trim().parse::<IpAddr>().ok());
+                let client_ip = forwarded_ip
+                    .or(real_ip)
+                    .or_else(|| remote_addr.map(|addr| addr.ip()));
                 let remote_context = monitoring_tracing::extract_remote_context(
                     request_headers
                         .get("traceparent")
@@ -605,6 +625,7 @@ async fn main() -> anyhow::Result<()> {
                         server_inst, // Pass server instance to handler
                         auth_service,
                         auth_user_id,
+                        client_ip,
                     )
                     .instrument(ws_upgrade_span)
                 })

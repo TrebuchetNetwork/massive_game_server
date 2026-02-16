@@ -17,8 +17,8 @@ pub fn profile(weapon: ServerWeaponType) -> WeaponProfile {
             max_ammo: 7,
         },
         ServerWeaponType::Shotgun => WeaponProfile {
-            damage: 7,
-            fire_rate_seconds: 0.8,
+            damage: 12,
+            fire_rate_seconds: 0.6,
             max_ammo: 5,
         },
         ServerWeaponType::Rifle => WeaponProfile {
