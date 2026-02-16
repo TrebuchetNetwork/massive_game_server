@@ -463,3 +463,26 @@
   - `cargo check -p massive_game_server_core` passed.
   - `cargo test -p massive_game_server_core simd_segment_radius_returns_first_hit_along_path -- --nocapture` passed.
   - `cargo test -p massive_game_server_core packet_batch_tests::collect_pending_chat_packets_applies_seq_filter_and_cap -- --nocapture` passed.
+
+### R2-R5 closure pass (2026-02-16)
+- Authoritative pickup ownership completed (`server/src/server/instance.rs`, `server/src/server/pickup_pipeline.rs`):
+  - pickup collection now executes as a read discovery stage (`collect_pickup_collection_candidates`) followed by an authoritative write/apply stage (`apply_pickup_collection_authoritative`).
+  - player mutation and pickup state/event writes now happen only in the apply stage.
+- SIMD coverage extended to pickup hot path (`server/src/server/pickup_pipeline.rs`):
+  - active pickups are packed into SoA vectors and queried via `simd::first_index_within_radius`.
+  - added unit coverage for candidate selection and pickup-effect application.
+- Zero-copy + legacy-path follow-through completed (`server/src/server/instance.rs`):
+  - removed dead duplicate static serialization/send flows that were no longer called:
+    - `build_delta_state_static`
+    - `process_client_broadcast_static`
+    - `send_initial_state_to_client`
+    - `send_delta_state_to_client`
+    - static chat/state helper variants tied to that path
+- Decomposition progress completed for this phase:
+  - new focused module: `server/src/server/pickup_pipeline.rs`.
+  - `instance.rs` reduced from `7721` to `6329` lines after module extraction + dead-path pruning.
+- Validation:
+  - `cargo check -p massive_game_server_core` passed.
+  - `cargo test -p massive_game_server_core pickup_pipeline -- --nocapture` passed.
+  - `cargo test -p massive_game_server_core simd_segment_radius_returns_first_hit_along_path -- --nocapture` passed.
+  - `cargo test -p massive_game_server_core packet_batch_tests::collect_pending_chat_packets_applies_seq_filter_and_cap -- --nocapture` passed.
