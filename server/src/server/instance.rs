@@ -21,10 +21,13 @@ use crate::network::signaling::PickupState;
 use crate::network::signaling::{
     next_chat_message_seq, ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap,
 };
+use crate::operational::tuning::adaptive_quality::QualitySettings;
+use crate::operational::tuning::auto_tuner::{AutoTuner, TuningSample};
 use crate::server::event_mapping::{
     event_instigator_id, event_position, event_target_id, event_value, event_weapon_type,
     map_game_event_type_to_fb,
 };
+use crate::server::ecs_bridge::EcsBridge;
 use crate::server::pickup_pipeline::{
     apply_pickup_effect, collect_pickup_candidates, PickupCollectionCandidate,
 };
@@ -374,6 +377,14 @@ fn join_authoritative_aoi_snapshot_enabled() -> bool {
     *ENABLED.get_or_init(|| {
         !env_bool_value("MGS_JOIN_DISABLE_AUTHORITATIVE_AOI_SNAPSHOT")
             || env_bool_value("MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT")
+    })
+}
+
+fn broadcast_work_stealing_enabled() -> bool {
+    static ENABLED: OnceCell<bool> = OnceCell::new();
+    *ENABLED.get_or_init(|| {
+        env_bool_value("MGS_BROADCAST_WORK_STEALING")
+            || env_bool_value("MGS_BROADCAST_RAYON_FANOUT")
     })
 }
 
@@ -739,6 +750,16 @@ struct MatchInfoSnapshot {
     flag_states: HashMap<u8, ServerFlagState>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct LiveReplayFrame {
+    pub frame: u64,
+    pub timestamp_ms: u64,
+    pub players: usize,
+    pub projectiles: usize,
+    pub pickups: usize,
+    pub events: usize,
+}
+
 pub struct MassiveGameServer {
     pub config: Arc<ServerConfig>,
     pub thread_pools: Arc<ThreadPoolSystem>,
@@ -793,6 +814,12 @@ pub struct MassiveGameServer {
     player_position_history: Arc<DashMap<PlayerID, VecDeque<(u64, f32, f32)>>>,
     aim_anomaly_states: Arc<DashMap<PlayerID, AimAnomalyState>>,
     lag_compensation_ms: u64,
+    auto_tuner: Arc<ParkingLotRwLock<AutoTuner>>,
+    dynamic_quality_settings: Arc<ParkingLotRwLock<QualitySettings>>,
+    ecs_bridge: Arc<EcsBridge>,
+    live_replay_enabled: bool,
+    live_replay_frames: Arc<ParkingLotRwLock<VecDeque<LiveReplayFrame>>>,
+    live_replay_capacity: usize,
 }
 
 const MAX_KILL_FEED_HISTORY: usize = 10;
@@ -988,6 +1015,13 @@ impl MassiveGameServer {
             .and_then(|raw| raw.parse::<u64>().ok())
             .unwrap_or(DEFAULT_LAG_COMPENSATION_MS)
             .min(250);
+        let auto_tuner_target_ms = (1000.0f32 / config.tick_rate.max(1) as f32).max(1.0);
+        let live_replay_enabled = env_bool_value("MGS_LIVE_REPLAY_ENABLED");
+        let live_replay_capacity = std::env::var("MGS_LIVE_REPLAY_CAPACITY")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(3600)
+            .clamp(120, 100_000);
 
         info!(
             "Human-priority slots: enabled={}, reserved_human_slots={}",
@@ -1039,6 +1073,14 @@ impl MassiveGameServer {
             player_position_history: Arc::new(DashMap::new()),
             aim_anomaly_states: Arc::new(DashMap::new()),
             lag_compensation_ms,
+            auto_tuner: Arc::new(ParkingLotRwLock::new(AutoTuner::new(auto_tuner_target_ms))),
+            dynamic_quality_settings: Arc::new(ParkingLotRwLock::new(QualitySettings::default())),
+            ecs_bridge: Arc::new(EcsBridge::new_from_env()),
+            live_replay_enabled,
+            live_replay_frames: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(
+                live_replay_capacity,
+            ))),
+            live_replay_capacity,
         };
 
         info!("MassiveGameServer initialized successfully.");
@@ -1051,6 +1093,55 @@ impl MassiveGameServer {
 
     pub fn is_shutdown_requested(&self) -> bool {
         self.is_shutting_down.load(AtomicOrdering::Acquire)
+    }
+
+    pub fn current_quality_settings(&self) -> QualitySettings {
+        *self.dynamic_quality_settings.read()
+    }
+
+    pub fn record_tick_metrics(&self, frame_duration: Duration) {
+        {
+            let mut history = self.tick_durations_history.write();
+            history.push_back(frame_duration);
+            while history.len() > 1000 {
+                let _ = history.pop_front();
+            }
+        }
+
+        let connected_players = self.data_channels_map.len();
+        let mut tuner = self.auto_tuner.write();
+        let quality = tuner.ingest_sample(TuningSample {
+            frame_time_ms: frame_duration.as_secs_f32() * 1000.0,
+            connected_players,
+        });
+        *self.dynamic_quality_settings.write() = quality;
+    }
+
+    pub fn recent_live_replay_frames(&self, limit: usize) -> Vec<LiveReplayFrame> {
+        let replay = self.live_replay_frames.read();
+        let bounded = limit.clamp(1, self.live_replay_capacity.max(1));
+        replay.iter().rev().take(bounded).cloned().collect()
+    }
+
+    fn capture_live_replay_frame(&self, frame: u64) {
+        if !self.live_replay_enabled {
+            return;
+        }
+
+        let frame_sample = LiveReplayFrame {
+            frame,
+            timestamp_ms: self.get_server_timestamp_ms(),
+            players: self.player_manager.player_count(),
+            projectiles: self.projectiles.read().len(),
+            pickups: self.pickups.read().len(),
+            events: self.global_game_events.len(),
+        };
+
+        let mut replay = self.live_replay_frames.write();
+        while replay.len() >= self.live_replay_capacity {
+            let _ = replay.pop_front();
+        }
+        replay.push_back(frame_sample);
     }
 
     fn prune_runtime_tracking_state(&self) {
@@ -5691,7 +5782,7 @@ impl MassiveGameServer {
             InitialSnapshotCaps::DEFAULT
         };
 
-        let max_delta_events_per_client = if extreme_tail_join_mode {
+        let mut max_delta_events_per_client = if extreme_tail_join_mode {
             MAX_DELTA_EVENTS_EXTREME_TAIL
         } else if aggressive_tail_join_mode {
             MAX_DELTA_EVENTS_AGGRESSIVE
@@ -5785,7 +5876,7 @@ impl MassiveGameServer {
         {
             max_delta_per_frame = max_delta_per_frame.min(SINGLE_MACHINE_MAX_DELTA_PER_FRAME);
         }
-        let delta_skip_modulus = if extreme_tail_join_mode {
+        let mut delta_skip_modulus = if extreme_tail_join_mode {
             EXTREME_TAIL_WAVE_DELTA_SKIP_MODULUS
         } else if tail_wave_70_plus_mode {
             TAIL_WAVE_70_PLUS_DELTA_SKIP_MODULUS
@@ -5800,6 +5891,13 @@ impl MassiveGameServer {
         } else {
             MASS_JOIN_DELTA_SKIP_MODULUS
         };
+
+        let quality = self.current_quality_settings();
+        max_delta_events_per_client = ((max_delta_events_per_client as f32)
+            * quality.max_projectiles_scale)
+            .round()
+            .clamp(1.0, MAX_DELTA_EVENTS_DEFAULT as f32) as usize;
+        delta_skip_modulus = delta_skip_modulus.max(quality.delta_skip_modulus);
 
         let mut scheduled_client_entries = scheduled_initial_entries;
         let mut scheduled_delta_count = 0usize;
@@ -5895,57 +5993,95 @@ impl MassiveGameServer {
             broadcast_concurrency = broadcast_concurrency.min(SINGLE_MACHINE_CONCURRENCY_CAP);
         }
 
-        let mut fanout_tasks = JoinSet::new();
-        for (peer_id_str, data_channel_arc, needs_initial) in scheduled_client_entries {
+        if broadcast_work_stealing_enabled() {
+            let runtime_handle = tokio::runtime::Handle::current();
             let server_ref = Arc::clone(&self);
             let shared_data_ref = Arc::clone(&shared_broadcast_data);
+            let frame_for_log = current_frame;
 
-            fanout_tasks.spawn(async move {
-                let client_info = ClientInfo {
-                    data_channel: data_channel_arc,
-                    needs_initial_state: needs_initial,
-                };
+            self.thread_pools.network_pool.install(move || {
+                scheduled_client_entries
+                    .into_par_iter()
+                    .for_each(|(peer_id_str, data_channel_arc, needs_initial)| {
+                        let server_ref = Arc::clone(&server_ref);
+                        let shared_data_ref = Arc::clone(&shared_data_ref);
+                        let runtime_handle = runtime_handle.clone();
 
-                trace!(
-                    "[Frame {}] Processing client: {}, Needs Initial: {}",
-                    current_frame,
-                    peer_id_str,
-                    client_info.needs_initial_state
-                );
+                        let client_info = ClientInfo {
+                            data_channel: data_channel_arc,
+                            needs_initial_state: needs_initial,
+                        };
 
-                if let Err(e) = Self::process_client_broadcast(
-                    &peer_id_str,
-                    &client_info,
-                    shared_data_ref.as_ref(),
-                    &server_ref,
-                )
-                .await
-                {
-                    error!(
-                        "[Frame {}] Error processing broadcast for client {}: {:?}",
-                        current_frame, peer_id_str, e
-                    );
-                }
+                        let result = runtime_handle.block_on(async {
+                            Self::process_client_broadcast(
+                                &peer_id_str,
+                                &client_info,
+                                shared_data_ref.as_ref(),
+                                &server_ref,
+                            )
+                            .await
+                        });
+                        if let Err(err) = result {
+                            error!(
+                                "[Frame {}] Work-stealing broadcast failed for {}: {}",
+                                frame_for_log, peer_id_str, err
+                            );
+                        }
+                    });
             });
+        } else {
+            let mut fanout_tasks = JoinSet::new();
+            for (peer_id_str, data_channel_arc, needs_initial) in scheduled_client_entries {
+                let server_ref = Arc::clone(&self);
+                let shared_data_ref = Arc::clone(&shared_broadcast_data);
 
-            if fanout_tasks.len() >= broadcast_concurrency {
-                if let Some(join_result) = fanout_tasks.join_next().await {
-                    if let Err(join_err) = join_result {
+                fanout_tasks.spawn(async move {
+                    let client_info = ClientInfo {
+                        data_channel: data_channel_arc,
+                        needs_initial_state: needs_initial,
+                    };
+
+                    trace!(
+                        "[Frame {}] Processing client: {}, Needs Initial: {}",
+                        current_frame,
+                        peer_id_str,
+                        client_info.needs_initial_state
+                    );
+
+                    if let Err(e) = Self::process_client_broadcast(
+                        &peer_id_str,
+                        &client_info,
+                        shared_data_ref.as_ref(),
+                        &server_ref,
+                    )
+                    .await
+                    {
                         error!(
-                            "[Frame {}] Broadcast fanout task join error: {}",
-                            current_frame, join_err
+                            "[Frame {}] Error processing broadcast for client {}: {:?}",
+                            current_frame, peer_id_str, e
                         );
+                    }
+                });
+
+                if fanout_tasks.len() >= broadcast_concurrency {
+                    if let Some(join_result) = fanout_tasks.join_next().await {
+                        if let Err(join_err) = join_result {
+                            error!(
+                                "[Frame {}] Broadcast fanout task join error: {}",
+                                current_frame, join_err
+                            );
+                        }
                     }
                 }
             }
-        }
 
-        while let Some(join_result) = fanout_tasks.join_next().await {
-            if let Err(join_err) = join_result {
-                error!(
-                    "[Frame {}] Broadcast fanout task join error: {}",
-                    current_frame, join_err
-                );
+            while let Some(join_result) = fanout_tasks.join_next().await {
+                if let Err(join_err) = join_result {
+                    error!(
+                        "[Frame {}] Broadcast fanout task join error: {}",
+                        current_frame, join_err
+                    );
+                }
             }
         }
 
@@ -6427,6 +6563,23 @@ impl MassiveGameServer {
             );
         }
 
+        if self.ecs_bridge.is_enabled() && frame % self.ecs_bridge.rebuild_stride_frames() == 0 {
+            let projectiles_snapshot = self.projectiles.read().clone();
+            let pickups_snapshot = self.pickups.read().clone();
+            let ecs_stats = self.ecs_bridge.rebuild_snapshot(
+                self.player_manager.as_ref(),
+                &projectiles_snapshot,
+                &pickups_snapshot,
+            );
+            trace!(
+                "[Frame {}] ECS snapshot rebuilt: players={}, projectiles={}, pickups={}",
+                frame,
+                ecs_stats.players,
+                ecs_stats.projectiles,
+                ecs_stats.pickups
+            );
+        }
+
         // Stage 3: State Sync & Broadcast
         let stage3_start = Instant::now();
 
@@ -6476,6 +6629,7 @@ impl MassiveGameServer {
             }
         }
         let _stage3_elapsed = stage3_start.elapsed();
+        self.capture_live_replay_frame(frame);
 
         // Stage 4: Cleanup
         self.destroyed_wall_ids_this_tick.write().clear();

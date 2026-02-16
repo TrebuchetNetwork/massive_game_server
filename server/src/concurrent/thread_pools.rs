@@ -1,6 +1,7 @@
 // massive_game_server/server/src/concurrent/thread_pools.rs
 use crate::core::config::{CoreAllocation, ServerConfig};
 use crate::core::error::{ServerError, ServerResult};
+use crate::memory::numa::NumaTopology;
 use core_affinity::CoreId;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::env;
@@ -78,23 +79,41 @@ impl ThreadPoolSystem {
     }*/
 
     pub fn new(config: Arc<ServerConfig>) -> Result<Self, anyhow::Error> {
+        let numa_aware = env_bool("MGS_NUMA_AWARE");
+        let numa_topology = Arc::new(NumaTopology::from_env());
+
         let affinity_enabled = env_bool("MGS_CPU_AFFINITY");
         if !affinity_enabled {
-            let network_pool = ThreadPoolBuilder::new()
-                .num_threads(config.thread_pools.networking_threads)
-                .build()?;
-            let ai_pool = ThreadPoolBuilder::new()
-                .num_threads(config.thread_pools.ai_threads)
-                .build()?;
-            let physics_pool = ThreadPoolBuilder::new()
-                .num_threads(config.thread_pools.physics_threads)
-                .build()?;
-            let game_logic_pool = ThreadPoolBuilder::new()
-                .num_threads(config.thread_pools.game_logic_threads)
-                .build()?;
-            let io_pool = ThreadPoolBuilder::new()
-                .num_threads(config.thread_pools.io_threads)
-                .build()?;
+            let network_pool = Self::create_pool_without_affinity(
+                "network",
+                config.thread_pools.networking_threads,
+                numa_aware,
+                Arc::clone(&numa_topology),
+            )?;
+            let ai_pool = Self::create_pool_without_affinity(
+                "ai",
+                config.thread_pools.ai_threads,
+                numa_aware,
+                Arc::clone(&numa_topology),
+            )?;
+            let physics_pool = Self::create_pool_without_affinity(
+                "physics",
+                config.thread_pools.physics_threads,
+                numa_aware,
+                Arc::clone(&numa_topology),
+            )?;
+            let game_logic_pool = Self::create_pool_without_affinity(
+                "game_logic",
+                config.thread_pools.game_logic_threads,
+                numa_aware,
+                Arc::clone(&numa_topology),
+            )?;
+            let io_pool = Self::create_pool_without_affinity(
+                "io",
+                config.thread_pools.io_threads,
+                numa_aware,
+                Arc::clone(&numa_topology),
+            )?;
 
             return Ok(Self {
                 network_pool: Arc::new(network_pool),
@@ -112,7 +131,7 @@ impl ThreadPoolSystem {
             warn!(
                 "MGS_CPU_AFFINITY=1 but core IDs are unavailable. Falling back to unpinned pools."
             );
-            return Self::new_without_affinity(config);
+            return Self::new_without_affinity(config, numa_aware, Arc::clone(&numa_topology));
         }
 
         let available_cores = all_core_ids_arc
@@ -141,30 +160,40 @@ impl ThreadPoolSystem {
             config.thread_pools.physics_threads,
             core_alloc.physics_cores_indices.clone(),
             all_core_ids_arc.clone(),
+            numa_aware,
+            Arc::clone(&numa_topology),
         )?;
         let network_pool = Self::create_pool(
             "network",
             config.thread_pools.networking_threads,
             core_alloc.networking_cores_indices.clone(),
             all_core_ids_arc.clone(),
+            numa_aware,
+            Arc::clone(&numa_topology),
         )?;
         let game_logic_pool = Self::create_pool(
             "game_logic",
             config.thread_pools.game_logic_threads,
             core_alloc.game_logic_cores_indices.clone(),
             all_core_ids_arc.clone(),
+            numa_aware,
+            Arc::clone(&numa_topology),
         )?;
         let ai_pool = Self::create_pool(
             "ai",
             config.thread_pools.ai_threads,
             core_alloc.ai_cores_indices.clone(),
             all_core_ids_arc.clone(),
+            numa_aware,
+            Arc::clone(&numa_topology),
         )?;
         let io_pool = Self::create_pool(
             "io",
             config.thread_pools.io_threads,
             core_alloc.io_cores_indices.clone(),
             all_core_ids_arc,
+            numa_aware,
+            Arc::clone(&numa_topology),
         )?;
 
         Ok(Self {
@@ -176,22 +205,41 @@ impl ThreadPoolSystem {
         })
     }
 
-    fn new_without_affinity(config: Arc<ServerConfig>) -> Result<Self, anyhow::Error> {
-        let network_pool = ThreadPoolBuilder::new()
-            .num_threads(config.thread_pools.networking_threads)
-            .build()?;
-        let ai_pool = ThreadPoolBuilder::new()
-            .num_threads(config.thread_pools.ai_threads)
-            .build()?;
-        let physics_pool = ThreadPoolBuilder::new()
-            .num_threads(config.thread_pools.physics_threads)
-            .build()?;
-        let game_logic_pool = ThreadPoolBuilder::new()
-            .num_threads(config.thread_pools.game_logic_threads)
-            .build()?;
-        let io_pool = ThreadPoolBuilder::new()
-            .num_threads(config.thread_pools.io_threads)
-            .build()?;
+    fn new_without_affinity(
+        config: Arc<ServerConfig>,
+        numa_aware: bool,
+        numa_topology: Arc<NumaTopology>,
+    ) -> Result<Self, anyhow::Error> {
+        let network_pool = Self::create_pool_without_affinity(
+            "network",
+            config.thread_pools.networking_threads,
+            numa_aware,
+            Arc::clone(&numa_topology),
+        )?;
+        let ai_pool = Self::create_pool_without_affinity(
+            "ai",
+            config.thread_pools.ai_threads,
+            numa_aware,
+            Arc::clone(&numa_topology),
+        )?;
+        let physics_pool = Self::create_pool_without_affinity(
+            "physics",
+            config.thread_pools.physics_threads,
+            numa_aware,
+            Arc::clone(&numa_topology),
+        )?;
+        let game_logic_pool = Self::create_pool_without_affinity(
+            "game_logic",
+            config.thread_pools.game_logic_threads,
+            numa_aware,
+            Arc::clone(&numa_topology),
+        )?;
+        let io_pool = Self::create_pool_without_affinity(
+            "io",
+            config.thread_pools.io_threads,
+            numa_aware,
+            Arc::clone(&numa_topology),
+        )?;
 
         Ok(Self {
             network_pool: Arc::new(network_pool),
@@ -207,6 +255,8 @@ impl ThreadPoolSystem {
         num_threads: usize,
         core_indices_to_use: Vec<usize>,
         all_available_core_ids_arc: Arc<Option<Vec<CoreId>>>,
+        numa_aware: bool,
+        numa_topology: Arc<NumaTopology>,
     ) -> ServerResult<ThreadPool> {
         let pool_identity_name_default = name_str.to_string();
 
@@ -234,6 +284,15 @@ impl ThreadPoolSystem {
             .num_threads(num_threads)
             .thread_name(move |i| format!("{}-{}", name_for_thread_name, i))
             .start_handler(move |thread_idx_in_pool| {
+                if numa_aware {
+                    let node_id = numa_topology.recommended_node_for_shard(thread_idx_in_pool);
+                    if !numa_topology.pin_current_thread_to_node(node_id) {
+                        warn!(
+                            "Failed to pin thread {}-{} to NUMA node {}.",
+                            name_for_start_handler, thread_idx_in_pool, node_id
+                        );
+                    }
+                }
                 // Correctly dereference Arc then Option to get &Vec<CoreId>
                 if let Some(available_core_ids_vec) = all_available_core_ids_arc.as_ref().as_ref() {
                     if let Some(global_core_idx_ptr) = core_indices_to_use.get(thread_idx_in_pool) {
@@ -268,6 +327,32 @@ impl ThreadPoolSystem {
             })
             .build()
             .map_err(|e| ServerError::ThreadingError(format!("Failed to build {} pool: {}", name_str, e)))
+    }
+
+    fn create_pool_without_affinity(
+        name_str: &str,
+        num_threads: usize,
+        numa_aware: bool,
+        numa_topology: Arc<NumaTopology>,
+    ) -> Result<ThreadPool, anyhow::Error> {
+        let threads = num_threads.max(1);
+        let name_for_thread = name_str.to_string();
+        let name_for_start = name_str.to_string();
+        Ok(ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(move |i| format!("{}-{}", name_for_thread, i))
+            .start_handler(move |thread_idx_in_pool| {
+                if numa_aware {
+                    let node_id = numa_topology.recommended_node_for_shard(thread_idx_in_pool);
+                    if !numa_topology.pin_current_thread_to_node(node_id) {
+                        warn!(
+                            "Failed to pin thread {}-{} to NUMA node {} (no explicit core affinity).",
+                            name_for_start, thread_idx_in_pool, node_id
+                        );
+                    }
+                }
+            })
+            .build()?)
     }
 }
 

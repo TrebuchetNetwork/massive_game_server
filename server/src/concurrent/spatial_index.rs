@@ -6,6 +6,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tracing::debug;
 
 #[derive(Debug, Clone)]
@@ -23,6 +24,198 @@ impl SpatialCell {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Aabb {
+    min_x: f32,
+    max_x: f32,
+    min_y: f32,
+    max_y: f32,
+}
+
+impl Aabb {
+    #[inline]
+    fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.min_x && x <= self.max_x && y >= self.min_y && y <= self.max_y
+    }
+
+    #[inline]
+    fn intersects_circle(&self, cx: f32, cy: f32, radius: f32) -> bool {
+        let clamped_x = cx.clamp(self.min_x, self.max_x);
+        let clamped_y = cy.clamp(self.min_y, self.max_y);
+        let dx = cx - clamped_x;
+        let dy = cy - clamped_y;
+        dx * dx + dy * dy <= radius * radius
+    }
+}
+
+#[derive(Debug, Clone)]
+struct QuadtreePoint<T> {
+    id: T,
+    x: f32,
+    y: f32,
+}
+
+#[derive(Debug, Clone)]
+struct QuadtreeNode<T> {
+    bounds: Aabb,
+    depth: u8,
+    points: Vec<QuadtreePoint<T>>,
+    children: Option<[Box<QuadtreeNode<T>>; 4]>,
+}
+
+impl<T: Clone> QuadtreeNode<T> {
+    fn new(bounds: Aabb, depth: u8) -> Self {
+        Self {
+            bounds,
+            depth,
+            points: Vec::new(),
+            children: None,
+        }
+    }
+
+    #[inline]
+    fn child_index_for(&self, x: f32, y: f32) -> usize {
+        let mid_x = (self.bounds.min_x + self.bounds.max_x) * 0.5;
+        let mid_y = (self.bounds.min_y + self.bounds.max_y) * 0.5;
+        let right = x > mid_x;
+        let top = y > mid_y;
+        match (right, top) {
+            (false, false) => 0,
+            (true, false) => 1,
+            (false, true) => 2,
+            (true, true) => 3,
+        }
+    }
+
+    fn split(&mut self) {
+        let mid_x = (self.bounds.min_x + self.bounds.max_x) * 0.5;
+        let mid_y = (self.bounds.min_y + self.bounds.max_y) * 0.5;
+        let depth = self.depth + 1;
+
+        self.children = Some([
+            Box::new(QuadtreeNode::new(
+                Aabb {
+                    min_x: self.bounds.min_x,
+                    max_x: mid_x,
+                    min_y: self.bounds.min_y,
+                    max_y: mid_y,
+                },
+                depth,
+            )),
+            Box::new(QuadtreeNode::new(
+                Aabb {
+                    min_x: mid_x,
+                    max_x: self.bounds.max_x,
+                    min_y: self.bounds.min_y,
+                    max_y: mid_y,
+                },
+                depth,
+            )),
+            Box::new(QuadtreeNode::new(
+                Aabb {
+                    min_x: self.bounds.min_x,
+                    max_x: mid_x,
+                    min_y: mid_y,
+                    max_y: self.bounds.max_y,
+                },
+                depth,
+            )),
+            Box::new(QuadtreeNode::new(
+                Aabb {
+                    min_x: mid_x,
+                    max_x: self.bounds.max_x,
+                    min_y: mid_y,
+                    max_y: self.bounds.max_y,
+                },
+                depth,
+            )),
+        ]);
+
+        let existing_points = std::mem::take(&mut self.points);
+        for point in existing_points {
+            self.insert_into_children(point, 8, 8);
+        }
+    }
+
+    fn insert_into_children(&mut self, point: QuadtreePoint<T>, capacity: usize, max_depth: u8) {
+        let idx = self.child_index_for(point.x, point.y);
+        if let Some(children) = self.children.as_mut() {
+            let inserted = children[idx].insert(point.clone(), capacity, max_depth);
+            if !inserted {
+                // Fallback safety path for precision edge-cases.
+                self.points.push(point);
+            }
+        }
+    }
+
+    fn insert(&mut self, point: QuadtreePoint<T>, capacity: usize, max_depth: u8) -> bool {
+        if !self.bounds.contains(point.x, point.y) {
+            return false;
+        }
+
+        if self.children.is_none() && (self.points.len() < capacity || self.depth >= max_depth) {
+            self.points.push(point);
+            return true;
+        }
+
+        if self.children.is_none() {
+            self.split();
+        }
+
+        self.insert_into_children(point, capacity, max_depth);
+        true
+    }
+
+    fn query_circle(&self, x: f32, y: f32, radius: f32, out: &mut Vec<T>) {
+        if !self.bounds.intersects_circle(x, y, radius) {
+            return;
+        }
+
+        let radius_sq = radius * radius;
+        for point in &self.points {
+            let dx = point.x - x;
+            let dy = point.y - y;
+            if dx * dx + dy * dy <= radius_sq {
+                out.push(point.id.clone());
+            }
+        }
+
+        if let Some(children) = self.children.as_ref() {
+            for child in children {
+                child.query_circle(x, y, radius, out);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PointQuadtree<T> {
+    root: QuadtreeNode<T>,
+}
+
+impl<T: Clone> PointQuadtree<T> {
+    fn from_points(bounds: Aabb, points: &[QuadtreePoint<T>], capacity: usize, max_depth: u8) -> Self {
+        let mut root = QuadtreeNode::new(bounds, 0);
+        for point in points {
+            let _ = root.insert(point.clone(), capacity.max(2), max_depth.max(2));
+        }
+        Self { root }
+    }
+
+    fn query_circle(&self, x: f32, y: f32, radius: f32) -> Vec<T> {
+        let mut out = Vec::new();
+        self.root.query_circle(x, y, radius, &mut out);
+        out
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpatialQueryMode {
+    Grid,
+    Quadtree,
+    Hybrid,
+}
+
 pub struct ImprovedSpatialIndex {
     cells: Vec<RwLock<SpatialCell>>,
     grid_width: usize,
@@ -38,6 +231,15 @@ pub struct ImprovedSpatialIndex {
     // Cell index tracking for efficient updates
     player_cells: Arc<DashMap<PlayerID, usize>>,
     projectile_cells: Arc<DashMap<EntityId, usize>>,
+
+    // Hierarchical index snapshots (rebuilt at a bounded cadence).
+    query_mode: SpatialQueryMode,
+    quadtree_min_entities: usize,
+    quadtree_rebuild_interval: Duration,
+    quadtree_last_rebuild: RwLock<Instant>,
+    quadtree_player_index: RwLock<Option<PointQuadtree<PlayerID>>>,
+    quadtree_projectile_index: RwLock<Option<PointQuadtree<EntityId>>>,
+    world_bounds: Aabb,
 }
 
 impl ImprovedSpatialIndex {
@@ -57,9 +259,27 @@ impl ImprovedSpatialIndex {
             cells.push(RwLock::new(SpatialCell::new()));
         }
 
+        let query_mode = parse_query_mode_from_env();
+        let quadtree_min_entities = std::env::var("MGS_SPATIAL_QUADTREE_MIN_ENTITIES")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(64)
+            .max(8);
+        let quadtree_rebuild_interval_ms = std::env::var("MGS_SPATIAL_QUADTREE_REBUILD_MS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(33)
+            .max(8);
+
         debug!(
-            "Spatial index initialized: {}x{} grid, {} total cells, cell size: {}",
-            grid_width, grid_height, total_cells, cell_size
+            "Spatial index initialized: {}x{} grid, {} total cells, cell size: {}, mode={:?}, quadtree_min_entities={}, quadtree_rebuild_ms={}",
+            grid_width,
+            grid_height,
+            total_cells,
+            cell_size,
+            query_mode,
+            quadtree_min_entities,
+            quadtree_rebuild_interval_ms,
         );
 
         ImprovedSpatialIndex {
@@ -73,7 +293,94 @@ impl ImprovedSpatialIndex {
             projectile_positions: Arc::new(DashMap::new()),
             player_cells: Arc::new(DashMap::new()),
             projectile_cells: Arc::new(DashMap::new()),
+            query_mode,
+            quadtree_min_entities,
+            quadtree_rebuild_interval: Duration::from_millis(quadtree_rebuild_interval_ms),
+            quadtree_last_rebuild: RwLock::new(
+                Instant::now() - Duration::from_millis(quadtree_rebuild_interval_ms),
+            ),
+            quadtree_player_index: RwLock::new(None),
+            quadtree_projectile_index: RwLock::new(None),
+            world_bounds: Aabb {
+                min_x: world_min_x,
+                max_x: world_min_x + world_width,
+                min_y: world_min_y,
+                max_y: world_min_y + world_height,
+            },
         }
+    }
+
+    #[inline]
+    fn should_use_quadtree(&self, entity_count: usize) -> bool {
+        match self.query_mode {
+            SpatialQueryMode::Grid => false,
+            SpatialQueryMode::Quadtree => true,
+            SpatialQueryMode::Hybrid => entity_count >= self.quadtree_min_entities,
+        }
+    }
+
+    fn maybe_rebuild_quadtrees(&self) {
+        if self.query_mode == SpatialQueryMode::Grid {
+            return;
+        }
+
+        let now = Instant::now();
+        {
+            let last_rebuild = self.quadtree_last_rebuild.read();
+            if now.duration_since(*last_rebuild) < self.quadtree_rebuild_interval {
+                return;
+            }
+        }
+        {
+            let mut last_rebuild = self.quadtree_last_rebuild.write();
+            if now.duration_since(*last_rebuild) < self.quadtree_rebuild_interval {
+                return;
+            }
+            *last_rebuild = now;
+        }
+
+        let mut player_points = Vec::with_capacity(self.player_positions.len());
+        for entry in self.player_positions.iter() {
+            let (x, y) = *entry.value();
+            player_points.push(QuadtreePoint {
+                id: entry.key().clone(),
+                x,
+                y,
+            });
+        }
+        let mut projectile_points = Vec::with_capacity(self.projectile_positions.len());
+        for entry in self.projectile_positions.iter() {
+            let (x, y) = *entry.value();
+            projectile_points.push(QuadtreePoint {
+                id: *entry.key(),
+                x,
+                y,
+            });
+        }
+
+        let player_tree = if player_points.is_empty() {
+            None
+        } else {
+            Some(PointQuadtree::from_points(
+                self.world_bounds,
+                &player_points,
+                12,
+                8,
+            ))
+        };
+        let projectile_tree = if projectile_points.is_empty() {
+            None
+        } else {
+            Some(PointQuadtree::from_points(
+                self.world_bounds,
+                &projectile_points,
+                12,
+                8,
+            ))
+        };
+
+        *self.quadtree_player_index.write() = player_tree;
+        *self.quadtree_projectile_index.write() = projectile_tree;
     }
 
     #[inline]
@@ -119,15 +426,50 @@ impl ImprovedSpatialIndex {
         cell_indices
     }
 
+    fn collect_grid_player_candidates(&self, x: f32, y: f32, radius: f32) -> Vec<PlayerID> {
+        let cell_indices = self.get_cells_in_radius(x, y, radius);
+        let mut candidate_ids = Vec::new();
+        let mut checked_players = HashSet::new();
+
+        for cell_idx in cell_indices {
+            if let Some(cell) = self.cells.get(cell_idx) {
+                let cell_guard = cell.read();
+                for player_id in &cell_guard.player_ids {
+                    if checked_players.insert(player_id.clone()) {
+                        candidate_ids.push(player_id.clone());
+                    }
+                }
+            }
+        }
+
+        candidate_ids
+    }
+
+    fn collect_grid_projectile_candidates(&self, x: f32, y: f32, radius: f32) -> Vec<EntityId> {
+        let cell_indices = self.get_cells_in_radius(x, y, radius);
+        let mut candidate_ids = Vec::new();
+        let mut checked_projectiles = HashSet::new();
+
+        for cell_idx in cell_indices {
+            if let Some(cell) = self.cells.get(cell_idx) {
+                let cell_guard = cell.read();
+                for proj_id in &cell_guard.projectile_ids {
+                    if checked_projectiles.insert(*proj_id) {
+                        candidate_ids.push(*proj_id);
+                    }
+                }
+            }
+        }
+
+        candidate_ids
+    }
+
     // Player methods
     pub fn update_player_position(&self, player_id: PlayerID, x: f32, y: f32) {
         let new_cell_idx = self.get_cell_index(x, y);
 
         // Check if player moved to a different cell
-        let old_cell_idx = self
-            .player_cells
-            .get(&player_id)
-            .map(|entry| *entry.value());
+        let old_cell_idx = self.player_cells.get(&player_id).map(|entry| *entry.value());
 
         if let Some(old_idx) = old_cell_idx {
             if old_idx != new_cell_idx {
@@ -166,29 +508,33 @@ impl ImprovedSpatialIndex {
 
     pub fn query_nearby_players(&self, x: f32, y: f32, radius: f32) -> Vec<PlayerID> {
         let radius_squared = radius * radius;
-        let cell_indices = self.get_cells_in_radius(x, y, radius);
-        let mut candidate_ids = Vec::new();
-        let mut candidate_xs = Vec::new();
-        let mut candidate_ys = Vec::new();
-        let mut checked_players = HashSet::new();
 
-        for cell_idx in cell_indices {
-            if let Some(cell) = self.cells.get(cell_idx) {
-                let cell_guard = cell.read();
-                for player_id in &cell_guard.player_ids {
-                    if checked_players.insert(player_id.clone()) {
-                        if let Some(pos_entry) = self.player_positions.get(player_id) {
-                            let (px, py) = *pos_entry.value();
-                            candidate_ids.push(player_id.clone());
-                            candidate_xs.push(px);
-                            candidate_ys.push(py);
-                        }
-                    }
-                }
+        let candidate_ids: Vec<PlayerID> = if self.should_use_quadtree(self.player_positions.len()) {
+            self.maybe_rebuild_quadtrees();
+            let tree_guard = self.quadtree_player_index.read();
+            if let Some(tree) = tree_guard.as_ref() {
+                tree.query_circle(x, y, radius)
+            } else {
+                self.collect_grid_player_candidates(x, y, radius)
+            }
+        } else {
+            self.collect_grid_player_candidates(x, y, radius)
+        };
+
+        let mut candidate_xs = Vec::with_capacity(candidate_ids.len());
+        let mut candidate_ys = Vec::with_capacity(candidate_ids.len());
+        let mut filtered_ids = Vec::with_capacity(candidate_ids.len());
+
+        for player_id in candidate_ids {
+            if let Some(pos_entry) = self.player_positions.get(&player_id) {
+                let (px, py) = *pos_entry.value();
+                filtered_ids.push(player_id);
+                candidate_xs.push(px);
+                candidate_ys.push(py);
             }
         }
 
-        let mut matched_indices = Vec::with_capacity(candidate_ids.len());
+        let mut matched_indices = Vec::with_capacity(filtered_ids.len());
         simd::filter_indices_within_radius(
             &candidate_xs,
             &candidate_ys,
@@ -200,7 +546,7 @@ impl ImprovedSpatialIndex {
 
         let mut nearby_players = Vec::with_capacity(matched_indices.len());
         for idx in matched_indices {
-            if let Some(player_id) = candidate_ids.get(idx) {
+            if let Some(player_id) = filtered_ids.get(idx) {
                 nearby_players.push(player_id.clone());
             }
         }
@@ -216,29 +562,33 @@ impl ImprovedSpatialIndex {
         radius: f32,
     ) -> Vec<(PlayerID, f32, f32)> {
         let radius_squared = radius * radius;
-        let cell_indices = self.get_cells_in_radius(x, y, radius);
-        let mut candidate_ids = Vec::new();
-        let mut candidate_xs = Vec::new();
-        let mut candidate_ys = Vec::new();
-        let mut checked_players = HashSet::new();
 
-        for cell_idx in cell_indices {
-            if let Some(cell) = self.cells.get(cell_idx) {
-                let cell_guard = cell.read();
-                for player_id in &cell_guard.player_ids {
-                    if checked_players.insert(player_id.clone()) {
-                        if let Some(pos_entry) = self.player_positions.get(player_id) {
-                            let (px, py) = *pos_entry.value();
-                            candidate_ids.push(player_id.clone());
-                            candidate_xs.push(px);
-                            candidate_ys.push(py);
-                        }
-                    }
-                }
+        let candidate_ids: Vec<PlayerID> = if self.should_use_quadtree(self.player_positions.len()) {
+            self.maybe_rebuild_quadtrees();
+            let tree_guard = self.quadtree_player_index.read();
+            if let Some(tree) = tree_guard.as_ref() {
+                tree.query_circle(x, y, radius)
+            } else {
+                self.collect_grid_player_candidates(x, y, radius)
+            }
+        } else {
+            self.collect_grid_player_candidates(x, y, radius)
+        };
+
+        let mut candidate_ids_filtered = Vec::with_capacity(candidate_ids.len());
+        let mut candidate_xs = Vec::with_capacity(candidate_ids.len());
+        let mut candidate_ys = Vec::with_capacity(candidate_ids.len());
+
+        for player_id in candidate_ids {
+            if let Some(pos_entry) = self.player_positions.get(&player_id) {
+                let (px, py) = *pos_entry.value();
+                candidate_ids_filtered.push(player_id);
+                candidate_xs.push(px);
+                candidate_ys.push(py);
             }
         }
 
-        let mut matched_indices = Vec::with_capacity(candidate_ids.len());
+        let mut matched_indices = Vec::with_capacity(candidate_ids_filtered.len());
         simd::filter_indices_within_radius(
             &candidate_xs,
             &candidate_ys,
@@ -251,7 +601,7 @@ impl ImprovedSpatialIndex {
         let mut nearby_players = Vec::with_capacity(matched_indices.len());
         for idx in matched_indices {
             if let (Some(player_id), Some(px), Some(py)) = (
-                candidate_ids.get(idx),
+                candidate_ids_filtered.get(idx),
                 candidate_xs.get(idx),
                 candidate_ys.get(idx),
             ) {
@@ -266,10 +616,7 @@ impl ImprovedSpatialIndex {
         let new_cell_idx = self.get_cell_index(x, y);
 
         // Check if projectile moved to a different cell
-        let old_cell_idx = self
-            .projectile_cells
-            .get(&proj_id)
-            .map(|entry| *entry.value());
+        let old_cell_idx = self.projectile_cells.get(&proj_id).map(|entry| *entry.value());
 
         if let Some(old_idx) = old_cell_idx {
             if old_idx != new_cell_idx {
@@ -308,29 +655,33 @@ impl ImprovedSpatialIndex {
 
     pub fn query_nearby_projectiles(&self, x: f32, y: f32, radius: f32) -> Vec<EntityId> {
         let radius_squared = radius * radius;
-        let cell_indices = self.get_cells_in_radius(x, y, radius);
-        let mut candidate_ids = Vec::new();
-        let mut candidate_xs = Vec::new();
-        let mut candidate_ys = Vec::new();
-        let mut checked_projectiles = HashSet::new();
 
-        for cell_idx in cell_indices {
-            if let Some(cell) = self.cells.get(cell_idx) {
-                let cell_guard = cell.read();
-                for proj_id in &cell_guard.projectile_ids {
-                    if checked_projectiles.insert(*proj_id) {
-                        if let Some(pos_entry) = self.projectile_positions.get(proj_id) {
-                            let (px, py) = *pos_entry.value();
-                            candidate_ids.push(*proj_id);
-                            candidate_xs.push(px);
-                            candidate_ys.push(py);
-                        }
-                    }
-                }
+        let candidate_ids: Vec<EntityId> = if self.should_use_quadtree(self.projectile_positions.len()) {
+            self.maybe_rebuild_quadtrees();
+            let tree_guard = self.quadtree_projectile_index.read();
+            if let Some(tree) = tree_guard.as_ref() {
+                tree.query_circle(x, y, radius)
+            } else {
+                self.collect_grid_projectile_candidates(x, y, radius)
+            }
+        } else {
+            self.collect_grid_projectile_candidates(x, y, radius)
+        };
+
+        let mut candidate_ids_filtered = Vec::with_capacity(candidate_ids.len());
+        let mut candidate_xs = Vec::with_capacity(candidate_ids.len());
+        let mut candidate_ys = Vec::with_capacity(candidate_ids.len());
+
+        for proj_id in candidate_ids {
+            if let Some(pos_entry) = self.projectile_positions.get(&proj_id) {
+                let (px, py) = *pos_entry.value();
+                candidate_ids_filtered.push(proj_id);
+                candidate_xs.push(px);
+                candidate_ys.push(py);
             }
         }
 
-        let mut matched_indices = Vec::with_capacity(candidate_ids.len());
+        let mut matched_indices = Vec::with_capacity(candidate_ids_filtered.len());
         simd::filter_indices_within_radius(
             &candidate_xs,
             &candidate_ys,
@@ -342,7 +693,7 @@ impl ImprovedSpatialIndex {
 
         let mut nearby_projectiles = Vec::with_capacity(matched_indices.len());
         for idx in matched_indices {
-            if let Some(projectile_id) = candidate_ids.get(idx) {
+            if let Some(projectile_id) = candidate_ids_filtered.get(idx) {
                 nearby_projectiles.push(*projectile_id);
             }
         }
@@ -377,7 +728,25 @@ impl ImprovedSpatialIndex {
             occupied_cells,
             total_cells: self.cells.len(),
             max_entities_per_cell,
+            query_mode: match self.query_mode {
+                SpatialQueryMode::Grid => "grid",
+                SpatialQueryMode::Quadtree => "quadtree",
+                SpatialQueryMode::Hybrid => "hybrid",
+            }
+            .to_string(),
         }
+    }
+}
+
+fn parse_query_mode_from_env() -> SpatialQueryMode {
+    let raw = std::env::var("MGS_SPATIAL_INDEX_MODE")
+        .unwrap_or_else(|_| "hybrid".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    match raw.as_str() {
+        "grid" => SpatialQueryMode::Grid,
+        "quadtree" | "quad" | "hierarchical" => SpatialQueryMode::Quadtree,
+        _ => SpatialQueryMode::Hybrid,
     }
 }
 
@@ -388,6 +757,7 @@ pub struct SpatialIndexStats {
     pub occupied_cells: usize,
     pub total_cells: usize,
     pub max_entities_per_cell: usize,
+    pub query_mode: String,
 }
 
 #[cfg(test)]

@@ -64,6 +64,7 @@ impl MassiveGameServer {
             dynamic_tick_duration.as_millis(),
             delta_time_fixed
         );
+        let mut last_logged_quality = self.current_quality_settings();
 
         loop {
             tick_timer.tick().await;
@@ -102,6 +103,27 @@ impl MassiveGameServer {
 
             // Log frame time if it's too long (sampled to avoid log-induced stalls under load).
             let frame_time = frame_start_time.elapsed();
+            self.record_tick_metrics(frame_time);
+
+            if current_frame % 120 == 0 {
+                let quality = self.current_quality_settings();
+                if quality.delta_skip_modulus != last_logged_quality.delta_skip_modulus
+                    || (quality.aoi_radius_scale - last_logged_quality.aoi_radius_scale).abs()
+                        > 0.01
+                    || (quality.max_projectiles_scale - last_logged_quality.max_projectiles_scale)
+                        .abs()
+                        > 0.01
+                {
+                    info!(
+                        "Adaptive quality updated: aoi_scale={:.2}, projectile_scale={:.2}, delta_skip={}",
+                        quality.aoi_radius_scale,
+                        quality.max_projectiles_scale,
+                        quality.delta_skip_modulus
+                    );
+                    last_logged_quality = quality;
+                }
+            }
+
             if frame_time > dynamic_tick_duration + Duration::from_millis(5)
                 && current_frame % 60 == 0
             {
@@ -207,7 +229,9 @@ impl MassiveGameServer {
     }
 
     pub fn update_player_aoi(&self, player_id: &PlayerID, x: f32, y: f32) {
-        const AOI_RADIUS_SQUARED: f32 = AOI_RADIUS * AOI_RADIUS;
+        let quality = self.current_quality_settings();
+        let effective_aoi_radius = AOI_RADIUS * quality.aoi_radius_scale;
+        let effective_aoi_radius_sq = effective_aoi_radius * effective_aoi_radius;
 
         let player_id_str = player_id.as_str();
 
@@ -229,7 +253,9 @@ impl MassiveGameServer {
         player_aoi.visible_walls.clear();
 
         // 1. Update visible players (using spatial index)
-        let nearby_player_ids = self.spatial_index.query_nearby_players(x, y, AOI_RADIUS);
+        let nearby_player_ids = self
+            .spatial_index
+            .query_nearby_players(x, y, effective_aoi_radius);
         for other_id_arc in nearby_player_ids
             .into_iter()
             .take(AOI_MAX_VISIBLE_PLAYERS.saturating_add(1))
@@ -245,7 +271,7 @@ impl MassiveGameServer {
         // 2. Update visible projectiles via spatial index (avoid scanning all projectiles)
         let nearby_projectile_ids = self
             .spatial_index
-            .query_nearby_projectiles(x, y, AOI_RADIUS);
+            .query_nearby_projectiles(x, y, effective_aoi_radius);
         for proj_id in nearby_projectile_ids
             .into_iter()
             .take(AOI_MAX_VISIBLE_PROJECTILES)
@@ -256,7 +282,12 @@ impl MassiveGameServer {
         // Candidate partitions for map/items within this AoI.
         let mut candidate_partition_indices = Vec::with_capacity(64);
         self.world_partition_manager
-            .collect_partition_indices_for_aoi(x, y, AOI_RADIUS, &mut candidate_partition_indices);
+            .collect_partition_indices_for_aoi(
+                x,
+                y,
+                effective_aoi_radius,
+                &mut candidate_partition_indices,
+            );
 
         // 3. Update visible pickups via partition dynamic object index.
         let mut candidate_pickups = 0usize;
@@ -273,7 +304,7 @@ impl MassiveGameServer {
                     active_pickups += 1;
                     let dx = pickup.x - x;
                     let dy = pickup.y - y;
-                    if (dx * dx + dy * dy) <= AOI_RADIUS_SQUARED {
+                    if (dx * dx + dy * dy) <= effective_aoi_radius_sq {
                         player_aoi.visible_pickups.insert(pickup.id);
                         if player_aoi.visible_pickups.len() >= AOI_MAX_VISIBLE_PICKUPS {
                             break 'pickups;
@@ -284,10 +315,10 @@ impl MassiveGameServer {
         }
 
         // 4. Update visible walls (check overlapping partitions)
-        let min_aoi_x = x - AOI_RADIUS;
-        let max_aoi_x = x + AOI_RADIUS;
-        let min_aoi_y = y - AOI_RADIUS;
-        let max_aoi_y = y + AOI_RADIUS;
+        let min_aoi_x = x - effective_aoi_radius;
+        let max_aoi_x = x + effective_aoi_radius;
+        let min_aoi_y = y - effective_aoi_radius;
+        let max_aoi_y = y + effective_aoi_radius;
 
         let mut candidate_walls = 0usize;
         'walls: for partition_idx in candidate_partition_indices.iter().copied() {

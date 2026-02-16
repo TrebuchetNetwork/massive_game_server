@@ -13,6 +13,7 @@ use massive_game_server_core::network::signaling::{
     SignalingPeers,
     WorldPartitionManagerRef,
 };
+use massive_game_server_core::network::quic::start_quic_runtime_from_env;
 use massive_game_server_core::operational::arena::{build_arena_routes, ArenaService};
 use massive_game_server_core::operational::auth::{build_auth_routes, AuthService};
 use massive_game_server_core::operational::code_generation::{
@@ -23,6 +24,7 @@ use massive_game_server_core::operational::diagnostics::{deadlock, heap_profiler
 use massive_game_server_core::operational::feature_flags::{
     build_feature_flag_routes, FeatureFlagService,
 };
+use massive_game_server_core::operational::monitoring::tracing as monitoring_tracing;
 use massive_game_server_core::server::instance::MassiveGameServer;
 use massive_game_server_core::server::lifecycle;
 
@@ -34,25 +36,15 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{error, info, warn, Level};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 use warp::http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use warp::{Filter, Reply};
 
 fn init_logging() -> anyhow::Result<()> {
-    let subscriber = fmt::Subscriber::builder()
-        .with_max_level(Level::INFO) // Adjusted default to INFO
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            "massive_game_server_core=info,warp=info,webrtc=warn,signaling=info".into()
-            // Keep this specific
-        }))
-        .finish();
-
-    tracing::subscriber::set_global_default(subscriber)
-        .map_err(|e| anyhow::anyhow!("Failed to set global default tracing subscriber: {}", e))?;
-    info!("Tracing subscriber initialized.");
-    Ok(())
+    monitoring_tracing::init_tracing_subscriber(
+        "massive_game_server_core=info,warp=info,webrtc=warn,signaling=info",
+    )
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -663,6 +655,15 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::anyhow!("Invalid bind address {}:{} ({})", bind_host, bind_port, err)
             })?;
 
+    let default_quic_bind_addr = SocketAddr::new(server_address.ip(), bind_port.saturating_add(1));
+    let quic_runtime = start_quic_runtime_from_env(default_quic_bind_addr)?;
+    if let Some(runtime) = quic_runtime.as_ref() {
+        info!(
+            "QUIC primary transport is enabled and listening on {}.",
+            runtime.local_addr()
+        );
+    }
+
     info!("Signaling server listening on ws://{}/ws", server_address);
     info!("Client files served from http://{}/", server_address);
 
@@ -676,6 +677,7 @@ async fn main() -> anyhow::Result<()> {
             lifecycle::request_shutdown(&server_for_shutdown);
         });
     server.await;
+    drop(quic_runtime);
 
     if let Err(err) = game_loop_handle.await {
         error!("Game loop task join failed: {}", err);
