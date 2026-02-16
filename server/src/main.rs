@@ -18,6 +18,8 @@ use massive_game_server_core::operational::auth::{build_auth_routes, AuthService
 use massive_game_server_core::operational::code_generation::{
     build_code_generation_routes, CodeGenerationService,
 };
+use massive_game_server_core::operational::config::load_validated_server_config;
+use massive_game_server_core::operational::diagnostics::{deadlock, heap_profiler};
 use massive_game_server_core::operational::feature_flags::{
     build_feature_flag_routes, FeatureFlagService,
 };
@@ -154,6 +156,16 @@ fn parse_list_env(var_name: &str) -> Vec<String> {
         .flat_map(|raw| raw.split(',').map(str::trim).map(str::to_owned).collect::<Vec<_>>())
         .filter(|item| !item.is_empty())
         .collect()
+}
+
+fn env_flag(var_name: &str) -> bool {
+    std::env::var(var_name)
+        .ok()
+        .map(|raw| {
+            let normalized = raw.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        })
+        .unwrap_or(false)
 }
 
 fn requires_admin_auth(
@@ -336,7 +348,10 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Massive Game Server starting up...");
 
-    let config = Arc::new(ServerConfig::default());
+    let config = Arc::new(
+        load_validated_server_config()
+            .map_err(|err| anyhow::anyhow!("failed to load/validate server config: {}", err))?,
+    );
     info!(
         "Server configuration loaded. Tick rate: {}",
         config.tick_rate
@@ -367,6 +382,16 @@ async fn main() -> anyhow::Result<()> {
         player_aois_state.clone(),
     ));
     info!("Game server instance created.");
+
+    if env_flag("MGS_DIAGNOSTICS_ENABLED") {
+        deadlock::spawn_frame_progress_watchdog(
+            game_server_instance.frame_counter.clone(),
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(10),
+        );
+        heap_profiler::spawn_heap_snapshot_logger(std::time::Duration::from_secs(30));
+        info!("Background diagnostics enabled.");
+    }
 
     let signaling_peers_state: SignalingPeers = Arc::new(DashMap::new());
     let auth_service = AuthService::new_from_env();

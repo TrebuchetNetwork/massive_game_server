@@ -1,6 +1,5 @@
 // massive_game_server/server/src/server/game_loop.rs
 use super::instance::MassiveGameServer;
-use crate::core::constants::{SERVER_TICK_RATE, TICK_DURATION};
 // Removed unused: use crate::network::signaling::{ChatMessage, handle_dc_send_error};
 // Removed unused: use crate::flatbuffers_generated::game_protocol as fb;
 use std::sync::Arc;
@@ -56,13 +55,13 @@ impl MassiveGameServer {
 
     pub async fn run_game_loop(self: Arc<Self>) {
         let delta_time_fixed = 1.0 / self.config.tick_rate as f32;
-        let mut tick_timer = interval(TICK_DURATION);
-        let mut last_tick_time = Instant::now();
+        let dynamic_tick_duration = Duration::from_secs_f64(1.0 / self.config.tick_rate as f64);
+        let mut tick_timer = interval(dynamic_tick_duration);
         let mut bots_spawned = false;
 
         info!(
             "Game loop started. Tick rate: {}ms, Delta time: {}s",
-            TICK_DURATION.as_millis(),
+            dynamic_tick_duration.as_millis(),
             delta_time_fixed
         );
 
@@ -103,7 +102,9 @@ impl MassiveGameServer {
 
             // Log frame time if it's too long (sampled to avoid log-induced stalls under load).
             let frame_time = frame_start_time.elapsed();
-            if frame_time > TICK_DURATION + Duration::from_millis(5) && current_frame % 60 == 0 {
+            if frame_time > dynamic_tick_duration + Duration::from_millis(5)
+                && current_frame % 60 == 0
+            {
                 warn!("Frame {} took too long: {:?}", current_frame, frame_time);
             }
         }

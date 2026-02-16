@@ -12089,7 +12089,26 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 if (killerMatchesId || killerMatchesName) div.classList.add('kill-entry--local');
                 if (victimMatchesId || victimMatchesName) div.classList.add('kill-entry--death');
 
-                div.innerHTML = `<span style="color:${'#'+killerColor.toString(16).padStart(6,'0')};">${entry.killer_name}</span> <span style="color: #A0A0A0;">[${weaponNames[entry.weapon] || 'Unknown'}]</span> <span style="color:${'#'+victimColor.toString(16).padStart(6,'0')};">${entry.victim_name}</span> ${weaponIcon}`;
+                const killerSpan = document.createElement('span');
+                killerSpan.style.color = '#' + killerColor.toString(16).padStart(6, '0');
+                killerSpan.textContent = String(entry.killer_name || 'Unknown');
+
+                const weaponSpan = document.createElement('span');
+                weaponSpan.style.color = '#A0A0A0';
+                weaponSpan.textContent = `[${weaponNames[entry.weapon] || 'Unknown'}]`;
+
+                const victimSpan = document.createElement('span');
+                victimSpan.style.color = '#' + victimColor.toString(16).padStart(6, '0');
+                victimSpan.textContent = String(entry.victim_name || 'Unknown');
+
+                div.appendChild(killerSpan);
+                div.appendChild(document.createTextNode(' '));
+                div.appendChild(weaponSpan);
+                div.appendChild(document.createTextNode(' '));
+                div.appendChild(victimSpan);
+                if (weaponIcon) {
+                    div.appendChild(document.createTextNode(` ${weaponIcon}`));
+                }
                 killFeedDiv.appendChild(div);
             });
         }

@@ -17,10 +17,10 @@ pub mod entities;
 pub mod network;
 pub mod server;
 pub mod world; // Assuming signaling.rs is in here
-               // pub mod state_sync;
+pub mod state_sync;
 pub mod operational;
 pub mod systems;
-// pub mod memory;
+pub mod memory;
 
 // Example re-exports if you want to shorten paths for users of this library:
 // pub use crate::core::types::PlayerId;

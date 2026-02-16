@@ -1,5 +1,7 @@
 // massive_game_server/server/src/entities/mod.rs
+
+pub mod flag;
+pub mod pickup;
 pub mod player;
-// pub mod projectile; // Define if needed
-// pub mod pickup; // Define if needed
-// pub mod wall; // Define if needed
+pub mod projectile;
+pub mod wall;

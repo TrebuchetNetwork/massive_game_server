@@ -10,6 +10,7 @@ use crate::concurrent::wall_spatial_index::WallSpatialIndex;
 use crate::core::config::ServerConfig;
 use crate::core::constants::*; // Import all constants, including MIN_PLAYERS_TO_START
 use crate::core::error::ServerError;
+use crate::core::math::lerp;
 use crate::core::simd;
 use crate::core::types::*;
 use crate::core::types::{CorePickupType, EntityId, MatchState, PlayerID};
@@ -215,6 +216,25 @@ struct ProjectileChunkResults {
     wall_hits: Vec<(EntityId, i32)>,
     spatial_updates: Vec<(EntityId, f32, f32)>,
     wall_impacts: Vec<GameEvent>,
+}
+
+#[derive(Debug, Clone)]
+struct AimAnomalyState {
+    last_rotation: f32,
+    last_input_timestamp_ms: u64,
+    suspicion_score: f32,
+    last_warned_at: Instant,
+}
+
+#[inline]
+fn shortest_angle_diff_radians(a: f32, b: f32) -> f32 {
+    let mut diff = (a - b) % (2.0 * std::f32::consts::PI);
+    if diff > std::f32::consts::PI {
+        diff -= 2.0 * std::f32::consts::PI;
+    } else if diff < -std::f32::consts::PI {
+        diff += 2.0 * std::f32::consts::PI;
+    }
+    diff
 }
 
 #[inline]
@@ -770,6 +790,9 @@ pub struct MassiveGameServer {
     pub pickup_soa_snapshot: Arc<AtomicPickupSnapshot>,
     join_stage_traces: Arc<DashMap<String, JoinStageTrace>>,
     join_sequence_counter: Arc<AtomicU64>,
+    player_position_history: Arc<DashMap<PlayerID, VecDeque<(u64, f32, f32)>>>,
+    aim_anomaly_states: Arc<DashMap<PlayerID, AimAnomalyState>>,
+    lag_compensation_ms: u64,
 }
 
 const MAX_KILL_FEED_HISTORY: usize = 10;
@@ -960,6 +983,11 @@ impl MassiveGameServer {
         } else {
             0
         };
+        let lag_compensation_ms = std::env::var("MGS_LAG_COMPENSATION_MS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_LAG_COMPENSATION_MS)
+            .min(250);
 
         info!(
             "Human-priority slots: enabled={}, reserved_human_slots={}",
@@ -1008,6 +1036,9 @@ impl MassiveGameServer {
             pickup_soa_snapshot: Arc::new(AtomicPickupSnapshot::new()),
             join_stage_traces: Arc::new(DashMap::new()),
             join_sequence_counter: Arc::new(AtomicU64::new(0)),
+            player_position_history: Arc::new(DashMap::new()),
+            aim_anomaly_states: Arc::new(DashMap::new()),
+            lag_compensation_ms,
         };
 
         info!("MassiveGameServer initialized successfully.");
@@ -1020,6 +1051,125 @@ impl MassiveGameServer {
 
     pub fn is_shutdown_requested(&self) -> bool {
         self.is_shutting_down.load(AtomicOrdering::Acquire)
+    }
+
+    fn prune_runtime_tracking_state(&self) {
+        self.player_position_history.retain(|player_id, _| {
+            self.player_manager.get_player_state(player_id).is_some()
+        });
+        self.aim_anomaly_states.retain(|player_id, _| {
+            self.player_manager.get_player_state(player_id).is_some()
+        });
+    }
+
+    fn record_player_position_sample(&self, player_id: &PlayerID, timestamp_ms: u64, x: f32, y: f32) {
+        let mut history = self
+            .player_position_history
+            .entry(player_id.clone())
+            .or_insert_with(|| VecDeque::with_capacity(MAX_POSITION_HISTORY_SAMPLES));
+        if history
+            .back()
+            .is_some_and(|(last_timestamp, _, _)| *last_timestamp == timestamp_ms)
+        {
+            if let Some(last) = history.back_mut() {
+                *last = (timestamp_ms, x, y);
+            }
+            return;
+        }
+        history.push_back((timestamp_ms, x, y));
+        while history.len() > MAX_POSITION_HISTORY_SAMPLES {
+            let _ = history.pop_front();
+        }
+    }
+
+    fn get_rewound_player_position(
+        &self,
+        player_id: &PlayerID,
+        target_timestamp_ms: u64,
+    ) -> Option<(f32, f32)> {
+        let history = self.player_position_history.get(player_id)?;
+        let first = history.front().copied()?;
+        let last = history.back().copied()?;
+
+        if target_timestamp_ms <= first.0 {
+            return Some((first.1, first.2));
+        }
+        if target_timestamp_ms >= last.0 {
+            return Some((last.1, last.2));
+        }
+
+        for window in history.as_slices().0.windows(2) {
+            let older = window[0];
+            let newer = window[1];
+            if older.0 <= target_timestamp_ms && target_timestamp_ms <= newer.0 {
+                let span = (newer.0 - older.0).max(1);
+                let alpha = (target_timestamp_ms - older.0) as f32 / span as f32;
+                return Some((lerp(older.1, newer.1, alpha), lerp(older.2, newer.2, alpha)));
+            }
+        }
+
+        let contiguous = history.iter().copied().collect::<Vec<_>>();
+        for window in contiguous.windows(2) {
+            let older = window[0];
+            let newer = window[1];
+            if older.0 <= target_timestamp_ms && target_timestamp_ms <= newer.0 {
+                let span = (newer.0 - older.0).max(1);
+                let alpha = (target_timestamp_ms - older.0) as f32 / span as f32;
+                return Some((lerp(older.1, newer.1, alpha), lerp(older.2, newer.2, alpha)));
+            }
+        }
+
+        Some((last.1, last.2))
+    }
+
+    fn apply_aim_anomaly_detection(
+        &self,
+        player_id: &PlayerID,
+        input: &PlayerInputData,
+        player_state: &mut PlayerState,
+        now: Instant,
+    ) {
+        let mut entry = self
+            .aim_anomaly_states
+            .entry(player_id.clone())
+            .or_insert_with(|| AimAnomalyState {
+                last_rotation: input.rotation,
+                last_input_timestamp_ms: input.timestamp,
+                suspicion_score: 0.0,
+                last_warned_at: now,
+            });
+
+        let dt_ms = input
+            .timestamp
+            .saturating_sub(entry.last_input_timestamp_ms)
+            .max(1);
+        let dt_sec = dt_ms as f32 / 1000.0;
+        let rotation_delta = shortest_angle_diff_radians(input.rotation, entry.last_rotation).abs();
+        let rotation_speed = rotation_delta / dt_sec.max(0.001);
+
+        if input.shooting && rotation_speed > AIMBOT_SUSPICION_ROTATION_RAD_PER_SEC {
+            let overshoot = rotation_speed / AIMBOT_SUSPICION_ROTATION_RAD_PER_SEC - 1.0;
+            entry.suspicion_score += AIMBOT_SUSPICION_SHOT_WEIGHT + overshoot * 0.2;
+        } else {
+            entry.suspicion_score =
+                (entry.suspicion_score - AIMBOT_SUSPICION_DECAY_PER_SEC * dt_sec).max(0.0);
+        }
+
+        if entry.suspicion_score >= AIMBOT_SUSPICION_THRESHOLD
+            && now.duration_since(entry.last_warned_at) >= Duration::from_secs(2)
+        {
+            entry.last_warned_at = now;
+            player_state.violation_count = player_state.violation_count.saturating_add(1);
+            warn!(
+                "[{}]: Aim anomaly detected (rotation_speed={:.2} rad/s, suspicion={:.2}).",
+                player_id.as_str(),
+                rotation_speed,
+                entry.suspicion_score
+            );
+        }
+
+        entry.last_rotation = input.rotation;
+        entry.last_input_timestamp_ms = input.timestamp;
     }
 
     fn sync_pickups_to_partition_index(
@@ -1246,6 +1396,13 @@ impl MassiveGameServer {
             return;
         }
         player_state.last_processed_input_sequence = input.sequence;
+        let player_id_for_anti_cheat = player_state.id.clone();
+        self.apply_aim_anomaly_detection(
+            &player_id_for_anti_cheat,
+            input,
+            player_state,
+            current_server_time,
+        );
         player_state.mark_field_changed(FIELD_POSITION_ROTATION);
 
         // Calculate movement relative to player rotation
@@ -1975,6 +2132,12 @@ impl MassiveGameServer {
         let wall_arc = Arc::new(walls.to_vec());
         let mut all_to_respawn = Vec::new();
         let mut total_alive = 0;
+        let sample_timestamp_ms = self.get_server_timestamp_ms();
+
+        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+        if frame % 120 == 0 {
+            self.prune_runtime_tracking_state();
+        }
 
         // Process all players using for_each_player_mut
         self.player_manager
@@ -1986,6 +2149,12 @@ impl MassiveGameServer {
                     total_alive += 1;
                     // Process movement with optimized collision
                     self.process_player_movement_optimized(player_state, &wall_arc, delta_time);
+                    self.record_player_position_sample(
+                        player_id,
+                        sample_timestamp_ms,
+                        player_state.x,
+                        player_state.y,
+                    );
                 } else if player_state.respawn_timer == Some(0.0) {
                     all_to_respawn.push((player_id.clone(), player_state.team_id));
                 }
@@ -2212,6 +2381,12 @@ impl MassiveGameServer {
 
             if let Some(mut p_state) = self.player_manager.get_player_state_mut(&player_id) {
                 p_state.respawn(spawn_pos.x, spawn_pos.y);
+                self.record_player_position_sample(
+                    &player_id,
+                    self.get_server_timestamp_ms(),
+                    spawn_pos.x,
+                    spawn_pos.y,
+                );
                 self.global_game_events.push(
                     GameEvent::PlayerJoined {
                         player_id: player_id.clone(),
@@ -2404,6 +2579,9 @@ impl MassiveGameServer {
             }
             Arc::new(caches)
         };
+        let lag_compensation_target_ms = self
+            .get_server_timestamp_ms()
+            .saturating_sub(self.lag_compensation_ms);
 
         // Process projectiles in parallel chunks
         let chunk_size = 50.max(total_projectiles / rayon::current_num_threads());
@@ -2531,9 +2709,12 @@ impl MassiveGameServer {
                         if target_id == proj.owner_id {
                             continue;
                         }
+                        let (validated_target_x, validated_target_y) = self
+                            .get_rewound_player_position(&target_id, lag_compensation_target_ms)
+                            .unwrap_or((target_x, target_y));
                         target_ids.push(target_id);
-                        target_xs.push(target_x);
-                        target_ys.push(target_y);
+                        target_xs.push(validated_target_x);
+                        target_ys.push(validated_target_y);
                     }
 
                     if !target_ids.is_empty() {
