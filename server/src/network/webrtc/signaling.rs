@@ -5,8 +5,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SignalingFrame {
-    Offer { sdp: String },
-    Answer { sdp: String },
+    Offer {
+        sdp: String,
+    },
+    Answer {
+        sdp: String,
+    },
     IceCandidate {
         candidate: String,
         sdp_mid: Option<String>,
@@ -16,7 +20,9 @@ pub enum SignalingFrame {
 
 pub fn validate_signaling_frame(frame: &SignalingFrame, max_sdp_bytes: usize) -> bool {
     match frame {
-        SignalingFrame::Offer { sdp } | SignalingFrame::Answer { sdp } => sdp.len() <= max_sdp_bytes,
+        SignalingFrame::Offer { sdp } | SignalingFrame::Answer { sdp } => {
+            sdp.len() <= max_sdp_bytes
+        }
         SignalingFrame::IceCandidate { candidate, .. } => candidate.len() <= 4 * 1024,
     }
 }

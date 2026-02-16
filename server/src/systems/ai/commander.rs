@@ -34,7 +34,10 @@ impl PredictiveMotionModel {
             let dt_prev = (prev.timestamp_ms.saturating_sub(prev2.timestamp_ms)).max(1) as f32;
             let vx_prev = (prev.position.x - prev2.position.x) / dt_prev;
             let vy_prev = (prev.position.y - prev2.position.y) / dt_prev;
-            ((vx - vx_prev) / dt_ms.max(1.0), (vy - vy_prev) / dt_ms.max(1.0))
+            (
+                (vx - vx_prev) / dt_ms.max(1.0),
+                (vy - vy_prev) / dt_ms.max(1.0),
+            )
         } else {
             (0.0, 0.0)
         };

@@ -17,7 +17,11 @@ impl Default for QualitySettings {
     }
 }
 
-pub fn adjust_quality(current: QualitySettings, frame_time_ms: f32, target_ms: f32) -> QualitySettings {
+pub fn adjust_quality(
+    current: QualitySettings,
+    frame_time_ms: f32,
+    target_ms: f32,
+) -> QualitySettings {
     if frame_time_ms > target_ms * 1.20 {
         return QualitySettings {
             aoi_radius_scale: (current.aoi_radius_scale * 0.95).clamp(0.65, 1.0),

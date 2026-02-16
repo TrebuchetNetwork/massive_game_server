@@ -4,10 +4,15 @@ use crate::core::constants::*;
 use crate::core::types::{PlayerID, PlayerInputData, ServerWeaponType, Vec2};
 use crate::flatbuffers_generated::game_protocol as fb;
 use crate::server::instance::{BotBehaviorState, BotController, MassiveGameServer};
+use crate::systems::ai::commander::{
+    MotionSample, PredictiveMotionModel, ThreatPredictor, ThreatSample,
+};
 
+use dashmap::DashMap;
 use rand::Rng;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, trace};
 
@@ -42,21 +47,38 @@ struct EnemySnapshot {
     id: PlayerID,
     x: f32,
     y: f32,
+    velocity_x: f32,
+    velocity_y: f32,
     team_id: u8,
     carries_flag_team_id: u8,
 }
 
 #[derive(Clone)]
 struct BotSnapshotOwned {
+    id: PlayerID,
     username: String,
     x: f32,
     y: f32,
+    velocity_x: f32,
+    velocity_y: f32,
     rotation: f32,
     ammo: i32,
     weapon: ServerWeaponType,
     team_id: u8,
     is_carrying_flag_team_id: u8,
     last_processed_input_sequence: u32,
+}
+
+#[derive(Default)]
+struct RuntimePredictiveModels {
+    motion_models: DashMap<PlayerID, PredictiveMotionModel>,
+    threat_models: DashMap<PlayerID, ThreatPredictor>,
+}
+
+static RUNTIME_PREDICTIVE_MODELS: OnceLock<RuntimePredictiveModels> = OnceLock::new();
+
+fn runtime_predictive_models() -> &'static RuntimePredictiveModels {
+    RUNTIME_PREDICTIVE_MODELS.get_or_init(RuntimePredictiveModels::default)
 }
 
 #[derive(Clone, Copy, Default)]
@@ -69,6 +91,15 @@ struct TeamObjectiveMetrics {
 struct TeamObjectiveSummary {
     team1: TeamObjectiveMetrics,
     team2: TeamObjectiveMetrics,
+}
+
+#[derive(Clone)]
+struct TargetSolution {
+    enemy_id: PlayerID,
+    direct_position: Vec2,
+    predicted_position: Vec2,
+    distance_sq: f32,
+    aim_angle: f32,
 }
 
 impl TeamObjectiveSummary {
@@ -98,6 +129,8 @@ impl OptimizedBotAI {
             .frame_counter
             .load(std::sync::atomic::Ordering::Relaxed);
         let current_time = Instant::now();
+        let now_ms = server_instance.get_server_timestamp_ms();
+        let predictive_models = runtime_predictive_models();
 
         // Get list of bot IDs (reuse allocation)
         thread_local! {
@@ -142,10 +175,23 @@ impl OptimizedBotAI {
                     return;
                 }
 
+                {
+                    let mut motion_model = predictive_models
+                        .motion_models
+                        .entry(id.clone())
+                        .or_default();
+                    motion_model.push_sample(MotionSample {
+                        timestamp_ms: now_ms,
+                        position: Vec2::new(player.x, player.y),
+                    });
+                }
+
                 let snapshot = EnemySnapshot {
                     id: id.clone(),
                     x: player.x,
                     y: player.y,
+                    velocity_x: player.velocity_x,
+                    velocity_y: player.velocity_y,
                     team_id: player.team_id,
                     carries_flag_team_id: player.is_carrying_flag_team_id,
                 };
@@ -198,9 +244,12 @@ impl OptimizedBotAI {
                     continue;
                 }
                 BotSnapshotOwned {
+                    id: bot_state.id.clone(),
                     username: bot_state.username.clone(),
                     x: bot_state.x,
                     y: bot_state.y,
+                    velocity_x: bot_state.velocity_x,
+                    velocity_y: bot_state.velocity_y,
                     rotation: bot_state.rotation,
                     ammo: bot_state.ammo,
                     weapon: bot_state.weapon,
@@ -577,6 +626,84 @@ impl OptimizedBotAI {
         true // Clear line of sight
     }
 
+    fn select_enemy_target(
+        bot_state: &BotSnapshotOwned,
+        enemies: &[EnemySnapshot],
+        game_mode: fb::GameModeType,
+        now_ms: u64,
+    ) -> Option<TargetSolution> {
+        let predictive_models = runtime_predictive_models();
+        let mut threat_model = predictive_models
+            .threat_models
+            .entry(bot_state.id.clone())
+            .or_default();
+
+        let mut selected: Option<(f32, TargetSolution)> = None;
+
+        for enemy in enemies {
+            let dx = enemy.x - bot_state.x;
+            let dy = enemy.y - bot_state.y;
+            let dist_sq = dx * dx + dy * dy;
+            if dist_sq > (BOT_TARGET_ACQUISITION_RANGE * 2.0).powi(2) {
+                continue;
+            }
+
+            let relative_speed = ((enemy.velocity_x - bot_state.velocity_x).powi(2)
+                + (enemy.velocity_y - bot_state.velocity_y).powi(2))
+            .sqrt();
+            let sample = ThreatSample {
+                distance: dist_sq.sqrt(),
+                relative_speed,
+                recent_damage_taken: if game_mode == fb::GameModeType::CaptureTheFlag
+                    && enemy.carries_flag_team_id == bot_state.team_id
+                {
+                    75.0
+                } else {
+                    0.0
+                },
+                target_visibility: 1.0,
+            };
+
+            let mut threat_score = threat_model.predict_threat_score(sample);
+            if game_mode == fb::GameModeType::CaptureTheFlag
+                && enemy.carries_flag_team_id == bot_state.team_id
+            {
+                threat_score += BOT_FLAG_CHASE_PRIORITY * 0.1;
+            }
+
+            let pseudo_label = enemy.carries_flag_team_id == bot_state.team_id
+                || dist_sq < (220.0f32).powi(2)
+                || threat_score > 0.55;
+            threat_model.train_online(sample, pseudo_label);
+
+            let direct_position = Vec2::new(enemy.x, enemy.y);
+            let predicted_position = predictive_models
+                .motion_models
+                .get(&enemy.id)
+                .and_then(|motion_model| motion_model.predict_position(now_ms.saturating_add(120)))
+                .unwrap_or(direct_position);
+            let aim_angle =
+                (predicted_position.y - bot_state.y).atan2(predicted_position.x - bot_state.x);
+
+            let candidate = TargetSolution {
+                enemy_id: enemy.id.clone(),
+                direct_position,
+                predicted_position,
+                distance_sq: dist_sq,
+                aim_angle,
+            };
+
+            let should_replace = selected
+                .as_ref()
+                .map_or(true, |(best_score, _)| threat_score > *best_score);
+            if should_replace {
+                selected = Some((threat_score, candidate));
+            }
+        }
+
+        selected.map(|(_, candidate)| candidate)
+    }
+
     /// Generate enhanced combat input with shooting and movement
     fn generate_combat_input(
         bot_state: &BotSnapshotOwned,
@@ -618,46 +745,34 @@ impl OptimizedBotAI {
             input.reload = true;
         }
 
-        // Find nearby enemies for combat
+        // Predictive target selection based on learned threat scores.
+        let selected_target = Self::select_enemy_target(
+            bot_state,
+            enemies,
+            game_mode,
+            server_instance.get_server_timestamp_ms(),
+        );
         let mut nearest_enemy_dist = f32::MAX;
-        let mut nearest_enemy_angle = 0.0;
+        let mut nearest_enemy_angle = bot_state.rotation;
         let mut has_enemy_target = false;
         let mut enemy_position = Vec2::zero();
 
-        for enemy in enemies {
-            let dx = enemy.x - bot_state.x;
-            let dy = enemy.y - bot_state.y;
-            let dist_sq = dx * dx + dy * dy;
-
-            if dist_sq < BOT_TARGET_ACQUISITION_RANGE.powi(2) && dist_sq < nearest_enemy_dist {
-                nearest_enemy_dist = dist_sq;
-                nearest_enemy_angle = dy.atan2(dx);
-                has_enemy_target = true;
-                enemy_position = Vec2::new(enemy.x, enemy.y);
-
-                // Priority target: enemy flag carrier
-                if game_mode == fb::GameModeType::CaptureTheFlag
-                    && enemy.carries_flag_team_id == bot_state.team_id
-                {
-                    nearest_enemy_dist *= 0.5;
-                }
-            }
-        }
-
-        // Verify line of sight only for the nearest target
-        if has_enemy_target {
+        if let Some(target) = selected_target.as_ref() {
+            nearest_enemy_dist = target.distance_sq;
+            nearest_enemy_angle = target.aim_angle;
+            enemy_position = target.direct_position;
             let bot_pos = Vec2::new(bot_state.x, bot_state.y);
-            if !Self::has_line_of_sight(bot_pos, enemy_position, server_instance) {
-                has_enemy_target = false;
-            }
+            has_enemy_target = Self::has_line_of_sight(bot_pos, enemy_position, server_instance);
         }
 
         // Movement towards objective - THIS IS THE KEY PART
         let mut movement_handled = false;
 
         if let Some(target_pos) = bot_controller.target_position {
-            let dx = target_pos.x - bot_state.x;
-            let dy = target_pos.y - bot_state.y;
+            let nav_target = server_instance
+                .navigation_waypoint_towards(Vec2::new(bot_state.x, bot_state.y), target_pos);
+            let dx = nav_target.x - bot_state.x;
+            let dy = nav_target.y - bot_state.y;
             let dist_sq = dx * dx + dy * dy;
 
             // Always set rotation towards target
@@ -692,8 +807,8 @@ impl OptimizedBotAI {
                 trace!(
                     "Bot {} moving to target at ({:.0}, {:.0}), distance: {:.0}",
                     bot_state.username,
-                    target_pos.x,
-                    target_pos.y,
+                    nav_target.x,
+                    nav_target.y,
                     dist_sq.sqrt()
                 );
             } else {
@@ -738,6 +853,17 @@ impl OptimizedBotAI {
             // Aim at enemy with some inaccuracy
             let aim_offset = rng.gen_range(-0.2..0.2) * (1.0 - BOT_SHOOT_ACCURACY);
             input.rotation = nearest_enemy_angle + aim_offset;
+            if let Some(target) = selected_target.as_ref() {
+                // Tighten movement vector around predicted enemy motion when engaging.
+                let predicted = target.predicted_position;
+                let predict_angle = (predicted.y - bot_state.y).atan2(predicted.x - bot_state.x);
+                input.rotation = (input.rotation + predict_angle) * 0.5;
+                trace!(
+                    "Bot {} engaging predicted target {}",
+                    bot_state.username,
+                    target.enemy_id.as_str()
+                );
+            }
 
             // Shoot if close enough and have line of sight
             let shoot_range: f32 = match bot_state.weapon {

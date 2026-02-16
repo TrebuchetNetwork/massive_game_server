@@ -2,6 +2,7 @@
 
 use dashmap::DashMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +37,12 @@ impl ConnectionInfo {
 #[derive(Default, Clone)]
 pub struct ConnectionManager {
     connections: Arc<DashMap<String, ConnectionInfo>>,
+}
+
+static SHARED_CONNECTION_MANAGER: OnceLock<ConnectionManager> = OnceLock::new();
+
+pub fn shared_connection_manager() -> &'static ConnectionManager {
+    SHARED_CONNECTION_MANAGER.get_or_init(ConnectionManager::default)
 }
 
 impl ConnectionManager {

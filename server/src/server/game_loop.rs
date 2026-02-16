@@ -269,9 +269,9 @@ impl MassiveGameServer {
         }
 
         // 2. Update visible projectiles via spatial index (avoid scanning all projectiles)
-        let nearby_projectile_ids = self
-            .spatial_index
-            .query_nearby_projectiles(x, y, effective_aoi_radius);
+        let nearby_projectile_ids =
+            self.spatial_index
+                .query_nearby_projectiles(x, y, effective_aoi_radius);
         for proj_id in nearby_projectile_ids
             .into_iter()
             .take(AOI_MAX_VISIBLE_PROJECTILES)

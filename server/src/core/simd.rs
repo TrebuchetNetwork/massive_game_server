@@ -149,15 +149,7 @@ pub fn first_index_within_segment_radius(
         }
     }
 
-    first_index_within_segment_radius_scalar(
-        xs,
-        ys,
-        start_x,
-        start_y,
-        end_x,
-        end_y,
-        radius_squared,
-    )
+    first_index_within_segment_radius_scalar(xs, ys, start_x, start_y, end_x, end_y, radius_squared)
 }
 
 #[inline]
@@ -418,8 +410,10 @@ unsafe fn first_index_within_segment_radius_avx2(
         let t_unclamped = x86_arch::_mm256_mul_ps(dot_v, inv_len_v);
         let t_v = x86_arch::_mm256_max_ps(zero_v, x86_arch::_mm256_min_ps(one_v, t_unclamped));
 
-        let closest_x_v = x86_arch::_mm256_add_ps(start_x_v, x86_arch::_mm256_mul_ps(t_v, seg_dx_v));
-        let closest_y_v = x86_arch::_mm256_add_ps(start_y_v, x86_arch::_mm256_mul_ps(t_v, seg_dy_v));
+        let closest_x_v =
+            x86_arch::_mm256_add_ps(start_x_v, x86_arch::_mm256_mul_ps(t_v, seg_dx_v));
+        let closest_y_v =
+            x86_arch::_mm256_add_ps(start_y_v, x86_arch::_mm256_mul_ps(t_v, seg_dy_v));
         let dx_v = x86_arch::_mm256_sub_ps(x_v, closest_x_v);
         let dy_v = x86_arch::_mm256_sub_ps(y_v, closest_y_v);
         let dist_sq_v = x86_arch::_mm256_add_ps(
@@ -722,8 +716,8 @@ unsafe fn first_index_aabb_containing_point_neon(
 #[cfg(test)]
 mod tests {
     use super::{
-        filter_indices_within_radius, first_index_aabb_containing_point,
-        first_index_within_radius, first_index_within_segment_radius,
+        filter_indices_within_radius, first_index_aabb_containing_point, first_index_within_radius,
+        first_index_within_segment_radius,
     };
 
     #[test]

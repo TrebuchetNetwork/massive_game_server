@@ -3,6 +3,9 @@ use dashmap::DashMap;
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
 use massive_game_server_core::core::types::PlayerAoI;
+use massive_game_server_core::network::quic::{
+    start_quic_runtime_from_env_with_handler, QuicRequestHandler,
+};
 use massive_game_server_core::network::signaling::{
     handle_signaling_connection,
     ChatMessagesQueue,
@@ -13,7 +16,6 @@ use massive_game_server_core::network::signaling::{
     SignalingPeers,
     WorldPartitionManagerRef,
 };
-use massive_game_server_core::network::quic::start_quic_runtime_from_env;
 use massive_game_server_core::operational::arena::{build_arena_routes, ArenaService};
 use massive_game_server_core::operational::auth::{build_auth_routes, AuthService};
 use massive_game_server_core::operational::code_generation::{
@@ -25,20 +27,21 @@ use massive_game_server_core::operational::feature_flags::{
     build_feature_flag_routes, FeatureFlagService,
 };
 use massive_game_server_core::operational::monitoring::tracing as monitoring_tracing;
-use massive_game_server_core::server::instance::MassiveGameServer;
+use massive_game_server_core::server::instance::{LiveReplayDisputeRequest, MassiveGameServer};
 use massive_game_server_core::server::lifecycle;
 
 use parking_lot::RwLock as ParkingLotRwLock;
 use serde::Deserialize;
-use std::convert::Infallible;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, Instrument};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
-use warp::http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri};
+use warp::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use warp::{Filter, Reply};
 
 fn init_logging() -> anyhow::Result<()> {
@@ -51,6 +54,20 @@ fn init_logging() -> anyhow::Result<()> {
 struct WsAuthQuery {
     auth_token: Option<String>,
     token: Option<String>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct LiveReplayRecentQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct QuicControlRequest {
+    op: Option<String>,
+    replay_limit: Option<usize>,
+    from_frame: Option<u64>,
+    to_frame: Option<u64>,
+    player_id: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -145,7 +162,12 @@ fn parse_list_env(var_name: &str) -> Vec<String> {
     std::env::var(var_name)
         .ok()
         .into_iter()
-        .flat_map(|raw| raw.split(',').map(str::trim).map(str::to_owned).collect::<Vec<_>>())
+        .flat_map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
         .filter(|item| !item.is_empty())
         .collect()
 }
@@ -204,9 +226,7 @@ fn requires_admin_auth(
         )
 }
 
-async fn handle_route_rejection(
-    rejection: warp::Rejection,
-) -> Result<impl Reply, Infallible> {
+async fn handle_route_rejection(rejection: warp::Rejection) -> Result<impl Reply, Infallible> {
     if let Some(admin_rejection) = rejection.find::<AdminAuthRejection>() {
         let body = warp::reply::json(&serde_json::json!({
             "ok": false,
@@ -408,6 +428,40 @@ async fn main() -> anyhow::Result<()> {
             server_inst.reset_join_stage_report();
             warp::reply::json(&serde_json::json!({ "ok": true }))
         });
+    let server_for_live_replay_recent = game_server_instance.clone();
+    let live_replay_recent_route = warp::path!("api" / "ops" / "live-replay" / "recent")
+        .and(warp::get())
+        .and(
+            warp::query::<LiveReplayRecentQuery>()
+                .or(warp::any().map(LiveReplayRecentQuery::default))
+                .unify(),
+        )
+        .and(warp::any().map(move || server_for_live_replay_recent.clone()))
+        .map(|query: LiveReplayRecentQuery, server_inst: ServerInstanceRef| {
+            let limit = query.limit.unwrap_or(256).clamp(1, 4096);
+            warp::reply::json(&serde_json::json!({
+                "enabled": server_inst.recent_live_replay_frames(1).len() > 0 || env_flag("MGS_LIVE_REPLAY_ENABLED"),
+                "frames": server_inst.recent_live_replay_frames(limit),
+                "limit": limit,
+            }))
+        });
+    let server_for_live_replay_dispute = game_server_instance.clone();
+    let live_replay_dispute_route = warp::path!("api" / "ops" / "live-replay" / "dispute")
+        .and(warp::post())
+        .and(warp::body::json::<LiveReplayDisputeRequest>())
+        .and(warp::any().map(move || server_for_live_replay_dispute.clone()))
+        .map(
+            |request: LiveReplayDisputeRequest, server_inst: ServerInstanceRef| {
+                warp::reply::json(&server_inst.build_live_replay_dispute_report(request))
+            },
+        );
+
+    let quic_primary_only = env_flag("MGS_QUIC_PRIMARY") && env_flag("MGS_QUIC_PRIMARY_ONLY");
+    if quic_primary_only {
+        info!(
+            "MGS_QUIC_PRIMARY_ONLY enabled: WebSocket signaling endpoint /ws will reject upgrades."
+        );
+    }
 
     let config_for_ws = config.clone();
     let signaling_peers_for_ws = signaling_peers_state.clone();
@@ -422,13 +476,14 @@ async fn main() -> anyhow::Result<()> {
     let server_instance_for_ws = game_server_instance.clone(); // Clone Arc for WebSocket handler
     let auth_service_for_ws = auth_service.clone();
 
-    let signaling_route = warp::path("ws")
+    let signaling_route_ws = warp::path("ws")
         .and(warp::ws())
         .and(
             warp::query::<WsAuthQuery>()
                 .or(warp::any().map(WsAuthQuery::default))
                 .unify(),
         )
+        .and(warp::header::headers_cloned())
         .and(warp::any().map(move || signaling_peers_for_ws.clone()))
         .and(warp::any().map(move || player_manager_for_ws.clone()))
         .and(warp::any().map(move || world_partition_manager_for_ws.clone()))
@@ -442,6 +497,7 @@ async fn main() -> anyhow::Result<()> {
         .map(
             |ws: warp::ws::Ws,
              ws_auth_query: WsAuthQuery,
+             request_headers: HeaderMap,
              s_peers: SignalingPeers,
              p_manager: PlayerManagerRef,
              w_p_manager: WorldPartitionManagerRef,
@@ -459,6 +515,22 @@ async fn main() -> anyhow::Result<()> {
                     .or(ws_auth_query.token)
                     .unwrap_or_default();
                 let auth_user_id = auth_service.resolve_user_id_from_token(&auth_token);
+                let remote_context = monitoring_tracing::extract_remote_context(
+                    request_headers
+                        .get("traceparent")
+                        .and_then(|value| value.to_str().ok()),
+                    request_headers
+                        .get("tracestate")
+                        .and_then(|value| value.to_str().ok()),
+                );
+                let ws_upgrade_span = tracing::info_span!(
+                    "ws_signaling_connection",
+                    peer_id = %peer_id,
+                    transport = "webrtc",
+                    auth_user_id = auth_user_id.as_deref().unwrap_or("anonymous")
+                );
+                ws_upgrade_span.set_parent(remote_context);
+
                 ws.on_upgrade(move |socket| {
                     handle_signaling_connection(
                         socket,
@@ -475,9 +547,32 @@ async fn main() -> anyhow::Result<()> {
                         auth_service,
                         auth_user_id,
                     )
+                    .instrument(ws_upgrade_span)
                 })
             },
-        );
+        )
+        .boxed();
+
+    let signaling_route = if quic_primary_only {
+        warp::path("ws")
+            .and(warp::path::end())
+            .and(warp::get())
+            .map(|| {
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "error": "quic_primary_only",
+                        "detail": "WebSocket signaling is disabled. Use QUIC primary transport."
+                    })),
+                    StatusCode::UPGRADE_REQUIRED,
+                )
+            })
+            .map(warp::reply::Reply::into_response)
+            .boxed()
+    } else {
+        signaling_route_ws
+            .map(warp::reply::Reply::into_response)
+            .boxed()
+    };
 
     let static_asset_allow_origin = std::env::var("MGS_CDN_ORIGIN")
         .ok()
@@ -537,7 +632,9 @@ async fn main() -> anyhow::Result<()> {
             arena_routes
                 .or(feature_flag_routes)
                 .or(join_stage_report_route)
-                .or(join_stage_reset_route),
+                .or(join_stage_reset_route)
+                .or(live_replay_recent_route)
+                .or(live_replay_dispute_route),
         )
         .map(|(), reply| reply);
     let public_routes = auth_routes
@@ -548,14 +645,14 @@ async fn main() -> anyhow::Result<()> {
         .or(static_files_route);
 
     let allowed_cors_origins = parse_list_env("MGS_ALLOWED_ORIGINS");
-    let base_routes = protected_routes.or(public_routes).recover(handle_route_rejection);
+    let base_routes = protected_routes
+        .or(public_routes)
+        .recover(handle_route_rejection);
     let routes = if allowed_cors_origins.is_empty() {
         info!(
             "No cross-origin API origins configured (set MGS_ALLOWED_ORIGINS for explicit allowlist)."
         );
-        base_routes
-            .map(warp::reply::Reply::into_response)
-            .boxed()
+        base_routes.map(warp::reply::Reply::into_response).boxed()
     } else {
         for origin in &allowed_cors_origins {
             info!("Allowing API CORS origin: {}", origin);
@@ -656,7 +753,54 @@ async fn main() -> anyhow::Result<()> {
             })?;
 
     let default_quic_bind_addr = SocketAddr::new(server_address.ip(), bind_port.saturating_add(1));
-    let quic_runtime = start_quic_runtime_from_env(default_quic_bind_addr)?;
+    let server_for_quic = game_server_instance.clone();
+    let quic_request_handler: QuicRequestHandler = Arc::new(move |payload: &[u8]| {
+        let request = serde_json::from_slice::<QuicControlRequest>(payload).unwrap_or_default();
+        let op = request.op.unwrap_or_else(|| "echo".to_string());
+
+        let response = match op.as_str() {
+            "healthz" => serde_json::json!({
+                "ok": true,
+                "op": "healthz",
+                "frame": server_for_quic.frame_counter.load(std::sync::atomic::Ordering::Relaxed),
+                "players": server_for_quic.player_manager.player_count(),
+                "projectiles": server_for_quic.projectiles.read().len(),
+                "pickups": server_for_quic.pickups.read().len(),
+                "ts_ms": server_for_quic.get_server_timestamp_ms(),
+            }),
+            "live_replay_recent" => {
+                let limit = request.replay_limit.unwrap_or(128).clamp(1, 4096);
+                serde_json::json!({
+                    "ok": true,
+                    "op": "live_replay_recent",
+                    "frames": server_for_quic.recent_live_replay_frames(limit),
+                    "limit": limit,
+                })
+            }
+            "live_replay_dispute" => {
+                let report =
+                    server_for_quic.build_live_replay_dispute_report(LiveReplayDisputeRequest {
+                        from_frame: request.from_frame,
+                        to_frame: request.to_frame,
+                        limit: request.replay_limit,
+                        player_id: request.player_id,
+                    });
+                return serde_json::to_vec(&report).ok();
+            }
+            _ => serde_json::json!({
+                "ok": true,
+                "op": "echo",
+                "bytes": payload.len(),
+                "trace_headers": monitoring_tracing::inject_current_context_headers(),
+            }),
+        };
+
+        serde_json::to_vec(&response).ok()
+    });
+    let quic_runtime = start_quic_runtime_from_env_with_handler(
+        default_quic_bind_addr,
+        Some(quic_request_handler),
+    )?;
     if let Some(runtime) = quic_runtime.as_ref() {
         info!(
             "QUIC primary transport is enabled and listening on {}.",
@@ -664,7 +808,14 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    info!("Signaling server listening on ws://{}/ws", server_address);
+    if quic_primary_only {
+        info!(
+            "WebSocket signaling endpoint ws://{}/ws is disabled (QUIC primary only mode).",
+            server_address
+        );
+    } else {
+        info!("Signaling server listening on ws://{}/ws", server_address);
+    }
     info!("Client files served from http://{}/", server_address);
 
     let server_for_shutdown = game_server_instance.clone();

@@ -2,12 +2,15 @@
 
 use anyhow::Context;
 use opentelemetry::global;
+use opentelemetry::propagation::{Extractor, Injector};
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace as sdktrace;
+use opentelemetry_sdk::Resource;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tracing_subscriber::layer::SubscriberExt;
@@ -26,6 +29,68 @@ pub fn with_trace_fields<R>(label: &str, f: impl FnOnce() -> R) -> R {
     f()
 }
 
+struct HeaderMapExtractor<'a> {
+    headers: &'a HashMap<String, String>,
+}
+
+impl<'a> Extractor for HeaderMapExtractor<'a> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.headers
+            .get(&key.to_ascii_lowercase())
+            .map(String::as_str)
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        self.headers.keys().map(String::as_str).collect()
+    }
+}
+
+struct HeaderMapInjector<'a> {
+    headers: &'a mut HashMap<String, String>,
+}
+
+impl<'a> Injector for HeaderMapInjector<'a> {
+    fn set(&mut self, key: &str, value: String) {
+        self.headers.insert(key.to_ascii_lowercase(), value);
+    }
+}
+
+pub fn extract_remote_context(
+    traceparent: Option<&str>,
+    tracestate: Option<&str>,
+) -> opentelemetry::Context {
+    let mut headers = HashMap::with_capacity(2);
+    if let Some(value) = traceparent {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            headers.insert("traceparent".to_string(), trimmed.to_string());
+        }
+    }
+    if let Some(value) = tracestate {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            headers.insert("tracestate".to_string(), trimmed.to_string());
+        }
+    }
+    global::get_text_map_propagator(|propagator| {
+        propagator.extract(&HeaderMapExtractor { headers: &headers })
+    })
+}
+
+pub fn inject_current_context_headers() -> HashMap<String, String> {
+    let mut headers = HashMap::new();
+    let cx = tracing_opentelemetry::OpenTelemetrySpanExt::context(&tracing::Span::current());
+    global::get_text_map_propagator(|propagator| {
+        propagator.inject_context(
+            &cx,
+            &mut HeaderMapInjector {
+                headers: &mut headers,
+            },
+        );
+    });
+    headers
+}
+
 fn env_flag(name: &str) -> bool {
     std::env::var(name)
         .ok()
@@ -37,6 +102,8 @@ fn env_flag(name: &str) -> bool {
 }
 
 pub fn init_tracing_subscriber(default_filter: &str) -> anyhow::Result<()> {
+    global::set_text_map_propagator(TraceContextPropagator::new());
+
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| default_filter.to_string().into());
     let fmt_layer = fmt::layer()
@@ -61,13 +128,11 @@ pub fn init_tracing_subscriber(default_filter: &str) -> anyhow::Result<()> {
                     .with_endpoint(otlp_endpoint.clone())
                     .with_timeout(Duration::from_millis(otlp_timeout_ms)),
             )
-            .with_trace_config(
-                sdktrace::config().with_resource(Resource::new(vec![
-                    KeyValue::new("service.name", "massive_game_server"),
-                    KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-                    KeyValue::new("service.namespace", "trebuchet"),
-                ])),
-            )
+            .with_trace_config(sdktrace::config().with_resource(Resource::new(vec![
+                KeyValue::new("service.name", "massive_game_server"),
+                KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+                KeyValue::new("service.namespace", "trebuchet"),
+            ])))
             .install_batch(Tokio)
             .context("failed to initialize OTLP tracing pipeline")?;
 

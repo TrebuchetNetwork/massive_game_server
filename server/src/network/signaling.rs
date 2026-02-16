@@ -11,7 +11,9 @@ use crate::core::constants::*;
 use crate::core::types::PlayerState;
 use crate::entities::player::ImprovedPlayerManager;
 use crate::flatbuffers_generated::game_protocol as fb;
-use crate::network::connection_manager::{ConnectionInfo, ConnectionManager, TransportKind};
+use crate::network::connection_manager::{
+    shared_connection_manager, ConnectionInfo, TransportKind,
+};
 use crate::operational::auth::AuthService;
 use crate::server::instance::MassiveGameServer; // Added for server access for initial spawn
 use crate::world::partition::WorldPartitionManager;
@@ -62,11 +64,6 @@ pub struct ChatMessage {
 pub type ChatMessagesQueue = Arc<RwLock<VecDeque<ChatMessage>>>;
 static NEXT_CHAT_MESSAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 static SHARED_WEBRTC_API: OnceLock<Result<Arc<API>, String>> = OnceLock::new();
-static CONNECTION_MANAGER: OnceLock<ConnectionManager> = OnceLock::new();
-
-pub fn shared_connection_manager() -> &'static ConnectionManager {
-    CONNECTION_MANAGER.get_or_init(ConnectionManager::default)
-}
 
 pub fn next_chat_message_seq() -> u64 {
     NEXT_CHAT_MESSAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

@@ -43,10 +43,7 @@ impl<T> ObjectPool<T> {
     }
 
     pub fn free_count(&self) -> usize {
-        self.free
-            .lock()
-            .expect("object pool mutex poisoned")
-            .len()
+        self.free.lock().expect("object pool mutex poisoned").len()
     }
 }
 

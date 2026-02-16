@@ -18,12 +18,12 @@ impl Default for CompressionConfig {
 }
 
 pub fn compress_payload(payload: &[u8], config: &CompressionConfig) -> Result<Vec<u8>> {
-    zstd::encode_all(payload, config.level)
-        .map_err(|err| anyhow!("zstd encode failed: {}", err))
+    zstd::encode_all(payload, config.level).map_err(|err| anyhow!("zstd encode failed: {}", err))
 }
 
 pub fn decompress_payload(payload: &[u8], config: &CompressionConfig) -> Result<Vec<u8>> {
-    let decoded = zstd::decode_all(payload).map_err(|err| anyhow!("zstd decode failed: {}", err))?;
+    let decoded =
+        zstd::decode_all(payload).map_err(|err| anyhow!("zstd decode failed: {}", err))?;
     if decoded.len() > config.max_uncompressed_bytes {
         return Err(anyhow!(
             "decompressed payload too large: {} > {}",

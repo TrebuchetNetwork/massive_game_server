@@ -194,7 +194,12 @@ struct PointQuadtree<T> {
 }
 
 impl<T: Clone> PointQuadtree<T> {
-    fn from_points(bounds: Aabb, points: &[QuadtreePoint<T>], capacity: usize, max_depth: u8) -> Self {
+    fn from_points(
+        bounds: Aabb,
+        points: &[QuadtreePoint<T>],
+        capacity: usize,
+        max_depth: u8,
+    ) -> Self {
         let mut root = QuadtreeNode::new(bounds, 0);
         for point in points {
             let _ = root.insert(point.clone(), capacity.max(2), max_depth.max(2));
@@ -469,7 +474,10 @@ impl ImprovedSpatialIndex {
         let new_cell_idx = self.get_cell_index(x, y);
 
         // Check if player moved to a different cell
-        let old_cell_idx = self.player_cells.get(&player_id).map(|entry| *entry.value());
+        let old_cell_idx = self
+            .player_cells
+            .get(&player_id)
+            .map(|entry| *entry.value());
 
         if let Some(old_idx) = old_cell_idx {
             if old_idx != new_cell_idx {
@@ -509,7 +517,8 @@ impl ImprovedSpatialIndex {
     pub fn query_nearby_players(&self, x: f32, y: f32, radius: f32) -> Vec<PlayerID> {
         let radius_squared = radius * radius;
 
-        let candidate_ids: Vec<PlayerID> = if self.should_use_quadtree(self.player_positions.len()) {
+        let candidate_ids: Vec<PlayerID> = if self.should_use_quadtree(self.player_positions.len())
+        {
             self.maybe_rebuild_quadtrees();
             let tree_guard = self.quadtree_player_index.read();
             if let Some(tree) = tree_guard.as_ref() {
@@ -563,7 +572,8 @@ impl ImprovedSpatialIndex {
     ) -> Vec<(PlayerID, f32, f32)> {
         let radius_squared = radius * radius;
 
-        let candidate_ids: Vec<PlayerID> = if self.should_use_quadtree(self.player_positions.len()) {
+        let candidate_ids: Vec<PlayerID> = if self.should_use_quadtree(self.player_positions.len())
+        {
             self.maybe_rebuild_quadtrees();
             let tree_guard = self.quadtree_player_index.read();
             if let Some(tree) = tree_guard.as_ref() {
@@ -616,7 +626,10 @@ impl ImprovedSpatialIndex {
         let new_cell_idx = self.get_cell_index(x, y);
 
         // Check if projectile moved to a different cell
-        let old_cell_idx = self.projectile_cells.get(&proj_id).map(|entry| *entry.value());
+        let old_cell_idx = self
+            .projectile_cells
+            .get(&proj_id)
+            .map(|entry| *entry.value());
 
         if let Some(old_idx) = old_cell_idx {
             if old_idx != new_cell_idx {
@@ -656,17 +669,18 @@ impl ImprovedSpatialIndex {
     pub fn query_nearby_projectiles(&self, x: f32, y: f32, radius: f32) -> Vec<EntityId> {
         let radius_squared = radius * radius;
 
-        let candidate_ids: Vec<EntityId> = if self.should_use_quadtree(self.projectile_positions.len()) {
-            self.maybe_rebuild_quadtrees();
-            let tree_guard = self.quadtree_projectile_index.read();
-            if let Some(tree) = tree_guard.as_ref() {
-                tree.query_circle(x, y, radius)
+        let candidate_ids: Vec<EntityId> =
+            if self.should_use_quadtree(self.projectile_positions.len()) {
+                self.maybe_rebuild_quadtrees();
+                let tree_guard = self.quadtree_projectile_index.read();
+                if let Some(tree) = tree_guard.as_ref() {
+                    tree.query_circle(x, y, radius)
+                } else {
+                    self.collect_grid_projectile_candidates(x, y, radius)
+                }
             } else {
                 self.collect_grid_projectile_candidates(x, y, radius)
-            }
-        } else {
-            self.collect_grid_projectile_candidates(x, y, radius)
-        };
+            };
 
         let mut candidate_ids_filtered = Vec::with_capacity(candidate_ids.len());
         let mut candidate_xs = Vec::with_capacity(candidate_ids.len());

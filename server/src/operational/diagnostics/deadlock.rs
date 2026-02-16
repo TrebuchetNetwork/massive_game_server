@@ -1,7 +1,7 @@
 // massive_game_server/server/src/operational/diagnostics/deadlock.rs
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
@@ -12,8 +12,7 @@ pub struct DeadlockHeartbeat {
 
 impl DeadlockHeartbeat {
     pub fn beat(&self) {
-        self.last_tick_ms
-            .store(unix_now_ms(), Ordering::Relaxed);
+        self.last_tick_ms.store(unix_now_ms(), Ordering::Relaxed);
     }
 
     pub fn last_tick_ms(&self) -> u64 {

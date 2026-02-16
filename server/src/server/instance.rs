@@ -10,7 +10,6 @@ use crate::concurrent::wall_spatial_index::WallSpatialIndex;
 use crate::core::config::ServerConfig;
 use crate::core::constants::*; // Import all constants, including MIN_PLAYERS_TO_START
 use crate::core::error::ServerError;
-use crate::core::math::lerp;
 use crate::core::simd;
 use crate::core::types::*;
 use crate::core::types::{CorePickupType, EntityId, MatchState, PlayerID};
@@ -23,18 +22,20 @@ use crate::network::signaling::{
 };
 use crate::operational::tuning::adaptive_quality::QualitySettings;
 use crate::operational::tuning::auto_tuner::{AutoTuner, TuningSample};
+use crate::server::ecs_bridge::EcsBridge;
 use crate::server::event_mapping::{
     event_instigator_id, event_position, event_target_id, event_value, event_weapon_type,
     map_game_event_type_to_fb,
 };
-use crate::server::ecs_bridge::EcsBridge;
 use crate::server::pickup_pipeline::{
     apply_pickup_effect, collect_pickup_candidates, PickupCollectionCandidate,
 };
+use crate::state_sync::interpolation::InterpolationBuffer;
 use crate::systems::ai::bot_ai::BotAISystem;
 use crate::systems::ai::optimized_bot_ai::OptimizedBotAI;
 use crate::systems::respawn::{RespawnManager, WallRespawnManager};
 use crate::world::map_generator::MapGenerator;
+use crate::world::navigation::NavMesh;
 use crate::world::partition::WorldPartitionManager; // Removed unused ImprovedWorldPartition
 use flatbuffers::FlatBufferBuilder;
 use futures::executor;
@@ -52,7 +53,7 @@ use parking_lot::RwLock as ParkingLotRwLock;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
@@ -758,6 +759,53 @@ pub struct LiveReplayFrame {
     pub projectiles: usize,
     pub pickups: usize,
     pub events: usize,
+    pub sampled_players: Vec<LiveReplayPlayerSample>,
+    pub kill_feed_size: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LiveReplayPlayerSample {
+    pub player_id: String,
+    pub username: String,
+    pub x: f32,
+    pub y: f32,
+    pub velocity_x: f32,
+    pub velocity_y: f32,
+    pub health: i32,
+    pub alive: bool,
+    pub team_id: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct LiveReplayDisputeRequest {
+    pub from_frame: Option<u64>,
+    pub to_frame: Option<u64>,
+    pub limit: Option<usize>,
+    pub player_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LiveReplayDisputeFilter {
+    pub from_frame: Option<u64>,
+    pub to_frame: Option<u64>,
+    pub player_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LiveReplayDisputeReport {
+    pub generated_at_ms: u64,
+    pub total_captured_frames: usize,
+    pub selected_frames: Vec<LiveReplayFrame>,
+    pub relevant_kill_feed: Vec<LiveReplayKillFeedEntry>,
+    pub filter: LiveReplayDisputeFilter,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LiveReplayKillFeedEntry {
+    pub killer_name: String,
+    pub victim_name: String,
+    pub weapon: String,
+    pub timestamp: u64,
 }
 
 pub struct MassiveGameServer {
@@ -811,15 +859,21 @@ pub struct MassiveGameServer {
     pub pickup_soa_snapshot: Arc<AtomicPickupSnapshot>,
     join_stage_traces: Arc<DashMap<String, JoinStageTrace>>,
     join_sequence_counter: Arc<AtomicU64>,
-    player_position_history: Arc<DashMap<PlayerID, VecDeque<(u64, f32, f32)>>>,
+    player_position_history: Arc<DashMap<PlayerID, InterpolationBuffer<Vec2>>>,
     aim_anomaly_states: Arc<DashMap<PlayerID, AimAnomalyState>>,
     lag_compensation_ms: u64,
     auto_tuner: Arc<ParkingLotRwLock<AutoTuner>>,
     dynamic_quality_settings: Arc<ParkingLotRwLock<QualitySettings>>,
     ecs_bridge: Arc<EcsBridge>,
+    navmesh_enabled: bool,
+    navmesh_rebuild_interval_frames: u64,
+    navmesh_cell_wall_limit: usize,
+    navmesh: Arc<ParkingLotRwLock<Option<NavMesh>>>,
+    navmesh_last_rebuild_frame: Arc<AtomicU64>,
     live_replay_enabled: bool,
     live_replay_frames: Arc<ParkingLotRwLock<VecDeque<LiveReplayFrame>>>,
     live_replay_capacity: usize,
+    live_replay_player_cap: usize,
 }
 
 const MAX_KILL_FEED_HISTORY: usize = 10;
@@ -1022,6 +1076,22 @@ impl MassiveGameServer {
             .and_then(|raw| raw.parse::<usize>().ok())
             .unwrap_or(3600)
             .clamp(120, 100_000);
+        let live_replay_player_cap = std::env::var("MGS_LIVE_REPLAY_PLAYER_CAP")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(64)
+            .clamp(8, 512);
+        let navmesh_enabled = env_bool_value("MGS_NAVMESH_ENABLED");
+        let navmesh_rebuild_interval_frames = std::env::var("MGS_NAVMESH_REBUILD_INTERVAL_FRAMES")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(180);
+        let navmesh_cell_wall_limit = std::env::var("MGS_NAVMESH_CELL_WALL_LIMIT")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(16)
+            .clamp(0, 2048);
 
         info!(
             "Human-priority slots: enabled={}, reserved_human_slots={}",
@@ -1076,13 +1146,20 @@ impl MassiveGameServer {
             auto_tuner: Arc::new(ParkingLotRwLock::new(AutoTuner::new(auto_tuner_target_ms))),
             dynamic_quality_settings: Arc::new(ParkingLotRwLock::new(QualitySettings::default())),
             ecs_bridge: Arc::new(EcsBridge::new_from_env()),
+            navmesh_enabled,
+            navmesh_rebuild_interval_frames,
+            navmesh_cell_wall_limit,
+            navmesh: Arc::new(ParkingLotRwLock::new(None)),
+            navmesh_last_rebuild_frame: Arc::new(AtomicU64::new(0)),
             live_replay_enabled,
             live_replay_frames: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(
                 live_replay_capacity,
             ))),
             live_replay_capacity,
+            live_replay_player_cap,
         };
 
+        server.maybe_refresh_navigation_mesh();
         info!("MassiveGameServer initialized successfully.");
         server
     }
@@ -1123,10 +1200,191 @@ impl MassiveGameServer {
         replay.iter().rev().take(bounded).cloned().collect()
     }
 
+    pub fn build_live_replay_dispute_report(
+        &self,
+        request: LiveReplayDisputeRequest,
+    ) -> LiveReplayDisputeReport {
+        let replay = self.live_replay_frames.read();
+        let limit = request
+            .limit
+            .unwrap_or(256)
+            .clamp(1, self.live_replay_capacity.max(1));
+        let player_filter = request
+            .player_id
+            .as_ref()
+            .map(|raw| raw.trim())
+            .filter(|raw| !raw.is_empty());
+
+        let mut selected_frames: Vec<LiveReplayFrame> = replay
+            .iter()
+            .filter(|frame| request.from_frame.map_or(true, |from| frame.frame >= from))
+            .filter(|frame| request.to_frame.map_or(true, |to| frame.frame <= to))
+            .filter(|frame| {
+                player_filter.map_or(true, |player_id| {
+                    frame
+                        .sampled_players
+                        .iter()
+                        .any(|sample| sample.player_id == player_id)
+                })
+            })
+            .cloned()
+            .collect();
+
+        if selected_frames.len() > limit {
+            let keep_from = selected_frames.len().saturating_sub(limit);
+            selected_frames.drain(0..keep_from);
+        }
+
+        let effective_from = request
+            .from_frame
+            .or_else(|| selected_frames.first().map(|frame| frame.frame));
+        let effective_to = request
+            .to_frame
+            .or_else(|| selected_frames.last().map(|frame| frame.frame));
+
+        let relevant_kill_feed: Vec<LiveReplayKillFeedEntry> = self
+            .kill_feed
+            .read()
+            .iter()
+            .filter(|entry| effective_from.map_or(true, |from| entry.timestamp >= from))
+            .filter(|entry| effective_to.map_or(true, |to| entry.timestamp <= to))
+            .map(|entry| LiveReplayKillFeedEntry {
+                killer_name: entry.killer_name.clone(),
+                victim_name: entry.victim_name.clone(),
+                weapon: format!("{:?}", entry.weapon),
+                timestamp: entry.timestamp,
+            })
+            .collect();
+
+        LiveReplayDisputeReport {
+            generated_at_ms: self.get_server_timestamp_ms(),
+            total_captured_frames: replay.len(),
+            selected_frames,
+            relevant_kill_feed,
+            filter: LiveReplayDisputeFilter {
+                from_frame: effective_from,
+                to_frame: effective_to,
+                player_id: player_filter.map(str::to_owned),
+            },
+        }
+    }
+
+    pub fn maybe_refresh_navigation_mesh(&self) {
+        if !self.navmesh_enabled {
+            return;
+        }
+
+        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+        let should_rebuild = {
+            if self.navmesh.read().is_none() {
+                true
+            } else {
+                let last = self
+                    .navmesh_last_rebuild_frame
+                    .load(AtomicOrdering::Relaxed);
+                frame.saturating_sub(last) >= self.navmesh_rebuild_interval_frames
+            }
+        };
+
+        if should_rebuild {
+            self.rebuild_navigation_mesh(frame);
+        }
+    }
+
+    fn rebuild_navigation_mesh(&self, frame: u64) {
+        let partitions = self.world_partition_manager.get_partitions_for_processing();
+        let mut polygons = Vec::with_capacity(partitions.len());
+        let inset = 8.0f32;
+
+        for partition in partitions {
+            let active_wall_count = partition
+                .all_walls_in_partition
+                .iter()
+                .filter(|entry| {
+                    let wall = entry.value();
+                    !(wall.is_destructible && wall.current_health <= 0)
+                })
+                .count();
+            if active_wall_count > self.navmesh_cell_wall_limit {
+                continue;
+            }
+
+            let bounds = partition.bounds;
+            if (bounds.max_x - bounds.min_x) <= inset * 2.0
+                || (bounds.max_y - bounds.min_y) <= inset * 2.0
+            {
+                continue;
+            }
+
+            polygons.push(vec![
+                Vec2::new(bounds.min_x + inset, bounds.min_y + inset),
+                Vec2::new(bounds.max_x - inset, bounds.min_y + inset),
+                Vec2::new(bounds.max_x - inset, bounds.max_y - inset),
+                Vec2::new(bounds.min_x + inset, bounds.max_y - inset),
+            ]);
+        }
+
+        let navmesh = if polygons.is_empty() {
+            None
+        } else {
+            Some(NavMesh::from_convex_polygons(polygons))
+        };
+        let polygon_count = navmesh.as_ref().map_or(0, NavMesh::polygon_count);
+        *self.navmesh.write() = navmesh;
+        self.navmesh_last_rebuild_frame
+            .store(frame, AtomicOrdering::Relaxed);
+
+        trace!(
+            "[Frame {}] NavMesh rebuilt (enabled={}, polygons={}, cell_wall_limit={})",
+            frame,
+            self.navmesh_enabled,
+            polygon_count,
+            self.navmesh_cell_wall_limit
+        );
+    }
+
+    pub fn navigation_waypoint_towards(&self, start: Vec2, goal: Vec2) -> Vec2 {
+        if !self.navmesh_enabled {
+            return goal;
+        }
+
+        let navmesh_guard = self.navmesh.read();
+        let Some(navmesh) = navmesh_guard.as_ref() else {
+            return goal;
+        };
+
+        if let Some(path) = navmesh.find_path(start, goal) {
+            if let Some(next) = path.get(1).copied() {
+                return next;
+            }
+        }
+
+        goal
+    }
+
     fn capture_live_replay_frame(&self, frame: u64) {
         if !self.live_replay_enabled {
             return;
         }
+
+        let mut sampled_players = Vec::with_capacity(self.live_replay_player_cap);
+        self.player_manager
+            .for_each_player(|player_id, player_state| {
+                if sampled_players.len() >= self.live_replay_player_cap {
+                    return;
+                }
+                sampled_players.push(LiveReplayPlayerSample {
+                    player_id: player_id.as_str().to_string(),
+                    username: player_state.username.clone(),
+                    x: player_state.x,
+                    y: player_state.y,
+                    velocity_x: player_state.velocity_x,
+                    velocity_y: player_state.velocity_y,
+                    health: player_state.health,
+                    alive: player_state.alive,
+                    team_id: player_state.team_id,
+                });
+            });
 
         let frame_sample = LiveReplayFrame {
             frame,
@@ -1135,6 +1393,8 @@ impl MassiveGameServer {
             projectiles: self.projectiles.read().len(),
             pickups: self.pickups.read().len(),
             events: self.global_game_events.len(),
+            sampled_players,
+            kill_feed_size: self.kill_feed.read().len(),
         };
 
         let mut replay = self.live_replay_frames.write();
@@ -1145,32 +1405,24 @@ impl MassiveGameServer {
     }
 
     fn prune_runtime_tracking_state(&self) {
-        self.player_position_history.retain(|player_id, _| {
-            self.player_manager.get_player_state(player_id).is_some()
-        });
-        self.aim_anomaly_states.retain(|player_id, _| {
-            self.player_manager.get_player_state(player_id).is_some()
-        });
+        self.player_position_history
+            .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
+        self.aim_anomaly_states
+            .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
     }
 
-    fn record_player_position_sample(&self, player_id: &PlayerID, timestamp_ms: u64, x: f32, y: f32) {
+    fn record_player_position_sample(
+        &self,
+        player_id: &PlayerID,
+        timestamp_ms: u64,
+        x: f32,
+        y: f32,
+    ) {
         let mut history = self
             .player_position_history
             .entry(player_id.clone())
-            .or_insert_with(|| VecDeque::with_capacity(MAX_POSITION_HISTORY_SAMPLES));
-        if history
-            .back()
-            .is_some_and(|(last_timestamp, _, _)| *last_timestamp == timestamp_ms)
-        {
-            if let Some(last) = history.back_mut() {
-                *last = (timestamp_ms, x, y);
-            }
-            return;
-        }
-        history.push_back((timestamp_ms, x, y));
-        while history.len() > MAX_POSITION_HISTORY_SAMPLES {
-            let _ = history.pop_front();
-        }
+            .or_insert_with(|| InterpolationBuffer::new(MAX_POSITION_HISTORY_SAMPLES));
+        history.push(timestamp_ms, Vec2::new(x, y));
     }
 
     fn get_rewound_player_position(
@@ -1179,38 +1431,8 @@ impl MassiveGameServer {
         target_timestamp_ms: u64,
     ) -> Option<(f32, f32)> {
         let history = self.player_position_history.get(player_id)?;
-        let first = history.front().copied()?;
-        let last = history.back().copied()?;
-
-        if target_timestamp_ms <= first.0 {
-            return Some((first.1, first.2));
-        }
-        if target_timestamp_ms >= last.0 {
-            return Some((last.1, last.2));
-        }
-
-        for window in history.as_slices().0.windows(2) {
-            let older = window[0];
-            let newer = window[1];
-            if older.0 <= target_timestamp_ms && target_timestamp_ms <= newer.0 {
-                let span = (newer.0 - older.0).max(1);
-                let alpha = (target_timestamp_ms - older.0) as f32 / span as f32;
-                return Some((lerp(older.1, newer.1, alpha), lerp(older.2, newer.2, alpha)));
-            }
-        }
-
-        let contiguous = history.iter().copied().collect::<Vec<_>>();
-        for window in contiguous.windows(2) {
-            let older = window[0];
-            let newer = window[1];
-            if older.0 <= target_timestamp_ms && target_timestamp_ms <= newer.0 {
-                let span = (newer.0 - older.0).max(1);
-                let alpha = (target_timestamp_ms - older.0) as f32 / span as f32;
-                return Some((lerp(older.1, newer.1, alpha), lerp(older.2, newer.2, alpha)));
-            }
-        }
-
-        Some((last.1, last.2))
+        let sample = history.sample_at(target_timestamp_ms)?;
+        Some((sample.x, sample.y))
     }
 
     fn apply_aim_anomaly_detection(
@@ -3835,7 +4057,7 @@ impl MassiveGameServer {
             .as_micros() as u64
     }
 
-    fn get_server_timestamp_ms(&self) -> u64 {
+    pub fn get_server_timestamp_ms(&self) -> u64 {
         self.get_server_timestamp_us() / 1000
     }
 
@@ -5893,10 +6115,10 @@ impl MassiveGameServer {
         };
 
         let quality = self.current_quality_settings();
-        max_delta_events_per_client = ((max_delta_events_per_client as f32)
-            * quality.max_projectiles_scale)
-            .round()
-            .clamp(1.0, MAX_DELTA_EVENTS_DEFAULT as f32) as usize;
+        max_delta_events_per_client =
+            ((max_delta_events_per_client as f32) * quality.max_projectiles_scale)
+                .round()
+                .clamp(1.0, MAX_DELTA_EVENTS_DEFAULT as f32) as usize;
         delta_skip_modulus = delta_skip_modulus.max(quality.delta_skip_modulus);
 
         let mut scheduled_client_entries = scheduled_initial_entries;
@@ -6000,9 +6222,8 @@ impl MassiveGameServer {
             let frame_for_log = current_frame;
 
             self.thread_pools.network_pool.install(move || {
-                scheduled_client_entries
-                    .into_par_iter()
-                    .for_each(|(peer_id_str, data_channel_arc, needs_initial)| {
+                scheduled_client_entries.into_par_iter().for_each(
+                    |(peer_id_str, data_channel_arc, needs_initial)| {
                         let server_ref = Arc::clone(&server_ref);
                         let shared_data_ref = Arc::clone(&shared_data_ref);
                         let runtime_handle = runtime_handle.clone();
@@ -6027,7 +6248,8 @@ impl MassiveGameServer {
                                 frame_for_log, peer_id_str, err
                             );
                         }
-                    });
+                    },
+                );
             });
         } else {
             let mut fanout_tasks = JoinSet::new();
@@ -6532,6 +6754,7 @@ impl MassiveGameServer {
 
         // Stage 2: Physics & Game Logic (Sequential, mutation-heavy)
         let stage2_start = Instant::now();
+        self.maybe_refresh_navigation_mesh();
 
         let physics_start = Instant::now();
         self.run_physics_update(dt).await;
@@ -6578,6 +6801,23 @@ impl MassiveGameServer {
                 ecs_stats.projectiles,
                 ecs_stats.pickups
             );
+
+            if self.ecs_bridge.is_authoritative() {
+                let mut projectiles = self.projectiles.write();
+                let mut pickups = self.pickups.write();
+                let reconciled = self.ecs_bridge.apply_authoritative_reconciliation(
+                    self.player_manager.as_ref(),
+                    projectiles.as_mut_slice(),
+                    pickups.as_mut_slice(),
+                );
+                trace!(
+                    "[Frame {}] ECS authoritative reconciliation applied: players={}, projectiles={}, pickups={}",
+                    frame,
+                    reconciled.players,
+                    reconciled.projectiles,
+                    reconciled.pickups
+                );
+            }
         }
 
         // Stage 3: State Sync & Broadcast

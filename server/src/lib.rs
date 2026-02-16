@@ -14,13 +14,13 @@ pub mod flatbuffers_generated {
 pub mod concurrent;
 pub mod core;
 pub mod entities;
-pub mod network;
-pub mod server;
-pub mod world; // Assuming signaling.rs is in here
-pub mod state_sync;
-pub mod operational;
-pub mod systems;
 pub mod memory;
+pub mod network;
+pub mod operational;
+pub mod server;
+pub mod state_sync;
+pub mod systems;
+pub mod world; // Assuming signaling.rs is in here
 
 // Example re-exports if you want to shorten paths for users of this library:
 // pub use crate::core::types::PlayerId;

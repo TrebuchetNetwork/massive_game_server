@@ -105,7 +105,9 @@ impl GridNav {
             path.push(current);
         }
         path.reverse();
-        path.into_iter().map(|p| self.grid_to_world(p.0, p.1)).collect()
+        path.into_iter()
+            .map(|p| self.grid_to_world(p.0, p.1))
+            .collect()
     }
 
     fn grid_to_world(&self, x: i32, y: i32) -> Vec2 {
@@ -198,7 +200,9 @@ impl NavMesh {
             }
         }
 
-        Self { polygons: nav_polys }
+        Self {
+            polygons: nav_polys,
+        }
     }
 
     pub fn polygon_count(&self) -> usize {
@@ -224,7 +228,11 @@ impl NavMesh {
         let poly_path = self.find_polygon_path(start_poly, end_poly)?;
         let mut waypoints = Vec::with_capacity(poly_path.len() + 2);
         waypoints.push(start);
-        for poly_idx in poly_path.iter().skip(1).take(poly_path.len().saturating_sub(2)) {
+        for poly_idx in poly_path
+            .iter()
+            .skip(1)
+            .take(poly_path.len().saturating_sub(2))
+        {
             waypoints.push(self.polygons[*poly_idx].centroid);
         }
         waypoints.push(end);
@@ -232,16 +240,13 @@ impl NavMesh {
     }
 
     fn find_polygon_containing(&self, p: Vec2) -> Option<usize> {
-        self.polygons
-            .iter()
-            .enumerate()
-            .find_map(|(idx, poly)| {
-                if point_in_polygon(p, &poly.vertices) {
-                    Some(idx)
-                } else {
-                    None
-                }
-            })
+        self.polygons.iter().enumerate().find_map(|(idx, poly)| {
+            if point_in_polygon(p, &poly.vertices) {
+                Some(idx)
+            } else {
+                None
+            }
+        })
     }
 
     fn closest_polygon(&self, p: Vec2) -> Option<usize> {
@@ -264,7 +269,10 @@ impl NavMesh {
         frontier.push(PolyNode {
             poly_idx: start_poly,
             cost: 0,
-            estimate: poly_heuristic(self.polygons[start_poly].centroid, self.polygons[end_poly].centroid),
+            estimate: poly_heuristic(
+                self.polygons[start_poly].centroid,
+                self.polygons[end_poly].centroid,
+            ),
         });
         cost_so_far.insert(start_poly, 0);
 
@@ -295,7 +303,11 @@ impl NavMesh {
     }
 }
 
-fn reconstruct_poly_path(start: usize, end: usize, came_from: &HashMap<usize, usize>) -> Vec<usize> {
+fn reconstruct_poly_path(
+    start: usize,
+    end: usize,
+    came_from: &HashMap<usize, usize>,
+) -> Vec<usize> {
     let mut current = end;
     let mut path = vec![end];
     while current != start {
