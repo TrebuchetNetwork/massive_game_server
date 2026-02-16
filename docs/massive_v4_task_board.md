@@ -19,8 +19,8 @@
 | V4-R1 | `120` launch target closure | In Progress | Latest strict rerun with closed-channel send guards + tuned scheduler thresholds (`artifacts/scale/multi_client_120_v4_r1_sendpath_tuned_20260215_191602.json`) remains `96/120`; vs first send-path run it reduced tail latency (`connect avg 57039.79 -> 54679.44`, `73+ avg 100507.42 -> 94144.5`) and kept lower server open-wait pressure (`73+ open_channel_wait avg=465.36`), but it still does not recover `100+`. |
 | V4-R2 | Full authoritative ECS writer ownership migration | In Progress | Broadcast read path is snapshot-owned; mutation ownership is still partially split in `server/src/server/instance.rs`. |
 | V4-R3 | Full-state zero-copy follow-through | In Progress | Main delta/initial paths are collapse-based, but broader serialization construction and legacy paths still need full migration/audit. |
-| V4-R4 | Broader SIMD physics coverage | In Progress | Projectile collision SIMD path is active; broader movement/collision vectorization is still pending. |
-| V4-R5 | `instance.rs` decomposition | In Progress | Core file remains monolithic; extract broadcast/join/snapshot modules after perf-sensitive tail work stabilizes. |
+| V4-R4 | Broader SIMD physics coverage | In Progress | Added segment-distance SIMD helper (`core::simd::first_index_within_segment_radius`) and switched projectile-player hot path in `server/src/server/instance.rs` from per-ray-step scans to segment hit checks; broader movement/collision vectorization is still pending. |
+| V4-R5 | `instance.rs` decomposition | In Progress | Extracted packet batching/coalesced send logic into `server/src/server/packet_batch.rs` and left a thin wrapper in `instance.rs`; remaining broadcast/join/snapshot extraction is still pending. |
 
 ## Validation Plan
 1. Keep strict `600000ms` benchmark profile and run at least 3 repeated `120` passes to separate code impact from run variance.

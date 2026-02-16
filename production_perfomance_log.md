@@ -142,6 +142,22 @@
   - Closed-channel send guards reduce server-side open-channel wait pressure, but strict tail throughput remains capped at `96/120`.
   - Client-visible tail latency (`73+`) is still above the shared-API pass baseline; V4-R1 remains open.
 
+### V4 SIMD + decomposition follow-through (2026-02-16)
+- Code updates:
+  - `server/src/server/packet_batch.rs` (new): extracted coalesced/batched data-channel send helpers from `instance.rs`.
+  - `server/src/server/instance.rs`: replaced in-file packet batching implementation with a thin wrapper to the new module and migrated projectile-player hit checks to segment-based SIMD lookup.
+  - `server/src/core/simd.rs`: added `first_index_within_segment_radius` (scalar + AVX2 path) and coverage tests.
+- Validation:
+  - `cargo check -p massive_game_server_core` passed after extraction + SIMD updates.
+  - `cargo test -p massive_game_server_core simd_segment_radius_returns_first_hit_along_path` passed.
+  - `cargo test -p massive_game_server_core coalesced_batch_supports_single_packet` passed.
+  - `artifacts/scale/multi_client_20_v4_r45_smoke_20260215_212303.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=77345`
+    - `connectLatency avg=23486ms`, `p95=26616.1ms`
+- Benchmark status:
+  - Strict `120` rerun is still required for this specific SIMD/decomposition pass; the latest strict tail artifact remains:
+    - `artifacts/scale/multi_client_120_v4_r1_sendpath_tuned_20260215_191602.json`
+
 ### Fresh refresh run artifacts (2026-02-15)
 - `artifacts/arena/arena_10v10_20260215_043820.json`
   - arena simulation: `10v10`, `3` rounds, `30` engagements, `durationMs=204`
