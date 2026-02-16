@@ -1580,17 +1580,15 @@ impl MassiveGameServer {
         let cache =
             WALL_CACHE.get_or_init(|| Arc::new(ParkingLotRwLock::new((0, Arc::new(Vec::new())))));
 
-        let cache_read = cache.read();
+        // Keep a read lock while deciding whether to upgrade, eliminating unlock/relock races.
+        let cache_read = cache.upgradable_read();
         if cache_read.0 + 5 > frame {
-            // Cache for 5 frames
             return cache_read.1.clone();
         }
-        drop(cache_read);
 
-        // Rebuild cache
-        let mut cache_write = cache.write();
+        // Rebuild cache after atomically upgrading to write access.
+        let mut cache_write = parking_lot::RwLockUpgradableReadGuard::upgrade(cache_read);
         if cache_write.0 + 5 > frame {
-            // Double-check after acquiring write lock
             return cache_write.1.clone();
         }
 
