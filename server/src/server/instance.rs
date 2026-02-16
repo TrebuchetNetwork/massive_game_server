@@ -21,6 +21,10 @@ use crate::network::signaling::{
     handle_dc_send_error, next_chat_message_seq, ChatMessagesQueue, ClientState, ClientStatesMap,
     DataChannelsMap,
 };
+use crate::server::event_mapping::{
+    event_instigator_id, event_position, event_target_id, event_value, event_weapon_type,
+    map_game_event_type_to_fb,
+};
 use crate::systems::ai::bot_ai::BotAISystem;
 use crate::systems::ai::optimized_bot_ai::OptimizedBotAI;
 use crate::systems::respawn::{RespawnManager, WallRespawnManager};
@@ -196,7 +200,10 @@ struct ProjectileResults {
     total_processed: usize,
     hits: Vec<(PlayerID, PlayerID, i32, ServerWeaponType)>, // (attacker, target, damage, weapon)
     wall_hits: Vec<(EntityId, i32)>,                        // (wall_id, damage)
-    to_remove: Vec<usize>,                                  // Projectile indices to remove
+    removed_projectile_ids: Vec<EntityId>,
+    kept_projectiles: Vec<Projectile>,
+    spatial_updates: Vec<(EntityId, f32, f32)>,
+    wall_impacts: Vec<GameEvent>,
 }
 
 #[derive(Default)]
@@ -1470,7 +1477,7 @@ impl MassiveGameServer {
             frame,
             projectile_results.total_processed,
             projectile_results.hits.len(),
-            projectile_results.to_remove.len(),
+            projectile_results.removed_projectile_ids.len(),
             projectiles_start.elapsed()
         );
 
@@ -2387,7 +2394,10 @@ impl MassiveGameServer {
                 total_processed: 0,
                 hits: Vec::new(),
                 wall_hits: Vec::new(),
-                to_remove: Vec::new(),
+                removed_projectile_ids: Vec::new(),
+                kept_projectiles: Vec::new(),
+                spatial_updates: Vec::new(),
+                wall_impacts: Vec::new(),
             };
         }
 
@@ -2585,15 +2595,6 @@ impl MassiveGameServer {
                 .append(&mut chunk_result.wall_impacts);
         }
 
-        for wall_impact in merged_results.wall_impacts.drain(..) {
-            self.global_game_events
-                .push(wall_impact, EventPriority::Normal);
-        }
-
-        // Apply spatial updates
-        self.spatial_index
-            .batch_update_projectiles(&merged_results.spatial_updates);
-
         // Remove dead projectiles
         merged_results.to_remove.sort_unstable();
         merged_results.to_remove.dedup();
@@ -2613,8 +2614,6 @@ impl MassiveGameServer {
             }
         }
 
-        self.commit_authoritative_projectile_state(kept_projectiles, &removed_ids);
-
         trace!(
             "[Frame {}] Projectile processing complete: {} processed, {} hits, {} wall hits, {} removed",
             frame,
@@ -2628,7 +2627,10 @@ impl MassiveGameServer {
             total_processed: total_projectiles,
             hits: merged_results.hits,
             wall_hits: merged_results.wall_hits,
-            to_remove: Vec::new(), // Already handled
+            removed_projectile_ids: removed_ids,
+            kept_projectiles,
+            spatial_updates: merged_results.spatial_updates,
+            wall_impacts: merged_results.wall_impacts,
         }
     }
 
@@ -2682,8 +2684,20 @@ impl MassiveGameServer {
             total_processed: _,
             hits,
             wall_hits,
-            to_remove: _,
+            removed_projectile_ids,
+            kept_projectiles,
+            spatial_updates,
+            wall_impacts,
         } = results;
+
+        for wall_impact in wall_impacts {
+            self.global_game_events
+                .push(wall_impact, EventPriority::Normal);
+        }
+        if !spatial_updates.is_empty() {
+            self.spatial_index.batch_update_projectiles(&spatial_updates);
+        }
+        self.commit_authoritative_projectile_state(kept_projectiles, &removed_projectile_ids);
 
         let destroyed_walls = self.apply_wall_damage_authoritative(&wall_hits);
         if destroyed_walls > 0 {
@@ -5372,49 +5386,6 @@ impl MassiveGameServer {
         (projectiles_fb, removed_projectiles_fb)
     }
 
-    // 2. Fix build_events_fb - add the missing method
-    fn build_events_fb<'a>(
-        &self,
-        builder: &mut flatbuffers::FlatBufferBuilder<'a>,
-        events: &[GameEvent],
-    ) -> flatbuffers::WIPOffset<
-        flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<fb::GameEvent<'a>>>,
-    > {
-        let game_events_fb_vec: Vec<_> = events
-            .iter()
-            .take(50)
-            .map(|event| {
-                let event_pos = event_position(event);
-                let pos_fb_offset = fb::Vec2::create(
-                    builder,
-                    &fb::Vec2Args {
-                        x: event_pos.x,
-                        y: event_pos.y,
-                    },
-                );
-                let instigator_id_fb =
-                    event_instigator_id(event).map(|id| builder.create_string(id.as_str()));
-                let target_id_fb =
-                    event_target_id(event).map(|id_str| builder.create_string(&id_str));
-                let weapon_type_fb = event_weapon_type(event)
-                    .map_or(fb::WeaponType::Pistol, map_server_weapon_to_fb);
-                fb::GameEvent::create(
-                    builder,
-                    &fb::GameEventArgs {
-                        event_type: map_game_event_type_to_fb(event),
-                        position: Some(pos_fb_offset),
-                        instigator_id: instigator_id_fb,
-                        target_id: target_id_fb,
-                        weapon_type: weapon_type_fb,
-                        value: event_value(event).unwrap_or(0.0),
-                    },
-                )
-            })
-            .collect();
-
-        builder.create_vector(&game_events_fb_vec)
-    }
-
     async fn build_delta_state_static(
         peer_id_str: &str,
         client_state: &ClientState,
@@ -5495,33 +5466,7 @@ impl MassiveGameServer {
             .events
             .iter()
             .take(50)
-            .map(|event| {
-                let event_pos = event_position(event);
-                let pos_fb_offset = fb::Vec2::create(
-                    &mut builder,
-                    &fb::Vec2Args {
-                        x: event_pos.x,
-                        y: event_pos.y,
-                    },
-                );
-                let instigator_id_fb =
-                    event_instigator_id(event).map(|id| builder.create_string(id.as_str()));
-                let target_id_fb =
-                    event_target_id(event).map(|id_str| builder.create_string(&id_str));
-                let weapon_type_fb = event_weapon_type(event)
-                    .map_or(fb::WeaponType::Pistol, map_server_weapon_to_fb);
-                fb::GameEvent::create(
-                    &mut builder,
-                    &fb::GameEventArgs {
-                        event_type: map_game_event_type_to_fb(event),
-                        position: Some(pos_fb_offset),
-                        instigator_id: instigator_id_fb,
-                        target_id: target_id_fb,
-                        weapon_type: weapon_type_fb,
-                        value: event_value(event).unwrap_or(0.0),
-                    },
-                )
-            })
+            .map(|event| build_game_event_fb(&mut builder, event))
             .collect();
         let game_events_fb = builder.create_vector(&game_events_fb_vec);
 
@@ -5530,7 +5475,7 @@ impl MassiveGameServer {
             .destroyed_wall_ids
             .iter()
             .take(20)
-            .map(|wall_id| builder.create_string(&wall_id.to_string()))
+            .map(|wall_id| fb_safe_entity_id(&mut builder, *wall_id))
             .collect();
         let destroyed_walls_fb = if !destroyed_walls_fb_vec.is_empty() {
             Some(builder.create_vector(&destroyed_walls_fb_vec))
@@ -7772,84 +7717,5 @@ fn summarize_join_stage_latencies(values: &[f64]) -> JoinStageLatencyStats {
         avg_ms: round_metric(avg),
         p95_ms: round_metric(percentile_sorted(&sorted, 0.95)),
         max_ms: round_metric(*sorted.last().unwrap_or(&0.0)),
-    }
-}
-
-fn event_position(event: &GameEvent) -> Vec2 {
-    match event {
-        GameEvent::PlayerDamaged { position, .. } => *position,
-        GameEvent::PlayerKilled { position, .. } => *position,
-        GameEvent::ProjectileHitWall { position, .. } => *position,
-        GameEvent::PowerupCollected { position, .. } => *position,
-        GameEvent::WeaponFired { position, .. } => *position,
-        GameEvent::WallDestroyed { position, .. } => *position,
-        GameEvent::WallImpact { position, .. } => *position,
-        GameEvent::MeleeHit { position, .. } => *position,
-        GameEvent::Footstep { position, .. } => *position,
-        GameEvent::FlagGrabbed { position, .. } => *position,
-        GameEvent::FlagDropped { position, .. } => *position,
-        GameEvent::FlagReturned { position, .. } => *position,
-        GameEvent::FlagCaptured { position, .. } => *position,
-        _ => Vec2::zero(),
-    }
-}
-fn event_instigator_id(event: &GameEvent) -> Option<PlayerID> {
-    match event {
-        GameEvent::PlayerDamaged { attacker_id, .. } => attacker_id.clone(),
-        GameEvent::PlayerKilled { killer_id, .. } => Some(killer_id.clone()),
-        GameEvent::WeaponFired { player_id, .. } => Some(player_id.clone()),
-        GameEvent::PowerupCollected { player_id, .. } => Some(player_id.clone()),
-        GameEvent::FlagGrabbed { player_id, .. } => Some(player_id.clone()),
-        GameEvent::FlagCaptured { capturer_id, .. } => Some(capturer_id.clone()),
-        _ => None,
-    }
-}
-fn event_target_id(event: &GameEvent) -> Option<String> {
-    match event {
-        GameEvent::PlayerDamaged { target_id, .. } => Some(target_id.to_string()),
-        GameEvent::PlayerKilled { victim_id, .. } => Some(victim_id.to_string()),
-        GameEvent::ProjectileHitWall { wall_id, .. } => Some(wall_id.to_string()),
-        GameEvent::PowerupCollected { pickup_id, .. } => Some(pickup_id.to_string()),
-        GameEvent::WallDestroyed { wall_id, .. } => Some(wall_id.to_string()),
-        GameEvent::WallImpact { wall_id, .. } => Some(wall_id.to_string()),
-        GameEvent::MeleeHit { target_id, .. } => target_id.as_ref().map(|id| id.to_string()),
-        GameEvent::FlagDropped { flag_team_id, .. } => Some(flag_team_id.to_string()),
-        GameEvent::FlagReturned { flag_team_id, .. } => Some(flag_team_id.to_string()),
-        _ => None,
-    }
-}
-fn event_weapon_type(event: &GameEvent) -> Option<ServerWeaponType> {
-    match event {
-        GameEvent::PlayerDamaged { weapon, .. } => Some(*weapon),
-        GameEvent::PlayerKilled { weapon, .. } => Some(*weapon),
-        GameEvent::WeaponFired { weapon, .. } => Some(*weapon),
-        _ => None,
-    }
-}
-fn event_value(event: &GameEvent) -> Option<f32> {
-    match event {
-        GameEvent::PlayerDamaged { damage, .. } => Some(*damage as f32),
-        GameEvent::WallImpact { damage, .. } => Some(*damage as f32),
-        _ => None,
-    }
-}
-fn map_game_event_type_to_fb(event: &GameEvent) -> fb::GameEventType {
-    match event {
-        GameEvent::PlayerDamaged { .. } => fb::GameEventType::PlayerDamageEffect,
-        GameEvent::PlayerKilled { .. } => fb::GameEventType::PlayerDamageEffect,
-        GameEvent::ProjectileHitWall { .. } => fb::GameEventType::WallImpact,
-        GameEvent::PowerupCollected { .. } => fb::GameEventType::PowerupActivated,
-        GameEvent::WeaponFired { .. } => fb::GameEventType::WeaponFire,
-        GameEvent::WallDestroyed { .. } => fb::GameEventType::WallDestroyed,
-        GameEvent::WallImpact { .. } => fb::GameEventType::WallImpact,
-        GameEvent::FlagGrabbed { .. } => fb::GameEventType::FlagGrabbed,
-        GameEvent::FlagDropped { .. } => fb::GameEventType::FlagDropped,
-        GameEvent::FlagReturned { .. } => fb::GameEventType::FlagReturned,
-        GameEvent::FlagCaptured { .. } => fb::GameEventType::FlagCaptured,
-        GameEvent::PlayerJoined { .. } | GameEvent::PlayerLeft { .. } => {
-            fb::GameEventType::BulletImpact
-        } // Placeholder, consider specific events
-        GameEvent::MeleeHit { .. } => fb::GameEventType::PlayerDamageEffect, // Could be a specific MeleeImpact event type
-        GameEvent::Footstep { .. } => fb::GameEventType::BulletImpact, // Placeholder, consider specific events
     }
 }

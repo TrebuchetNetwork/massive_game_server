@@ -132,6 +132,23 @@ pub fn first_index_within_segment_radius(
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    {
+        if std::arch::is_aarch64_feature_detected!("neon") {
+            return unsafe {
+                first_index_within_segment_radius_neon(
+                    xs,
+                    ys,
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    radius_squared,
+                )
+            };
+        }
+    }
+
     first_index_within_segment_radius_scalar(
         xs,
         ys,
@@ -430,6 +447,84 @@ unsafe fn first_index_within_segment_radius_avx2(
             return Some(tail_idx);
         }
     }
+    None
+}
+
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn first_index_within_segment_radius_neon(
+    xs: &[f32],
+    ys: &[f32],
+    start_x: f32,
+    start_y: f32,
+    end_x: f32,
+    end_y: f32,
+    radius_squared: f32,
+) -> Option<usize> {
+    let seg_dx = end_x - start_x;
+    let seg_dy = end_y - start_y;
+    let seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy;
+    if seg_len_sq <= f32::EPSILON {
+        return first_index_within_radius_scalar(xs, ys, start_x, start_y, radius_squared);
+    }
+
+    let inv_seg_len_sq = 1.0 / seg_len_sq;
+    let start_x_v = neon_arch::vdupq_n_f32(start_x);
+    let start_y_v = neon_arch::vdupq_n_f32(start_y);
+    let seg_dx_v = neon_arch::vdupq_n_f32(seg_dx);
+    let seg_dy_v = neon_arch::vdupq_n_f32(seg_dy);
+    let inv_len_v = neon_arch::vdupq_n_f32(inv_seg_len_sq);
+    let zero_v = neon_arch::vdupq_n_f32(0.0);
+    let one_v = neon_arch::vdupq_n_f32(1.0);
+    let radius_v = neon_arch::vdupq_n_f32(radius_squared);
+
+    let mut idx = 0usize;
+    while idx + 4 <= xs.len() {
+        let x_v = neon_arch::vld1q_f32(xs.as_ptr().add(idx));
+        let y_v = neon_arch::vld1q_f32(ys.as_ptr().add(idx));
+
+        let px_v = neon_arch::vsubq_f32(x_v, start_x_v);
+        let py_v = neon_arch::vsubq_f32(y_v, start_y_v);
+        let dot_v = neon_arch::vaddq_f32(
+            neon_arch::vmulq_f32(px_v, seg_dx_v),
+            neon_arch::vmulq_f32(py_v, seg_dy_v),
+        );
+        let t_unclamped_v = neon_arch::vmulq_f32(dot_v, inv_len_v);
+        let t_v = neon_arch::vmaxq_f32(zero_v, neon_arch::vminq_f32(one_v, t_unclamped_v));
+
+        let closest_x_v = neon_arch::vaddq_f32(start_x_v, neon_arch::vmulq_f32(t_v, seg_dx_v));
+        let closest_y_v = neon_arch::vaddq_f32(start_y_v, neon_arch::vmulq_f32(t_v, seg_dy_v));
+        let dx_v = neon_arch::vsubq_f32(x_v, closest_x_v);
+        let dy_v = neon_arch::vsubq_f32(y_v, closest_y_v);
+        let dist_sq_v = neon_arch::vaddq_f32(
+            neon_arch::vmulq_f32(dx_v, dx_v),
+            neon_arch::vmulq_f32(dy_v, dy_v),
+        );
+
+        let cmp_v = neon_arch::vcleq_f32(dist_sq_v, radius_v);
+        let mut cmp_arr = [0u32; 4];
+        neon_arch::vst1q_u32(cmp_arr.as_mut_ptr(), cmp_v);
+        for lane in 0..4usize {
+            if cmp_arr[lane] != 0 {
+                return Some(idx + lane);
+            }
+        }
+        idx += 4;
+    }
+
+    for tail_idx in idx..xs.len() {
+        let px = xs[tail_idx] - start_x;
+        let py = ys[tail_idx] - start_y;
+        let t = ((px * seg_dx + py * seg_dy) * inv_seg_len_sq).clamp(0.0, 1.0);
+        let closest_x = start_x + t * seg_dx;
+        let closest_y = start_y + t * seg_dy;
+        let dx = xs[tail_idx] - closest_x;
+        let dy = ys[tail_idx] - closest_y;
+        if dx * dx + dy * dy <= radius_squared {
+            return Some(tail_idx);
+        }
+    }
+
     None
 }
 

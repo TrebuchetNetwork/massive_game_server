@@ -446,3 +446,20 @@
 - `cargo test -p massive_game_server_core --test boundary_stress -- --nocapture` passed.
 - `RUN_STRESS_TEST=1 ... --exact stress_test_game_tick --nocapture` passed (`avg=1.13ms`, `p95=1.79ms`, `max=4.34ms`).
 - `RUN_STRESS_TEST=1 ... --exact stress_test_game_tick_with_bots --nocapture` passed (`avg=1.34ms`, `p95=1.87ms`, `max=2.26ms`).
+
+### R2-R5 maintenance pass (2026-02-16)
+- Authoritative projectile writer ownership tightened (`server/src/server/instance.rs`):
+  - `process_projectiles_optimized` now returns write artifacts (`removed_projectile_ids`, `kept_projectiles`, `spatial_updates`, `wall_impacts`) instead of mutating shared state directly.
+  - `apply_projectile_results` is now the single write stage for wall-impact event enqueue, projectile spatial index updates, authoritative projectile state commit, and wall damage application.
+- Zero-copy follow-through extension (`server/src/server/instance.rs`):
+  - fallback `build_delta_state_static` now reuses `build_game_event_fb`.
+  - destroyed wall IDs in fallback delta path now use `fb_safe_entity_id` (removes per-ID `to_string` allocation in that path).
+- SIMD coverage extension (`server/src/core/simd.rs`):
+  - added NEON implementation for `first_index_within_segment_radius` and runtime dispatch on aarch64 with NEON.
+- `instance.rs` decomposition progress (`server/src/server/event_mapping.rs`, `server/src/server/mod.rs`, `server/src/server/instance.rs`):
+  - moved event mapping helpers out of `instance.rs` into `event_mapping.rs`.
+  - removed duplicate local mapping helper block and unused local event-vector helper from `instance.rs`.
+- Validation:
+  - `cargo check -p massive_game_server_core` passed.
+  - `cargo test -p massive_game_server_core simd_segment_radius_returns_first_hit_along_path -- --nocapture` passed.
+  - `cargo test -p massive_game_server_core packet_batch_tests::collect_pending_chat_packets_applies_seq_filter_and_cap -- --nocapture` passed.
