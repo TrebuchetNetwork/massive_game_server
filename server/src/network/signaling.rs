@@ -280,6 +280,11 @@ fn map_server_weapon_to_fb(server_weapon: ServerWeaponType) -> fb::WeaponType {
 const DEFAULT_JOIN_RATE_LIMIT_PER_SEC: u32 = 30;
 const DEFAULT_JOIN_RATE_LIMIT_BURST: u32 = 50;
 const JOIN_RATE_LIMIT_THROTTLED_MESSAGE: &str = "Server busy handling joins, retry shortly.";
+const MAX_SIGNALING_TEXT_BYTES: usize = 128 * 1024;
+const MAX_SIGNALING_SDP_BYTES: usize = 120 * 1024;
+const MAX_SIGNALING_ICE_CANDIDATE_BYTES: usize = 4 * 1024;
+const MAX_SIGNALING_ICE_SDP_MID_BYTES: usize = 256;
+const MAX_SIGNALING_ICE_USERNAME_FRAGMENT_BYTES: usize = 256;
 
 #[derive(Debug)]
 struct JoinRateLimiter {
@@ -366,6 +371,40 @@ fn try_acquire_join_rate_limit_token() -> bool {
         }
     };
     limiter_guard.try_acquire()
+}
+
+fn validate_signaling_payload(payload: &SignalingMessageJson) -> Result<(), &'static str> {
+    if payload.sdp.is_none() && payload.ice.is_none() {
+        return Err("empty signaling payload");
+    }
+
+    if let Some(sdp) = payload.sdp.as_ref() {
+        if sdp.sdp.len() > MAX_SIGNALING_SDP_BYTES {
+            return Err("SDP payload too large");
+        }
+    }
+
+    if let Some(ice) = payload.ice.as_ref() {
+        if ice.candidate.len() > MAX_SIGNALING_ICE_CANDIDATE_BYTES {
+            return Err("ICE candidate payload too large");
+        }
+        if ice
+            .sdp_mid
+            .as_ref()
+            .is_some_and(|value| value.len() > MAX_SIGNALING_ICE_SDP_MID_BYTES)
+        {
+            return Err("ICE sdpMid payload too large");
+        }
+        if ice
+            .username_fragment
+            .as_ref()
+            .is_some_and(|value| value.len() > MAX_SIGNALING_ICE_USERNAME_FRAGMENT_BYTES)
+        {
+            return Err("ICE usernameFragment payload too large");
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn handle_signaling_connection(
@@ -915,9 +954,23 @@ pub async fn handle_signaling_connection(
         match result {
             Ok(msg) => {
                 if msg.is_text() {
+                    if msg.as_bytes().len() > MAX_SIGNALING_TEXT_BYTES {
+                        warn!(
+                            "[{}]: Signaling message exceeds {} bytes; closing connection.",
+                            current_peer_id_ws, MAX_SIGNALING_TEXT_BYTES
+                        );
+                        break;
+                    }
                     if let Ok(text_content) = msg.to_str() {
                         match serde_json::from_str::<SignalingMessageJson>(text_content) {
                             Ok(sig_data) => {
+                                if let Err(reason) = validate_signaling_payload(&sig_data) {
+                                    warn!(
+                                        "[{}]: Invalid signaling payload: {}. Closing connection.",
+                                        current_peer_id_ws, reason
+                                    );
+                                    break;
+                                }
                                 if let Some(sdp) = sig_data.sdp {
                                     if let Err(e) =
                                         pc_signal_receiver.set_remote_description(sdp.clone()).await
@@ -966,8 +1019,10 @@ pub async fn handle_signaling_connection(
                             }
                             Err(e) => {
                                 error!(
-                                    "[{}]: Failed to parse signaling message: {}. Content: '{}'",
-                                    current_peer_id_ws, e, text_content
+                                    "[{}]: Failed to parse signaling message: {} (len={}).",
+                                    current_peer_id_ws,
+                                    e,
+                                    text_content.len()
                                 );
                             }
                         }
