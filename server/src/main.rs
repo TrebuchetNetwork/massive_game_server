@@ -368,8 +368,7 @@ async fn main() -> anyhow::Result<()> {
     ));
     info!("Game server instance created.");
 
-    let signaling_peers_state: SignalingPeers =
-        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let signaling_peers_state: SignalingPeers = Arc::new(DashMap::new());
     let auth_service = AuthService::new_from_env();
     let arena_service = ArenaService::new_from_env();
     let arena_service_for_worker = arena_service.clone();

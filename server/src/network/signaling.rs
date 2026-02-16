@@ -45,7 +45,7 @@ use webrtc::{
 
 // Type Aliases
 pub type SignalingPeers =
-    Arc<std::sync::Mutex<HashMap<String, mpsc::UnboundedSender<Result<Message, warp::Error>>>>>;
+    Arc<DashMap<String, mpsc::UnboundedSender<Result<Message, warp::Error>>>>;
 pub type PlayerManagerRef = Arc<ImprovedPlayerManager>;
 pub type DataChannelsMap = Arc<DashMap<String, Arc<CoreRTCDataChannel>>>;
 pub type WorldPartitionManagerRef = Arc<WorldPartitionManager>;
@@ -405,10 +405,7 @@ pub async fn handle_signaling_connection(
     let (mut ws_tx, mut ws_rx) = ws.split();
     let (client_signaling_tx, mut client_signaling_rx) = mpsc::unbounded_channel();
 
-    signaling_peers
-        .lock()
-        .unwrap()
-        .insert(peer_id_str.clone(), client_signaling_tx.clone());
+    signaling_peers.insert(peer_id_str.clone(), client_signaling_tx.clone());
 
     let peer_id_fwd = peer_id_str.clone();
     tokio::spawn(async move {
@@ -1015,38 +1012,39 @@ pub fn cleanup_connection(
     auth_service: &AuthService,
 ) {
     info!("[{}]: Cleaning up resources.", peer_id_str);
-    // Check if peer_id was already removed from signaling_peers to prevent double cleanup issues.
-    if signaling_peers
-        .lock()
-        .unwrap()
-        .remove(peer_id_str)
-        .is_some()
-    {
-        let player_state_snapshot = {
-            let player_id_lookup: PlayerID = Arc::new(peer_id_str.to_owned());
-            player_manager
-                .get_player_state(&player_id_lookup)
-                .map(|entry| entry.clone())
-        };
+    // Remove signaling sender first; duplicate cleanups are expected under concurrent callbacks.
+    let removed_signaling_entry = signaling_peers.remove(peer_id_str).is_some();
 
+    let player_state_snapshot = {
+        let player_id_lookup: PlayerID = Arc::new(peer_id_str.to_owned());
+        player_manager
+            .get_player_state(&player_id_lookup)
+            .map(|entry| entry.clone())
+    };
+
+    if removed_signaling_entry {
         if let Some(player_state) = player_state_snapshot.as_ref() {
             auth_service.record_disconnect_score_for_peer(peer_id_str, player_state);
         } else {
             auth_service.clear_peer_binding(peer_id_str);
         }
-
-        // Only proceed with other removals if this was the first successful removal from signaling_peers
-        player_manager.remove_player(peer_id_str); // This is where the warn originates
-        data_channels_map.remove(peer_id_str);
-        client_states_map.write().remove(peer_id_str); // Assuming client_states_map is Arc<ParkingLotRwLock<HashMap<...>>>
-        player_aois.remove(peer_id_str);
-        info!("[{}]: Player AoI data removed.", peer_id_str);
     } else {
         debug!(
-            "[{}]: Resources already cleaned up or peer not in signaling_peers.",
+            "[{}]: Signaling sender already removed; continuing idempotent cleanup.",
             peer_id_str
         );
+        if player_state_snapshot.is_none() {
+            auth_service.clear_peer_binding(peer_id_str);
+        }
     }
+
+    if player_state_snapshot.is_some() {
+        player_manager.remove_player(peer_id_str);
+    }
+    data_channels_map.remove(peer_id_str);
+    client_states_map.write().remove(peer_id_str);
+    player_aois.remove(peer_id_str);
+    info!("[{}]: Player AoI data removed.", peer_id_str);
 }
 
 pub fn handle_dc_send_error(error_string: &str, peer_id_str: &str, message_type: &str) {
