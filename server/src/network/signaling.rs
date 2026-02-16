@@ -11,6 +11,7 @@ use crate::core::constants::*;
 use crate::core::types::PlayerState;
 use crate::entities::player::ImprovedPlayerManager;
 use crate::flatbuffers_generated::game_protocol as fb;
+use crate::network::connection_manager::{ConnectionInfo, ConnectionManager, TransportKind};
 use crate::operational::auth::AuthService;
 use crate::server::instance::MassiveGameServer; // Added for server access for initial spawn
 use crate::world::partition::WorldPartitionManager;
@@ -61,6 +62,11 @@ pub struct ChatMessage {
 pub type ChatMessagesQueue = Arc<RwLock<VecDeque<ChatMessage>>>;
 static NEXT_CHAT_MESSAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 static SHARED_WEBRTC_API: OnceLock<Result<Arc<API>, String>> = OnceLock::new();
+static CONNECTION_MANAGER: OnceLock<ConnectionManager> = OnceLock::new();
+
+pub fn shared_connection_manager() -> &'static ConnectionManager {
+    CONNECTION_MANAGER.get_or_init(ConnectionManager::default)
+}
 
 pub fn next_chat_message_seq() -> u64 {
     NEXT_CHAT_MESSAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -512,6 +518,11 @@ pub async fn handle_signaling_connection(
     auth_service: AuthService,
     auth_user_id: Option<String>,
 ) {
+    shared_connection_manager().upsert(ConnectionInfo::new(
+        peer_id_str.clone(),
+        TransportKind::WebRtc,
+    ));
+
     if !try_acquire_join_rate_limit_token() {
         warn!(
             "[{}]: Join attempt throttled by join rate limiter.",
@@ -525,6 +536,7 @@ pub async fn handle_signaling_connection(
         .to_string();
         let _ = throttled_ws_tx.send(Message::text(throttled_payload)).await;
         let _ = throttled_ws_tx.send(Message::close()).await;
+        let _ = shared_connection_manager().remove(&peer_id_str);
         return;
     }
 
@@ -541,6 +553,7 @@ pub async fn handle_signaling_connection(
         while let Some(message_result) = client_signaling_rx.recv().await {
             match message_result {
                 Ok(msg) => {
+                    shared_connection_manager().touch(peer_id_fwd.as_str());
                     if ws_tx.send(msg).await.is_err() {
                         warn!(
                             "[{}]: WebSocket send error, terminating forwarder.",
@@ -1075,6 +1088,7 @@ pub async fn handle_signaling_connection(
     let current_peer_id_ws = peer_id_str.clone();
 
     while let Some(result) = ws_rx.next().await {
+        shared_connection_manager().touch(&current_peer_id_ws);
         match result {
             Ok(msg) => {
                 if msg.is_text() {
@@ -1191,6 +1205,7 @@ pub fn cleanup_connection(
     auth_service: &AuthService,
 ) {
     info!("[{}]: Cleaning up resources.", peer_id_str);
+    let _ = shared_connection_manager().remove(peer_id_str);
     // Remove signaling sender first; duplicate cleanups are expected under concurrent callbacks.
     let removed_signaling_entry = signaling_peers.remove(peer_id_str).is_some();
 
