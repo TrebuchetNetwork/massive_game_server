@@ -110,10 +110,14 @@ For real internet play (especially mobile networks), configure ICE/TURN explicit
   * `urls_csv|username|credential`
   * Example: `turn:turn-a.example.com:3478?transport=udp|user|pass;turns:turn-a.example.com:5349?transport=tcp|user|pass`
 
-The client can also override ICE servers via URL params:
+The client can also override ICE server URLs via URL params:
 * `?stun=stun:...`
-* `?turn=turn:...&turn_user=...&turn_pass=...`
+* `?turn=turn:...`
 * `?ice=stun:...;turn:...|user|pass`
+
+For security, TURN credentials are not accepted from URL query params. Supply credentials using:
+* `window.__MGS_TURN_CONFIG = { username: "...", credential: "..." }`
+* Storage keys `mgs_turn_username` and `mgs_turn_credential`
 
 ### Auth Store Redis Cache
 

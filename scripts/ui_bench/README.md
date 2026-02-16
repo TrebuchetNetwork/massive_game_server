@@ -128,7 +128,7 @@ Connection reliability URL params (useful for real mobile/browser sessions):
 - `auto_reconnect=1`: retry after WebRTC/signaling drops (enabled by default on mobile mode)
 - `auto_reconnect_max=<n>`: reconnect attempt cap
 - `stun=<stun_url[,stun_url2]>`: override client STUN URLs
-- `turn=<turn_url[,turn_url2]>&turn_user=<u>&turn_pass=<p>`: add TURN relay URLs
+- `turn=<turn_url[,turn_url2]>`: add TURN relay URLs (credentials must come from `window.__MGS_TURN_CONFIG` or `mgs_turn_username` / `mgs_turn_credential` storage keys)
 - `ice=<urls_csv|username|credential>`: add advanced ICE entries; can be repeated or `;`-separated
 
 ## Real-frame render stress (PIXI/WebGL)

@@ -6296,15 +6296,13 @@ void main() {
                 const turnServer = {
                     urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls
                 };
-                const legacyTurnUser = String(
-                    uiModeParams.get('turn_user') || uiModeParams.get('turn_username') || ''
-                ).trim();
-                const legacyTurnCredential = String(
-                    uiModeParams.get('turn_pass') || uiModeParams.get('turn_credential') || ''
-                ).trim();
-                if (legacyTurnUser || legacyTurnCredential) {
+                const hasLegacyTurnCredentialParams = uiModeParams.has('turn_user')
+                    || uiModeParams.has('turn_username')
+                    || uiModeParams.has('turn_pass')
+                    || uiModeParams.has('turn_credential');
+                if (hasLegacyTurnCredentialParams) {
                     log(
-                        'Ignoring TURN credentials in URL query params for security. '
+                        'TURN credentials in URL query params are disabled for security. '
                         + 'Use window.__MGS_TURN_CONFIG or storage keys instead.',
                         'warn'
                     );
