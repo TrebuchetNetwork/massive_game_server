@@ -2,7 +2,7 @@
 use dashmap::DashMap;
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
-use massive_game_server_core::core::types::PlayerAoI;
+use massive_game_server_core::core::types::{PlayerAoI, PlayerInputData};
 use massive_game_server_core::network::quic::{
     start_quic_runtime_from_env_with_handler, QuicRequestHandler,
 };
@@ -64,10 +64,50 @@ struct LiveReplayRecentQuery {
 #[derive(Clone, Default, Deserialize)]
 struct QuicControlRequest {
     op: Option<String>,
+    peer_id: Option<String>,
+    username: Option<String>,
+    team_id: Option<u8>,
     replay_limit: Option<usize>,
     from_frame: Option<u64>,
     to_frame: Option<u64>,
     player_id: Option<String>,
+    input: Option<QuicInputEnvelope>,
+    inputs: Option<Vec<QuicInputEnvelope>>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct QuicInputEnvelope {
+    timestamp: Option<u64>,
+    sequence: Option<u32>,
+    move_forward: Option<bool>,
+    move_backward: Option<bool>,
+    move_left: Option<bool>,
+    move_right: Option<bool>,
+    shooting: Option<bool>,
+    reload: Option<bool>,
+    rotation: Option<f32>,
+    melee_attack: Option<bool>,
+    change_weapon_slot: Option<u8>,
+    use_ability_slot: Option<u8>,
+}
+
+impl QuicInputEnvelope {
+    fn into_player_input(self) -> PlayerInputData {
+        PlayerInputData {
+            timestamp: self.timestamp.unwrap_or_default(),
+            sequence: self.sequence.unwrap_or_default(),
+            move_forward: self.move_forward.unwrap_or(false),
+            move_backward: self.move_backward.unwrap_or(false),
+            move_left: self.move_left.unwrap_or(false),
+            move_right: self.move_right.unwrap_or(false),
+            shooting: self.shooting.unwrap_or(false),
+            reload: self.reload.unwrap_or(false),
+            rotation: self.rotation.unwrap_or(0.0),
+            melee_attack: self.melee_attack.unwrap_or(false),
+            change_weapon_slot: self.change_weapon_slot.unwrap_or(0),
+            use_ability_slot: self.use_ability_slot.unwrap_or(0),
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -455,6 +495,25 @@ async fn main() -> anyhow::Result<()> {
                 warp::reply::json(&server_inst.build_live_replay_dispute_report(request))
             },
         );
+    let server_for_live_replay_dispute_recent = game_server_instance.clone();
+    let live_replay_dispute_recent_route =
+        warp::path!("api" / "ops" / "live-replay" / "disputes" / "recent")
+            .and(warp::get())
+            .and(
+                warp::query::<LiveReplayRecentQuery>()
+                    .or(warp::any().map(LiveReplayRecentQuery::default))
+                    .unify(),
+            )
+            .and(warp::any().map(move || server_for_live_replay_dispute_recent.clone()))
+            .map(|query: LiveReplayRecentQuery, server_inst: ServerInstanceRef| {
+                let limit = query.limit.unwrap_or(128).clamp(1, 2048);
+                warp::reply::json(&serde_json::json!({
+                    "ok": true,
+                    "op": "live_replay_disputes_recent",
+                    "audits": server_inst.recent_live_replay_dispute_audits(limit),
+                    "limit": limit,
+                }))
+            });
 
     let quic_primary_only = env_flag("MGS_QUIC_PRIMARY") && env_flag("MGS_QUIC_PRIMARY_ONLY");
     if quic_primary_only {
@@ -634,7 +693,8 @@ async fn main() -> anyhow::Result<()> {
                 .or(join_stage_report_route)
                 .or(join_stage_reset_route)
                 .or(live_replay_recent_route)
-                .or(live_replay_dispute_route),
+                .or(live_replay_dispute_route)
+                .or(live_replay_dispute_recent_route),
         )
         .map(|(), reply| reply);
     let public_routes = auth_routes
@@ -777,6 +837,15 @@ async fn main() -> anyhow::Result<()> {
                     "limit": limit,
                 })
             }
+            "live_replay_disputes_recent" => {
+                let limit = request.replay_limit.unwrap_or(128).clamp(1, 2048);
+                serde_json::json!({
+                    "ok": true,
+                    "op": "live_replay_disputes_recent",
+                    "audits": server_for_quic.recent_live_replay_dispute_audits(limit),
+                    "limit": limit,
+                })
+            }
             "live_replay_dispute" => {
                 let report =
                     server_for_quic.build_live_replay_dispute_report(LiveReplayDisputeRequest {
@@ -786,6 +855,94 @@ async fn main() -> anyhow::Result<()> {
                         player_id: request.player_id,
                     });
                 return serde_json::to_vec(&report).ok();
+            }
+            "join" => {
+                let peer_id = request
+                    .peer_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                match peer_id {
+                    Some(peer_id) => {
+                        let joined = server_for_quic.register_quic_player(
+                            peer_id,
+                            request.username.as_deref(),
+                            request.team_id,
+                        );
+                        serde_json::json!({
+                            "ok": joined.is_some(),
+                            "op": "join",
+                            "player": joined,
+                        })
+                    }
+                    None => serde_json::json!({
+                        "ok": false,
+                        "op": "join",
+                        "error": "missing_peer_id",
+                    }),
+                }
+            }
+            "input" => {
+                let peer_id = request
+                    .peer_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let Some(peer_id) = peer_id else {
+                    return serde_json::to_vec(&serde_json::json!({
+                        "ok": false,
+                        "op": "input",
+                        "error": "missing_peer_id",
+                    }))
+                    .ok();
+                };
+
+                let mut inputs = Vec::new();
+                if let Some(single_input) = request.input {
+                    inputs.push(single_input.into_player_input());
+                }
+                if let Some(batch_inputs) = request.inputs {
+                    for input in batch_inputs.into_iter().take(128) {
+                        inputs.push(input.into_player_input());
+                    }
+                }
+
+                let mut accepted = 0usize;
+                for input in inputs {
+                    if server_for_quic.enqueue_quic_input(peer_id, input) {
+                        accepted += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                serde_json::json!({
+                    "ok": accepted > 0,
+                    "op": "input",
+                    "accepted": accepted,
+                    "peer_id": peer_id,
+                })
+            }
+            "leave" | "disconnect" => {
+                if let Some(peer_id) = request
+                    .peer_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    server_for_quic.remove_quic_player(peer_id);
+                    serde_json::json!({
+                        "ok": true,
+                        "op": "leave",
+                        "peer_id": peer_id,
+                    })
+                } else {
+                    serde_json::json!({
+                        "ok": false,
+                        "op": "leave",
+                        "error": "missing_peer_id",
+                    })
+                }
             }
             _ => serde_json::json!({
                 "ok": true,

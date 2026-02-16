@@ -5,11 +5,15 @@ use crate::network::connection_manager::{
 };
 use crate::operational::monitoring::tracing as monitoring_tracing;
 use anyhow::{anyhow, Context, Result};
+use bytes::Bytes;
+use dashmap::DashMap;
 use quinn::{Connecting, Endpoint, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -27,6 +31,15 @@ pub struct QuicRuntime {
     endpoint: Endpoint,
     local_addr: SocketAddr,
 }
+
+#[derive(Clone)]
+struct QuicPeerSender {
+    connection_token: u64,
+    outbound_tx: mpsc::UnboundedSender<Bytes>,
+}
+
+static QUIC_PEER_SENDERS: OnceLock<DashMap<String, QuicPeerSender>> = OnceLock::new();
+static QUIC_CONNECTION_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 impl QuicRuntime {
     pub fn local_addr(&self) -> SocketAddr {
@@ -60,6 +73,48 @@ impl QuicEndpointConfig {
             max_stream_payload_bytes,
         }
     }
+}
+
+fn shared_quic_peer_senders() -> &'static DashMap<String, QuicPeerSender> {
+    QUIC_PEER_SENDERS.get_or_init(DashMap::new)
+}
+
+pub fn connected_quic_peer_count() -> usize {
+    shared_quic_peer_senders().len()
+}
+
+pub fn connected_quic_peer_ids() -> Vec<String> {
+    shared_quic_peer_senders()
+        .iter()
+        .map(|entry| entry.key().clone())
+        .collect()
+}
+
+pub fn send_quic_packet_batch(peer_id: &str, packets: &[Bytes]) -> usize {
+    if packets.is_empty() {
+        return 0;
+    }
+
+    let Some(sender) = shared_quic_peer_senders()
+        .get(peer_id)
+        .map(|entry| entry.value().clone())
+    else {
+        return 0;
+    };
+
+    let mut sent = 0usize;
+    for packet in packets {
+        if sender.outbound_tx.send(packet.clone()).is_ok() {
+            sent += 1;
+        } else {
+            break;
+        }
+    }
+
+    if sent == 0 {
+        let _ = shared_quic_peer_senders().remove(peer_id);
+    }
+    sent
 }
 
 pub fn quic_enabled() -> bool {
@@ -179,15 +234,37 @@ async fn handle_connecting(
         .context("failed to establish QUIC connection")?;
     let remote_addr = connection.remote_address();
     info!("QUIC client connected from {}", remote_addr);
+    let connection_token = QUIC_CONNECTION_TOKEN.fetch_add(1, AtomicOrdering::Relaxed);
+    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel::<Bytes>();
+    let peer_sender = QuicPeerSender {
+        connection_token,
+        outbound_tx,
+    };
+    let registered_peer_ids = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    tokio::spawn(run_connection_writer(
+        connection.clone(),
+        outbound_rx,
+        connection_token,
+        remote_addr,
+    ));
 
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
                 let request_handler = request_handler.clone();
+                let peer_sender = peer_sender.clone();
+                let registered_peer_ids = Arc::clone(&registered_peer_ids);
                 tokio::spawn(async move {
-                    if let Err(err) =
-                        handle_bidi_stream(send, recv, request_handler, max_stream_payload_bytes)
-                            .await
+                    if let Err(err) = handle_bidi_stream(
+                        send,
+                        recv,
+                        request_handler,
+                        max_stream_payload_bytes,
+                        peer_sender,
+                        registered_peer_ids,
+                    )
+                    .await
                     {
                         debug!("QUIC stream handler ended with error: {}", err);
                     }
@@ -199,6 +276,8 @@ async fn handle_connecting(
             }
         }
     }
+
+    cleanup_registered_quic_peers(connection_token, &registered_peer_ids);
 
     Ok(())
 }
@@ -212,7 +291,11 @@ fn build_control_ack(op: impl Into<String>, detail: impl Into<String>) -> Vec<u8
     .unwrap_or_else(|_| br#"{"ok":true,"op":"ack","detail":"ok"}"#.to_vec())
 }
 
-fn maybe_register_quic_peer(payload: &[u8]) {
+fn maybe_register_quic_peer(
+    payload: &[u8],
+    sender: &QuicPeerSender,
+    registered_peer_ids: &Arc<Mutex<Vec<String>>>,
+) {
     let Ok(envelope) = serde_json::from_slice::<QuicControlEnvelope>(payload) else {
         return;
     };
@@ -224,6 +307,13 @@ fn maybe_register_quic_peer(payload: &[u8]) {
     else {
         return;
     };
+
+    shared_quic_peer_senders().insert(peer_id.to_string(), sender.clone());
+    if let Ok(mut peers) = registered_peer_ids.lock() {
+        if !peers.iter().any(|existing| existing == peer_id) {
+            peers.push(peer_id.to_string());
+        }
+    }
 
     shared_connection_manager().upsert(ConnectionInfo::new(
         peer_id.to_string(),
@@ -240,6 +330,8 @@ async fn handle_bidi_stream(
     mut recv: RecvStream,
     request_handler: Option<QuicRequestHandler>,
     max_stream_payload_bytes: usize,
+    peer_sender: QuicPeerSender,
+    registered_peer_ids: Arc<Mutex<Vec<String>>>,
 ) -> Result<()> {
     let payload = recv
         .read_to_end(max_stream_payload_bytes)
@@ -269,7 +361,7 @@ async fn handle_bidi_stream(
     stream_span.set_parent(remote_context);
 
     async move {
-        maybe_register_quic_peer(&payload);
+        maybe_register_quic_peer(&payload, &peer_sender, &registered_peer_ids);
 
         let response = if let Some(handler) = request_handler {
             handler(payload.as_slice()).unwrap_or_else(|| build_control_ack("quic", "ok"))
@@ -292,4 +384,61 @@ async fn handle_bidi_stream(
     }
     .instrument(stream_span)
     .await
+}
+
+async fn run_connection_writer(
+    connection: quinn::Connection,
+    mut outbound_rx: mpsc::UnboundedReceiver<Bytes>,
+    connection_token: u64,
+    remote_addr: SocketAddr,
+) {
+    while let Some(payload) = outbound_rx.recv().await {
+        if payload.is_empty() {
+            continue;
+        }
+
+        let mut send_stream = match connection.open_uni().await {
+            Ok(stream) => stream,
+            Err(err) => {
+                debug!(
+                    "QUIC writer token={} could not open uni stream for {}: {}",
+                    connection_token, remote_addr, err
+                );
+                break;
+            }
+        };
+
+        if let Err(err) = send_stream.write_all(payload.as_ref()).await {
+            debug!(
+                "QUIC writer token={} failed writing payload to {}: {}",
+                connection_token, remote_addr, err
+            );
+            break;
+        }
+        if let Err(err) = send_stream.finish().await {
+            debug!(
+                "QUIC writer token={} failed finishing payload to {}: {}",
+                connection_token, remote_addr, err
+            );
+            break;
+        }
+    }
+}
+
+fn cleanup_registered_quic_peers(connection_token: u64, registered_peer_ids: &Arc<Mutex<Vec<String>>>) {
+    let peers = registered_peer_ids
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+
+    for peer_id in peers {
+        let should_remove = shared_quic_peer_senders()
+            .get(&peer_id)
+            .map(|entry| entry.connection_token == connection_token)
+            .unwrap_or(false);
+        if should_remove {
+            let _ = shared_quic_peer_senders().remove(&peer_id);
+            let _ = shared_connection_manager().remove(&peer_id);
+        }
+    }
 }

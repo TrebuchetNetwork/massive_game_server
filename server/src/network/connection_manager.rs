@@ -71,6 +71,21 @@ impl ConnectionManager {
         self.connections.len()
     }
 
+    pub fn len_by_transport(&self, transport: TransportKind) -> usize {
+        self.connections
+            .iter()
+            .filter(|entry| entry.transport == transport)
+            .count()
+    }
+
+    pub fn peer_ids_by_transport(&self, transport: TransportKind) -> Vec<String> {
+        self.connections
+            .iter()
+            .filter(|entry| entry.transport == transport)
+            .map(|entry| entry.peer_id.clone())
+            .collect()
+    }
+
     pub fn stale_peer_ids(&self, stale_after: Duration) -> Vec<String> {
         let now = Instant::now();
         self.connections

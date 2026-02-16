@@ -15,6 +15,9 @@ use crate::core::types::*;
 use crate::core::types::{CorePickupType, EntityId, MatchState, PlayerID};
 use crate::entities::player::ImprovedPlayerManager;
 use crate::flatbuffers_generated::game_protocol as fb;
+use crate::network::quic::{
+    connected_quic_peer_count, connected_quic_peer_ids, send_quic_packet_batch,
+};
 use crate::network::signaling::ChatMessage;
 use crate::network::signaling::PickupState;
 use crate::network::signaling::{
@@ -47,6 +50,7 @@ use webrtc::data_channel::data_channel_state::RTCDataChannelState;
 use bytes::Bytes;
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
+use hmac::{Hmac, Mac};
 use itoa::Buffer as ItoaBuffer;
 use once_cell::sync::OnceCell;
 use parking_lot::RwLock as ParkingLotRwLock;
@@ -54,7 +58,11 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -784,11 +792,22 @@ pub struct LiveReplayDisputeRequest {
     pub player_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LiveReplayDisputeFilter {
     pub from_frame: Option<u64>,
     pub to_frame: Option<u64>,
     pub player_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LiveReplayDisputeAuditProof {
+    pub dispute_id: String,
+    pub persisted: bool,
+    pub storage_path: Option<String>,
+    pub payload_sha256: String,
+    pub chain_hash_sha256: String,
+    pub chain_prev_hash_sha256: Option<String>,
+    pub signature_hmac_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -798,6 +817,7 @@ pub struct LiveReplayDisputeReport {
     pub selected_frames: Vec<LiveReplayFrame>,
     pub relevant_kill_feed: Vec<LiveReplayKillFeedEntry>,
     pub filter: LiveReplayDisputeFilter,
+    pub audit: Option<LiveReplayDisputeAuditProof>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -806,6 +826,32 @@ pub struct LiveReplayKillFeedEntry {
     pub victim_name: String,
     pub weapon: String,
     pub timestamp: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PersistedLiveReplayDisputeRecord {
+    dispute_id: String,
+    generated_at_ms: u64,
+    total_captured_frames: usize,
+    selected_frame_count: usize,
+    selected_from_frame: Option<u64>,
+    selected_to_frame: Option<u64>,
+    kill_feed_event_count: usize,
+    filter: LiveReplayDisputeFilter,
+    payload_sha256: String,
+    chain_hash_sha256: String,
+    chain_prev_hash_sha256: Option<String>,
+    signature_hmac_sha256: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct QuicJoinSnapshot {
+    pub peer_id: String,
+    pub username: String,
+    pub team_id: u8,
+    pub spawn_x: f32,
+    pub spawn_y: f32,
+    pub created: bool,
 }
 
 pub struct MassiveGameServer {
@@ -874,6 +920,12 @@ pub struct MassiveGameServer {
     live_replay_frames: Arc<ParkingLotRwLock<VecDeque<LiveReplayFrame>>>,
     live_replay_capacity: usize,
     live_replay_player_cap: usize,
+    live_replay_dispute_persist_enabled: bool,
+    live_replay_dispute_store_path: Arc<PathBuf>,
+    live_replay_dispute_signing_key: Option<Arc<Vec<u8>>>,
+    live_replay_dispute_chain_head: Arc<ParkingLotRwLock<Option<String>>>,
+    live_replay_dispute_audits: Arc<ParkingLotRwLock<VecDeque<LiveReplayDisputeAuditProof>>>,
+    live_replay_dispute_audit_capacity: usize,
 }
 
 const MAX_KILL_FEED_HISTORY: usize = 10;
@@ -1081,6 +1133,36 @@ impl MassiveGameServer {
             .and_then(|raw| raw.parse::<usize>().ok())
             .unwrap_or(64)
             .clamp(8, 512);
+        let live_replay_dispute_persist_enabled = std::env::var("MGS_LIVE_REPLAY_DISPUTE_PERSIST")
+            .ok()
+            .map(|raw| {
+                let normalized = raw.trim().to_ascii_lowercase();
+                normalized == "1"
+                    || normalized == "true"
+                    || normalized == "yes"
+                    || normalized == "on"
+            })
+            .unwrap_or(live_replay_enabled);
+        let live_replay_dispute_store_path = std::env::var("MGS_LIVE_REPLAY_DISPUTE_STORE_PATH")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("data/live_replay/disputes.jsonl"));
+        let live_replay_dispute_signing_key = std::env::var("MGS_LIVE_REPLAY_DISPUTE_SIGNING_KEY")
+            .ok()
+            .map(|raw| raw.into_bytes())
+            .filter(|bytes| !bytes.is_empty())
+            .map(Arc::new);
+        let live_replay_dispute_audit_capacity =
+            std::env::var("MGS_LIVE_REPLAY_DISPUTE_AUDIT_CAPACITY")
+                .ok()
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(512)
+                .clamp(16, 4096);
+        let live_replay_dispute_chain_head = if live_replay_dispute_persist_enabled {
+            load_dispute_chain_head(live_replay_dispute_store_path.as_path())
+        } else {
+            None
+        };
         let navmesh_enabled = env_bool_value("MGS_NAVMESH_ENABLED");
         let navmesh_rebuild_interval_frames = std::env::var("MGS_NAVMESH_REBUILD_INTERVAL_FRAMES")
             .ok()
@@ -1157,6 +1239,16 @@ impl MassiveGameServer {
             ))),
             live_replay_capacity,
             live_replay_player_cap,
+            live_replay_dispute_persist_enabled,
+            live_replay_dispute_store_path: Arc::new(live_replay_dispute_store_path),
+            live_replay_dispute_signing_key,
+            live_replay_dispute_chain_head: Arc::new(ParkingLotRwLock::new(
+                live_replay_dispute_chain_head,
+            )),
+            live_replay_dispute_audits: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(
+                live_replay_dispute_audit_capacity,
+            ))),
+            live_replay_dispute_audit_capacity,
         };
 
         server.maybe_refresh_navigation_mesh();
@@ -1185,7 +1277,10 @@ impl MassiveGameServer {
             }
         }
 
-        let connected_players = self.data_channels_map.len();
+        let connected_players = self
+            .data_channels_map
+            .len()
+            .saturating_add(connected_quic_peer_count());
         let mut tuner = self.auto_tuner.write();
         let quality = tuner.ingest_sample(TuningSample {
             frame_time_ms: frame_duration.as_secs_f32() * 1000.0,
@@ -1198,6 +1293,12 @@ impl MassiveGameServer {
         let replay = self.live_replay_frames.read();
         let bounded = limit.clamp(1, self.live_replay_capacity.max(1));
         replay.iter().rev().take(bounded).cloned().collect()
+    }
+
+    pub fn recent_live_replay_dispute_audits(&self, limit: usize) -> Vec<LiveReplayDisputeAuditProof> {
+        let audits = self.live_replay_dispute_audits.read();
+        let bounded = limit.clamp(1, self.live_replay_dispute_audit_capacity.max(1));
+        audits.iter().rev().take(bounded).cloned().collect()
     }
 
     pub fn build_live_replay_dispute_report(
@@ -1256,7 +1357,7 @@ impl MassiveGameServer {
             })
             .collect();
 
-        LiveReplayDisputeReport {
+        let mut report = LiveReplayDisputeReport {
             generated_at_ms: self.get_server_timestamp_ms(),
             total_captured_frames: replay.len(),
             selected_frames,
@@ -1266,7 +1367,12 @@ impl MassiveGameServer {
                 to_frame: effective_to,
                 player_id: player_filter.map(str::to_owned),
             },
-        }
+            audit: None,
+        };
+        drop(replay);
+
+        report.audit = Some(self.persist_live_replay_dispute_report(&report));
+        report
     }
 
     pub fn maybe_refresh_navigation_mesh(&self) {
@@ -1402,6 +1508,172 @@ impl MassiveGameServer {
             let _ = replay.pop_front();
         }
         replay.push_back(frame_sample);
+    }
+
+    fn persist_live_replay_dispute_report(
+        &self,
+        report: &LiveReplayDisputeReport,
+    ) -> LiveReplayDisputeAuditProof {
+        let dispute_id = format!("dispute_{}", Uuid::new_v4());
+        let payload = serde_json::to_vec(report).unwrap_or_default();
+        let payload_sha256 = sha256_hex(&payload);
+        let previous_chain_hash = self.live_replay_dispute_chain_head.read().clone();
+
+        let mut chain_material = String::new();
+        if let Some(previous) = previous_chain_hash.as_deref() {
+            chain_material.push_str(previous);
+        }
+        chain_material.push(':');
+        chain_material.push_str(&payload_sha256);
+        chain_material.push(':');
+        chain_material.push_str(&report.generated_at_ms.to_string());
+        let chain_hash_sha256 = sha256_hex(chain_material.as_bytes());
+        let signature_hmac_sha256 = self
+            .live_replay_dispute_signing_key
+            .as_ref()
+            .and_then(|key| hmac_sha256_hex(key.as_slice(), chain_hash_sha256.as_bytes()));
+
+        let mut audit = LiveReplayDisputeAuditProof {
+            dispute_id: dispute_id.clone(),
+            persisted: false,
+            storage_path: if self.live_replay_dispute_persist_enabled {
+                Some(self.live_replay_dispute_store_path.to_string_lossy().to_string())
+            } else {
+                None
+            },
+            payload_sha256: payload_sha256.clone(),
+            chain_hash_sha256: chain_hash_sha256.clone(),
+            chain_prev_hash_sha256: previous_chain_hash,
+            signature_hmac_sha256: signature_hmac_sha256.clone(),
+        };
+
+        if self.live_replay_dispute_persist_enabled {
+            let persisted_record = PersistedLiveReplayDisputeRecord {
+                dispute_id: dispute_id.clone(),
+                generated_at_ms: report.generated_at_ms,
+                total_captured_frames: report.total_captured_frames,
+                selected_frame_count: report.selected_frames.len(),
+                selected_from_frame: report.selected_frames.first().map(|frame| frame.frame),
+                selected_to_frame: report.selected_frames.last().map(|frame| frame.frame),
+                kill_feed_event_count: report.relevant_kill_feed.len(),
+                filter: report.filter.clone(),
+                payload_sha256: payload_sha256.clone(),
+                chain_hash_sha256: chain_hash_sha256.clone(),
+                chain_prev_hash_sha256: audit.chain_prev_hash_sha256.clone(),
+                signature_hmac_sha256: signature_hmac_sha256.clone(),
+            };
+
+            match append_dispute_record(
+                self.live_replay_dispute_store_path.as_path(),
+                &persisted_record,
+            ) {
+                Ok(()) => {
+                    *self.live_replay_dispute_chain_head.write() = Some(chain_hash_sha256.clone());
+                    audit.persisted = true;
+                }
+                Err(err) => {
+                    warn!(
+                        "failed to persist live replay dispute record {}: {}",
+                        dispute_id, err
+                    );
+                }
+            }
+        }
+
+        {
+            let mut audits = self.live_replay_dispute_audits.write();
+            while audits.len() >= self.live_replay_dispute_audit_capacity {
+                let _ = audits.pop_front();
+            }
+            audits.push_back(audit.clone());
+        }
+
+        audit
+    }
+
+    pub fn register_quic_player(
+        &self,
+        peer_id: &str,
+        username_override: Option<&str>,
+        requested_team: Option<u8>,
+    ) -> Option<QuicJoinSnapshot> {
+        let peer_id = peer_id.trim();
+        if peer_id.is_empty() {
+            return None;
+        }
+
+        self.note_join_channel_open(peer_id);
+        self.client_states_map
+            .write()
+            .entry(peer_id.to_string())
+            .or_insert_with(ClientState::default);
+
+        let player_id = self.player_manager.id_pool.get_or_create(peer_id);
+        if let Some(player_state) = self.player_manager.get_player_state(&player_id) {
+            return Some(QuicJoinSnapshot {
+                peer_id: peer_id.to_string(),
+                username: player_state.username.clone(),
+                team_id: player_state.team_id,
+                spawn_x: player_state.x,
+                spawn_y: player_state.y,
+                created: false,
+            });
+        }
+
+        let chosen_team = requested_team
+            .filter(|team| *team == 1 || *team == 2)
+            .unwrap_or_else(|| self.player_manager.assign_team_to_new_player());
+        if !self.ensure_human_join_capacity_for_team(peer_id, Some(chosen_team)) {
+            warn!(
+                "[{}]: unable to ensure human join capacity for QUIC player",
+                peer_id
+            );
+        }
+
+        let spawn = self
+            .respawn_manager
+            .get_respawn_position(self, &player_id, Some(chosen_team), &[]);
+        let fallback_username = format!("QPlayer_{}", &peer_id[..peer_id.len().min(6)]);
+        let username = username_override
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .unwrap_or(fallback_username);
+
+        let inserted_player_id = self
+            .player_manager
+            .add_player(peer_id.to_string(), username.clone(), spawn.x, spawn.y)
+            .unwrap_or(player_id);
+        if let Some(mut player_state) = self.player_manager.get_player_state_mut(&inserted_player_id) {
+            player_state.team_id = chosen_team;
+            player_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
+        }
+        self.update_player_aoi(&inserted_player_id, spawn.x, spawn.y);
+
+        Some(QuicJoinSnapshot {
+            peer_id: peer_id.to_string(),
+            username,
+            team_id: chosen_team,
+            spawn_x: spawn.x,
+            spawn_y: spawn.y,
+            created: true,
+        })
+    }
+
+    pub fn enqueue_quic_input(&self, peer_id: &str, input: PlayerInputData) -> bool {
+        let player_id = self.player_manager.id_pool.get_or_create(peer_id);
+        if let Some(mut player_state) = self.player_manager.get_player_state_mut(&player_id) {
+            player_state.input_queue.push_back(input);
+            return true;
+        }
+        false
+    }
+
+    pub fn remove_quic_player(&self, peer_id: &str) {
+        self.player_manager.remove_player(peer_id);
+        self.client_states_map.write().remove(peer_id);
+        self.player_aois.remove(peer_id);
+        self.data_channels_map.remove(peer_id);
     }
 
     fn prune_runtime_tracking_state(&self) {
@@ -4049,6 +4321,125 @@ impl MassiveGameServer {
         Ok(())
     }
 
+    async fn process_quic_client_broadcast(
+        peer_id_str: &str,
+        needs_initial_state: bool,
+        shared_data: &SharedBroadcastData,
+        server: &Arc<MassiveGameServer>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let frame = server.frame_counter.load(AtomicOrdering::Relaxed);
+        let player_id_arc = server.player_manager.id_pool.get_or_create(peer_id_str);
+        let player_exists =
+            Self::lookup_player_state_from_shared(shared_data, &player_id_arc).is_some();
+        if !player_exists {
+            return Ok(());
+        }
+
+        let mut client_state_for_delta: Option<ClientState> = None;
+        let mut last_chat_message_seq_sent = server
+            .client_states_map
+            .read()
+            .get(peer_id_str)
+            .map(|state| state.last_chat_message_seq_sent)
+            .unwrap_or_default();
+        let state_result = if needs_initial_state {
+            let cached_initial_state = server
+                .client_states_map
+                .read()
+                .get(peer_id_str)
+                .and_then(|state| state.pending_initial_state_bytes.clone());
+
+            if let Some(cached_bytes) = cached_initial_state {
+                Ok(cached_bytes)
+            } else {
+                let initial_result = server.build_initial_state_optimized(peer_id_str, shared_data);
+                if let Ok(initial_bytes) = initial_result.as_ref() {
+                    let mut client_states = server.client_states_map.write();
+                    let state_entry = client_states
+                        .entry(peer_id_str.to_string())
+                        .or_insert_with(ClientState::default);
+                    state_entry.pending_initial_state_bytes = Some(initial_bytes.clone());
+                    state_entry.known_walls_sent = false;
+                }
+                initial_result
+            }
+        } else {
+            let client_state_snapshot = server
+                .client_states_map
+                .read()
+                .get(peer_id_str)
+                .cloned()
+                .unwrap_or_default();
+            let delta_result = server.build_delta_state_optimized(
+                peer_id_str,
+                &client_state_snapshot,
+                shared_data,
+            );
+            last_chat_message_seq_sent = client_state_snapshot.last_chat_message_seq_sent;
+            client_state_for_delta = Some(client_state_snapshot);
+            delta_result
+        };
+
+        let bytes_to_send = match state_result {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                return Err(
+                    format!(
+                        "[Frame {}] failed building QUIC payload for {}: {}",
+                        frame, peer_id_str, err
+                    )
+                    .into(),
+                );
+            }
+        };
+
+        let pending_chat_packets =
+            collect_pending_chat_packets(last_chat_message_seq_sent, &shared_data.chat_packets);
+        let mut outbound_packets = Vec::with_capacity(1 + pending_chat_packets.len());
+        outbound_packets.push(bytes_to_send);
+        outbound_packets.extend(pending_chat_packets.iter().map(|packet| packet.bytes.clone()));
+
+        let sent_packets = send_quic_packet_batch(peer_id_str, &outbound_packets);
+        let send_succeeded = sent_packets > 0;
+        if !send_succeeded {
+            trace!(
+                "[Frame {}] QUIC send skipped/failed for {}",
+                frame,
+                peer_id_str
+            );
+            return Ok(());
+        }
+
+        let sent_chat_packets_count = sent_packets
+            .saturating_sub(1)
+            .min(pending_chat_packets.len());
+        let mut final_chat_message_seq_sent = last_chat_message_seq_sent;
+        for packet in pending_chat_packets.iter().take(sent_chat_packets_count) {
+            if packet.seq > final_chat_message_seq_sent {
+                final_chat_message_seq_sent = packet.seq;
+            }
+        }
+
+        if needs_initial_state {
+            server.update_client_state_after_initial(
+                peer_id_str,
+                shared_data,
+                final_chat_message_seq_sent,
+            );
+        } else {
+            let mut client_state = client_state_for_delta.unwrap_or_default();
+            client_state.last_chat_message_seq_sent = final_chat_message_seq_sent;
+            server.update_client_state_after_delta(&mut client_state, &player_id_arc, shared_data);
+            server.update_client_state_after_delta_with_shared(&mut client_state, shared_data);
+            server
+                .client_states_map
+                .write()
+                .insert(peer_id_str.to_string(), client_state);
+        }
+
+        Ok(())
+    }
+
     fn get_server_timestamp_us(&self) -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
         SystemTime::now()
@@ -5870,12 +6261,28 @@ impl MassiveGameServer {
             return;
         }
 
-        let connected_clients_total = self.data_channels_map.len();
+        let quic_peer_ids = connected_quic_peer_ids();
+        if !quic_peer_ids.is_empty() {
+            let mut client_states_guard = self.client_states_map.write();
+            for peer_id in &quic_peer_ids {
+                client_states_guard
+                    .entry(peer_id.clone())
+                    .or_insert_with(ClientState::default);
+            }
+        }
+
+        let connected_clients_total = self
+            .data_channels_map
+            .len()
+            .saturating_add(quic_peer_ids.len());
         if connected_clients_total == 0 {
             if current_frame % 30 == 0 {
                 // Log every 30 frames
                 // Debug: List all keys in the map to see if there's a mismatch
-                info!("[Frame {}] No connected clients in data_channels_map. Checking map contents...", current_frame);
+                info!(
+                    "[Frame {}] No connected clients in WebRTC/QUIC maps. Checking map contents...",
+                    current_frame
+                );
                 info!(
                     "[Frame {}] Map ptr in broadcast: {:p}",
                     current_frame,
@@ -5889,9 +6296,10 @@ impl MassiveGameServer {
                     );
                 }
                 info!(
-                    "[Frame {}] Total entries found: {}",
+                    "[Frame {}] Total entries found: {} (quic={})",
                     current_frame,
-                    self.data_channels_map.len()
+                    self.data_channels_map.len(),
+                    quic_peer_ids.len()
                 );
             }
             return;
@@ -5923,7 +6331,7 @@ impl MassiveGameServer {
             .iter()
             .filter(|(_, _, _, channel_open)| *channel_open)
             .count();
-        if connected_clients_open == 0 {
+        if connected_clients_open == 0 && quic_peer_ids.is_empty() {
             trace!(
                 "[Frame {}] Skipping broadcast fanout because no data channels are open (tracked={}).",
                 current_frame,
@@ -5953,6 +6361,20 @@ impl MassiveGameServer {
                 pending_delta_closed_count += 1;
             }
         }
+
+        let quic_entries: Vec<(String, bool)> = {
+            let client_states_guard = self.client_states_map.read();
+            quic_peer_ids
+                .iter()
+                .filter(|peer_id| !self.data_channels_map.contains_key(peer_id.as_str()))
+                .map(|peer_id| {
+                    let needs_initial = !client_states_guard
+                        .get(peer_id.as_str())
+                        .map_or(false, |cs_state| cs_state.known_walls_sent);
+                    (peer_id.clone(), needs_initial)
+                })
+                .collect()
+        };
 
         let pending_initial_open_count = initial_entries_open.len();
         let pending_initial_total_count = pending_initial_open_count + pending_initial_closed_count;
@@ -6165,10 +6587,15 @@ impl MassiveGameServer {
             scheduled_delta_count
         );
 
-        let scheduled_peer_ids: Vec<String> = scheduled_client_entries
+        let mut scheduled_peer_ids: Vec<String> = scheduled_client_entries
             .iter()
             .map(|(peer_id, _, _)| peer_id.clone())
             .collect();
+        for (peer_id, _) in &quic_entries {
+            if !scheduled_peer_ids.iter().any(|existing| existing == peer_id) {
+                scheduled_peer_ids.push(peer_id.clone());
+            }
+        }
 
         let shared_broadcast_data = Arc::new(
             self.prepare_shared_broadcast_data(
@@ -6301,6 +6728,50 @@ impl MassiveGameServer {
                 if let Err(join_err) = join_result {
                     error!(
                         "[Frame {}] Broadcast fanout task join error: {}",
+                        current_frame, join_err
+                    );
+                }
+            }
+        }
+
+        if !quic_entries.is_empty() {
+            let mut quic_tasks = JoinSet::new();
+            for (peer_id_str, needs_initial) in quic_entries {
+                let server_ref = Arc::clone(&self);
+                let shared_data_ref = Arc::clone(&shared_broadcast_data);
+
+                quic_tasks.spawn(async move {
+                    if let Err(err) = Self::process_quic_client_broadcast(
+                        &peer_id_str,
+                        needs_initial,
+                        shared_data_ref.as_ref(),
+                        &server_ref,
+                    )
+                    .await
+                    {
+                        error!(
+                            "[Frame {}] Error processing QUIC broadcast for {}: {}",
+                            current_frame, peer_id_str, err
+                        );
+                    }
+                });
+
+                if quic_tasks.len() >= broadcast_concurrency {
+                    if let Some(join_result) = quic_tasks.join_next().await {
+                        if let Err(join_err) = join_result {
+                            error!(
+                                "[Frame {}] QUIC broadcast task join error: {}",
+                                current_frame, join_err
+                            );
+                        }
+                    }
+                }
+            }
+
+            while let Some(join_result) = quic_tasks.join_next().await {
+                if let Err(join_err) = join_result {
+                    error!(
+                        "[Frame {}] QUIC broadcast task join error: {}",
                         current_frame, join_err
                     );
                 }
@@ -6685,7 +7156,8 @@ impl MassiveGameServer {
     pub async fn process_game_tick(self: Arc<Self>, dt: f32) -> Result<(), ServerError> {
         let tick_started = Instant::now();
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-        let has_connected_clients = !self.data_channels_map.is_empty();
+        let has_connected_clients =
+            !self.data_channels_map.is_empty() || connected_quic_peer_count() > 0;
 
         // Stage 1: Input & AI (Potentially parallelizable)
         let stage1_start = Instant::now();
@@ -6786,7 +7258,10 @@ impl MassiveGameServer {
             );
         }
 
-        if self.ecs_bridge.is_enabled() && frame % self.ecs_bridge.rebuild_stride_frames() == 0 {
+        let should_rebuild_ecs = self.ecs_bridge.is_enabled()
+            && (self.ecs_bridge.is_authoritative()
+                || frame % self.ecs_bridge.rebuild_stride_frames() == 0);
+        if should_rebuild_ecs {
             let projectiles_snapshot = self.projectiles.read().clone();
             let pickups_snapshot = self.pickups.read().clone();
             let ecs_stats = self.ecs_bridge.rebuild_snapshot(
@@ -6997,4 +7472,46 @@ fn summarize_join_stage_latencies(values: &[f64]) -> JoinStageLatencyStats {
         p95_ms: round_metric(percentile_sorted(&sorted, 0.95)),
         max_ms: round_metric(*sorted.last().unwrap_or(&0.0)),
     }
+}
+
+fn load_dispute_chain_head(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    let content = String::from_utf8(bytes).ok()?;
+    let last_line = content.lines().rev().find(|line| !line.trim().is_empty())?;
+    let record = serde_json::from_str::<PersistedLiveReplayDisputeRecord>(last_line).ok()?;
+    Some(record.chain_hash_sha256)
+}
+
+fn append_dispute_record(path: &Path, record: &PersistedLiveReplayDisputeRecord) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|err| err.to_string())?;
+    let line = serde_json::to_string(record).map_err(|err| err.to_string())?;
+    writeln!(file, "{}", line).map_err(|err| err.to_string())
+}
+
+fn sha256_hex(payload: &[u8]) -> String {
+    let digest = Sha256::digest(payload);
+    let mut rendered = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        rendered.push_str(&format!("{:02x}", byte));
+    }
+    rendered
+}
+
+fn hmac_sha256_hex(key: &[u8], payload: &[u8]) -> Option<String> {
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = HmacSha256::new_from_slice(key).ok()?;
+    mac.update(payload);
+    let bytes = mac.finalize().into_bytes();
+    let mut rendered = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        rendered.push_str(&format!("{:02x}", byte));
+    }
+    Some(rendered)
 }

@@ -68,6 +68,8 @@ num_cpus = "1.16"
 
 # Hashing
 seahash = "4.1.0"
+sha2 = "0.10"
+hmac = "0.12"
 
 # Monitoring & Diagnostics
 tracing = "0.1.40" # Or your preferred version
