@@ -1,4 +1,4 @@
-# Production Performance Log (Refreshed 2026-02-15)
+# Production Performance Log (Refreshed 2026-02-16)
 
 ## Join-Throughput Pass Summary
 
@@ -106,6 +106,41 @@
 - Conclusion:
   - API reuse materially recovers most of the strict-run regression while preserving throughput.
   - Remaining gap is concentrated in `73+` signaling/open-channel wait; next pass should target negotiation concurrency/backpressure rather than broadcast scheduler aggression.
+
+### V4 send-path closed-channel guard pass (2026-02-16 early morning)
+- Code path update:
+  - `server/src/server/instance.rs`
+  - Added early-open checks and not-open error filtering in batched/sequential send helpers to avoid repeated fallback/resend pressure on closed data channels.
+  - Scheduler now skips closed-channel delta fanout explicitly and reports `pending_delta_closed` in join-scheduler diagnostics.
+  - Delta-build fallback missing-state warning reduced from `warn` to `debug` in the hot path.
+- Added pass artifacts:
+  - `artifacts/scale/multi_client_20_v4_r1_sendpath_tuned_20260215_192624.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=77409`
+    - `connectLatency avg=24259.55ms`, `p95=27186.5ms`
+  - `artifacts/scale/multi_client_120_v4_r1_sendpath_20260215_190215.json` (first pass)
+    - `96/120`, `connectedRatio=0.8`, `passed=false`, `durationMs=600798`
+    - `connectLatency avg=57039.79ms`, `p95=106218.75ms`
+    - `73+`: `count=24/48`, `avg=100507.42ms`, `p95=117643.85ms`
+    - `73+ open_channel_wait`: `avg=382.92ms`, `p95=1257.55ms`
+  - `artifacts/scale/multi_client_120_v4_r1_sendpath_tuned_20260215_191602.json` (threshold-tuned rerun)
+    - `96/120`, `connectedRatio=0.8`, `passed=false`, `durationMs=600805`
+    - `connectLatency avg=54679.44ms`, `p95=98951.25ms`
+    - `73+`: `count=24/48`, `avg=94144.5ms`, `p95=105340.45ms`
+    - `73+ open_channel_wait`: `avg=465.36ms`, `p95=2023.66ms`
+- Delta vs first send-path run (`...190215.json -> ...191602.json`):
+  - launch count: `96 -> 96` (no change)
+  - `connectLatency avg`: `57039.79 -> 54679.44` (`-2360.35ms`)
+  - `connectLatency p95`: `106218.75 -> 98951.25` (`-7267.5ms`)
+  - `73+ avg`: `100507.42 -> 94144.5` (`-6362.92ms`)
+  - `73+ p95`: `117643.85 -> 105340.45` (`-12303.4ms`)
+- Delta vs shared API pass (`artifacts/scale/multi_client_120_v4_shared_api_20260215_171301.json`):
+  - launch count remains `96/120`
+  - `connectLatency avg`: `51185.6 -> 54679.44` (`+3493.84ms`)
+  - `73+ avg`: `80321.33 -> 94144.5` (`+13823.17ms`)
+  - `73+ open_channel_wait avg`: `1413.62 -> 465.36` (`-948.26ms`)
+- Conclusion:
+  - Closed-channel send guards reduce server-side open-channel wait pressure, but strict tail throughput remains capped at `96/120`.
+  - Client-visible tail latency (`73+`) is still above the shared-API pass baseline; V4-R1 remains open.
 
 ### Fresh refresh run artifacts (2026-02-15)
 - `artifacts/arena/arena_10v10_20260215_043820.json`

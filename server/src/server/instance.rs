@@ -553,12 +553,23 @@ fn build_coalesced_packet_batch(packets: &[Bytes]) -> Option<Bytes> {
     Some(Bytes::from(out))
 }
 
+#[inline]
+fn is_not_open_channel_send_error(err_text: &str) -> bool {
+    let normalized = err_text.to_ascii_lowercase();
+    normalized.contains("not opened")
+        || normalized.contains("not open")
+        || normalized.contains("datachannel is not open")
+}
+
 async fn send_packet_batch_over_channel(
     data_channel: &Arc<crate::core::types::RTCDataChannel>,
     packets: &[Bytes],
     timeout_ms: u64,
 ) -> usize {
     if packets.is_empty() {
+        return 0;
+    }
+    if !data_channel.is_open() {
         return 0;
     }
 
@@ -576,6 +587,14 @@ async fn send_packet_batch_over_channel(
                     return packets.len();
                 }
                 Ok(Err(e)) => {
+                    let err_text = e.to_string();
+                    if is_not_open_channel_send_error(&err_text) {
+                        trace!(
+                            "Coalesced packet send skipped because data channel is not open ({} logical packets).",
+                            packets.len()
+                        );
+                        return 0;
+                    }
                     warn!(
                         "Coalesced packet send error ({} logical packets): {:?}. Falling back to sequential dispatch.",
                         packets.len(),
@@ -602,7 +621,12 @@ async fn send_packet_batch_over_channel(
                 sent_packets += 1;
             }
             Ok(Err(e)) => {
-                warn!("Chat/data packet send error during batch dispatch: {:?}", e);
+                let err_text = e.to_string();
+                if is_not_open_channel_send_error(&err_text) {
+                    trace!("Chat/data packet send skipped because data channel is not open.");
+                } else {
+                    warn!("Chat/data packet send error during batch dispatch: {:?}", e);
+                }
                 break;
             }
             Err(_) => {
@@ -3430,7 +3454,11 @@ impl MassiveGameServer {
                 .get(peer_id_str)
                 .map(|cs_state_ref| cs_state_ref.clone()) // Clone the ClientState from the &ClientState
                 .unwrap_or_else(|| {
-                    warn!("[Frame {}] ClientState not found for {} during delta build, using default. This might indicate a logic issue.", server.frame_counter.load(AtomicOrdering::Relaxed), peer_id_str);
+                    debug!(
+                        "[Frame {}] ClientState not found for {} during delta build, using default.",
+                        server.frame_counter.load(AtomicOrdering::Relaxed),
+                        peer_id_str
+                    );
                     ClientState::default()
                 });
             let delta_result = server.build_delta_state_optimized(
@@ -3535,13 +3563,21 @@ impl MassiveGameServer {
         }
 
         if !send_succeeded {
-            warn!(
-                "[Frame {}] Send failed for client {} (timeout {}ms, batch packets {}).",
-                frame,
-                peer_id_str,
-                send_timeout_ms,
-                outbound_packets.len()
-            );
+            if client_info.data_channel.is_open() {
+                warn!(
+                    "[Frame {}] Send failed for client {} (timeout {}ms, batch packets {}).",
+                    frame,
+                    peer_id_str,
+                    send_timeout_ms,
+                    outbound_packets.len()
+                );
+            } else {
+                trace!(
+                    "[Frame {}] Send skipped for {} because data channel is not open.",
+                    frame,
+                    peer_id_str
+                );
+            }
         } else {
             trace!(
                 "[Frame {}] Sent {} packet(s) to client {} in one dispatch path.",
@@ -5902,8 +5938,8 @@ impl MassiveGameServer {
             return;
         }
 
-        let connected_clients = self.data_channels_map.len();
-        if connected_clients == 0 {
+        let connected_clients_total = self.data_channels_map.len();
+        if connected_clients_total == 0 {
             if current_frame % 30 == 0 {
                 // Log every 30 frames
                 // Debug: List all keys in the map to see if there's a mismatch
@@ -5931,7 +5967,7 @@ impl MassiveGameServer {
 
         debug!(
             "[Frame {}] Starting broadcast to {} clients. Last broadcast frame: {}",
-            current_frame, connected_clients, last_broadcast
+            current_frame, connected_clients_total, last_broadcast
         );
         self.last_broadcast_frame
             .store(current_frame, AtomicOrdering::Relaxed);
@@ -5951,12 +5987,25 @@ impl MassiveGameServer {
                 })
                 .collect()
         };
+        let connected_clients_open = client_entries
+            .iter()
+            .filter(|(_, _, _, channel_open)| *channel_open)
+            .count();
+        if connected_clients_open == 0 {
+            trace!(
+                "[Frame {}] Skipping broadcast fanout because no data channels are open (tracked={}).",
+                current_frame,
+                connected_clients_total
+            );
+            return;
+        }
 
         let mut initial_entries_open: Vec<(String, Arc<crate::core::types::RTCDataChannel>, bool)> =
             Vec::new();
         let mut delta_entries: Vec<(String, Arc<crate::core::types::RTCDataChannel>, bool)> =
             Vec::new();
         let mut pending_initial_closed_count = 0usize;
+        let mut pending_delta_closed_count = 0usize;
 
         for (peer_id, data_channel, needs_initial, channel_open) in client_entries {
             if needs_initial {
@@ -5966,8 +6015,10 @@ impl MassiveGameServer {
                 } else {
                     pending_initial_closed_count += 1;
                 }
-            } else {
+            } else if channel_open {
                 delta_entries.push((peer_id, data_channel, false));
+            } else {
+                pending_delta_closed_count += 1;
             }
         }
 
@@ -5996,16 +6047,16 @@ impl MassiveGameServer {
 
         let tail_policy_enabled = join_tail_policy_enabled();
         let tail_join_mode = tail_policy_enabled
-            && connected_clients >= tail_connected_clients_min
+            && connected_clients_total >= tail_connected_clients_min
             && pending_initial_open_count >= tail_pending_initial_open_min;
         let aggressive_tail_join_mode = tail_policy_enabled
-            && connected_clients >= aggressive_connected_clients_min
+            && connected_clients_total >= aggressive_connected_clients_min
             && pending_initial_open_count >= aggressive_pending_initial_open_min;
         let tail_wave_70_plus_mode = tail_policy_enabled
-            && connected_clients >= TAIL_WAVE_70_PLUS_CLIENTS_MIN
+            && connected_clients_total >= TAIL_WAVE_70_PLUS_CLIENTS_MIN
             && pending_initial_open_count >= TAIL_WAVE_70_PLUS_PENDING_INITIAL_OPEN_MIN;
         let extreme_tail_join_mode = tail_policy_enabled
-            && connected_clients >= EXTREME_TAIL_WAVE_CLIENTS_MIN
+            && connected_clients_total >= EXTREME_TAIL_WAVE_CLIENTS_MIN
             && pending_initial_open_count >= EXTREME_TAIL_WAVE_PENDING_INITIAL_OPEN_MIN;
         let initial_snapshot_caps = if extreme_tail_join_mode {
             InitialSnapshotCaps::EXTREME_TAIL
@@ -6035,7 +6086,7 @@ impl MassiveGameServer {
             MAX_DELTA_EVENTS_DEFAULT
         };
         let soa_adaptive_fallback_active = join_soa_adaptive_fallback_enabled()
-            && connected_clients >= MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN
+            && connected_clients_total >= MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN
             && (pending_initial_total_count >= MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
                 || aggressive_tail_join_mode
                 || tail_join_mode);
@@ -6145,11 +6196,14 @@ impl MassiveGameServer {
         }
 
         debug!(
-            "[Frame {}] Join scheduler: pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, tail_policy_enabled={}, tail_join_mode={}, aggressive_tail_join_mode={}, tail_wave_70_plus_mode={}, extreme_tail_join_mode={}, single_machine_opt={}, soa_fallback_active={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, delta_event_budget={}, snapshot_caps={{players:{}, walls:{}, projectiles:{}, pickups:{}}}, scheduled_initial={}, scheduled_delta={}",
+            "[Frame {}] Join scheduler: tracked_clients_total={}, tracked_clients_open={}, pending_initial_total={}, pending_initial_open={}, pending_initial_closed={}, pending_delta_closed={}, tail_policy_enabled={}, tail_join_mode={}, aggressive_tail_join_mode={}, tail_wave_70_plus_mode={}, extreme_tail_join_mode={}, single_machine_opt={}, soa_fallback_active={}, initial_budget={}, delta_budget={}, delta_skip_modulus={}, delta_event_budget={}, snapshot_caps={{players:{}, walls:{}, projectiles:{}, pickups:{}}}, scheduled_initial={}, scheduled_delta={}",
             current_frame,
+            connected_clients_total,
+            connected_clients_open,
             pending_initial_total_count,
             pending_initial_open_count,
             pending_initial_closed_count,
+            pending_delta_closed_count,
             tail_policy_enabled,
             tail_join_mode,
             aggressive_tail_join_mode,
