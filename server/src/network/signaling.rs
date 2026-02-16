@@ -179,13 +179,8 @@ fn build_welcome_message_bytes(player_id: &str, server_tick_rate: u16) -> Bytes 
     };
     let game_msg_welcome = fb::GameMessage::create(&mut builder_welcome, &game_msg_welcome_args);
     builder_welcome.finish(game_msg_welcome, None);
-
-    if !env_bool("MGS_JOIN_DISABLE_ZERO_COPY_SERIALIZATION") {
-        let (buffer, root_index) = builder_welcome.collapse();
-        Bytes::from(buffer).slice(root_index..)
-    } else {
-        Bytes::copy_from_slice(builder_welcome.finished_data())
-    }
+    let (buffer, root_index) = builder_welcome.collapse();
+    Bytes::from(buffer).slice(root_index..)
 }
 
 fn parse_ice_servers_env(raw: &str) -> Vec<RTCIceServer> {

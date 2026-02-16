@@ -158,6 +158,23 @@
   - Strict `120` rerun is still required for this specific SIMD/decomposition pass; the latest strict tail artifact remains:
     - `artifacts/scale/multi_client_120_v4_r1_sendpath_tuned_20260215_191602.json`
 
+### V4 authoritative writer + zero-copy follow-through (2026-02-16)
+- Code updates:
+  - `server/src/server/instance.rs`
+    - moved destructible wall state mutation out of `process_projectiles_optimized` and into `apply_projectile_results` via `apply_wall_damage_authoritative`, keeping projectile collision discovery read-heavy and consolidating wall writes in one authoritative apply stage.
+  - `server/src/network/signaling.rs`
+    - welcome packet serialization now always uses zero-copy `collapse` (removed `finished_data` copy fallback path).
+- Validation:
+  - `cargo check -p massive_game_server_core` passed.
+  - `cargo test -p massive_game_server_core simd_segment_radius_handles_zero_length_segment` passed.
+  - `cargo test -p massive_game_server_core coalesced_batch_supports_single_packet` passed.
+  - `artifacts/scale/multi_client_20_v4_r23_smoke_20260216_060716.json`
+    - `20/20`, `connectedRatio=1.0`, `passed=true`, `durationMs=78982`
+    - `connectLatency avg=25269.35ms`, `p95=29092.4ms`
+- Remaining work:
+  - strict `120` rerun is still required for this code pass.
+  - broader authoritative writer ownership migration (full ECS surface) remains open.
+
 ### Fresh refresh run artifacts (2026-02-15)
 - `artifacts/arena/arena_10v10_20260215_043820.json`
   - arena simulation: `10v10`, `3` rounds, `30` engagements, `durationMs=204`

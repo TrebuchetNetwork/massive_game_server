@@ -2615,42 +2615,6 @@ impl MassiveGameServer {
 
         self.commit_authoritative_projectile_state(kept_projectiles, &removed_ids);
 
-        // Process wall damage
-        let mut wall_damage_by_id: HashMap<EntityId, i32> = HashMap::new();
-        for (wall_id, damage) in &merged_results.wall_hits {
-            *wall_damage_by_id.entry(*wall_id).or_insert(0) += *damage;
-        }
-
-        let partitions_for_lookup = self.world_partition_manager.get_partitions_for_processing();
-        let mut wall_partition_lookup: HashMap<EntityId, usize> = HashMap::new();
-        for (partition_idx, partition) in partitions_for_lookup.iter().enumerate() {
-            for wall_entry in partition.all_walls_in_partition.iter() {
-                wall_partition_lookup.insert(*wall_entry.key(), partition_idx);
-            }
-        }
-
-        for (wall_id, total_damage) in wall_damage_by_id {
-            if let Some(partition_idx) = wall_partition_lookup.get(&wall_id).copied() {
-                if let Some(partition) = partitions_for_lookup.get(partition_idx) {
-                    if let Some((destroyed, pos)) =
-                        partition.damage_destructible_wall(wall_id, total_damage)
-                    {
-                        if destroyed {
-                            self.global_game_events.push(
-                                GameEvent::WallDestroyed {
-                                    wall_id,
-                                    position: pos,
-                                },
-                                EventPriority::High,
-                            );
-                            self.destroyed_wall_ids_this_tick.write().insert(wall_id);
-                            self.wall_respawn_manager.wall_destroyed(wall_id);
-                        }
-                    }
-                }
-            }
-        }
-
         trace!(
             "[Frame {}] Projectile processing complete: {} processed, {} hits, {} wall hits, {} removed",
             frame,
@@ -2668,12 +2632,69 @@ impl MassiveGameServer {
         }
     }
 
+    fn apply_wall_damage_authoritative(&self, wall_hits: &[(EntityId, i32)]) -> usize {
+        if wall_hits.is_empty() {
+            return 0;
+        }
+
+        let mut wall_damage_by_id: HashMap<EntityId, i32> = HashMap::new();
+        for (wall_id, damage) in wall_hits {
+            *wall_damage_by_id.entry(*wall_id).or_insert(0) += *damage;
+        }
+
+        let partitions_for_lookup = self.world_partition_manager.get_partitions_for_processing();
+        let mut wall_partition_lookup: HashMap<EntityId, usize> = HashMap::new();
+        for (partition_idx, partition) in partitions_for_lookup.iter().enumerate() {
+            for wall_entry in partition.all_walls_in_partition.iter() {
+                wall_partition_lookup.insert(*wall_entry.key(), partition_idx);
+            }
+        }
+
+        let mut destroyed_count = 0usize;
+        for (wall_id, total_damage) in wall_damage_by_id {
+            if let Some(partition_idx) = wall_partition_lookup.get(&wall_id).copied() {
+                if let Some(partition) = partitions_for_lookup.get(partition_idx) {
+                    if let Some((destroyed, pos)) =
+                        partition.damage_destructible_wall(wall_id, total_damage)
+                    {
+                        if destroyed {
+                            destroyed_count += 1;
+                            self.global_game_events.push(
+                                GameEvent::WallDestroyed {
+                                    wall_id,
+                                    position: pos,
+                                },
+                                EventPriority::High,
+                            );
+                            self.destroyed_wall_ids_this_tick.write().insert(wall_id);
+                            self.wall_respawn_manager.wall_destroyed(wall_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        destroyed_count
+    }
+
     async fn apply_projectile_results(&self, results: ProjectileResults) {
-        // Track if we need to rebuild spatial index
-        let mut walls_destroyed = false;
+        let ProjectileResults {
+            total_processed: _,
+            hits,
+            wall_hits,
+            to_remove: _,
+        } = results;
+
+        let destroyed_walls = self.apply_wall_damage_authoritative(&wall_hits);
+        if destroyed_walls > 0 {
+            trace!(
+                "Applied authoritative wall damage from projectile results (destroyed_walls={}).",
+                destroyed_walls
+            );
+        }
 
         // Process hits - reuse existing game logic
-        for (attacker_id, target_id, damage, weapon) in results.hits {
+        for (attacker_id, target_id, damage, weapon) in hits {
             if let Some(mut target_state_entry) =
                 self.player_manager.get_player_state_mut(&target_id)
             {
