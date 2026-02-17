@@ -93,6 +93,7 @@ itoa = "1.0"
 shell-escape = "0.1"
 rcgen = "0.13"
 rustls = "0.21"
+ipnet = "2.10"
 # atomic = "0.6" # Usually not needed
 
 # Spatial Indexing

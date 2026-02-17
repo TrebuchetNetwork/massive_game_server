@@ -1,4 +1,5 @@
 use crate::core::types::PlayerState;
+use crate::operational::monitoring::metrics;
 use dashmap::DashMap;
 use parking_lot::{Mutex as ParkingLotMutex, RwLock};
 use rand::Rng;
@@ -12,6 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -330,8 +332,10 @@ impl AuthService {
     }
 
     fn request_phone_code(&self, phone_number_raw: &str) -> Result<RequestCodeResult, AuthError> {
-        let phone_number =
-            normalize_phone_number(phone_number_raw).ok_or(AuthError::InvalidPhone)?;
+        let phone_number = normalize_phone_number(phone_number_raw).ok_or_else(|| {
+            metrics::record_auth_attempt("request_code", "invalid_phone");
+            AuthError::InvalidPhone
+        })?;
         let now = unix_now();
 
         if let Some(existing) = self.inner.otp_challenges.get(&phone_number) {
@@ -339,6 +343,7 @@ impl AuthService {
                 .last_sent_at
                 .saturating_add(self.inner.resend_interval_seconds);
             if now < earliest_retry {
+                metrics::record_auth_attempt("request_code", "rate_limited");
                 return Err(AuthError::RateLimited {
                     retry_after_seconds: earliest_retry.saturating_sub(now),
                 });
@@ -359,6 +364,7 @@ impl AuthService {
 
         if let Err(reason) = self.dispatch_sms_code(&phone_number, &code) {
             self.inner.otp_challenges.remove(&phone_number);
+            metrics::record_auth_attempt("request_code", "delivery_failed");
             return Err(AuthError::DeliveryFailed(reason));
         }
 
@@ -368,6 +374,7 @@ impl AuthService {
             None
         };
 
+        metrics::record_auth_attempt("request_code", "success");
         Ok(RequestCodeResult {
             phone_number,
             expires_at,
@@ -381,10 +388,13 @@ impl AuthService {
         phone_number_raw: &str,
         code_raw: &str,
     ) -> Result<VerifyCodeResult, AuthError> {
-        let phone_number =
-            normalize_phone_number(phone_number_raw).ok_or(AuthError::InvalidPhone)?;
+        let phone_number = normalize_phone_number(phone_number_raw).ok_or_else(|| {
+            metrics::record_auth_attempt("verify_code", "invalid_phone");
+            AuthError::InvalidPhone
+        })?;
         let code = code_raw.trim();
         if code.len() != 6 || !code.chars().all(|ch| ch.is_ascii_digit()) {
+            metrics::record_auth_attempt("verify_code", "invalid_code_format");
             return Err(AuthError::InvalidCodeFormat);
         }
 
@@ -397,7 +407,10 @@ impl AuthService {
                 .inner
                 .otp_challenges
                 .get_mut(&phone_number)
-                .ok_or(AuthError::CodeNotRequested)?;
+                .ok_or_else(|| {
+                    metrics::record_auth_attempt("verify_code", "code_not_requested");
+                    AuthError::CodeNotRequested
+                })?;
 
             if now > challenge_entry.expires_at {
                 remove_after_check = true;
@@ -423,8 +436,10 @@ impl AuthService {
                 self.inner.otp_challenges.remove(&phone_number);
             }
             if remaining == 0 {
+                metrics::record_auth_attempt("verify_code", "too_many_attempts");
                 return Err(AuthError::TooManyAttempts);
             }
+            metrics::record_auth_attempt("verify_code", "code_mismatch");
             return Err(AuthError::CodeMismatch {
                 remaining_attempts: remaining,
             });
@@ -433,13 +448,16 @@ impl AuthService {
         if let Some(existing) = self.inner.otp_challenges.get(&phone_number) {
             if now > existing.expires_at {
                 self.inner.otp_challenges.remove(&phone_number);
+                metrics::record_auth_attempt("verify_code", "code_expired");
                 return Err(AuthError::CodeExpired);
             }
             if existing.code != code {
                 self.inner.otp_challenges.remove(&phone_number);
+                metrics::record_auth_attempt("verify_code", "too_many_attempts");
                 return Err(AuthError::TooManyAttempts);
             }
         } else {
+            metrics::record_auth_attempt("verify_code", "code_not_requested");
             return Err(AuthError::CodeNotRequested);
         }
 
@@ -482,6 +500,7 @@ impl AuthService {
             user.last_seen_at = now;
             to_profile_view(user)
         } else {
+            metrics::record_auth_attempt("verify_code", "store_inconsistent");
             return Err(AuthError::Internal(
                 "Auth store is inconsistent: user record missing.".to_owned(),
             ));
@@ -503,6 +522,7 @@ impl AuthService {
             },
         );
 
+        metrics::record_auth_attempt("verify_code", "success");
         Ok(VerifyCodeResult {
             token: session_token,
             token_expires_at,
@@ -511,37 +531,60 @@ impl AuthService {
     }
 
     pub fn resolve_user_id_from_token(&self, token_raw: &str) -> Option<String> {
+        let started_at = Instant::now();
         let token = token_raw.trim();
         if token.is_empty() {
+            metrics::record_auth_attempt("token_resolve", "empty");
+            metrics::record_auth_token_resolution(started_at.elapsed().as_secs_f64(), "empty");
             return None;
         }
         let now = unix_now();
-        let session_entry = self.inner.sessions.get(token)?;
+        let Some(session_entry) = self.inner.sessions.get(token) else {
+            metrics::record_auth_attempt("token_resolve", "not_found");
+            metrics::record_auth_token_resolution(started_at.elapsed().as_secs_f64(), "not_found");
+            return None;
+        };
         if now > session_entry.expires_at {
             drop(session_entry);
             self.inner.sessions.remove(token);
+            metrics::record_auth_attempt("token_resolve", "expired");
+            metrics::record_auth_token_resolution(started_at.elapsed().as_secs_f64(), "expired");
             return None;
         }
+        metrics::record_auth_attempt("token_resolve", "success");
+        metrics::record_auth_token_resolution(started_at.elapsed().as_secs_f64(), "success");
         Some(session_entry.user_id.clone())
     }
 
     pub fn profile_from_token(&self, token_raw: &str) -> Option<(AuthProfileView, u64)> {
+        let started_at = Instant::now();
         let token = token_raw.trim();
         if token.is_empty() {
+            metrics::record_auth_attempt("profile_lookup", "empty");
+            metrics::record_auth_token_resolution(started_at.elapsed().as_secs_f64(), "empty");
             return None;
         }
         let now = unix_now();
-        let session_entry = self.inner.sessions.get(token)?;
+        let Some(session_entry) = self.inner.sessions.get(token) else {
+            metrics::record_auth_attempt("profile_lookup", "not_found");
+            metrics::record_auth_token_resolution(started_at.elapsed().as_secs_f64(), "not_found");
+            return None;
+        };
         if now > session_entry.expires_at {
             drop(session_entry);
             self.inner.sessions.remove(token);
+            metrics::record_auth_attempt("profile_lookup", "expired");
+            metrics::record_auth_token_resolution(started_at.elapsed().as_secs_f64(), "expired");
             return None;
         }
         let user_id = session_entry.user_id.clone();
         let expires_at = session_entry.expires_at;
         drop(session_entry);
-        self.profile_by_user_id(&user_id)
-            .map(|profile| (profile, expires_at))
+        let profile = self.profile_by_user_id(&user_id);
+        let result = if profile.is_some() { "success" } else { "missing_user" };
+        metrics::record_auth_attempt("profile_lookup", result);
+        metrics::record_auth_token_resolution(started_at.elapsed().as_secs_f64(), result);
+        profile.map(|profile| (profile, expires_at))
     }
 
     pub fn profile_by_user_id(&self, user_id: &str) -> Option<AuthProfileView> {

@@ -518,12 +518,12 @@ Detect backpressure issues
 
 ### Sprint 1 (Weeks 1-2) - Critical Fixes
 - [ ] Split `instance.rs` into focused modules
-- [ ] Add TLS termination (nginx)
+- [x] Add TLS termination (nginx)
 - [x] Replace blocking mutex in WebSocket handler
 - [x] Fix lock ordering in signaling
 - [x] Add player-player collision
-- [ ] Fix client memory leaks
-- [ ] Implement automated backups
+- [x] Fix client memory leaks
+- [x] Implement automated backups
 
 ### Sprint 2 (Weeks 3-4) - High Priority
 - [x] Optimize AOI with distance sorting
@@ -531,20 +531,20 @@ Detect backpressure issues
 - [x] Add IP-based rate limiting
 - [x] Complete or remove admin-tools
 - [x] Fix shotgun weapon balance
-- [ ] Add missing Prometheus metrics
+- [x] Add missing Prometheus metrics
 - [x] Fix ObjectPool mutex
 
 ### Sprint 3 (Weeks 5-6) - Security & Hardening
 - [x] Add QUIC TLS certificate management
-- [ ] Implement chat validation
-- [ ] Add graceful shutdown
-- [ ] Deploy Alertmanager integration
-- [ ] Add IP allowlisting for admin APIs
+- [x] Implement chat validation
+- [x] Add graceful shutdown
+- [x] Deploy Alertmanager integration
+- [x] Add IP allowlisting for admin APIs
 
 ### Sprint 4+ (Ongoing) - Performance & Features
-- [ ] Wall spatial index
-- [ ] ECS lock granularity
-- [ ] 8-directional pathfinding
+- [x] Wall spatial index
+- [x] ECS lock granularity
+- [x] 8-directional pathfinding
 - [ ] Client TypeScript migration
 - [ ] Horizontal scaling architecture
 

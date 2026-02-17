@@ -6815,6 +6815,32 @@ void main() {
     if (sprite.respawnText) sprite.respawnText.visible = false;
 }
 
+    function destroyPlayerSprite(playerId) {
+    const sprite = playerSprites.get(playerId);
+    if (!sprite) return;
+    if (localPlayerSprite === sprite) {
+        localPlayerSprite = null;
+    }
+    playerContainer.removeChild(sprite);
+    sprite.destroy({ children: true });
+    playerSprites.delete(playerId);
+}
+
+    function removePlayerClientState(playerId) {
+    if (!playerId) return;
+    destroyPlayerSprite(playerId);
+    players.delete(playerId);
+    for (let i = 0; i < serverUpdates.length; i += 1) {
+        const snapshot = serverUpdates[i];
+        if (snapshot && snapshot.players) {
+            snapshot.players.delete(playerId);
+        }
+    }
+    if (cullWorkerResult && cullWorkerResult.playerSet) {
+        cullWorkerResult.playerSet.delete(playerId);
+    }
+}
+
     function updatePlayerSprite(sprite, player, localAnchorX, localAnchorY, updateContext, skipVisibilityCheck = false) {
     const targetX = player.render_x !== undefined ? player.render_x : player.x;
     const targetY = player.render_y !== undefined ? player.render_y : player.y;
@@ -7320,6 +7346,26 @@ function releaseProjectileSprite(sprite) {
     } else {
         projectileSpritePoolStats.destroyed += 1;
         sprite.destroy({ children: true });
+    }
+}
+
+function removeProjectileClientState(projectileId) {
+    if (projectileId === undefined || projectileId === null) return;
+    const sprite = projectileSprites.get(projectileId);
+    if (sprite) {
+        projectileContainer.removeChild(sprite);
+        releaseProjectileSprite(sprite);
+        projectileSprites.delete(projectileId);
+    }
+    projectiles.delete(projectileId);
+    for (let i = 0; i < serverUpdates.length; i += 1) {
+        const snapshot = serverUpdates[i];
+        if (snapshot && snapshot.projectiles) {
+            snapshot.projectiles.delete(projectileId);
+        }
+    }
+    if (cullWorkerResult && cullWorkerResult.projectileSet) {
+        cullWorkerResult.projectileSet.delete(projectileId);
     }
 }
 
@@ -9810,7 +9856,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 const removedPlayers = messageData.removed_player_ids;
                 for (let i = 0; i < removedPlayers.length; i += 1) {
                     const removedId = removedPlayers[i];
-                    players.delete(removedId);
+                    removePlayerClientState(removedId);
                     log(`Player ${removedId} removed.`, 'info');
                 }
             }
@@ -9831,7 +9877,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             if (messageData.removed_projectiles) {
                 const removedProjectiles = messageData.removed_projectiles;
                 for (let i = 0; i < removedProjectiles.length; i += 1) {
-                    projectiles.delete(removedProjectiles[i]);
+                    removeProjectileClientState(removedProjectiles[i]);
                 }
             }
             // newProjectileStates.forEach((pData, pId) => projectiles.set(pId, pData)); // If using newProjectileStates
@@ -10399,7 +10445,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     for (let i = 0; i < removedPlayerLength; i += 1) {
                         const removedId = delta.removedPlayerIds(i);
                         if (!removedId) continue;
-                        players.delete(removedId);
+                        removePlayerClientState(removedId);
                         log(`Player ${removedId} removed.`, 'info');
                     }
                 }
@@ -10422,7 +10468,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 for (let i = 0; i < removedProjectileLength; i += 1) {
                     const projectileId = delta.removedProjectiles(i);
                     if (!projectileId) continue;
-                    projectiles.delete(projectileId);
+                    removeProjectileClientState(projectileId);
                 }
             }
 

@@ -320,29 +320,15 @@ impl MassiveGameServer {
         let min_aoi_y = y - effective_aoi_radius;
         let max_aoi_y = y + effective_aoi_radius;
 
-        let mut candidate_walls = 0usize;
-        'walls: for partition_idx in candidate_partition_indices.iter().copied() {
-            if let Some(partition) = self.world_partition_manager.get_partition(partition_idx) {
-                for wall_entry in partition.all_walls_in_partition.iter() {
-                    let wall = wall_entry.value();
-                    if wall.is_destructible && wall.current_health <= 0 {
-                        continue;
-                    }
-
-                    candidate_walls += 1;
-                    // Check if wall AABB intersects with AoI AABB
-                    if wall.x < max_aoi_x
-                        && wall.x + wall.width > min_aoi_x
-                        && wall.y < max_aoi_y
-                        && wall.y + wall.height > min_aoi_y
-                    {
-                        player_aoi.visible_walls.insert(wall.id);
-                        if player_aoi.visible_walls.len() >= AOI_MAX_VISIBLE_WALLS {
-                            break 'walls;
-                        }
-                    }
-                }
+        let candidate_walls_query = self
+            .wall_spatial_index
+            .query_aabb(min_aoi_x, min_aoi_y, max_aoi_x, max_aoi_y);
+        let candidate_walls = candidate_walls_query.len();
+        for wall in candidate_walls_query.into_iter().take(AOI_MAX_VISIBLE_WALLS) {
+            if wall.is_destructible && wall.current_health <= 0 {
+                continue;
             }
+            player_aoi.visible_walls.insert(wall.id);
         }
 
         // Debug logging

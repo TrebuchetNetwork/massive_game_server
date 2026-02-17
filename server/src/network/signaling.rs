@@ -15,6 +15,7 @@ use crate::network::connection_manager::{
     shared_connection_manager, ConnectionInfo, TransportKind,
 };
 use crate::operational::auth::AuthService;
+use crate::operational::monitoring::metrics;
 use crate::server::instance::MassiveGameServer; // Added for server access for initial spawn
 use crate::world::partition::WorldPartitionManager;
 use parking_lot::RwLock as ParkingLotRwLock;
@@ -65,6 +66,9 @@ pub struct ChatMessage {
 pub type ChatMessagesQueue = Arc<RwLock<VecDeque<ChatMessage>>>;
 static NEXT_CHAT_MESSAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 static SHARED_WEBRTC_API: OnceLock<Result<Arc<API>, String>> = OnceLock::new();
+const MAX_CHAT_MESSAGE_CHARS: usize = 160;
+const MAX_CHAT_USERNAME_CHARS: usize = 32;
+const CHAT_HISTORY_LIMIT: usize = 50;
 
 pub fn next_chat_message_seq() -> u64 {
     NEXT_CHAT_MESSAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -161,6 +165,54 @@ fn parse_csv(raw: &str) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .collect()
+}
+
+fn sanitize_chat_field(raw: &str, max_chars: usize) -> Option<String> {
+    if max_chars == 0 {
+        return None;
+    }
+
+    let mut cleaned = String::with_capacity(raw.len().min(max_chars));
+    let mut count = 0usize;
+    let mut last_was_space = true;
+
+    for ch in raw.chars() {
+        if ch.is_control() && !ch.is_whitespace() {
+            continue;
+        }
+        let normalized = if ch.is_whitespace() { ' ' } else { ch };
+        if normalized == '<' || normalized == '>' || normalized == '`' {
+            continue;
+        }
+        if normalized == ' ' {
+            if last_was_space {
+                continue;
+            }
+            last_was_space = true;
+        } else {
+            last_was_space = false;
+        }
+
+        cleaned.push(normalized);
+        count += 1;
+        if count >= max_chars {
+            break;
+        }
+    }
+
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn build_welcome_message_bytes(player_id: &str, server_tick_rate: u16) -> Bytes {
@@ -606,6 +658,7 @@ pub async fn handle_signaling_connection(
     let (client_signaling_tx, mut client_signaling_rx) = mpsc::unbounded_channel();
 
     signaling_peers.insert(peer_id_str.clone(), client_signaling_tx.clone());
+    metrics::set_ws_connections_active(signaling_peers.len());
 
     let peer_id_fwd = peer_id_str.clone();
     tokio::spawn(async move {
@@ -613,6 +666,7 @@ pub async fn handle_signaling_connection(
             match message_result {
                 Ok(msg) => {
                     shared_connection_manager().touch(peer_id_fwd.as_str());
+                    metrics::record_network_bytes("egress_ws", msg.as_bytes().len());
                     if ws_tx.send(msg).await.is_err() {
                         warn!(
                             "[{}]: WebSocket send error, terminating forwarder.",
@@ -985,6 +1039,7 @@ pub async fn handle_signaling_connection(
             let input_rate_limiter_on_msg = input_rate_limiter.clone();
 
             Box::pin(async move {
+                metrics::record_network_bytes("ingress_data_channel", msg.data.len());
                 if let Ok(game_msg_root) = fb::root_as_game_message(&msg.data) {
                     let protocol_version = game_msg_root.protocol_version();
                     if protocol_version != GAME_PROTOCOL_VERSION {
@@ -1065,16 +1120,33 @@ pub async fn handle_signaling_connection(
                                         let player_id_arc_for_chat = players_map_on_msg
                                             .id_pool
                                             .get_or_create(&player_id_from_connection);
-
-                                        let trimmed_msg: String =
-                                            message_text_fb.chars().take(100).collect();
+                                        let Some(sanitized_message) = sanitize_chat_field(
+                                            message_text_fb,
+                                            MAX_CHAT_MESSAGE_CHARS,
+                                        ) else {
+                                            warn!(
+                                                "[{}]: Dropping empty/invalid chat payload.",
+                                                pid_msg_inner_str
+                                            );
+                                            return;
+                                        };
+                                        let authoritative_username = players_map_on_msg
+                                            .get_player_state(&player_id_arc_for_chat)
+                                            .map(|state| state.username.clone());
+                                        let sanitized_username = sanitize_chat_field(
+                                            authoritative_username
+                                                .as_deref()
+                                                .unwrap_or(username_text_fb),
+                                            MAX_CHAT_USERNAME_CHARS,
+                                        )
+                                        .unwrap_or_else(|| "Player".to_owned());
                                         let current_seq = next_chat_message_seq();
                                         let chat_entry = ChatMessage {
                                             seq: current_seq,
                                             player_id: player_id_arc_for_chat,
-                                            username: username_text_fb.to_string(),
-                                            message: trimmed_msg,
-                                            timestamp: chat_fb.timestamp(),
+                                            username: sanitized_username,
+                                            message: sanitized_message,
+                                            timestamp: chat_fb.timestamp().max(now_millis()),
                                         };
                                         info!(
                                             "[CHAT] {} ({}): {}",
@@ -1084,7 +1156,7 @@ pub async fn handle_signaling_connection(
                                         );
                                         let mut chat_q_guard = chat_q_on_msg.write().await;
                                         chat_q_guard.push_back(chat_entry);
-                                        if chat_q_guard.len() > 50 {
+                                        if chat_q_guard.len() > CHAT_HISTORY_LIMIT {
                                             chat_q_guard.pop_front();
                                         }
                                     }
@@ -1142,6 +1214,7 @@ pub async fn handle_signaling_connection(
         match result {
             Ok(msg) => {
                 if msg.is_text() {
+                    metrics::record_network_bytes("ingress_ws", msg.as_bytes().len());
                     if msg.as_bytes().len() > MAX_SIGNALING_TEXT_BYTES {
                         warn!(
                             "[{}]: Signaling message exceeds {} bytes; closing connection.",
@@ -1258,6 +1331,7 @@ pub fn cleanup_connection(
     let _ = shared_connection_manager().remove(peer_id_str);
     // Remove signaling sender first; duplicate cleanups are expected under concurrent callbacks.
     let removed_signaling_entry = signaling_peers.remove(peer_id_str).is_some();
+    metrics::set_ws_connections_active(signaling_peers.len());
     // Maintain a single lock acquisition order for lifecycle paths:
     // client state first, then player manager operations.
     client_states_map.write().remove(peer_id_str);

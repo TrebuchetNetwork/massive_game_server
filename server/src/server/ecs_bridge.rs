@@ -141,54 +141,83 @@ impl EcsBridge {
             return EcsSnapshotStats::default();
         }
 
+        #[derive(Clone)]
+        struct PlayerSnapshot {
+            id: PlayerID,
+            username: String,
+            transform: Transform,
+            health: i32,
+            team_id: u8,
+            alive: bool,
+            velocity_x: f32,
+            velocity_y: f32,
+        }
+
+        let mut player_snapshots = Vec::with_capacity(player_manager.player_count());
+        player_manager.for_each_player(|player_id, player_state| {
+            player_snapshots.push(PlayerSnapshot {
+                id: player_id.clone(),
+                username: player_state.username.clone(),
+                transform: Transform {
+                    x: player_state.x,
+                    y: player_state.y,
+                    rotation: player_state.rotation,
+                },
+                health: player_state.health,
+                team_id: player_state.team_id,
+                alive: player_state.alive,
+                velocity_x: player_state.velocity_x,
+                velocity_y: player_state.velocity_y,
+            });
+        });
+        let player_count = player_snapshots.len();
+        let projectile_snapshots: Vec<Projectile> = projectiles.to_vec();
+        let pickup_snapshots: Vec<Pickup> = pickups.to_vec();
+
         let mut world = self.world.write();
         let mut entity_index = self.entity_index.write();
-        let mut seen_player_ids: HashSet<PlayerID> = HashSet::new();
-        let mut player_count = 0usize;
-        player_manager.for_each_player(|player_id, player_state| {
-            seen_player_ids.insert(player_id.clone());
-            player_count += 1;
+        let mut seen_player_ids: HashSet<PlayerID> = HashSet::with_capacity(player_snapshots.len());
+        for player_snapshot in &player_snapshots {
+            seen_player_ids.insert(player_snapshot.id.clone());
 
             let entity = entity_index
                 .players
-                .get(player_id)
+                .get(&player_snapshot.id)
                 .copied()
                 .filter(|entity| world.contains(*entity))
                 .unwrap_or_else(|| {
                     let entity = world.spawn((
-                        Transform {
-                            x: player_state.x,
-                            y: player_state.y,
-                            rotation: player_state.rotation,
-                        },
+                        player_snapshot.transform.clone(),
                         PlayerComponent {
-                            id: player_id.clone(),
-                            username: player_state.username.clone(),
-                            health: player_state.health,
-                            team_id: player_state.team_id,
-                            alive: player_state.alive,
-                            velocity_x: player_state.velocity_x,
-                            velocity_y: player_state.velocity_y,
+                            id: player_snapshot.id.clone(),
+                            username: player_snapshot.username.clone(),
+                            health: player_snapshot.health,
+                            team_id: player_snapshot.team_id,
+                            alive: player_snapshot.alive,
+                            velocity_x: player_snapshot.velocity_x,
+                            velocity_y: player_snapshot.velocity_y,
                         },
                     ));
-                    entity_index.players.insert(player_id.clone(), entity);
+                    entity_index
+                        .players
+                        .insert(player_snapshot.id.clone(), entity);
                     entity
                 });
 
             if let Ok(mut transform) = world.get::<&mut Transform>(entity) {
-                transform.x = player_state.x;
-                transform.y = player_state.y;
-                transform.rotation = player_state.rotation;
+                transform.x = player_snapshot.transform.x;
+                transform.y = player_snapshot.transform.y;
+                transform.rotation = player_snapshot.transform.rotation;
             }
             if let Ok(mut player_component) = world.get::<&mut PlayerComponent>(entity) {
-                player_component.username = player_state.username.clone();
-                player_component.health = player_state.health;
-                player_component.team_id = player_state.team_id;
-                player_component.alive = player_state.alive;
-                player_component.velocity_x = player_state.velocity_x;
-                player_component.velocity_y = player_state.velocity_y;
+                player_component.username = player_snapshot.username.clone();
+                player_component.health = player_snapshot.health;
+                player_component.team_id = player_snapshot.team_id;
+                player_component.alive = player_snapshot.alive;
+                player_component.velocity_x = player_snapshot.velocity_x;
+                player_component.velocity_y = player_snapshot.velocity_y;
             }
-        });
+        }
 
         let stale_players: Vec<PlayerID> = entity_index
             .players
@@ -202,8 +231,9 @@ impl EcsBridge {
             }
         }
 
-        let mut seen_projectile_ids: HashSet<EntityId> = HashSet::with_capacity(projectiles.len());
-        for projectile in projectiles {
+        let mut seen_projectile_ids: HashSet<EntityId> =
+            HashSet::with_capacity(projectile_snapshots.len());
+        for projectile in &projectile_snapshots {
             seen_projectile_ids.insert(projectile.id);
             let entity = entity_index
                 .projectiles
@@ -255,8 +285,9 @@ impl EcsBridge {
             }
         }
 
-        let mut seen_pickup_ids: HashSet<EntityId> = HashSet::with_capacity(pickups.len());
-        for pickup in pickups {
+        let mut seen_pickup_ids: HashSet<EntityId> =
+            HashSet::with_capacity(pickup_snapshots.len());
+        for pickup in &pickup_snapshots {
             seen_pickup_ids.insert(pickup.id);
             let entity = entity_index
                 .pickups
@@ -307,8 +338,8 @@ impl EcsBridge {
 
         EcsSnapshotStats {
             players: player_count,
-            projectiles: projectiles.len(),
-            pickups: pickups.len(),
+            projectiles: projectile_snapshots.len(),
+            pickups: pickup_snapshots.len(),
         }
     }
 

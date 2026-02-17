@@ -24,6 +24,7 @@ use crate::network::signaling::{
     next_chat_message_seq, ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap,
 };
 use crate::operational::tuning::adaptive_quality::QualitySettings;
+use crate::operational::monitoring::metrics;
 use crate::operational::tuning::auto_tuner::{AutoTuner, TuningSample};
 use crate::server::ecs_bridge::EcsBridge;
 use crate::server::event_mapping::{
@@ -1281,6 +1282,7 @@ impl MassiveGameServer {
             .data_channels_map
             .len()
             .saturating_add(connected_quic_peer_count());
+        metrics::record_frame_metrics(frame_duration.as_secs_f64(), connected_players);
         let mut tuner = self.auto_tuner.write();
         let quality = tuner.ingest_sample(TuningSample {
             frame_time_ms: frame_duration.as_secs_f32() * 1000.0,
@@ -2172,6 +2174,7 @@ impl MassiveGameServer {
     }
 
     pub async fn process_network_input(&self) {
+        let network_start = Instant::now();
         let current_server_time = Instant::now();
 
         // First, collect all player inputs with their IDs
@@ -2199,6 +2202,7 @@ impl MassiveGameServer {
                 }
             }
         }
+        metrics::record_subsystem_time("network", network_start.elapsed().as_secs_f64());
     }
 
     pub async fn run_ai_update(&self) {
@@ -2329,6 +2333,7 @@ impl MassiveGameServer {
             frame,
             physics_start_time.elapsed()
         );
+        metrics::record_subsystem_time("physics", physics_start_time.elapsed().as_secs_f64());
 
         // The specific log "Collected {} walls from {} partitions"
         // in `collect_active_walls_optimized` can also be changed to `debug!`.

@@ -1,10 +1,11 @@
 // massive_game_server/server/src/main.rs
 use dashmap::DashMap;
+use ipnet::IpNet;
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
 use massive_game_server_core::core::types::{PlayerAoI, PlayerInputData};
 use massive_game_server_core::network::quic::{
-    start_quic_runtime_from_env_with_handler, QuicRequestHandler,
+    connected_quic_peer_count, start_quic_runtime_from_env_with_handler, QuicRequestHandler,
 };
 use massive_game_server_core::network::signaling::{
     handle_signaling_connection,
@@ -18,6 +19,7 @@ use massive_game_server_core::network::signaling::{
 };
 use massive_game_server_core::operational::arena::{build_arena_routes, ArenaService};
 use massive_game_server_core::operational::auth::{build_auth_routes, AuthService};
+use massive_game_server_core::operational::backup::BackupManager;
 use massive_game_server_core::operational::code_generation::{
     build_code_generation_routes, CodeGenerationService,
 };
@@ -26,7 +28,9 @@ use massive_game_server_core::operational::diagnostics::{deadlock, heap_profiler
 use massive_game_server_core::operational::feature_flags::{
     build_feature_flag_routes, FeatureFlagService,
 };
-use massive_game_server_core::operational::monitoring::tracing as monitoring_tracing;
+use massive_game_server_core::operational::monitoring::{
+    alerts as monitoring_alerts, metrics as monitoring_metrics, tracing as monitoring_tracing,
+};
 use massive_game_server_core::server::instance::{LiveReplayDisputeRequest, MassiveGameServer};
 use massive_game_server_core::server::lifecycle;
 
@@ -35,9 +39,11 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::convert::Infallible;
+use std::future::pending;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tracing::{error, info, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
@@ -113,6 +119,7 @@ impl QuicInputEnvelope {
 #[derive(Clone, Default)]
 struct AdminAuthConfig {
     bearer_token: Option<Arc<String>>,
+    ip_allowlist: Arc<Vec<IpNet>>,
 }
 
 impl AdminAuthConfig {
@@ -133,7 +140,20 @@ impl AdminAuthConfig {
             );
         }
 
-        Self { bearer_token }
+        let ip_allowlist = parse_admin_ip_allowlist();
+        if ip_allowlist.is_empty() {
+            info!("Admin IP allowlist is disabled (set MGS_ADMIN_IP_ALLOWLIST to enforce source IP restrictions).");
+        } else {
+            info!(
+                "Admin IP allowlist enabled with {} CIDR entries.",
+                ip_allowlist.len()
+            );
+        }
+
+        Self {
+            bearer_token,
+            ip_allowlist: Arc::new(ip_allowlist),
+        }
     }
 }
 
@@ -157,6 +177,14 @@ impl AdminAuthRejection {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
             code: "admin_auth_unconfigured",
+            message: message.into(),
+        }
+    }
+
+    fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            code: "admin_ip_blocked",
             message: message.into(),
         }
     }
@@ -212,6 +240,37 @@ fn parse_list_env(var_name: &str) -> Vec<String> {
         .collect()
 }
 
+fn parse_admin_ip_allowlist() -> Vec<IpNet> {
+    let mut entries = parse_list_env("MGS_ADMIN_IP_ALLOWLIST");
+    entries.extend(parse_list_env("MGS_ADMIN_ALLOWED_IPS"));
+
+    let mut allowlist = Vec::new();
+    for entry in entries {
+        if let Ok(cidr) = entry.parse::<IpNet>() {
+            allowlist.push(cidr);
+            continue;
+        }
+        if let Ok(ip) = entry.parse::<IpAddr>() {
+            allowlist.push(IpNet::from(ip));
+            continue;
+        }
+        warn!(
+            "Skipping invalid admin allowlist entry '{}'. Expected IP or CIDR.",
+            entry
+        );
+    }
+    allowlist.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+    allowlist.dedup_by(|a, b| a == b);
+    allowlist
+}
+
+fn admin_ip_allowed(ip_allowlist: &[IpNet], source_ip: IpAddr) -> bool {
+    if ip_allowlist.is_empty() {
+        return true;
+    }
+    ip_allowlist.iter().any(|cidr| cidr.contains(&source_ip))
+}
+
 fn env_flag(var_name: &str) -> bool {
     std::env::var(var_name)
         .ok()
@@ -228,10 +287,14 @@ fn requires_admin_auth(
     warp::method()
         .and(warp::path::full())
         .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::headers_cloned())
+        .and(warp::addr::remote())
         .and_then(
             move |method: Method,
                   full_path: warp::path::FullPath,
-                  authorization: Option<String>| {
+                  authorization: Option<String>,
+                  headers: HeaderMap,
+                  remote_addr: Option<SocketAddr>| {
                 let config = config.clone();
                 async move {
                     let path = full_path.as_str();
@@ -247,6 +310,35 @@ fn requires_admin_auth(
                             "Admin routes are disabled until MGS_ADMIN_BEARER_TOKEN is configured.",
                         )));
                     };
+
+                    if !config.ip_allowlist.is_empty() {
+                        let forwarded_ip = headers
+                            .get("x-forwarded-for")
+                            .and_then(|value| value.to_str().ok())
+                            .and_then(parse_forwarded_for_ip);
+                        let real_ip = headers
+                            .get("x-real-ip")
+                            .and_then(|value| value.to_str().ok())
+                            .and_then(|value| value.trim().parse::<IpAddr>().ok());
+                        let source_ip = forwarded_ip
+                            .or(real_ip)
+                            .or_else(|| remote_addr.map(|addr| addr.ip()));
+
+                        let Some(source_ip) = source_ip else {
+                            return Err(warp::reject::custom(AdminAuthRejection::forbidden(
+                                "Admin request source IP could not be determined.",
+                            )));
+                        };
+
+                        if !admin_ip_allowed(config.ip_allowlist.as_slice(), source_ip) {
+                            return Err(warp::reject::custom(AdminAuthRejection::forbidden(
+                                format!(
+                                    "Admin access denied for source IP {} (not in allowlist).",
+                                    source_ip
+                                ),
+                            )));
+                        }
+                    }
 
                     let Some(provided_token) = parse_bearer_token(authorization.as_deref()) else {
                         return Err(warp::reject::custom(AdminAuthRejection::unauthorized(
@@ -364,6 +456,74 @@ fn parse_forwarded_for_ip(raw: &str) -> Option<IpAddr> {
         .and_then(|candidate| candidate.parse::<IpAddr>().ok())
 }
 
+fn parse_u64_env(var_name: &str, default_value: u64) -> u64 {
+    std::env::var(var_name)
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_value)
+}
+
+fn recent_frame_p95_ms(server: &MassiveGameServer) -> Option<f64> {
+    let history = server.tick_durations_history.read();
+    if history.is_empty() {
+        return None;
+    }
+    let mut samples_ms: Vec<f64> = history
+        .iter()
+        .rev()
+        .take(240)
+        .map(|sample| sample.as_secs_f64() * 1000.0)
+        .collect();
+    if samples_ms.is_empty() {
+        return None;
+    }
+    samples_ms.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    let p95_idx = ((samples_ms.len().saturating_sub(1) as f64) * 0.95).round() as usize;
+    samples_ms.get(p95_idx).copied()
+}
+
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        let mut terminate = signal(SignalKind::terminate()).ok();
+        let mut interrupt = signal(SignalKind::interrupt()).ok();
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Shutdown signal received via Ctrl+C.");
+            }
+            _ = async {
+                if let Some(sig) = terminate.as_mut() {
+                    let _ = sig.recv().await;
+                } else {
+                    pending::<()>().await;
+                }
+            } => {
+                info!("Shutdown signal received via SIGTERM.");
+            }
+            _ = async {
+                if let Some(sig) = interrupt.as_mut() {
+                    let _ = sig.recv().await;
+                } else {
+                    pending::<()>().await;
+                }
+            } => {
+                info!("Shutdown signal received via SIGINT.");
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => info!("Shutdown signal received."),
+            Err(err) => warn!("Failed to listen for shutdown signal: {}", err),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // MUST be the very first line
@@ -403,6 +563,12 @@ async fn main() -> anyhow::Result<()> {
     if let Err(e) = init_logging() {
         eprintln!("Failed to initialize logging: {:?}", e);
         return Err(e);
+    }
+    if let Err(err) = monitoring_metrics::init_metrics_exporter_from_env() {
+        warn!(
+            "Prometheus exporter initialization failed; continuing without metrics endpoint: {}",
+            err
+        );
     }
 
     info!("Massive Game Server starting up...");
@@ -450,6 +616,96 @@ async fn main() -> anyhow::Result<()> {
         );
         heap_profiler::spawn_heap_snapshot_logger(std::time::Duration::from_secs(30));
         info!("Background diagnostics enabled.");
+    }
+
+    let backup_manager = BackupManager::from_env();
+    if backup_manager.enabled() {
+        info!(
+            "Automated backups enabled (interval={}s, dir from MGS_BACKUP_DIR).",
+            backup_manager.interval_seconds()
+        );
+        let backup_manager_task = backup_manager.clone();
+        let server_for_backup_task = game_server_instance.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(
+                backup_manager_task.interval_seconds(),
+            ));
+            // Skip immediate tick to avoid backup spike during warm startup.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                if server_for_backup_task.is_shutdown_requested() {
+                    info!("Backup worker observed shutdown; stopping.");
+                    break;
+                }
+                if let Err(err) = backup_manager_task.run_once("scheduled").await {
+                    warn!("Scheduled backup failed: {}", err);
+                }
+            }
+        });
+    } else {
+        info!("Automated backups are disabled (set MGS_BACKUP_ENABLED=1 to enable).");
+    }
+
+    let alert_rules = monitoring_alerts::default_alert_rules_from_env();
+    let alert_notifier =
+        monitoring_alerts::AlertmanagerNotifier::new(monitoring_alerts::AlertmanagerConfig::from_env());
+    if alert_rules.is_empty() {
+        info!("Alert evaluator disabled (no threshold env vars configured).");
+    } else {
+        let alert_eval_interval_secs = parse_u64_env("MGS_ALERT_EVAL_INTERVAL_SECONDS", 15);
+        info!(
+            "Alert evaluator enabled (rules={}, interval={}s, alertmanager_webhook={}).",
+            alert_rules.len(),
+            alert_eval_interval_secs,
+            if alert_notifier.enabled() { "configured" } else { "disabled" }
+        );
+        let server_for_alerts = game_server_instance.clone();
+        let rules_for_alerts = alert_rules.clone();
+        let notifier_for_alerts = alert_notifier.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(alert_eval_interval_secs));
+            loop {
+                ticker.tick().await;
+                if server_for_alerts.is_shutdown_requested() {
+                    info!("Alert evaluator observed shutdown; stopping.");
+                    break;
+                }
+
+                let connected_players = server_for_alerts
+                    .player_manager
+                    .player_count()
+                    .saturating_add(connected_quic_peer_count());
+                let heap_snapshot = heap_profiler::collect_heap_snapshot();
+                monitoring_metrics::record_memory_usage(
+                    heap_snapshot.resident_bytes,
+                    heap_snapshot.allocated_bytes,
+                );
+
+                let mut snapshots = vec![monitoring_alerts::MetricSnapshot {
+                    name: "game_players_connected".to_owned(),
+                    value: connected_players as f64,
+                }];
+                if let Some(frame_p95_ms) = recent_frame_p95_ms(server_for_alerts.as_ref()) {
+                    snapshots.push(monitoring_alerts::MetricSnapshot {
+                        name: "game_frame_time_ms_p95".to_owned(),
+                        value: frame_p95_ms,
+                    });
+                }
+                if let Some(rss_bytes) = heap_snapshot.resident_bytes {
+                    snapshots.push(monitoring_alerts::MetricSnapshot {
+                        name: "game_memory_rss_bytes".to_owned(),
+                        value: rss_bytes as f64,
+                    });
+                }
+
+                let events = monitoring_alerts::evaluate_alerts(&rules_for_alerts, &snapshots);
+                if !events.is_empty() {
+                    warn!("Alert thresholds crossed: {:?}", events);
+                    notifier_for_alerts.notify_events(&events).await;
+                }
+            }
+        });
     }
 
     let signaling_peers_state: SignalingPeers = Arc::new(DashMap::new());
@@ -999,19 +1255,41 @@ async fn main() -> anyhow::Result<()> {
     let server_for_shutdown = game_server_instance.clone();
     let (_bound_address, server) =
         warp::serve(routes).bind_with_graceful_shutdown(server_address, async move {
-            match tokio::signal::ctrl_c().await {
-                Ok(()) => info!("Shutdown signal received."),
-                Err(err) => warn!("Failed to listen for shutdown signal: {}", err),
-            }
+            wait_for_shutdown_signal().await;
             lifecycle::request_shutdown(&server_for_shutdown);
         });
+    let shutdown_started_at = Instant::now();
     server.await;
     drop(quic_runtime);
 
-    if let Err(err) = game_loop_handle.await {
-        error!("Game loop task join failed: {}", err);
+    if backup_manager.enabled() {
+        if let Err(err) = backup_manager.run_once("shutdown").await {
+            warn!("Final shutdown backup failed: {}", err);
+        }
     }
 
+    let mut game_loop_handle = game_loop_handle;
+    let shutdown_drain_timeout_secs = parse_u64_env("MGS_SHUTDOWN_DRAIN_TIMEOUT_SECONDS", 20);
+    tokio::select! {
+        join_result = &mut game_loop_handle => {
+            if let Err(err) = join_result {
+                error!("Game loop task join failed: {}", err);
+            }
+        }
+        _ = tokio::time::sleep(Duration::from_secs(shutdown_drain_timeout_secs)) => {
+            warn!(
+                "Game loop did not stop within {}s; aborting task.",
+                shutdown_drain_timeout_secs
+            );
+            game_loop_handle.abort();
+            match game_loop_handle.await {
+                Ok(()) => {}
+                Err(err) => warn!("Game loop abort join result: {}", err),
+            }
+        }
+    }
+
+    monitoring_metrics::record_shutdown_duration(shutdown_started_at.elapsed().as_secs_f64());
     info!("Massive Game Server shut down.");
     Ok(())
 }

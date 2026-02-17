@@ -68,11 +68,21 @@ impl GridNav {
                 return Some(self.reconstruct_path(from, to, &came_from));
             }
 
-            for next in neighbors(current.pos) {
+            for (next, step_cost) in neighbors(current.pos) {
+                if step_cost == COST_DIAGONAL {
+                    let dx = next.0 - current.pos.0;
+                    let dy = next.1 - current.pos.1;
+                    // Prevent diagonal corner cutting through blocked orthogonal neighbors.
+                    if self.is_blocked(current.pos.0 + dx, current.pos.1)
+                        || self.is_blocked(current.pos.0, current.pos.1 + dy)
+                    {
+                        continue;
+                    }
+                }
                 if self.is_blocked(next.0, next.1) {
                     continue;
                 }
-                let new_cost = current.cost + 1;
+                let new_cost = current.cost + step_cost;
                 let old = cost_so_far.get(&next).copied().unwrap_or(i32::MAX);
                 if new_cost < old {
                     cost_so_far.insert(next, new_cost);
@@ -131,17 +141,28 @@ impl GridNav {
     }
 }
 
-fn neighbors(pos: (i32, i32)) -> [(i32, i32); 4] {
+const COST_CARDINAL: i32 = 10;
+const COST_DIAGONAL: i32 = 14;
+
+fn neighbors(pos: (i32, i32)) -> [((i32, i32), i32); 8] {
     [
-        (pos.0 + 1, pos.1),
-        (pos.0 - 1, pos.1),
-        (pos.0, pos.1 + 1),
-        (pos.0, pos.1 - 1),
+        ((pos.0 + 1, pos.1), COST_CARDINAL),
+        ((pos.0 - 1, pos.1), COST_CARDINAL),
+        ((pos.0, pos.1 + 1), COST_CARDINAL),
+        ((pos.0, pos.1 - 1), COST_CARDINAL),
+        ((pos.0 + 1, pos.1 + 1), COST_DIAGONAL),
+        ((pos.0 - 1, pos.1 + 1), COST_DIAGONAL),
+        ((pos.0 + 1, pos.1 - 1), COST_DIAGONAL),
+        ((pos.0 - 1, pos.1 - 1), COST_DIAGONAL),
     ]
 }
 
 fn manhattan(a: (i32, i32), b: (i32, i32)) -> i32 {
-    (a.0 - b.0).abs() + (a.1 - b.1).abs()
+    let dx = (a.0 - b.0).abs();
+    let dy = (a.1 - b.1).abs();
+    let diagonal_steps = dx.min(dy);
+    let straight_steps = dx.max(dy) - diagonal_steps;
+    (diagonal_steps * COST_DIAGONAL) + (straight_steps * COST_CARDINAL)
 }
 
 #[derive(Debug, Clone)]
@@ -393,6 +414,23 @@ mod tests {
         nav.set_blocked(3, 4, true);
         let path = nav.find_path((1, 1), (6, 6));
         assert!(path.is_some());
+    }
+
+    #[test]
+    fn grid_nav_uses_diagonal_steps_when_clear() {
+        let nav = GridNav::new(8, 8, 1.0);
+        let path = nav.find_path((1, 1), (6, 6)).expect("path should exist");
+        // 8-direction A* should produce fewer than pure 4-direction steps here.
+        assert!(path.len() < 11);
+    }
+
+    #[test]
+    fn grid_nav_blocks_diagonal_corner_cutting() {
+        let mut nav = GridNav::new(4, 4, 1.0);
+        nav.set_blocked(1, 0, true);
+        nav.set_blocked(0, 1, true);
+        let path = nav.find_path((0, 0), (1, 1));
+        assert!(path.is_none());
     }
 
     #[test]
