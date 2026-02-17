@@ -2162,6 +2162,8 @@ pub fn build_arena_routes(
         .or(leaderboard)
         .or(overview)
         .or(worker_stats)
+        .map(warp::reply::Reply::into_response)
+        .boxed()
 }
 
 #[cfg(test)]

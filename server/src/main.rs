@@ -963,38 +963,44 @@ async fn main() -> anyhow::Result<()> {
         });
 
     let admin_auth_config = AdminAuthConfig::from_env();
+    let admin_routes = arena_routes
+        .or(feature_flag_routes)
+        .or(join_stage_report_route)
+        .or(join_stage_reset_route)
+        .or(live_replay_recent_route)
+        .or(live_replay_dispute_route)
+        .or(live_replay_dispute_recent_route)
+        .map(warp::reply::Reply::into_response)
+        .boxed();
+
     let protected_routes = requires_admin_auth(admin_auth_config)
-        .and(
-            arena_routes
-                .or(feature_flag_routes)
-                .or(join_stage_report_route)
-                .or(join_stage_reset_route)
-                .or(live_replay_recent_route)
-                .or(live_replay_dispute_route)
-                .or(live_replay_dispute_recent_route),
-        )
-        .map(|(), reply| reply);
+        .and(admin_routes)
+        .map(|(), reply| reply)
+        .boxed();
+
     let public_routes = auth_routes
         .or(code_generation_routes)
         .or(signaling_route)
         .or(root_route)
         .or(healthz_route)
-        .or(static_files_route);
+        .or(static_files_route)
+        .map(warp::reply::Reply::into_response)
+        .boxed();
 
     let allowed_cors_origins = parse_list_env("MGS_ALLOWED_ORIGINS");
-    let base_routes = protected_routes
-        .or(public_routes)
-        .recover(handle_route_rejection);
+    let base_routes = protected_routes.or(public_routes).boxed();
+    let recovered_routes = base_routes.recover(handle_route_rejection);
+
     let routes = if allowed_cors_origins.is_empty() {
         info!(
             "No cross-origin API origins configured (set MGS_ALLOWED_ORIGINS for explicit allowlist)."
         );
-        base_routes.map(warp::reply::Reply::into_response).boxed()
+        recovered_routes.map(warp::reply::Reply::into_response).boxed()
     } else {
         for origin in &allowed_cors_origins {
             info!("Allowing API CORS origin: {}", origin);
         }
-        base_routes
+        recovered_routes
             .with(
                 warp::cors()
                     .allow_origins(allowed_cors_origins.iter().map(String::as_str))
