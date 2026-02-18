@@ -20,7 +20,7 @@ categories = ["games", "network-programming", "simulation"] # Choose appropriate
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.37", features = ["full"] } # Or your preferred version
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "fs", "signal"] } # Keep runtime features explicit to reduce compile/link overhead.
 tokio-stream = { version = "0.1", features = ["sync"] }
 
 

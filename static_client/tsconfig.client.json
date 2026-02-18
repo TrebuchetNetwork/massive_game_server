@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "allowJs": false,
+    "noEmitOnError": true,
+    "rootDir": "./client_logic_ts",
+    "outDir": "./client_logic_ts_build"
+  },
+  "include": [
+    "client_logic_ts/**/*.ts",
+    "client_logic_ts/**/*.d.ts"
+  ]
+}

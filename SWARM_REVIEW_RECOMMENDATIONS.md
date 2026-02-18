@@ -545,8 +545,8 @@ Detect backpressure issues
 - [x] Wall spatial index
 - [x] ECS lock granularity
 - [x] 8-directional pathfinding
-- [ ] Client TypeScript migration
-- [ ] Horizontal scaling architecture
+- [x] Client TypeScript migration
+- [x] Horizontal scaling architecture
 
 ---
 

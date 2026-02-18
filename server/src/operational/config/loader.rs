@@ -18,6 +18,8 @@ struct PartialServerConfig {
     tick_rate: Option<u64>,
     num_player_shards: Option<usize>,
     world_partition_grid_dim: Option<usize>,
+    cluster_shard_count: Option<usize>,
+    local_shard_id: Option<usize>,
     max_players_per_match: Option<usize>,
     thread_pools: Option<PartialThreadPoolConfig>,
 }
@@ -55,6 +57,12 @@ fn apply_partial(config: &mut ServerConfig, partial: PartialServerConfig) {
     if let Some(world_partition_grid_dim) = partial.world_partition_grid_dim {
         config.world_partition_grid_dim = world_partition_grid_dim;
         config.num_world_partitions = world_partition_grid_dim * world_partition_grid_dim;
+    }
+    if let Some(cluster_shard_count) = partial.cluster_shard_count {
+        config.cluster_shard_count = cluster_shard_count.max(1);
+    }
+    if let Some(local_shard_id) = partial.local_shard_id {
+        config.local_shard_id = local_shard_id;
     }
     if let Some(max_players_per_match) = partial.max_players_per_match {
         config.max_players_per_match = max_players_per_match;
@@ -105,6 +113,12 @@ fn apply_env_overrides(config: &mut ServerConfig) {
     if let Some(value) = env_usize("MGS_WORLD_GRID_DIM") {
         config.world_partition_grid_dim = value;
         config.num_world_partitions = value * value;
+    }
+    if let Some(value) = env_usize("MGS_CLUSTER_SHARDS") {
+        config.cluster_shard_count = value.max(1);
+    }
+    if let Some(value) = env_usize("MGS_LOCAL_SHARD_ID") {
+        config.local_shard_id = value;
     }
     if let Some(value) = env_usize("MGS_MAX_PLAYERS_PER_MATCH") {
         config.max_players_per_match = value;

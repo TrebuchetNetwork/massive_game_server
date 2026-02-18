@@ -74,6 +74,8 @@ use tracing::{debug, error, info, trace, warn}; // Ensure all levels are availab
 
 use tokio::{task::JoinSet, time::timeout};
 
+mod bot_management;
+
 const INITIAL_SNAPSHOT_MAX_PLAYERS: usize = 24;
 const INITIAL_SNAPSHOT_MAX_WALLS: usize = 128;
 const INITIAL_SNAPSHOT_MAX_PROJECTILES: usize = 200;
@@ -2281,7 +2283,7 @@ impl MassiveGameServer {
 
         // Stage 4: Apply Player Updates
         let apply_updates_start = Instant::now();
-        self.apply_player_updates(player_updates).await; //
+        self.apply_player_updates(player_updates, &active_walls).await; //
                                                          // CHANGED to debug!
         debug!(
             "Frame {}: Applied player updates (took {:?})",
@@ -2981,15 +2983,29 @@ impl MassiveGameServer {
         results
     }*/
 
-    async fn apply_player_updates(&self, updates: PlayerPhysicsResults) {
+    async fn apply_player_updates(&self, updates: PlayerPhysicsResults, active_walls: &[Wall]) {
+        // Precompute enemy snapshots once for this respawn batch.
+        let enemies_for_team_1 = self.get_enemy_positions_for_team(1);
+        let enemies_for_team_2 = self.get_enemy_positions_for_team(2);
+        let no_enemies: Vec<(Vec2, PlayerID)> = Vec::new();
+
         // Batch respawns
         for (player_id, team_id) in updates.players_to_respawn {
-            let enemies = self.get_enemy_positions_for_team(team_id);
-            let spawn_pos = self.respawn_manager.get_respawn_position(
-                self,
+            let assigned_team = if team_id == 1 || team_id == 2 {
+                Some(team_id)
+            } else {
+                None
+            };
+            let enemies = match assigned_team {
+                Some(1) => enemies_for_team_1.as_slice(),
+                Some(2) => enemies_for_team_2.as_slice(),
+                _ => no_enemies.as_slice(),
+            };
+            let spawn_pos = self.respawn_manager.get_respawn_position_with_walls(
                 &player_id,
-                Some(team_id),
-                &enemies,
+                assigned_team,
+                enemies,
+                active_walls,
             );
 
             if let Some(mut p_state) = self.player_manager.get_player_state_mut(&player_id) {
@@ -3684,13 +3700,24 @@ impl MassiveGameServer {
     fn update_match_state_authoritative(&self, delta_time: f32) {
         let mut match_info_guard = self.match_info.write();
         let player_count = self.player_manager.player_count();
+        let connected_client_count = self
+            .data_channels_map
+            .len()
+            .saturating_add(connected_quic_peer_count());
+        let effective_participant_count = player_count.max(connected_client_count);
 
         match match_info_guard.match_state {
             fb::MatchStateType::Waiting => {
-                if player_count >= MIN_PLAYERS_TO_START {
+                if effective_participant_count >= MIN_PLAYERS_TO_START {
                     match_info_guard.match_state = fb::MatchStateType::Active;
                     match_info_guard.time_remaining = 300.0;
-                    info!("Match starting! Mode: {:?}", match_info_guard.game_mode);
+                    info!(
+                        "Match starting! Mode: {:?}, players={}, connected_clients={}, effective_participants={}",
+                        match_info_guard.game_mode,
+                        player_count,
+                        connected_client_count,
+                        effective_participant_count
+                    );
                     if match_info_guard.game_mode == fb::GameModeType::CaptureTheFlag {
                         self.initialize_ctf_flags(&mut match_info_guard);
                     }
@@ -5357,391 +5384,6 @@ impl MassiveGameServer {
             self.update_client_state_after_delta(&peer_id_str, shared_data);
         }
     }*/
-
-    fn manage_bot_population(&self) {
-        // Ensure this method is defined within the impl block
-        let human_player_count = self
-            .player_manager
-            .player_count()
-            .saturating_sub(self.bot_players.len());
-        let current_bot_count = self.bot_players.len();
-
-        // Corrected line: Directly use the usize value from config
-        let max_players_in_match = self.config.max_players_per_match;
-        let effective_bot_capacity = max_players_in_match.saturating_sub(self.reserved_human_slots);
-
-        let desired_bot_count = if human_player_count >= effective_bot_capacity {
-            0
-        } else {
-            (effective_bot_capacity - human_player_count).min(
-                self.target_bot_count
-                    .load(std::sync::atomic::Ordering::Relaxed) as usize,
-            ) // Also consider target_bot_count
-        };
-
-        if current_bot_count > desired_bot_count {
-            let bots_to_remove_count = current_bot_count - desired_bot_count;
-            debug!("[Bot Management] Max players: {}, Humans: {}, Current Bots: {}, Desired Bots: {}. Removing {} bots.",
-                max_players_in_match, human_player_count, current_bot_count, desired_bot_count, bots_to_remove_count);
-            self.remove_bots(bots_to_remove_count);
-        } else if current_bot_count < desired_bot_count {
-            let bots_to_add_count = desired_bot_count - current_bot_count;
-            debug!("[Bot Management] Max players: {}, Humans: {}, Current Bots: {}, Desired Bots: {}. Adding {} bots.",
-                max_players_in_match, human_player_count, current_bot_count, desired_bot_count, bots_to_add_count);
-            self.spawn_additional_bots(bots_to_add_count);
-        }
-    }
-
-    fn team_player_counts(&self) -> (usize, usize) {
-        let mut team1_count = 0usize;
-        let mut team2_count = 0usize;
-        self.player_manager.for_each_player(|_, state| {
-            if state.team_id == 1 {
-                team1_count += 1;
-            } else if state.team_id == 2 {
-                team2_count += 1;
-            }
-        });
-        (team1_count, team2_count)
-    }
-
-    pub fn ensure_human_join_capacity(&self, joining_peer_id: &str) -> bool {
-        self.ensure_human_join_capacity_for_team(joining_peer_id, None)
-    }
-
-    pub fn ensure_human_join_capacity_for_team(
-        &self,
-        joining_peer_id: &str,
-        joining_team: Option<u8>,
-    ) -> bool {
-        if !self.human_priority_enabled {
-            return self.player_manager.player_count() < self.config.max_players_per_match;
-        }
-        if self.player_manager.player_count() < self.config.max_players_per_match {
-            return true;
-        }
-        let selected_bot = match joining_team {
-            Some(team) if team == 1 || team == 2 => self.select_balanced_bot_for_human_join(team),
-            _ => self.select_lowest_performing_bot(),
-        };
-        let Some(bot_id) = selected_bot else {
-            warn!(
-                "[Human Priority] No bot available to evict for human '{}'; server remains full.",
-                joining_peer_id
-            );
-            return false;
-        };
-        self.evict_bot_for_human(&bot_id, joining_peer_id, joining_team)
-    }
-
-    fn bot_eviction_candidates(&self) -> Vec<(PlayerID, i64, u8, String)> {
-        let mut candidates = Vec::with_capacity(self.bot_players.len());
-
-        for entry in self.bot_players.iter() {
-            let bot_id = entry.key().clone();
-            let (rating, team_id, username) = self
-                .player_manager
-                .get_player_state(&bot_id)
-                .map(|state| {
-                    let score = state.score as i64;
-                    let kills = state.kills as i64 * 25;
-                    let deaths_penalty = state.deaths as i64 * 10;
-                    let health_bonus = state.health.max(0) as i64;
-                    (
-                        score + kills + health_bonus - deaths_penalty,
-                        state.team_id,
-                        state.username.clone(),
-                    )
-                })
-                .unwrap_or((i64::MIN, 0, bot_id.as_str().to_owned()));
-            candidates.push((bot_id, rating, team_id, username));
-        }
-
-        candidates
-    }
-
-    fn select_lowest_performing_bot(&self) -> Option<PlayerID> {
-        self.bot_eviction_candidates()
-            .into_iter()
-            .min_by_key(|(_, rating, _, _)| *rating)
-            .map(|(bot_id, _, _, _)| bot_id)
-    }
-
-    fn select_balanced_bot_for_human_join(&self, joining_team: u8) -> Option<PlayerID> {
-        let candidates = self.bot_eviction_candidates();
-        if candidates.is_empty() {
-            return None;
-        }
-        if joining_team != 1 && joining_team != 2 {
-            return candidates
-                .into_iter()
-                .min_by_key(|(_, rating, _, _)| *rating)
-                .map(|(bot_id, _, _, _)| bot_id);
-        }
-
-        let (team1_count, team2_count) = self.team_player_counts();
-        candidates
-            .into_iter()
-            .map(|(bot_id, rating, bot_team, _)| {
-                let mut projected_team1 =
-                    team1_count as i64 + if joining_team == 1 { 1 } else { 0 };
-                let mut projected_team2 =
-                    team2_count as i64 + if joining_team == 2 { 1 } else { 0 };
-                if bot_team == 1 {
-                    projected_team1 -= 1;
-                } else if bot_team == 2 {
-                    projected_team2 -= 1;
-                }
-                let imbalance = (projected_team1 - projected_team2).abs();
-                (bot_id, imbalance, rating)
-            })
-            .min_by(|lhs, rhs| lhs.1.cmp(&rhs.1).then_with(|| lhs.2.cmp(&rhs.2)))
-            .map(|(bot_id, _, _)| bot_id)
-    }
-
-    fn enqueue_system_chat_message(&self, message: String) {
-        let entry = ChatMessage {
-            seq: next_chat_message_seq(),
-            player_id: self.player_manager.id_pool.get_or_create("system"),
-            username: "System".to_owned(),
-            message: message.chars().take(160).collect(),
-            timestamp: self.get_server_timestamp_ms(),
-        };
-
-        if let Ok(mut chat_q_guard) = self.chat_messages_queue.try_write() {
-            chat_q_guard.push_back(entry);
-            if chat_q_guard.len() > MAX_CHAT_MESSAGES_HISTORY {
-                chat_q_guard.pop_front();
-            }
-            return;
-        }
-
-        let queue = self.chat_messages_queue.clone();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                let mut chat_q_guard = queue.write().await;
-                chat_q_guard.push_back(entry);
-                if chat_q_guard.len() > MAX_CHAT_MESSAGES_HISTORY {
-                    chat_q_guard.pop_front();
-                }
-            });
-        } else {
-            warn!(
-                "[System Chat] Dropped announcement without runtime: {}",
-                message
-            );
-        }
-    }
-
-    fn push_kill_feed_entry(
-        &self,
-        killer_name: String,
-        victim_name: String,
-        weapon: ServerWeaponType,
-    ) {
-        let mut kill_feed_guard = self.kill_feed.write();
-        kill_feed_guard.push_back(ServerKillFeedEntry {
-            killer_name,
-            victim_name,
-            weapon,
-            timestamp: self.frame_counter.load(AtomicOrdering::Relaxed),
-        });
-        if kill_feed_guard.len() > MAX_KILL_FEED_HISTORY {
-            kill_feed_guard.pop_front();
-        }
-    }
-
-    fn evict_bot_for_human(
-        &self,
-        bot_id: &PlayerID,
-        joining_peer_id: &str,
-        joining_team: Option<u8>,
-    ) -> bool {
-        let bot_snapshot = self
-            .bot_eviction_candidates()
-            .into_iter()
-            .find(|(candidate_bot_id, _, _, _)| candidate_bot_id == bot_id)
-            .map(|(_, _, team_id, username)| (team_id, username));
-
-        if self.bot_players.remove(bot_id).is_none() {
-            return false;
-        }
-
-        self.player_manager.remove_player(bot_id.as_str());
-        self.data_channels_map.remove(bot_id.as_str());
-        self.client_states_map.write().remove(bot_id.as_str());
-        self.player_aois.remove(bot_id.as_str());
-
-        info!(
-            "[Human Priority] Evicted bot '{}' to free a slot for human '{}'.",
-            bot_id, joining_peer_id
-        );
-
-        if joining_peer_id != "bot_population_manager" {
-            let (bot_team, bot_name) =
-                bot_snapshot.unwrap_or((0, format!("Bot {}", bot_id.as_str())));
-            let mut announcement = format!(
-                "{} was rotated out to free a slot for {}.",
-                bot_name, joining_peer_id
-            );
-            if let Some(team) = joining_team {
-                if (team == 1 || team == 2) && (bot_team == 1 || bot_team == 2) {
-                    announcement.push_str(&format!(
-                        " Team balance: joiner T{}, removed bot T{}.",
-                        team, bot_team
-                    ));
-                }
-            }
-            self.enqueue_system_chat_message(announcement);
-            let joiner_short = &joining_peer_id[..joining_peer_id.len().min(6)];
-            self.push_kill_feed_entry(
-                format!("Human {}", joiner_short),
-                bot_name,
-                ServerWeaponType::Melee,
-            );
-        }
-
-        true
-    }
-
-    fn spawn_additional_bots(&self, count_to_add: usize) {
-        if count_to_add == 0 {
-            return;
-        }
-        info!(
-            "[Bot Management] Attempting to spawn {} additional bots...",
-            count_to_add
-        );
-
-        let team_spawn_areas = crate::world::map_generator::MapGenerator::get_team_spawn_areas();
-        let mut rng = rand::thread_rng();
-        let bot_names = [
-            "Alpha", "Beta", "Gamma", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India",
-            "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa", "Quebec", "Romeo",
-            "Sierra", "Tango", "Uniform", "Victor", "Whiskey", "Xray", "Yankee", "Zulu",
-        ];
-
-        for _i in 0..count_to_add {
-            // _i as it's not directly used for bot naming index here
-            let current_total_players = self.player_manager.player_count();
-            if current_total_players >= self.config.max_players_per_match {
-                info!("[Bot Management] Max player limit ({}) reached, stopping additional bot spawn. Current players: {}", self.config.max_players_per_match, current_total_players);
-                break;
-            }
-
-            let bot_name_num = self.bot_name_counter.fetch_add(1, AtomicOrdering::SeqCst);
-            let bot_base_name = bot_names
-                .get(bot_name_num as usize % bot_names.len())
-                .unwrap_or(&"Extra");
-            let bot_name = format!(
-                "Bot {}{}",
-                bot_base_name,
-                if bot_name_num >= bot_names.len() as u64 {
-                    (bot_name_num / bot_names.len() as u64).to_string()
-                } else {
-                    "".to_string()
-                }
-            );
-
-            let bot_player_id_str = format!("bot_{}", uuid::Uuid::new_v4());
-
-            let mut team1_player_count = 0; // Count players (human + bot) on team 1
-            let mut team2_player_count = 0; // Count players (human + bot) on team 2
-            self.player_manager.for_each_player(|_id, p_state| {
-                if p_state.team_id == 1 {
-                    team1_player_count += 1;
-                } else if p_state.team_id == 2 {
-                    team2_player_count += 1;
-                }
-            });
-
-            let team_id = if team1_player_count <= team2_player_count {
-                1
-            } else {
-                2
-            };
-
-            // Get spawn points for the selected team
-            let potential_spawns_for_team: Vec<Vec2> = team_spawn_areas
-                .iter()
-                .filter(|(_, sp_team_id)| *sp_team_id == team_id as u8)
-                .map(|(pos, _)| *pos)
-                .collect();
-
-            let spawn_pos = if !potential_spawns_for_team.is_empty() {
-                // Use team spawn point with some random offset
-                let base_spawn =
-                    potential_spawns_for_team[rng.gen_range(0..potential_spawns_for_team.len())];
-                let offset_radius = 50.0; // Small offset to prevent stacking
-                let angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
-                let offset_x = offset_radius * angle.cos();
-                let offset_y = offset_radius * angle.sin();
-                Vec2::new(
-                    (base_spawn.x + offset_x)
-                        .clamp(WORLD_MIN_X + PLAYER_RADIUS, WORLD_MAX_X - PLAYER_RADIUS),
-                    (base_spawn.y + offset_y)
-                        .clamp(WORLD_MIN_Y + PLAYER_RADIUS, WORLD_MAX_Y - PLAYER_RADIUS),
-                )
-            } else {
-                // Fallback: use respawn manager
-                self.respawn_manager.get_respawn_position(
-                    self,
-                    &Arc::new(bot_player_id_str.clone()),
-                    Some(team_id as u8),
-                    &[],
-                )
-            };
-
-            if let Some(player_id_arc) = self.player_manager.add_player(
-                bot_player_id_str.clone(),
-                bot_name.clone(),
-                spawn_pos.x,
-                spawn_pos.y,
-            ) {
-                if let Some(mut p_state_entry) =
-                    self.player_manager.get_player_state_mut(&player_id_arc)
-                {
-                    let p_state = &mut *p_state_entry;
-                    p_state.team_id = team_id;
-                    p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
-                }
-
-                let bot_controller = BotController {
-                    player_id: player_id_arc.clone(),
-                    target_position: None,
-                    target_enemy_id: None,
-                    last_decision_time: Instant::now(),
-                    behavior_state: BotBehaviorState::Idle,
-                    current_path: VecDeque::new(),
-                    path_recalculation_timer: Instant::now(),
-                    last_position: Vec2::new(spawn_pos.x, spawn_pos.y),
-                    stuck_timer: 0.0,
-                    stuck_check_position: Vec2::new(spawn_pos.x, spawn_pos.y),
-                };
-                self.bot_players.insert(player_id_arc, bot_controller);
-                debug!("[Bot Management] Spawned additional bot: {} (ID: {}) on team {} at ({:.1}, {:.1}). Total players: {}", bot_name, bot_player_id_str, team_id, spawn_pos.x, spawn_pos.y, self.player_manager.player_count());
-            } else {
-                error!(
-                    "[Bot Management] Failed to add bot {} to player manager.",
-                    bot_name
-                );
-            }
-        }
-    }
-
-    fn remove_bots(&self, count: usize) {
-        let mut removed_count = 0;
-        while removed_count < count {
-            let Some(bot_key) = self.select_lowest_performing_bot() else {
-                break;
-            };
-            if self.evict_bot_for_human(&bot_key, "bot_population_manager", None) {
-                removed_count += 1;
-            } else {
-                break;
-            }
-        }
-    }
 
     // Complete replacement for build_delta_state_optimized method:
     // In server/src/server/instance.rs

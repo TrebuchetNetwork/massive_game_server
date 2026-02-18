@@ -15,13 +15,14 @@ COPY protocol ./protocol
 COPY flatbuffers ./flatbuffers
 COPY static_client ./static_client
 
-RUN cargo build --release -p massive_game_server_core --bin massive_game_server_core
+RUN cargo build --release --features jemalloc -p massive_game_server_core --bin massive_game_server_core
 
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    libjemalloc2 \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 

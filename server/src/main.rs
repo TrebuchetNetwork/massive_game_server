@@ -31,6 +31,7 @@ use massive_game_server_core::operational::feature_flags::{
 use massive_game_server_core::operational::monitoring::{
     alerts as monitoring_alerts, metrics as monitoring_metrics, tracing as monitoring_tracing,
 };
+use massive_game_server_core::scaling::HorizontalScalingCoordinator;
 use massive_game_server_core::server::instance::{LiveReplayDisputeRequest, MassiveGameServer};
 use massive_game_server_core::server::lifecycle;
 
@@ -580,6 +581,15 @@ async fn main() -> anyhow::Result<()> {
     info!(
         "Server configuration loaded. Tick rate: {}",
         config.tick_rate
+    );
+    let scaling_coordinator = HorizontalScalingCoordinator::new(config.cluster_shard_count, 2);
+    let bootstrap_assignment = scaling_coordinator.assignment_for_match("bootstrap");
+    info!(
+        "Horizontal scaling coordinator ready: shards={}, local_shard={}, bootstrap_primary={}, replicas={:?}",
+        scaling_coordinator.shard_count(),
+        config.local_shard_id,
+        bootstrap_assignment.primary_shard,
+        bootstrap_assignment.replica_shards
     );
 
     let thread_pool_system = match ThreadPoolSystem::new(config.clone()) {

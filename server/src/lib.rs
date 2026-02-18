@@ -1,5 +1,9 @@
 // massive_game_server/server/src/lib.rs
 
+#[cfg(all(not(target_env = "msvc"), feature = "jemalloc"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 // Make flatbuffers generated code accessible throughout the crate
 pub mod flatbuffers_generated {
     // The include! macro will paste the contents of game_generated.rs here during compilation.
@@ -17,6 +21,7 @@ pub mod entities;
 pub mod memory;
 pub mod network;
 pub mod operational;
+pub mod scaling;
 pub mod server;
 pub mod state_sync;
 pub mod systems;

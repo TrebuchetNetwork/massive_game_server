@@ -13,6 +13,16 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<()> {
     if config.world_partition_grid_dim == 0 {
         return Err(anyhow!("world_partition_grid_dim must be > 0"));
     }
+    if config.cluster_shard_count == 0 {
+        return Err(anyhow!("cluster_shard_count must be > 0"));
+    }
+    if config.local_shard_id >= config.cluster_shard_count {
+        return Err(anyhow!(
+            "local_shard_id must be < cluster_shard_count ({} >= {})",
+            config.local_shard_id,
+            config.cluster_shard_count
+        ));
+    }
     if config.max_players_per_match == 0 {
         return Err(anyhow!("max_players_per_match must be > 0"));
     }

@@ -3,3 +3,5 @@ Cargo.lock
 scripts/ui_bench/node_modules/
 scripts/e2e/node_modules/
 artifacts/
+static_client/node_modules/
+static_client/client_logic_ts_build/

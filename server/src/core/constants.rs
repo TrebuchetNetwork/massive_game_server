@@ -42,7 +42,7 @@ pub const SHOTGUN_PELLET_COUNT: i32 = 8;
 pub const SHOTGUN_SPREAD_ANGLE_RAD: f32 = 0.25;
 
 // Other game constants
-pub const DEFAULT_RESPAWN_DURATION_SECS: f32 = 5.0;
+pub const DEFAULT_RESPAWN_DURATION_SECS: f32 = 2.5;
 pub const MAX_INPUT_QUEUE_SIZE_PER_PLAYER: usize = 32;
 pub const GAME_PROTOCOL_VERSION: u32 = 1;
 

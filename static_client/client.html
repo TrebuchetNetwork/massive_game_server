@@ -221,6 +221,8 @@
             position: absolute;
             inset: -35% -20%;
             opacity: 0;
+            display: none !important;
+            pointer-events: none;
             background:
                 repeating-linear-gradient(
                     160deg,
@@ -1418,6 +1420,7 @@
         const FOG_ENABLED = FOG_TOGGLE.state !== 'off';
         const HYPE_UI_TOGGLE = parseToggleParam(uiModeParams.get('hype_ui'));
         const EXCITEMENT_UI_ENABLED = !BENCH_MODE && HYPE_UI_TOGGLE.state !== 'off';
+        const COMBAT_SPEED_LINES_ENABLED = false;
         const TAB_THROTTLE_TOGGLE = parseToggleParam(uiModeParams.get('tab_throttle'));
         const TAB_THROTTLE_ENABLED = TAB_THROTTLE_TOGGLE.state !== 'off';
         const COMBAT_UI_QUALITY_OVERRIDE = (() => {
@@ -1447,6 +1450,7 @@
         const BENCH_MAX_FPS = Number.isFinite(benchMaxFpsParam) && benchMaxFpsParam >= 30
             ? Math.min(240, benchMaxFpsParam)
             : 30;
+        const PERF_CONSOLE_OUTPUT_ENABLED = uiModeParams.get('perf_console') === '1';
         const ULTRA_AUTO_UPSHIFT_PLAYERS = STABLE_MODE_FORCED ? 36 : 90;
         const ULTRA_AUTO_DOWNSHIFT_PLAYERS = STABLE_MODE_FORCED ? 24 : 65;
         const TARGET_FRAME_MS_60FPS = 16.67;
@@ -1481,7 +1485,7 @@
         const RECONCILIATION_BUFFER_SIZE = 120;
         const PLAYER_RADIUS = 15;
         const PICKUP_RADIUS = 20;
-        const MIN_PLAYERS_TO_START = 2;
+        const MIN_PLAYERS_TO_START = 1;
         const MAX_CHAT_MESSAGE_LENGTH = 100;
         const MAX_LOG_ENTRIES = 200;
         const SERVER_TICK_RATE = 60;
@@ -1580,6 +1584,10 @@
         const combatOverlayDiv = document.getElementById('combatOverlay');
         const damageFlashLayerDiv = document.getElementById('damageFlashLayer');
         const speedLinesLayerDiv = document.getElementById('speedLinesLayer');
+        if (speedLinesLayerDiv) {
+            speedLinesLayerDiv.style.display = 'none';
+            speedLinesLayerDiv.style.opacity = '0';
+        }
         const damageDirectionLayerDiv = document.getElementById('damageDirectionLayer');
         const hitMarkerDiv = document.getElementById('hitMarker');
         const combatBannerDiv = document.getElementById('combatBanner');
@@ -1672,6 +1680,14 @@
         let smoothedFrameMs = 16.67;
         let lowFpsFrameStreak = 0;
         let recoveryFrameStreak = 0;
+        let lowFpsDurationMs = 0;
+        let recoveryDurationMs = 0;
+        const ULTRA_AUTO_LOW_FPS_TRIGGER_MS = STABLE_MODE_FORCED ? 450 : 900;
+        const ULTRA_AUTO_RECOVERY_TRIGGER_MS = STABLE_MODE_FORCED ? 9000 : 14000;
+        const ULTRA_EMERGENCY_FRAME_MS = STABLE_MODE_FORCED ? 38 : 48;
+        const ULTRA_MIN_HOLD_MS = STABLE_MODE_FORCED ? 12000 : 18000;
+        const ULTRA_DOWNSHIFT_MAX_FRAME_MS = STABLE_MODE_FORCED ? 16.9 : 18.2;
+        const ULTRA_DOWNSHIFT_MAX_LOW_FPS_MS = STABLE_MODE_FORCED ? 60 : 120;
         const E2E_STATS_UPDATE_INTERVAL_MS = 120;
         const RENDER_RESOLUTION_DOWNSHIFT_COOLDOWN_MS = STABLE_MODE_FORCED ? 1500 : 900;
         const RENDER_RESOLUTION_UPSHIFT_COOLDOWN_MS = STABLE_MODE_FORCED ? 6000 : 3200;
@@ -1948,9 +1964,27 @@
             return !!(WORKER_CULL_ENABLED && cullWorker && cullWorkerReady);
         }
 
+        function getWorkerCullDispatchIntervalMs() {
+            let intervalMs = WORKER_CULL_INTERVAL_MS;
+            if (!ultraPerformanceMode && !STABLE_MODE_FORCED && !TOURNAMENT_MODE_FORCED) {
+                return intervalMs;
+            }
+            if (projectiles.size >= 2400 || players.size >= 140 || smoothedFrameMs >= 28) {
+                return Math.max(intervalMs, 140);
+            }
+            if (projectiles.size >= 1300 || players.size >= 90 || smoothedFrameMs >= 24) {
+                return Math.max(intervalMs, 100);
+            }
+            if (projectiles.size >= 700 || players.size >= 56 || smoothedFrameMs >= 21) {
+                return Math.max(intervalMs, 72);
+            }
+            return intervalMs;
+        }
+
         function dispatchCullWorkerIfNeeded(currentTimeMs) {
             if (!isCullWorkerUsable()) return;
-            if ((currentTimeMs - lastCullWorkerDispatchTime) < WORKER_CULL_INTERVAL_MS) return;
+            const cullDispatchIntervalMs = getWorkerCullDispatchIntervalMs();
+            if ((currentTimeMs - lastCullWorkerDispatchTime) < cullDispatchIntervalMs) return;
 
             const totalObjects = players.size + projectiles.size;
             if (!MASS_MODE_FORCED && totalObjects < 30) {
@@ -2247,20 +2281,25 @@
         }
 
         function updateFramePerformanceSignals(deltaMs) {
-            smoothedFrameMs = smoothedFrameMs * 0.92 + deltaMs * 0.08;
+            const clampedDeltaMs = Math.max(4, Math.min(250, Number(deltaMs) || 16.67));
+            smoothedFrameMs = smoothedFrameMs * 0.92 + clampedDeltaMs * 0.08;
             const lowFpsThreshold = STABLE_MODE_FORCED ? STABLE_ULTRA_FRAME_MS : 28;
             const recoveryThreshold = STABLE_MODE_FORCED ? STABLE_DENSE_FRAME_MS : 20;
 
             if (smoothedFrameMs > lowFpsThreshold) {
                 lowFpsFrameStreak = Math.min(lowFpsFrameStreak + 1, 600);
+                lowFpsDurationMs = Math.min(lowFpsDurationMs + clampedDeltaMs, 20000);
             } else {
                 lowFpsFrameStreak = Math.max(lowFpsFrameStreak - 2, 0);
+                lowFpsDurationMs = Math.max(0, lowFpsDurationMs - (clampedDeltaMs * 2));
             }
 
             if (smoothedFrameMs < recoveryThreshold) {
                 recoveryFrameStreak = Math.min(recoveryFrameStreak + 1, 600);
+                recoveryDurationMs = Math.min(recoveryDurationMs + clampedDeltaMs, 30000);
             } else {
                 recoveryFrameStreak = Math.max(recoveryFrameStreak - 2, 0);
+                recoveryDurationMs = Math.max(0, recoveryDurationMs - (clampedDeltaMs * 2));
             }
         }
 
@@ -2268,7 +2307,11 @@
             if (!effectsManager) return;
             const disableByProfile = activeEffectsProfileName === 'ultra';
             const disableByLoad = players.size >= (HIGH_POPULATION_PLAYER_COUNT + 30) || smoothedFrameMs > 30;
-            effectsManager.setParticlesEnabled(gameSettings.particleEffects && !disableByProfile && !disableByLoad);
+            const disableByRespawn =
+                RESPAWN_ANIMATION_LIGHTWEIGHT &&
+                !!localPlayerState &&
+                !localPlayerState.alive;
+            effectsManager.setParticlesEnabled(gameSettings.particleEffects && !disableByProfile && !disableByLoad && !disableByRespawn);
         }
 
         function getTargetEffectsProfileName() {
@@ -2311,7 +2354,15 @@
             const targetPriority = EFFECTS_PROFILE_PRIORITY[targetProfile] ?? 1;
             const isUpshift = targetPriority > currentPriority;
 
-            if (isUpshift && !TOURNAMENT_MODE_FORCED && recoveryFrameStreak < 90) {
+            if (
+                isUpshift &&
+                !TOURNAMENT_MODE_FORCED &&
+                (
+                    recoveryFrameStreak < 90 ||
+                    recoveryDurationMs < ULTRA_AUTO_RECOVERY_TRIGGER_MS ||
+                    smoothedFrameMs > ULTRA_DOWNSHIFT_MAX_FRAME_MS
+                )
+            ) {
                 return;
             }
 
@@ -2333,6 +2384,8 @@
                     targetResolution = DENSE_RENDER_RESOLUTION;
                 }
             } else if (ultraPerformanceMode) {
+                targetResolution = ULTRA_RENDER_RESOLUTION;
+            } else if (smoothedFrameMs > 34) {
                 targetResolution = ULTRA_RENDER_RESOLUTION;
             } else if (players.size >= HIGH_POPULATION_PLAYER_COUNT || smoothedFrameMs > 24) {
                 targetResolution = DENSE_RENDER_RESOLUTION;
@@ -2402,6 +2455,9 @@
             if (ultraPerformanceMode === next) return;
 
             ultraPerformanceMode = next;
+            if (ultraPerformanceMode) {
+                ultraModeEnteredAt = Date.now();
+            }
             refreshRuntimePerfIntervals();
 
             if (starfield) starfield.visible = !ultraPerformanceMode;
@@ -2420,6 +2476,7 @@
             }
             syncParticlesBudget();
             updateRenderResolutionBudget('perf mode');
+            drawWalls(true);
             if (minimap && typeof minimap.setPerformanceMode === 'function') {
                 if (ultraPerformanceMode) {
                     minimap.setPerformanceMode('ultra');
@@ -2451,13 +2508,22 @@
                 return;
             }
 
+            const playerCount = players.size;
+            const hasActiveMatchLoad = playerCount >= 4 || !!localPlayerState;
+            if (!ultraPerformanceMode && hasActiveMatchLoad && smoothedFrameMs >= ULTRA_EMERGENCY_FRAME_MS) {
+                setUltraPerformanceMode(true, `emergency ${smoothedFrameMs.toFixed(1)}ms`);
+                return;
+            }
+
             if (currentTime - lastPerfModeEvalTime < 1000) return;
             lastPerfModeEvalTime = currentTime;
             syncParticlesBudget();
 
-            const playerCount = players.size;
-            const hasActiveMatchLoad = playerCount >= 4 || !!localPlayerState;
-            if (!ultraPerformanceMode && hasActiveMatchLoad && lowFpsFrameStreak >= 80) {
+            if (
+                !ultraPerformanceMode &&
+                hasActiveMatchLoad &&
+                (lowFpsDurationMs >= ULTRA_AUTO_LOW_FPS_TRIGGER_MS || lowFpsFrameStreak >= 24)
+            ) {
                 setUltraPerformanceMode(true, `frame ${smoothedFrameMs.toFixed(1)}ms`);
                 return;
             }
@@ -2467,8 +2533,14 @@
             }
             if (
                 ultraPerformanceMode &&
+                ultraModeEnteredAt > 0 &&
+                (currentTime - ultraModeEnteredAt) >= ULTRA_MIN_HOLD_MS &&
                 playerCount <= ULTRA_AUTO_DOWNSHIFT_PLAYERS &&
-                recoveryFrameStreak >= 140
+                projectiles.size < PROJECTILE_RAW_MODE_SOFT_COUNT &&
+                recoveryFrameStreak >= 90 &&
+                recoveryDurationMs >= ULTRA_AUTO_RECOVERY_TRIGGER_MS &&
+                smoothedFrameMs <= ULTRA_DOWNSHIFT_MAX_FRAME_MS &&
+                lowFpsDurationMs <= ULTRA_DOWNSHIFT_MAX_LOW_FPS_MS
             ) {
                 setUltraPerformanceMode(false, `${playerCount} players / ${smoothedFrameMs.toFixed(1)}ms`);
             }
@@ -4856,7 +4928,15 @@ void main() {
                     return;
                 }
                 if (!localPlayerState.alive) {
-                    applyConnectionStatus('respawn', 'Awaiting respawn...');
+                    const respawnTimer = Number(localPlayerState.respawn_timer);
+                    if (Number.isFinite(respawnTimer) && respawnTimer > 0) {
+                        const respawnLabel = respawnTimer >= 1
+                            ? `${Math.ceil(respawnTimer)}s`
+                            : `${Math.max(0, respawnTimer).toFixed(1)}s`;
+                        applyConnectionStatus('respawn', `Respawning in ${respawnLabel}...`);
+                    } else {
+                        applyConnectionStatus('respawn', 'Respawning...');
+                    }
                     return;
                 }
                 applyConnectionStatus('playing');
@@ -5706,7 +5786,7 @@ void main() {
             -PLAYER_RADIUS * 0.3, PLAYER_RADIUS * 0.4,
             -PLAYER_RADIUS * 0.8, PLAYER_RADIUS * 0.8
         ];
-        const HIGH_POPULATION_PLAYER_COUNT = 80;
+        const HIGH_POPULATION_PLAYER_COUNT = 60;
         const FAR_DETAIL_DISTANCE_SQ = (STABLE_MODE_FORCED ? 1200 : 1800) * (STABLE_MODE_FORCED ? 1200 : 1800);
         const PLAYER_PRIORITY_DISTANCE_SQ = 900 * 900;
         const PROJECTILE_PRIORITY_DISTANCE_SQ = (STABLE_MODE_FORCED ? 520 : 760) * (STABLE_MODE_FORCED ? 520 : 760);
@@ -5721,17 +5801,17 @@ void main() {
         const PLAYER_CULL_MARGIN_WORLD = 240;
         const PROJECTILE_CULL_MARGIN_WORLD = 220;
         const PICKUP_CULL_MARGIN_WORLD = 160;
-        const PLAYER_RENDER_CAP_DEFAULT = 220;
-        const PLAYER_RENDER_CAP_STABLE = 140;
-        const PLAYER_RENDER_CAP_DENSE = 150;
-        const PLAYER_RENDER_CAP_ULTRA = 100;
-        const PROJECTILE_RENDER_CAP_DEFAULT = 1400;
-        const PROJECTILE_RENDER_CAP_STABLE = 700;
-        const PROJECTILE_RENDER_CAP_DENSE = 520;
-        const PROJECTILE_RENDER_CAP_ULTRA = 300;
-        const PROJECTILE_RENDER_CAP_ULTRA_SOFT = 240;
-        const PROJECTILE_RENDER_CAP_ULTRA_RECOVERY = 160;
-        const PROJECTILE_RENDER_CAP_ULTRA_EMERGENCY = 96;
+        const PLAYER_RENDER_CAP_DEFAULT = 128;
+        const PLAYER_RENDER_CAP_STABLE = 92;
+        const PLAYER_RENDER_CAP_DENSE = 72;
+        const PLAYER_RENDER_CAP_ULTRA = 52;
+        const PROJECTILE_RENDER_CAP_DEFAULT = 520;
+        const PROJECTILE_RENDER_CAP_STABLE = 280;
+        const PROJECTILE_RENDER_CAP_DENSE = 180;
+        const PROJECTILE_RENDER_CAP_ULTRA = 120;
+        const PROJECTILE_RENDER_CAP_ULTRA_SOFT = 96;
+        const PROJECTILE_RENDER_CAP_ULTRA_RECOVERY = 72;
+        const PROJECTILE_RENDER_CAP_ULTRA_EMERGENCY = 48;
         const PLAYER_LOD_MEDIUM_DISTANCE_SQ = 480 * 480;
         const PLAYER_LOD_LOW_DISTANCE_SQ = 860 * 860;
         const PLAYER_LOD_DOT_DISTANCE_SQ = 1260 * 1260;
@@ -5750,9 +5830,12 @@ void main() {
         const WEBGPU_FRAME_PRESSURE_MS = Number.isFinite(webgpuFramePressureParam)
             ? Math.max(14, Math.min(60, webgpuFramePressureParam))
             : (STABLE_MODE_FORCED ? 18.5 : 20);
-        const PROJECTILE_RAW_MODE_SOFT_COUNT = 320;
-        const PROJECTILE_RAW_MODE_HARD_COUNT = 480;
-        const PROJECTILE_RAW_MODE_FRAME_MS = 21;
+        const PROJECTILE_RAW_MODE_SOFT_COUNT = 160;
+        const PROJECTILE_RAW_MODE_HARD_COUNT = 260;
+        const PROJECTILE_RAW_MODE_FRAME_MS = 19;
+        const PROJECTILE_WORKER_CULL_GRACE_MS = STABLE_MODE_FORCED ? 420 : 320;
+        const WALL_REDRAW_MIN_INTERVAL_MS = STABLE_MODE_FORCED ? 220 : 120;
+        const WALL_REDRAW_MIN_INTERVAL_ULTRA_MS = STABLE_MODE_FORCED ? 320 : 200;
         const PICKUP_VISIBILITY_UPDATE_STRIDE = STABLE_MODE_FORCED ? 3 : 2;
         const TRANSFORM_EPSILON = 0.0001;
         const ALPHA_EPSILON = 0.002;
@@ -5779,11 +5862,15 @@ void main() {
         let cullWorkerResultSeq = 0;
         let lastCullWorkerDispatchTime = 0;
         let cullWorkerResult = null;
+        const projectileWorkerCullGraceUntil = new Map();
         let projectileRawModeActive = false;
         let webgpuProjectileInstanceScratch = new Float32Array(0);
         let webgpuPlayerInstanceScratch = new Float32Array(0);
         let webgpuProjectileRenderPathActive = false;
         let webgpuPlayerRenderPathActive = false;
+        let ultraModeEnteredAt = 0;
+        let lastWallRedrawAt = 0;
+        let pendingWallRedraw = false;
         const cullWorkerStats = {
             dispatches: 0,
             responses: 0,
@@ -5824,7 +5911,9 @@ void main() {
         const COMBAT_HITMARKER_MS = 130;
         const COMBAT_HEADSHOT_MARKER_MS = 280;
         const COMBAT_MEDAL_MS = 1250;
-        const DEATH_RECAP_MS = 5000;
+        const DEATH_RECAP_MS = 2500;
+        const RESPAWN_ANIMATION_LIGHTWEIGHT = true;
+        const RESPAWN_WORLD_TEXT_ENABLED = false;
         const OBJECTIVE_URGENCY_REFRESH_MS = 260;
         const COMBAT_MAX_DAMAGE_INDICATORS = 10;
         const COMBAT_VISIBLE_DAMAGE_INDICATORS = 4;
@@ -5899,6 +5988,7 @@ void main() {
         let mobileLastAdaptiveSizingAt = 0;
         let fireButtonTapCount = 0;
         let fireButtonTapWindowUntil = 0;
+        let respawnVisualSuppressionActive = false;
 
         // Client-side prediction state
         let inputSequence = 0;
@@ -6530,7 +6620,7 @@ void main() {
                     width: containerRect.width,
                     height: containerRect.height,
                     backgroundColor: 0x1a202c,
-                    antialias: !LOW_OVERHEAD_MODE,
+                    antialias: false,
                     resolution: currentRenderResolution,
                     autoDensity: true,
                     powerPreference: 'high-performance',
@@ -7002,7 +7092,7 @@ void main() {
         sprite.usernameText.text = player.username || 'Player';
     }
 
-    if (!player.alive && player.respawn_timer > 0) {
+    if (RESPAWN_WORLD_TEXT_ENABLED && !isLocalSprite && !player.alive && player.respawn_timer > 0) {
         if (!sprite.respawnText) {
             const respawnStyle = new PIXI.TextStyle({ fontSize: 14, fill: 0xFFFFFF, stroke: 0x000000, strokeThickness: 3, fontWeight: 'bold' });
             sprite.respawnText = new PIXI.Text('', respawnStyle);
@@ -7367,6 +7457,7 @@ function removeProjectileClientState(projectileId) {
     if (cullWorkerResult && cullWorkerResult.projectileSet) {
         cullWorkerResult.projectileSet.delete(projectileId);
     }
+    projectileWorkerCullGraceUntil.delete(projectileId);
 }
 
 
@@ -7920,25 +8011,40 @@ function updateStarfield(starfieldContainer, cameraX, cameraY, delta) {
     });
 }
 
-    function drawWalls() {
+    function drawWalls(force = false) {
+        if (!wallGraphics) return;
+
+        const now = Date.now();
+        const minRedrawIntervalMs = ultraPerformanceMode
+            ? WALL_REDRAW_MIN_INTERVAL_ULTRA_MS
+            : WALL_REDRAW_MIN_INTERVAL_MS;
+        if (!force && (now - lastWallRedrawAt) < minRedrawIntervalMs) {
+            pendingWallRedraw = true;
+            return;
+        }
+        pendingWallRedraw = false;
+        lastWallRedrawAt = now;
+
         wallGraphics.clear();
         const debugChildren = wallGraphics.removeChildren();
-        debugChildren.forEach(child => child.destroy?.());
-        
-        // Debug mode: Show destroyed wall boundaries
-        const showDestroyedWallDebug = gameSettings.showDestroyedWallDebug;
-        
+        debugChildren.forEach((child) => child.destroy?.());
+
+        const showDestroyedWallDebug = !!gameSettings.showDestroyedWallDebug;
+        const simplifiedWallRender = !showDestroyedWallDebug && (
+            ultraPerformanceMode ||
+            STABLE_MODE_FORCED ||
+            smoothedFrameMs >= 22 ||
+            walls.size >= 72
+        );
+
         if (showDestroyedWallDebug) {
-            // Draw destroyed walls with red outline
-            walls.forEach(wall => {
+            walls.forEach((wall) => {
                 if (wall.is_destructible && wall.current_health <= 0) {
-                    // Draw collision boundary in red
                     wallGraphics.lineStyle(2, 0xFF0000, 0.5);
                     wallGraphics.beginFill(0xFF0000, 0.1);
                     wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
                     wallGraphics.endFill();
-                    
-                    // Add "DESTROYED" text
+
                     const text = new PIXI.Text('DESTROYED', {
                         fontSize: 10,
                         fill: 0xFF0000,
@@ -7951,12 +8057,36 @@ function updateStarfield(starfieldContainer, cameraX, cameraY, delta) {
                 }
             });
         }
-        
-        // First pass: Draw wall shadows
-        walls.forEach(wall => {
+
+        if (simplifiedWallRender) {
+            walls.forEach((wall) => {
+                if (wall.is_destructible && wall.current_health <= 0) return;
+
+                let wallColor = 0x374151;
+                let wallAlpha = 0.9;
+                if (wall.is_destructible) {
+                    const healthPercent = Math.max(0, Math.min(1, wall.current_health / Math.max(1, wall.max_health)));
+                    wallAlpha = 0.62 + (healthPercent * 0.28);
+                    wallColor = healthPercent > 0.5
+                        ? interpolateColor(0x4B5563, 0x374151, (healthPercent - 0.5) * 2)
+                        : interpolateColor(0xBF616A, 0x4B5563, healthPercent * 2);
+                }
+                wallGraphics.beginFill(wallColor, wallAlpha);
+                wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+                wallGraphics.endFill();
+
+                wallGraphics.lineStyle(1, mixColors(wallColor, 0x000000, 0.35), Math.min(1, wallAlpha + 0.1));
+                wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+            });
+
+            minimapWallsCacheDirty = true;
+            if (minimap) minimap.wallsNeedUpdate = true;
+            return;
+        }
+
+        walls.forEach((wall) => {
             if (wall.is_destructible && wall.current_health <= 0) return;
-            
-            // Layered soft shadow with global light direction.
+
             const shadowX = GLOBAL_LIGHT_DIR.x;
             const shadowY = GLOBAL_LIGHT_DIR.y;
             wallGraphics.beginFill(0x000000, 0.22);
@@ -7977,76 +8107,64 @@ function updateStarfield(starfieldContainer, cameraX, cameraY, delta) {
             );
             wallGraphics.endFill();
         });
-        
-        // Second pass: Draw walls
-        walls.forEach(wall => {
-            // Skip destroyed walls (health = 0) unless in debug mode
-            if (wall.is_destructible && wall.current_health <= 0 && !gameSettings.showDestroyedWallDebug) return;
 
-        let wallColor = 0x374151;
-        let wallAlpha = 1.0;
+        walls.forEach((wall) => {
+            if (wall.is_destructible && wall.current_health <= 0 && !showDestroyedWallDebug) return;
 
-        if (wall.is_destructible) {
-            const healthPercent = wall.current_health / wall.max_health;
-            wallAlpha = 0.6 + healthPercent * 0.4;
-            
-            // Color transitions from gray to red as health decreases
-            if (healthPercent > 0.5) {
-                wallColor = interpolateColor(0x4B5563, 0x374151, (healthPercent - 0.5) * 2);
+            let wallColor = 0x374151;
+            let wallAlpha = 1.0;
+
+            if (wall.is_destructible) {
+                const healthPercent = wall.current_health / Math.max(1, wall.max_health);
+                wallAlpha = 0.6 + healthPercent * 0.4;
+                if (healthPercent > 0.5) {
+                    wallColor = interpolateColor(0x4B5563, 0x374151, (healthPercent - 0.5) * 2);
+                } else {
+                    wallColor = interpolateColor(0xBF616A, 0x4B5563, healthPercent * 2);
+                }
+
+                wallGraphics.beginFill(wallColor, wallAlpha * 0.9);
+                wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+                wallGraphics.endFill();
+
+                wallGraphics.lineStyle(1, mixColors(wallColor, 0x000000, 0.3), wallAlpha * 0.5);
+                const lineSpacing = 10;
+                for (let i = wall.x + lineSpacing; i < wall.x + wall.width; i += lineSpacing) {
+                    wallGraphics.moveTo(i, wall.y);
+                    wallGraphics.lineTo(i, wall.y + wall.height);
+                }
+
+                if (healthPercent < 0.8) {
+                    drawEnhancedWallCracks(wall, healthPercent);
+                }
+
+                if (healthPercent < 0.3) {
+                    wallGraphics.lineStyle(2, 0xFF6B6B, (1 - healthPercent) * 0.5);
+                    wallGraphics.drawRect(wall.x - 1, wall.y - 1, wall.width + 2, wall.height + 2);
+                }
             } else {
-                wallColor = interpolateColor(0xBF616A, 0x4B5563, healthPercent * 2);
+                wallGraphics.beginFill(wallColor);
+                wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+                wallGraphics.endFill();
+
+                wallGraphics.lineStyle(1, mixColors(wallColor, 0xFFFFFF, 0.1), 0.5);
+                wallGraphics.moveTo(wall.x, wall.y + wall.height);
+                wallGraphics.lineTo(wall.x, wall.y);
+                wallGraphics.lineTo(wall.x + wall.width, wall.y);
+
+                wallGraphics.lineStyle(1, mixColors(wallColor, 0x000000, 0.3), 0.5);
+                wallGraphics.moveTo(wall.x + wall.width, wall.y);
+                wallGraphics.lineTo(wall.x + wall.width, wall.y + wall.height);
+                wallGraphics.lineTo(wall.x, wall.y + wall.height);
             }
 
-            // Main wall fill with texture-like pattern
-            wallGraphics.beginFill(wallColor, wallAlpha * 0.9);
+            wallGraphics.lineStyle(2, mixColors(wallColor, 0x000000, 0.4), wallAlpha);
             wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
-            wallGraphics.endFill();
-            
-            // Add subtle texture lines
-            wallGraphics.lineStyle(1, mixColors(wallColor, 0x000000, 0.3), wallAlpha * 0.5);
-            const lineSpacing = 10;
-            for (let i = wall.x + lineSpacing; i < wall.x + wall.width; i += lineSpacing) {
-                wallGraphics.moveTo(i, wall.y);
-                wallGraphics.lineTo(i, wall.y + wall.height);
-            }
-            
-            // Draw damage/cracks if health is low
-            if (healthPercent < 0.8) {
-                drawEnhancedWallCracks(wall, healthPercent);
-            }
-            
-            // Warning glow for very damaged walls
-            if (healthPercent < 0.3) {
-                wallGraphics.lineStyle(2, 0xFF6B6B, (1 - healthPercent) * 0.5);
-                wallGraphics.drawRect(wall.x - 1, wall.y - 1, wall.width + 2, wall.height + 2);
-            }
-        } else {
-            // Non-destructible walls with enhanced appearance
-            // Base fill
-            wallGraphics.beginFill(wallColor);
-            wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
-            wallGraphics.endFill();
-            
-            // Bevel effect for depth
-            wallGraphics.lineStyle(1, mixColors(wallColor, 0xFFFFFF, 0.1), 0.5);
-            wallGraphics.moveTo(wall.x, wall.y + wall.height);
-            wallGraphics.lineTo(wall.x, wall.y);
-            wallGraphics.lineTo(wall.x + wall.width, wall.y);
-            
-            wallGraphics.lineStyle(1, mixColors(wallColor, 0x000000, 0.3), 0.5);
-            wallGraphics.moveTo(wall.x + wall.width, wall.y);
-            wallGraphics.lineTo(wall.x + wall.width, wall.y + wall.height);
-            wallGraphics.lineTo(wall.x, wall.y + wall.height);
-        }
+        });
 
-        // Main border
-        wallGraphics.lineStyle(2, mixColors(wallColor, 0x000000, 0.4), wallAlpha);
-        wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
-    });
-    
-    minimapWallsCacheDirty = true;
-    if (minimap) minimap.wallsNeedUpdate = true;
-}
+        minimapWallsCacheDirty = true;
+        if (minimap) minimap.wallsNeedUpdate = true;
+    }
 
 function applyScreenShake(container, duration, magnitude) {
     let shakeTime = duration;
@@ -8406,6 +8524,21 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             const currentTime = Date.now();
             frameNowMs = currentTime;
             frameCounter += 1;
+            const localRespawning =
+                RESPAWN_ANIMATION_LIGHTWEIGHT &&
+                !!localPlayerState &&
+                !localPlayerState.alive;
+            if (localRespawning && !respawnVisualSuppressionActive) {
+                respawnVisualSuppressionActive = true;
+                if (effectsManager) effectsManager.clearAllEffects();
+                if (deathRecapDiv) deathRecapDiv.classList.remove('death-recap--visible');
+                if (combatBannerDiv) combatBannerDiv.classList.remove('combat-banner--visible');
+                if (objectiveUrgencyDiv) objectiveUrgencyDiv.classList.remove('objective-urgency--visible');
+                clearDamageDirectionIndicators();
+            } else if (!localRespawning && respawnVisualSuppressionActive) {
+                respawnVisualSuppressionActive = false;
+                syncParticlesBudget();
+            }
             updateFramePerformanceSignals(app.ticker.deltaMS);
             evaluateUltraPerformanceMode(currentTime);
             evaluateAdaptiveEffectsProfile(currentTime);
@@ -8592,6 +8725,9 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             } else {
                 updateSprites();
             }
+            if (pendingWallRedraw) {
+                drawWalls();
+            }
             if (perfEnabled) {
                 const t = perfStart();
                 updateCamera();
@@ -8672,7 +8808,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 }
             }
 
-            if (!backgroundThrottleActive && effectsManager && currentTime - lastEffectsUpdateTime >= EFFECTS_UPDATE_INTERVAL_MS) {
+            if (!backgroundThrottleActive && effectsManager && !localRespawning && currentTime - lastEffectsUpdateTime >= EFFECTS_UPDATE_INTERVAL_MS) {
                 lastEffectsUpdateTime = currentTime;
                 if (perfEnabled) {
                     const t = perfStart();
@@ -8682,7 +8818,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     effectsManager.update(app.ticker.deltaMS);
                 }
             }
-            if (!backgroundThrottleActive && !BENCH_MODE && minimap && localPlayerState && (currentTime - lastMinimapUpdateTime >= MINIMAP_UPDATE_INTERVAL_MS)) {
+            if (!backgroundThrottleActive && !BENCH_MODE && !localRespawning && minimap && localPlayerState && (currentTime - lastMinimapUpdateTime >= MINIMAP_UPDATE_INTERVAL_MS)) {
                 lastMinimapUpdateTime = currentTime;
                 if (typeof minimap.setPerformanceMode === 'function') {
                     if (ultraPerformanceMode) {
@@ -8767,18 +8903,19 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     window.__e2e.perfReport = perfReport;
                     window.__e2e.perfReportGeneratedAt = performance.now();
                 }
-
-                const consoleTableData = {};
-                perfReport.rankedPhases.slice(0, 12).forEach((phase) => {
-                    consoleTableData[phase.name] = {
-                        avgMs: phase.avgMs,
-                        maxMs: phase.maxMs,
-                        calls: phase.calls,
-                        dutyCyclePct: phase.dutyCyclePct,
-                        sharePct: phase.sharePct,
-                    };
-                });
-                console.table(consoleTableData);
+                if (PERF_CONSOLE_OUTPUT_ENABLED) {
+                    const consoleTableData = {};
+                    perfReport.rankedPhases.slice(0, 12).forEach((phase) => {
+                        consoleTableData[phase.name] = {
+                            avgMs: phase.avgMs,
+                            maxMs: phase.maxMs,
+                            calls: phase.calls,
+                            dutyCyclePct: phase.dutyCyclePct,
+                            sharePct: phase.sharePct,
+                        };
+                    });
+                    console.table(consoleTableData);
+                }
             }
             
             // Debug: expensive wall diagnostics are opt-in.
@@ -9209,7 +9346,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 }
             }
 
-            for (const [playerId, playerEntry] of players) {
+            const processPlayerCandidate = (playerId, playerEntry) => {
                 const player = (playerId === myPlayerId && localPlayerState) ? localPlayerState : playerEntry;
                 const isLocal = playerId === myPlayerId;
                 const px = player.render_x !== undefined ? player.render_x : player.x;
@@ -9230,7 +9367,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     if (workerPlayerSet) {
                         if (!workerPlayerSet.has(playerId)) {
                             if (sprite) hidePlayerSprite(sprite);
-                            continue;
+                            return;
                         }
                     } else {
                         const inView =
@@ -9240,7 +9377,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             py <= playerCullBottom;
                         if (!inView) {
                             if (sprite) hidePlayerSprite(sprite);
-                            continue;
+                            return;
                         }
 
                         const allowedRemoteCount = isPriorityPlayer
@@ -9248,19 +9385,19 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             : remoteRenderCap;
                         if (renderedRemotePlayers >= allowedRemoteCount) {
                             if (sprite) hidePlayerSprite(sprite);
-                            continue;
+                            return;
                         }
                         renderedRemotePlayers += 1;
                     }
                     if (workerPlayerSet && !player.alive && player.respawn_timer <= 0) {
                         if (sprite) hidePlayerSprite(sprite);
-                        continue;
+                        return;
                     }
 
                     const remoteVisibleState = player.alive || (player.respawn_timer !== undefined && player.respawn_timer > 0);
                     if (!remoteVisibleState) {
                         if (sprite) hidePlayerSprite(sprite);
-                        continue;
+                        return;
                     }
 
                     if (!useWebGPUPlayers && remotePlayerUpdateStride > 1 && !isPriorityPlayer && sprite) {
@@ -9274,7 +9411,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             if (!sprite.visible) sprite.visible = true;
                             countLodTier(playerLodSummary, playerLodTier);
                             visiblePlayers += 1;
-                            continue;
+                            return;
                         }
                     }
 
@@ -9289,7 +9426,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             py
                         );
                         visiblePlayers += 1;
-                        continue;
+                        return;
                     }
                 }
                 if (!sprite) {
@@ -9306,6 +9443,30 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 if (sprite.visible) {
                     countLodTier(playerLodSummary, playerLodTier);
                     visiblePlayers += 1;
+                }
+            };
+
+            const iteratePlayersWithWorkerSet = !!(workerPlayerSet && workerPlayerSet.size > 0);
+            if (iteratePlayersWithWorkerSet) {
+                if (myPlayerId && players.has(myPlayerId)) {
+                    processPlayerCandidate(myPlayerId, players.get(myPlayerId));
+                }
+                workerPlayerSet.forEach((playerId) => {
+                    if (playerId === myPlayerId) return;
+                    const playerEntry = players.get(playerId);
+                    if (!playerEntry) return;
+                    processPlayerCandidate(playerId, playerEntry);
+                });
+                for (const [playerId, sprite] of playerSprites) {
+                    if (playerId === myPlayerId) continue;
+                    if (!players.has(playerId)) continue;
+                    if (!workerPlayerSet.has(playerId)) {
+                        hidePlayerSprite(sprite);
+                    }
+                }
+            } else {
+                for (const [playerId, playerEntry] of players) {
+                    processPlayerCandidate(playerId, playerEntry);
                 }
             }
             lastVisiblePlayers = visiblePlayers;
@@ -9393,6 +9554,10 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             let projectileInstanceOffset = 0;
             const projectileLodSummary = createLodSummaryCounter();
             const projectileDotCullStride = getProjectileDotCullStride();
+            const workerProjectileCullGraceMs = Math.max(
+                PROJECTILE_WORKER_CULL_GRACE_MS,
+                getWorkerCullDispatchIntervalMs() * 3
+            );
             if (useWebGPUProjectiles) {
                 const projectedCount = workerProjectileSet
                     ? Math.min(projectiles.size, Math.max(projectileRenderCap, workerProjectileSet.size))
@@ -9408,7 +9573,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 }
             }
             let visibleProjectiles = 0;
-            for (const [projectileId, projectile] of projectiles) {
+            const processProjectileCandidate = (projectileId, projectile) => {
                 let sprite = projectileSprites.get(projectileId);
                 const px =
                     Number.isFinite(projectile.render_x) ? projectile.render_x : projectile.x;
@@ -9435,31 +9600,46 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     if (sprite && !useWebGPUProjectiles) {
                         sprite.visible = false;
                     }
-                    continue;
+                    return;
                 }
 
                 if (workerProjectileSet) {
-                    if (!workerProjectileSet.has(projectileId)) {
-                        if (sprite && !useWebGPUProjectiles) {
-                            sprite.visible = false;
+                    const selectedByWorker = workerProjectileSet.has(projectileId);
+                    if (selectedByWorker) {
+                        projectileWorkerCullGraceUntil.set(projectileId, frameNowMs + workerProjectileCullGraceMs);
+                    } else {
+                        const graceUntilMs = projectileWorkerCullGraceUntil.get(projectileId) || 0;
+                        const withinCullGrace = graceUntilMs > frameNowMs;
+                        if (!withinCullGrace && !isPriorityProjectile) {
+                            if (sprite && !useWebGPUProjectiles) {
+                                sprite.visible = false;
+                            }
+                            return;
                         }
-                        continue;
                     }
                 } else if (visibleProjectiles >= projectileRenderCap) {
                     if (sprite && !useWebGPUProjectiles) {
                         sprite.visible = false;
                     }
-                    continue;
+                    return;
                 }
                 if (
                     projectileLodTier === 'dot' &&
                     !isPriorityProjectile &&
+                    !useWebGPUProjectiles &&
                     ((frameCounter + getEntityCadenceBucket(projectileId)) % projectileDotCullStride) !== 0
                 ) {
-                    if (sprite && !useWebGPUProjectiles) {
-                        sprite.visible = false;
+                    if (sprite) {
+                        if (sprite.position.x !== px) sprite.position.x = px;
+                        if (sprite.position.y !== py) sprite.position.y = py;
+                        if (!sprite.visible) sprite.visible = true;
+                        if (Math.abs(sprite.alpha - 0.58) > ALPHA_EPSILON) {
+                            sprite.alpha = 0.58;
+                        }
+                        countLodTier(projectileLodSummary, projectileLodTier);
+                        visibleProjectiles += 1;
                     }
-                    continue;
+                    return;
                 }
                 projectile._renderLodTier = projectileLodTier;
 
@@ -9473,7 +9653,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         py
                     );
                     visibleProjectiles += 1;
-                    continue;
+                    return;
                 }
 
                 if (!sprite) {
@@ -9491,7 +9671,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             if (!sprite.visible) sprite.visible = true;
                             countLodTier(projectileLodSummary, projectileLodTier);
                             visibleProjectiles += 1;
-                            continue;
+                            return;
                         }
                     }
                 }
@@ -9508,6 +9688,43 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 ) {
                     countLodTier(projectileLodSummary, projectileLodTier);
                     visibleProjectiles += 1;
+                }
+            };
+
+            const iterateProjectilesWithWorkerSet = !!(workerProjectileSet && workerProjectileSet.size > 0);
+            if (iterateProjectilesWithWorkerSet) {
+                workerProjectileSet.forEach((projectileId) => {
+                    const projectile = projectiles.get(projectileId);
+                    if (!projectile) return;
+                    processProjectileCandidate(projectileId, projectile);
+                });
+                projectileWorkerCullGraceUntil.forEach((graceUntilMs, projectileId) => {
+                    if (workerProjectileSet.has(projectileId)) return;
+                    if (graceUntilMs <= frameNowMs) {
+                        projectileWorkerCullGraceUntil.delete(projectileId);
+                        return;
+                    }
+                    const projectile = projectiles.get(projectileId);
+                    if (!projectile) {
+                        projectileWorkerCullGraceUntil.delete(projectileId);
+                        return;
+                    }
+                    processProjectileCandidate(projectileId, projectile);
+                });
+                if (!useWebGPUProjectiles) {
+                    for (const [projectileId, sprite] of projectileSprites) {
+                        if (!projectiles.has(projectileId)) continue;
+                        if (workerProjectileSet.has(projectileId)) continue;
+                        const graceUntilMs = projectileWorkerCullGraceUntil.get(projectileId) || 0;
+                        if (graceUntilMs > frameNowMs) continue;
+                        if (sprite && !useWebGPUProjectiles) {
+                            sprite.visible = false;
+                        }
+                    }
+                }
+            } else {
+                for (const [projectileId, projectile] of projectiles) {
+                    processProjectileCandidate(projectileId, projectile);
                 }
             }
             lastVisibleProjectiles = visibleProjectiles;
@@ -9552,6 +9769,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 projectileContainer.removeChild(sprite);
                 releaseProjectileSprite(sprite);
                 projectileSprites.delete(projectileId);
+                projectileWorkerCullGraceUntil.delete(projectileId);
             }
 
             // Update pickup sprites
@@ -9925,9 +10143,15 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             // Process game events
             if (messageData.game_events && effectsManager) {
-                const gameEvents = messageData.game_events;
-                for (let i = 0; i < gameEvents.length; i += 1) {
-                    effectsManager.processGameEvent(gameEvents[i]);
+                const suppressRespawnEventEffects =
+                    RESPAWN_ANIMATION_LIGHTWEIGHT &&
+                    !!localPlayerState &&
+                    !localPlayerState.alive;
+                if (!suppressRespawnEventEffects) {
+                    const gameEvents = messageData.game_events;
+                    for (let i = 0; i < gameEvents.length; i += 1) {
+                        effectsManager.processGameEvent(gameEvents[i]);
+                    }
                 }
             }
 
@@ -11663,6 +11887,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         }
 
         function showDeathRecap(entry) {
+            if (RESPAWN_ANIMATION_LIGHTWEIGHT) return;
             if (!deathRecapDiv || !deathRecapMainDiv || !deathRecapDistanceDiv || !deathRecapListDiv) return;
             const killerName = entry?.killer_name || 'Unknown';
             const weaponLabel = weaponNames[entry?.weapon] || 'Unknown';
@@ -11828,9 +12053,11 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 combatUiState.comboExpiresAt = 0;
                 combatUiState.damagePulse = Math.min(1, combatUiState.damagePulse + 0.75);
                 combatUiState.momentum = Math.max(0, combatUiState.momentum - 0.16);
-                showCombatBanner('Downed', 'death', 1100);
-                showDeathRecap(entry);
-                triggerHaptic([20, 20, 16]);
+                if (!RESPAWN_ANIMATION_LIGHTWEIGHT) {
+                    showCombatBanner('Downed', 'death', 1100);
+                    showDeathRecap(entry);
+                    triggerHaptic([20, 20, 16]);
+                }
             });
         }
 
@@ -11855,7 +12082,12 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 return;
             }
 
-            if (!myPlayerId || !localPlayerState || ultraPerformanceMode) {
+            if (
+                !myPlayerId ||
+                !localPlayerState ||
+                ultraPerformanceMode ||
+                (RESPAWN_ANIMATION_LIGHTWEIGHT && !localPlayerState.alive)
+            ) {
                 damageFlashLayerDiv.style.opacity = '0';
                 speedLinesLayerDiv.style.opacity = '0';
                 combatMomentumFillDiv.style.transform = 'scaleX(0)';
@@ -11942,8 +12174,12 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 ? clamp(combatUiState.speedPulse * 0.56 + momentumValue * 0.18, 0, 0.78)
                 : 0;
             damageFlashLayerDiv.style.opacity = damageOpacity.toFixed(3);
-            speedLinesLayerDiv.style.opacity = speedOpacity.toFixed(3);
-            speedLinesLayerDiv.style.transform = `translate3d(0, ${((currentTime * 0.2) % 160).toFixed(1)}px, 0)`;
+            if (COMBAT_SPEED_LINES_ENABLED) {
+                speedLinesLayerDiv.style.opacity = speedOpacity.toFixed(3);
+                speedLinesLayerDiv.style.transform = `translate3d(0, ${((currentTime * 0.2) % 160).toFixed(1)}px, 0)`;
+            } else if (speedLinesLayerDiv.style.opacity !== '0') {
+                speedLinesLayerDiv.style.opacity = '0';
+            }
 
             const bannerVisible = combatUiState.bannerUntilMs > currentTime;
             combatBannerDiv.classList.toggle('combat-banner--visible', bannerVisible);
@@ -12237,7 +12473,12 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             switch (matchInfo.match_state) {
                 case GP.MatchStateType.Waiting:
-                    content += `<div class="text-yellow-400">Waiting for players... (${players.size}/${MIN_PLAYERS_TO_START})</div>`;
+                    const waitingPlayerCount = Math.max(players.size, localPlayerState ? 1 : 0);
+                    if (waitingPlayerCount >= MIN_PLAYERS_TO_START) {
+                        content += `<div class="text-yellow-300">Match is initializing...</div>`;
+                    } else {
+                        content += `<div class="text-yellow-400">Waiting for players... (${waitingPlayerCount}/${MIN_PLAYERS_TO_START})</div>`;
+                    }
                     break;
                 case GP.MatchStateType.Active:
                     const minutes = Math.floor(matchInfo.time_remaining / 60);
@@ -12626,6 +12867,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 gameSettings = { ...gameSettings, ...JSON.parse(storedSettings) };
                 log('Settings loaded from localStorage.', 'info');
             }
+            gameSettings.showDestroyedWallDebug = false;
             gameSettings.combatUiQuality = normalizeCombatUiQuality(gameSettings.combatUiQuality);
             applyMobilePresetSettings();
             applyTournamentPresetSettings();
@@ -12946,6 +13188,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             localPlayerState = null;
             players.clear();
             projectiles.clear();
+            projectileWorkerCullGraceUntil.clear();
             syntheticProjectileCount = 0;
             lastVisiblePlayers = 0;
             lastPlayerRenderCap = PLAYER_RENDER_CAP_DEFAULT;
@@ -13027,6 +13270,14 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             lastPlayerLodSummary = { full: 0, medium: 0, low: 0, dot: 0 };
             lastProjectileLodSummary = { full: 0, medium: 0, low: 0, dot: 0 };
             lastRenderLodScale = 1;
+            smoothedFrameMs = 16.67;
+            lowFpsFrameStreak = 0;
+            recoveryFrameStreak = 0;
+            lowFpsDurationMs = 0;
+            recoveryDurationMs = 0;
+            ultraModeEnteredAt = 0;
+            lastWallRedrawAt = 0;
+            pendingWallRedraw = false;
             if (window.__e2e) {
                 window.__e2e.matchInfoReady = false;
                 window.__e2e.playerCount = 0;
@@ -16161,7 +16412,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             width,
             height,
             backgroundColor: 0x0F172A,
-            antialias: true,
+            antialias: false,
             resolution: 1
         });
         this.width = width;

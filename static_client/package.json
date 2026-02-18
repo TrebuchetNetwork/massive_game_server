@@ -1,0 +1,13 @@
+{
+  "name": "massive-game-server-client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build:ts-client": "tsc -p tsconfig.client.json",
+    "check:ts-client": "tsc -p tsconfig.client.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
