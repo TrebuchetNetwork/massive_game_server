@@ -1,12 +1,16 @@
 /**
- * Main index file for client logic modules
- * Exports all classes and shared utilities
+ * Active barrel module for client logic used by static_client/client.html.
  */
 
-export { EffectsManager } from './EffectsManager.js';
-export { AudioManager } from './AudioManager.js';
-export { Minimap } from './Minimap.js';
-export { NetworkIndicator } from './NetworkIndicator.js';
-
-// Re-export shared utilities
-export * from './utils.js';
+export { Minimap, NetworkIndicator } from './ui_widgets.js';
+export { buildRuntimeConfig } from './runtime_config.js';
+export {
+    buildPeerConnectionConfig,
+    getDefaultWsUrl,
+    normalizeSignalingUrl,
+    summarizeSignalingError,
+} from './networking_utils.js';
+export { clamp, lerp, normalizeAngle, smoothFollowGain } from './math_utils.js';
+export { createAuthHelpers } from './auth_utils.js';
+export { createReconnectHelpers } from './reconnect_utils.js';
+export { createAcceleratedLayerRuntime } from './accelerated_layers.js';
