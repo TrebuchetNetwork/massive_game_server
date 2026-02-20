@@ -478,7 +478,7 @@ Defending bots marked "stuck" after 2s
 
 ### Sprint 3 (Weeks 4-5): client.html Modularization
 **Agents:** G, H, I, J, K
-- [ ] Extract CSS and JS modules *(CSS extracted; `ui_widgets.js`, `runtime_config.js`, `networking_utils.js`, `math_utils.js`, `auth_utils.js`, `reconnect_utils.js`, and `accelerated_layers.js` extracted; additional JS extraction in progress)*
+- [x] Extract CSS and JS modules *(CSS extracted; JS extracted to `ui_widgets.js`, `runtime_config.js`, `networking_utils.js`, `math_utils.js`, `auth_utils.js`, `reconnect_utils.js`, `accelerated_layers.js`, and `effects_audio_runtime.js`)*
 - [x] Implement ES6 module structure *(client now imports core logic via `client_logic/index.js` barrel exports)*
 - [x] Test all client functionality *(validated with `scripts/validate_ui.sh`: UI surface audit + `connect.spec.js` + `runtime.spec.js`)*
 
@@ -497,11 +497,11 @@ Defending bots marked "stuck" after 2s
 |-------|-------------|------|-----------|
 | Sprint 1 (Critical Fixes) | 3 | 3 | 0 |
 | Sprint 2 (instance.rs Modularization) | 3 | 3 | 0 |
-| Sprint 3 (client.html Modularization) | 3 | 2 | 1 |
+| Sprint 3 (client.html Modularization) | 3 | 3 | 0 |
 | Sprint 4 (High Priority Polish) | 4 | 4 | 0 |
-| **Total** | **13** | **12** | **1** |
+| **Total** | **13** | **13** | **0** |
 
-**Completion Rate (sprint checklist):** 92.3%
+**Completion Rate (sprint checklist):** 100%
 
 ---
 

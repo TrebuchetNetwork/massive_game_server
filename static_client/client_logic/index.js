@@ -14,3 +14,4 @@ export { clamp, lerp, normalizeAngle, smoothFollowGain } from './math_utils.js';
 export { createAuthHelpers } from './auth_utils.js';
 export { createReconnectHelpers } from './reconnect_utils.js';
 export { createAcceleratedLayerRuntime } from './accelerated_layers.js';
+export { createEffectsAudioRuntime } from './effects_audio_runtime.js';
