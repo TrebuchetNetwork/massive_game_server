@@ -56,6 +56,18 @@ fn describe_metrics_catalog() {
         "Active WebSocket signaling connections"
     );
     describe_counter!(
+        "game_webrtc_peer_state_transitions_total",
+        "PeerConnection state transitions by state"
+    );
+    describe_gauge!(
+        "game_webrtc_peers_in_state",
+        "Current number of peers in each RTCPeerConnection state"
+    );
+    describe_histogram!(
+        "game_connection_rtt_ms",
+        "Reported transport round-trip time in milliseconds"
+    );
+    describe_counter!(
         "game_auth_attempts_total",
         "Authentication attempts by stage and result"
     );
@@ -154,6 +166,27 @@ pub fn set_ws_connections_active(count: usize) {
         return;
     }
     gauge!("game_ws_connections_active").set(count as f64);
+}
+
+pub fn record_webrtc_peer_state_transition(state: &'static str) {
+    if !enabled() {
+        return;
+    }
+    counter!("game_webrtc_peer_state_transitions_total", "state" => state).increment(1);
+}
+
+pub fn set_webrtc_peers_in_state(state: &'static str, count: usize) {
+    if !enabled() {
+        return;
+    }
+    gauge!("game_webrtc_peers_in_state", "state" => state).set(count as f64);
+}
+
+pub fn record_connection_rtt_ms(transport: &'static str, rtt_ms: f64) {
+    if !enabled() {
+        return;
+    }
+    histogram!("game_connection_rtt_ms", "transport" => transport).record(rtt_ms.max(0.0));
 }
 
 pub fn record_auth_attempt(stage: &'static str, result: &'static str) {

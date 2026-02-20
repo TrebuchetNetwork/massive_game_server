@@ -3,6 +3,7 @@
 use crate::network::connection_manager::{
     shared_connection_manager, ConnectionInfo, TransportKind,
 };
+use crate::operational::monitoring::metrics;
 use crate::operational::monitoring::tracing as monitoring_tracing;
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
@@ -119,13 +120,23 @@ pub fn send_quic_packet_batch(peer_id: &str, packets: &[Bytes]) -> usize {
 }
 
 pub fn quic_enabled() -> bool {
-    std::env::var("MGS_QUIC_PRIMARY")
+    env_flag("MGS_QUIC_PRIMARY")
+}
+
+fn env_flag(var_name: &str) -> bool {
+    std::env::var(var_name)
         .ok()
         .map(|raw| {
             let normalized = raw.trim().to_ascii_lowercase();
             normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
         })
         .unwrap_or(false)
+}
+
+fn allow_self_signed_quic_identity_fallback() -> bool {
+    cfg!(debug_assertions)
+        || env_flag("MGS_QUIC_ALLOW_SELF_SIGNED_FALLBACK")
+        || env_flag("QUIC_ALLOW_SELF_SIGNED_FALLBACK")
 }
 
 pub fn validate_quic_config(config: &QuicEndpointConfig) -> Result<()> {
@@ -149,6 +160,17 @@ pub fn start_quic_runtime(
     {
         Some(identity) => identity,
         None => {
+            if !allow_self_signed_quic_identity_fallback() {
+                return Err(anyhow!(
+                    "QUIC certificates are required in this build. Set MGS_QUIC_CERT_PATH and \
+                     MGS_QUIC_KEY_PATH, or explicitly allow fallback with \
+                     MGS_QUIC_ALLOW_SELF_SIGNED_FALLBACK=1 for non-production usage."
+                ));
+            }
+            warn!(
+                "QUIC identity files were not configured; falling back to a self-signed certificate. \
+                 This should only be used in local/dev environments."
+            );
             let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
                 .context("failed to generate self-signed QUIC certificate")?;
             let cert_der = certified_key.cert.der().to_vec();
@@ -365,6 +387,7 @@ fn maybe_register_quic_peer(
     shared_connection_manager().touch(peer_id);
     if let Some(rtt) = envelope.smoothed_rtt_ms {
         shared_connection_manager().set_rtt_ms(peer_id, rtt);
+        metrics::record_connection_rtt_ms("quic", rtt as f64);
     }
 }
 

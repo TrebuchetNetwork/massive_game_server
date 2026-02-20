@@ -66,9 +66,19 @@ pub struct ChatMessage {
 pub type ChatMessagesQueue = Arc<RwLock<VecDeque<ChatMessage>>>;
 static NEXT_CHAT_MESSAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 static SHARED_WEBRTC_API: OnceLock<Result<Arc<API>, String>> = OnceLock::new();
+static WEBRTC_PEER_STATES: OnceLock<DashMap<String, &'static str>> = OnceLock::new();
 const MAX_CHAT_MESSAGE_CHARS: usize = 160;
 const MAX_CHAT_USERNAME_CHARS: usize = 32;
 const CHAT_HISTORY_LIMIT: usize = 50;
+const WEBRTC_STATE_LABELS: [&str; 7] = [
+    "new",
+    "connecting",
+    "connected",
+    "disconnected",
+    "failed",
+    "closed",
+    "other",
+];
 
 pub fn next_chat_message_seq() -> u64 {
     NEXT_CHAT_MESSAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -87,6 +97,51 @@ fn shared_webrtc_api() -> Result<Arc<API>, String> {
         Ok(api) => Ok(Arc::clone(api)),
         Err(err) => Err(err.clone()),
     }
+}
+
+fn shared_webrtc_peer_states() -> &'static DashMap<String, &'static str> {
+    WEBRTC_PEER_STATES.get_or_init(DashMap::new)
+}
+
+fn webrtc_state_label(state: RTCPeerConnectionState) -> &'static str {
+    match state {
+        RTCPeerConnectionState::New => "new",
+        RTCPeerConnectionState::Connecting => "connecting",
+        RTCPeerConnectionState::Connected => "connected",
+        RTCPeerConnectionState::Disconnected => "disconnected",
+        RTCPeerConnectionState::Failed => "failed",
+        RTCPeerConnectionState::Closed => "closed",
+        _ => "other",
+    }
+}
+
+fn publish_webrtc_peer_state_gauges(states: &DashMap<String, &'static str>) {
+    let mut counts = [0usize; WEBRTC_STATE_LABELS.len()];
+    states.iter().for_each(|entry| {
+        if let Some(index) = WEBRTC_STATE_LABELS
+            .iter()
+            .position(|label| label == entry.value())
+        {
+            counts[index] = counts[index].saturating_add(1);
+        }
+    });
+    for (index, label) in WEBRTC_STATE_LABELS.iter().enumerate() {
+        metrics::set_webrtc_peers_in_state(label, counts[index]);
+    }
+}
+
+fn record_webrtc_peer_state(peer_id: &str, state: RTCPeerConnectionState) {
+    let label = webrtc_state_label(state);
+    metrics::record_webrtc_peer_state_transition(label);
+    let states = shared_webrtc_peer_states();
+    states.insert(peer_id.to_owned(), label);
+    publish_webrtc_peer_state_gauges(states);
+}
+
+fn remove_webrtc_peer_state(peer_id: &str) {
+    let states = shared_webrtc_peer_states();
+    states.remove(peer_id);
+    publish_webrtc_peer_state_gauges(states);
 }
 
 #[derive(Clone, Debug)]
@@ -789,6 +844,7 @@ pub async fn handle_signaling_connection(
     pc_for_state_change.on_peer_connection_state_change(Box::new(
         move |s: RTCPeerConnectionState| {
             let current_peer_id = peer_id_for_state_change.clone();
+            record_webrtc_peer_state(&current_peer_id, s);
             info!(
                 "[{}]: Peer Connection State changed: {}",
                 current_peer_id, s
@@ -1328,6 +1384,7 @@ pub fn cleanup_connection(
     auth_service: &AuthService,
 ) {
     info!("[{}]: Cleaning up resources.", peer_id_str);
+    remove_webrtc_peer_state(peer_id_str);
     let _ = shared_connection_manager().remove(peer_id_str);
     // Remove signaling sender first; duplicate cleanups are expected under concurrent callbacks.
     let removed_signaling_entry = signaling_peers.remove(peer_id_str).is_some();
