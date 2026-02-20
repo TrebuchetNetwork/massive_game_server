@@ -480,7 +480,7 @@ Defending bots marked "stuck" after 2s
 **Agents:** G, H, I, J, K
 - [ ] Extract CSS and JS modules *(CSS extracted; `ui_widgets.js`, `runtime_config.js`, `networking_utils.js`, `math_utils.js`, `auth_utils.js`, `reconnect_utils.js`, and `accelerated_layers.js` extracted; additional JS extraction in progress)*
 - [x] Implement ES6 module structure *(client now imports core logic via `client_logic/index.js` barrel exports)*
-- [ ] Test all client functionality *(core smoke e2e passed: `connect.spec.js`, `runtime.spec.js`; full UI audit matrix still pending)*
+- [x] Test all client functionality *(validated with `scripts/validate_ui.sh`: UI surface audit + `connect.spec.js` + `runtime.spec.js`)*
 
 ### Sprint 4 (Week 6): High Priority Polish
 **Agents:** S, T, U, V
@@ -497,11 +497,11 @@ Defending bots marked "stuck" after 2s
 |-------|-------------|------|-----------|
 | Sprint 1 (Critical Fixes) | 3 | 3 | 0 |
 | Sprint 2 (instance.rs Modularization) | 3 | 3 | 0 |
-| Sprint 3 (client.html Modularization) | 3 | 1 | 2 |
+| Sprint 3 (client.html Modularization) | 3 | 2 | 1 |
 | Sprint 4 (High Priority Polish) | 4 | 4 | 0 |
-| **Total** | **13** | **11** | **2** |
+| **Total** | **13** | **12** | **1** |
 
-**Completion Rate (sprint checklist):** 84.6%
+**Completion Rate (sprint checklist):** 92.3%
 
 ---
 
