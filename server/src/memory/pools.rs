@@ -29,8 +29,9 @@ impl<T> ObjectPool<T> {
 
     pub fn acquire(&self) -> T {
         let mut free = self.free.lock();
+        let value = free.pop().unwrap_or_else(|| (self.factory)());
         self.in_use.fetch_add(1, Ordering::Relaxed);
-        free.pop().unwrap_or_else(|| (self.factory)())
+        value
     }
 
     pub fn release(&self, value: T) {

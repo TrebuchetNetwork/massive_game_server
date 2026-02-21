@@ -850,6 +850,39 @@
             }
         }
 
+        function terminateCullWorker() {
+            if (!cullWorker) {
+                cullWorkerReady = false;
+                cullWorkerBusy = false;
+                cullWorkerResult = null;
+                return;
+            }
+            try {
+                cullWorker.onmessage = null;
+                cullWorker.onerror = null;
+                cullWorker.terminate();
+            } catch (_) {}
+            cullWorker = null;
+            cullWorkerReady = false;
+            cullWorkerBusy = false;
+            cullWorkerSeq = 0;
+            cullWorkerResultSeq = 0;
+            lastCullWorkerDispatchTime = 0;
+            cullWorkerResult = null;
+            cullWorkerStats.dispatches = 0;
+            cullWorkerStats.responses = 0;
+            cullWorkerStats.dropped = 0;
+            cullWorkerStats.avgComputeMs = 0;
+            cullWorkerStats.lastComputeMs = 0;
+            cullWorkerStats.wasmKernelActive = false;
+            cullWorkerStats.wasmKernelLabel = 'js';
+            if (window.__e2e) {
+                window.__e2e.workerCullReady = false;
+                window.__e2e.workerCullBusy = false;
+                window.__e2e.workerCullKernel = 'js';
+            }
+        }
+
         function isCullWorkerUsable() {
             return !!(WORKER_CULL_ENABLED && cullWorker && cullWorkerReady);
         }
@@ -2893,6 +2926,7 @@
 
         // PIXI.js Application
         let app;
+        let inputHandlersInitialized = false;
         let gameScene;
         let worldContainer;
         let hudContainer;
@@ -8480,6 +8514,10 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
         // Input handling
         function setupInputHandlers() {
+            if (inputHandlersInitialized || !app || !app.view) {
+                return;
+            }
+            inputHandlersInitialized = true;
             document.addEventListener('keydown', (e) => handleKeyInput(e, true));
             document.addEventListener('keyup', (e) => handleKeyInput(e, false));
             app.view.addEventListener('mousemove', handleMouseMove);
@@ -10012,6 +10050,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             if (!canStartConnectionAttempt()) {
                 return false;
             }
+            if (!cullWorker && WORKER_CULL_ENABLED) {
+                initCullWorker();
+            }
             startJoinTimingAttempt(isRetry ? 'retry' : 'manual');
 
             const normalized = normalizeSignalingUrl(wsUrlInput.value);
@@ -10157,10 +10198,16 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 applyBackgroundThrottling(true);
             }
         });
+        window.addEventListener('beforeunload', () => {
+            try {
+                resetConnectionUI({ allowReconnect: false, destroyRenderer: true });
+            } catch (_) {}
+        });
 
         function resetConnectionUI(options = {}) {
             const allowReconnect = options.allowReconnect === true;
             const reconnectReason = String(options.reconnectReason || '').trim();
+            const destroyRenderer = options.destroyRenderer === true;
             connectAttemptInFlight = false;
             markJoinTimingAborted(reconnectReason || connectionErrorDetail || 'connection reset');
             connectButton.disabled = false;
@@ -10203,6 +10250,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             if (window.__e2e) {
                 window.__e2e.activeSignalingUrl = activeSignalingUrl;
             }
+            terminateCullWorker();
 
             // Clear game state
             stopFxStress(true);
@@ -10434,6 +10482,31 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             projectileSprites.clear();
             pickupSprites.clear();
             localPlayerSprite = null;
+
+            if (destroyRenderer && app) {
+                try {
+                    app.ticker.remove(gameLoop);
+                } catch (_) {}
+                try {
+                    app.destroy(true, { children: true, texture: true, baseTexture: true });
+                } catch (_) {}
+                if (window.app === app) {
+                    window.app = null;
+                }
+                app = null;
+                gameScene = null;
+                worldContainer = null;
+                hudContainer = null;
+                wallGraphics = null;
+                pickupContainer = null;
+                projectileContainer = null;
+                playerContainer = null;
+                flagContainer = null;
+                aimingGraphics = null;
+                trajectoryGraphics = null;
+                sniperRangeText = null;
+                inputHandlersInitialized = false;
+            }
 
             log('Connection reset, game state cleared.', 'info');
             setControlsPanelHidden(false);

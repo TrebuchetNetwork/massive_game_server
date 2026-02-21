@@ -49,7 +49,7 @@ use webrtc::{
 // Removed: use rand::Rng; // Not directly used here after spawn logic change
 
 // Type Aliases
-pub type SignalingPeers = Arc<DashMap<String, mpsc::UnboundedSender<Result<Message, warp::Error>>>>;
+pub type SignalingPeers = Arc<DashMap<String, mpsc::Sender<Result<Message, warp::Error>>>>;
 pub type PlayerManagerRef = Arc<ImprovedPlayerManager>;
 pub type DataChannelsMap = Arc<DashMap<String, Arc<CoreRTCDataChannel>>>;
 pub type WorldPartitionManagerRef = Arc<WorldPartitionManager>;
@@ -435,6 +435,32 @@ const MAX_SIGNALING_SDP_BYTES: usize = 120 * 1024;
 const MAX_SIGNALING_ICE_CANDIDATE_BYTES: usize = 4 * 1024;
 const MAX_SIGNALING_ICE_SDP_MID_BYTES: usize = 256;
 const MAX_SIGNALING_ICE_USERNAME_FRAGMENT_BYTES: usize = 256;
+const SIGNALING_OUTBOX_CAPACITY: usize = 1000;
+
+fn try_queue_signaling_message(
+    sender: &mpsc::Sender<Result<Message, warp::Error>>,
+    message: Result<Message, warp::Error>,
+    peer_id: &str,
+    label: &str,
+) -> bool {
+    match sender.try_send(message) {
+        Ok(()) => true,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            warn!(
+                "[{}]: Signaling outbox full while sending {} (capacity={}). Dropping message.",
+                peer_id, label, SIGNALING_OUTBOX_CAPACITY
+            );
+            false
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            warn!(
+                "[{}]: Signaling outbox closed while sending {}.",
+                peer_id, label
+            );
+            false
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct InputRateLimitConfig {
@@ -591,7 +617,8 @@ fn ip_rate_limit_config() -> Option<IpRateLimitConfig> {
                 return None;
             }
 
-            let burst = env_u32("MGS_IP_RATE_LIMIT_BURST", DEFAULT_IP_RATE_LIMIT_BURST).max(per_sec);
+            let burst =
+                env_u32("MGS_IP_RATE_LIMIT_BURST", DEFAULT_IP_RATE_LIMIT_BURST).max(per_sec);
             info!(
                 "IP rate limiter enabled: {} connects/sec per source IP with burst {}.",
                 per_sec, burst
@@ -749,7 +776,7 @@ pub async fn handle_signaling_connection(
     server_instance.note_join_enqueued(&peer_id_str);
 
     let (mut ws_tx, mut ws_rx) = ws.split();
-    let (client_signaling_tx, mut client_signaling_rx) = mpsc::unbounded_channel();
+    let (client_signaling_tx, mut client_signaling_rx) = mpsc::channel(SIGNALING_OUTBOX_CAPACITY);
 
     signaling_peers.insert(peer_id_str.clone(), client_signaling_tx.clone());
     metrics::set_ws_connections_active(signaling_peers.len());
@@ -850,7 +877,12 @@ pub async fn handle_signaling_connection(
                         };
                         match serde_json::to_string(&sig_msg) {
                             Ok(json_msg) => {
-                                if ice_sender.send(Ok(Message::text(json_msg))).is_err() {
+                                if !try_queue_signaling_message(
+                                    &ice_sender,
+                                    Ok(Message::text(json_msg)),
+                                    &pid_ice,
+                                    "ice_candidate",
+                                ) {
                                     warn!(
                                         "[{}]: Failed to send ICE candidate via channel.",
                                         pid_ice
@@ -1342,7 +1374,12 @@ pub async fn handle_signaling_connection(
                                                 if pc_signal_receiver.set_local_description(answer.clone()).await.is_ok() {
                                                     let resp_msg = SignalingMessageJson { sdp: Some(answer), ice: None };
                                                     if let Ok(json_resp) = serde_json::to_string(&resp_msg) {
-                                                        if ws_signal_sender_clone.send(Ok(Message::text(json_resp))).is_err() {
+                                                        if !try_queue_signaling_message(
+                                                            &ws_signal_sender_clone,
+                                                            Ok(Message::text(json_resp)),
+                                                            &current_peer_id_ws,
+                                                            "sdp_answer",
+                                                        ) {
                                                             warn!("[{}]: Failed to send SDP answer via channel.", current_peer_id_ws);
                                                         }
                                                     } else {

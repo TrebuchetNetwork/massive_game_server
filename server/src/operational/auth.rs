@@ -10,9 +10,10 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
@@ -26,10 +27,17 @@ const DEFAULT_RESEND_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_MAX_VERIFY_ATTEMPTS: u32 = 5;
 const DEFAULT_LEADERBOARD_LIMIT: usize = 50;
 const DEFAULT_REDIS_STORE_KEY: &str = "mgs:auth:persistent_store";
+const DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_PER_SEC: u32 = 24;
+const DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_BURST: u32 = 48;
 const PROGRESSION_BASE_XP_PER_MATCH: u64 = 50;
 const PROGRESSION_XP_PER_KILL: u64 = 30;
 const PROGRESSION_BASE_CREDITS_PER_MATCH: u64 = 20;
 const PROGRESSION_CREDITS_PER_KILL: u64 = 8;
+static TOKEN_VALIDATION_RATE_LIMITERS: OnceLock<
+    DashMap<String, Arc<ParkingLotMutex<TokenValidationRateLimiter>>>,
+> = OnceLock::new();
+static TOKEN_VALIDATION_RATE_LIMIT_CONFIG: OnceLock<TokenValidationRateLimitConfig> =
+    OnceLock::new();
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -106,6 +114,7 @@ enum AuthError {
     CodeMismatch { remaining_attempts: u32 },
     TooManyAttempts,
     RateLimited { retry_after_seconds: u64 },
+    TokenValidationRateLimited { retry_after_seconds: u64 },
     DeliveryFailed(String),
     SessionInvalid,
     Internal(String),
@@ -255,6 +264,15 @@ impl AuthError {
                 Some(*retry_after_seconds),
                 None,
             ),
+            AuthError::TokenValidationRateLimited {
+                retry_after_seconds,
+            } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "token_rate_limited",
+                "Too many token validation attempts from this client. Retry shortly.".to_owned(),
+                Some(*retry_after_seconds),
+                None,
+            ),
             AuthError::DeliveryFailed(reason) => (
                 StatusCode::BAD_GATEWAY,
                 "sms_delivery_failed",
@@ -278,6 +296,89 @@ impl AuthError {
             ),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TokenValidationRateLimitConfig {
+    per_sec: u32,
+    burst: u32,
+}
+
+#[derive(Debug)]
+struct TokenValidationRateLimiter {
+    refill_per_sec: f64,
+    capacity: f64,
+    available_tokens: f64,
+    last_refill_at: Instant,
+}
+
+impl TokenValidationRateLimiter {
+    fn new(refill_per_sec: u32, capacity: u32) -> Self {
+        Self {
+            refill_per_sec: refill_per_sec.max(1) as f64,
+            capacity: capacity.max(1) as f64,
+            available_tokens: capacity.max(1) as f64,
+            last_refill_at: Instant::now(),
+        }
+    }
+
+    fn try_acquire(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(self.last_refill_at);
+        self.last_refill_at = now;
+        let refill = elapsed.as_secs_f64() * self.refill_per_sec;
+        self.available_tokens = (self.available_tokens + refill).min(self.capacity);
+
+        if self.available_tokens >= 1.0 {
+            self.available_tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn shared_token_validation_rate_limiters(
+) -> &'static DashMap<String, Arc<ParkingLotMutex<TokenValidationRateLimiter>>> {
+    TOKEN_VALIDATION_RATE_LIMITERS.get_or_init(DashMap::new)
+}
+
+fn token_validation_rate_limit_config() -> TokenValidationRateLimitConfig {
+    *TOKEN_VALIDATION_RATE_LIMIT_CONFIG.get_or_init(|| {
+        let per_sec = std::env::var("MGS_AUTH_TOKEN_RATE_LIMIT_PER_SEC")
+            .ok()
+            .and_then(|raw| raw.parse::<u32>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_PER_SEC);
+        let burst = std::env::var("MGS_AUTH_TOKEN_RATE_LIMIT_BURST")
+            .ok()
+            .and_then(|raw| raw.parse::<u32>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_BURST);
+        TokenValidationRateLimitConfig { per_sec, burst }
+    })
+}
+
+fn token_validation_rate_limit_key(remote_addr: Option<SocketAddr>) -> String {
+    remote_addr
+        .map(|addr| addr.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn try_acquire_token_validation_token(remote_addr: Option<SocketAddr>) -> bool {
+    let config = token_validation_rate_limit_config();
+    let key = token_validation_rate_limit_key(remote_addr);
+    let limiter_arc = shared_token_validation_rate_limiters()
+        .entry(key)
+        .or_insert_with(|| {
+            Arc::new(ParkingLotMutex::new(TokenValidationRateLimiter::new(
+                config.per_sec,
+                config.burst,
+            )))
+        })
+        .clone();
+    let mut limiter = limiter_arc.lock();
+    limiter.try_acquire()
 }
 
 impl AuthService {
@@ -581,7 +682,11 @@ impl AuthService {
         let expires_at = session_entry.expires_at;
         drop(session_entry);
         let profile = self.profile_by_user_id(&user_id);
-        let result = if profile.is_some() { "success" } else { "missing_user" };
+        let result = if profile.is_some() {
+            "success"
+        } else {
+            "missing_user"
+        };
         metrics::record_auth_attempt("profile_lookup", result);
         metrics::record_auth_token_resolution(started_at.elapsed().as_secs_f64(), result);
         profile.map(|profile| (profile, expires_at))
@@ -747,6 +852,7 @@ pub fn build_auth_routes(
                 .or(warp::any().map(TokenQuery::default))
                 .unify(),
         )
+        .and(warp::addr::remote())
         .and(with_auth_service(auth_service.clone()))
         .and_then(handle_auth_me);
 
@@ -758,6 +864,7 @@ pub fn build_auth_routes(
                 .or(warp::any().map(TokenQuery::default))
                 .unify(),
         )
+        .and(warp::addr::remote())
         .and(with_auth_service(auth_service.clone()))
         .and_then(handle_auth_logout);
 
@@ -809,8 +916,14 @@ async fn handle_verify_code(
 async fn handle_auth_me(
     authorization_header: Option<String>,
     query: TokenQuery,
+    remote_addr: Option<SocketAddr>,
     auth_service: AuthService,
 ) -> Result<impl Reply, Infallible> {
+    if !try_acquire_token_validation_token(remote_addr) {
+        return Ok(error_response(AuthError::TokenValidationRateLimited {
+            retry_after_seconds: 1,
+        }));
+    }
     let token = resolve_token(authorization_header.as_deref(), &query);
     let reply = match token {
         Some(token_value) => match auth_service.profile_from_token(&token_value) {
@@ -828,8 +941,14 @@ async fn handle_auth_me(
 async fn handle_auth_logout(
     authorization_header: Option<String>,
     query: TokenQuery,
+    remote_addr: Option<SocketAddr>,
     auth_service: AuthService,
 ) -> Result<impl Reply, Infallible> {
+    if !try_acquire_token_validation_token(remote_addr) {
+        return Ok(error_response(AuthError::TokenValidationRateLimited {
+            retry_after_seconds: 1,
+        }));
+    }
     let token = resolve_token(authorization_header.as_deref(), &query);
     let revoked = token
         .as_deref()

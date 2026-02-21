@@ -135,8 +135,6 @@ fn env_flag(var_name: &str) -> bool {
 
 fn allow_self_signed_quic_identity_fallback() -> bool {
     cfg!(debug_assertions)
-        || env_flag("MGS_QUIC_ALLOW_SELF_SIGNED_FALLBACK")
-        || env_flag("QUIC_ALLOW_SELF_SIGNED_FALLBACK")
 }
 
 pub fn validate_quic_config(config: &QuicEndpointConfig) -> Result<()> {
@@ -163,8 +161,7 @@ pub fn start_quic_runtime(
             if !allow_self_signed_quic_identity_fallback() {
                 return Err(anyhow!(
                     "QUIC certificates are required in this build. Set MGS_QUIC_CERT_PATH and \
-                     MGS_QUIC_KEY_PATH, or explicitly allow fallback with \
-                     MGS_QUIC_ALLOW_SELF_SIGNED_FALLBACK=1 for non-production usage."
+                     MGS_QUIC_KEY_PATH."
                 ));
             }
             warn!(
@@ -491,7 +488,10 @@ async fn run_connection_writer(
     }
 }
 
-fn cleanup_registered_quic_peers(connection_token: u64, registered_peer_ids: &Arc<Mutex<Vec<String>>>) {
+fn cleanup_registered_quic_peers(
+    connection_token: u64,
+    registered_peer_ids: &Arc<Mutex<Vec<String>>>,
+) {
     let peers = registered_peer_ids
         .lock()
         .map(|guard| guard.clone())

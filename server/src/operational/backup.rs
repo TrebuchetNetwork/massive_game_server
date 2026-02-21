@@ -1,7 +1,7 @@
 // massive_game_server/server/src/operational/backup.rs
 
 use crate::operational::monitoring::metrics;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -22,7 +22,7 @@ struct BackupConfig {
     sources: Vec<PathBuf>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct BackupManifest {
     created_at_unix: u64,
     reason: String,
@@ -30,11 +30,27 @@ struct BackupManifest {
     missing_sources: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct BackupCopiedFile {
     source: String,
     backup_path: String,
     size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BackupRestoreResult {
+    pub backup_dir: String,
+    pub created_at_unix: u64,
+    pub restored_files: Vec<BackupRestoredFile>,
+    pub missing_backup_files: Vec<String>,
+    pub missing_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BackupRestoredFile {
+    pub source: String,
+    pub restored_from: String,
+    pub size_bytes: u64,
 }
 
 impl BackupManager {
@@ -65,7 +81,11 @@ impl BackupManager {
             ),
         ];
         if let Ok(extra_paths) = std::env::var("MGS_BACKUP_EXTRA_PATHS") {
-            for raw_path in extra_paths.split(',').map(str::trim).filter(|value| !value.is_empty()) {
+            for raw_path in extra_paths
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
                 sources.push(PathBuf::from(raw_path));
             }
         }
@@ -109,6 +129,34 @@ impl BackupManager {
         }
     }
 
+    pub async fn restore_from_backup(
+        &self,
+        backup_dir_name: Option<&str>,
+    ) -> Result<BackupRestoreResult, String> {
+        let started_at = Instant::now();
+        let result = self.restore_from_backup_inner(backup_dir_name).await;
+        match result {
+            Ok(summary) => {
+                metrics::record_backup_result(
+                    "restore_success",
+                    started_at.elapsed().as_secs_f64(),
+                );
+                Ok(summary)
+            }
+            Err(err) => {
+                metrics::record_backup_result(
+                    "restore_failure",
+                    started_at.elapsed().as_secs_f64(),
+                );
+                Err(err)
+            }
+        }
+    }
+
+    pub async fn restore_latest_backup(&self) -> Result<BackupRestoreResult, String> {
+        self.restore_from_backup(None).await
+    }
+
     async fn run_once_inner(&self, reason: &str) -> Result<(), String> {
         let created_at_unix = unix_now();
         let backup_dir_name = format!("backup-{}", created_at_unix);
@@ -134,16 +182,14 @@ impl BackupManager {
 
             let target_file_name = backup_name_for_path(source_path);
             let target_path = backup_root.join(target_file_name);
-            fs::copy(source_path, &target_path)
-                .await
-                .map_err(|err| {
-                    format!(
-                        "failed to copy '{}' to '{}': {}",
-                        source_path.display(),
-                        target_path.display(),
-                        err
-                    )
-                })?;
+            fs::copy(source_path, &target_path).await.map_err(|err| {
+                format!(
+                    "failed to copy '{}' to '{}': {}",
+                    source_path.display(),
+                    target_path.display(),
+                    err
+                )
+            })?;
             let size_bytes = fs::metadata(&target_path)
                 .await
                 .ok()
@@ -157,8 +203,8 @@ impl BackupManager {
         }
 
         let manifest_path = backup_root.join("manifest.json");
-        let manifest_json =
-            serde_json::to_vec_pretty(&manifest).map_err(|err| format!("manifest json: {}", err))?;
+        let manifest_json = serde_json::to_vec_pretty(&manifest)
+            .map_err(|err| format!("manifest json: {}", err))?;
         fs::write(&manifest_path, manifest_json)
             .await
             .map_err(|err| format!("failed to write backup manifest: {}", err))?;
@@ -175,6 +221,134 @@ impl BackupManager {
             backup_root.display()
         );
         Ok(())
+    }
+
+    async fn restore_from_backup_inner(
+        &self,
+        backup_dir_name: Option<&str>,
+    ) -> Result<BackupRestoreResult, String> {
+        let backup_root = self.resolve_backup_root(backup_dir_name).await?;
+        let manifest_path = backup_root.join("manifest.json");
+        let manifest_raw = fs::read(&manifest_path).await.map_err(|err| {
+            format!(
+                "failed to read backup manifest '{}': {}",
+                manifest_path.display(),
+                err
+            )
+        })?;
+        let manifest: BackupManifest = serde_json::from_slice(&manifest_raw).map_err(|err| {
+            format!(
+                "invalid backup manifest '{}': {}",
+                manifest_path.display(),
+                err
+            )
+        })?;
+
+        let mut restored_files = Vec::new();
+        let mut missing_backup_files = Vec::new();
+        for copied_file in &manifest.copied_files {
+            let source_path = PathBuf::from(&copied_file.source);
+            let backup_path = resolve_backup_file_path(&backup_root, copied_file);
+            if !backup_path.exists() {
+                missing_backup_files.push(backup_path.to_string_lossy().to_string());
+                continue;
+            }
+
+            if let Some(parent) = source_path.parent() {
+                fs::create_dir_all(parent).await.map_err(|err| {
+                    format!(
+                        "failed creating destination directory '{}' during restore: {}",
+                        parent.display(),
+                        err
+                    )
+                })?;
+            }
+
+            fs::copy(&backup_path, &source_path).await.map_err(|err| {
+                format!(
+                    "failed restoring '{}' from '{}': {}",
+                    source_path.display(),
+                    backup_path.display(),
+                    err
+                )
+            })?;
+
+            let size_bytes = fs::metadata(&source_path)
+                .await
+                .ok()
+                .map(|meta| meta.len())
+                .unwrap_or(copied_file.size_bytes);
+            restored_files.push(BackupRestoredFile {
+                source: source_path.to_string_lossy().to_string(),
+                restored_from: backup_path.to_string_lossy().to_string(),
+                size_bytes,
+            });
+        }
+
+        let backup_dir = backup_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        info!(
+            "Backup restore completed (backup='{}', restored={}, missing_backup_files={}).",
+            backup_dir,
+            restored_files.len(),
+            missing_backup_files.len()
+        );
+        Ok(BackupRestoreResult {
+            backup_dir,
+            created_at_unix: manifest.created_at_unix,
+            restored_files,
+            missing_backup_files,
+            missing_sources: manifest.missing_sources,
+        })
+    }
+
+    async fn resolve_backup_root(&self, backup_dir_name: Option<&str>) -> Result<PathBuf, String> {
+        if let Some(backup_dir_name) = backup_dir_name {
+            let trimmed = backup_dir_name.trim();
+            if trimmed.is_empty() {
+                return Err("backup directory name cannot be empty".to_owned());
+            }
+            let explicit = self.inner.output_dir.join(trimmed);
+            if explicit.exists() {
+                return Ok(explicit);
+            }
+            return Err(format!(
+                "backup directory '{}' does not exist under '{}'",
+                trimmed,
+                self.inner.output_dir.display()
+            ));
+        }
+
+        let mut entries = fs::read_dir(&self.inner.output_dir)
+            .await
+            .map_err(|err| format!("read backup dir failed: {}", err))?;
+        let mut backup_dirs: Vec<PathBuf> = Vec::new();
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|err| format!("read backup entry failed: {}", err))?
+        {
+            let file_type = entry
+                .file_type()
+                .await
+                .map_err(|err| format!("backup entry type failed: {}", err))?;
+            if !file_type.is_dir() {
+                continue;
+            }
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy();
+            if file_name.starts_with("backup-") {
+                backup_dirs.push(entry.path());
+            }
+        }
+
+        backup_dirs.sort();
+        backup_dirs
+            .pop()
+            .ok_or_else(|| format!("no backups found in '{}'", self.inner.output_dir.display()))
     }
 
     async fn prune_old_backups(&self) -> Result<(), String> {
@@ -229,6 +403,14 @@ fn backup_name_for_path(path: &Path) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or("root");
     format!("{}__{}", prefix, file_name)
+}
+
+fn resolve_backup_file_path(backup_root: &Path, copied_file: &BackupCopiedFile) -> PathBuf {
+    let recorded_path = PathBuf::from(&copied_file.backup_path);
+    if recorded_path.exists() {
+        return recorded_path;
+    }
+    backup_root.join(backup_name_for_path(Path::new(&copied_file.source)))
 }
 
 fn env_path_or_default(var_name: &str, default_value: &str) -> PathBuf {
