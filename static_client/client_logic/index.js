@@ -20,3 +20,7 @@ export {
     readWebGpuAutorunConfigFromUrl,
     runWebGPUTest,
 } from './webgpu_test.js';
+export {
+    populateSyntheticProjectiles,
+    removeSyntheticProjectiles,
+} from './synthetic_projectiles.js';

@@ -347,6 +347,8 @@
             getRendererBackendSummary,
             readWebGpuAutorunConfigFromUrl,
             runWebGPUTest,
+            populateSyntheticProjectiles,
+            removeSyntheticProjectiles,
         } from './client_logic/index.js';
         const GP = GameProtocol;
         const {
@@ -1548,11 +1550,7 @@
         }
 
         function clearSyntheticProjectiles() {
-            for (const projectileId of Array.from(projectiles.keys())) {
-                if (typeof projectileId === 'string' && projectileId.startsWith(SYNTHETIC_PROJECTILE_PREFIX)) {
-                    projectiles.delete(projectileId);
-                }
-            }
+            removeSyntheticProjectiles(projectiles, SYNTHETIC_PROJECTILE_PREFIX);
             syntheticProjectileCount = 0;
             if (window.__e2e) {
                 window.__e2e.syntheticProjectileCount = 0;
@@ -1560,50 +1558,18 @@
         }
 
         function setSyntheticProjectileCount(rawCount) {
-            const nextCount = Math.max(0, Math.min(5000, Math.floor(Number(rawCount) || 0)));
             clearSyntheticProjectiles();
-            if (nextCount <= 0) {
-                return 0;
-            }
-
-            const weaponTypes = [
-                GP.WeaponType.Pistol,
-                GP.WeaponType.Shotgun,
-                GP.WeaponType.Rifle,
-                GP.WeaponType.Sniper
-            ];
-            const spawnWidth = 1400;
-            const spawnHeight = 760;
-            const columns = Math.max(1, Math.ceil(Math.sqrt(nextCount * (spawnWidth / spawnHeight))));
-            const rows = Math.max(1, Math.ceil(nextCount / columns));
-            const spacingX = spawnWidth / columns;
-            const spacingY = spawnHeight / rows;
-            const syntheticUpdateMs = performance.now();
-
-            for (let i = 0; i < nextCount; i += 1) {
-                const ratio = i / Math.max(1, nextCount);
-                const angle = ratio * Math.PI * 2;
-                const col = i % columns;
-                const row = Math.floor(i / columns);
-                const x = -spawnWidth * 0.5 + (col + 0.5) * spacingX;
-                const y = -spawnHeight * 0.5 + (row + 0.5) * spacingY;
-                const speed = 180 + (i % 11) * 14;
-                const id = `${SYNTHETIC_PROJECTILE_PREFIX}${i}`;
-
-                projectiles.set(id, {
-                    id,
-                    x,
-                    y,
-                    render_x: x,
-                    render_y: y,
-                    velocity_x: Math.cos(angle) * speed,
-                    velocity_y: Math.sin(angle) * speed,
-                    weapon_type: weaponTypes[i % weaponTypes.length],
-                    last_server_update_ms: syntheticUpdateMs
-                });
-            }
-
-            syntheticProjectileCount = nextCount;
+            syntheticProjectileCount = populateSyntheticProjectiles({
+                rawCount,
+                projectiles,
+                projectileIdPrefix: SYNTHETIC_PROJECTILE_PREFIX,
+                weaponTypes: [
+                    GP.WeaponType.Pistol,
+                    GP.WeaponType.Shotgun,
+                    GP.WeaponType.Rifle,
+                    GP.WeaponType.Sniper
+                ],
+            });
             if (window.__e2e) {
                 window.__e2e.syntheticProjectileCount = syntheticProjectileCount;
             }
