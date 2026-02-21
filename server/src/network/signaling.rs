@@ -222,7 +222,24 @@ fn parse_csv(raw: &str) -> Vec<String> {
         .collect()
 }
 
-fn sanitize_chat_field(raw: &str, max_chars: usize) -> Option<String> {
+fn is_bidi_or_directional_control(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{200E}'
+            | '\u{200F}'
+            | '\u{202A}'
+            | '\u{202B}'
+            | '\u{202C}'
+            | '\u{202D}'
+            | '\u{202E}'
+            | '\u{2066}'
+            | '\u{2067}'
+            | '\u{2068}'
+            | '\u{2069}'
+    )
+}
+
+fn sanitize_text_field(raw: &str, max_chars: usize, username_mode: bool) -> Option<String> {
     if max_chars == 0 {
         return None;
     }
@@ -232,13 +249,27 @@ fn sanitize_chat_field(raw: &str, max_chars: usize) -> Option<String> {
     let mut last_was_space = true;
 
     for ch in raw.chars() {
-        if ch.is_control() && !ch.is_whitespace() {
+        if (ch.is_control() && !ch.is_whitespace()) || is_bidi_or_directional_control(ch) {
             continue;
         }
         let normalized = if ch.is_whitespace() { ' ' } else { ch };
-        if normalized == '<' || normalized == '>' || normalized == '`' {
+        if matches!(
+            normalized,
+            '<' | '>' | '`' | '&' | '"' | '\'' | '\\' | '/' | '{' | '}'
+        ) {
             continue;
         }
+
+        if username_mode
+            && !(normalized.is_alphanumeric()
+                || normalized == '_'
+                || normalized == '-'
+                || normalized == '.'
+                || normalized == ' ')
+        {
+            continue;
+        }
+
         if normalized == ' ' {
             if last_was_space {
                 continue;
@@ -261,6 +292,14 @@ fn sanitize_chat_field(raw: &str, max_chars: usize) -> Option<String> {
     } else {
         Some(trimmed.to_owned())
     }
+}
+
+fn sanitize_chat_field(raw: &str, max_chars: usize) -> Option<String> {
+    sanitize_text_field(raw, max_chars, false)
+}
+
+fn sanitize_username_field(raw: &str, max_chars: usize) -> Option<String> {
+    sanitize_text_field(raw, max_chars, true)
 }
 
 fn now_millis() -> u64 {
@@ -946,7 +985,8 @@ pub async fn handle_signaling_connection(
 
             if let Some(bound_user_id) = auth_user_id_on_open.as_deref() {
                 if let Some(profile) = auth_service_on_open.profile_by_user_id(bound_user_id) {
-                    username = profile.display_name;
+                    username = sanitize_username_field(&profile.display_name, MAX_CHAT_USERNAME_CHARS)
+                        .unwrap_or_else(|| username.clone());
                     auth_service_on_open.bind_peer_to_user(&current_peer_id_on_open_cb, bound_user_id);
                     info!(
                         "[{}]: Bound authenticated user '{}' to peer.",
@@ -1169,9 +1209,7 @@ pub async fn handle_signaling_connection(
                                 if let Some(chat_fb) =
                                     game_msg_root.actual_message_as_chat_message()
                                 {
-                                    if let (Some(message_text_fb), Some(username_text_fb)) =
-                                        (chat_fb.message(), chat_fb.username())
-                                    {
+                                    if let Some(message_text_fb) = chat_fb.message() {
                                         let player_id_from_connection = pid_msg_inner_str.clone();
                                         let player_id_arc_for_chat = players_map_on_msg
                                             .id_pool
@@ -1189,10 +1227,10 @@ pub async fn handle_signaling_connection(
                                         let authoritative_username = players_map_on_msg
                                             .get_player_state(&player_id_arc_for_chat)
                                             .map(|state| state.username.clone());
-                                        let sanitized_username = sanitize_chat_field(
+                                        let sanitized_username = sanitize_username_field(
                                             authoritative_username
                                                 .as_deref()
-                                                .unwrap_or(username_text_fb),
+                                                .unwrap_or("Player"),
                                             MAX_CHAT_USERNAME_CHARS,
                                         )
                                         .unwrap_or_else(|| "Player".to_owned());

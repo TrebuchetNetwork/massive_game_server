@@ -45,6 +45,7 @@ pub struct EcsSnapshotStats {
     pub players: usize,
     pub projectiles: usize,
     pub pickups: usize,
+    pub skipped_contention: bool,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -174,8 +175,22 @@ impl EcsBridge {
         let projectile_snapshots: Vec<Projectile> = projectiles.to_vec();
         let pickup_snapshots: Vec<Pickup> = pickups.to_vec();
 
-        let mut world = self.world.write();
-        let mut entity_index = self.entity_index.write();
+        let Some(mut world) = self.world.try_write() else {
+            return EcsSnapshotStats {
+                players: 0,
+                projectiles: 0,
+                pickups: 0,
+                skipped_contention: true,
+            };
+        };
+        let Some(mut entity_index) = self.entity_index.try_write() else {
+            return EcsSnapshotStats {
+                players: 0,
+                projectiles: 0,
+                pickups: 0,
+                skipped_contention: true,
+            };
+        };
         let mut seen_player_ids: HashSet<PlayerID> = HashSet::with_capacity(player_snapshots.len());
         for player_snapshot in &player_snapshots {
             seen_player_ids.insert(player_snapshot.id.clone());
@@ -340,6 +355,7 @@ impl EcsBridge {
             players: player_count,
             projectiles: projectile_snapshots.len(),
             pickups: pickup_snapshots.len(),
+            skipped_contention: false,
         }
     }
 
@@ -375,7 +391,14 @@ impl EcsBridge {
             return EcsSnapshotStats::default();
         }
 
-        let world = self.world.read();
+        let Some(world) = self.world.try_read() else {
+            return EcsSnapshotStats {
+                players: 0,
+                projectiles: 0,
+                pickups: 0,
+                skipped_contention: true,
+            };
+        };
         let mut player_updates = 0usize;
         let mut projectile_updates = HashMap::with_capacity(projectiles.len());
         let mut pickup_updates = HashMap::with_capacity(pickups.len());
@@ -434,6 +457,7 @@ impl EcsBridge {
             players: player_updates,
             projectiles: projectile_updates.len(),
             pickups: pickup_updates.len(),
+            skipped_contention: false,
         }
     }
 }

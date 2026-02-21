@@ -29,6 +29,7 @@ const BOT_MOVEMENT_TOLERANCE: f32 = 50.0; // Distance to consider "at target"
 const BOT_STUCK_THRESHOLD: f32 = 10.0; // Min distance to move to not be considered stuck
 const BOT_STUCK_TIME_THRESHOLD: f32 = 2.0; // Seconds before considering bot stuck
 const BOT_STUCK_CHECK_INTERVAL: f32 = 0.5; // Check every half second
+const BOT_STUCK_TARGET_TOLERANCE: f32 = BOT_MOVEMENT_TOLERANCE + 20.0;
 
 #[derive(Debug, Clone)]
 enum BotObjective {
@@ -755,12 +756,11 @@ impl OptimizedBotAI {
         let mut nearest_enemy_dist = f32::MAX;
         let mut nearest_enemy_angle = bot_state.rotation;
         let mut has_enemy_target = false;
-        let mut enemy_position = Vec2::zero();
 
         if let Some(target) = selected_target.as_ref() {
             nearest_enemy_dist = target.distance_sq;
             nearest_enemy_angle = target.aim_angle;
-            enemy_position = target.direct_position;
+            let enemy_position = target.direct_position;
             let bot_pos = Vec2::new(bot_state.x, bot_state.y);
             has_enemy_target = Self::has_line_of_sight(bot_pos, enemy_position, server_instance);
         }
@@ -917,6 +917,26 @@ impl OptimizedBotAI {
         delta_time: f32,
     ) {
         let current_pos = Vec2::new(bot_state.x, bot_state.y);
+
+        // Defenders and objective bots can be intentionally stationary once they reach their post.
+        if let Some(target) = bot_controller.target_position {
+            let dist_to_target_sq =
+                (current_pos.x - target.x).powi(2) + (current_pos.y - target.y).powi(2);
+            if dist_to_target_sq <= BOT_STUCK_TARGET_TOLERANCE.powi(2) {
+                bot_controller.stuck_timer = 0.0;
+                bot_controller.stuck_check_position = current_pos;
+                bot_controller.last_position = current_pos;
+                return;
+            }
+        } else if matches!(
+            bot_controller.behavior_state,
+            BotBehaviorState::Defending | BotBehaviorState::Patrolling
+        ) {
+            bot_controller.stuck_timer = 0.0;
+            bot_controller.stuck_check_position = current_pos;
+            bot_controller.last_position = current_pos;
+            return;
+        }
 
         // Update stuck timer
         bot_controller.stuck_timer += delta_time;

@@ -407,25 +407,27 @@ if (networkIndicator) {
 
 ## 🟡 MEDIUM PRIORITY (Next Month)
 
-### MED-1: Chat Message Injection Possible
+### MED-1: Chat Message Injection Possible - RESOLVED
 **Location:** `server/src/network/signaling.rs`  
-Username validation exists but could be enhanced
+Sanitization now strips control/bidi/script punctuation and ignores client-supplied chat usernames in favor of authoritative server identity.
 
-### MED-2: No Graceful Shutdown for Game State
+### MED-2: No Graceful Shutdown for Game State - RESOLVED
 **Location:** `server/src/server/game_loop.rs`  
-Players not notified on shutdown
+Shutdown now injects a server chat notice, marks match state as ended, and attempts a final broadcast flush.
 
-### MED-3: ECS Bridge Holds World Lock Too Long
+### MED-3: ECS Bridge Holds World Lock Too Long - RESOLVED
 **Location:** `server/src/server/ecs_bridge.rs`  
-Single writer bottleneck
+Snapshot/reconciliation paths now use contention-aware `try_read`/`try_write` and report skip metrics instead of blocking the frame.
 
-### MED-4: GridNav Only 4-Directional
+### MED-4: GridNav Only 4-Directional - RESOLVED
 **Location:** `server/src/world/navigation.rs`  
-Should support 8-directional for optimal paths
+Grid A* is 8-directional with diagonal costs + corner-cut prevention, plus bounds/start==goal hardening tests.
 
-### MED-5: AI Stuck Detection False Positives
-**Location:** `server/src/systems/ai/bot_ai.rs`  
-Defending bots marked "stuck" after 2s
+### MED-5: AI Stuck Detection False Positives - RESOLVED
+**Location:** `server/src/systems/ai/optimized_bot_ai.rs`  
+Defenders/patrollers and bots already at objective are excluded from stuck resets.
+
+**Remaining medium-priority backlog:** none from this checklist.
 
 ---
 

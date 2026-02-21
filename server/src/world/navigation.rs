@@ -48,8 +48,14 @@ impl GridNav {
     }
 
     pub fn find_path(&self, from: (i32, i32), to: (i32, i32)) -> Option<Vec<Vec2>> {
-        if self.is_blocked(to.0, to.1) {
+        if !self.is_in_bounds(from.0, from.1) || !self.is_in_bounds(to.0, to.1) {
             return None;
+        }
+        if self.is_blocked(from.0, from.1) || self.is_blocked(to.0, to.1) {
+            return None;
+        }
+        if from == to {
+            return Some(vec![self.grid_to_world(from.0, from.1)]);
         }
 
         let mut frontier = BinaryHeap::new();
@@ -59,7 +65,7 @@ impl GridNav {
         frontier.push(Node {
             pos: from,
             cost: 0,
-            estimate: manhattan(from, to),
+            estimate: octile_heuristic(from, to),
         });
         cost_so_far.insert(from, 0);
 
@@ -90,7 +96,7 @@ impl GridNav {
                     frontier.push(Node {
                         pos: next,
                         cost: new_cost,
-                        estimate: manhattan(next, to),
+                        estimate: octile_heuristic(next, to),
                     });
                 }
             }
@@ -134,6 +140,10 @@ impl GridNav {
         Some((y * self.width + x) as usize)
     }
 
+    fn is_in_bounds(&self, x: i32, y: i32) -> bool {
+        self.index(x, y).is_some()
+    }
+
     fn is_blocked(&self, x: i32, y: i32) -> bool {
         self.index(x, y)
             .map(|idx| self.blocked[idx])
@@ -157,7 +167,7 @@ fn neighbors(pos: (i32, i32)) -> [((i32, i32), i32); 8] {
     ]
 }
 
-fn manhattan(a: (i32, i32), b: (i32, i32)) -> i32 {
+fn octile_heuristic(a: (i32, i32), b: (i32, i32)) -> i32 {
     let dx = (a.0 - b.0).abs();
     let dy = (a.1 - b.1).abs();
     let diagonal_steps = dx.min(dy);
@@ -431,6 +441,30 @@ mod tests {
         nav.set_blocked(0, 1, true);
         let path = nav.find_path((0, 0), (1, 1));
         assert!(path.is_none());
+    }
+
+    #[test]
+    fn grid_nav_returns_none_when_start_blocked() {
+        let mut nav = GridNav::new(4, 4, 1.0);
+        nav.set_blocked(0, 0, true);
+        let path = nav.find_path((0, 0), (3, 3));
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn grid_nav_returns_none_when_out_of_bounds() {
+        let nav = GridNav::new(4, 4, 1.0);
+        assert!(nav.find_path((-1, 0), (3, 3)).is_none());
+        assert!(nav.find_path((0, 0), (4, 3)).is_none());
+    }
+
+    #[test]
+    fn grid_nav_returns_single_waypoint_when_already_at_target() {
+        let nav = GridNav::new(4, 4, 10.0);
+        let path = nav.find_path((2, 1), (2, 1)).expect("path should exist");
+        assert_eq!(path.len(), 1);
+        assert!((path[0].x - 25.0).abs() < 0.001);
+        assert!((path[0].y - 15.0).abs() < 0.001);
     }
 
     #[test]

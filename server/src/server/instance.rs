@@ -5724,13 +5724,17 @@ impl MassiveGameServer {
                 &projectiles_snapshot,
                 &pickups_snapshot,
             );
-            trace!(
-                "[Frame {}] ECS snapshot rebuilt: players={}, projectiles={}, pickups={}",
-                frame,
-                ecs_stats.players,
-                ecs_stats.projectiles,
-                ecs_stats.pickups
-            );
+            if ecs_stats.skipped_contention {
+                trace!("[Frame {}] ECS snapshot rebuild skipped due to lock contention.", frame);
+            } else {
+                trace!(
+                    "[Frame {}] ECS snapshot rebuilt: players={}, projectiles={}, pickups={}",
+                    frame,
+                    ecs_stats.players,
+                    ecs_stats.projectiles,
+                    ecs_stats.pickups
+                );
+            }
 
             if self.ecs_bridge.is_authoritative() {
                 let mut projectiles = self.projectiles.write();
@@ -5740,13 +5744,20 @@ impl MassiveGameServer {
                     projectiles.as_mut_slice(),
                     pickups.as_mut_slice(),
                 );
-                trace!(
-                    "[Frame {}] ECS authoritative reconciliation applied: players={}, projectiles={}, pickups={}",
-                    frame,
-                    reconciled.players,
-                    reconciled.projectiles,
-                    reconciled.pickups
-                );
+                if reconciled.skipped_contention {
+                    trace!(
+                        "[Frame {}] ECS authoritative reconciliation skipped due to lock contention.",
+                        frame
+                    );
+                } else {
+                    trace!(
+                        "[Frame {}] ECS authoritative reconciliation applied: players={}, projectiles={}, pickups={}",
+                        frame,
+                        reconciled.players,
+                        reconciled.projectiles,
+                        reconciled.pickups
+                    );
+                }
             }
         }
 

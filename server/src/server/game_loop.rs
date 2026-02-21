@@ -7,25 +7,69 @@ use std::time::{Duration, Instant}; // Removed unused SystemTime, UNIX_EPOCH
 use tokio::time::interval;
 use tracing::{error, info, trace, warn};
 // Removed unused: use std::collections::VecDeque;
-use futures::executor::block_on;
 use std::sync::atomic::Ordering as AtomicOrdering;
 // Removed unused: use bytes::Bytes;
 // Removed unused: use crate::core::types::{PlayerID, PlayerAoI, Vec2, GameEvent, CorePickupType, EventPriority};
 // Removed unused: use crate::core::types::EntityId;
 // Removed unused: use std::collections::HashSet;
+use crate::flatbuffers_generated::game_protocol as fb;
 use crate::core::constants::{
     AOI_MAX_VISIBLE_PICKUPS, AOI_MAX_VISIBLE_PLAYERS, AOI_MAX_VISIBLE_PROJECTILES,
     AOI_MAX_VISIBLE_WALLS, AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS,
 }; // Assuming these are in constants
-use crate::core::types::{PlayerAoI, PlayerID, Vec2};
-use crate::network::signaling::{ChatMessage, ClientState};
+use crate::core::types::{PlayerAoI, PlayerID};
+use crate::network::signaling::{next_chat_message_seq, ChatMessage};
 use std::collections::HashSet;
-use tokio::time::sleep; // Add this import
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::time::timeout;
 
 const MAX_FRAME_TIME_HISTORY: usize = 100;
 const SIGNIFICANT_MOVEMENT_THRESHOLD_SQ: f32 = 5.0 * 5.0; // Player must move more than 5 units for AoI recalc
+const SHUTDOWN_CHAT_HISTORY_LIMIT: usize = 50;
+const SHUTDOWN_CHAT_PLAYER_ID: &str = "__server__";
+const SHUTDOWN_CHAT_USERNAME: &str = "Server";
+const SHUTDOWN_CHAT_MESSAGE: &str = "Server is shutting down. Please reconnect shortly.";
 
 impl MassiveGameServer {
+    async fn notify_players_of_shutdown(self: Arc<Self>) {
+        if self.data_channels_map.is_empty() {
+            return;
+        }
+
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_millis() as u64;
+        let shutdown_chat = ChatMessage {
+            seq: next_chat_message_seq(),
+            player_id: Arc::new(SHUTDOWN_CHAT_PLAYER_ID.to_owned()),
+            username: SHUTDOWN_CHAT_USERNAME.to_owned(),
+            message: SHUTDOWN_CHAT_MESSAGE.to_owned(),
+            timestamp: timestamp_ms,
+        };
+        {
+            let mut chat_q = self.chat_messages_queue.write().await;
+            chat_q.push_back(shutdown_chat);
+            while chat_q.len() > SHUTDOWN_CHAT_HISTORY_LIMIT {
+                chat_q.pop_front();
+            }
+        }
+        {
+            let mut match_info = self.match_info.write();
+            match_info.match_state = fb::MatchStateType::Ended;
+        }
+
+        if timeout(
+            Duration::from_millis(350),
+            Arc::clone(&self).broadcast_world_updates_optimized(),
+        )
+        .await
+        .is_err()
+        {
+            warn!("Shutdown broadcast flush timed out.");
+        }
+    }
+
     /*pub async fn run_game_loop_v2(self: Arc<Self>) {
         let mut tick_timer = interval(TICK_DURATION);
         let mut last_tick_time = Instant::now();
@@ -69,6 +113,7 @@ impl MassiveGameServer {
         loop {
             tick_timer.tick().await;
             if crate::server::lifecycle::is_shutdown_requested(self.as_ref()) {
+                Arc::clone(&self).notify_players_of_shutdown().await;
                 info!("Shutdown requested; exiting game loop.");
                 break;
             }
