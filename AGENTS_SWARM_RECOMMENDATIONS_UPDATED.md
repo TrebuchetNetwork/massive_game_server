@@ -95,11 +95,11 @@ This document provides updated recommendations for swarm agents to accelerate de
 **Current Remaining Critical Items:** CRITICAL-1 and CRITICAL-2 only.  
 CRITICAL-3/4/5 are retained below for historical context and marked resolved.
 
-### CRITICAL-1: instance.rs Still 5,446 Lines (Code Organization Crisis)
+### CRITICAL-1: instance.rs Still 4,493 Lines (Code Organization Crisis)
 
 **Impact:** Unmaintainable, blocks team velocity, high bug risk  
 **Location:** `server/src/server/instance.rs`  
-**Lines:** 5,446 (down from 7,095)
+**Lines:** 4,493 (down from 7,095)
 
 **Current Structure:**
 | Component | Lines | Description |
