@@ -24,3 +24,7 @@ export {
     populateSyntheticProjectiles,
     removeSyntheticProjectiles,
 } from './synthetic_projectiles.js';
+export {
+    applyConnectionStatusUi,
+    normalizeConnectionErrorDetail,
+} from './connection_status.js';

@@ -349,6 +349,8 @@
             runWebGPUTest,
             populateSyntheticProjectiles,
             removeSyntheticProjectiles,
+            applyConnectionStatusUi,
+            normalizeConnectionErrorDetail,
         } from './client_logic/index.js';
         const GP = GameProtocol;
         const {
@@ -2249,6 +2251,7 @@
             error: 'Disconnected',
             playing: ''
         };
+        const CONNECTION_ERROR_FALLBACK = 'Connection lost. Click Connect to retry.';
 
         function setControlsPanelHidden(hidden) {
             controlsPanelHidden = hidden;
@@ -2301,50 +2304,34 @@
         }
 
         function applyConnectionStatus(statusKey, detailText = '') {
-            if (!connectionStatusDiv || !connectionStatusTitle || !connectionStatusDetail) return;
-            if (statusKey === 'playing') {
-                connectionStatusDiv.classList.add('hidden');
-                lastConnectionStatusKey = statusKey;
-                lastConnectionDetail = detailText;
-                if (window.__e2e) {
-                    window.__e2e.connectionStatus = { statusKey, detailText };
-                }
-                return;
-            }
-
-            if (statusKey === lastConnectionStatusKey && detailText === lastConnectionDetail) return;
-
-            connectionStatusDiv.classList.remove('hidden');
-            connectionStatusDiv.classList.remove(
-                'connection-status--idle',
-                'connection-status--connecting',
-                'connection-status--negotiating',
-                'connection-status--waiting',
-                'connection-status--respawn',
-                'connection-status--error'
-            );
-
-            const styleKey = statusKey === 'negotiating' ? 'connecting' : (statusKey === 'respawn' ? 'waiting' : statusKey);
-            connectionStatusDiv.classList.add(`connection-status--${styleKey}`);
-            connectionStatusTitle.textContent = connectionStatusTitles[statusKey] || 'Status';
-            connectionStatusDetail.textContent = detailText;
-
-            lastConnectionStatusKey = statusKey;
-            lastConnectionDetail = detailText;
-            if (window.__e2e) {
-                window.__e2e.connectionStatus = { statusKey, detailText };
-            }
+            const nextStatus = applyConnectionStatusUi({
+                statusKey,
+                detailText,
+                connectionStatusDiv,
+                connectionStatusTitle,
+                connectionStatusDetail,
+                connectionStatusTitles,
+                lastConnectionStatusKey,
+                lastConnectionDetail,
+                onStatusChange: (nextKey, nextDetail) => {
+                    if (window.__e2e) {
+                        window.__e2e.connectionStatus = { statusKey: nextKey, detailText: nextDetail };
+                    }
+                },
+            });
+            lastConnectionStatusKey = nextStatus.lastConnectionStatusKey;
+            lastConnectionDetail = nextStatus.lastConnectionDetail;
         }
 
         function setConnectionError(detailText) {
             connectionStateOverride = 'error';
-            connectionErrorDetail = detailText || 'Connection lost. Click Connect to retry.';
+            connectionErrorDetail = normalizeConnectionErrorDetail(detailText, CONNECTION_ERROR_FALLBACK);
             applyConnectionStatus('error', connectionErrorDetail);
         }
 
         function clearConnectionOverride() {
             connectionStateOverride = null;
-            connectionErrorDetail = 'Connection lost. Click Connect to retry.';
+            connectionErrorDetail = CONNECTION_ERROR_FALLBACK;
         }
 
         function evaluateConnectionStatus() {
