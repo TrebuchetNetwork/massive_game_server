@@ -6,9 +6,19 @@ on:
   pull_request:
     branches: ["main"]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust-check-and-web-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+      # Keep CI release checks fast while still validating release-mode compilation.
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,28 +28,34 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
       - name: Install FlatBuffers compiler
         run: |
           sudo apt-get update
           sudo apt-get install -y flatbuffers-compiler
 
-      - name: Cargo check
-        run: cargo check -p massive_game_server_core
+      - name: Cargo check (workspace)
+        run: cargo check --workspace --locked
 
       - name: Format check
-        run: cargo fmt --all --check
+        run: cargo fmt --all --check --verbose
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets --locked
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
+
+      - name: Compile benches
+        run: cargo bench -p massive_game_server_core --no-run --locked
 
       - name: Build debug binary
-        run: cargo build -p massive_game_server_core --bin massive_game_server_core
+        run: cargo build -p massive_game_server_core --bin massive_game_server_core --locked
 
       - name: Build release binary
-        run: cargo build -p massive_game_server_core --release --bin massive_game_server_core
+        run: cargo build -p massive_game_server_core --release --bin massive_game_server_core --locked
 
       - name: Website route smoke test
         run: |
@@ -65,3 +81,13 @@ jobs:
           curl -fsS http://127.0.0.1:18080/healthz | grep -q '"ok":true'
           curl -fsS http://127.0.0.1:18080/index.html >/dev/null
           curl -fsS http://127.0.0.1:18080/client.html >/dev/null
+
+      - name: Upload smoke logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-smoke-logs
+          path: |
+            /tmp/mgs_ci_server.log
+            /tmp/root_headers
+            /tmp/root_body
