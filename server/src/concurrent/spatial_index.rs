@@ -469,6 +469,60 @@ impl ImprovedSpatialIndex {
         candidate_ids
     }
 
+    /// Lock-ordering helper for player migration between two cells.
+    /// Always acquires cell write locks in ascending cell index order.
+    fn move_player_between_cells(&self, player_id: &PlayerID, old_idx: usize, new_idx: usize) {
+        if old_idx == new_idx {
+            return;
+        }
+        let (first_idx, second_idx, old_is_first) = if old_idx < new_idx {
+            (old_idx, new_idx, true)
+        } else {
+            (new_idx, old_idx, false)
+        };
+        if second_idx >= self.cells.len() {
+            return;
+        }
+        let first_cell = &self.cells[first_idx];
+        let second_cell = &self.cells[second_idx];
+        let mut first_guard = first_cell.write();
+        let mut second_guard = second_cell.write();
+        if old_is_first {
+            first_guard.player_ids.remove(player_id);
+            second_guard.player_ids.insert(player_id.clone());
+        } else {
+            second_guard.player_ids.remove(player_id);
+            first_guard.player_ids.insert(player_id.clone());
+        }
+    }
+
+    /// Lock-ordering helper for projectile migration between two cells.
+    /// Always acquires cell write locks in ascending cell index order.
+    fn move_projectile_between_cells(&self, proj_id: EntityId, old_idx: usize, new_idx: usize) {
+        if old_idx == new_idx {
+            return;
+        }
+        let (first_idx, second_idx, old_is_first) = if old_idx < new_idx {
+            (old_idx, new_idx, true)
+        } else {
+            (new_idx, old_idx, false)
+        };
+        if second_idx >= self.cells.len() {
+            return;
+        }
+        let first_cell = &self.cells[first_idx];
+        let second_cell = &self.cells[second_idx];
+        let mut first_guard = first_cell.write();
+        let mut second_guard = second_cell.write();
+        if old_is_first {
+            first_guard.projectile_ids.remove(&proj_id);
+            second_guard.projectile_ids.insert(proj_id);
+        } else {
+            second_guard.projectile_ids.remove(&proj_id);
+            first_guard.projectile_ids.insert(proj_id);
+        }
+    }
+
     // Player methods
     pub fn update_player_position(&self, player_id: PlayerID, x: f32, y: f32) {
         let new_cell_idx = self.get_cell_index(x, y);
@@ -481,16 +535,7 @@ impl ImprovedSpatialIndex {
 
         if let Some(old_idx) = old_cell_idx {
             if old_idx != new_cell_idx {
-                // Remove from old cell
-                if let Some(old_cell) = self.cells.get(old_idx) {
-                    old_cell.write().player_ids.remove(&player_id);
-                }
-
-                // Add to new cell
-                if let Some(new_cell) = self.cells.get(new_cell_idx) {
-                    new_cell.write().player_ids.insert(player_id.clone());
-                }
-
+                self.move_player_between_cells(&player_id, old_idx, new_cell_idx);
                 self.player_cells.insert(player_id.clone(), new_cell_idx);
             }
         } else {
@@ -633,16 +678,7 @@ impl ImprovedSpatialIndex {
 
         if let Some(old_idx) = old_cell_idx {
             if old_idx != new_cell_idx {
-                // Remove from old cell
-                if let Some(old_cell) = self.cells.get(old_idx) {
-                    old_cell.write().projectile_ids.remove(&proj_id);
-                }
-
-                // Add to new cell
-                if let Some(new_cell) = self.cells.get(new_cell_idx) {
-                    new_cell.write().projectile_ids.insert(proj_id);
-                }
-
+                self.move_projectile_between_cells(proj_id, old_idx, new_cell_idx);
                 self.projectile_cells.insert(proj_id, new_cell_idx);
             }
         } else {
@@ -777,7 +813,7 @@ pub struct SpatialIndexStats {
 #[cfg(test)]
 mod tests {
     use super::ImprovedSpatialIndex;
-    use crate::core::types::PlayerID;
+    use crate::core::types::{EntityId, PlayerID};
     use std::sync::Arc;
 
     fn pid(raw: &str) -> PlayerID {
@@ -805,5 +841,49 @@ mod tests {
         assert_eq!(nearby[1].0.as_str(), "p2");
         assert_eq!(nearby[1].1, 28.0);
         assert_eq!(nearby[1].2, 24.0);
+    }
+
+    #[test]
+    fn moving_player_between_cells_keeps_single_membership() {
+        let index = ImprovedSpatialIndex::new(512.0, 512.0, 0.0, 0.0, 64.0);
+        let p1 = pid("p1");
+
+        index.update_player_position(p1.clone(), 20.0, 20.0);
+        index.update_player_position(p1.clone(), 220.0, 20.0);
+
+        let old_cell_hits = index.query_nearby_players(20.0, 20.0, 24.0);
+        assert!(
+            !old_cell_hits.iter().any(|id| id.as_str() == "p1"),
+            "player should have been removed from the old cell"
+        );
+
+        let new_cell_hits = index.query_nearby_players(220.0, 20.0, 24.0);
+        let matches = new_cell_hits
+            .iter()
+            .filter(|id| id.as_str() == "p1")
+            .count();
+        assert_eq!(matches, 1, "player should exist exactly once");
+    }
+
+    #[test]
+    fn moving_projectile_between_cells_keeps_single_membership() {
+        let index = ImprovedSpatialIndex::new(512.0, 512.0, 0.0, 0.0, 64.0);
+        let projectile_id: EntityId = 77;
+
+        index.update_projectile_position(projectile_id, 24.0, 24.0);
+        index.update_projectile_position(projectile_id, 232.0, 24.0);
+
+        let old_cell_hits = index.query_nearby_projectiles(24.0, 24.0, 24.0);
+        assert!(
+            !old_cell_hits.contains(&projectile_id),
+            "projectile should have been removed from the old cell"
+        );
+
+        let new_cell_hits = index.query_nearby_projectiles(232.0, 24.0, 24.0);
+        let matches = new_cell_hits
+            .iter()
+            .filter(|id| **id == projectile_id)
+            .count();
+        assert_eq!(matches, 1, "projectile should exist exactly once");
     }
 }

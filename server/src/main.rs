@@ -40,7 +40,6 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::convert::Infallible;
-use std::future::pending;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
@@ -482,47 +481,6 @@ fn recent_frame_p95_ms(server: &MassiveGameServer) -> Option<f64> {
     samples_ms.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
     let p95_idx = ((samples_ms.len().saturating_sub(1) as f64) * 0.95).round() as usize;
     samples_ms.get(p95_idx).copied()
-}
-
-async fn wait_for_shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-
-        let mut terminate = signal(SignalKind::terminate()).ok();
-        let mut interrupt = signal(SignalKind::interrupt()).ok();
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                info!("Shutdown signal received via Ctrl+C.");
-            }
-            _ = async {
-                if let Some(sig) = terminate.as_mut() {
-                    let _ = sig.recv().await;
-                } else {
-                    pending::<()>().await;
-                }
-            } => {
-                info!("Shutdown signal received via SIGTERM.");
-            }
-            _ = async {
-                if let Some(sig) = interrupt.as_mut() {
-                    let _ = sig.recv().await;
-                } else {
-                    pending::<()>().await;
-                }
-            } => {
-                info!("Shutdown signal received via SIGINT.");
-            }
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        match tokio::signal::ctrl_c().await {
-            Ok(()) => info!("Shutdown signal received."),
-            Err(err) => warn!("Failed to listen for shutdown signal: {}", err),
-        }
-    }
 }
 
 #[tokio::main]
@@ -1271,8 +1229,7 @@ async fn main() -> anyhow::Result<()> {
     let server_for_shutdown = game_server_instance.clone();
     let (_bound_address, server) =
         warp::serve(routes).bind_with_graceful_shutdown(server_address, async move {
-            wait_for_shutdown_signal().await;
-            lifecycle::request_shutdown(&server_for_shutdown);
+            lifecycle::request_shutdown_on_signal(server_for_shutdown).await;
         });
     let shutdown_started_at = Instant::now();
     server.await;
@@ -1286,24 +1243,11 @@ async fn main() -> anyhow::Result<()> {
 
     let mut game_loop_handle = game_loop_handle;
     let shutdown_drain_timeout_secs = parse_u64_env("MGS_SHUTDOWN_DRAIN_TIMEOUT_SECONDS", 20);
-    tokio::select! {
-        join_result = &mut game_loop_handle => {
-            if let Err(err) = join_result {
-                error!("Game loop task join failed: {}", err);
-            }
-        }
-        _ = tokio::time::sleep(Duration::from_secs(shutdown_drain_timeout_secs)) => {
-            warn!(
-                "Game loop did not stop within {}s; aborting task.",
-                shutdown_drain_timeout_secs
-            );
-            game_loop_handle.abort();
-            match game_loop_handle.await {
-                Ok(()) => {}
-                Err(err) => warn!("Game loop abort join result: {}", err),
-            }
-        }
-    }
+    lifecycle::drain_game_loop_with_timeout(
+        &mut game_loop_handle,
+        Duration::from_secs(shutdown_drain_timeout_secs),
+    )
+    .await;
 
     monitoring_metrics::record_shutdown_duration(shutdown_started_at.elapsed().as_secs_f64());
     info!("Massive Game Server shut down.");

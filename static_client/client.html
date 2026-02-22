@@ -2927,6 +2927,14 @@
         // PIXI.js Application
         let app;
         let inputHandlersInitialized = false;
+        let inputGameplayKeyDownHandler = null;
+        let inputGameplayKeyUpHandler = null;
+        let inputMouseMoveHandler = null;
+        let inputMouseDownHandler = null;
+        let inputMouseUpHandler = null;
+        let inputContextMenuHandler = null;
+        let inputUiKeyDownHandler = null;
+        let inputUiKeyUpHandler = null;
         let gameScene;
         let worldContainer;
         let hudContainer;
@@ -8513,15 +8521,57 @@ function drawEnhancedWallCracks(wall, healthPercent) {
         }
 
         // Input handling
+        function teardownInputHandlers() {
+            if (!inputHandlersInitialized) {
+                return;
+            }
+            if (inputGameplayKeyDownHandler) {
+                document.removeEventListener('keydown', inputGameplayKeyDownHandler);
+            }
+            if (inputGameplayKeyUpHandler) {
+                document.removeEventListener('keyup', inputGameplayKeyUpHandler);
+            }
+            if (inputUiKeyDownHandler) {
+                document.removeEventListener('keydown', inputUiKeyDownHandler);
+            }
+            if (inputUiKeyUpHandler) {
+                document.removeEventListener('keyup', inputUiKeyUpHandler);
+            }
+
+            const view = app?.view || null;
+            if (view && inputMouseMoveHandler) {
+                view.removeEventListener('mousemove', inputMouseMoveHandler);
+            }
+            if (view && inputMouseDownHandler) {
+                view.removeEventListener('mousedown', inputMouseDownHandler);
+            }
+            if (view && inputMouseUpHandler) {
+                view.removeEventListener('mouseup', inputMouseUpHandler);
+            }
+            if (view && inputContextMenuHandler) {
+                view.removeEventListener('contextmenu', inputContextMenuHandler);
+            }
+
+            inputGameplayKeyDownHandler = null;
+            inputGameplayKeyUpHandler = null;
+            inputMouseMoveHandler = null;
+            inputMouseDownHandler = null;
+            inputMouseUpHandler = null;
+            inputContextMenuHandler = null;
+            inputUiKeyDownHandler = null;
+            inputUiKeyUpHandler = null;
+            inputHandlersInitialized = false;
+        }
+
         function setupInputHandlers() {
             if (inputHandlersInitialized || !app || !app.view) {
                 return;
             }
             inputHandlersInitialized = true;
-            document.addEventListener('keydown', (e) => handleKeyInput(e, true));
-            document.addEventListener('keyup', (e) => handleKeyInput(e, false));
-            app.view.addEventListener('mousemove', handleMouseMove);
-            app.view.addEventListener('mousedown', (e) => {
+            inputGameplayKeyDownHandler = (e) => handleKeyInput(e, true);
+            inputGameplayKeyUpHandler = (e) => handleKeyInput(e, false);
+            inputMouseMoveHandler = handleMouseMove;
+            inputMouseDownHandler = (e) => {
                 if (e.button === 0) {
                     if (localPlayerState && localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo === 0) {
                         if (audioManager && gameSettings.soundEnabled && !window.playedOutOfAmmoSoundRecently) {
@@ -8542,13 +8592,13 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         inputState.shooting = true;
                     }
                 }
-            });
-            app.view.addEventListener('mouseup', (e) => {
+            };
+            inputMouseUpHandler = (e) => {
                 if (e.button === 0) inputState.shooting = false;
-            });
-            app.view.oncontextmenu = (e) => e.preventDefault();
+            };
+            inputContextMenuHandler = (e) => e.preventDefault();
 
-            document.addEventListener('keydown', (e) => {
+            inputUiKeyDownHandler = (e) => {
                 if (e.key === 'Tab') {
                     e.preventDefault();
                     if (!overviewMode) {
@@ -8563,16 +8613,25 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     e.preventDefault();
                     setFocusMode(!focusModeEnabled);
                 }
-            });
+            };
             
-            document.addEventListener('keyup', (e) => {
+            inputUiKeyUpHandler = (e) => {
                 if (e.key === 'Tab') {
                     e.preventDefault();
                     if (overviewMode) {
                         exitOverviewMode();
                     }
                 }
-            });
+            };
+
+            document.addEventListener('keydown', inputGameplayKeyDownHandler);
+            document.addEventListener('keyup', inputGameplayKeyUpHandler);
+            document.addEventListener('keydown', inputUiKeyDownHandler);
+            document.addEventListener('keyup', inputUiKeyUpHandler);
+            app.view.addEventListener('mousemove', inputMouseMoveHandler);
+            app.view.addEventListener('mousedown', inputMouseDownHandler);
+            app.view.addEventListener('mouseup', inputMouseUpHandler);
+            app.view.addEventListener('contextmenu', inputContextMenuHandler);
 
             setupTouchControls();
         }
@@ -10215,6 +10274,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             connectButton.classList.replace('bg-gray-500', 'bg-indigo-600');
             connectButton.classList.replace('cursor-not-allowed', 'hover:bg-indigo-700');
             controlsDiv.classList.add('hidden');
+            teardownInputHandlers();
             if (peerConnection) {
                 peerConnection.onicecandidate = null;
                 peerConnection.oniceconnectionstatechange = null;
@@ -10505,7 +10565,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                 aimingGraphics = null;
                 trajectoryGraphics = null;
                 sniperRangeText = null;
-                inputHandlersInitialized = false;
+                teardownInputHandlers();
             }
 
             log('Connection reset, game state cleared.', 'info');
