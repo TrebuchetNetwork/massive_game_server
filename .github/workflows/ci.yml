@@ -49,7 +49,7 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Compile benches
-        run: cargo bench -p massive_game_server_core --no-run --locked
+        run: cargo check -p massive_game_server_core --benches --locked
 
       - name: Build debug binary
         run: cargo build -p massive_game_server_core --bin massive_game_server_core --locked
