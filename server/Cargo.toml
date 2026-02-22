@@ -141,6 +141,10 @@ path = "tests/integration/walls.rs"
 name = "basic_gameplay" # You can choose a name, e.g., "walls_integration" or keep "walls"
 path = "tests/integration/basic_gameplay.rs"
 
+[[test]]
+name = "full_match"
+path = "tests/integration/full_match.rs"
+
 
 [[test]]
 name = "boundary_stress" # You can choose a name, e.g., "walls_integration" or keep "walls"
