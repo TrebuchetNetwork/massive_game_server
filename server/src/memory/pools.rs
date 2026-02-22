@@ -52,6 +52,7 @@ impl<T> ObjectPool<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
 
     #[test]
     fn pool_tracks_usage() {
@@ -62,5 +63,18 @@ mod tests {
         pool.release(value);
         assert_eq!(pool.in_use_count(), 0);
         assert_eq!(pool.free_count(), 1);
+    }
+
+    #[test]
+    fn factory_panic_does_not_increment_in_use_count() {
+        let pool = ObjectPool::new(0, || -> u32 { panic!("factory failure") });
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _ = pool.acquire();
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(pool.in_use_count(), 0);
+        assert_eq!(pool.free_count(), 0);
     }
 }
