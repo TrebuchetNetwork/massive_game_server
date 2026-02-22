@@ -300,8 +300,7 @@ impl EcsBridge {
             }
         }
 
-        let mut seen_pickup_ids: HashSet<EntityId> =
-            HashSet::with_capacity(pickup_snapshots.len());
+        let mut seen_pickup_ids: HashSet<EntityId> = HashSet::with_capacity(pickup_snapshots.len());
         for pickup in &pickup_snapshots {
             seen_pickup_ids.insert(pickup.id);
             let entity = entity_index
@@ -366,14 +365,16 @@ impl EcsBridge {
             .filter(|value| *value > 0.0)
             .unwrap_or(1.0 / 60.0);
 
-        for (_entity, (transform, player)) in world.query::<(&mut Transform, &PlayerComponent)>().iter()
+        for (_entity, (transform, player)) in
+            world.query::<(&mut Transform, &PlayerComponent)>().iter()
         {
             transform.x += player.velocity_x * fixed_dt;
             transform.y += player.velocity_y * fixed_dt;
         }
 
-        for (_entity, (transform, projectile)) in
-            world.query::<(&mut Transform, &ProjectileComponent)>().iter()
+        for (_entity, (transform, projectile)) in world
+            .query::<(&mut Transform, &ProjectileComponent)>()
+            .iter()
         {
             transform.x += projectile.velocity_x * fixed_dt;
             transform.y += projectile.velocity_y * fixed_dt;
@@ -399,22 +400,34 @@ impl EcsBridge {
                 skipped_contention: true,
             };
         };
-        let mut player_updates = 0usize;
+        #[derive(Clone)]
+        struct PlayerReconcileUpdate {
+            id: PlayerID,
+            x: f32,
+            y: f32,
+            rotation: f32,
+            health: i32,
+            alive: bool,
+            velocity_x: f32,
+            velocity_y: f32,
+        }
+
+        let mut player_updates = Vec::new();
         let mut projectile_updates = HashMap::with_capacity(projectiles.len());
         let mut pickup_updates = HashMap::with_capacity(pickups.len());
 
         for (_entity, (transform, player)) in world.query::<(&Transform, &PlayerComponent)>().iter()
         {
-            if let Some(mut player_state) = player_manager.get_player_state_mut(&player.id) {
-                player_state.x = transform.x;
-                player_state.y = transform.y;
-                player_state.rotation = transform.rotation;
-                player_state.health = player.health;
-                player_state.alive = player.alive;
-                player_state.velocity_x = player.velocity_x;
-                player_state.velocity_y = player.velocity_y;
-                player_updates += 1;
-            }
+            player_updates.push(PlayerReconcileUpdate {
+                id: player.id.clone(),
+                x: transform.x,
+                y: transform.y,
+                rotation: transform.rotation,
+                health: player.health,
+                alive: player.alive,
+                velocity_x: player.velocity_x,
+                velocity_y: player.velocity_y,
+            });
         }
 
         for (_entity, (transform, projectile)) in
@@ -445,6 +458,22 @@ impl EcsBridge {
         {
             pickup_updates.insert(pickup.id, (transform.x, transform.y, pickup.is_active));
         }
+        drop(world);
+
+        let mut reconciled_players = 0usize;
+        for update in player_updates {
+            if let Some(mut player_state) = player_manager.get_player_state_mut(&update.id) {
+                player_state.x = update.x;
+                player_state.y = update.y;
+                player_state.rotation = update.rotation;
+                player_state.health = update.health;
+                player_state.alive = update.alive;
+                player_state.velocity_x = update.velocity_x;
+                player_state.velocity_y = update.velocity_y;
+                reconciled_players += 1;
+            }
+        }
+
         for pickup in pickups.iter_mut() {
             if let Some((x, y, is_active)) = pickup_updates.get(&pickup.id).copied() {
                 pickup.x = x;
@@ -454,10 +483,104 @@ impl EcsBridge {
         }
 
         EcsSnapshotStats {
-            players: player_updates,
+            players: reconciled_players,
             projectiles: projectile_updates.len(),
             pickups: pickup_updates.len(),
             skipped_contention: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::concurrent::spatial_index::ImprovedSpatialIndex;
+    use crate::core::types::{CorePickupType, ServerWeaponType};
+
+    fn authoritative_bridge_for_test() -> EcsBridge {
+        EcsBridge {
+            world: Arc::new(RwLock::new(World::new())),
+            entity_index: Arc::new(RwLock::new(EcsEntityIndex::default())),
+            mode: EcsMode::Authoritative,
+            rebuild_stride_frames: 1,
+        }
+    }
+
+    #[test]
+    fn authoritative_reconciliation_applies_after_snapshot_capture() {
+        let spatial_index = Arc::new(ImprovedSpatialIndex::new(
+            2000.0, 2000.0, -1000.0, -1000.0, 64.0,
+        ));
+        let player_manager = ImprovedPlayerManager::new(8, spatial_index);
+        let player_id = player_manager
+            .add_player(
+                "ecs_test_player".to_string(),
+                "ECS Test".to_string(),
+                0.0,
+                0.0,
+            )
+            .expect("player should be created");
+        {
+            let mut player_state = player_manager
+                .get_player_state_mut(&player_id)
+                .expect("player state should exist");
+            player_state.velocity_x = 60.0;
+            player_state.velocity_y = 0.0;
+        }
+
+        let mut projectile = Projectile::new(
+            player_id.clone(),
+            ServerWeaponType::Rifle,
+            10.0,
+            5.0,
+            1.0,
+            0.0,
+            1.0,
+        );
+        projectile.id = 7001;
+        let pickup = Pickup::new(8001, -5.0, 9.0, CorePickupType::Health);
+
+        let bridge = authoritative_bridge_for_test();
+        bridge.rebuild_snapshot(
+            &player_manager,
+            std::slice::from_ref(&projectile),
+            std::slice::from_ref(&pickup),
+        );
+
+        let mut projectiles = vec![Projectile {
+            x: -999.0,
+            y: -999.0,
+            ..projectile.clone()
+        }];
+        let mut pickups = vec![Pickup {
+            x: -999.0,
+            y: -999.0,
+            is_active: false,
+            ..pickup.clone()
+        }];
+
+        let stats = bridge.apply_authoritative_reconciliation(
+            &player_manager,
+            &mut projectiles,
+            &mut pickups,
+        );
+
+        assert!(!stats.skipped_contention);
+        assert_eq!(stats.players, 1);
+        assert_eq!(stats.projectiles, 1);
+        assert_eq!(stats.pickups, 1);
+
+        let reconciled_player = player_manager
+            .get_player_state(&player_id)
+            .expect("player should still exist");
+        assert!(reconciled_player.x > 0.0);
+        assert_eq!(reconciled_player.y, 0.0);
+        assert_eq!(reconciled_player.velocity_x, 60.0);
+
+        assert!(projectiles[0].x > 10.0);
+        assert_eq!(projectiles[0].y, 5.0);
+        assert_eq!(pickups[0].x, -5.0);
+        assert_eq!(pickups[0].y, 9.0);
+        assert!(pickups[0].is_active);
     }
 }
