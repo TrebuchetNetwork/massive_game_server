@@ -364,6 +364,7 @@ impl MassiveGameServer {
                     target_position: None,
                     target_enemy_id: None,
                     last_decision_time: Instant::now(),
+                    ai_update_accumulator_secs: 0.0,
                     behavior_state: BotBehaviorState::Idle,
                     current_path: VecDeque::new(),
                     path_recalculation_timer: Instant::now(),

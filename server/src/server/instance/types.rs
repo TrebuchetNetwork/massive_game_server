@@ -1,5 +1,5 @@
-use super::*;
 use super::constants::InitialSnapshotCaps;
+use super::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServerFlagState {
@@ -54,6 +54,7 @@ pub struct BotController {
     pub target_position: Option<Vec2>,
     pub target_enemy_id: Option<PlayerID>,
     pub last_decision_time: Instant,
+    pub ai_update_accumulator_secs: f32,
     pub behavior_state: BotBehaviorState,
     pub current_path: VecDeque<Vec2>,
     pub path_recalculation_timer: Instant,

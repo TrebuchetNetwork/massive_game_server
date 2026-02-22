@@ -16,7 +16,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, trace, warn};
 
 // Constants for Bot AI
-const BOT_UPDATE_RATE: u64 = 2; // Update every 2 frames for more responsive AI
+const BOT_UPDATE_INTERVAL_SECS: f32 = 1.0 / 30.0; // Target ~30Hz AI updates independent of frame count
+const BOT_MAX_UPDATE_ACCUMULATOR_SECS: f32 = BOT_UPDATE_INTERVAL_SECS * 4.0;
 const BOT_DECISION_INTERVAL: Duration = Duration::from_millis(25); // Very fast decision making
 const BOT_PATH_RECALCULATION_INTERVAL: Duration = Duration::from_millis(200); // More frequent path updates
 const BOT_MELEE_RANGE: f32 = 50.0;
@@ -47,13 +48,12 @@ const TACTICAL_POSITIONS: [(f32, f32); 12] = [
 pub struct BotAISystem;
 
 impl BotAISystem {
-    pub fn update_bots(server_instance: &MassiveGameServer, _delta_time: f32) {
-        let frame_count = server_instance
-            .frame_counter
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if frame_count % BOT_UPDATE_RATE != 0 {
-            return;
-        }
+    pub fn update_bots(server_instance: &MassiveGameServer, delta_time: f32) {
+        let dt = if delta_time.is_finite() && delta_time > 0.0 {
+            delta_time.min(0.2)
+        } else {
+            BOT_UPDATE_INTERVAL_SECS
+        };
 
         let current_time_instant = Instant::now();
         let all_player_states_snapshot: HashMap<PlayerID, PlayerState> = {
@@ -107,6 +107,13 @@ impl BotAISystem {
                     server_instance.bot_players.get_mut(&bot_id_arc)
                 {
                     let bot_controller = bot_controller_entry.value_mut();
+                    bot_controller.ai_update_accumulator_secs =
+                        (bot_controller.ai_update_accumulator_secs + dt)
+                            .min(BOT_MAX_UPDATE_ACCUMULATOR_SECS);
+                    if bot_controller.ai_update_accumulator_secs < BOT_UPDATE_INTERVAL_SECS {
+                        continue;
+                    }
+                    bot_controller.ai_update_accumulator_secs = 0.0;
 
                     // Decision making
                     if current_time_instant.duration_since(bot_controller.last_decision_time)
