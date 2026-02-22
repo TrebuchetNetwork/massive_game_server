@@ -1,0 +1,13 @@
+[package]
+name = "massive_game_server_protocol"
+version = "0.1.0"
+edition = "2021"
+description = "Shared FlatBuffers protocol crate for massive_game_server."
+license = "MIT"
+repository = "https://github.com/TrebuchetNetwork/massive_game_server"
+
+[dependencies]
+flatbuffers = "25.2.10"
+
+[build-dependencies]
+flatc-rust = "0.2"

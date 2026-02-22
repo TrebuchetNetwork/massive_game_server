@@ -5,7 +5,7 @@
 resolver = "2"
 members = [
     "server",
-    #"protocol", 
+    "protocol",
     #"stress-client",
     #"admin-tools",
 ]
@@ -24,6 +24,5 @@ debug = true
 [profile.bench]
 inherits = "release"
 debug = true
-
 
 
