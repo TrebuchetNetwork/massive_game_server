@@ -281,7 +281,7 @@ impl BotAISystem {
                     bot_controller.target_enemy_id = None;
                     bot_controller.current_path.clear();
                     debug!("[Bot {} ({})]: Going for enemy flag at ({:.1}, {:.1}) (team flag capture rate: {:.1}%)",
-                        bot_state.username, bot_id_str, enemy_flag_state.position.x, enemy_flag_state.position.y, 
+                        bot_state.username, bot_id_str, enemy_flag_state.position.x, enemy_flag_state.position.y,
                         flag_capture_percentage * 100.0);
                     return;
                 }

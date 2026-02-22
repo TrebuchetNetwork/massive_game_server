@@ -145,3 +145,15 @@ path = "tests/integration/basic_gameplay.rs"
 [[test]]
 name = "boundary_stress" # You can choose a name, e.g., "walls_integration" or keep "walls"
 path = "tests/performance/boundary_stress.rs"
+
+[[bench]]
+name = "physics"
+harness = false
+
+[[bench]]
+name = "serialization"
+harness = false
+
+[[bench]]
+name = "spatial_index"
+harness = false

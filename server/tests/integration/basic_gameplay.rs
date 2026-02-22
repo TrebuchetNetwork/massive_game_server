@@ -618,8 +618,8 @@ async fn test_player_spawning_and_movement() {
                 very_near_wall_in_front = true;
             }
 
-            assert!(very_near_wall_in_front, 
-                    "Player {} (spawned at {:.2},{:.2}) did not move significantly from ({:.2}, {:.2}) to ({:.2}, {:.2}) and was not blocked in front (tried rot: {:.2}). Velocity: ({:.2}, {:.2})", 
+            assert!(very_near_wall_in_front,
+                    "Player {} (spawned at {:.2},{:.2}) did not move significantly from ({:.2}, {:.2}) to ({:.2}, {:.2}) and was not blocked in front (tried rot: {:.2}). Velocity: ({:.2}, {:.2})",
                     player_id_str, spawn_pos.x, spawn_pos.y, initial_x, initial_y, final_player_state_snapshot.x, final_player_state_snapshot.y, movement_rotation, final_player_state_snapshot.velocity_x, final_player_state_snapshot.velocity_y);
             info!(
                 "[Spawn Test Iteration {}] Player {} did not move, but was blocked as expected.",
