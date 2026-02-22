@@ -276,4 +276,5 @@ table GameMessage {
 
 // REMOVED the duplicate ServerMessage table - use GameMessage instead
 
+file_identifier "MGS1";
 root_type GameMessage;
