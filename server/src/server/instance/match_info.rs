@@ -14,6 +14,19 @@ impl MassiveGameServer {
 
     pub(crate) fn build_match_info_only_bytes(&self) -> Bytes {
         let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(2048);
+        let timestamp_ms = self.get_server_timestamp_ms();
+        self.refresh_commander_runtime_state(timestamp_ms);
+        let team1_commander_id = self
+            .commander_id_for_team(1)
+            .map(|commander_id| commander_id.as_str().to_owned());
+        let team2_commander_id = self
+            .commander_id_for_team(2)
+            .map(|commander_id| commander_id.as_str().to_owned());
+        let team1_commander_waypoint = self.commander_primary_waypoint_for_team(1);
+        let team2_commander_waypoint = self.commander_primary_waypoint_for_team(2);
+        let team1_commander_attack_bias = self.commander_attack_bias_for_team(1).unwrap_or(0.0);
+        let team2_commander_attack_bias = self.commander_attack_bias_for_team(2).unwrap_or(0.0);
+
         let match_info_guard = self.match_info.read();
         let team_scores_vec: Vec<_> = match_info_guard
             .team_scores
@@ -29,6 +42,30 @@ impl MassiveGameServer {
             })
             .collect();
         let team_scores_fb = builder.create_vector(&team_scores_vec);
+        let team1_commander_id_fb = team1_commander_id
+            .as_deref()
+            .map(|id| fb_safe_str(&mut builder, id));
+        let team2_commander_id_fb = team2_commander_id
+            .as_deref()
+            .map(|id| fb_safe_str(&mut builder, id));
+        let team1_commander_waypoint_fb = team1_commander_waypoint.map(|waypoint| {
+            fb::Vec2::create(
+                &mut builder,
+                &fb::Vec2Args {
+                    x: waypoint.x,
+                    y: waypoint.y,
+                },
+            )
+        });
+        let team2_commander_waypoint_fb = team2_commander_waypoint.map(|waypoint| {
+            fb::Vec2::create(
+                &mut builder,
+                &fb::Vec2Args {
+                    x: waypoint.x,
+                    y: waypoint.y,
+                },
+            )
+        });
         let match_info_fb = fb::MatchInfo::create(
             &mut builder,
             &fb::MatchInfoArgs {
@@ -38,6 +75,12 @@ impl MassiveGameServer {
                 winner_name: None,
                 game_mode: match_info_guard.game_mode,
                 team_scores: Some(team_scores_fb),
+                team1_commander_id: team1_commander_id_fb,
+                team2_commander_id: team2_commander_id_fb,
+                team1_commander_waypoint: team1_commander_waypoint_fb,
+                team2_commander_waypoint: team2_commander_waypoint_fb,
+                team1_commander_attack_bias,
+                team2_commander_attack_bias,
             },
         );
         drop(match_info_guard);
@@ -49,10 +92,7 @@ impl MassiveGameServer {
             pickups: None,
             deactivated_pickup_ids: None,
             game_events: None,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64,
+            timestamp: timestamp_ms,
             last_processed_input_sequence: 0,
             changed_player_fields: None,
             kill_feed: None,

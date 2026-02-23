@@ -489,6 +489,34 @@ impl MassiveGameServer {
                     })
                     .collect();
                 let team_scores_fb = builder.create_vector(&team_scores_vec);
+                let team1_commander_id_fb = match_snapshot
+                    .team1_commander_id
+                    .as_deref()
+                    .map(|id| fb_safe_str(&mut builder, id));
+                let team2_commander_id_fb = match_snapshot
+                    .team2_commander_id
+                    .as_deref()
+                    .map(|id| fb_safe_str(&mut builder, id));
+                let team1_commander_waypoint_fb =
+                    match_snapshot.team1_commander_waypoint.map(|waypoint| {
+                        fb::Vec2::create(
+                            &mut builder,
+                            &fb::Vec2Args {
+                                x: waypoint.x,
+                                y: waypoint.y,
+                            },
+                        )
+                    });
+                let team2_commander_waypoint_fb =
+                    match_snapshot.team2_commander_waypoint.map(|waypoint| {
+                        fb::Vec2::create(
+                            &mut builder,
+                            &fb::Vec2Args {
+                                x: waypoint.x,
+                                y: waypoint.y,
+                            },
+                        )
+                    });
                 Some(fb::MatchInfo::create(
                     &mut builder,
                     &fb::MatchInfoArgs {
@@ -498,6 +526,12 @@ impl MassiveGameServer {
                         winner_name: None,
                         game_mode: match_snapshot.game_mode,
                         team_scores: Some(team_scores_fb),
+                        team1_commander_id: team1_commander_id_fb,
+                        team2_commander_id: team2_commander_id_fb,
+                        team1_commander_waypoint: team1_commander_waypoint_fb,
+                        team2_commander_waypoint: team2_commander_waypoint_fb,
+                        team1_commander_attack_bias: match_snapshot.team1_commander_attack_bias,
+                        team2_commander_attack_bias: match_snapshot.team2_commander_attack_bias,
                     },
                 ))
             } else {
@@ -884,6 +918,32 @@ impl MassiveGameServer {
             })
             .collect();
         let team_scores_fb = builder.create_vector(&fb_team_scores_vec);
+        let team1_commander_id_fb = match_snapshot
+            .team1_commander_id
+            .as_deref()
+            .map(|id| fb_safe_str(&mut builder, id));
+        let team2_commander_id_fb = match_snapshot
+            .team2_commander_id
+            .as_deref()
+            .map(|id| fb_safe_str(&mut builder, id));
+        let team1_commander_waypoint_fb = match_snapshot.team1_commander_waypoint.map(|waypoint| {
+            fb::Vec2::create(
+                &mut builder,
+                &fb::Vec2Args {
+                    x: waypoint.x,
+                    y: waypoint.y,
+                },
+            )
+        });
+        let team2_commander_waypoint_fb = match_snapshot.team2_commander_waypoint.map(|waypoint| {
+            fb::Vec2::create(
+                &mut builder,
+                &fb::Vec2Args {
+                    x: waypoint.x,
+                    y: waypoint.y,
+                },
+            )
+        });
 
         let match_info_fb = fb::MatchInfo::create(
             &mut builder,
@@ -894,6 +954,12 @@ impl MassiveGameServer {
                 winner_name: None,
                 game_mode: match_snapshot.game_mode,
                 team_scores: Some(team_scores_fb),
+                team1_commander_id: team1_commander_id_fb,
+                team2_commander_id: team2_commander_id_fb,
+                team1_commander_waypoint: team1_commander_waypoint_fb,
+                team2_commander_waypoint: team2_commander_waypoint_fb,
+                team1_commander_attack_bias: match_snapshot.team1_commander_attack_bias,
+                team2_commander_attack_bias: match_snapshot.team2_commander_attack_bias,
             },
         );
 

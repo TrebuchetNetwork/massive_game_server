@@ -162,6 +162,18 @@ impl MassiveGameServer {
             .collect();
 
         // Snapshot match info (read once)
+        self.refresh_commander_runtime_state(current_timestamp_ms);
+        let team1_commander_id = self
+            .commander_id_for_team(1)
+            .map(|commander_id| commander_id.as_str().to_owned());
+        let team2_commander_id = self
+            .commander_id_for_team(2)
+            .map(|commander_id| commander_id.as_str().to_owned());
+        let team1_commander_waypoint = self.commander_primary_waypoint_for_team(1);
+        let team2_commander_waypoint = self.commander_primary_waypoint_for_team(2);
+        let team1_commander_attack_bias = self.commander_attack_bias_for_team(1).unwrap_or(0.0);
+        let team2_commander_attack_bias = self.commander_attack_bias_for_team(2).unwrap_or(0.0);
+
         let match_info_guard = self.match_info.read();
         let match_info_snapshot = MatchInfoSnapshot {
             time_remaining: match_info_guard.time_remaining,
@@ -169,6 +181,12 @@ impl MassiveGameServer {
             game_mode: match_info_guard.game_mode,
             team_scores: match_info_guard.team_scores.clone(),
             flag_states: match_info_guard.flag_states.clone(),
+            team1_commander_id,
+            team2_commander_id,
+            team1_commander_waypoint,
+            team2_commander_waypoint,
+            team1_commander_attack_bias,
+            team2_commander_attack_bias,
         };
         drop(match_info_guard);
 

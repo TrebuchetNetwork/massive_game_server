@@ -16,7 +16,7 @@ impl MassiveGameServer {
         }
     }
 
-    fn refresh_commander_runtime_state(&self, now_ms: u64) {
+    pub(super) fn refresh_commander_runtime_state(&self, now_ms: u64) {
         if !self.commander_mode_enabled {
             return;
         }
@@ -279,6 +279,17 @@ impl MassiveGameServer {
             runtime.team_attack_bias.remove(&team_id);
         }
         runtime.team_attack_bias.get(&team_id).copied()
+    }
+
+    pub fn commander_id_for_team(&self, team_id: u8) -> Option<PlayerID> {
+        if !self.commander_mode_enabled || !(team_id == 1 || team_id == 2) {
+            return None;
+        }
+        self.commander_runtime_state
+            .read()
+            .team_commanders
+            .get(&team_id)
+            .cloned()
     }
 
     pub(super) fn record_player_position_sample(

@@ -13,5 +13,6 @@ export enum GameEventType {
   FlagGrabbed = 7,
   FlagDropped = 8,
   FlagReturned = 9,
-  FlagCaptured = 10
+  FlagCaptured = 10,
+  TeamPing = 11
 }

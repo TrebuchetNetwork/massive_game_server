@@ -185,7 +185,7 @@ impl MassiveGameServer {
             .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
     }
 
-    fn build_system_event_packet<T: Serialize>(
+    pub(super) fn build_system_event_packet<T: Serialize>(
         &self,
         event: &str,
         payload: Option<&T>,

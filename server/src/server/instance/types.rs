@@ -281,6 +281,12 @@ pub(super) struct MatchInfoSnapshot {
     pub(super) game_mode: fb::GameModeType,
     pub(super) team_scores: HashMap<u8, i32>,
     pub(super) flag_states: HashMap<u8, ServerFlagState>,
+    pub(super) team1_commander_id: Option<String>,
+    pub(super) team2_commander_id: Option<String>,
+    pub(super) team1_commander_waypoint: Option<Vec2>,
+    pub(super) team2_commander_waypoint: Option<Vec2>,
+    pub(super) team1_commander_attack_bias: f32,
+    pub(super) team2_commander_attack_bias: f32,
 }
 
 #[derive(Clone, Debug, Serialize)]

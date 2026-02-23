@@ -1,6 +1,35 @@
 use super::*;
 
 impl MassiveGameServer {
+    fn game_mode_label(mode: fb::GameModeType) -> &'static str {
+        match mode {
+            fb::GameModeType::FreeForAll => "FreeForAll",
+            fb::GameModeType::TeamDeathmatch => "TeamDeathmatch",
+            fb::GameModeType::CaptureTheFlag => "CaptureTheFlag",
+            _ => "Unknown",
+        }
+    }
+
+    fn broadcast_dynamic_mode_event(
+        &self,
+        phase: &str,
+        from_mode: fb::GameModeType,
+        to_mode: fb::GameModeType,
+        seconds_remaining: Option<u32>,
+        time_remaining: f32,
+    ) {
+        let payload = serde_json::json!({
+            "phase": phase,
+            "from_mode": Self::game_mode_label(from_mode),
+            "to_mode": Self::game_mode_label(to_mode),
+            "seconds_remaining": seconds_remaining,
+            "time_remaining": time_remaining.max(0.0),
+        });
+        if let Some(packet) = self.build_system_event_packet("mode_transition", Some(&payload)) {
+            self.enqueue_direct_packet_for_all_players(packet);
+        }
+    }
+
     pub(super) fn update_match_state_authoritative(&self, delta_time: f32) {
         let mut match_info_guard = self.match_info.write();
         let player_count = self.participant_count();
@@ -44,21 +73,93 @@ impl MassiveGameServer {
                 }
             }
             fb::MatchStateType::Active => {
+                let previous_time_remaining = match_info_guard.time_remaining;
                 match_info_guard.time_remaining -= delta_time;
                 if dynamic_mode_transitions {
                     let elapsed = (300.0 - match_info_guard.time_remaining).max(0.0);
+                    let previous_elapsed = (300.0 - previous_time_remaining).max(0.0);
+                    if match_info_guard.game_mode == fb::GameModeType::FreeForAll
+                        && previous_elapsed < 105.0
+                        && elapsed >= 105.0
+                    {
+                        self.broadcast_dynamic_mode_event(
+                            "countdown",
+                            fb::GameModeType::FreeForAll,
+                            fb::GameModeType::TeamDeathmatch,
+                            Some(15),
+                            match_info_guard.time_remaining,
+                        );
+                    }
                     if elapsed >= 120.0
                         && match_info_guard.time_remaining > 70.0
                         && match_info_guard.game_mode == fb::GameModeType::FreeForAll
                     {
+                        let previous_mode = match_info_guard.game_mode;
                         match_info_guard.game_mode = fb::GameModeType::TeamDeathmatch;
-                        info!("Dynamic mode transition: FreeForAll -> TeamDeathmatch");
-                    } else if match_info_guard.time_remaining <= 70.0
+                        info!(
+                            "Dynamic mode transition: {} -> {}",
+                            Self::game_mode_label(previous_mode),
+                            Self::game_mode_label(fb::GameModeType::TeamDeathmatch)
+                        );
+                        self.broadcast_dynamic_mode_event(
+                            "transition",
+                            previous_mode,
+                            fb::GameModeType::TeamDeathmatch,
+                            None,
+                            match_info_guard.time_remaining,
+                        );
+                    } else if previous_time_remaining > 70.0
                         && match_info_guard.game_mode != fb::GameModeType::CaptureTheFlag
                     {
+                        if previous_time_remaining > 90.0 && match_info_guard.time_remaining <= 90.0
+                        {
+                            self.broadcast_dynamic_mode_event(
+                                "countdown",
+                                match_info_guard.game_mode,
+                                fb::GameModeType::CaptureTheFlag,
+                                Some(20),
+                                match_info_guard.time_remaining,
+                            );
+                        }
+                        if previous_time_remaining > 80.0 && match_info_guard.time_remaining <= 80.0
+                        {
+                            self.broadcast_dynamic_mode_event(
+                                "countdown",
+                                match_info_guard.game_mode,
+                                fb::GameModeType::CaptureTheFlag,
+                                Some(10),
+                                match_info_guard.time_remaining,
+                            );
+                        }
+                        if previous_time_remaining > 75.0 && match_info_guard.time_remaining <= 75.0
+                        {
+                            self.broadcast_dynamic_mode_event(
+                                "countdown",
+                                match_info_guard.game_mode,
+                                fb::GameModeType::CaptureTheFlag,
+                                Some(5),
+                                match_info_guard.time_remaining,
+                            );
+                        }
+                    }
+                    if match_info_guard.time_remaining <= 70.0
+                        && match_info_guard.game_mode != fb::GameModeType::CaptureTheFlag
+                    {
+                        let previous_mode = match_info_guard.game_mode;
                         match_info_guard.game_mode = fb::GameModeType::CaptureTheFlag;
                         self.initialize_ctf_flags(&mut match_info_guard);
-                        info!("Dynamic mode transition: TeamDeathmatch -> CaptureTheFlag");
+                        info!(
+                            "Dynamic mode transition: {} -> {}",
+                            Self::game_mode_label(previous_mode),
+                            Self::game_mode_label(fb::GameModeType::CaptureTheFlag)
+                        );
+                        self.broadcast_dynamic_mode_event(
+                            "transition",
+                            previous_mode,
+                            fb::GameModeType::CaptureTheFlag,
+                            None,
+                            match_info_guard.time_remaining,
+                        );
                     }
                 }
                 if match_info_guard.time_remaining <= 0.0 {

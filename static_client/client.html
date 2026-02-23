@@ -75,6 +75,10 @@
                 <button id="mobileFire" class="mobile-button mobile-button--primary">Fire</button>
                 <button id="mobileReload" class="mobile-button">Reload</button>
                 <button id="mobileMelee" class="mobile-button">Melee</button>
+                <button id="mobileWeaponPrimary" class="mobile-button">Primary</button>
+                <button id="mobileWeaponSecondary" class="mobile-button">Secondary</button>
+                <button id="mobileAbilityDash" class="mobile-button">Dash</button>
+                <button id="mobileAbilityDodge" class="mobile-button">Dodge</button>
             </div>
         </div>
         <div id="deathRecap" class="death-recap">
@@ -82,6 +86,23 @@
             <div id="deathRecapMain" class="death-recap__line"></div>
             <div id="deathRecapDistance" class="death-recap__line"></div>
             <ul id="deathRecapList" class="death-recap__list"></ul>
+        </div>
+        <div id="killcamPanel" class="killcam-panel">
+            <div class="killcam-panel__title">Killcam Replay</div>
+            <div id="killcamMeta" class="killcam-panel__meta"></div>
+            <canvas id="killcamCanvas" class="killcam-panel__canvas" width="280" height="140"></canvas>
+            <div class="killcam-panel__progress-track">
+                <div id="killcamProgress" class="killcam-panel__progress-fill"></div>
+            </div>
+        </div>
+        <div id="postMatchPanel" class="post-match-panel">
+            <div class="post-match-panel__header">
+                <div class="post-match-panel__title">Match Summary</div>
+                <button id="closePostMatchButton" class="post-match-panel__close" type="button">Close</button>
+            </div>
+            <div id="postMatchMeta" class="post-match-panel__meta"></div>
+            <div id="postMatchMvp" class="post-match-panel__mvp"></div>
+            <div id="postMatchTable" class="post-match-panel__table"></div>
         </div>
         <div id="pingWheel" class="ping-wheel">
             <div class="ping-wheel__center">Ping</div>
@@ -167,6 +188,9 @@
                             <li>Left Click - Shoot</li>
                             <li>R - Reload</li>
                             <li>V - Melee Attack</li>
+                            <li>1 / 2 - Primary / Secondary Weapon</li>
+                            <li>Q / E - Dash / Dodge Ability</li>
+                            <li>C - Commander Order (if commander)</li>
                             <li>Tab - Scoreboard</li>
                             <li>H - Focus UI</li>
                             <li>Esc - Settings</li>
@@ -178,6 +202,7 @@
                         <div id="gameStats" class="text-sm text-gray-300 space-y-1">
                             <p>My ID: <span id="myPlayerIdSpan" class="text-indigo-300">N/A</span></p>
                             <p>Team: <span id="playerTeam" class="text-gray-100">None</span></p>
+                            <p>Role: <span id="commanderRole" class="text-gray-100">Member</span></p>
                             <p>Health: <span id="playerHealth" class="text-green-400">100</span></p>
                             <p>Shield: <span id="playerShield" class="text-blue-400">0</span></p>
                             <p>Ammo: <span id="playerAmmo" class="text-yellow-400">10</span> <span id="reloadPrompt" class="text-red-500 font-bold"></span></p>
@@ -501,11 +526,27 @@
         const mobileFireButton = document.getElementById('mobileFire');
         const mobileReloadButton = document.getElementById('mobileReload');
         const mobileMeleeButton = document.getElementById('mobileMelee');
+        const mobileWeaponPrimaryButton = document.getElementById('mobileWeaponPrimary');
+        const mobileWeaponSecondaryButton = document.getElementById('mobileWeaponSecondary');
+        const mobileAbilityDashButton = document.getElementById('mobileAbilityDash');
+        const mobileAbilityDodgeButton = document.getElementById('mobileAbilityDodge');
         const pingWheelDiv = document.getElementById('pingWheel');
         const deathRecapDiv = document.getElementById('deathRecap');
         const deathRecapMainDiv = document.getElementById('deathRecapMain');
         const deathRecapDistanceDiv = document.getElementById('deathRecapDistance');
         const deathRecapListDiv = document.getElementById('deathRecapList');
+        const killcamPanelDiv = document.getElementById('killcamPanel');
+        const killcamMetaDiv = document.getElementById('killcamMeta');
+        const killcamCanvas = document.getElementById('killcamCanvas');
+        const killcamCanvasCtx = killcamCanvas && typeof killcamCanvas.getContext === 'function'
+            ? killcamCanvas.getContext('2d')
+            : null;
+        const killcamProgressDiv = document.getElementById('killcamProgress');
+        const postMatchPanelDiv = document.getElementById('postMatchPanel');
+        const postMatchMetaDiv = document.getElementById('postMatchMeta');
+        const postMatchMvpDiv = document.getElementById('postMatchMvp');
+        const postMatchTableDiv = document.getElementById('postMatchTable');
+        const closePostMatchButton = document.getElementById('closePostMatchButton');
         const combatUiQualitySelect = document.getElementById('combatUiQuality');
         const showNetworkProfilerCheckbox = document.getElementById('showNetworkProfiler');
         const mobileStickyFireCheckbox = document.getElementById('mobileStickyFire');
@@ -531,6 +572,7 @@
         // Game Stats UI Elements
         const myPlayerIdSpan = document.getElementById('myPlayerIdSpan');
         const playerTeamSpan = document.getElementById('playerTeam');
+        const commanderRoleSpan = document.getElementById('commanderRole');
         const playerHealthSpan = document.getElementById('playerHealth');
         const playerShieldSpan = document.getElementById('playerShield');
         const playerAmmoSpan = document.getElementById('playerAmmo');
@@ -2609,8 +2651,11 @@
         function sendTacticalPing(kind, worldPoint) {
             if (!worldPoint || !Number.isFinite(worldPoint.x) || !Number.isFinite(worldPoint.y)) return;
             const now = Date.now();
+            const localCommander = isLocalTeamCommander();
             tacticalPings.push({
-                kind: kind === 'enemy' ? 'enemy' : (kind === 'defend' ? 'defend' : 'group'),
+                kind: localCommander
+                    ? 'defend'
+                    : (kind === 'enemy' ? 'enemy' : (kind === 'defend' ? 'defend' : 'group')),
                 x: worldPoint.x,
                 y: worldPoint.y,
                 createdAt: now,
@@ -2628,13 +2673,28 @@
             inputState.ping_y = Number(worldPoint.y) || 0;
 
             if (dataChannel && dataChannel.readyState === 'open' && (now - lastPingChatAt) >= TACTICAL_PING_CHAT_THROTTLE_MS) {
-                const pingLabel = kind === 'enemy' ? 'Enemy' : (kind === 'defend' ? 'Defend' : 'Group');
+                const pingLabel = localCommander
+                    ? 'Commander'
+                    : (kind === 'enemy' ? 'Enemy' : (kind === 'defend' ? 'Defend' : 'Group'));
                 const msg = `[PING] ${pingLabel} @ ${Math.round(worldPoint.x)}, ${Math.round(worldPoint.y)}`;
                 try {
                     dataChannel.send(createChatMessage(msg));
                     lastPingChatAt = now;
                 } catch (_) {}
             }
+        }
+
+        function issueCommanderOrder(worldPoint) {
+            if (!worldPoint || !Number.isFinite(worldPoint.x) || !Number.isFinite(worldPoint.y)) {
+                return false;
+            }
+            if (!isLocalTeamCommander()) {
+                setObjectiveUrgency('Only the team commander can issue global orders', 'info', 800);
+                return false;
+            }
+            sendTacticalPing('defend', worldPoint);
+            setObjectiveUrgency('Commander order issued', 'positive', 950);
+            return true;
         }
 
         function setupTouchControls() {
@@ -2815,6 +2875,38 @@
                 recordMobileActionReachSample(event.changedTouches[0]);
                 inputState.melee_attack = true;
                 triggerHaptic(8);
+                event.preventDefault();
+            }, { passive: false });
+
+            mobileWeaponPrimaryButton?.addEventListener('touchstart', (event) => {
+                recordMobileActionReachSample(event.changedTouches[0]);
+                inputState.change_weapon_slot = 1;
+                setObjectiveUrgency('Swapping to primary weapon', 'info', 650);
+                triggerHaptic(8);
+                event.preventDefault();
+            }, { passive: false });
+
+            mobileWeaponSecondaryButton?.addEventListener('touchstart', (event) => {
+                recordMobileActionReachSample(event.changedTouches[0]);
+                inputState.change_weapon_slot = 2;
+                setObjectiveUrgency('Swapping to secondary weapon', 'info', 650);
+                triggerHaptic(8);
+                event.preventDefault();
+            }, { passive: false });
+
+            mobileAbilityDashButton?.addEventListener('touchstart', (event) => {
+                recordMobileActionReachSample(event.changedTouches[0]);
+                inputState.use_ability_slot = 1;
+                setObjectiveUrgency('Dash ability activated', 'positive', 600);
+                triggerHaptic([8, 10]);
+                event.preventDefault();
+            }, { passive: false });
+
+            mobileAbilityDodgeButton?.addEventListener('touchstart', (event) => {
+                recordMobileActionReachSample(event.changedTouches[0]);
+                inputState.use_ability_slot = 2;
+                setObjectiveUrgency('Dodge ability activated', 'positive', 600);
+                triggerHaptic([8, 12]);
                 event.preventDefault();
             }, { passive: false });
 
@@ -3101,6 +3193,9 @@
         let chatMessages = [];
         let latestKillcam = null;
         let latestMatchSummary = null;
+        let activeKillcamPlayback = null;
+        let postMatchSummaryVisible = false;
+        let postMatchSummarySignature = '';
         let matchInfo = null;
         let currentMapName = "Unknown Map";
         const COMBAT_MOMENTUM_DECAY_PER_SEC = 0.065;
@@ -3113,6 +3208,9 @@
         const COMBAT_HEADSHOT_MARKER_MS = 280;
         const COMBAT_MEDAL_MS = 1250;
         const DEATH_RECAP_MS = 2500;
+        const KILLCAM_MIN_DURATION_MS = 900;
+        const KILLCAM_MAX_DURATION_MS = 3200;
+        const KILLCAM_DISPLAY_GRACE_MS = 900;
         const RESPAWN_ANIMATION_LIGHTWEIGHT = true;
         const RESPAWN_WORLD_TEXT_ENABLED = false;
         const OBJECTIVE_URGENCY_REFRESH_MS = 260;
@@ -5812,6 +5910,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             } else {
                 updateCombatPresentation(currentTime, clientDeltaTime);
             }
+            updateKillcamReplayUi(currentTime);
             
             // Update aiming system
             if (showAiming && localPlayerState && localPlayerState.alive) {
@@ -7919,6 +8018,12 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
         function parseMatchInfo(matchInfoTable) {
             if (!matchInfoTable) return null;
+            const team1CommanderWaypointTable = typeof matchInfoTable.team1CommanderWaypoint === 'function'
+                ? matchInfoTable.team1CommanderWaypoint(flatbufferParseScratch.vec2)
+                : null;
+            const team2CommanderWaypointTable = typeof matchInfoTable.team2CommanderWaypoint === 'function'
+                ? matchInfoTable.team2CommanderWaypoint(flatbufferParseScratch.vec2)
+                : null;
             return {
                 time_remaining: matchInfoTable.timeRemaining(),
                 match_state: matchInfoTable.matchState(),
@@ -7926,7 +8031,259 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 winner_name: matchInfoTable.winnerName(),
                 game_mode: matchInfoTable.gameMode(),
                 team_scores: parseTeamScores(matchInfoTable),
+                team1_commander_id: typeof matchInfoTable.team1CommanderId === 'function'
+                    ? matchInfoTable.team1CommanderId()
+                    : null,
+                team2_commander_id: typeof matchInfoTable.team2CommanderId === 'function'
+                    ? matchInfoTable.team2CommanderId()
+                    : null,
+                team1_commander_waypoint: team1CommanderWaypointTable
+                    ? { x: team1CommanderWaypointTable.x(), y: team1CommanderWaypointTable.y() }
+                    : null,
+                team2_commander_waypoint: team2CommanderWaypointTable
+                    ? { x: team2CommanderWaypointTable.x(), y: team2CommanderWaypointTable.y() }
+                    : null,
+                team1_commander_attack_bias: typeof matchInfoTable.team1CommanderAttackBias === 'function'
+                    ? matchInfoTable.team1CommanderAttackBias()
+                    : 0.0,
+                team2_commander_attack_bias: typeof matchInfoTable.team2CommanderAttackBias === 'function'
+                    ? matchInfoTable.team2CommanderAttackBias()
+                    : 0.0,
             };
+        }
+
+        function getCommanderIdForTeam(teamId) {
+            if (!matchInfo || teamId === 0) return null;
+            if (teamId === 1) {
+                return matchInfo.team1_commander_id || null;
+            }
+            if (teamId === 2) {
+                return matchInfo.team2_commander_id || null;
+            }
+            return null;
+        }
+
+        function getCommanderWaypointForTeam(teamId) {
+            if (!matchInfo || teamId === 0) return null;
+            if (teamId === 1) {
+                return matchInfo.team1_commander_waypoint || null;
+            }
+            if (teamId === 2) {
+                return matchInfo.team2_commander_waypoint || null;
+            }
+            return null;
+        }
+
+        function isLocalTeamCommander() {
+            if (!myPlayerId || !localPlayerState) return false;
+            const teamId = Number(localPlayerState.team_id) || 0;
+            if (!(teamId === 1 || teamId === 2)) return false;
+            const commanderId = getCommanderIdForTeam(teamId);
+            return !!commanderId && String(commanderId) === String(myPlayerId);
+        }
+
+        function formatModeName(rawMode) {
+            const normalized = String(rawMode || '').trim();
+            if (!normalized) return 'Unknown';
+            if (normalized === 'FreeForAll') return 'FFA';
+            if (normalized === 'TeamDeathmatch') return 'TDM';
+            if (normalized === 'CaptureTheFlag') return 'CTF';
+            return normalized;
+        }
+
+        function closePostMatchSummary() {
+            postMatchSummaryVisible = false;
+            if (postMatchPanelDiv) {
+                postMatchPanelDiv.classList.remove('post-match-panel--visible');
+            }
+        }
+
+        function renderPostMatchSummary(summaryPayload) {
+            if (!summaryPayload || typeof summaryPayload !== 'object') return;
+            if (!postMatchPanelDiv || !postMatchMetaDiv || !postMatchMvpDiv || !postMatchTableDiv) return;
+
+            const generatedAt = Number(summaryPayload.generated_at_ms || summaryPayload.generatedAtMs || 0);
+            const summarySignature = `${generatedAt}:${summaryPayload.reason || ''}:${summaryPayload.match_duration || 0}:${(summaryPayload.players || []).length}`;
+            if (summarySignature === postMatchSummarySignature && postMatchSummaryVisible) {
+                return;
+            }
+            postMatchSummarySignature = summarySignature;
+
+            const modeName = formatModeName(summaryPayload.game_mode || summaryPayload.gameMode || 'Unknown');
+            const reasonRaw = String(summaryPayload.reason || 'match_complete').replace(/_/g, ' ');
+            const durationSec = Math.max(0, Number(summaryPayload.match_duration || summaryPayload.matchDuration || 0));
+            const minutes = Math.floor(durationSec / 60);
+            const seconds = Math.floor(durationSec % 60);
+            const winnerTeam = Number(summaryPayload.winning_team || summaryPayload.winningTeam || 0);
+            const winnerText = winnerTeam > 0 ? `Winner: Team ${winnerTeam}` : 'Winner: Draw / FFA';
+            const reasonText = reasonRaw.charAt(0).toUpperCase() + reasonRaw.slice(1);
+            postMatchMetaDiv.textContent = `${modeName} · ${winnerText} · ${minutes}:${seconds.toString().padStart(2, '0')} · ${reasonText}`;
+
+            const mvpKills = summaryPayload.mvp_kills || summaryPayload.mvpKills || 'N/A';
+            const mvpDamage = summaryPayload.mvp_damage || summaryPayload.mvpDamage || 'N/A';
+            const mvpObjectives = summaryPayload.mvp_objectives || summaryPayload.mvpObjectives || 'N/A';
+            postMatchMvpDiv.textContent = `MVP Kills: ${mvpKills} | MVP Damage: ${mvpDamage} | MVP Objectives: ${mvpObjectives}`;
+
+            const playersRows = Array.isArray(summaryPayload.players) ? summaryPayload.players : [];
+            const rows = playersRows.slice(0, 10).map((row) => {
+                const name = escapeHtml(String(row?.player_name || row?.playerName || 'Unknown'));
+                const team = Number(row?.team_id || row?.teamId || 0);
+                const kills = Number(row?.kills || 0) | 0;
+                const deaths = Number(row?.deaths || 0) | 0;
+                const score = Number(row?.score || 0) | 0;
+                const damage = Number(row?.damage_dealt || row?.damageDealt || 0) | 0;
+                const kd = Number(row?.kd_ratio || row?.kdRatio || 0);
+                return `<tr><td>${name}</td><td>${team || '-'}</td><td>${score}</td><td>${kills}/${deaths}</td><td>${damage}</td><td>${kd.toFixed(2)}</td></tr>`;
+            });
+            if (rows.length === 0) {
+                postMatchTableDiv.innerHTML = '<div class="post-match-panel__empty">No match stats available.</div>';
+            } else {
+                postMatchTableDiv.innerHTML = `<table class="post-match-table"><thead><tr><th>Player</th><th>Team</th><th>Score</th><th>K/D</th><th>Dmg</th><th>KD</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+            }
+
+            postMatchSummaryVisible = true;
+            postMatchPanelDiv.classList.add('post-match-panel--visible');
+        }
+
+        function clearKillcamPlayback() {
+            activeKillcamPlayback = null;
+            if (killcamPanelDiv) {
+                killcamPanelDiv.classList.remove('killcam-panel--visible');
+            }
+            if (killcamProgressDiv) {
+                killcamProgressDiv.style.width = '0%';
+            }
+            if (killcamCanvasCtx && killcamCanvas) {
+                killcamCanvasCtx.clearRect(0, 0, killcamCanvas.width, killcamCanvas.height);
+            }
+        }
+
+        function startKillcamPlayback(payload) {
+            if (!payload || typeof payload !== 'object') {
+                clearKillcamPlayback();
+                return;
+            }
+            const rawSamples = Array.isArray(payload.samples) ? payload.samples : [];
+            const samples = rawSamples
+                .map((sample) => ({
+                    x: Number(sample?.x),
+                    y: Number(sample?.y),
+                    timestamp_ms: Number(sample?.timestamp_ms || sample?.timestampMs || 0),
+                    shooting: !!sample?.shooting,
+                }))
+                .filter((sample) => Number.isFinite(sample.x) && Number.isFinite(sample.y));
+
+            if (samples.length < 2 || !killcamPanelDiv) {
+                clearKillcamPlayback();
+                return;
+            }
+
+            const firstTimestamp = Number(samples[0].timestamp_ms) || 0;
+            const lastTimestamp = Number(samples[samples.length - 1].timestamp_ms) || firstTimestamp;
+            const timelineSpanMs = Math.max(0, lastTimestamp - firstTimestamp);
+            const durationMs = clamp(
+                timelineSpanMs > 10 ? timelineSpanMs : samples.length * 55,
+                KILLCAM_MIN_DURATION_MS,
+                KILLCAM_MAX_DURATION_MS
+            );
+            activeKillcamPlayback = {
+                startedAtMs: Date.now(),
+                durationMs,
+                killerName: String(payload.killer_name || payload.killerName || 'Unknown'),
+                weapon: String(payload.weapon || 'Unknown'),
+                samples,
+                firstTimestamp,
+                lastTimestamp,
+            };
+
+            if (killcamPanelDiv) {
+                killcamPanelDiv.classList.add('killcam-panel--visible');
+            }
+            if (killcamMetaDiv) {
+                killcamMetaDiv.textContent = `By ${activeKillcamPlayback.killerName} (${activeKillcamPlayback.weapon})`;
+            }
+        }
+
+        function renderKillcamCanvas(progress) {
+            if (!activeKillcamPlayback || !killcamCanvasCtx || !killcamCanvas) return;
+            const samples = activeKillcamPlayback.samples;
+            if (!samples || samples.length < 2) return;
+
+            const canvasWidth = killcamCanvas.width;
+            const canvasHeight = killcamCanvas.height;
+            killcamCanvasCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+            killcamCanvasCtx.fillStyle = '#0b1220';
+            killcamCanvasCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+            const padding = 12;
+            let minX = samples[0].x;
+            let maxX = samples[0].x;
+            let minY = samples[0].y;
+            let maxY = samples[0].y;
+            for (let i = 1; i < samples.length; i += 1) {
+                const sample = samples[i];
+                minX = Math.min(minX, sample.x);
+                maxX = Math.max(maxX, sample.x);
+                minY = Math.min(minY, sample.y);
+                maxY = Math.max(maxY, sample.y);
+            }
+            const spanX = Math.max(40, maxX - minX);
+            const spanY = Math.max(40, maxY - minY);
+            const scaleX = (canvasWidth - padding * 2) / spanX;
+            const scaleY = (canvasHeight - padding * 2) / spanY;
+            const scale = Math.min(scaleX, scaleY);
+            const offsetX = (canvasWidth - spanX * scale) * 0.5;
+            const offsetY = (canvasHeight - spanY * scale) * 0.5;
+
+            const projectPoint = (sample) => ({
+                x: offsetX + (sample.x - minX) * scale,
+                y: offsetY + (sample.y - minY) * scale,
+            });
+
+            killcamCanvasCtx.lineWidth = 2;
+            killcamCanvasCtx.strokeStyle = '#38bdf8';
+            killcamCanvasCtx.beginPath();
+            const firstPoint = projectPoint(samples[0]);
+            killcamCanvasCtx.moveTo(firstPoint.x, firstPoint.y);
+            for (let i = 1; i < samples.length; i += 1) {
+                const projected = projectPoint(samples[i]);
+                killcamCanvasCtx.lineTo(projected.x, projected.y);
+            }
+            killcamCanvasCtx.stroke();
+
+            const samplePosition = progress * (samples.length - 1);
+            const sampleFloor = Math.floor(samplePosition);
+            const sampleCeil = Math.min(samples.length - 1, sampleFloor + 1);
+            const sampleT = clamp(samplePosition - sampleFloor, 0, 1);
+            const startSample = samples[sampleFloor];
+            const endSample = samples[sampleCeil];
+            const interpSample = {
+                x: startSample.x + (endSample.x - startSample.x) * sampleT,
+                y: startSample.y + (endSample.y - startSample.y) * sampleT,
+            };
+            const markerPoint = projectPoint(interpSample);
+            killcamCanvasCtx.fillStyle = '#f87171';
+            killcamCanvasCtx.beginPath();
+            killcamCanvasCtx.arc(markerPoint.x, markerPoint.y, 4, 0, Math.PI * 2);
+            killcamCanvasCtx.fill();
+        }
+
+        function updateKillcamReplayUi(currentTimeMs) {
+            if (!activeKillcamPlayback || !killcamPanelDiv) return;
+            if (localPlayerState && localPlayerState.alive) {
+                clearKillcamPlayback();
+                return;
+            }
+            const elapsedMs = currentTimeMs - activeKillcamPlayback.startedAtMs;
+            if (elapsedMs >= activeKillcamPlayback.durationMs + KILLCAM_DISPLAY_GRACE_MS) {
+                clearKillcamPlayback();
+                return;
+            }
+            const progress = clamp(elapsedMs / activeKillcamPlayback.durationMs, 0, 1);
+            if (killcamProgressDiv) {
+                killcamProgressDiv.style.width = `${Math.round(progress * 100)}%`;
+            }
+            renderKillcamCanvas(progress);
         }
 
         function tryExtractSystemEvent(chatPayload) {
@@ -7958,6 +8315,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 latestKillcam = payload;
                 const killerName = payload.killer_name || payload.killerName || 'Unknown';
                 const weapon = payload.weapon || 'Unknown';
+                startKillcamPlayback(payload);
                 setObjectiveUrgency(`Eliminated by ${killerName} (${weapon})`, 'critical', 2200);
                 log(`Killcam: ${killerName} eliminated you with ${weapon}.`, 'warn');
                 return true;
@@ -7965,6 +8323,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
 
             if (eventName === 'match_summary' && payload && typeof payload === 'object') {
                 latestMatchSummary = payload;
+                renderPostMatchSummary(payload);
                 const winner = Number(payload.winning_team || 0);
                 const reason = payload.reason || 'match_complete';
                 if (winner > 0) {
@@ -7973,6 +8332,24 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     setObjectiveUrgency(`Match ended (${reason}).`, 'info', 6000);
                 }
                 log(`Match summary received (${reason}).`, 'info');
+                return true;
+            }
+
+            if (eventName === 'mode_transition' && payload && typeof payload === 'object') {
+                const phase = String(payload.phase || 'transition');
+                const fromMode = formatModeName(payload.from_mode || payload.fromMode);
+                const toMode = formatModeName(payload.to_mode || payload.toMode);
+                const countdownSeconds = Number(payload.seconds_remaining ?? payload.secondsRemaining);
+                if (phase === 'countdown' && Number.isFinite(countdownSeconds) && countdownSeconds > 0) {
+                    setObjectiveUrgency(
+                        `Mode shift in ${Math.round(countdownSeconds)}s: ${fromMode} -> ${toMode}`,
+                        'info',
+                        2200
+                    );
+                } else {
+                    setObjectiveUrgency(`Mode shifted: ${fromMode} -> ${toMode}`, 'positive', 2600);
+                }
+                log(`Mode transition event: ${fromMode} -> ${toMode} (${phase})`, 'info');
                 return true;
             }
 
@@ -8729,6 +9106,38 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 case 'KeyV':
                     if (isDown) inputState.melee_attack = true;
                     break;
+                case 'Digit1':
+                    if (isDown && !event.repeat) {
+                        inputState.change_weapon_slot = 1;
+                        setObjectiveUrgency('Swapping to primary weapon', 'info', 650);
+                    }
+                    break;
+                case 'Digit2':
+                    if (isDown && !event.repeat) {
+                        inputState.change_weapon_slot = 2;
+                        setObjectiveUrgency('Swapping to secondary weapon', 'info', 650);
+                    }
+                    break;
+                case 'KeyQ':
+                    if (isDown && !event.repeat && localPlayerState && localPlayerState.alive) {
+                        inputState.use_ability_slot = 1;
+                        setObjectiveUrgency('Dash ability activated', 'positive', 600);
+                    }
+                    break;
+                case 'KeyE':
+                    if (isDown && !event.repeat && localPlayerState && localPlayerState.alive) {
+                        inputState.use_ability_slot = 2;
+                        setObjectiveUrgency('Dodge ability activated', 'positive', 600);
+                    }
+                    break;
+                case 'KeyC':
+                    if (isDown && localPlayerState && localPlayerState.alive) {
+                        const commandPoint = (Number.isFinite(mouseWorldPos.x) && Number.isFinite(mouseWorldPos.y))
+                            ? { x: mouseWorldPos.x, y: mouseWorldPos.y }
+                            : { x: Number(localPlayerState.x) || 0, y: Number(localPlayerState.y) || 0 };
+                        issueCommanderOrder(commandPoint);
+                    }
+                    break;
                 default:
                     gameKeyProcessed = false;
                     break;
@@ -9138,8 +9547,11 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     const pingX = Number(event.position?.x);
                     const pingY = Number(event.position?.y);
                     if (Number.isFinite(pingX) && Number.isFinite(pingY)) {
+                        const localTeamId = Number(localPlayerState?.team_id) || 0;
+                        const localCommanderId = getCommanderIdForTeam(localTeamId);
+                        const fromCommander = !!localCommanderId && String(localCommanderId) === String(instigatorId);
                         tacticalPings.push({
-                            kind: 'group',
+                            kind: fromCommander ? 'defend' : 'group',
                             x: pingX,
                             y: pingY,
                             createdAt: Date.now(),
@@ -9148,7 +9560,11 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                         if (tacticalPings.length > 18) {
                             tacticalPings.splice(0, tacticalPings.length - 18);
                         }
-                        setObjectiveUrgency('Teammate pinged a location', 'info', 900);
+                        setObjectiveUrgency(
+                            fromCommander ? 'Commander issued an order' : 'Teammate pinged a location',
+                            fromCommander ? 'critical' : 'info',
+                            fromCommander ? 1100 : 900
+                        );
                     }
                 }
                 return;
@@ -9655,6 +10071,18 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             const teamScoresSignature = (matchInfo.team_scores || [])
                 .map(ts => `${ts.team_id}:${ts.score}`)
                 .join('|');
+            const commanderSignature = [
+                matchInfo.team1_commander_id || '',
+                matchInfo.team2_commander_id || '',
+                matchInfo.team1_commander_waypoint
+                    ? `${Math.round(Number(matchInfo.team1_commander_waypoint.x) || 0)},${Math.round(Number(matchInfo.team1_commander_waypoint.y) || 0)}`
+                    : '',
+                matchInfo.team2_commander_waypoint
+                    ? `${Math.round(Number(matchInfo.team2_commander_waypoint.x) || 0)},${Math.round(Number(matchInfo.team2_commander_waypoint.y) || 0)}`
+                    : '',
+                Number(matchInfo.team1_commander_attack_bias || 0).toFixed(2),
+                Number(matchInfo.team2_commander_attack_bias || 0).toFixed(2),
+            ].join('|');
             const matchSignature = [
                 matchInfo.match_state,
                 matchInfo.game_mode,
@@ -9662,7 +10090,8 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 matchInfo.winner_id || '',
                 matchInfo.winner_name || '',
                 players.size,
-                teamScoresSignature
+                teamScoresSignature,
+                commanderSignature
             ].join(':');
             if (uiCache.matchInfoSignature === matchSignature) {
                 return;
@@ -9678,6 +10107,41 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             }[matchInfo.game_mode] || "Unknown Mode";
 
             content += `<div class="font-semibold">${gameModeName}</div>`;
+
+            const describeCommander = (teamId) => {
+                const commanderId = getCommanderIdForTeam(teamId);
+                if (!commanderId) return 'Unassigned';
+                const commanderPlayer = players.get(commanderId);
+                if (commanderPlayer && commanderPlayer.username) {
+                    return `${commanderPlayer.username}`;
+                }
+                return `#${String(commanderId).slice(0, 8)}`;
+            };
+            const describeWaypoint = (teamId) => {
+                const waypoint = getCommanderWaypointForTeam(teamId);
+                if (!waypoint || !Number.isFinite(waypoint.x) || !Number.isFinite(waypoint.y)) {
+                    return 'none';
+                }
+                return `${Math.round(waypoint.x)}, ${Math.round(waypoint.y)}`;
+            };
+            const localTeamId = Number(localPlayerState?.team_id) || 0;
+            if (localTeamId === 1 || localTeamId === 2) {
+                const roleText = isLocalTeamCommander() ? 'Commander' : 'Member';
+                const waypointText = describeWaypoint(localTeamId);
+                content += `<div class="commander-line">Role: <span class="commander-line__role">${roleText}</span> · Waypoint: <span class="commander-line__waypoint">${waypointText}</span></div>`;
+                if (localTeamId === 1 || localTeamId === 2) {
+                    const ownCommander = describeCommander(localTeamId);
+                    content += `<div class="commander-line commander-line--minor">Team ${localTeamId} commander: ${ownCommander}</div>`;
+                }
+            } else {
+                const commander1 = describeCommander(1);
+                const commander2 = describeCommander(2);
+                content += `<div class="commander-line commander-line--minor">Cmd R:${commander1} · Cmd B:${commander2}</div>`;
+            }
+
+            if (matchInfo.match_state !== GP.MatchStateType.Ended && postMatchSummaryVisible) {
+                closePostMatchSummary();
+            }
 
             switch (matchInfo.match_state) {
                 case GP.MatchStateType.Waiting:
@@ -9790,6 +10254,8 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     uiCache.teamClass = teamClass;
                     playerTeamSpan.className = teamClass;
                 }
+                const commanderRoleText = isLocalTeamCommander() ? 'Commander' : 'Member';
+                setTextIfChanged(commanderRoleSpan, commanderRoleText, 'commanderRole');
                 setTextIfChanged(playerHealthSpan, localPlayerState.health, 'health');
                 setTextIfChanged(playerShieldSpan, localPlayerState.shield_current, 'shield');
                 setTextIfChanged(playerAmmoSpan, localPlayerState.ammo, 'ammo');
@@ -10147,6 +10613,9 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             loadSettings(); // Revert to saved settings on cancel
             settingsMenuDiv.classList.add('hidden');
         });
+        closePostMatchButton?.addEventListener('click', () => {
+            closePostMatchSummary();
+        });
         document.getElementById('soundVolume').addEventListener('input', (e) => {
             document.getElementById('soundVolumeValue').textContent = e.target.value + '%';
             if (audioManager) audioManager.setGlobalVolume(e.target.value / 100); // Live update
@@ -10440,6 +10909,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             stopFxStress(true);
             myPlayerId = null;
             localPlayerState = null;
+            if (commanderRoleSpan) commanderRoleSpan.textContent = 'Member';
             players.clear();
             projectiles.clear();
             projectileWorkerCullGraceUntil.clear();
@@ -10454,6 +10924,11 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             killFeed = [];
             chatMessages = [];
             matchInfo = null;
+            latestKillcam = null;
+            latestMatchSummary = null;
+            postMatchSummarySignature = '';
+            closePostMatchSummary();
+            clearKillcamPlayback();
             combatUiState.momentum = 0;
             combatUiState.speedPulse = 0;
             combatUiState.damagePulse = 0;

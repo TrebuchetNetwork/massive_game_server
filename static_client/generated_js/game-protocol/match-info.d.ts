@@ -2,6 +2,7 @@ import * as flatbuffers from 'flatbuffers';
 import { GameModeType } from '../game-protocol/game-mode-type.js';
 import { MatchStateType } from '../game-protocol/match-state-type.js';
 import { TeamScoreEntry } from '../game-protocol/team-score-entry.js';
+import { Vec2 } from '../game-protocol/vec2.js';
 export declare class MatchInfo {
     bb: flatbuffers.ByteBuffer | null;
     bb_pos: number;
@@ -17,6 +18,14 @@ export declare class MatchInfo {
     gameMode(): GameModeType;
     teamScores(index: number, obj?: TeamScoreEntry): TeamScoreEntry | null;
     teamScoresLength(): number;
+    team1CommanderId(): string | null;
+    team1CommanderId(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+    team2CommanderId(): string | null;
+    team2CommanderId(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+    team1CommanderWaypoint(obj?: Vec2): Vec2 | null;
+    team2CommanderWaypoint(obj?: Vec2): Vec2 | null;
+    team1CommanderAttackBias(): number;
+    team2CommanderAttackBias(): number;
     static startMatchInfo(builder: flatbuffers.Builder): void;
     static addTimeRemaining(builder: flatbuffers.Builder, timeRemaining: number): void;
     static addMatchState(builder: flatbuffers.Builder, matchState: MatchStateType): void;
@@ -24,9 +33,15 @@ export declare class MatchInfo {
     static addWinnerName(builder: flatbuffers.Builder, winnerNameOffset: flatbuffers.Offset): void;
     static addGameMode(builder: flatbuffers.Builder, gameMode: GameModeType): void;
     static addTeamScores(builder: flatbuffers.Builder, teamScoresOffset: flatbuffers.Offset): void;
+    static addTeam1CommanderId(builder: flatbuffers.Builder, team1CommanderIdOffset: flatbuffers.Offset): void;
+    static addTeam2CommanderId(builder: flatbuffers.Builder, team2CommanderIdOffset: flatbuffers.Offset): void;
+    static addTeam1CommanderWaypoint(builder: flatbuffers.Builder, team1CommanderWaypointOffset: flatbuffers.Offset): void;
+    static addTeam2CommanderWaypoint(builder: flatbuffers.Builder, team2CommanderWaypointOffset: flatbuffers.Offset): void;
+    static addTeam1CommanderAttackBias(builder: flatbuffers.Builder, team1CommanderAttackBias: number): void;
+    static addTeam2CommanderAttackBias(builder: flatbuffers.Builder, team2CommanderAttackBias: number): void;
     static createTeamScoresVector(builder: flatbuffers.Builder, data: flatbuffers.Offset[]): flatbuffers.Offset;
     static startTeamScoresVector(builder: flatbuffers.Builder, numElems: number): void;
     static endMatchInfo(builder: flatbuffers.Builder): flatbuffers.Offset;
-    static createMatchInfo(builder: flatbuffers.Builder, timeRemaining: number, matchState: MatchStateType, winnerIdOffset: flatbuffers.Offset, winnerNameOffset: flatbuffers.Offset, gameMode: GameModeType, teamScoresOffset: flatbuffers.Offset): flatbuffers.Offset;
+    static createMatchInfo(builder: flatbuffers.Builder, timeRemaining: number, matchState: MatchStateType, winnerIdOffset: flatbuffers.Offset, winnerNameOffset: flatbuffers.Offset, gameMode: GameModeType, teamScoresOffset: flatbuffers.Offset, team1CommanderIdOffset: flatbuffers.Offset, team2CommanderIdOffset: flatbuffers.Offset, team1CommanderWaypointOffset: flatbuffers.Offset, team2CommanderWaypointOffset: flatbuffers.Offset, team1CommanderAttackBias: number, team2CommanderAttackBias: number): flatbuffers.Offset;
 }
 //# sourceMappingURL=match-info.d.ts.map

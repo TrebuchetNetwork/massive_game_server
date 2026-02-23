@@ -90,6 +90,12 @@ table MatchInfo {
     winner_name: string;
     game_mode: GameModeType = FreeForAll;
     team_scores: [TeamScoreEntry]; // Changed to vector of table
+    team1_commander_id: string;
+    team2_commander_id: string;
+    team1_commander_waypoint: Vec2;
+    team2_commander_waypoint: Vec2;
+    team1_commander_attack_bias: float = 0.0;
+    team2_commander_attack_bias: float = 0.0;
 }
 
 table Vec2 {
