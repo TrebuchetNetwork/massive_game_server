@@ -200,7 +200,9 @@ pub fn default_alert_rules_from_env() -> Vec<AlertRule> {
             greater_is_alert: true,
         });
     }
-    if let Some(max_auth_failures_per_minute) = parse_env_f64("MGS_ALERT_MAX_AUTH_FAILURES_PER_MINUTE") {
+    if let Some(max_auth_failures_per_minute) =
+        parse_env_f64("MGS_ALERT_MAX_AUTH_FAILURES_PER_MINUTE")
+    {
         rules.push(AlertRule {
             metric_name: "game_auth_failures_per_minute".to_owned(),
             threshold: max_auth_failures_per_minute.max(1.0),

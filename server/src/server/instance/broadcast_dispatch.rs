@@ -16,7 +16,8 @@ impl MassiveGameServer {
         );
 
         let player_id_arc = server.player_manager.id_pool.get_or_create(peer_id_str);
-        let player_exists = Self::lookup_player_state_from_shared(shared_data, &player_id_arc).is_some();
+        let player_exists =
+            Self::lookup_player_state_from_shared(shared_data, &player_id_arc).is_some();
 
         if !player_exists {
             trace!(
@@ -96,8 +97,11 @@ impl MassiveGameServer {
                     );
                     ClientState::default()
                 });
-            let delta_result =
-                server.build_delta_state_optimized(peer_id_str, &client_state_snapshot, shared_data);
+            let delta_result = server.build_delta_state_optimized(
+                peer_id_str,
+                &client_state_snapshot,
+                shared_data,
+            );
             last_chat_message_seq_sent = client_state_snapshot.last_chat_message_seq_sent;
             client_state_for_delta = Some(client_state_snapshot);
             delta_result
@@ -281,7 +285,8 @@ impl MassiveGameServer {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let frame = server.frame_counter.load(AtomicOrdering::Relaxed);
         let player_id_arc = server.player_manager.id_pool.get_or_create(peer_id_str);
-        let player_exists = Self::lookup_player_state_from_shared(shared_data, &player_id_arc).is_some();
+        let player_exists =
+            Self::lookup_player_state_from_shared(shared_data, &player_id_arc).is_some();
         if !player_exists {
             return Ok(());
         }
@@ -321,8 +326,11 @@ impl MassiveGameServer {
                 .get(peer_id_str)
                 .cloned()
                 .unwrap_or_default();
-            let delta_result =
-                server.build_delta_state_optimized(peer_id_str, &client_state_snapshot, shared_data);
+            let delta_result = server.build_delta_state_optimized(
+                peer_id_str,
+                &client_state_snapshot,
+                shared_data,
+            );
             last_chat_message_seq_sent = client_state_snapshot.last_chat_message_seq_sent;
             client_state_for_delta = Some(client_state_snapshot);
             delta_result
@@ -331,13 +339,11 @@ impl MassiveGameServer {
         let bytes_to_send = match state_result {
             Ok(bytes) => bytes,
             Err(err) => {
-                return Err(
-                    format!(
-                        "[Frame {}] failed building QUIC payload for {}: {}",
-                        frame, peer_id_str, err
-                    )
-                    .into(),
-                );
+                return Err(format!(
+                    "[Frame {}] failed building QUIC payload for {}: {}",
+                    frame, peer_id_str, err
+                )
+                .into());
             }
         };
 
@@ -345,7 +351,11 @@ impl MassiveGameServer {
             collect_pending_chat_packets(last_chat_message_seq_sent, &shared_data.chat_packets);
         let mut outbound_packets = Vec::with_capacity(1 + pending_chat_packets.len());
         outbound_packets.push(bytes_to_send);
-        outbound_packets.extend(pending_chat_packets.iter().map(|packet| packet.bytes.clone()));
+        outbound_packets.extend(
+            pending_chat_packets
+                .iter()
+                .map(|packet| packet.bytes.clone()),
+        );
 
         let sent_packets = send_quic_packet_batch(peer_id_str, &outbound_packets);
         let send_succeeded = sent_packets > 0;

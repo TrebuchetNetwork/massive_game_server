@@ -566,6 +566,7 @@ pub enum MatchState {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct MatchStatus {
     state: MatchState,
     time_remaining: Duration,

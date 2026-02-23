@@ -176,20 +176,22 @@ async fn duplicate_wall_destruction_is_ignored() {
     server.run_game_logic_update(0.016).await;
     info!("[Test] After second game_logic_update.");
 
-    let mut final_health = -1;
     let wall_center_x = 100.0 + 50.0 / 2.0;
     let wall_center_y = 100.0 + 50.0 / 2.0;
     let partition_idx = server
         .world_partition_manager
         .get_partition_index_for_point(wall_center_x, wall_center_y);
 
-    if let Some(partition) = server.world_partition_manager.get_partition(partition_idx) {
+    let final_health = if let Some(partition) =
+        server.world_partition_manager.get_partition(partition_idx)
+    {
         if let Some(wall_data_entry) = partition.all_walls_in_partition.get(&wall_id) {
-            final_health = wall_data_entry.value().current_health;
+            let current = wall_data_entry.value().current_health;
             info!(
                 "[Test] Wall ID {} found in partition. Final health from DashMap: {}",
-                wall_id, final_health
+                wall_id, current
             );
+            current
         } else {
             // If wall is destroyed, it might be removed from all_walls_in_partition if your logic does that,
             // or its health is just 0. The test expects to find it and check health.
@@ -204,7 +206,7 @@ async fn duplicate_wall_destruction_is_ignored() {
             "Test assertion setup error: Partition not found for wall ID {}.",
             wall_id
         );
-    }
+    };
     assert_eq!(
         final_health, 0,
         "Wall health was not reduced to 0 after projectile hits. Current health: {}",

@@ -71,8 +71,9 @@ impl MassiveGameServer {
 
         // Stage 4: Apply Player Updates
         let apply_updates_start = Instant::now();
-        self.apply_player_updates(player_updates, &active_walls).await; //
-                                                         // CHANGED to debug!
+        self.apply_player_updates(player_updates, &active_walls)
+            .await; //
+                    // CHANGED to debug!
         debug!(
             "Frame {}: Applied player updates (took {:?})",
             frame,
@@ -660,7 +661,11 @@ impl MassiveGameServer {
         let mut guard = self.projectiles.write();
         *guard = kept_projectiles;
     }
-    pub(super) fn process_pickup_respawns_authoritative(&self, pickups: &mut [Pickup], delta_time: f32) {
+    pub(super) fn process_pickup_respawns_authoritative(
+        &self,
+        pickups: &mut [Pickup],
+        delta_time: f32,
+    ) {
         for pickup in pickups.iter_mut() {
             if !pickup.is_active {
                 if let Some(timer) = &mut pickup.respawn_timer {

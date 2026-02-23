@@ -1,19 +1,17 @@
 // Async Bot AI that runs independently from the game loop
 
-use crate::core::constants::*;
 use crate::core::types::{
-    CorePickupType, Pickup, PlayerID, PlayerInputData, PlayerState, Projectile, Vec2,
+    CorePickupType, PlayerID, PlayerInputData, PlayerState, Projectile, Vec2,
 };
 use crate::server::instance::{BotBehaviorState, BotController, MassiveGameServer};
 
-use dashmap::DashMap;
 use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio::time::interval;
-use tracing::{debug, info, trace};
+use tracing::info;
 
 // Bot AI decisions are made independently and sent via channels
 pub struct BotDecision {
@@ -22,7 +20,8 @@ pub struct BotDecision {
 }
 
 pub struct AsyncBotAI {
-    decision_sender: mpsc::UnboundedSender<BotDecision>,
+    #[allow(dead_code)]
+    pub(crate) decision_sender: mpsc::UnboundedSender<BotDecision>,
     decision_receiver: mpsc::UnboundedReceiver<BotDecision>,
 }
 
@@ -128,7 +127,7 @@ impl AsyncBotAI {
         let incoming_projectiles = Self::detect_incoming_projectiles(server, bot_state, 150.0);
 
         // Decide behavior based on situation
-        let mut new_behavior = bot_controller.behavior_state.clone();
+        let new_behavior;
         let mut target_pos = bot_controller.target_position;
         let mut should_shoot = false;
         let mut should_reload = false;
@@ -148,7 +147,7 @@ impl AsyncBotAI {
             }
         }
         // Priority 2: Engage nearby enemies
-        else if let Some((enemy_id, enemy_pos, enemy_health)) = nearby_enemies.first() {
+        else if let Some((_, enemy_pos, _)) = nearby_enemies.first() {
             new_behavior = BotBehaviorState::Engaging;
 
             // Calculate engagement position

@@ -4,7 +4,7 @@ use crate::core::types::{
     BoundaryAction, BoundarySnapshot, BoundaryUpdate, Direction, EntityId, GameEvent,
     PartitionBounds, Pickup, PlayerID, Vec2, Wall,
 };
-use crossbeam_epoch::{self as epoch, Atomic, Guard, Shared}; // Removed 'unprotected' as it's not directly needed with pinned guards
+use crossbeam_epoch::{self as epoch, Guard, Shared}; // Removed 'unprotected' as it's not directly needed with pinned guards
 use crossbeam_queue::{ArrayQueue, SegQueue};
 use dashmap::{DashMap, DashSet};
 // Removed unused: use parking_lot::RwLock;
@@ -170,7 +170,7 @@ impl LockFreeBoundaryZone {
     pub fn get_snapshot<'g>(
         &self,
         direction: Direction,
-        guard: &'g Guard,
+        _guard: &'g Guard,
     ) -> Option<&'g BoundarySnapshot> {
         let snapshot_ptr_raw = self.snapshots[direction as usize].load(Ordering::Acquire);
         if snapshot_ptr_raw.is_null() {

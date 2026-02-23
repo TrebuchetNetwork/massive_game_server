@@ -12,7 +12,7 @@ use crate::core::constants::*; // Import all constants, including MIN_PLAYERS_TO
 use crate::core::error::ServerError;
 use crate::core::simd;
 use crate::core::types::*;
-use crate::core::types::{CorePickupType, EntityId, MatchState, PlayerID};
+use crate::core::types::{CorePickupType, EntityId, PlayerID};
 use crate::entities::player::ImprovedPlayerManager;
 use crate::flatbuffers_generated::game_protocol as fb;
 use crate::network::quic::{
@@ -23,8 +23,8 @@ use crate::network::signaling::PickupState;
 use crate::network::signaling::{
     next_chat_message_seq, ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap,
 };
-use crate::operational::tuning::adaptive_quality::QualitySettings;
 use crate::operational::monitoring::metrics;
+use crate::operational::tuning::adaptive_quality::QualitySettings;
 use crate::operational::tuning::auto_tuner::{AutoTuner, TuningSample};
 use crate::server::ecs_bridge::EcsBridge;
 use crate::server::event_mapping::{
@@ -35,18 +35,12 @@ use crate::server::pickup_pipeline::{
     apply_pickup_effect, collect_pickup_candidates, PickupCollectionCandidate,
 };
 use crate::state_sync::interpolation::InterpolationBuffer;
-use crate::systems::ai::bot_ai::BotAISystem;
 use crate::systems::ai::optimized_bot_ai::OptimizedBotAI;
 use crate::systems::respawn::{RespawnManager, WallRespawnManager};
 use crate::world::map_generator::MapGenerator;
 use crate::world::navigation::NavMesh;
 use crate::world::partition::WorldPartitionManager; // Removed unused ImprovedWorldPartition
-use flatbuffers::FlatBufferBuilder;
-use futures::executor;
-use parking_lot::RwLockReadGuard;
 use std::borrow::Cow;
-use tokio::task::JoinError;
-use webrtc::data_channel::data_channel_state::RTCDataChannelState;
 
 use bytes::Bytes;
 use crossbeam_queue::SegQueue;
@@ -67,7 +61,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::time::sleep; // Add this import
 use uuid::Uuid;
 // In src/server/instance.rs
 use tracing::{debug, error, info, trace, warn}; // Ensure all levels are available
@@ -96,15 +89,14 @@ mod util;
 
 use self::constants::*;
 use self::serialization::*;
-use self::util::*;
+use self::types::*;
 pub use self::types::{
     BotBehaviorState, BotController, JoinStageLatencyStats, JoinStageReport, JoinStageWaveSummary,
     LiveReplayDisputeAuditProof, LiveReplayDisputeFilter, LiveReplayDisputeReport,
     LiveReplayDisputeRequest, LiveReplayFrame, LiveReplayKillFeedEntry, QuicJoinSnapshot,
     ServerFlagState, ServerKillFeedEntry, ServerMatchInfo,
 };
-use self::types::*;
-
+use self::util::*;
 
 #[inline]
 fn shortest_angle_diff_radians(a: f32, b: f32) -> f32 {
@@ -762,9 +754,9 @@ impl MassiveGameServer {
             );
         }
 
-        let spawn = self
-            .respawn_manager
-            .get_respawn_position(self, &player_id, Some(chosen_team), &[]);
+        let spawn =
+            self.respawn_manager
+                .get_respawn_position(self, &player_id, Some(chosen_team), &[]);
         let fallback_username = format!("QPlayer_{}", &peer_id[..peer_id.len().min(6)]);
         let username = username_override
             .map(str::trim)
@@ -776,7 +768,10 @@ impl MassiveGameServer {
             .player_manager
             .add_player(peer_id.to_string(), username.clone(), spawn.x, spawn.y)
             .unwrap_or(player_id);
-        if let Some(mut player_state) = self.player_manager.get_player_state_mut(&inserted_player_id) {
+        if let Some(mut player_state) = self
+            .player_manager
+            .get_player_state_mut(&inserted_player_id)
+        {
             player_state.team_id = chosen_team;
             player_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
         }
@@ -864,5 +859,4 @@ impl MassiveGameServer {
     ) -> usize {
         send_packet_batch_over_channel(data_channel, packets, timeout_ms).await
     }
-
 }

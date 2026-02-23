@@ -128,11 +128,13 @@ pub fn init_tracing_subscriber(default_filter: &str) -> anyhow::Result<()> {
                     .with_endpoint(otlp_endpoint.clone())
                     .with_timeout(Duration::from_millis(otlp_timeout_ms)),
             )
-            .with_trace_config(sdktrace::config().with_resource(Resource::new(vec![
-                KeyValue::new("service.name", "massive_game_server"),
-                KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-                KeyValue::new("service.namespace", "trebuchet"),
-            ])))
+            .with_trace_config(
+                sdktrace::Config::default().with_resource(Resource::new(vec![
+                    KeyValue::new("service.name", "massive_game_server"),
+                    KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+                    KeyValue::new("service.namespace", "trebuchet"),
+                ])),
+            )
             .install_batch(Tokio)
             .context("failed to initialize OTLP tracing pipeline")?;
 

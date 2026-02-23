@@ -118,7 +118,10 @@ impl MassiveGameServer {
                 &pickups_snapshot,
             );
             if ecs_stats.skipped_contention {
-                trace!("[Frame {}] ECS snapshot rebuild skipped due to lock contention.", frame);
+                trace!(
+                    "[Frame {}] ECS snapshot rebuild skipped due to lock contention.",
+                    frame
+                );
             } else {
                 trace!(
                     "[Frame {}] ECS snapshot rebuilt: players={}, projectiles={}, pickups={}",

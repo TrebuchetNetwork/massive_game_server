@@ -37,12 +37,24 @@ fn parse_listener_addr() -> SocketAddr {
 
 fn describe_metrics_catalog() {
     describe_counter!("game_frames_total", "Total number of game frames processed");
-    describe_histogram!("game_frame_time_seconds", "Frame processing time in seconds");
-    describe_histogram!("game_physics_time_seconds", "Physics update time in seconds");
-    describe_histogram!("game_network_time_seconds", "Network update time in seconds");
+    describe_histogram!(
+        "game_frame_time_seconds",
+        "Frame processing time in seconds"
+    );
+    describe_histogram!(
+        "game_physics_time_seconds",
+        "Physics update time in seconds"
+    );
+    describe_histogram!(
+        "game_network_time_seconds",
+        "Network update time in seconds"
+    );
     describe_gauge!("game_players_connected", "Number of connected players");
     describe_gauge!("game_cpu_usage_percent", "CPU usage percentage");
-    describe_gauge!("game_memory_rss_bytes", "Process resident set size in bytes");
+    describe_gauge!(
+        "game_memory_rss_bytes",
+        "Process resident set size in bytes"
+    );
     describe_gauge!(
         "game_memory_heap_allocated_bytes",
         "Process heap allocated bytes when available"

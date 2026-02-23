@@ -92,9 +92,10 @@ impl MassiveGameServer {
             (snapshot, HashMap::new())
         } else {
             let mut by_id = HashMap::with_capacity(self.player_manager.player_count());
-            self.player_manager.for_each_player(|player_id, player_state| {
-                by_id.insert(player_id.clone(), player_state.clone());
-            });
+            self.player_manager
+                .for_each_player(|player_id, player_state| {
+                    by_id.insert(player_id.clone(), player_state.clone());
+                });
             (Arc::new(PlayerSoASnapshot::default()), by_id)
         };
 

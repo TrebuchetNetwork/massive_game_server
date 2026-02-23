@@ -159,7 +159,11 @@ impl MassiveGameServer {
             dispute_id: dispute_id.clone(),
             persisted: false,
             storage_path: if self.live_replay_dispute_persist_enabled {
-                Some(self.live_replay_dispute_store_path.to_string_lossy().to_string())
+                Some(
+                    self.live_replay_dispute_store_path
+                        .to_string_lossy()
+                        .to_string(),
+                )
             } else {
                 None
             },

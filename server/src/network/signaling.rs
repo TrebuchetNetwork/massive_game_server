@@ -1,10 +1,8 @@
 // massive_game_server/server/src/network/signaling.rs
 use crate::core::config::ServerConfig;
 use crate::core::types::{
-    CorePickupType, EntityId, Pickup as CorePickup, PlayerAoI, PlayerAoIs, PlayerID,
-    PlayerInputData, PlayerState as MassivePlayerState, RTCDataChannel as CoreRTCDataChannel,
-    ServerWeaponType, Vec2, Wall as CoreWall, FIELD_FLAG, FIELD_HEALTH_ALIVE,
-    FIELD_POSITION_ROTATION, FIELD_POWERUPS, FIELD_SCORE_STATS, FIELD_SHIELD, FIELD_WEAPON_AMMO,
+    EntityId, PlayerAoIs, PlayerID, PlayerInputData, RTCDataChannel as CoreRTCDataChannel,
+    FIELD_FLAG, FIELD_SCORE_STATS,
 };
 
 use crate::core::constants::*;
@@ -32,7 +30,6 @@ use std::{
 };
 use tokio::sync::{mpsc, Mutex as AsyncMutex, RwLock};
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 use warp::ws::{Message, WebSocket};
 use webrtc::{
     api::{media_engine::MediaEngine, APIBuilder, API},
@@ -413,16 +410,6 @@ struct RTCIceCandidateInitSerde {
     sdp_m_line_index: Option<u16>,
     #[serde(rename = "usernameFragment")]
     username_fragment: Option<String>,
-}
-
-fn map_server_weapon_to_fb(server_weapon: ServerWeaponType) -> fb::WeaponType {
-    match server_weapon {
-        ServerWeaponType::Pistol => fb::WeaponType::Pistol,
-        ServerWeaponType::Shotgun => fb::WeaponType::Shotgun,
-        ServerWeaponType::Rifle => fb::WeaponType::Rifle,
-        ServerWeaponType::Sniper => fb::WeaponType::Sniper,
-        ServerWeaponType::Melee => fb::WeaponType::Melee,
-    }
 }
 
 const DEFAULT_JOIN_RATE_LIMIT_PER_SEC: u32 = 30;

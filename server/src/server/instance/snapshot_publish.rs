@@ -49,7 +49,9 @@ impl MassiveGameServer {
         self.publish_entity_soa_snapshots_if_enabled();
         self.publish_player_aoi_snapshot_if_enabled();
     }
-    pub(super) fn rebuild_player_soa_snapshot_from_authoritative_state(&self) -> Arc<PlayerSoASnapshot> {
+    pub(super) fn rebuild_player_soa_snapshot_from_authoritative_state(
+        &self,
+    ) -> Arc<PlayerSoASnapshot> {
         let mut owned_states = Vec::with_capacity(self.player_manager.player_count());
         self.player_manager
             .for_each_player(|player_id, player_state| {
@@ -70,7 +72,9 @@ impl MassiveGameServer {
         self.projectile_soa_snapshot.publish_arc(snapshot.clone());
         snapshot
     }
-    pub(super) fn rebuild_pickup_soa_snapshot_from_authoritative_state(&self) -> Arc<PickupSoASnapshot> {
+    pub(super) fn rebuild_pickup_soa_snapshot_from_authoritative_state(
+        &self,
+    ) -> Arc<PickupSoASnapshot> {
         let pickups_guard = self.pickups.read();
         let snapshot = Arc::new(PickupSoASnapshot::from_pickups_slice(&pickups_guard));
         drop(pickups_guard);

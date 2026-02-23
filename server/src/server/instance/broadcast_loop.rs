@@ -398,7 +398,10 @@ impl MassiveGameServer {
             .map(|(peer_id, _, _)| peer_id.clone())
             .collect();
         for (peer_id, _) in &quic_entries {
-            if !scheduled_peer_ids.iter().any(|existing| existing == peer_id) {
+            if !scheduled_peer_ids
+                .iter()
+                .any(|existing| existing == peer_id)
+            {
                 scheduled_peer_ids.push(peer_id.clone());
             }
         }

@@ -5,6 +5,9 @@
 static GLOBAL_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 // Make flatbuffers generated code accessible throughout the crate
+#[allow(dead_code)]
+#[allow(clippy::all)]
+#[allow(warnings)]
 pub mod flatbuffers_generated {
     // The include! macro will paste the contents of game_generated.rs here during compilation.
     // The path is constructed relative to the OUT_DIR environment variable.

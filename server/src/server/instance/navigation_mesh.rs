@@ -11,7 +11,9 @@ impl MassiveGameServer {
             if self.navmesh.read().is_none() {
                 true
             } else {
-                let last = self.navmesh_last_rebuild_frame.load(AtomicOrdering::Relaxed);
+                let last = self
+                    .navmesh_last_rebuild_frame
+                    .load(AtomicOrdering::Relaxed);
                 frame.saturating_sub(last) >= self.navmesh_rebuild_interval_frames
             }
         };

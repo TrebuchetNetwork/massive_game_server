@@ -3,7 +3,6 @@
 use crate::core::constants::*;
 use crate::core::types::{
     CorePickupType, EntityId, PlayerID, PlayerInputData, PlayerState, ServerWeaponType, Vec2, Wall,
-    FIELD_POSITION_ROTATION,
 };
 use crate::flatbuffers_generated::game_protocol as fb;
 use crate::server::instance::{BotBehaviorState, BotController, MassiveGameServer};
@@ -13,7 +12,7 @@ use rand::Rng;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace};
 
 // Constants for Bot AI
 const BOT_UPDATE_INTERVAL_SECS: f32 = 1.0 / 30.0; // Target ~30Hz AI updates independent of frame count
@@ -21,7 +20,6 @@ const BOT_MAX_UPDATE_ACCUMULATOR_SECS: f32 = BOT_UPDATE_INTERVAL_SECS * 4.0;
 const BOT_DECISION_INTERVAL: Duration = Duration::from_millis(25); // Very fast decision making
 const BOT_PATH_RECALCULATION_INTERVAL: Duration = Duration::from_millis(200); // More frequent path updates
 const BOT_MELEE_RANGE: f32 = 50.0;
-const BOT_MAX_NAVIGATION_TARGET_DISTANCE: f32 = 5000.0;
 
 // Dynamic Movement Constants - Ultra Aggressive
 const BOT_SPREAD_DISTANCE: f32 = 100.0; // Very close combat formations
@@ -422,8 +420,7 @@ impl BotAISystem {
                 );
             } else if too_close_to_allies {
                 // Spread out from allies
-                let spread_pos =
-                    Self::find_spread_position(bot_pos, &allies, &all_player_entities, rng);
+                let spread_pos = Self::find_spread_position(bot_pos, &allies, rng);
 
                 bot_controller.behavior_state = BotBehaviorState::MovingToPosition;
                 bot_controller.target_position = Some(spread_pos);
@@ -455,8 +452,7 @@ impl BotAISystem {
                     ((ally.x - bot_state.x).powi(2) + (ally.y - bot_state.y).powi(2)).sqrt();
                 ally_dist < BOT_SPREAD_DISTANCE
             }) {
-                let spread_pos =
-                    Self::find_spread_position(bot_pos, &allies, &all_player_entities, rng);
+                let spread_pos = Self::find_spread_position(bot_pos, &allies, rng);
                 bot_controller.behavior_state = BotBehaviorState::MovingToPosition;
                 bot_controller.target_position = Some(spread_pos);
                 bot_controller.target_enemy_id = None;
@@ -507,12 +503,7 @@ impl BotAISystem {
         )
     }
 
-    fn find_spread_position(
-        bot_pos: Vec2,
-        allies: &[&PlayerState],
-        all_players: &HashMap<PlayerID, PlayerState>,
-        rng: &mut impl Rng,
-    ) -> Vec2 {
+    fn find_spread_position(bot_pos: Vec2, allies: &[&PlayerState], rng: &mut impl Rng) -> Vec2 {
         // Calculate average ally position
         let mut avg_x = 0.0;
         let mut avg_y = 0.0;
@@ -584,8 +575,6 @@ impl BotAISystem {
         world_partition_manager: &Arc<WorldPartitionManager>,
     ) -> VecDeque<Vec2> {
         let mut path = VecDeque::new();
-        // INCREASED segment length for fewer waypoints and faster movement
-        const MAX_PATH_SEGMENT_LENGTH: f32 = 800.0;
 
         if ((start.x - goal.x).powi(2) + (start.y - goal.y).powi(2)).sqrt() < 50.0 {
             return path;
@@ -642,14 +631,11 @@ impl BotAISystem {
         server_instance: &MassiveGameServer,
         rng: &mut impl Rng,
     ) {
-        let bot_id_str = bot_state.id.as_str();
-
         // Movement handling - ALWAYS try to move
-        let mut current_movement_target: Option<Vec2> = None;
-        if !bot_controller.current_path.is_empty() {
-            current_movement_target = bot_controller.current_path.front().cloned();
+        let current_movement_target: Option<Vec2> = if !bot_controller.current_path.is_empty() {
+            bot_controller.current_path.front().cloned()
         } else if bot_controller.target_position.is_some() {
-            current_movement_target = bot_controller.target_position;
+            bot_controller.target_position
         } else {
             // No target? Pick a random direction to move
             let random_angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
@@ -660,8 +646,8 @@ impl BotAISystem {
                 (bot_state.y + random_dist * random_angle.sin())
                     .clamp(WORLD_MIN_Y + 100.0, WORLD_MAX_Y - 100.0),
             );
-            current_movement_target = Some(random_target);
-        }
+            Some(random_target)
+        };
 
         if let Some(target_pos) = current_movement_target {
             let dx = target_pos.x - bot_state.x;
@@ -677,14 +663,6 @@ impl BotAISystem {
 
                 // ALWAYS keep moving forward for speed
                 // Add diagonal movement for extra speed
-                let angle_diff = ((input.rotation - bot_state.rotation).abs()
-                    % (2.0 * std::f32::consts::PI))
-                    .min(
-                        2.0 * std::f32::consts::PI
-                            - (input.rotation - bot_state.rotation).abs()
-                                % (2.0 * std::f32::consts::PI),
-                    );
-
                 // Constant strafing movement
                 if rng.gen_bool(0.8) {
                     // Very high chance to strafe

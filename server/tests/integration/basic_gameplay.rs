@@ -5,8 +5,7 @@ use massive_game_server_core::core::config::ServerConfig;
 use massive_game_server_core::core::constants::PLAYER_RADIUS;
 use massive_game_server_core::core::types::PlayerAoIs;
 use massive_game_server_core::core::types::{
-    EntityId, EventPriority, PlayerID, PlayerInputData, PlayerState, Projectile, ServerWeaponType,
-    Vec2, Wall,
+    EntityId, EventPriority, PlayerID, PlayerInputData, Projectile, ServerWeaponType, Vec2, Wall,
 }; // Added PlayerState, PlayerInputData
 use massive_game_server_core::network::signaling::{
     ChatMessagesQueue, ClientStatesMap, DataChannelsMap,

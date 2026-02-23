@@ -1,8 +1,8 @@
-use crate::core::types::{EntityId, Wall};
+use crate::core::types::Wall;
 use parking_lot::RwLock;
 use rstar::{RTree, RTreeObject, AABB};
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::debug;
 
 #[derive(Clone, Debug)]
 struct SpatialWall {

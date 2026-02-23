@@ -12,18 +12,17 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 // Removed unused: use crate::core::types::{PlayerID, PlayerAoI, Vec2, GameEvent, CorePickupType, EventPriority};
 // Removed unused: use crate::core::types::EntityId;
 // Removed unused: use std::collections::HashSet;
-use crate::flatbuffers_generated::game_protocol as fb;
 use crate::core::constants::{
     AOI_MAX_VISIBLE_PICKUPS, AOI_MAX_VISIBLE_PLAYERS, AOI_MAX_VISIBLE_PROJECTILES,
     AOI_MAX_VISIBLE_WALLS, AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS,
 }; // Assuming these are in constants
 use crate::core::types::{PlayerAoI, PlayerID};
+use crate::flatbuffers_generated::game_protocol as fb;
 use crate::network::signaling::{next_chat_message_seq, ChatMessage};
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
-const MAX_FRAME_TIME_HISTORY: usize = 100;
 const SIGNIFICANT_MOVEMENT_THRESHOLD_SQ: f32 = 5.0 * 5.0; // Player must move more than 5 units for AoI recalc
 const SHUTDOWN_CHAT_HISTORY_LIMIT: usize = 50;
 const SHUTDOWN_CHAT_PLAYER_ID: &str = "__server__";
@@ -369,7 +368,10 @@ impl MassiveGameServer {
             .wall_spatial_index
             .query_aabb(min_aoi_x, min_aoi_y, max_aoi_x, max_aoi_y);
         let candidate_walls = candidate_walls_query.len();
-        for wall in candidate_walls_query.into_iter().take(AOI_MAX_VISIBLE_WALLS) {
+        for wall in candidate_walls_query
+            .into_iter()
+            .take(AOI_MAX_VISIBLE_WALLS)
+        {
             if wall.is_destructible && wall.current_health <= 0 {
                 continue;
             }
@@ -392,6 +394,7 @@ impl MassiveGameServer {
         player_aoi.last_update = Instant::now();
     }
 
+    #[allow(dead_code)]
     fn update_player_aoi_v3(&self, player_id: &PlayerID, x: f32, y: f32) {
         // const AOI_RADIUS: f32 = 600.0; // Defined in constants
         const AOI_RADIUS_SQUARED: f32 = AOI_RADIUS * AOI_RADIUS;

@@ -17,7 +17,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, trace};
 
 // Optimized constants
-const BOT_UPDATE_BATCH_SIZE: usize = 50; // Process all bots every frame
 const BOT_SIMPLE_MOVEMENT_ONLY: bool = false; // Enable full AI with combat
 const BOT_MOVEMENT_CHANGE_INTERVAL: Duration = Duration::from_millis(2000); // Less frequent decision changes
 const BOT_TARGET_ACQUISITION_RANGE: f32 = 600.0; // Increased combat range
@@ -219,7 +218,7 @@ impl OptimizedBotAI {
                     if let Some(flag_pos) = enemy_flag_pos {
                         let dist_to_enemy_flag_sq =
                             (player.x - flag_pos.x).powi(2) + (player.y - flag_pos.y).powi(2);
-                        if dist_to_enemy_flag_sq < 300.0 * 300.0 {
+                        if dist_to_enemy_flag_sq < BOT_FLAG_DETECTION_RANGE.powi(2) {
                             metrics.attackers_going_for_flag += 1;
                         }
                     }
@@ -270,7 +269,9 @@ impl OptimizedBotAI {
                 {
                     bot_controller.last_decision_time = current_time;
 
-                    if game_mode == fb::GameModeType::CaptureTheFlag
+                    if BOT_SIMPLE_MOVEMENT_ONLY {
+                        Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
+                    } else if game_mode == fb::GameModeType::CaptureTheFlag
                         && match_state == fb::MatchStateType::Active
                     {
                         let enemies = if bot_snapshot.team_id == 1 {
@@ -501,6 +502,11 @@ impl OptimizedBotAI {
         let metrics = team_objectives.for_team(bot_team);
         let defenders_at_base = metrics.defenders_at_base;
         let attackers_going_for_flag = metrics.attackers_going_for_flag;
+        let has_nearby_enemy = live_players_by_id.values().any(|player| {
+            player.team_id != bot_team
+                && (player.x - bot_state.x).powi(2) + (player.y - bot_state.y).powi(2)
+                    <= BOT_TARGET_ACQUISITION_RANGE.powi(2)
+        });
 
         // More aggressive role distribution
         let mut rng = rand::thread_rng();
@@ -518,9 +524,12 @@ impl OptimizedBotAI {
         {
             // If our flag is dropped, help return it
             BotObjective::DefendOwnFlag
-        } else {
-            // Default to attacking
+        } else if has_nearby_enemy {
+            BotObjective::EngageNearbyEnemy
+        } else if role_choice < 95 {
             BotObjective::AttackEnemyFlag
+        } else {
+            BotObjective::PatrolMidfield
         }
     }
 

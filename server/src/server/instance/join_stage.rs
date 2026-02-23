@@ -135,7 +135,8 @@ impl MassiveGameServer {
                 .iter()
                 .filter_map(|trace| {
                     trace.first_build_start_ms.map(|build_start| {
-                        let queue_start = trace.first_channel_open_ms.unwrap_or(trace.first_seen_ms);
+                        let queue_start =
+                            trace.first_channel_open_ms.unwrap_or(trace.first_seen_ms);
                         build_start.saturating_sub(queue_start) as f64 / 1000.0
                     })
                 })

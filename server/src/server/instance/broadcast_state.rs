@@ -117,7 +117,9 @@ impl MassiveGameServer {
 
         client_state.last_known_projectile_ids.clear();
         for projectile_id in &player_aoi.visible_projectiles {
-            client_state.last_known_projectile_ids.insert(*projectile_id);
+            client_state
+                .last_known_projectile_ids
+                .insert(*projectile_id);
         }
 
         client_state.last_known_pickup_states.clear();
@@ -219,7 +221,9 @@ impl MassiveGameServer {
         projectile_id: &EntityId,
     ) -> Option<&'a Projectile> {
         if shared_data.use_entity_soa_snapshot {
-            shared_data.projectiles_soa_snapshot.get_state(projectile_id)
+            shared_data
+                .projectiles_soa_snapshot
+                .get_state(projectile_id)
         } else {
             shared_data.projectiles_snapshot.get(projectile_id)
         }
@@ -265,7 +269,11 @@ impl MassiveGameServer {
         if let Some(self_state) = Self::lookup_player_state_from_shared(shared_data, &player_id) {
             let is_new = !client_state.last_known_players.contains(&player_id);
             if is_new || self_state.changed_fields > 0 {
-                let mask = if is_new { 0xFFFF } else { self_state.changed_fields };
+                let mask = if is_new {
+                    0xFFFF
+                } else {
+                    self_state.changed_fields
+                };
                 players_fb_vec.push(create_fb_player_state_for_delta(
                     &mut builder,
                     &self_state,
@@ -282,7 +290,11 @@ impl MassiveGameServer {
                 {
                     let is_new = !client_state.last_known_players.contains(visible_player_id);
                     if is_new || player_state.changed_fields > 0 {
-                        let mask = if is_new { 0xFFFF } else { player_state.changed_fields };
+                        let mask = if is_new {
+                            0xFFFF
+                        } else {
+                            player_state.changed_fields
+                        };
                         players_fb_vec.push(create_fb_player_state_for_delta(
                             &mut builder,
                             &player_state,
@@ -295,7 +307,8 @@ impl MassiveGameServer {
         }
 
         for known_player_id in &client_state.last_known_players {
-            if !player_aoi.visible_players.contains(known_player_id) && known_player_id != &player_id
+            if !player_aoi.visible_players.contains(known_player_id)
+                && known_player_id != &player_id
             {
                 removed_player_ids_vec.push(builder.create_string(known_player_id.as_str()));
             }
@@ -350,16 +363,17 @@ impl MassiveGameServer {
 
         for pickup_id in &player_aoi.visible_pickups {
             if let Some(pickup) = Self::lookup_pickup_from_shared(shared_data, pickup_id) {
-                let should_send =
-                    if let Some(last_known_state) = client_state.last_known_pickup_states.get(pickup_id)
-                    {
-                        last_known_state.is_active != pickup.is_active
-                    } else {
-                        true
-                    };
+                let should_send = if let Some(last_known_state) =
+                    client_state.last_known_pickup_states.get(pickup_id)
+                {
+                    last_known_state.is_active != pickup.is_active
+                } else {
+                    true
+                };
 
                 if should_send {
-                    let (pickup_type_fb, weapon_type_fb) = map_core_pickup_to_fb(&pickup.pickup_type);
+                    let (pickup_type_fb, weapon_type_fb) =
+                        map_core_pickup_to_fb(&pickup.pickup_type);
                     let id_str = fb_safe_entity_id(&mut builder, pickup.id);
 
                     let pickup_fb = fb::Pickup::create(
@@ -429,14 +443,19 @@ impl MassiveGameServer {
 
         let match_info_fb = {
             let match_snapshot = &shared_data.match_info_snapshot;
-            let team_scores_changed = client_state.last_known_team_scores != match_snapshot.team_scores;
+            let team_scores_changed =
+                client_state.last_known_team_scores != match_snapshot.team_scores;
             let time_changed = client_state
                 .last_known_match_time_remaining
                 .map_or(true, |t| (t - match_snapshot.time_remaining).abs() > 0.5);
             let state_changed = client_state
                 .last_known_match_state
                 .map_or(true, |s| s != match_snapshot.match_state);
-            if client_state.match_info_pending || state_changed || time_changed || team_scores_changed {
+            if client_state.match_info_pending
+                || state_changed
+                || time_changed
+                || team_scores_changed
+            {
                 let team_scores_vec: Vec<_> = match_snapshot
                     .team_scores
                     .iter()
@@ -616,7 +635,8 @@ impl MassiveGameServer {
 
         let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
 
-        let active_walls_to_send: Cow<'_, [Wall]> = if shared_data.active_walls_snapshot.is_empty() {
+        let active_walls_to_send: Cow<'_, [Wall]> = if shared_data.active_walls_snapshot.is_empty()
+        {
             let mut fallback_walls: Vec<Wall> =
                 shared_data.active_walls_by_id.values().cloned().collect();
             fallback_walls.sort_by_key(|wall| wall.id);

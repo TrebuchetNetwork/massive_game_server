@@ -595,9 +595,8 @@ async fn main() -> anyhow::Result<()> {
         let backup_manager_task = backup_manager.clone();
         let server_for_backup_task = game_server_instance.clone();
         tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(Duration::from_secs(
-                backup_manager_task.interval_seconds(),
-            ));
+            let mut ticker =
+                tokio::time::interval(Duration::from_secs(backup_manager_task.interval_seconds()));
             // Skip immediate tick to avoid backup spike during warm startup.
             ticker.tick().await;
             loop {
@@ -616,8 +615,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let alert_rules = monitoring_alerts::default_alert_rules_from_env();
-    let alert_notifier =
-        monitoring_alerts::AlertmanagerNotifier::new(monitoring_alerts::AlertmanagerConfig::from_env());
+    let alert_notifier = monitoring_alerts::AlertmanagerNotifier::new(
+        monitoring_alerts::AlertmanagerConfig::from_env(),
+    );
     if alert_rules.is_empty() {
         info!("Alert evaluator disabled (no threshold env vars configured).");
     } else {
@@ -626,7 +626,11 @@ async fn main() -> anyhow::Result<()> {
             "Alert evaluator enabled (rules={}, interval={}s, alertmanager_webhook={}).",
             alert_rules.len(),
             alert_eval_interval_secs,
-            if alert_notifier.enabled() { "configured" } else { "disabled" }
+            if alert_notifier.enabled() {
+                "configured"
+            } else {
+                "disabled"
+            }
         );
         let server_for_alerts = game_server_instance.clone();
         let rules_for_alerts = alert_rules.clone();
@@ -736,15 +740,17 @@ async fn main() -> anyhow::Result<()> {
                     .unify(),
             )
             .and(warp::any().map(move || server_for_live_replay_dispute_recent.clone()))
-            .map(|query: LiveReplayRecentQuery, server_inst: ServerInstanceRef| {
-                let limit = query.limit.unwrap_or(128).clamp(1, 2048);
-                warp::reply::json(&serde_json::json!({
-                    "ok": true,
-                    "op": "live_replay_disputes_recent",
-                    "audits": server_inst.recent_live_replay_dispute_audits(limit),
-                    "limit": limit,
-                }))
-            });
+            .map(
+                |query: LiveReplayRecentQuery, server_inst: ServerInstanceRef| {
+                    let limit = query.limit.unwrap_or(128).clamp(1, 2048);
+                    warp::reply::json(&serde_json::json!({
+                        "ok": true,
+                        "op": "live_replay_disputes_recent",
+                        "audits": server_inst.recent_live_replay_dispute_audits(limit),
+                        "limit": limit,
+                    }))
+                },
+            );
 
     let quic_primary_only = env_flag("MGS_QUIC_PRIMARY") && env_flag("MGS_QUIC_PRIMARY_ONLY");
     if quic_primary_only {
@@ -963,7 +969,9 @@ async fn main() -> anyhow::Result<()> {
         info!(
             "No cross-origin API origins configured (set MGS_ALLOWED_ORIGINS for explicit allowlist)."
         );
-        recovered_routes.map(warp::reply::Reply::into_response).boxed()
+        recovered_routes
+            .map(warp::reply::Reply::into_response)
+            .boxed()
     } else {
         for origin in &allowed_cors_origins {
             info!("Allowing API CORS origin: {}", origin);

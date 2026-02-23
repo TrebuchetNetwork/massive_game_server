@@ -1,7 +1,6 @@
 // massive_game_server/server/src/systems/physics/collision.rs
 // This file might be new or you might integrate this function into an existing collision system.
 
-use crate::core::constants::PLAYER_RADIUS; // Example, if needed for other collisions
 use crate::core::types::{EntityId, GameEvent, Projectile, Vec2, Wall}; // Assuming GameEvent and Vec2 are in types
 use crate::systems::respawn::WallRespawnManager; // To call wall_destroyed
 use tracing::{debug, warn}; // For logging
