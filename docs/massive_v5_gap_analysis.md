@@ -15,15 +15,14 @@ Status legend:
 - `Not started` = no production implementation found
 
 ## Executive Summary
-- `Done`: 7 items
-- `Partial`: 10 items
+- `Done`: 8 items
+- `Partial`: 9 items
 - `Not started`: 2 items
 
 Critical remaining product gaps:
-1. Team ping end-to-end UX is incomplete (client input/render path not fully wired).
-2. 120-client tail-wave join hardening is only partially complete (initial-state chunking/prewarm model is incomplete).
-3. Progressive destructible terrain is not implemented.
-4. Commander mode gameplay loop is not implemented.
+1. 120-client tail-wave join hardening is only partially complete (initial-state chunking/prewarm model is incomplete).
+2. Progressive destructible terrain is not implemented.
+3. Commander mode gameplay loop is not implemented.
 
 ## Phase Matrix
 
@@ -39,7 +38,7 @@ Critical remaining product gaps:
 | 3.1 | Kill cam replay | Partial | Killcam capture + direct packet dispatch in `/Users/ivo/massive_game_server/server/src/server/instance/match_summary.rs` | Client only stores payload (no replay renderer) in `/Users/ivo/massive_game_server/static_client/client.html` |
 | 3.2 | Post-match stats screen | Partial | Summary assembly + broadcast in `/Users/ivo/massive_game_server/server/src/server/instance/match_summary.rs` | Client receives event but has no full stats screen implementation in `/Users/ivo/massive_game_server/static_client/client.html` |
 | 3.3 | SBMM | Partial | MMR compute in `/Users/ivo/massive_game_server/server/src/operational/auth.rs`; routing primitives in `/Users/ivo/massive_game_server/server/src/scaling/router.rs` | WebSocket join path only logs shard hint (no enforced multi-instance placement) in `/Users/ivo/massive_game_server/server/src/main.rs` |
-| 4.1 | Team ping system | Partial | Server ping ingestion in `/Users/ivo/massive_game_server/server/src/server/instance/input_runtime.rs`; teammate filtering in `/Users/ivo/massive_game_server/server/src/server/instance/broadcast_state.rs` | Client `inputState` does not carry `ping_x/ping_y`; ping wheel currently emits local/chat behavior only in `/Users/ivo/massive_game_server/static_client/client.html` |
+| 4.1 | Team ping system | Done | Server ping ingestion + teammate filtering in `/Users/ivo/massive_game_server/server/src/server/instance/input_runtime.rs` and `/Users/ivo/massive_game_server/server/src/server/instance/broadcast_state.rs`; client ping send/render wiring in `/Users/ivo/massive_game_server/static_client/client.html` | None identified |
 | 4.2 | Spectator mode | Done | Join gating/cap and spectator assignment in `/Users/ivo/massive_game_server/server/src/network/signaling.rs`; spectator handling through input/physics/broadcast in `/Users/ivo/massive_game_server/server/src/server/instance/*` | None identified |
 | 4.3 | Public bot arena | Partial | Arena APIs + leaderboard in `/Users/ivo/massive_game_server/server/src/operational/arena.rs`; UI shell in `/Users/ivo/massive_game_server/static_client/arena.html` | Monaco-style code editor and source submission workflow are not present in current arena UI |
 | 5.1 | Close 120-client gap | Partial | SDP admission gate + queue hint in `/Users/ivo/massive_game_server/server/src/network/signaling.rs`; tail-wave broadcast policies in `/Users/ivo/massive_game_server/server/src/server/instance/broadcast_loop.rs` | No true multi-frame initial-state chunking; client-state prewarm exists but not full pre-SDP warm-pool design |
