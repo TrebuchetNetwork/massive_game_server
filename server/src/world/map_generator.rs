@@ -1,6 +1,6 @@
 // massive_game_server/server/src/world/map_generator.rs
 use crate::core::constants::*;
-use crate::core::types::{generate_entity_id, Vec2, Wall};
+use crate::core::types::{generate_entity_id, Vec2, Wall, Zone, ZoneType};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -27,6 +27,64 @@ impl MapGenerator {
         let walls = Self::generate_map_with_density(seed, cover_points, destructible_nodes);
         let map_name = format!("Massive Arena Dynamic {}p", target);
         (walls, map_name)
+    }
+
+    pub fn generate_environment_zones_with_seed(seed: u64) -> Vec<Zone> {
+        let mut rng = StdRng::seed_from_u64(seed ^ 0xA5A5_5A5A_D15C_AFE5);
+        let mut zones = Vec::with_capacity(6);
+
+        zones.push(Zone {
+            id: generate_entity_id(),
+            x: -95.0,
+            y: -320.0,
+            width: 190.0,
+            height: 640.0,
+            zone_type: ZoneType::SlowZone,
+            direction: 0.0,
+        });
+
+        zones.push(Zone {
+            id: generate_entity_id(),
+            x: -260.0,
+            y: -70.0,
+            width: 120.0,
+            height: 140.0,
+            zone_type: ZoneType::DamageZone,
+            direction: 0.0,
+        });
+
+        zones.push(Zone {
+            id: generate_entity_id(),
+            x: 140.0,
+            y: -70.0,
+            width: 120.0,
+            height: 140.0,
+            zone_type: ZoneType::DamageZone,
+            direction: 0.0,
+        });
+
+        let left_boost_y = rng.gen_range(-220.0..220.0);
+        let right_boost_y = rng.gen_range(-220.0..220.0);
+        zones.push(Zone {
+            id: generate_entity_id(),
+            x: WORLD_MIN_X + 120.0,
+            y: left_boost_y,
+            width: 80.0,
+            height: 60.0,
+            zone_type: ZoneType::BoostPad,
+            direction: 0.0,
+        });
+        zones.push(Zone {
+            id: generate_entity_id(),
+            x: WORLD_MAX_X - 200.0,
+            y: right_boost_y,
+            width: 80.0,
+            height: 60.0,
+            zone_type: ZoneType::BoostPad,
+            direction: std::f32::consts::PI,
+        });
+
+        zones
     }
 
     fn generate_map_with_density(

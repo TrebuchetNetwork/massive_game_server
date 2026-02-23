@@ -133,6 +133,13 @@ impl MassiveGameServer {
                         victim_was_carrying_flag_id,
                     )) = target_hit_data
                     {
+                        if let Some(mut attacker_state_entry) =
+                            self.player_manager.get_player_state_mut(&attacker_id)
+                        {
+                            attacker_state_entry.record_damage_dealt(melee_damage);
+                            attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
+                        }
+
                         // Push damage event
                         self.global_game_events.push(
                             GameEvent::PlayerDamaged {
@@ -160,6 +167,8 @@ impl MassiveGameServer {
                                 {
                                     let attacker_mut_state = &mut *attacker_mut_state_entry;
                                     attacker_mut_state.kills += 1;
+                                    attacker_mut_state
+                                        .record_kill_with_weapon(ServerWeaponType::Melee);
 
                                     // Check for friendly fire
                                     if attacker_team_id != 0
@@ -191,6 +200,13 @@ impl MassiveGameServer {
                             );
 
                             // Update kill feed
+                            self.capture_killcam_for_victim(
+                                &target_id_arc_nearby,
+                                &target_username,
+                                &attacker_id,
+                                ServerWeaponType::Melee,
+                            );
+
                             self.push_kill_feed_entry(
                                 attacker_username.clone(),
                                 target_username,

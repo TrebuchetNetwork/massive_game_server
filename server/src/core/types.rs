@@ -45,6 +45,8 @@ pub struct PlayerInputData {
     pub melee_attack: bool,
     pub change_weapon_slot: u8,
     pub use_ability_slot: u8,
+    pub ping_x: f32,
+    pub ping_y: f32,
 }
 
 // --- Basic Geometric Types ---
@@ -60,6 +62,31 @@ impl Vec2 {
     }
     pub fn zero() -> Self {
         Vec2 { x: 0.0, y: 0.0 }
+    }
+}
+
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub enum ZoneType {
+    SlowZone,
+    DamageZone,
+    BoostPad,
+}
+
+#[derive(Clone, Debug)]
+pub struct Zone {
+    pub id: EntityId,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub zone_type: ZoneType,
+    pub direction: f32,
+}
+
+impl Zone {
+    #[inline]
+    pub fn contains(&self, px: f32, py: f32) -> bool {
+        px >= self.x && px <= self.x + self.width && py >= self.y && py <= self.y + self.height
     }
 }
 
@@ -103,15 +130,34 @@ pub struct PlayerState {
 
     pub weapon: ServerWeaponType,
     pub ammo: i32,
+    pub primary_weapon: ServerWeaponType,
+    pub primary_ammo: i32,
+    pub secondary_weapon: ServerWeaponType,
+    pub secondary_ammo: i32,
+    pub weapon_swap_progress: f32,
+    pub pending_weapon_swap: Option<ServerWeaponType>,
     pub respawn_timer: Option<f32>,
     pub reload_progress: Option<f32>,
     pub last_shot_time: Option<Instant>,
+    pub ability_1_cooldown_remaining: f32,
+    pub ability_2_cooldown_remaining: f32,
+    pub dash_remaining: f32,
+    pub dodge_roll_remaining: f32,
+    pub invulnerable_remaining: f32,
+    pub ping_cooldown_remaining: f32,
+    pub zone_boost_cooldown_remaining: f32,
 
     pub speed_boost_remaining: f32,
     pub damage_boost_remaining: f32,
     pub shield_current: i32,
     pub shield_max: i32,
     pub is_carrying_flag_team_id: u8,
+
+    pub damage_dealt: i32,
+    pub damage_taken: i32,
+    pub flag_captures: i32,
+    pub flag_returns: i32,
+    pub kills_per_weapon: [i32; 5],
 
     pub last_valid_position: (f32, f32),
     pub violation_count: u32,
@@ -122,7 +168,9 @@ pub struct PlayerState {
 impl PlayerState {
     pub fn new(id_val: String, username_val: String, initial_x: f32, initial_y: f32) -> Self {
         let arc_id = Arc::new(id_val);
-        let default_weapon = ServerWeaponType::default();
+        let primary_weapon = ServerWeaponType::Rifle;
+        let secondary_weapon = ServerWeaponType::Pistol;
+        let default_weapon = primary_weapon;
         let default_ammo = Self::get_max_ammo_for_weapon(default_weapon);
 
         PlayerState {
@@ -147,14 +195,32 @@ impl PlayerState {
             last_update_timestamp: Some(Instant::now()),
             weapon: default_weapon,
             ammo: default_ammo,
+            primary_weapon,
+            primary_ammo: default_ammo,
+            secondary_weapon,
+            secondary_ammo: Self::get_max_ammo_for_weapon(secondary_weapon),
+            weapon_swap_progress: 0.0,
+            pending_weapon_swap: None,
             respawn_timer: None,
             reload_progress: None,
             last_shot_time: None,
+            ability_1_cooldown_remaining: 0.0,
+            ability_2_cooldown_remaining: 0.0,
+            dash_remaining: 0.0,
+            dodge_roll_remaining: 0.0,
+            invulnerable_remaining: 0.0,
+            ping_cooldown_remaining: 0.0,
+            zone_boost_cooldown_remaining: 0.0,
             speed_boost_remaining: 0.0,
             damage_boost_remaining: 0.0,
             shield_current: 0,
             shield_max: 0,
             is_carrying_flag_team_id: 0,
+            damage_dealt: 0,
+            damage_taken: 0,
+            flag_captures: 0,
+            flag_returns: 0,
+            kills_per_weapon: [0; 5],
             last_valid_position: (initial_x, initial_y),
             violation_count: 0,
             changed_fields: 0xFFFF,
@@ -219,7 +285,7 @@ impl PlayerState {
     }
 
     pub fn can_shoot(&self, current_time: Instant) -> bool {
-        if !self.alive || self.reload_progress.is_some() {
+        if !self.alive || self.reload_progress.is_some() || self.weapon_swap_progress > 0.0 {
             return false;
         }
         if self.weapon != ServerWeaponType::Melee && self.ammo <= 0 {
@@ -240,6 +306,7 @@ impl PlayerState {
         if self.reload_progress.is_some()
             || !self.alive
             || self.ammo == Self::get_max_ammo_for_weapon(self.weapon)
+            || self.weapon_swap_progress > 0.0
         {
             return;
         }
@@ -257,6 +324,7 @@ impl PlayerState {
                 *progress += delta_time / reload_duration;
                 if *progress >= 1.0 {
                     self.ammo = Self::get_max_ammo_for_weapon(self.weapon);
+                    self.sync_active_weapon_to_loadout_slot();
                     self.reload_progress = None;
                     self.mark_field_changed(FIELD_WEAPON_AMMO);
                 } else {
@@ -269,7 +337,7 @@ impl PlayerState {
     }
 
     pub fn apply_damage(&mut self, damage: i32) -> bool {
-        if !self.alive {
+        if !self.alive || self.invulnerable_remaining > 0.0 {
             return false;
         }
         let mut remaining_damage = damage;
@@ -284,6 +352,7 @@ impl PlayerState {
         if remaining_damage > 0 {
             let old_health = self.health;
             self.health = (self.health - remaining_damage).max(0);
+            self.damage_taken = self.damage_taken.saturating_add(remaining_damage);
             if old_health != self.health {
                 self.mark_field_changed(FIELD_HEALTH_ALIVE);
             }
@@ -302,8 +371,15 @@ impl PlayerState {
         self.respawn_timer = Some(crate::core::constants::DEFAULT_RESPAWN_DURATION_SECS);
         self.velocity_x = 0.0; // Added for consistency
         self.velocity_y = 0.0; // Added for consistency
-                               // self.is_carrying_flag_team_id = 0; // <<<< REMOVE THIS LINE (or comment it out)
-                               // Mark FIELD_FLAG changed if it was carried, this will be handled by the caller now.
+        self.weapon_swap_progress = 0.0;
+        self.pending_weapon_swap = None;
+        self.dash_remaining = 0.0;
+        self.dodge_roll_remaining = 0.0;
+        self.invulnerable_remaining = 0.0;
+        self.ping_cooldown_remaining = 0.0;
+        self.zone_boost_cooldown_remaining = 0.0;
+        // self.is_carrying_flag_team_id = 0; // <<<< REMOVE THIS LINE (or comment it out)
+        // Mark FIELD_FLAG changed if it was carried, this will be handled by the caller now.
         self.mark_field_changed(FIELD_HEALTH_ALIVE | FIELD_SCORE_STATS | FIELD_POSITION_ROTATION);
         // FIELD_FLAG will be marked by caller if changed
     }
@@ -317,9 +393,20 @@ impl PlayerState {
         self.last_valid_position = (new_x, new_y);
         self.velocity_x = 0.0;
         self.velocity_y = 0.0;
-        self.weapon = ServerWeaponType::Pistol;
-        self.ammo = Self::get_max_ammo_for_weapon(self.weapon);
+        self.primary_ammo = Self::get_max_ammo_for_weapon(self.primary_weapon);
+        self.secondary_ammo = Self::get_max_ammo_for_weapon(self.secondary_weapon);
+        self.weapon = self.primary_weapon;
+        self.ammo = self.primary_ammo;
+        self.weapon_swap_progress = 0.0;
+        self.pending_weapon_swap = None;
         self.reload_progress = None;
+        self.ability_1_cooldown_remaining = 0.0;
+        self.ability_2_cooldown_remaining = 0.0;
+        self.dash_remaining = 0.0;
+        self.dodge_roll_remaining = 0.0;
+        self.invulnerable_remaining = 0.0;
+        self.ping_cooldown_remaining = 0.0;
+        self.zone_boost_cooldown_remaining = 0.0;
         self.shield_current = 0;
         self.is_carrying_flag_team_id = 0; // Reset flag carrying state on respawn
         self.mark_field_changed(
@@ -334,6 +421,7 @@ impl PlayerState {
     pub fn update_timers(&mut self, delta_time: f32) {
         let mut changed_health_alive = false;
         let mut changed_powerups = false;
+        let mut changed_weapon_state = false;
 
         if !self.alive {
             if let Some(timer) = &mut self.respawn_timer {
@@ -353,6 +441,46 @@ impl PlayerState {
             self.damage_boost_remaining = (self.damage_boost_remaining - delta_time).max(0.0);
             changed_powerups = true;
         }
+        if self.ability_1_cooldown_remaining > 0.0 {
+            self.ability_1_cooldown_remaining =
+                (self.ability_1_cooldown_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.ability_2_cooldown_remaining > 0.0 {
+            self.ability_2_cooldown_remaining =
+                (self.ability_2_cooldown_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.dash_remaining > 0.0 {
+            self.dash_remaining = (self.dash_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.dodge_roll_remaining > 0.0 {
+            self.dodge_roll_remaining = (self.dodge_roll_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.invulnerable_remaining > 0.0 {
+            self.invulnerable_remaining = (self.invulnerable_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.ping_cooldown_remaining > 0.0 {
+            self.ping_cooldown_remaining = (self.ping_cooldown_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.zone_boost_cooldown_remaining > 0.0 {
+            self.zone_boost_cooldown_remaining =
+                (self.zone_boost_cooldown_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.weapon_swap_progress > 0.0 {
+            self.weapon_swap_progress = (self.weapon_swap_progress - delta_time).max(0.0);
+            changed_weapon_state = true;
+            if self.weapon_swap_progress <= 0.0 {
+                if let Some(next_weapon) = self.pending_weapon_swap.take() {
+                    self.commit_pending_weapon_swap(next_weapon);
+                }
+            }
+        }
 
         if changed_health_alive {
             self.mark_field_changed(FIELD_HEALTH_ALIVE);
@@ -360,11 +488,119 @@ impl PlayerState {
         if changed_powerups {
             self.mark_field_changed(FIELD_POWERUPS);
         }
+        if changed_weapon_state {
+            self.mark_field_changed(FIELD_WEAPON_AMMO);
+        }
 
         let old_reload_progress = self.reload_progress;
         self.update_reload_progress(delta_time);
         if self.reload_progress != old_reload_progress {
             self.mark_field_changed(FIELD_WEAPON_AMMO);
+        }
+    }
+
+    pub fn start_weapon_swap_to_slot(&mut self, slot: u8) -> bool {
+        if self.weapon_swap_progress > 0.0 {
+            return false;
+        }
+
+        let target_weapon = match slot {
+            1 => self.primary_weapon,
+            2 => self.secondary_weapon,
+            _ => return false,
+        };
+
+        if self.weapon == target_weapon {
+            return false;
+        }
+
+        self.sync_active_weapon_to_loadout_slot();
+        self.pending_weapon_swap = Some(target_weapon);
+        self.weapon_swap_progress = crate::core::constants::WEAPON_SWAP_DURATION_SECS;
+        self.reload_progress = None;
+        self.mark_field_changed(FIELD_WEAPON_AMMO);
+        true
+    }
+
+    pub fn replace_active_slot_weapon(&mut self, weapon: ServerWeaponType) {
+        if self.active_loadout_slot() == 2 {
+            self.secondary_weapon = weapon;
+            self.secondary_ammo = Self::get_max_ammo_for_weapon(weapon);
+        } else {
+            self.primary_weapon = weapon;
+            self.primary_ammo = Self::get_max_ammo_for_weapon(weapon);
+        }
+        self.weapon = weapon;
+        self.ammo = Self::get_max_ammo_for_weapon(weapon);
+        self.pending_weapon_swap = None;
+        self.weapon_swap_progress = 0.0;
+        self.reload_progress = None;
+        self.mark_field_changed(FIELD_WEAPON_AMMO);
+    }
+
+    fn commit_pending_weapon_swap(&mut self, weapon: ServerWeaponType) {
+        self.weapon = weapon;
+        self.ammo = if self.secondary_weapon == weapon {
+            self.secondary_ammo
+        } else {
+            self.primary_ammo
+        };
+        self.mark_field_changed(FIELD_WEAPON_AMMO);
+    }
+
+    fn active_loadout_slot(&self) -> u8 {
+        if self.weapon == self.secondary_weapon && self.weapon != self.primary_weapon {
+            2
+        } else {
+            1
+        }
+    }
+
+    pub fn sync_active_weapon_to_loadout_slot(&mut self) {
+        match self.active_loadout_slot() {
+            2 => {
+                self.secondary_weapon = self.weapon;
+                self.secondary_ammo = self.ammo.max(0);
+            }
+            _ => {
+                self.primary_weapon = self.weapon;
+                self.primary_ammo = self.ammo.max(0);
+            }
+        }
+    }
+
+    #[inline]
+    pub fn record_damage_dealt(&mut self, damage: i32) {
+        self.damage_dealt = self.damage_dealt.saturating_add(damage.max(0));
+    }
+
+    #[inline]
+    pub fn record_damage_taken(&mut self, damage: i32) {
+        self.damage_taken = self.damage_taken.saturating_add(damage.max(0));
+    }
+
+    #[inline]
+    pub fn record_kill_with_weapon(&mut self, weapon: ServerWeaponType) {
+        let idx = Self::weapon_index(weapon);
+        self.kills_per_weapon[idx] = self.kills_per_weapon[idx].saturating_add(1);
+    }
+
+    pub fn reset_match_stats(&mut self) {
+        self.damage_dealt = 0;
+        self.damage_taken = 0;
+        self.flag_captures = 0;
+        self.flag_returns = 0;
+        self.kills_per_weapon = [0; 5];
+    }
+
+    #[inline]
+    fn weapon_index(weapon: ServerWeaponType) -> usize {
+        match weapon {
+            ServerWeaponType::Pistol => 0,
+            ServerWeaponType::Shotgun => 1,
+            ServerWeaponType::Rifle => 2,
+            ServerWeaponType::Sniper => 3,
+            ServerWeaponType::Melee => 4,
         }
     }
 }
@@ -501,6 +737,11 @@ pub enum GameEvent {
         capturer_id: PlayerID,
         captured_flag_team_id: u8,
         capturing_team_id: u8,
+        position: Vec2,
+    },
+    TeamPing {
+        player_id: PlayerID,
+        team_id: u8,
         position: Vec2,
     },
 }

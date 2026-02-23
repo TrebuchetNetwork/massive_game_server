@@ -1199,6 +1199,8 @@ pub async fn handle_signaling_connection(
                                         melee_attack: input_fb.melee_attack(),
                                         change_weapon_slot: input_fb.change_weapon_slot() as u8,
                                         use_ability_slot: input_fb.use_ability_slot() as u8,
+                                        ping_x: input_fb.ping_x(),
+                                        ping_y: input_fb.ping_y(),
                                     };
 
                                     let player_id_arc: PlayerID = players_map_on_msg

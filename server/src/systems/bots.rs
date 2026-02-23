@@ -250,6 +250,8 @@ impl BotManager {
                 melee_attack: false,
                 change_weapon_slot: 0,
                 use_ability_slot: 0,
+                ping_x: 0.0,
+                ping_y: 0.0,
             };
             
             if let Some(target_pos) = bot.target_position {

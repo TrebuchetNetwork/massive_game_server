@@ -95,6 +95,8 @@ struct QuicInputEnvelope {
     melee_attack: Option<bool>,
     change_weapon_slot: Option<u8>,
     use_ability_slot: Option<u8>,
+    ping_x: Option<f32>,
+    ping_y: Option<f32>,
 }
 
 impl QuicInputEnvelope {
@@ -112,6 +114,8 @@ impl QuicInputEnvelope {
             melee_attack: self.melee_attack.unwrap_or(false),
             change_weapon_slot: self.change_weapon_slot.unwrap_or(0),
             use_ability_slot: self.use_ability_slot.unwrap_or(0),
+            ping_x: self.ping_x.unwrap_or(0.0),
+            ping_y: self.ping_y.unwrap_or(0.0),
         }
     }
 }
@@ -751,6 +755,27 @@ async fn main() -> anyhow::Result<()> {
                     }))
                 },
             );
+    let server_for_match_summary = game_server_instance.clone();
+    let match_summary_latest_route = warp::path!("api" / "ops" / "match-summary" / "latest")
+        .and(warp::get())
+        .and(warp::any().map(move || server_for_match_summary.clone()))
+        .map(|server_inst: ServerInstanceRef| {
+            warp::reply::json(&serde_json::json!({
+                "ok": true,
+                "summary": server_inst.latest_match_end_summary(),
+            }))
+        });
+    let server_for_killcam = game_server_instance.clone();
+    let killcam_latest_route = warp::path!("api" / "ops" / "killcam" / String)
+        .and(warp::get())
+        .and(warp::any().map(move || server_for_killcam.clone()))
+        .map(|player_id: String, server_inst: ServerInstanceRef| {
+            warp::reply::json(&serde_json::json!({
+                "ok": true,
+                "player_id": player_id,
+                "killcam": server_inst.latest_killcam_for_player(&player_id),
+            }))
+        });
 
     let quic_primary_only = env_flag("MGS_QUIC_PRIMARY") && env_flag("MGS_QUIC_PRIMARY_ONLY");
     if quic_primary_only {
@@ -944,6 +969,8 @@ async fn main() -> anyhow::Result<()> {
         .or(live_replay_recent_route)
         .or(live_replay_dispute_route)
         .or(live_replay_dispute_recent_route)
+        .or(match_summary_latest_route)
+        .or(killcam_latest_route)
         .map(warp::reply::Reply::into_response)
         .boxed();
 

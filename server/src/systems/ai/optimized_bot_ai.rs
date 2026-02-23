@@ -11,7 +11,7 @@ use crate::systems::ai::commander::{
 use dashmap::DashMap;
 use rand::Rng;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, trace};
@@ -341,6 +341,19 @@ impl OptimizedBotAI {
                 }
             }
         }
+        if frame_count % 120 == 0 {
+            let mut live_ids: HashSet<PlayerID> = HashSet::with_capacity(live_players_by_id.len());
+            for id in live_players_by_id.keys() {
+                live_ids.insert(id.clone());
+            }
+            predictive_models
+                .motion_models
+                .retain(|player_id, _| live_ids.contains(player_id));
+            predictive_models
+                .threat_models
+                .retain(|player_id, _| live_ids.contains(player_id));
+        }
+
         drop(match_info_guard);
         BOT_IDS.with(|cell| *cell.borrow_mut() = bot_ids);
     }
@@ -585,7 +598,7 @@ impl OptimizedBotAI {
 
         // Randomly switch weapons occasionally
         if rng.gen_bool(0.1) {
-            bot_controller.path_recalculation_timer = Instant::now(); // Use as weapon switch timer
+            bot_controller.last_weapon_switch_time = Instant::now();
         }
 
         trace!(
@@ -741,13 +754,15 @@ impl OptimizedBotAI {
             melee_attack: false,
             change_weapon_slot: 0,
             use_ability_slot: 0,
+            ping_x: 0.0,
+            ping_y: 0.0,
         };
 
         // Weapon switching logic
-        if current_time.duration_since(bot_controller.path_recalculation_timer)
+        if current_time.duration_since(bot_controller.last_weapon_switch_time)
             < Duration::from_secs(1)
         {
-            input.change_weapon_slot = rng.gen_range(1..=4);
+            input.change_weapon_slot = rng.gen_range(1..=2);
         }
 
         // Reload if low on ammo
@@ -894,6 +909,16 @@ impl OptimizedBotAI {
                 }
             }
 
+            // Use movement abilities for outplay opportunities.
+            if nearest_enemy_dist > 180.0 * 180.0
+                && nearest_enemy_dist < 420.0 * 420.0
+                && rng.gen_bool(0.06)
+            {
+                input.use_ability_slot = 1; // Dash engage
+            } else if nearest_enemy_dist < 120.0 * 120.0 && rng.gen_bool(0.08) {
+                input.use_ability_slot = 2; // Dodge roll disengage
+            }
+
             // Tactical movement during combat
             if has_enemy_target && !movement_handled {
                 if nearest_enemy_dist < 200.0 * 200.0 {
@@ -926,6 +951,17 @@ impl OptimizedBotAI {
         delta_time: f32,
     ) {
         let current_pos = Vec2::new(bot_state.x, bot_state.y);
+        if bot_controller.behavior_state == BotBehaviorState::Defending && bot_state.team_id != 0 {
+            let own_flag_base = MassiveGameServer::get_flag_base_position(bot_state.team_id);
+            let dist_to_base_sq = (current_pos.x - own_flag_base.x).powi(2)
+                + (current_pos.y - own_flag_base.y).powi(2);
+            if dist_to_base_sq <= 220.0 * 220.0 {
+                bot_controller.stuck_timer = 0.0;
+                bot_controller.stuck_check_position = current_pos;
+                bot_controller.last_position = current_pos;
+                return;
+            }
+        }
 
         // Defenders and objective bots can be intentionally stationary once they reach their post.
         if let Some(target) = bot_controller.target_position {

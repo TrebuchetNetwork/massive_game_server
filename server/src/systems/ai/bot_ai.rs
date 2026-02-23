@@ -189,6 +189,8 @@ impl BotAISystem {
                         melee_attack: false,
                         change_weapon_slot: 0,
                         use_ability_slot: 0,
+                        ping_x: 0.0,
+                        ping_y: 0.0,
                     };
 
                     Self::generate_warzone_input(
@@ -951,6 +953,12 @@ impl BotAISystem {
                                 input.move_right = !input.move_left;
                             }
                         }
+
+                        if dist_to_enemy > 180.0 && dist_to_enemy < 420.0 && rng.gen_bool(0.05) {
+                            input.use_ability_slot = 1; // Dash engage
+                        } else if dist_to_enemy < 120.0 && rng.gen_bool(0.07) {
+                            input.use_ability_slot = 2; // Dodge roll disengage
+                        }
                     } else {
                         bot_controller.target_enemy_id = None;
                     }
@@ -973,33 +981,15 @@ impl BotAISystem {
 
         // Dynamic weapon switching
         if bot_controller.behavior_state != BotBehaviorState::Engaging && rng.gen_bool(0.03) {
-            // Choose weapon based on situation
-            let new_weapon = if bot_controller.behavior_state == BotBehaviorState::Flanking {
-                // Prefer close range for flanking
-                if rng.gen_bool(0.6) {
-                    ServerWeaponType::Shotgun
+            // Loadout swap: prefer close-range slot while flanking, otherwise random switch.
+            input.change_weapon_slot =
+                if bot_controller.behavior_state == BotBehaviorState::Flanking {
+                    2
+                } else if rng.gen_bool(0.5) {
+                    1
                 } else {
-                    ServerWeaponType::Rifle
-                }
-            } else {
-                // General weapon choice
-                match rng.gen_range(0..4) {
-                    0 => ServerWeaponType::Pistol,
-                    1 => ServerWeaponType::Shotgun,
-                    2 => ServerWeaponType::Rifle,
-                    _ => ServerWeaponType::Sniper,
-                }
-            };
-
-            if new_weapon != bot_state.weapon {
-                input.change_weapon_slot = match new_weapon {
-                    ServerWeaponType::Pistol => 1,
-                    ServerWeaponType::Shotgun => 2,
-                    ServerWeaponType::Rifle => 3,
-                    ServerWeaponType::Sniper => 4,
-                    ServerWeaponType::Melee => 5,
+                    2
                 };
-            }
         }
     }
 

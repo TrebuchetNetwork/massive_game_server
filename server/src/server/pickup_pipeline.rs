@@ -70,14 +70,16 @@ pub(crate) fn apply_pickup_effect(
         }
         CorePickupType::Ammo => {
             player_state.ammo = PlayerState::get_max_ammo_for_weapon(player_state.weapon);
+            player_state.sync_active_weapon_to_loadout_slot();
+            player_state.primary_ammo =
+                PlayerState::get_max_ammo_for_weapon(player_state.primary_weapon);
+            player_state.secondary_ammo =
+                PlayerState::get_max_ammo_for_weapon(player_state.secondary_weapon);
             player_state.mark_field_changed(FIELD_WEAPON_AMMO);
             true
         }
         CorePickupType::WeaponCrate(weapon) => {
-            player_state.weapon = *weapon;
-            player_state.ammo = PlayerState::get_max_ammo_for_weapon(*weapon);
-            player_state.reload_progress = None;
-            player_state.mark_field_changed(FIELD_WEAPON_AMMO);
+            player_state.replace_active_slot_weapon(*weapon);
             true
         }
         CorePickupType::SpeedBoost => {

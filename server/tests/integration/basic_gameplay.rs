@@ -576,6 +576,8 @@ async fn test_player_spawning_and_movement() {
                 melee_attack: false,
                 change_weapon_slot: 0,
                 use_ability_slot: 0,
+                ping_x: 0.0,
+                ping_y: 0.0,
             };
             p_state_mut.queue_input(input);
             info!("[Spawn Test Iteration {}] Player {} queued move input (rot: {:.2}). Initial pos: ({:.2}, {:.2})", i, player_id_str, movement_rotation, initial_x, initial_y);

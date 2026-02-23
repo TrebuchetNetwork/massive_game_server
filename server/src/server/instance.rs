@@ -78,6 +78,7 @@ mod game_modes;
 mod input_runtime;
 mod join_stage;
 mod match_info;
+mod match_summary;
 mod navigation_mesh;
 mod physics;
 mod replay;
@@ -92,9 +93,10 @@ use self::serialization::*;
 use self::types::*;
 pub use self::types::{
     BotBehaviorState, BotController, JoinStageLatencyStats, JoinStageReport, JoinStageWaveSummary,
-    LiveReplayDisputeAuditProof, LiveReplayDisputeFilter, LiveReplayDisputeReport,
-    LiveReplayDisputeRequest, LiveReplayFrame, LiveReplayKillFeedEntry, QuicJoinSnapshot,
-    ServerFlagState, ServerKillFeedEntry, ServerMatchInfo,
+    KillCamData, KillCamSample, LiveReplayDisputeAuditProof, LiveReplayDisputeFilter,
+    LiveReplayDisputeReport, LiveReplayDisputeRequest, LiveReplayFrame, LiveReplayKillFeedEntry,
+    MatchEndSummary, PlayerMatchStats, QuicJoinSnapshot, ServerFlagState, ServerKillFeedEntry,
+    ServerMatchInfo,
 };
 use self::util::*;
 
@@ -302,6 +304,7 @@ pub struct MassiveGameServer {
     pub tick_durations_history: Arc<ParkingLotRwLock<VecDeque<Duration>>>,
     pub projectiles: Arc<ParkingLotRwLock<Vec<Projectile>>>,
     pub pickups: Arc<ParkingLotRwLock<Vec<Pickup>>>,
+    pub zones: Arc<Vec<Zone>>,
 
     pub data_channels_map: DataChannelsMap,
     pub client_states_map: ClientStatesMap,
@@ -356,6 +359,8 @@ pub struct MassiveGameServer {
     live_replay_dispute_chain_head: Arc<ParkingLotRwLock<Option<String>>>,
     live_replay_dispute_audits: Arc<ParkingLotRwLock<VecDeque<LiveReplayDisputeAuditProof>>>,
     live_replay_dispute_audit_capacity: usize,
+    latest_match_end_summary: Arc<ParkingLotRwLock<Option<MatchEndSummary>>>,
+    recent_killcams: Arc<DashMap<PlayerID, KillCamData>>,
 }
 
 impl MassiveGameServer {
@@ -428,6 +433,8 @@ impl MassiveGameServer {
             force_10v10_map,
             map_seed
         );
+        let zones = MapGenerator::generate_environment_zones_with_seed(map_seed);
+        info!("Generated {} environmental zones.", zones.len());
 
         let world_partition_manager = Arc::new(WorldPartitionManager::new(
             config.world_partition_grid_dim,
@@ -620,6 +627,7 @@ impl MassiveGameServer {
             tick_durations_history: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(1000))),
             projectiles: Arc::new(ParkingLotRwLock::new(Vec::new())),
             pickups: Arc::new(ParkingLotRwLock::new(initial_pickups)),
+            zones: Arc::new(zones),
             data_channels_map,
             client_states_map,
             chat_messages_queue,
@@ -674,6 +682,8 @@ impl MassiveGameServer {
                 live_replay_dispute_audit_capacity,
             ))),
             live_replay_dispute_audit_capacity,
+            latest_match_end_summary: Arc::new(ParkingLotRwLock::new(None)),
+            recent_killcams: Arc::new(DashMap::new()),
         };
 
         server.maybe_refresh_navigation_mesh();

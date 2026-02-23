@@ -40,6 +40,19 @@ pub const POSITION_VALIDATION_VIOLATION_THRESHOLD: u32 = 5;
 // Weapon specific constants (can be moved to a dedicated module later)
 pub const SHOTGUN_PELLET_COUNT: i32 = 8;
 pub const SHOTGUN_SPREAD_ANGLE_RAD: f32 = 0.25;
+pub const WEAPON_SWAP_DURATION_SECS: f32 = 0.3;
+pub const ABILITY_DASH_COOLDOWN_SECS: f32 = 8.0;
+pub const ABILITY_DASH_DURATION_SECS: f32 = 0.2;
+pub const ABILITY_DASH_SPEED_MULTIPLIER: f32 = 2.0;
+pub const ABILITY_DODGE_COOLDOWN_SECS: f32 = 12.0;
+pub const ABILITY_DODGE_DURATION_SECS: f32 = 0.3;
+pub const ABILITY_DODGE_SPEED_MULTIPLIER: f32 = 1.6;
+pub const TEAM_PING_COOLDOWN_SECS: f32 = 3.0;
+pub const ZONE_SLOW_MULTIPLIER: f32 = 0.6;
+pub const ZONE_DAMAGE_PER_SEC: f32 = 5.0;
+pub const ZONE_BOOST_DURATION_SECS: f32 = 0.5;
+pub const ZONE_BOOST_SPEED_MULTIPLIER: f32 = 2.0;
+pub const ZONE_BOOST_RETRIGGER_COOLDOWN_SECS: f32 = 0.8;
 
 // Other game constants
 pub const DEFAULT_RESPAWN_DURATION_SECS: f32 = 2.5;

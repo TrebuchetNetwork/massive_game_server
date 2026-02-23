@@ -14,6 +14,13 @@ pub fn apply_damage(
     _weapon: ServerWeaponType,
     amount: i32,
 ) -> DamageResult {
+    if target.invulnerable_remaining > 0.0 {
+        return DamageResult {
+            health_damage: 0,
+            shield_damage: 0,
+            killed: false,
+        };
+    }
     let mut pending = amount.max(0);
     let mut shield_damage = 0;
     if target.shield_current > 0 {

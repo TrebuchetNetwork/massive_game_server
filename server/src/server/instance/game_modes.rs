@@ -9,12 +9,16 @@ impl MassiveGameServer {
             .len()
             .saturating_add(connected_quic_peer_count());
         let effective_participant_count = player_count.max(connected_client_count);
+        let dynamic_mode_transitions = env_bool_value("MGS_DYNAMIC_MODE_TRANSITIONS");
 
         match match_info_guard.match_state {
             fb::MatchStateType::Waiting => {
                 if effective_participant_count >= MIN_PLAYERS_TO_START {
                     match_info_guard.match_state = fb::MatchStateType::Active;
                     match_info_guard.time_remaining = 300.0;
+                    if dynamic_mode_transitions {
+                        match_info_guard.game_mode = fb::GameModeType::FreeForAll;
+                    }
                     info!(
                         "Match starting! Mode: {:?}, players={}, connected_clients={}, effective_participants={}",
                         match_info_guard.game_mode,
@@ -29,6 +33,7 @@ impl MassiveGameServer {
                         p_state.score = 0;
                         p_state.kills = 0;
                         p_state.deaths = 0;
+                        p_state.reset_match_stats();
                         p_state.is_carrying_flag_team_id = 0;
                         p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
                     });
@@ -37,6 +42,22 @@ impl MassiveGameServer {
             }
             fb::MatchStateType::Active => {
                 match_info_guard.time_remaining -= delta_time;
+                if dynamic_mode_transitions {
+                    let elapsed = (300.0 - match_info_guard.time_remaining).max(0.0);
+                    if elapsed >= 120.0
+                        && match_info_guard.time_remaining > 70.0
+                        && match_info_guard.game_mode == fb::GameModeType::FreeForAll
+                    {
+                        match_info_guard.game_mode = fb::GameModeType::TeamDeathmatch;
+                        info!("Dynamic mode transition: FreeForAll -> TeamDeathmatch");
+                    } else if match_info_guard.time_remaining <= 70.0
+                        && match_info_guard.game_mode != fb::GameModeType::CaptureTheFlag
+                    {
+                        match_info_guard.game_mode = fb::GameModeType::CaptureTheFlag;
+                        self.initialize_ctf_flags(&mut match_info_guard);
+                        info!("Dynamic mode transition: TeamDeathmatch -> CaptureTheFlag");
+                    }
+                }
                 if match_info_guard.time_remaining <= 0.0 {
                     match_info_guard.match_state = fb::MatchStateType::Ended;
                     info!("Match ended! (Time up)");
@@ -67,6 +88,9 @@ impl MassiveGameServer {
                             info!("Match ended with no winner (0-0).");
                         }
                     }
+                    drop(match_info_guard);
+                    self.capture_match_end_summary("time_expired");
+                    return;
                 }
             }
             fb::MatchStateType::Ended => {
@@ -168,6 +192,14 @@ impl MassiveGameServer {
                                         Self::get_flag_base_position(flag_state.team_id);
                                     flag_state.carrier_id = None;
                                     flag_state.respawn_timer = 0.0;
+                                    if let Some(mut p_state_mut_entry) =
+                                        self.player_manager.get_player_state_mut(player_id_arc)
+                                    {
+                                        let p_state_mut = &mut *p_state_mut_entry;
+                                        p_state_mut.flag_returns =
+                                            p_state_mut.flag_returns.saturating_add(1);
+                                        p_state_mut.mark_field_changed(FIELD_SCORE_STATS);
+                                    }
                                     self.global_game_events.push(
                                         GameEvent::FlagReturned {
                                             player_id: player_id_arc.clone(),
@@ -226,6 +258,8 @@ impl MassiveGameServer {
                                 p_state_mut.is_carrying_flag_team_id = 0;
                                 p_state_mut.mark_field_changed(FIELD_FLAG);
                                 p_state_mut.score += 100;
+                                p_state_mut.flag_captures =
+                                    p_state_mut.flag_captures.saturating_add(1);
                                 p_state_mut.mark_field_changed(FIELD_SCORE_STATS);
                             }
 
@@ -259,6 +293,9 @@ impl MassiveGameServer {
                                     "Team {} wins by capturing {} flags!",
                                     own_player_team_id, current_score
                                 );
+                                drop(match_info_write_guard);
+                                self.capture_match_end_summary("ctf_score_limit");
+                                return;
                             }
                         }
                     }
@@ -322,6 +359,7 @@ impl MassiveGameServer {
             pstate.score = 0;
             pstate.kills = 0;
             pstate.deaths = 0;
+            pstate.reset_match_stats();
             pstate.is_carrying_flag_team_id = 0;
             pstate.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
         });

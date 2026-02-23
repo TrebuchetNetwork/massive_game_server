@@ -137,6 +137,8 @@ pub struct AuthProfileView {
     pub credits: u64,
     pub level: u32,
     pub next_level_experience: u64,
+    pub mmr: f32,
+    pub mmr_band: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -770,8 +772,10 @@ impl AuthService {
         };
 
         profiles.sort_by(|a, b| {
-            b.cumulative_score
-                .cmp(&a.cumulative_score)
+            b.mmr
+                .partial_cmp(&a.mmr)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.cumulative_score.cmp(&a.cumulative_score))
                 .then_with(|| b.best_score.cmp(&a.best_score))
                 .then_with(|| b.total_kills.cmp(&a.total_kills))
                 .then_with(|| a.user_id.cmp(&b.user_id))
@@ -1016,6 +1020,12 @@ fn parse_bearer_token(authorization_header: Option<&str>) -> Option<String> {
 
 fn to_profile_view(user: &UserRecord) -> AuthProfileView {
     let level = level_from_experience(user.experience_points);
+    let mmr = compute_mmr(
+        user.total_kills,
+        user.total_deaths,
+        user.cumulative_score,
+        user.matches_played,
+    );
     AuthProfileView {
         user_id: user.user_id.clone(),
         display_name: user.display_name.clone(),
@@ -1032,6 +1042,26 @@ fn to_profile_view(user: &UserRecord) -> AuthProfileView {
         credits: user.credits,
         level,
         next_level_experience: experience_for_level(level.saturating_add(1)),
+        mmr,
+        mmr_band: classify_mmr_band(mmr).to_string(),
+    }
+}
+
+fn compute_mmr(total_kills: u64, total_deaths: u64, cumulative_score: i64, matches_played: u64) -> f32 {
+    let kd = total_kills as f32 / total_deaths.max(1) as f32;
+    let avg_score = cumulative_score.max(0) as f32 / matches_played.max(1) as f32;
+    kd * 100.0 + avg_score * 0.5
+}
+
+fn classify_mmr_band(mmr: f32) -> &'static str {
+    if mmr < 100.0 {
+        "Bronze"
+    } else if mmr < 250.0 {
+        "Silver"
+    } else if mmr < 500.0 {
+        "Gold"
+    } else {
+        "Diamond"
     }
 }
 

@@ -43,7 +43,7 @@ impl PredictiveMotionModel {
         };
 
         let future_dt = future_timestamp_ms.saturating_sub(last.timestamp_ms) as f32;
-        let clamped_dt = future_dt.min(500.0);
+        let clamped_dt = future_dt.min(2000.0);
 
         Some(Vec2::new(
             last.position.x + vx * clamped_dt + 0.5 * ax * clamped_dt * clamped_dt,

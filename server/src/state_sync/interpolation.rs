@@ -82,6 +82,13 @@ impl<T: Interpolate> InterpolationBuffer<T> {
 
         Some(last.value.clone())
     }
+
+    pub fn recent_samples(&self, limit: usize) -> Vec<TimedSample<T>> {
+        let bounded = limit.max(1).min(self.samples.len().max(1));
+        let mut result: Vec<_> = self.samples.iter().rev().take(bounded).cloned().collect();
+        result.reverse();
+        result
+    }
 }
 
 #[cfg(test)]

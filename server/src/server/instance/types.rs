@@ -58,6 +58,7 @@ pub struct BotController {
     pub behavior_state: BotBehaviorState,
     pub current_path: VecDeque<Vec2>,
     pub path_recalculation_timer: Instant,
+    pub last_weapon_switch_time: Instant,
     // Stuck detection fields
     pub last_position: Vec2,
     pub stuck_timer: f32,
@@ -70,6 +71,56 @@ pub struct ServerKillFeedEntry {
     pub victim_name: String,
     pub weapon: ServerWeaponType,
     pub timestamp: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PlayerMatchStats {
+    pub player_id: String,
+    pub player_name: String,
+    pub team_id: u8,
+    pub kills: i32,
+    pub deaths: i32,
+    pub score: i32,
+    pub damage_dealt: i32,
+    pub damage_taken: i32,
+    pub flag_captures: i32,
+    pub flag_returns: i32,
+    pub weapon_kills: Vec<i32>,
+    pub kd_ratio: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MatchEndSummary {
+    pub generated_at_ms: u64,
+    pub reason: String,
+    pub map_name: String,
+    pub game_mode: String,
+    pub match_duration: f32,
+    pub winning_team: u8,
+    pub players: Vec<PlayerMatchStats>,
+    pub mvp_kills: Option<String>,
+    pub mvp_damage: Option<String>,
+    pub mvp_objectives: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KillCamSample {
+    pub x: f32,
+    pub y: f32,
+    pub rotation: f32,
+    pub shooting: bool,
+    pub timestamp_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KillCamData {
+    pub victim_id: String,
+    pub victim_name: String,
+    pub killer_id: String,
+    pub killer_name: String,
+    pub weapon: String,
+    pub generated_at_ms: u64,
+    pub samples: Vec<KillCamSample>,
 }
 
 #[derive(Debug)]

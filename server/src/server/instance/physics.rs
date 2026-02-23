@@ -374,6 +374,35 @@ impl MassiveGameServer {
     ) {
         let old_x = player_state.x;
         let old_y = player_state.y;
+        let mut movement_multiplier = 1.0f32;
+        let mut boost_pad_direction = None;
+
+        for zone in self.zones.iter() {
+            if !zone.contains(old_x, old_y) {
+                continue;
+            }
+            match zone.zone_type {
+                ZoneType::SlowZone => {
+                    movement_multiplier = movement_multiplier.min(ZONE_SLOW_MULTIPLIER);
+                }
+                ZoneType::BoostPad if player_state.zone_boost_cooldown_remaining <= 0.0 => {
+                    boost_pad_direction = Some(zone.direction);
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(direction) = boost_pad_direction {
+            player_state.velocity_x =
+                direction.cos() * PLAYER_BASE_SPEED * ZONE_BOOST_SPEED_MULTIPLIER;
+            player_state.velocity_y =
+                direction.sin() * PLAYER_BASE_SPEED * ZONE_BOOST_SPEED_MULTIPLIER;
+            player_state.speed_boost_remaining = player_state
+                .speed_boost_remaining
+                .max(ZONE_BOOST_DURATION_SECS);
+            player_state.zone_boost_cooldown_remaining = ZONE_BOOST_RETRIGGER_COOLDOWN_SECS;
+            player_state.mark_field_changed(FIELD_POWERUPS | FIELD_POSITION_ROTATION);
+        }
 
         // Debug logging for bot movement
         if player_state.username.starts_with("Bot")
@@ -391,8 +420,8 @@ impl MassiveGameServer {
         }
 
         // Apply velocity
-        player_state.x += player_state.velocity_x * delta_time;
-        player_state.y += player_state.velocity_y * delta_time;
+        player_state.x += player_state.velocity_x * delta_time * movement_multiplier;
+        player_state.y += player_state.velocity_y * delta_time * movement_multiplier;
 
         // Log position after velocity application
         if player_state.username.starts_with("Bot")
@@ -475,6 +504,73 @@ impl MassiveGameServer {
         // Mark as changed if moved
         if (old_x - player_state.x).abs() > 0.01 || (old_y - player_state.y).abs() > 0.01 {
             player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+        }
+
+        let mut zone_damage = 0i32;
+        for zone in self.zones.iter() {
+            if zone.zone_type == ZoneType::DamageZone
+                && zone.contains(player_state.x, player_state.y)
+            {
+                zone_damage = (ZONE_DAMAGE_PER_SEC * delta_time).ceil().max(1.0) as i32;
+                break;
+            }
+        }
+        if zone_damage > 0 {
+            let died = player_state.apply_damage(zone_damage);
+            let pos = Vec2::new(player_state.x, player_state.y);
+            self.global_game_events.push(
+                GameEvent::PlayerDamaged {
+                    target_id: player_state.id.clone(),
+                    attacker_id: None,
+                    damage: zone_damage,
+                    weapon: ServerWeaponType::Pistol,
+                    position: pos,
+                },
+                EventPriority::Low,
+            );
+
+            if died {
+                let victim_name = player_state.username.clone();
+                let player_id = player_state.id.clone();
+                self.global_game_events.push(
+                    GameEvent::PlayerKilled {
+                        victim_id: player_id.clone(),
+                        killer_id: Arc::new("environment".to_string()),
+                        weapon: ServerWeaponType::Pistol,
+                        position: pos,
+                    },
+                    EventPriority::Normal,
+                );
+                self.push_kill_feed_entry(
+                    "Environment".to_string(),
+                    victim_name,
+                    ServerWeaponType::Pistol,
+                );
+
+                if player_state.is_carrying_flag_team_id != 0 {
+                    let dropped_flag_team = player_state.is_carrying_flag_team_id;
+                    player_state.is_carrying_flag_team_id = 0;
+                    player_state.mark_field_changed(FIELD_FLAG);
+                    let mut match_info_guard = self.match_info.write();
+                    if let Some(flag_state) =
+                        match_info_guard.flag_states.get_mut(&dropped_flag_team)
+                    {
+                        flag_state.status = fb::FlagStatus::Dropped;
+                        flag_state.position = pos;
+                        flag_state.carrier_id = None;
+                        flag_state.respawn_timer = 30.0;
+                    }
+                    drop(match_info_guard);
+                    self.global_game_events.push(
+                        GameEvent::FlagDropped {
+                            player_id,
+                            flag_team_id: dropped_flag_team,
+                            position: pos,
+                        },
+                        EventPriority::High,
+                    );
+                }
+            }
         }
     }
 
@@ -1233,6 +1329,12 @@ impl MassiveGameServer {
 
                     let died = target_state_entry.apply_damage(damage);
                     let target_pos = Vec2::new(target_state_entry.x, target_state_entry.y);
+                    if let Some(mut attacker_state_entry) =
+                        self.player_manager.get_player_state_mut(&attacker_id)
+                    {
+                        attacker_state_entry.record_damage_dealt(damage);
+                        attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
+                    }
 
                     self.global_game_events.push(
                         GameEvent::PlayerDamaged {
@@ -1271,6 +1373,7 @@ impl MassiveGameServer {
                                 self.player_manager.get_player_state_mut(&attacker_id)
                             {
                                 attacker_state_entry.kills += 1;
+                                attacker_state_entry.record_kill_with_weapon(weapon);
 
                                 // Check for friendly fire
                                 if attacker_team != 0
@@ -1338,6 +1441,13 @@ impl MassiveGameServer {
                             .player_manager
                             .get_player_state(&attacker_id)
                             .map_or_else(|| "World".to_string(), |p| p.username.clone());
+
+                        self.capture_killcam_for_victim(
+                            &target_id,
+                            &victim_username,
+                            &attacker_id,
+                            weapon,
+                        );
 
                         self.push_kill_feed_entry(
                             killer_username.clone(),

@@ -368,6 +368,7 @@ impl MassiveGameServer {
                     behavior_state: BotBehaviorState::Idle,
                     current_path: VecDeque::new(),
                     path_recalculation_timer: Instant::now(),
+                    last_weapon_switch_time: Instant::now(),
                     last_position: Vec2::new(spawn_pos.x, spawn_pos.y),
                     stuck_timer: 0.0,
                     stuck_check_position: Vec2::new(spawn_pos.x, spawn_pos.y),

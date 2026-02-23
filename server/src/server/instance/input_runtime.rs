@@ -6,6 +6,7 @@ impl MassiveGameServer {
             .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
         self.aim_anomaly_states
             .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
+        self.prune_match_runtime_state();
     }
     pub(super) fn record_player_position_sample(
         &self,
@@ -270,6 +271,7 @@ impl MassiveGameServer {
                     behavior_state: BotBehaviorState::Idle,
                     current_path: VecDeque::new(),
                     path_recalculation_timer: Instant::now(),
+                    last_weapon_switch_time: Instant::now(),
                     last_position: Vec2::new(spawn_pos.x, spawn_pos.y),
                     stuck_timer: 0.0,
                     stuck_check_position: Vec2::new(spawn_pos.x, spawn_pos.y),
@@ -311,6 +313,23 @@ impl MassiveGameServer {
         );
         player_state.mark_field_changed(FIELD_POSITION_ROTATION);
 
+        if input.use_ability_slot != 0 {
+            match input.use_ability_slot {
+                1 if player_state.ability_1_cooldown_remaining <= 0.0 => {
+                    player_state.ability_1_cooldown_remaining = ABILITY_DASH_COOLDOWN_SECS;
+                    player_state.dash_remaining = ABILITY_DASH_DURATION_SECS;
+                    player_state.mark_field_changed(FIELD_POWERUPS | FIELD_POSITION_ROTATION);
+                }
+                2 if player_state.ability_2_cooldown_remaining <= 0.0 => {
+                    player_state.ability_2_cooldown_remaining = ABILITY_DODGE_COOLDOWN_SECS;
+                    player_state.dodge_roll_remaining = ABILITY_DODGE_DURATION_SECS;
+                    player_state.invulnerable_remaining = ABILITY_DODGE_DURATION_SECS;
+                    player_state.mark_field_changed(FIELD_POWERUPS | FIELD_POSITION_ROTATION);
+                }
+                _ => {}
+            }
+        }
+
         // Calculate movement relative to player rotation
         let mut forward_intent = 0.0_f32;
         let mut strafe_intent = 0.0_f32;
@@ -333,7 +352,20 @@ impl MassiveGameServer {
         } else {
             PLAYER_BASE_SPEED
         };
+        let mut effective_speed = effective_speed;
+        if player_state.dash_remaining > 0.0 {
+            effective_speed *= ABILITY_DASH_SPEED_MULTIPLIER;
+        }
+        if player_state.dodge_roll_remaining > 0.0 {
+            effective_speed *= ABILITY_DODGE_SPEED_MULTIPLIER;
+        }
 
+        if forward_intent == 0.0
+            && strafe_intent == 0.0
+            && (player_state.dash_remaining > 0.0 || player_state.dodge_roll_remaining > 0.0)
+        {
+            forward_intent = 1.0;
+        }
         if forward_intent != 0.0 || strafe_intent != 0.0 {
             // Normalize movement vector
             let move_magnitude =
@@ -373,6 +405,24 @@ impl MassiveGameServer {
             player_state.mark_field_changed(FIELD_POSITION_ROTATION);
         }
 
+        if (input.ping_x != 0.0 || input.ping_y != 0.0)
+            && player_state.team_id != 0
+            && player_state.ping_cooldown_remaining <= 0.0
+        {
+            let ping_x = input.ping_x.clamp(WORLD_MIN_X, WORLD_MAX_X);
+            let ping_y = input.ping_y.clamp(WORLD_MIN_Y, WORLD_MAX_Y);
+            player_state.ping_cooldown_remaining = TEAM_PING_COOLDOWN_SECS;
+            player_state.mark_field_changed(FIELD_POWERUPS);
+            self.global_game_events.push(
+                GameEvent::TeamPing {
+                    player_id: player_state.id.clone(),
+                    team_id: player_state.team_id,
+                    position: Vec2::new(ping_x, ping_y),
+                },
+                EventPriority::High,
+            );
+        }
+
         // Shooting logic for firearms
         if input.shooting
             && player_state.weapon != ServerWeaponType::Melee
@@ -380,6 +430,7 @@ impl MassiveGameServer {
         {
             player_state.last_shot_time = Some(current_server_time);
             player_state.ammo -= 1;
+            player_state.sync_active_weapon_to_loadout_slot();
             player_state.mark_field_changed(FIELD_WEAPON_AMMO);
 
             let spawn_offset = PLAYER_RADIUS + 5.0;
@@ -473,20 +524,17 @@ impl MassiveGameServer {
         }
 
         if input.change_weapon_slot != 0 {
-            let new_weapon = match input.change_weapon_slot {
-                1 => Some(ServerWeaponType::Pistol),
-                2 => Some(ServerWeaponType::Shotgun),
-                3 => Some(ServerWeaponType::Rifle),
-                4 => Some(ServerWeaponType::Sniper),
-                5 => Some(ServerWeaponType::Melee),
-                _ => None,
-            };
-            if let Some(weapon) = new_weapon {
-                if player_state.weapon != weapon {
-                    player_state.weapon = weapon;
-                    player_state.ammo = PlayerState::get_max_ammo_for_weapon(weapon);
-                    player_state.reload_progress = None;
-                    player_state.mark_field_changed(FIELD_WEAPON_AMMO);
+            if input.change_weapon_slot == 1 || input.change_weapon_slot == 2 {
+                let _ = player_state.start_weapon_swap_to_slot(input.change_weapon_slot);
+            } else {
+                let new_weapon = match input.change_weapon_slot {
+                    3 => Some(ServerWeaponType::Rifle),
+                    4 => Some(ServerWeaponType::Sniper),
+                    5 => Some(ServerWeaponType::Melee),
+                    _ => None,
+                };
+                if let Some(weapon) = new_weapon {
+                    player_state.replace_active_slot_weapon(weapon);
                 }
             }
         }

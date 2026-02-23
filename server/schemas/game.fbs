@@ -55,7 +55,8 @@ enum GameEventType : byte {
     FlagGrabbed = 7,
     FlagDropped = 8,
     FlagReturned = 9,
-    FlagCaptured = 10
+    FlagCaptured = 10,
+    TeamPing = 11
 }
 
 enum MatchStateType : byte {
@@ -192,6 +193,8 @@ table PlayerInput {
     melee_attack: bool = false; // Added for melee
     change_weapon_slot: byte; // If players can switch weapons
     use_ability_slot: byte; // For future abilities
+    ping_x: float = 0.0;
+    ping_y: float = 0.0;
 }
 
 table ChatMessage {

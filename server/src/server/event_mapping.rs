@@ -16,6 +16,7 @@ pub(crate) fn event_position(event: &GameEvent) -> Vec2 {
         GameEvent::FlagDropped { position, .. } => *position,
         GameEvent::FlagReturned { position, .. } => *position,
         GameEvent::FlagCaptured { position, .. } => *position,
+        GameEvent::TeamPing { position, .. } => *position,
         _ => Vec2::zero(),
     }
 }
@@ -28,6 +29,7 @@ pub(crate) fn event_instigator_id(event: &GameEvent) -> Option<PlayerID> {
         GameEvent::PowerupCollected { player_id, .. } => Some(player_id.clone()),
         GameEvent::FlagGrabbed { player_id, .. } => Some(player_id.clone()),
         GameEvent::FlagCaptured { capturer_id, .. } => Some(capturer_id.clone()),
+        GameEvent::TeamPing { player_id, .. } => Some(player_id.clone()),
         _ => None,
     }
 }
@@ -43,6 +45,7 @@ pub(crate) fn event_target_id(event: &GameEvent) -> Option<String> {
         GameEvent::MeleeHit { target_id, .. } => target_id.as_ref().map(|id| id.to_string()),
         GameEvent::FlagDropped { flag_team_id, .. } => Some(flag_team_id.to_string()),
         GameEvent::FlagReturned { flag_team_id, .. } => Some(flag_team_id.to_string()),
+        GameEvent::TeamPing { team_id, .. } => Some(team_id.to_string()),
         _ => None,
     }
 }
@@ -77,6 +80,7 @@ pub(crate) fn map_game_event_type_to_fb(event: &GameEvent) -> fb::GameEventType 
         GameEvent::FlagDropped { .. } => fb::GameEventType::FlagDropped,
         GameEvent::FlagReturned { .. } => fb::GameEventType::FlagReturned,
         GameEvent::FlagCaptured { .. } => fb::GameEventType::FlagCaptured,
+        GameEvent::TeamPing { .. } => fb::GameEventType::TeamPing,
         GameEvent::PlayerJoined { .. } | GameEvent::PlayerLeft { .. } => {
             fb::GameEventType::BulletImpact
         }
