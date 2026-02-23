@@ -10,6 +10,8 @@ pub struct GridNav {
     height: i32,
     blocked: Vec<bool>,
     cell_size: f32,
+    origin_x: f32,
+    origin_y: f32,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -33,11 +35,23 @@ impl PartialOrd for Node {
 
 impl GridNav {
     pub fn new(width: i32, height: i32, cell_size: f32) -> Self {
+        Self::with_origin(width, height, cell_size, 0.0, 0.0)
+    }
+
+    pub fn with_origin(
+        width: i32,
+        height: i32,
+        cell_size: f32,
+        origin_x: f32,
+        origin_y: f32,
+    ) -> Self {
         Self {
             width,
             height,
             blocked: vec![false; (width * height).max(0) as usize],
             cell_size,
+            origin_x,
+            origin_y,
         }
     }
 
@@ -45,6 +59,25 @@ impl GridNav {
         if let Some(idx) = self.index(x, y) {
             self.blocked[idx] = blocked;
         }
+    }
+
+    pub fn world_to_grid(&self, world_x: f32, world_y: f32) -> Option<(i32, i32)> {
+        if !world_x.is_finite() || !world_y.is_finite() {
+            return None;
+        }
+        let grid_x = ((world_x - self.origin_x) / self.cell_size).floor() as i32;
+        let grid_y = ((world_y - self.origin_y) / self.cell_size).floor() as i32;
+        if self.is_in_bounds(grid_x, grid_y) {
+            Some((grid_x, grid_y))
+        } else {
+            None
+        }
+    }
+
+    pub fn find_path_world(&self, from: Vec2, to: Vec2) -> Option<Vec<Vec2>> {
+        let from_grid = self.world_to_grid(from.x, from.y)?;
+        let to_grid = self.world_to_grid(to.x, to.y)?;
+        self.find_path(from_grid, to_grid)
     }
 
     pub fn find_path(&self, from: (i32, i32), to: (i32, i32)) -> Option<Vec<Vec2>> {
@@ -128,8 +161,8 @@ impl GridNav {
 
     fn grid_to_world(&self, x: i32, y: i32) -> Vec2 {
         Vec2::new(
-            (x as f32 + 0.5) * self.cell_size,
-            (y as f32 + 0.5) * self.cell_size,
+            self.origin_x + (x as f32 + 0.5) * self.cell_size,
+            self.origin_y + (y as f32 + 0.5) * self.cell_size,
         )
     }
 

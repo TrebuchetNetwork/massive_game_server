@@ -6,11 +6,14 @@ use crate::core::types::{
 };
 use crate::flatbuffers_generated::game_protocol as fb;
 use crate::server::instance::{BotBehaviorState, BotController, MassiveGameServer};
+use crate::world::navigation::GridNav;
 use crate::world::partition::WorldPartitionManager;
 
+use parking_lot::RwLock as ParkingLotRwLock;
 use rand::Rng;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, trace};
 
@@ -20,6 +23,7 @@ const BOT_MAX_UPDATE_ACCUMULATOR_SECS: f32 = BOT_UPDATE_INTERVAL_SECS * 4.0;
 const BOT_DECISION_INTERVAL: Duration = Duration::from_millis(25); // Very fast decision making
 const BOT_PATH_RECALCULATION_INTERVAL: Duration = Duration::from_millis(200); // More frequent path updates
 const BOT_MELEE_RANGE: f32 = 50.0;
+const BOT_NAV_GRID_CELL_SIZE: f32 = 20.0;
 
 // Dynamic Movement Constants - Ultra Aggressive
 const BOT_SPREAD_DISTANCE: f32 = 100.0; // Very close combat formations
@@ -44,6 +48,27 @@ const TACTICAL_POSITIONS: [(f32, f32); 12] = [
 ];
 
 pub struct BotAISystem;
+
+#[derive(Clone)]
+struct BotNavGridCache {
+    grid: Option<GridNav>,
+    wall_index_frame: u64,
+}
+
+impl Default for BotNavGridCache {
+    fn default() -> Self {
+        Self {
+            grid: None,
+            wall_index_frame: u64::MAX,
+        }
+    }
+}
+
+static BOT_NAV_GRID_CACHE: OnceLock<ParkingLotRwLock<BotNavGridCache>> = OnceLock::new();
+
+fn bot_nav_grid_cache() -> &'static ParkingLotRwLock<BotNavGridCache> {
+    BOT_NAV_GRID_CACHE.get_or_init(|| ParkingLotRwLock::new(BotNavGridCache::default()))
+}
 
 impl BotAISystem {
     pub fn update_bots(server_instance: &MassiveGameServer, delta_time: f32) {
@@ -139,7 +164,7 @@ impl BotAISystem {
                             bot_controller.current_path = Self::calculate_warzone_path(
                                 Vec2::new(bot_current_state.x, bot_current_state.y),
                                 goal_pos,
-                                &server_instance.world_partition_manager,
+                                server_instance,
                             );
                             bot_controller.path_recalculation_timer = current_time_instant;
                         }
@@ -572,9 +597,10 @@ impl BotAISystem {
     fn calculate_warzone_path(
         start: Vec2,
         goal: Vec2,
-        world_partition_manager: &Arc<WorldPartitionManager>,
+        server_instance: &MassiveGameServer,
     ) -> VecDeque<Vec2> {
         let mut path = VecDeque::new();
+        let world_partition_manager = &server_instance.world_partition_manager;
 
         if ((start.x - goal.x).powi(2) + (start.y - goal.y).powi(2)).sqrt() < 50.0 {
             return path;
@@ -584,6 +610,37 @@ impl BotAISystem {
             // Direct path - just go straight there
             path.push_back(goal);
             return path;
+        }
+
+        if let Some(nav_grid) = Self::get_or_build_nav_grid(server_instance) {
+            if let Some(grid_path) = nav_grid.find_path_world(start, goal) {
+                let path_len = grid_path.len();
+                if path_len <= 1 {
+                    path.push_back(goal);
+                    return path;
+                }
+
+                let max_waypoints = 18usize;
+                let stride = if path_len > max_waypoints {
+                    (path_len / max_waypoints).max(1)
+                } else {
+                    1
+                };
+
+                for (idx, waypoint) in grid_path.iter().enumerate().skip(1) {
+                    let is_last = idx + 1 == path_len;
+                    if is_last || idx % stride == 0 {
+                        path.push_back(*waypoint);
+                    }
+                }
+
+                if let Some(last) = path.back_mut() {
+                    *last = goal;
+                } else {
+                    path.push_back(goal);
+                }
+                return path;
+            }
         }
 
         // Simple detour if direct path blocked
@@ -621,6 +678,90 @@ impl BotAISystem {
         // Just go direct if no detour found
         path.push_back(goal);
         path
+    }
+
+    fn get_or_build_nav_grid(server_instance: &MassiveGameServer) -> Option<GridNav> {
+        let wall_index_frame = server_instance.wall_spatial_index.last_update_frame();
+        {
+            let cache = bot_nav_grid_cache().read();
+            if cache.wall_index_frame == wall_index_frame {
+                if let Some(grid) = cache.grid.as_ref() {
+                    return Some(grid.clone());
+                }
+            }
+        }
+
+        let rebuilt = Self::build_nav_grid(server_instance);
+        {
+            let mut cache = bot_nav_grid_cache().write();
+            cache.wall_index_frame = wall_index_frame;
+            cache.grid = rebuilt.clone();
+        }
+        rebuilt
+    }
+
+    fn build_nav_grid(server_instance: &MassiveGameServer) -> Option<GridNav> {
+        if BOT_NAV_GRID_CELL_SIZE <= 0.0 {
+            return None;
+        }
+
+        let world_width = (WORLD_MAX_X - WORLD_MIN_X).max(BOT_NAV_GRID_CELL_SIZE);
+        let world_height = (WORLD_MAX_Y - WORLD_MIN_Y).max(BOT_NAV_GRID_CELL_SIZE);
+        let grid_width = (world_width / BOT_NAV_GRID_CELL_SIZE).ceil() as i32;
+        let grid_height = (world_height / BOT_NAV_GRID_CELL_SIZE).ceil() as i32;
+        let mut nav_grid = GridNav::with_origin(
+            grid_width.max(1),
+            grid_height.max(1),
+            BOT_NAV_GRID_CELL_SIZE,
+            WORLD_MIN_X,
+            WORLD_MIN_Y,
+        );
+
+        let partitions = server_instance
+            .world_partition_manager
+            .get_partitions_for_processing();
+        let mut seen_wall_ids: HashSet<EntityId> = HashSet::new();
+        for partition in partitions {
+            for wall_entry in partition.all_walls_in_partition.iter() {
+                let wall = wall_entry.value();
+                if wall.is_destructible && wall.current_health <= 0 {
+                    continue;
+                }
+                if !seen_wall_ids.insert(wall.id) {
+                    continue;
+                }
+                Self::mark_wall_cells_blocked(&mut nav_grid, wall);
+            }
+        }
+        Some(nav_grid)
+    }
+
+    fn mark_wall_cells_blocked(nav_grid: &mut GridNav, wall: &Wall) {
+        let max_world_x = WORLD_MAX_X - f32::EPSILON;
+        let max_world_y = WORLD_MAX_Y - f32::EPSILON;
+        let inflated_min_x = wall.x - PLAYER_RADIUS;
+        let inflated_min_y = wall.y - PLAYER_RADIUS;
+        let inflated_max_x = wall.x + wall.width + PLAYER_RADIUS;
+        let inflated_max_y = wall.y + wall.height + PLAYER_RADIUS;
+
+        let Some((min_cell_x, min_cell_y)) = nav_grid.world_to_grid(
+            inflated_min_x.clamp(WORLD_MIN_X, WORLD_MAX_X),
+            inflated_min_y.clamp(WORLD_MIN_Y, WORLD_MAX_Y),
+        ) else {
+            return;
+        };
+        let Some((max_cell_x, max_cell_y)) = nav_grid.world_to_grid(
+            inflated_max_x.clamp(WORLD_MIN_X, max_world_x),
+            inflated_max_y.clamp(WORLD_MIN_Y, max_world_y),
+        ) else {
+            return;
+        };
+
+        for gy in min_cell_y.min(max_cell_y)..=min_cell_y.max(max_cell_y) {
+            for gx in min_cell_x.min(max_cell_x)..=min_cell_x.max(max_cell_x) {
+                nav_grid.set_blocked(gx, gy, true);
+            }
+        }
     }
 
     fn generate_warzone_input(

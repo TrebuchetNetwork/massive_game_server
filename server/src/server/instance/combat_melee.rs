@@ -10,7 +10,7 @@ impl MassiveGameServer {
                 ..
             } = event
             {
-                let melee_range_sq = 50.0 * 50.0;
+                let melee_range_sq = 30.0 * 30.0;
                 let melee_arc_angle_rad = std::f32::consts::FRAC_PI_3;
                 let melee_damage = 30;
 
@@ -73,6 +73,15 @@ impl MassiveGameServer {
 
                             if dist_sq >= melee_range_sq {
                                 continue; // Out of range
+                            }
+
+                            if !self.has_clear_line_of_sight(
+                                attacker_pos_x,
+                                attacker_pos_y,
+                                target_state.x,
+                                target_state.y,
+                            ) {
+                                continue; // Wall blocks melee reach
                             }
 
                             let angle_to_target = dy.atan2(dx);

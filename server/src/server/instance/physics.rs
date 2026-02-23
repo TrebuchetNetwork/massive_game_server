@@ -358,6 +358,8 @@ impl MassiveGameServer {
                 }
             });
 
+        self.apply_player_soft_push_separation(delta_time);
+
         PlayerPhysicsResults {
             players_to_respawn: all_to_respawn,
             alive_count: total_alive,
@@ -447,29 +449,6 @@ impl MassiveGameServer {
             }
         }
 
-        // Prevent player stacking by rejecting moves that overlap nearby players.
-        let min_player_distance = PLAYER_RADIUS * 2.0;
-        let min_player_distance_sq = min_player_distance * min_player_distance;
-        let nearby_players = self.spatial_index.query_nearby_players_with_positions(
-            player_state.x,
-            player_state.y,
-            min_player_distance + 8.0,
-        );
-        for (other_player_id, other_x, other_y) in nearby_players {
-            if other_player_id == player_state.id {
-                continue;
-            }
-            let dist_sq = (player_state.x - other_x).powi(2) + (player_state.y - other_y).powi(2);
-            if dist_sq < min_player_distance_sq {
-                player_state.x = old_x;
-                player_state.y = old_y;
-                player_state.velocity_x = 0.0;
-                player_state.velocity_y = 0.0;
-                player_state.mark_field_changed(FIELD_POSITION_ROTATION);
-                return;
-            }
-        }
-
         // Anti-cheat validation
         let max_speed_dist = PLAYER_BASE_SPEED * MAX_PLAYER_SPEED_MULTIPLIER * delta_time;
         // Fixed slack per tick allowed excessive burst distance; scale with expected movement instead.
@@ -497,6 +476,110 @@ impl MassiveGameServer {
         if (old_x - player_state.x).abs() > 0.01 || (old_y - player_state.y).abs() > 0.01 {
             player_state.mark_field_changed(FIELD_POSITION_ROTATION);
         }
+    }
+
+    fn apply_player_soft_push_separation(&self, delta_time: f32) {
+        let mut alive_positions: Vec<(PlayerID, f32, f32)> = Vec::new();
+        self.player_manager
+            .for_each_player(|player_id, player_state| {
+                if player_state.alive {
+                    alive_positions.push((player_id.clone(), player_state.x, player_state.y));
+                }
+            });
+
+        if alive_positions.len() < 2 {
+            return;
+        }
+
+        let min_distance = PLAYER_RADIUS * 2.0;
+        let min_distance_sq = min_distance * min_distance;
+        let max_push_per_player = (PLAYER_BASE_SPEED * delta_time * 0.5).clamp(0.5, 6.0);
+        let mut accumulated_push: HashMap<PlayerID, (f32, f32)> =
+            HashMap::with_capacity(alive_positions.len());
+
+        for i in 0..alive_positions.len() {
+            for j in (i + 1)..alive_positions.len() {
+                let (left_id, left_x, left_y) = &alive_positions[i];
+                let (right_id, right_x, right_y) = &alive_positions[j];
+                let dx = right_x - left_x;
+                let dy = right_y - left_y;
+                let dist_sq = dx * dx + dy * dy;
+
+                if dist_sq >= min_distance_sq {
+                    continue;
+                }
+
+                let dist = dist_sq.sqrt().max(0.001);
+                let overlap = (min_distance - dist).max(0.0);
+                if overlap <= 0.0 {
+                    continue;
+                }
+
+                // Resolve overlap by pushing each player half the overlap.
+                let push = (overlap * 0.5).min(max_push_per_player);
+                let normal_x = dx / dist;
+                let normal_y = dy / dist;
+                let left_push = (-normal_x * push, -normal_y * push);
+                let right_push = (normal_x * push, normal_y * push);
+
+                let left_entry = accumulated_push
+                    .entry(left_id.clone())
+                    .or_insert((0.0, 0.0));
+                left_entry.0 += left_push.0;
+                left_entry.1 += left_push.1;
+                let right_entry = accumulated_push
+                    .entry(right_id.clone())
+                    .or_insert((0.0, 0.0));
+                right_entry.0 += right_push.0;
+                right_entry.1 += right_push.1;
+            }
+        }
+
+        if accumulated_push.is_empty() {
+            return;
+        }
+
+        for (player_id, (push_x, push_y)) in accumulated_push {
+            if push_x.abs() <= f32::EPSILON && push_y.abs() <= f32::EPSILON {
+                continue;
+            }
+
+            let Some(mut player_state) = self.player_manager.get_player_state_mut(&player_id)
+            else {
+                continue;
+            };
+            if !player_state.alive {
+                continue;
+            }
+
+            let next_x = (player_state.x + push_x)
+                .clamp(WORLD_MIN_X + PLAYER_RADIUS, WORLD_MAX_X - PLAYER_RADIUS);
+            let next_y = (player_state.y + push_y)
+                .clamp(WORLD_MIN_Y + PLAYER_RADIUS, WORLD_MAX_Y - PLAYER_RADIUS);
+
+            if self.position_overlaps_any_wall(next_x, next_y) {
+                continue;
+            }
+
+            if (next_x - player_state.x).abs() > 0.001 || (next_y - player_state.y).abs() > 0.001 {
+                player_state.x = next_x;
+                player_state.y = next_y;
+                player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+            }
+        }
+    }
+
+    fn position_overlaps_any_wall(&self, x: f32, y: f32) -> bool {
+        let nearby_walls = self
+            .wall_spatial_index
+            .query_radius(x, y, PLAYER_RADIUS + 8.0);
+        nearby_walls.iter().any(|wall| {
+            let closest_x = x.clamp(wall.x, wall.x + wall.width);
+            let closest_y = y.clamp(wall.y, wall.y + wall.height);
+            let dx = x - closest_x;
+            let dy = y - closest_y;
+            dx * dx + dy * dy < PLAYER_RADIUS * PLAYER_RADIUS
+        })
     }
 
     /*async fn process_projectiles_optimized(&self, _walls: &[Wall], delta_time: f32) -> ProjectileResults {
@@ -980,6 +1063,8 @@ impl MassiveGameServer {
                                     target_id.clone(),
                                     proj.damage,
                                     proj.weapon_type,
+                                    hit_x,
+                                    hit_y,
                                 ));
                                 local_results.to_remove.push(global_idx);
                             }
@@ -1118,11 +1203,34 @@ impl MassiveGameServer {
         }
 
         // Process hits - reuse existing game logic
-        for (attacker_id, target_id, damage, weapon) in hits {
+        for (attacker_id, target_id, base_damage, weapon, hit_x, hit_y) in hits {
+            let Some(attacker_state_entry) = self.player_manager.get_player_state(&attacker_id)
+            else {
+                continue;
+            };
+            let attacker_pos = Vec2::new(attacker_state_entry.x, attacker_state_entry.y);
+            drop(attacker_state_entry);
+
+            if !self.has_clear_line_of_sight(attacker_pos.x, attacker_pos.y, hit_x, hit_y) {
+                continue;
+            }
+
             if let Some(mut target_state_entry) =
                 self.player_manager.get_player_state_mut(&target_id)
             {
                 if target_state_entry.alive {
+                    let distance = ((hit_x - attacker_pos.x).powi(2)
+                        + (hit_y - attacker_pos.y).powi(2))
+                    .sqrt();
+                    let damage = crate::systems::combat::weapons::apply_distance_falloff(
+                        weapon,
+                        base_damage,
+                        distance,
+                    );
+                    if damage <= 0 {
+                        continue;
+                    }
+
                     let died = target_state_entry.apply_damage(damage);
                     let target_pos = Vec2::new(target_state_entry.x, target_state_entry.y);
 
@@ -1271,6 +1379,35 @@ impl MassiveGameServer {
                 }
             }
         }
+    }
+
+    pub(super) fn has_clear_line_of_sight(
+        &self,
+        from_x: f32,
+        from_y: f32,
+        to_x: f32,
+        to_y: f32,
+    ) -> bool {
+        let walls = self
+            .wall_spatial_index
+            .query_line_segment(from_x, from_y, to_x, to_y);
+        for wall in walls {
+            if segment_first_hit_fraction_with_aabb(
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+                wall.x,
+                wall.x + wall.width,
+                wall.y,
+                wall.y + wall.height,
+            )
+            .is_some()
+            {
+                return false;
+            }
+        }
+        true
     }
 
     async fn process_pickup_respawns(&self, delta_time: f32) {

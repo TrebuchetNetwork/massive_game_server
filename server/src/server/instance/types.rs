@@ -75,8 +75,8 @@ pub struct ServerKillFeedEntry {
 #[derive(Debug)]
 pub(super) struct ProjectileResults {
     pub(super) total_processed: usize,
-    pub(super) hits: Vec<(PlayerID, PlayerID, i32, ServerWeaponType)>, // (attacker, target, damage, weapon)
-    pub(super) wall_hits: Vec<(EntityId, i32)>,                        // (wall_id, damage)
+    pub(super) hits: Vec<(PlayerID, PlayerID, i32, ServerWeaponType, f32, f32)>, // (attacker, target, damage, weapon, hit_x, hit_y)
+    pub(super) wall_hits: Vec<(EntityId, i32)>, // (wall_id, damage)
     pub(super) removed_projectile_ids: Vec<EntityId>,
     pub(super) kept_projectiles: Vec<Projectile>,
     pub(super) spatial_updates: Vec<(EntityId, f32, f32)>,
@@ -86,7 +86,7 @@ pub(super) struct ProjectileResults {
 #[derive(Default)]
 pub(super) struct ProjectileChunkResults {
     pub(super) to_remove: Vec<usize>,
-    pub(super) hits: Vec<(PlayerID, PlayerID, i32, ServerWeaponType)>,
+    pub(super) hits: Vec<(PlayerID, PlayerID, i32, ServerWeaponType, f32, f32)>,
     pub(super) wall_hits: Vec<(EntityId, i32)>,
     pub(super) spatial_updates: Vec<(EntityId, f32, f32)>,
     pub(super) wall_impacts: Vec<GameEvent>,
