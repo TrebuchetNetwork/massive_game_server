@@ -151,6 +151,33 @@ pub(super) struct AimAnomalyState {
     pub(super) last_warned_at: Instant,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct ProgressiveWallFragmentState {
+    pub(super) stage: u8,
+    pub(super) parent_wall: Wall,
+    pub(super) child_walls: Vec<Wall>,
+}
+
+#[derive(Default, Debug)]
+pub(super) struct ProgressiveDestructibleState {
+    pub(super) fragmented_walls: HashMap<EntityId, ProgressiveWallFragmentState>,
+    pub(super) child_to_parent: HashMap<EntityId, EntityId>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct CommanderWaypoint {
+    pub(super) position: Vec2,
+    pub(super) expires_at_ms: u64,
+}
+
+#[derive(Default, Debug)]
+pub(super) struct CommanderRuntimeState {
+    pub(super) team_commanders: HashMap<u8, PlayerID>,
+    pub(super) team_waypoints: HashMap<u8, VecDeque<CommanderWaypoint>>,
+    pub(super) team_attack_bias: HashMap<u8, f32>,
+    pub(super) team_supply_drop_ready_ms: HashMap<u8, u64>,
+}
+
 #[derive(Debug)]
 pub(super) struct PlayerPhysicsResults {
     pub(super) players_to_respawn: Vec<(PlayerID, u8)>, // (player_id, team_id)

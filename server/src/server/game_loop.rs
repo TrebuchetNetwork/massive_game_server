@@ -324,9 +324,12 @@ impl MassiveGameServer {
                     }
                 }
             }
-            let active_walls = self
-                .wall_spatial_index
-                .query_aabb(WORLD_MIN_X, WORLD_MIN_Y, WORLD_MAX_X, WORLD_MAX_Y);
+            let active_walls = self.wall_spatial_index.query_aabb(
+                WORLD_MIN_X,
+                WORLD_MIN_Y,
+                WORLD_MAX_X,
+                WORLD_MAX_Y,
+            );
             for wall in active_walls.into_iter().take(AOI_MAX_VISIBLE_WALLS) {
                 player_aoi.visible_walls.insert(wall.id);
             }

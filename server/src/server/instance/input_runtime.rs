@@ -11,7 +11,276 @@ impl MassiveGameServer {
             self.player_manager.get_player_state(&player_id).is_some()
         });
         self.prune_match_runtime_state();
+        if self.commander_mode_enabled {
+            self.refresh_commander_runtime_state(self.get_server_timestamp_ms());
+        }
     }
+
+    fn refresh_commander_runtime_state(&self, now_ms: u64) {
+        if !self.commander_mode_enabled {
+            return;
+        }
+
+        let mut preferred_human_commander: HashMap<u8, PlayerID> = HashMap::new();
+        let mut fallback_commander: HashMap<u8, PlayerID> = HashMap::new();
+        self.player_manager
+            .for_each_player(|player_id, player_state| {
+                if player_state.is_spectator
+                    || !(player_state.team_id == 1 || player_state.team_id == 2)
+                {
+                    return;
+                }
+                fallback_commander
+                    .entry(player_state.team_id)
+                    .or_insert_with(|| player_id.clone());
+                if !self.bot_players.contains_key(player_id) {
+                    preferred_human_commander
+                        .entry(player_state.team_id)
+                        .or_insert_with(|| player_id.clone());
+                }
+            });
+
+        let mut runtime = self.commander_runtime_state.write();
+        for team_id in [1u8, 2u8] {
+            let mut clear_team_waypoints = false;
+            if let Some(waypoints) = runtime.team_waypoints.get_mut(&team_id) {
+                while waypoints
+                    .front()
+                    .is_some_and(|waypoint| waypoint.expires_at_ms <= now_ms)
+                {
+                    let _ = waypoints.pop_front();
+                }
+                if waypoints.is_empty() {
+                    clear_team_waypoints = true;
+                }
+            }
+            if clear_team_waypoints {
+                runtime.team_waypoints.remove(&team_id);
+                runtime.team_attack_bias.remove(&team_id);
+            }
+
+            let existing_commander =
+                runtime
+                    .team_commanders
+                    .get(&team_id)
+                    .cloned()
+                    .and_then(|candidate| {
+                        self.player_manager
+                            .get_player_state(&candidate)
+                            .and_then(|state| {
+                                if !state.is_spectator && state.team_id == team_id {
+                                    Some(candidate)
+                                } else {
+                                    None
+                                }
+                            })
+                    });
+
+            if let Some(commander_id) = existing_commander {
+                runtime.team_commanders.insert(team_id, commander_id);
+                continue;
+            }
+
+            if let Some(new_commander) = preferred_human_commander
+                .get(&team_id)
+                .cloned()
+                .or_else(|| fallback_commander.get(&team_id).cloned())
+            {
+                runtime.team_commanders.insert(team_id, new_commander);
+            } else {
+                runtime.team_commanders.remove(&team_id);
+                runtime.team_waypoints.remove(&team_id);
+                runtime.team_attack_bias.remove(&team_id);
+                runtime.team_supply_drop_ready_ms.remove(&team_id);
+            }
+        }
+    }
+
+    fn is_player_team_commander(&self, player_id: &PlayerID, team_id: u8) -> bool {
+        if !self.commander_mode_enabled || !(team_id == 1 || team_id == 2) {
+            return false;
+        }
+        self.commander_runtime_state
+            .read()
+            .team_commanders
+            .get(&team_id)
+            .is_some_and(|commander_id| commander_id == player_id)
+    }
+
+    fn commander_attack_bias_for_waypoint(team_id: u8, position: Vec2) -> f32 {
+        let own_base = Self::get_flag_base_position(team_id);
+        let enemy_base = Self::get_flag_base_position(if team_id == 1 { 2 } else { 1 });
+        let dist_to_own_sq = (position.x - own_base.x).powi(2) + (position.y - own_base.y).powi(2);
+        let dist_to_enemy_sq =
+            (position.x - enemy_base.x).powi(2) + (position.y - enemy_base.y).powi(2);
+
+        if dist_to_enemy_sq + 6_400.0 < dist_to_own_sq {
+            0.75
+        } else if dist_to_own_sq + 6_400.0 < dist_to_enemy_sq {
+            0.35
+        } else {
+            0.55
+        }
+    }
+
+    fn spawn_commander_supply_drop(&self, _team_id: u8, center: Vec2) -> usize {
+        let mut rng = rand::thread_rng();
+        let pickup_types = [
+            CorePickupType::Health,
+            CorePickupType::Ammo,
+            CorePickupType::Shield,
+            CorePickupType::DamageBoost,
+            CorePickupType::SpeedBoost,
+            CorePickupType::WeaponCrate(ServerWeaponType::Shotgun),
+        ];
+
+        let mut spawned = Vec::with_capacity(COMMANDER_SUPPLY_DROP_PICKUPS);
+        {
+            let mut pickups = self.pickups.write();
+            for idx in 0..COMMANDER_SUPPLY_DROP_PICKUPS {
+                let angle = rng.gen_range(0.0..(2.0 * std::f32::consts::PI));
+                let radius = rng.gen_range(6.0..45.0);
+                let spawn_x =
+                    (center.x + radius * angle.cos()).clamp(WORLD_MIN_X + 40.0, WORLD_MAX_X - 40.0);
+                let spawn_y =
+                    (center.y + radius * angle.sin()).clamp(WORLD_MIN_Y + 40.0, WORLD_MAX_Y - 40.0);
+                let overlaps_wall = self
+                    .wall_spatial_index
+                    .query_radius(spawn_x, spawn_y, PLAYER_RADIUS + 8.0)
+                    .iter()
+                    .any(|wall| {
+                        let closest_x = spawn_x.clamp(wall.x, wall.x + wall.width);
+                        let closest_y = spawn_y.clamp(wall.y, wall.y + wall.height);
+                        let dx = spawn_x - closest_x;
+                        let dy = spawn_y - closest_y;
+                        dx * dx + dy * dy < PLAYER_RADIUS * PLAYER_RADIUS
+                    });
+                if overlaps_wall {
+                    continue;
+                }
+
+                let pickup = Pickup::new(
+                    generate_entity_id(),
+                    spawn_x,
+                    spawn_y,
+                    pickup_types[idx % pickup_types.len()].clone(),
+                );
+                pickups.push(pickup.clone());
+                spawned.push(pickup);
+            }
+        }
+
+        for pickup in &spawned {
+            self.upsert_pickup_in_partition_index(pickup);
+        }
+        spawned.len()
+    }
+
+    fn register_commander_waypoint(
+        &self,
+        commander_id: &PlayerID,
+        team_id: u8,
+        position: Vec2,
+        now_ms: u64,
+    ) {
+        if !self.commander_mode_enabled || !(team_id == 1 || team_id == 2) {
+            return;
+        }
+
+        let attack_bias = Self::commander_attack_bias_for_waypoint(team_id, position);
+        let mut should_spawn_supply_drop = false;
+        {
+            let mut runtime = self.commander_runtime_state.write();
+            let waypoints = runtime.team_waypoints.entry(team_id).or_default();
+            waypoints.push_back(CommanderWaypoint {
+                position,
+                expires_at_ms: now_ms.saturating_add(COMMANDER_WAYPOINT_TTL_MS),
+            });
+            while waypoints.len() > COMMANDER_MAX_WAYPOINTS_PER_TEAM {
+                let _ = waypoints.pop_front();
+            }
+            runtime.team_attack_bias.insert(team_id, attack_bias);
+
+            let ready_at = runtime
+                .team_supply_drop_ready_ms
+                .get(&team_id)
+                .copied()
+                .unwrap_or(0);
+            if now_ms >= ready_at {
+                runtime.team_supply_drop_ready_ms.insert(
+                    team_id,
+                    now_ms.saturating_add(COMMANDER_SUPPLY_DROP_COOLDOWN_MS),
+                );
+                should_spawn_supply_drop = true;
+            }
+        }
+
+        if should_spawn_supply_drop {
+            let spawned = self.spawn_commander_supply_drop(team_id, position);
+            info!(
+                "[Commander] Team {} commander {} set waypoint and triggered supply drop ({} pickups).",
+                team_id,
+                commander_id.as_str(),
+                spawned
+            );
+        }
+    }
+
+    pub fn commander_primary_waypoint_for_team(&self, team_id: u8) -> Option<Vec2> {
+        if !self.commander_mode_enabled || !(team_id == 1 || team_id == 2) {
+            return None;
+        }
+        let now_ms = self.get_server_timestamp_ms();
+        let mut runtime = self.commander_runtime_state.write();
+        let mut remove_waypoints = false;
+        let waypoint = if let Some(waypoints) = runtime.team_waypoints.get_mut(&team_id) {
+            while waypoints
+                .front()
+                .is_some_and(|waypoint| waypoint.expires_at_ms <= now_ms)
+            {
+                let _ = waypoints.pop_front();
+            }
+            if waypoints.is_empty() {
+                remove_waypoints = true;
+                None
+            } else {
+                waypoints.back().map(|waypoint| waypoint.position)
+            }
+        } else {
+            None
+        };
+        if remove_waypoints {
+            runtime.team_waypoints.remove(&team_id);
+            runtime.team_attack_bias.remove(&team_id);
+        }
+        waypoint
+    }
+
+    pub fn commander_attack_bias_for_team(&self, team_id: u8) -> Option<f32> {
+        if !self.commander_mode_enabled || !(team_id == 1 || team_id == 2) {
+            return None;
+        }
+        let now_ms = self.get_server_timestamp_ms();
+        let mut runtime = self.commander_runtime_state.write();
+        let mut remove_waypoints = false;
+        if let Some(waypoints) = runtime.team_waypoints.get_mut(&team_id) {
+            while waypoints
+                .front()
+                .is_some_and(|waypoint| waypoint.expires_at_ms <= now_ms)
+            {
+                let _ = waypoints.pop_front();
+            }
+            if waypoints.is_empty() {
+                remove_waypoints = true;
+            }
+        }
+        if remove_waypoints {
+            runtime.team_waypoints.remove(&team_id);
+            runtime.team_attack_bias.remove(&team_id);
+        }
+        runtime.team_attack_bias.get(&team_id).copied()
+    }
+
     pub(super) fn record_player_position_sample(
         &self,
         player_id: &PlayerID,
@@ -463,6 +732,8 @@ impl MassiveGameServer {
         {
             let ping_x = input.ping_x.clamp(WORLD_MIN_X, WORLD_MAX_X);
             let ping_y = input.ping_y.clamp(WORLD_MIN_Y, WORLD_MAX_Y);
+            let now_ms = self.get_server_timestamp_ms();
+            self.refresh_commander_runtime_state(now_ms);
             player_state.ping_cooldown_remaining = TEAM_PING_COOLDOWN_SECS;
             player_state.mark_field_changed(FIELD_POWERUPS);
             self.global_game_events.push(
@@ -473,6 +744,14 @@ impl MassiveGameServer {
                 },
                 EventPriority::High,
             );
+            if self.is_player_team_commander(&player_state.id, player_state.team_id) {
+                self.register_commander_waypoint(
+                    &player_state.id,
+                    player_state.team_id,
+                    Vec2::new(ping_x, ping_y),
+                    now_ms,
+                );
+            }
         }
 
         // Shooting logic for firearms
@@ -626,6 +905,9 @@ impl MassiveGameServer {
 
     pub async fn run_ai_update(&self) {
         let delta_time = TICK_DURATION.as_secs_f32();
+        if self.commander_mode_enabled {
+            self.refresh_commander_runtime_state(self.get_server_timestamp_ms());
+        }
         // Use the optimized bot AI that processes bots in batches
         OptimizedBotAI::update_bots_batch(self, delta_time);
     }

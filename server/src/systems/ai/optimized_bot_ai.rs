@@ -167,6 +167,10 @@ impl OptimizedBotAI {
         let team2_base = MassiveGameServer::get_flag_base_position(2);
         let team1_enemy_flag_pos = flag_states.get(&2).map(|f| f.position);
         let team2_enemy_flag_pos = flag_states.get(&1).map(|f| f.position);
+        let commander_waypoint_team1 = server_instance.commander_primary_waypoint_for_team(1);
+        let commander_waypoint_team2 = server_instance.commander_primary_waypoint_for_team(2);
+        let commander_attack_bias_team1 = server_instance.commander_attack_bias_for_team(1);
+        let commander_attack_bias_team2 = server_instance.commander_attack_bias_for_team(2);
 
         server_instance
             .player_manager
@@ -286,10 +290,26 @@ impl OptimizedBotAI {
                             &live_players_by_id,
                             team_objectives,
                             enemies,
+                            if bot_snapshot.team_id == 1 {
+                                commander_attack_bias_team1
+                            } else {
+                                commander_attack_bias_team2
+                            },
                         );
                     } else {
                         Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
                     }
+
+                    let commander_waypoint = if bot_snapshot.team_id == 1 {
+                        commander_waypoint_team1
+                    } else {
+                        commander_waypoint_team2
+                    };
+                    Self::apply_commander_waypoint(
+                        bot_controller,
+                        &bot_snapshot,
+                        commander_waypoint,
+                    );
 
                     debug!(
                         "Bot {} made new decision: {:?} targeting {:?}",
@@ -366,6 +386,7 @@ impl OptimizedBotAI {
         live_players_by_id: &HashMap<PlayerID, EnemySnapshot>,
         team_objectives: TeamObjectiveSummary,
         enemies: &[EnemySnapshot],
+        commander_attack_bias: Option<f32>,
     ) {
         let mut rng = rand::thread_rng();
         let bot_team = bot_state.team_id;
@@ -377,6 +398,7 @@ impl OptimizedBotAI {
             flag_states,
             live_players_by_id,
             team_objectives,
+            commander_attack_bias,
         );
 
         debug!(
@@ -472,6 +494,7 @@ impl OptimizedBotAI {
         flag_states: &HashMap<u8, crate::server::instance::ServerFlagState>,
         live_players_by_id: &HashMap<PlayerID, EnemySnapshot>,
         team_objectives: TeamObjectiveSummary,
+        commander_attack_bias: Option<f32>,
     ) -> BotObjective {
         let bot_team = bot_state.team_id;
         let enemy_team = if bot_team == 1 { 2 } else { 1 };
@@ -525,11 +548,15 @@ impl OptimizedBotAI {
         let mut rng = rand::thread_rng();
         let role_choice = rng.gen_range(0..100);
 
-        // 60% attack, 25% defend, 15% flexible - MORE AGGRESSIVE
-        if defenders_at_base < 1 && role_choice < 25 {
+        let attack_bias = commander_attack_bias.unwrap_or(0.60).clamp(0.25, 0.85);
+        let defend_roll_threshold = ((1.0 - attack_bias) * 40.0) as i32;
+        let attack_roll_threshold = (defend_roll_threshold as f32 + attack_bias * 65.0) as i32;
+
+        // Commander bias shifts attack-vs-defend composition for large teams.
+        if defenders_at_base < 1 && role_choice < defend_roll_threshold {
             // Only 1-2 defenders needed
             BotObjective::DefendOwnFlag
-        } else if attackers_going_for_flag < 5 && role_choice < 85 {
+        } else if attackers_going_for_flag < 5 && role_choice < attack_roll_threshold {
             // Most bots should attack
             BotObjective::AttackEnemyFlag
         } else if defenders_at_base < 2
@@ -543,6 +570,25 @@ impl OptimizedBotAI {
             BotObjective::AttackEnemyFlag
         } else {
             BotObjective::PatrolMidfield
+        }
+    }
+
+    fn apply_commander_waypoint(
+        bot_controller: &mut BotController,
+        bot_state: &BotSnapshotOwned,
+        commander_waypoint: Option<Vec2>,
+    ) {
+        if bot_state.team_id == 0 || bot_state.is_carrying_flag_team_id != 0 {
+            return;
+        }
+        let Some(waypoint) = commander_waypoint else {
+            return;
+        };
+
+        let mut rng = rand::thread_rng();
+        if rng.gen_bool(0.72) {
+            bot_controller.target_position = Some(waypoint);
+            bot_controller.behavior_state = BotBehaviorState::MovingToObjective;
         }
     }
 

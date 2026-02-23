@@ -15,14 +15,13 @@ Status legend:
 - `Not started` = no production implementation found
 
 ## Executive Summary
-- `Done`: 8 items
-- `Partial`: 9 items
-- `Not started`: 2 items
+- `Done`: 9 items
+- `Partial`: 10 items
+- `Not started`: 0 items
 
 Critical remaining product gaps:
 1. 120-client tail-wave join hardening is only partially complete (initial-state chunking/prewarm model is incomplete).
-2. Progressive destructible terrain is not implemented.
-3. Commander mode gameplay loop is not implemented.
+2. Commander mode still lacks dedicated client commander UX/protocol despite server-side loop support.
 
 ## Phase Matrix
 
@@ -45,8 +44,8 @@ Critical remaining product gaps:
 | 5.2 | Persistent server-side replay recording | Done | Live replay capture + zstd persisted snapshots + retention in `/Users/ivo/massive_game_server/server/src/server/instance/replay.rs` | None blocking for current milestone |
 | 5.3 | Map editor + custom maps | Partial | Editor UI exists in `/Users/ivo/massive_game_server/static_client/editor.html`; JSON loader exists in `/Users/ivo/massive_game_server/server/src/world/map_loader.rs` | Match creation flow is still tied to generated maps in `/Users/ivo/massive_game_server/server/src/server/instance.rs` |
 | 5.4 | Authoritative ECS migration | Partial | Authoritative ECS default in `/Users/ivo/massive_game_server/server/src/server/ecs_bridge.rs` | Most game logic is still concentrated in `/Users/ivo/massive_game_server/server/src/server/instance.rs` |
-| 6.1 | Progressive destructible terrain stages | Not started | No staged wall split/reassembly pipeline found | Implement wall health thresholds + child-wall lifecycle |
-| 6.2 | Commander mode | Not started | Only predictive helper models in `/Users/ivo/massive_game_server/server/src/systems/ai/commander.rs` | Missing commander player role, waypoint/control protocol, and bot obedience pipeline |
+| 6.1 | Progressive destructible terrain stages | Done | Staged wall fragmentation and parent-child lifecycle in `/Users/ivo/massive_game_server/server/src/server/instance/physics.rs`; wall partition helpers in `/Users/ivo/massive_game_server/server/src/world/partition.rs` | None identified |
+| 6.2 | Commander mode | Partial | Commander assignment, waypoint TTL, supply-drop loop in `/Users/ivo/massive_game_server/server/src/server/instance/input_runtime.rs`; bot obedience and bias integration in `/Users/ivo/massive_game_server/server/src/systems/ai/optimized_bot_ai.rs` | Dedicated commander UI/protocol in `/Users/ivo/massive_game_server/server/schemas/game.fbs` + client commander controls remain pending |
 | 6.3 | Dynamic game mode transitions | Partial | FFA->TDM->CTF transitions in `/Users/ivo/massive_game_server/server/src/server/instance/game_modes.rs` | Missing transition countdown announcements and richer transition UX |
 
 ## Bug Fixes From Prior Review
@@ -78,6 +77,5 @@ Critical remaining product gaps:
 3. Wire map editor output to match creation path (custom map selection/import).
 
 ### P2
-1. Implement progressive destructible terrain stages.
-2. Implement commander mode gameplay loop (waypoints, bot role mix, supply drops).
-3. Add transition countdown broadcast/events for dynamic mode shifts.
+1. Complete dedicated commander UX/protocol (input schema + client controls).
+2. Add transition countdown broadcast/events for dynamic mode shifts.

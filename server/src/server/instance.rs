@@ -170,6 +170,14 @@ fn segment_first_hit_fraction_with_aabb(
     Some(t_min.clamp(0.0, 1.0))
 }
 
+const PROGRESSIVE_WALL_STAGE1_HEALTH_RATIO: f32 = 0.50;
+const PROGRESSIVE_WALL_STAGE2_HEALTH_RATIO: f32 = 0.25;
+const PROGRESSIVE_WALL_MIN_FRAGMENT_LENGTH: f32 = 12.0;
+const COMMANDER_MAX_WAYPOINTS_PER_TEAM: usize = 3;
+const COMMANDER_WAYPOINT_TTL_MS: u64 = 20_000;
+const COMMANDER_SUPPLY_DROP_COOLDOWN_MS: u64 = 60_000;
+const COMMANDER_SUPPLY_DROP_PICKUPS: usize = 6;
+
 fn env_bool_value(name: &str) -> bool {
     std::env::var(name)
         .ok()
@@ -322,6 +330,8 @@ pub struct MassiveGameServer {
 
     pub destroyed_wall_ids_this_tick: Arc<ParkingLotRwLock<HashSet<EntityId>>>,
     pub updated_walls_this_tick: Arc<ParkingLotRwLock<HashMap<EntityId, Wall>>>, // To track respawned/updated walls
+    progressive_destructible_enabled: bool,
+    progressive_destructible_state: Arc<ParkingLotRwLock<ProgressiveDestructibleState>>,
 
     pub player_aois: PlayerAoIs,
 
@@ -372,6 +382,8 @@ pub struct MassiveGameServer {
     recent_killcams: Arc<DashMap<PlayerID, KillCamData>>,
     direct_packets: Arc<DashMap<String, VecDeque<Bytes>>>,
     direct_packet_queue_cap: usize,
+    commander_mode_enabled: bool,
+    commander_runtime_state: Arc<ParkingLotRwLock<CommanderRuntimeState>>,
 }
 
 impl MassiveGameServer {
@@ -646,10 +658,17 @@ impl MassiveGameServer {
             .and_then(|raw| raw.parse::<usize>().ok())
             .unwrap_or(16)
             .clamp(0, 2048);
+        let progressive_destructible_enabled =
+            !env_bool_value("MGS_DISABLE_PROGRESSIVE_DESTRUCTIBLE");
+        let commander_mode_enabled = !env_bool_value("MGS_DISABLE_COMMANDER_MODE");
 
         info!(
             "Human-priority slots: enabled={}, reserved_human_slots={}",
             human_priority_enabled, reserved_human_slots
+        );
+        info!(
+            "Phase 6 features: progressive_destructible_enabled={}, commander_mode_enabled={}",
+            progressive_destructible_enabled, commander_mode_enabled
         );
 
         let server = MassiveGameServer {
@@ -678,6 +697,10 @@ impl MassiveGameServer {
             ))),
             destroyed_wall_ids_this_tick: Arc::new(ParkingLotRwLock::new(HashSet::new())),
             updated_walls_this_tick: Arc::new(ParkingLotRwLock::new(HashMap::new())),
+            progressive_destructible_enabled,
+            progressive_destructible_state: Arc::new(ParkingLotRwLock::new(
+                ProgressiveDestructibleState::default(),
+            )),
             player_aois,
             respawn_manager,
             wall_respawn_manager,
@@ -730,6 +753,10 @@ impl MassiveGameServer {
             recent_killcams: Arc::new(DashMap::new()),
             direct_packets: Arc::new(DashMap::new()),
             direct_packet_queue_cap,
+            commander_mode_enabled,
+            commander_runtime_state: Arc::new(ParkingLotRwLock::new(
+                CommanderRuntimeState::default(),
+            )),
         };
 
         server.maybe_refresh_navigation_mesh();

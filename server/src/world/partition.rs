@@ -236,6 +236,16 @@ impl ImprovedWorldPartition {
         self.all_walls_in_partition.insert(wall.id, wall);
     }
 
+    pub fn upsert_wall(&self, wall: Wall) {
+        self.all_walls_in_partition.insert(wall.id, wall);
+    }
+
+    pub fn remove_wall(&self, wall_id: EntityId) -> Option<Wall> {
+        self.all_walls_in_partition
+            .remove(&wall_id)
+            .map(|(_, wall)| wall)
+    }
+
     pub fn get_wall(&self, wall_id: EntityId) -> Option<Wall> {
         self.all_walls_in_partition
             .get(&wall_id)

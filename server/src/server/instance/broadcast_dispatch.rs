@@ -85,12 +85,11 @@ impl MassiveGameServer {
                     }
                 }
                 match initial_result {
-                    Ok(initial_chunks) => initial_chunks
-                        .front()
-                        .cloned()
-                        .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+                    Ok(initial_chunks) => initial_chunks.front().cloned().ok_or_else(
+                        || -> Box<dyn std::error::Error + Send + Sync> {
                             "initial state chunk sequence is empty".into()
-                        }),
+                        },
+                    ),
                     Err(err) => Err(err),
                 }
             }
@@ -356,12 +355,11 @@ impl MassiveGameServer {
                     }
                 }
                 match initial_result {
-                    Ok(initial_chunks) => initial_chunks
-                        .front()
-                        .cloned()
-                        .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+                    Ok(initial_chunks) => initial_chunks.front().cloned().ok_or_else(
+                        || -> Box<dyn std::error::Error + Send + Sync> {
                             "initial state chunk sequence is empty".into()
-                        }),
+                        },
+                    ),
                     Err(err) => Err(err),
                 }
             }
