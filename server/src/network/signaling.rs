@@ -28,7 +28,7 @@ use std::{
     sync::{Arc, Mutex as StdMutex, OnceLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::{mpsc, Mutex as AsyncMutex, RwLock};
+use tokio::sync::{mpsc, Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock, Semaphore};
 use tracing::{debug, error, info, warn};
 use warp::ws::{Message, WebSocket};
 use webrtc::{
@@ -416,6 +416,7 @@ const DEFAULT_JOIN_RATE_LIMIT_PER_SEC: u32 = 30;
 const DEFAULT_JOIN_RATE_LIMIT_BURST: u32 = 50;
 const DEFAULT_IP_RATE_LIMIT_PER_SEC: u32 = 20;
 const DEFAULT_IP_RATE_LIMIT_BURST: u32 = 40;
+const DEFAULT_SDP_ADMISSION_CONCURRENCY: usize = 4;
 const JOIN_RATE_LIMIT_THROTTLED_MESSAGE: &str = "Server busy handling joins, retry shortly.";
 const MAX_SIGNALING_TEXT_BYTES: usize = 128 * 1024;
 const MAX_SIGNALING_SDP_BYTES: usize = 120 * 1024;
@@ -641,6 +642,64 @@ fn input_rate_limit_config() -> Option<InputRateLimitConfig> {
         .copied()
 }
 
+fn sdp_admission_semaphore() -> Option<&'static Arc<Semaphore>> {
+    static SDP_ADMISSION_SEMAPHORE: OnceLock<Option<Arc<Semaphore>>> = OnceLock::new();
+    SDP_ADMISSION_SEMAPHORE
+        .get_or_init(|| {
+            let limit = std::env::var("MGS_SIGNALING_SDP_CONCURRENCY")
+                .ok()
+                .and_then(|raw| raw.parse::<usize>().ok())
+                .unwrap_or(DEFAULT_SDP_ADMISSION_CONCURRENCY);
+            if limit == 0 {
+                info!("SDP admission gate disabled (MGS_SIGNALING_SDP_CONCURRENCY=0).");
+                None
+            } else {
+                info!(
+                    "SDP admission gate enabled with max {} concurrent offers.",
+                    limit
+                );
+                Some(Arc::new(Semaphore::new(limit)))
+            }
+        })
+        .as_ref()
+}
+
+async fn acquire_sdp_admission_permit(
+    peer_id: &str,
+    sender: &mpsc::Sender<Result<Message, warp::Error>>,
+) -> Option<OwnedSemaphorePermit> {
+    let Some(semaphore) = sdp_admission_semaphore() else {
+        return None;
+    };
+    match semaphore.clone().try_acquire_owned() {
+        Ok(permit) => Some(permit),
+        Err(_) => {
+            let queue_hint = semaphore.available_permits().saturating_add(1).max(1);
+            let queue_notice = serde_json::json!({
+                "event": "sdp_offer_queue",
+                "queue_position_hint": queue_hint,
+            })
+            .to_string();
+            let _ = try_queue_signaling_message(
+                sender,
+                Ok(Message::text(queue_notice)),
+                peer_id,
+                "sdp_offer_queue",
+            );
+            match semaphore.clone().acquire_owned().await {
+                Ok(permit) => Some(permit),
+                Err(err) => {
+                    warn!(
+                        "[{}]: Failed to acquire SDP admission permit because semaphore is closed: {}",
+                        peer_id, err
+                    );
+                    None
+                }
+            }
+        }
+    }
+}
+
 fn try_acquire_join_rate_limit_token() -> bool {
     let Some(rate_limiter) = join_rate_limiter() else {
         return true;
@@ -717,6 +776,7 @@ pub async fn handle_signaling_connection(
     server_instance: ServerInstanceRef, // Added server instance for initial spawn
     auth_service: AuthService,
     auth_user_id: Option<String>,
+    requested_team_id: Option<u8>,
     remote_ip: Option<IpAddr>,
 ) {
     shared_connection_manager().upsert(ConnectionInfo::new(
@@ -961,6 +1021,7 @@ pub async fn handle_signaling_connection(
         let server_instance_on_open = server_instance_for_dc_event.clone(); // Clone server instance for on_open
         let auth_service_on_open = auth_service_for_dc_event.clone();
         let auth_user_id_on_open = auth_user_id_for_dc_event.clone();
+        let requested_team_on_open = requested_team_id;
 
         dc_on_open_arc.on_open(Box::new(move || {
             let current_peer_id_on_open_cb = peer_id_on_open.clone();
@@ -1014,9 +1075,29 @@ pub async fn handle_signaling_connection(
                 }
             }
 
-            let team_to_assign = player_manager_on_open.assign_team_to_new_player();
-            if !server_instance_on_open
-                .ensure_human_join_capacity_for_team(&current_peer_id_on_open_cb, Some(team_to_assign))
+            let requested_spectator = requested_team_on_open == Some(0);
+            if requested_spectator && !server_instance_on_open.can_accept_spectator_join() {
+                warn!(
+                    "[{}]: spectator join rejected due to spectator cap. Closing data channel.",
+                    current_peer_id_on_open_cb
+                );
+                let dc_reject = Arc::clone(&dc_for_async_block);
+                return Box::pin(async move {
+                    let _ = dc_reject.close().await;
+                });
+            }
+            let team_to_assign = if requested_spectator {
+                0
+            } else {
+                requested_team_on_open
+                    .filter(|team| *team == 1 || *team == 2)
+                    .unwrap_or_else(|| player_manager_on_open.assign_team_to_new_player())
+            };
+            if !requested_spectator
+                && !server_instance_on_open.ensure_human_join_capacity_for_team(
+                    &current_peer_id_on_open_cb,
+                    Some(team_to_assign),
+                )
             {
                 warn!(
                     "[{}]: server is full and no bot slot could be reclaimed for human priority join.",
@@ -1028,14 +1109,18 @@ pub async fn handle_signaling_connection(
             let player_id_arc_for_spawn = player_manager_on_open
                 .id_pool
                 .get_or_create(&current_peer_id_on_open_cb);
-            let initial_spawn_pos = server_instance_on_open
-                .respawn_manager
-                .get_respawn_position(
-                    &server_instance_on_open, // Pass the server instance
-                    &player_id_arc_for_spawn,
-                    Some(team_to_assign),
-                    &[], // No specific enemy positions for initial spawn balancing here
-                );
+            let initial_spawn_pos = if requested_spectator {
+                crate::core::types::Vec2::new(0.0, 0.0)
+            } else {
+                server_instance_on_open
+                    .respawn_manager
+                    .get_respawn_position(
+                        &server_instance_on_open, // Pass the server instance
+                        &player_id_arc_for_spawn,
+                        Some(team_to_assign),
+                        &[], // No specific enemy positions for initial spawn balancing here
+                    )
+            };
 
             info!(
                 "[{}] Player spawned at ({}, {})",
@@ -1064,6 +1149,12 @@ pub async fn handle_signaling_connection(
             {
                 let p_state: &mut PlayerState = &mut *p_state_entry;
                 p_state.team_id = team_to_assign;
+                p_state.is_spectator = requested_spectator;
+                if requested_spectator {
+                    p_state.health = p_state.max_health;
+                    p_state.respawn_timer = None;
+                    p_state.reload_progress = None;
+                }
                 p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
                 info!(
                     "[{}] assigned to team {}. Player state marked as changed.",
@@ -1348,6 +1439,11 @@ pub async fn handle_signaling_connection(
                                     break;
                                 }
                                 if let Some(sdp) = sig_data.sdp {
+                                    let _sdp_permit = acquire_sdp_admission_permit(
+                                        &current_peer_id_ws,
+                                        &ws_signal_sender_clone,
+                                    )
+                                    .await;
                                     if let Err(e) =
                                         pc_signal_receiver.set_remote_description(sdp.clone()).await
                                     {

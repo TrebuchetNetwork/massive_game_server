@@ -132,6 +132,104 @@ impl MassiveGameServer {
         replay.push_back(frame_sample);
     }
 
+    pub(super) fn persist_match_replay_snapshot(&self, reason: &str) {
+        if !self.live_replay_match_persist_enabled {
+            return;
+        }
+
+        let frames: Vec<LiveReplayFrame> = self.live_replay_frames.read().iter().cloned().collect();
+        if frames.is_empty() {
+            return;
+        }
+
+        let now_ms = self.get_server_timestamp_ms();
+        let normalized_reason: String = reason
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '-')
+            .collect();
+        let safe_reason = if normalized_reason.is_empty() {
+            "match_end".to_string()
+        } else {
+            normalized_reason
+        };
+
+        let payload = serde_json::json!({
+            "generated_at_ms": now_ms,
+            "reason": reason,
+            "map_name": self.map_name.clone(),
+            "frame_count": frames.len(),
+            "frames": frames,
+        });
+        let payload_bytes = match serde_json::to_vec(&payload) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                warn!("failed to serialize live replay match payload: {}", err);
+                return;
+            }
+        };
+        let compressed = match zstd::encode_all(std::io::Cursor::new(payload_bytes), 3) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                warn!("failed to compress live replay match payload: {}", err);
+                return;
+            }
+        };
+
+        if let Err(err) = fs::create_dir_all(self.live_replay_match_store_dir.as_path()) {
+            warn!(
+                "failed to create live replay match store directory '{}': {}",
+                self.live_replay_match_store_dir.display(),
+                err
+            );
+            return;
+        }
+
+        let file_name = format!("replay_{}_{}.json.zst", now_ms, safe_reason);
+        let target_path = self.live_replay_match_store_dir.as_path().join(file_name);
+        if let Err(err) = fs::write(&target_path, compressed) {
+            warn!(
+                "failed to persist match replay to '{}': {}",
+                target_path.display(),
+                err
+            );
+            return;
+        }
+
+        self.enforce_live_replay_match_retention();
+    }
+
+    fn enforce_live_replay_match_retention(&self) {
+        let mut replay_files = Vec::new();
+        let read_dir = match fs::read_dir(self.live_replay_match_store_dir.as_path()) {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "zst") {
+                let modified = entry.metadata().ok().and_then(|meta| meta.modified().ok());
+                replay_files.push((path, modified));
+            }
+        }
+        if replay_files.len() <= self.live_replay_match_retention {
+            return;
+        }
+
+        replay_files.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
+        let delete_count = replay_files
+            .len()
+            .saturating_sub(self.live_replay_match_retention);
+        for (path, _) in replay_files.into_iter().take(delete_count) {
+            if let Err(err) = fs::remove_file(&path) {
+                warn!(
+                    "failed to remove old replay file '{}': {}",
+                    path.display(),
+                    err
+                );
+            }
+        }
+    }
+
     fn persist_live_replay_dispute_report(
         &self,
         report: &LiveReplayDisputeReport,

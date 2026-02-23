@@ -95,9 +95,9 @@ impl EcsBridge {
                             || normalized == "yes"
                             || normalized == "on"
                     })
-                    .unwrap_or(false);
+                    .unwrap_or(true);
                 if enabled {
-                    EcsMode::Mirror
+                    EcsMode::Authoritative
                 } else {
                     EcsMode::Disabled
                 }

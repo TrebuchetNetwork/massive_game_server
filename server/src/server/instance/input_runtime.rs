@@ -6,6 +6,10 @@ impl MassiveGameServer {
             .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
         self.aim_anomaly_states
             .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
+        self.direct_packets.retain(|peer_id, _| {
+            let player_id = self.player_manager.id_pool.get_or_create(peer_id.as_str());
+            self.player_manager.get_player_state(&player_id).is_some()
+        });
         self.prune_match_runtime_state();
     }
     pub(super) fn record_player_position_sample(
@@ -293,6 +297,54 @@ impl MassiveGameServer {
         input: &PlayerInputData,
         current_server_time: Instant,
     ) {
+        if player_state.is_spectator {
+            if input.sequence <= player_state.last_processed_input_sequence && input.sequence != 0 {
+                return;
+            }
+            player_state.last_processed_input_sequence = input.sequence;
+
+            if (input.rotation - player_state.rotation).abs() > 0.001 {
+                player_state.rotation = input.rotation;
+            }
+
+            let mut forward_intent = 0.0_f32;
+            let mut strafe_intent = 0.0_f32;
+            if input.move_forward {
+                forward_intent += 1.0;
+            }
+            if input.move_backward {
+                forward_intent -= 1.0;
+            }
+            if input.move_left {
+                strafe_intent -= 1.0;
+            }
+            if input.move_right {
+                strafe_intent += 1.0;
+            }
+
+            if forward_intent != 0.0 || strafe_intent != 0.0 {
+                let move_magnitude =
+                    (forward_intent * forward_intent + strafe_intent * strafe_intent).sqrt();
+                forward_intent /= move_magnitude;
+                strafe_intent /= move_magnitude;
+
+                let cos_rot = player_state.rotation.cos();
+                let sin_rot = player_state.rotation.sin();
+                let forward_x = cos_rot * forward_intent;
+                let forward_y = sin_rot * forward_intent;
+                let strafe_x = -sin_rot * strafe_intent;
+                let strafe_y = cos_rot * strafe_intent;
+                let spectator_speed = PLAYER_BASE_SPEED * 1.35;
+                player_state.velocity_x = (forward_x + strafe_x) * spectator_speed;
+                player_state.velocity_y = (forward_y + strafe_y) * spectator_speed;
+            } else {
+                player_state.velocity_x = 0.0;
+                player_state.velocity_y = 0.0;
+            }
+            player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+            return;
+        }
+
         if !player_state.alive {
             player_state.velocity_x = 0.0;
             player_state.velocity_y = 0.0;

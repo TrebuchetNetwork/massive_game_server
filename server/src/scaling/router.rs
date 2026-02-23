@@ -2,6 +2,20 @@ use seahash::hash;
 
 pub type ShardId = usize;
 
+pub fn classify_mmr_band(mmr: f32) -> &'static str {
+    if mmr < 100.0 {
+        "rookie"
+    } else if mmr < 250.0 {
+        "bronze"
+    } else if mmr < 500.0 {
+        "silver"
+    } else if mmr < 900.0 {
+        "gold"
+    } else {
+        "elite"
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RendezvousShardRouter {
     shard_ids: Vec<ShardId>,
@@ -28,6 +42,13 @@ impl RendezvousShardRouter {
             .unwrap_or(0)
     }
 
+    pub fn assign_with_mmr(&self, key: &str, mmr: f32) -> ShardId {
+        self.assign_with_mmr_replication(key, mmr, 1)
+            .into_iter()
+            .next()
+            .unwrap_or(0)
+    }
+
     pub fn assign_with_replication(&self, key: &str, replicas: usize) -> Vec<ShardId> {
         let replica_count = replicas.max(1).min(self.shard_ids.len());
         let mut weighted = self
@@ -41,6 +62,16 @@ impl RendezvousShardRouter {
             .take(replica_count)
             .map(|(shard_id, _)| shard_id)
             .collect()
+    }
+
+    pub fn assign_with_mmr_replication(
+        &self,
+        key: &str,
+        mmr: f32,
+        replicas: usize,
+    ) -> Vec<ShardId> {
+        let mmr_key = format!("mmr:{}:{}", classify_mmr_band(mmr), key);
+        self.assign_with_replication(&mmr_key, replicas)
     }
 }
 
@@ -74,5 +105,14 @@ mod tests {
         dedup.sort_unstable();
         dedup.dedup();
         assert_eq!(dedup.len(), 3);
+    }
+
+    #[test]
+    fn mmr_assignment_uses_band_prefix() {
+        let router = RendezvousShardRouter::new(8);
+        let low_mmr = router.assign_with_mmr("match:abc", 80.0);
+        let high_mmr = router.assign_with_mmr("match:abc", 980.0);
+        assert_eq!(low_mmr, router.assign("mmr:rookie:match:abc"));
+        assert_eq!(high_mmr, router.assign("mmr:elite:match:abc"));
     }
 }

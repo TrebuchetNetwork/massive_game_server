@@ -328,6 +328,7 @@ pub struct MassiveGameServer {
     pub bot_name_counter: Arc<AtomicU64>,
     human_priority_enabled: bool,
     reserved_human_slots: usize,
+    spectator_slot_cap: usize,
     pub map_name: String,
 
     pub last_broadcast_frame: Arc<AtomicU64>,
@@ -359,8 +360,13 @@ pub struct MassiveGameServer {
     live_replay_dispute_chain_head: Arc<ParkingLotRwLock<Option<String>>>,
     live_replay_dispute_audits: Arc<ParkingLotRwLock<VecDeque<LiveReplayDisputeAuditProof>>>,
     live_replay_dispute_audit_capacity: usize,
+    live_replay_match_persist_enabled: bool,
+    live_replay_match_store_dir: Arc<PathBuf>,
+    live_replay_match_retention: usize,
     latest_match_end_summary: Arc<ParkingLotRwLock<Option<MatchEndSummary>>>,
     recent_killcams: Arc<DashMap<PlayerID, KillCamData>>,
+    direct_packets: Arc<DashMap<String, VecDeque<Bytes>>>,
+    direct_packet_queue_cap: usize,
 }
 
 impl MassiveGameServer {
@@ -548,6 +554,11 @@ impl MassiveGameServer {
         } else {
             0
         };
+        let spectator_slot_cap = std::env::var("MGS_SPECTATOR_CAP")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(20)
+            .clamp(0, 256);
         let lag_compensation_ms = std::env::var("MGS_LAG_COMPENSATION_MS")
             .ok()
             .and_then(|raw| raw.parse::<u64>().ok())
@@ -590,6 +601,30 @@ impl MassiveGameServer {
                 .and_then(|raw| raw.parse::<usize>().ok())
                 .unwrap_or(512)
                 .clamp(16, 4096);
+        let live_replay_match_persist_enabled = std::env::var("MGS_LIVE_REPLAY_MATCH_PERSIST")
+            .ok()
+            .map(|raw| {
+                let normalized = raw.trim().to_ascii_lowercase();
+                normalized == "1"
+                    || normalized == "true"
+                    || normalized == "yes"
+                    || normalized == "on"
+            })
+            .unwrap_or(live_replay_enabled);
+        let live_replay_match_store_dir = std::env::var("MGS_LIVE_REPLAY_MATCH_STORE_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("data/live_replay/matches"));
+        let live_replay_match_retention = std::env::var("MGS_LIVE_REPLAY_MATCH_RETENTION")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(100)
+            .clamp(1, 2_000);
+        let direct_packet_queue_cap = std::env::var("MGS_DIRECT_PACKET_QUEUE_CAP")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(64)
+            .clamp(8, 512);
         let live_replay_dispute_chain_head = if live_replay_dispute_persist_enabled {
             load_dispute_chain_head(live_replay_dispute_store_path.as_path())
         } else {
@@ -646,6 +681,7 @@ impl MassiveGameServer {
             bot_name_counter: Arc::new(AtomicU64::new(0)),
             human_priority_enabled,
             reserved_human_slots,
+            spectator_slot_cap,
             map_name,
             last_broadcast_frame: Arc::new(AtomicU64::new(0)),
             player_last_sync_positions: Arc::new(DashMap::new()),
@@ -682,8 +718,13 @@ impl MassiveGameServer {
                 live_replay_dispute_audit_capacity,
             ))),
             live_replay_dispute_audit_capacity,
+            live_replay_match_persist_enabled,
+            live_replay_match_store_dir: Arc::new(live_replay_match_store_dir),
+            live_replay_match_retention,
             latest_match_end_summary: Arc::new(ParkingLotRwLock::new(None)),
             recent_killcams: Arc::new(DashMap::new()),
+            direct_packets: Arc::new(DashMap::new()),
+            direct_packet_queue_cap,
         };
 
         server.maybe_refresh_navigation_mesh();
@@ -701,6 +742,88 @@ impl MassiveGameServer {
 
     pub fn current_quality_settings(&self) -> QualitySettings {
         *self.dynamic_quality_settings.read()
+    }
+
+    pub fn spectator_count(&self) -> usize {
+        let mut count = 0usize;
+        self.player_manager.for_each_player(|_, player_state| {
+            if player_state.is_spectator {
+                count += 1;
+            }
+        });
+        count
+    }
+
+    pub fn can_accept_spectator_join(&self) -> bool {
+        self.spectator_slot_cap > 0 && self.spectator_count() < self.spectator_slot_cap
+    }
+
+    pub fn is_player_spectator(&self, player_id: &PlayerID) -> bool {
+        self.player_manager
+            .get_player_state(player_id)
+            .map(|player_state| player_state.is_spectator)
+            .unwrap_or(false)
+    }
+
+    pub fn is_peer_spectator(&self, peer_id: &str) -> bool {
+        let player_id = self.player_manager.id_pool.get_or_create(peer_id);
+        self.is_player_spectator(&player_id)
+    }
+
+    pub fn participant_count(&self) -> usize {
+        self.player_manager
+            .player_count()
+            .saturating_sub(self.spectator_count())
+    }
+
+    pub(super) fn enqueue_direct_packet_for_peer(&self, peer_id: &str, packet: Bytes) {
+        let mut queue = self
+            .direct_packets
+            .entry(peer_id.to_owned())
+            .or_insert_with(VecDeque::new);
+        while queue.len() >= self.direct_packet_queue_cap {
+            let _ = queue.pop_front();
+        }
+        queue.push_back(packet);
+    }
+
+    pub(super) fn drain_direct_packets_for_peer(
+        &self,
+        peer_id: &str,
+        max_packets: usize,
+    ) -> Vec<Bytes> {
+        if max_packets == 0 {
+            return Vec::new();
+        }
+        let mut drained = Vec::new();
+        if let Some(mut queue_entry) = self.direct_packets.get_mut(peer_id) {
+            for _ in 0..max_packets {
+                let Some(packet) = queue_entry.pop_front() else {
+                    break;
+                };
+                drained.push(packet);
+            }
+            if queue_entry.is_empty() {
+                drop(queue_entry);
+                self.direct_packets.remove(peer_id);
+            }
+        }
+        drained
+    }
+
+    pub(super) fn enqueue_direct_packet_for_all_players(&self, packet: Bytes) {
+        let mut peers = Vec::new();
+        for entry in self.data_channels_map.iter() {
+            peers.push(entry.key().clone());
+        }
+        for peer_id in connected_quic_peer_ids() {
+            if !peers.iter().any(|known| known == &peer_id) {
+                peers.push(peer_id);
+            }
+        }
+        for peer_id in peers {
+            self.enqueue_direct_packet_for_peer(&peer_id, packet.clone());
+        }
     }
 
     pub fn record_tick_metrics(&self, frame_duration: Duration) {
@@ -754,19 +877,37 @@ impl MassiveGameServer {
             });
         }
 
-        let chosen_team = requested_team
-            .filter(|team| *team == 1 || *team == 2)
-            .unwrap_or_else(|| self.player_manager.assign_team_to_new_player());
-        if !self.ensure_human_join_capacity_for_team(peer_id, Some(chosen_team)) {
+        let requested_spectator = requested_team == Some(0);
+        if requested_spectator && !self.can_accept_spectator_join() {
+            warn!(
+                "[{}]: spectator join rejected due to spectator slot cap (cap={}).",
+                peer_id, self.spectator_slot_cap
+            );
+            return None;
+        }
+
+        let chosen_team = if requested_spectator {
+            0
+        } else {
+            requested_team
+                .filter(|team| *team == 1 || *team == 2)
+                .unwrap_or_else(|| self.player_manager.assign_team_to_new_player())
+        };
+        if !requested_spectator
+            && !self.ensure_human_join_capacity_for_team(peer_id, Some(chosen_team))
+        {
             warn!(
                 "[{}]: unable to ensure human join capacity for QUIC player",
                 peer_id
             );
         }
 
-        let spawn =
+        let spawn = if requested_spectator {
+            Vec2::new(0.0, 0.0)
+        } else {
             self.respawn_manager
-                .get_respawn_position(self, &player_id, Some(chosen_team), &[]);
+                .get_respawn_position(self, &player_id, Some(chosen_team), &[])
+        };
         let fallback_username = format!("QPlayer_{}", &peer_id[..peer_id.len().min(6)]);
         let username = username_override
             .map(str::trim)
@@ -783,6 +924,11 @@ impl MassiveGameServer {
             .get_player_state_mut(&inserted_player_id)
         {
             player_state.team_id = chosen_team;
+            player_state.is_spectator = requested_spectator;
+            if requested_spectator {
+                player_state.health = player_state.max_health;
+                player_state.respawn_timer = None;
+            }
             player_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
         }
         self.update_player_aoi(&inserted_player_id, spawn.x, spawn.y);
@@ -811,6 +957,7 @@ impl MassiveGameServer {
         self.client_states_map.write().remove(peer_id);
         self.player_aois.remove(peer_id);
         self.data_channels_map.remove(peer_id);
+        self.direct_packets.remove(peer_id);
     }
 
     pub async fn run_game_logic_update(&self, delta_time: f32) {

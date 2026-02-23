@@ -2,10 +2,14 @@ use super::*;
 
 impl MassiveGameServer {
     pub(super) fn manage_bot_population(&self) {
-        let human_player_count = self
-            .player_manager
-            .player_count()
-            .saturating_sub(self.bot_players.len());
+        let mut human_player_count = 0usize;
+        self.player_manager
+            .for_each_player(|player_id, player_state| {
+                if self.bot_players.contains_key(player_id) || player_state.is_spectator {
+                    return;
+                }
+                human_player_count += 1;
+            });
         let current_bot_count = self.bot_players.len();
 
         let max_players_in_match = self.config.max_players_per_match;
@@ -67,10 +71,11 @@ impl MassiveGameServer {
         joining_peer_id: &str,
         joining_team: Option<u8>,
     ) -> bool {
+        let participant_count = self.participant_count();
         if !self.human_priority_enabled {
-            return self.player_manager.player_count() < self.config.max_players_per_match;
+            return participant_count < self.config.max_players_per_match;
         }
-        if self.player_manager.player_count() < self.config.max_players_per_match {
+        if participant_count < self.config.max_players_per_match {
             return true;
         }
         let selected_bot = match joining_team {

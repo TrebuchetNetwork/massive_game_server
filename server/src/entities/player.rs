@@ -57,6 +57,9 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     if original.username != updated.username {
         base.username = updated.username.clone();
     }
+    if original.is_spectator != updated.is_spectator {
+        base.is_spectator = updated.is_spectator;
+    }
     if original.x != updated.x {
         base.x = updated.x;
     }

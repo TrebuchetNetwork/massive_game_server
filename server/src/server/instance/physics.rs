@@ -343,7 +343,15 @@ impl MassiveGameServer {
                 // Update timers
                 player_state.update_timers(delta_time);
 
-                if player_state.alive {
+                if player_state.is_spectator {
+                    self.process_player_movement_optimized(player_state, &wall_arc, delta_time);
+                    self.record_player_position_sample(
+                        player_id,
+                        sample_timestamp_ms,
+                        player_state.x,
+                        player_state.y,
+                    );
+                } else if player_state.alive {
                     total_alive += 1;
                     // Process movement with optimized collision
                     self.process_player_movement_optimized(player_state, &wall_arc, delta_time);
@@ -376,6 +384,17 @@ impl MassiveGameServer {
         let old_y = player_state.y;
         let mut movement_multiplier = 1.0f32;
         let mut boost_pad_direction = None;
+
+        if player_state.is_spectator {
+            player_state.x = (player_state.x + player_state.velocity_x * delta_time)
+                .clamp(WORLD_MIN_X + PLAYER_RADIUS, WORLD_MAX_X - PLAYER_RADIUS);
+            player_state.y = (player_state.y + player_state.velocity_y * delta_time)
+                .clamp(WORLD_MIN_Y + PLAYER_RADIUS, WORLD_MAX_Y - PLAYER_RADIUS);
+            if (old_x - player_state.x).abs() > 0.01 || (old_y - player_state.y).abs() > 0.01 {
+                player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+            }
+            return;
+        }
 
         for zone in self.zones.iter() {
             if !zone.contains(old_x, old_y) {
@@ -578,7 +597,7 @@ impl MassiveGameServer {
         let mut alive_positions: Vec<(PlayerID, f32, f32)> = Vec::new();
         self.player_manager
             .for_each_player(|player_id, player_state| {
-                if player_state.alive {
+                if player_state.alive && !player_state.is_spectator {
                     alive_positions.push((player_id.clone(), player_state.x, player_state.y));
                 }
             });
@@ -644,7 +663,7 @@ impl MassiveGameServer {
             else {
                 continue;
             };
-            if !player_state.alive {
+            if !player_state.alive || player_state.is_spectator {
                 continue;
             }
 
@@ -865,7 +884,7 @@ impl MassiveGameServer {
         let mut players = Vec::with_capacity(self.player_manager.player_count());
         self.player_manager
             .for_each_player(|player_id, player_state| {
-                if player_state.alive {
+                if player_state.alive && !player_state.is_spectator {
                     players.push((player_id.clone(), player_state.x, player_state.y));
                 }
             });
@@ -896,6 +915,9 @@ impl MassiveGameServer {
                 .get_player_state_mut(&pickup_candidate.player_id)
             {
                 if !player_state_for_pickup.alive {
+                    continue;
+                }
+                if player_state_for_pickup.is_spectator {
                     continue;
                 }
 
@@ -1123,6 +1145,14 @@ impl MassiveGameServer {
                         if target_id == proj.owner_id {
                             continue;
                         }
+                        let Some(target_state) = self.player_manager.get_player_state(&target_id)
+                        else {
+                            continue;
+                        };
+                        if !target_state.alive || target_state.is_spectator {
+                            continue;
+                        }
+                        drop(target_state);
                         let (validated_target_x, validated_target_y) = self
                             .get_rewound_player_position(&target_id, lag_compensation_target_ms)
                             .unwrap_or((target_x, target_y));
@@ -1304,6 +1334,9 @@ impl MassiveGameServer {
             else {
                 continue;
             };
+            if attacker_state_entry.is_spectator {
+                continue;
+            }
             let attacker_pos = Vec2::new(attacker_state_entry.x, attacker_state_entry.y);
             drop(attacker_state_entry);
 
@@ -1314,7 +1347,7 @@ impl MassiveGameServer {
             if let Some(mut target_state_entry) =
                 self.player_manager.get_player_state_mut(&target_id)
             {
-                if target_state_entry.alive {
+                if target_state_entry.alive && !target_state_entry.is_spectator {
                     let distance = ((hit_x - attacker_pos.x).powi(2)
                         + (hit_y - attacker_pos.y).powi(2))
                     .sqrt();
@@ -1528,7 +1561,8 @@ impl MassiveGameServer {
     fn get_enemy_positions_for_team(&self, team_id: u8) -> Vec<(Vec2, PlayerID)> {
         let mut enemies = Vec::with_capacity(50);
         self.player_manager.for_each_player(|id, state| {
-            if state.alive && state.team_id != team_id && state.team_id != 0 {
+            if state.alive && !state.is_spectator && state.team_id != team_id && state.team_id != 0
+            {
                 enemies.push((Vec2::new(state.x, state.y), id.clone()));
             }
         });

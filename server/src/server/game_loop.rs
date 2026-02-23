@@ -14,7 +14,8 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 // Removed unused: use std::collections::HashSet;
 use crate::core::constants::{
     AOI_MAX_VISIBLE_PICKUPS, AOI_MAX_VISIBLE_PLAYERS, AOI_MAX_VISIBLE_PROJECTILES,
-    AOI_MAX_VISIBLE_WALLS, AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS,
+    AOI_MAX_VISIBLE_WALLS, AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS, WORLD_MAX_X, WORLD_MAX_Y,
+    WORLD_MIN_X, WORLD_MIN_Y,
 }; // Assuming these are in constants
 use crate::core::types::{PlayerAoI, PlayerID};
 use crate::flatbuffers_generated::game_protocol as fb;
@@ -295,6 +296,43 @@ impl MassiveGameServer {
         player_aoi.visible_projectiles.clear();
         player_aoi.visible_pickups.clear();
         player_aoi.visible_walls.clear();
+
+        let is_spectator = self
+            .player_manager
+            .get_player_state(player_id)
+            .map(|state| state.is_spectator)
+            .unwrap_or(false);
+        if is_spectator {
+            self.player_manager.for_each_player(|other_id, _| {
+                if other_id != player_id
+                    && player_aoi.visible_players.len() < AOI_MAX_VISIBLE_PLAYERS
+                {
+                    player_aoi.visible_players.insert(other_id.clone());
+                }
+            });
+            {
+                let projectiles = self.projectiles.read();
+                for projectile in projectiles.iter().take(AOI_MAX_VISIBLE_PROJECTILES) {
+                    player_aoi.visible_projectiles.insert(projectile.id);
+                }
+            }
+            {
+                let pickups = self.pickups.read();
+                for pickup in pickups.iter().take(AOI_MAX_VISIBLE_PICKUPS) {
+                    if pickup.is_active {
+                        player_aoi.visible_pickups.insert(pickup.id);
+                    }
+                }
+            }
+            let active_walls = self
+                .wall_spatial_index
+                .query_aabb(WORLD_MIN_X, WORLD_MIN_Y, WORLD_MAX_X, WORLD_MAX_Y);
+            for wall in active_walls.into_iter().take(AOI_MAX_VISIBLE_WALLS) {
+                player_aoi.visible_walls.insert(wall.id);
+            }
+            player_aoi.last_update = Instant::now();
+            return;
+        }
 
         // 1. Update visible players (using spatial index)
         let nearby_player_ids = self

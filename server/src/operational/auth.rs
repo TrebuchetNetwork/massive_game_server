@@ -1047,7 +1047,12 @@ fn to_profile_view(user: &UserRecord) -> AuthProfileView {
     }
 }
 
-fn compute_mmr(total_kills: u64, total_deaths: u64, cumulative_score: i64, matches_played: u64) -> f32 {
+fn compute_mmr(
+    total_kills: u64,
+    total_deaths: u64,
+    cumulative_score: i64,
+    matches_played: u64,
+) -> f32 {
     let kd = total_kills as f32 / total_deaths.max(1) as f32;
     let avg_score = cumulative_score.max(0) as f32 / matches_played.max(1) as f32;
     kd * 100.0 + avg_score * 0.5

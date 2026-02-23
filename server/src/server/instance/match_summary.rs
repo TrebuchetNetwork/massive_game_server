@@ -25,6 +25,9 @@ impl MassiveGameServer {
         let mut players = Vec::new();
         self.player_manager
             .for_each_player(|player_id, player_state| {
+                if player_state.is_spectator {
+                    return;
+                }
                 let kd_ratio = if player_state.deaths <= 0 {
                     player_state.kills as f32
                 } else {
@@ -92,6 +95,13 @@ impl MassiveGameServer {
         };
 
         *self.latest_match_end_summary.write() = Some(summary);
+        let latest_summary = self.latest_match_end_summary();
+        if let Some(summary_event_packet) =
+            self.build_system_event_packet("match_summary", latest_summary.as_ref())
+        {
+            self.enqueue_direct_packet_for_all_players(summary_event_packet);
+        }
+        self.persist_match_replay_snapshot(reason);
     }
 
     pub(super) fn capture_killcam_for_victim(
@@ -161,10 +171,38 @@ impl MassiveGameServer {
                 samples,
             },
         );
+        if let Some(killcam) = self.latest_killcam_for_player(victim_id.as_str()) {
+            if let Some(killcam_event_packet) =
+                self.build_system_event_packet("killcam", Some(&killcam))
+            {
+                self.enqueue_direct_packet_for_peer(victim_id.as_str(), killcam_event_packet);
+            }
+        }
     }
 
     pub(super) fn prune_match_runtime_state(&self) {
         self.recent_killcams
             .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
+    }
+
+    fn build_system_event_packet<T: Serialize>(
+        &self,
+        event: &str,
+        payload: Option<&T>,
+    ) -> Option<Bytes> {
+        let message = serde_json::json!({
+            "event": event,
+            "payload": payload,
+            "timestamp_ms": self.get_server_timestamp_ms(),
+        })
+        .to_string();
+        let chat_entry = ChatMessage {
+            seq: next_chat_message_seq(),
+            player_id: self.player_manager.id_pool.get_or_create("system"),
+            username: "System".to_owned(),
+            message,
+            timestamp: self.get_server_timestamp_ms(),
+        };
+        Some(build_chat_game_message_bytes(&chat_entry))
     }
 }

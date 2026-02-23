@@ -60,6 +60,54 @@ fn init_logging() -> anyhow::Result<()> {
 struct WsAuthQuery {
     auth_token: Option<String>,
     token: Option<String>,
+    team_id: Option<u8>,
+    team: Option<String>,
+    spectator: Option<String>,
+    mode: Option<String>,
+}
+
+impl WsAuthQuery {
+    fn requested_team_id(&self) -> Option<u8> {
+        if let Some(team_id) = self.team_id {
+            return Some(team_id);
+        }
+
+        let team_hint = self
+            .team
+            .as_deref()
+            .or(self.mode.as_deref())
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if team_hint == "spectator" || team_hint == "spec" {
+            return Some(0);
+        }
+        if team_hint == "1" || team_hint == "team1" || team_hint == "red" {
+            return Some(1);
+        }
+        if team_hint == "2" || team_hint == "team2" || team_hint == "blue" {
+            return Some(2);
+        }
+
+        if self
+            .spectator
+            .as_deref()
+            .and_then(parse_boolish_query)
+            .unwrap_or(false)
+        {
+            return Some(0);
+        }
+        None
+    }
+}
+
+fn parse_boolish_query(raw: &str) -> Option<bool> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -544,7 +592,10 @@ async fn main() -> anyhow::Result<()> {
         "Server configuration loaded. Tick rate: {}",
         config.tick_rate
     );
-    let scaling_coordinator = HorizontalScalingCoordinator::new(config.cluster_shard_count, 2);
+    let scaling_coordinator = Arc::new(HorizontalScalingCoordinator::new(
+        config.cluster_shard_count,
+        2,
+    ));
     let bootstrap_assignment = scaling_coordinator.assignment_for_match("bootstrap");
     info!(
         "Horizontal scaling coordinator ready: shards={}, local_shard={}, bootstrap_primary={}, replicas={:?}",
@@ -796,6 +847,7 @@ async fn main() -> anyhow::Result<()> {
     let player_aois_for_ws = player_aois_state.clone();
     let server_instance_for_ws = game_server_instance.clone(); // Clone Arc for WebSocket handler
     let auth_service_for_ws = auth_service.clone();
+    let scaling_coordinator_for_ws = scaling_coordinator.clone();
 
     let signaling_route_ws = warp::path("ws")
         .and(warp::ws())
@@ -816,6 +868,7 @@ async fn main() -> anyhow::Result<()> {
         .and(warp::any().map(move || player_aois_for_ws.clone()))
         .and(warp::any().map(move || server_instance_for_ws.clone())) // Pass server instance Arc
         .and(warp::any().map(move || auth_service_for_ws.clone()))
+        .and(warp::any().map(move || scaling_coordinator_for_ws.clone()))
         .map(
             |ws: warp::ws::Ws,
              ws_auth_query: WsAuthQuery,
@@ -830,14 +883,31 @@ async fn main() -> anyhow::Result<()> {
              conf: Arc<ServerConfig>,
              p_aois: Arc<DashMap<String, PlayerAoI>>,
              server_inst: ServerInstanceRef,
-             auth_service: AuthService| {
+             auth_service: AuthService,
+             scaling_coordinator: Arc<HorizontalScalingCoordinator>| {
                 // Accept server instance Arc
                 let peer_id = Uuid::new_v4().to_string();
+                let requested_team_id = ws_auth_query.requested_team_id();
                 let auth_token = ws_auth_query
                     .auth_token
                     .or(ws_auth_query.token)
                     .unwrap_or_default();
                 let auth_user_id = auth_service.resolve_user_id_from_token(&auth_token);
+                if let Some(bound_user_id) = auth_user_id.as_deref() {
+                    if let Some(profile) = auth_service.profile_by_user_id(bound_user_id) {
+                        let routing_key = format!("user:{}", bound_user_id);
+                        let assignment = scaling_coordinator
+                            .assignment_for_match_with_mmr(&routing_key, profile.mmr);
+                        info!(
+                            "MMR shard hint for {} (band={}, mmr={:.1}): primary={}, replicas={:?}",
+                            bound_user_id,
+                            profile.mmr_band,
+                            profile.mmr,
+                            assignment.primary_shard,
+                            assignment.replica_shards
+                        );
+                    }
+                }
                 let forwarded_ip = request_headers
                     .get("x-forwarded-for")
                     .and_then(|value| value.to_str().ok())
@@ -880,6 +950,7 @@ async fn main() -> anyhow::Result<()> {
                         server_inst, // Pass server instance to handler
                         auth_service,
                         auth_user_id,
+                        requested_team_id,
                         client_ip,
                     )
                     .instrument(ws_upgrade_span)

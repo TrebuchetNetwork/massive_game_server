@@ -3097,6 +3097,8 @@
         };
         let killFeed = [];
         let chatMessages = [];
+        let latestKillcam = null;
+        let latestMatchSummary = null;
         let matchInfo = null;
         let currentMapName = "Unknown Map";
         const COMBAT_MOMENTUM_DECAY_PER_SEC = 0.065;
@@ -7923,6 +7925,56 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             };
         }
 
+        function tryExtractSystemEvent(chatPayload) {
+            if (!chatPayload) return null;
+            const username = typeof chatPayload.username === 'string' ? chatPayload.username : '';
+            const message = typeof chatPayload.message === 'string' ? chatPayload.message : '';
+            if (username.toLowerCase() !== 'system' || message.length < 2 || message[0] !== '{') {
+                return null;
+            }
+            try {
+                const parsed = JSON.parse(message);
+                if (!parsed || typeof parsed.event !== 'string') {
+                    return null;
+                }
+                return parsed;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function handleSystemEvent(systemEvent) {
+            if (!systemEvent || typeof systemEvent.event !== 'string') {
+                return false;
+            }
+
+            const eventName = String(systemEvent.event);
+            const payload = systemEvent.payload;
+            if (eventName === 'killcam' && payload && typeof payload === 'object') {
+                latestKillcam = payload;
+                const killerName = payload.killer_name || payload.killerName || 'Unknown';
+                const weapon = payload.weapon || 'Unknown';
+                setObjectiveUrgency(`Eliminated by ${killerName} (${weapon})`, 'critical', 2200);
+                log(`Killcam: ${killerName} eliminated you with ${weapon}.`, 'warn');
+                return true;
+            }
+
+            if (eventName === 'match_summary' && payload && typeof payload === 'object') {
+                latestMatchSummary = payload;
+                const winner = Number(payload.winning_team || 0);
+                const reason = payload.reason || 'match_complete';
+                if (winner > 0) {
+                    setObjectiveUrgency(`Match ended (${reason}). Winner: Team ${winner}`, 'info', 6000);
+                } else {
+                    setObjectiveUrgency(`Match ended (${reason}).`, 'info', 6000);
+                }
+                log(`Match summary received (${reason}).`, 'info');
+                return true;
+            }
+
+            return false;
+        }
+
         // Parse FlatBuffer message.
         function parseFlatBufferMessage(data) {
             try {
@@ -8486,6 +8538,12 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             GP.PlayerInput.addMeleeAttack(builder, currentInputState.melee_attack);
             GP.PlayerInput.addChangeWeaponSlot(builder, currentInputState.change_weapon_slot);
             GP.PlayerInput.addUseAbilitySlot(builder, currentInputState.use_ability_slot);
+            if (typeof GP.PlayerInput.addPingX === 'function') {
+                GP.PlayerInput.addPingX(builder, Number(currentInputState.ping_x) || 0);
+            }
+            if (typeof GP.PlayerInput.addPingY === 'function') {
+                GP.PlayerInput.addPingY(builder, Number(currentInputState.ping_y) || 0);
+            }
             const playerInputOffset = GP.PlayerInput.endPlayerInput(builder);
 
             GP.GameMessage.startGameMessage(builder);
@@ -10103,6 +10161,32 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             }
         });
 
+        function withJoinSelectionInUrl(rawUrl) {
+            const joinTeam = uiModeParams.get('team') || '';
+            const spectatorRequested = uiModeParams.get('spectator') === '1';
+            if (!joinTeam && !spectatorRequested) {
+                return rawUrl;
+            }
+            try {
+                const urlObj = new URL(rawUrl);
+                if (spectatorRequested && !joinTeam) {
+                    urlObj.searchParams.set('team_id', '0');
+                } else if (joinTeam) {
+                    const normalized = String(joinTeam).trim().toLowerCase();
+                    if (normalized === 'spectator' || normalized === 'spec') {
+                        urlObj.searchParams.set('team_id', '0');
+                    } else if (normalized === '1' || normalized === '2') {
+                        urlObj.searchParams.set('team_id', normalized);
+                    } else {
+                        urlObj.searchParams.set('team', joinTeam);
+                    }
+                }
+                return urlObj.toString();
+            } catch (_) {
+                return rawUrl;
+            }
+        }
+
 
         function startConnectionAttempt(options = {}) {
             const isRetry = !!options.isRetry;
@@ -10126,7 +10210,7 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             }
 
             const url = normalized.url;
-            const wsConnectUrl = withAuthTokenInUrl(url);
+            const wsConnectUrl = withJoinSelectionInUrl(withAuthTokenInUrl(url));
             activeSignalingUrl = url;
             wsUrlInput.value = url;
             if (window.__e2e) {
@@ -10158,6 +10242,15 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
 
             signalingSocket.onmessage = async (event) => {
                 const msg = JSON.parse(event.data);
+                if (msg.event === 'sdp_offer_queue') {
+                    const queueHint = Number(msg.queue_position_hint);
+                    const queueText = Number.isFinite(queueHint) && queueHint > 0
+                        ? `Queued for SDP processing (position ~${queueHint})...`
+                        : 'Queued for SDP processing...';
+                    applyConnectionStatus('negotiating', queueText);
+                    log(queueText, 'info');
+                    return;
+                }
                 if (msg.error) {
                     const detail = String(msg.detail || msg.error || 'Server rejected join request');
                     log(detail, 'warn');
@@ -10710,6 +10803,10 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                                 break;
                             case 'chat':
                                 if (parsed.data) {
+                                    const systemEvent = tryExtractSystemEvent(parsed.data);
+                                    if (systemEvent && handleSystemEvent(systemEvent)) {
+                                        break;
+                                    }
                                     const username = typeof parsed.data.username === 'string'
                                         ? parsed.data.username
                                         : 'System';

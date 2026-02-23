@@ -112,6 +112,7 @@ pub const FIELD_FLAG: u16 = 1 << 6;
 pub struct PlayerState {
     pub id: PlayerID,
     pub username: String,
+    pub is_spectator: bool,
     pub x: f32,
     pub y: f32,
     pub velocity_x: f32,
@@ -176,6 +177,7 @@ impl PlayerState {
         PlayerState {
             id: arc_id,
             username: username_val,
+            is_spectator: false,
             x: initial_x,
             y: initial_y,
             velocity_x: 0.0,

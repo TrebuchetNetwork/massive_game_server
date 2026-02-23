@@ -21,6 +21,7 @@ impl MassiveGameServer {
                     attacker_rot,
                     attacker_team_id,
                     attacker_username,
+                    attacker_is_spectator,
                 ) = {
                     if let Some(attacker_state_guard) =
                         self.player_manager.get_player_state(&attacker_id)
@@ -31,11 +32,15 @@ impl MassiveGameServer {
                             attacker_state_guard.rotation,
                             attacker_state_guard.team_id,
                             attacker_state_guard.username.clone(),
+                            attacker_state_guard.is_spectator,
                         )
                     } else {
                         continue; // Attacker not found
                     }
                 };
+                if attacker_is_spectator {
+                    continue;
+                }
 
                 // Use spatial index for nearby players
                 let melee_check_radius = 70.0;
@@ -60,6 +65,7 @@ impl MassiveGameServer {
                             let target_state = &mut *target_state_entry;
 
                             if !target_state.alive
+                                || target_state.is_spectator
                                 || (target_state.team_id != 0
                                     && attacker_team_id != 0
                                     && target_state.team_id == attacker_team_id)

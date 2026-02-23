@@ -250,9 +250,10 @@ impl MassiveGameServer {
         let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(16384);
         let build_start = Instant::now();
         let player_id = self.player_manager.id_pool.get_or_create(peer_id_str);
-        let own_team_id = Self::lookup_player_state_from_shared(shared_data, &player_id)
-            .map(|state| state.team_id)
-            .unwrap_or(0);
+        let (own_team_id, own_is_spectator) =
+            Self::lookup_player_state_from_shared(shared_data, &player_id)
+                .map(|state| (state.team_id, state.is_spectator))
+                .unwrap_or((0, false));
 
         trace!("[{}] DeltaBuilder: Started", peer_id_str);
 
@@ -413,7 +414,7 @@ impl MassiveGameServer {
                 .iter()
                 .filter(|event| match event {
                     GameEvent::TeamPing { team_id, .. } => {
-                        own_team_id != 0 && *team_id == own_team_id
+                        own_is_spectator || (own_team_id != 0 && *team_id == own_team_id)
                     }
                     _ => true,
                 })

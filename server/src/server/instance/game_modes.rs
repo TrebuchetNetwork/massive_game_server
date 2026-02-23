@@ -3,12 +3,12 @@ use super::*;
 impl MassiveGameServer {
     pub(super) fn update_match_state_authoritative(&self, delta_time: f32) {
         let mut match_info_guard = self.match_info.write();
-        let player_count = self.player_manager.player_count();
+        let player_count = self.participant_count();
         let connected_client_count = self
             .data_channels_map
             .len()
             .saturating_add(connected_quic_peer_count());
-        let effective_participant_count = player_count.max(connected_client_count);
+        let effective_participant_count = player_count;
         let dynamic_mode_transitions = env_bool_value("MGS_DYNAMIC_MODE_TRANSITIONS");
 
         match match_info_guard.match_state {
@@ -30,6 +30,9 @@ impl MassiveGameServer {
                         self.initialize_ctf_flags(&mut match_info_guard);
                     }
                     self.player_manager.for_each_player_mut(|_id, p_state| {
+                        if p_state.is_spectator {
+                            return;
+                        }
                         p_state.score = 0;
                         p_state.kills = 0;
                         p_state.deaths = 0;
@@ -137,7 +140,7 @@ impl MassiveGameServer {
             });
 
             for (player_id_arc, player_state_snapshot) in &player_snapshots {
-                if !player_state_snapshot.alive {
+                if !player_state_snapshot.alive || player_state_snapshot.is_spectator {
                     continue;
                 }
 

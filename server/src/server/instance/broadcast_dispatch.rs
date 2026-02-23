@@ -135,13 +135,16 @@ impl MassiveGameServer {
 
         let pending_chat_packets =
             collect_pending_chat_packets(last_chat_message_seq_sent, &shared_data.chat_packets);
-        let mut outbound_packets: Vec<Bytes> = Vec::with_capacity(1 + pending_chat_packets.len());
+        let pending_direct_packets = server.drain_direct_packets_for_peer(peer_id_str, 8);
+        let mut outbound_packets: Vec<Bytes> =
+            Vec::with_capacity(1 + pending_chat_packets.len() + pending_direct_packets.len());
         outbound_packets.push(bytes_to_send.clone());
         outbound_packets.extend(
             pending_chat_packets
                 .iter()
                 .map(|packet| packet.bytes.clone()),
         );
+        outbound_packets.extend(pending_direct_packets);
 
         const DELTA_SEND_TIMEOUT_MS: u64 = 50;
         const INITIAL_SEND_TIMEOUT_MS: u64 = 200;
@@ -349,13 +352,16 @@ impl MassiveGameServer {
 
         let pending_chat_packets =
             collect_pending_chat_packets(last_chat_message_seq_sent, &shared_data.chat_packets);
-        let mut outbound_packets = Vec::with_capacity(1 + pending_chat_packets.len());
+        let pending_direct_packets = server.drain_direct_packets_for_peer(peer_id_str, 8);
+        let mut outbound_packets =
+            Vec::with_capacity(1 + pending_chat_packets.len() + pending_direct_packets.len());
         outbound_packets.push(bytes_to_send);
         outbound_packets.extend(
             pending_chat_packets
                 .iter()
                 .map(|packet| packet.bytes.clone()),
         );
+        outbound_packets.extend(pending_direct_packets);
 
         let sent_packets = send_quic_packet_batch(peer_id_str, &outbound_packets);
         let send_succeeded = sent_packets > 0;
