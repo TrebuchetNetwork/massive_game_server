@@ -1,5 +1,14 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+struct InitialStateChunkBuildParams {
+    include_walls: bool,
+    include_players: bool,
+    include_projectiles: bool,
+    include_pickups: bool,
+    players_self_only: bool,
+}
+
 impl MassiveGameServer {
     pub(super) fn update_client_state_after_initial(
         &self,
@@ -628,10 +637,83 @@ impl MassiveGameServer {
         Ok(bytes)
     }
 
+    pub(super) fn build_initial_state_sequence_optimized(
+        &self,
+        peer_id_str: &str,
+        shared_data: &SharedBroadcastData,
+    ) -> Result<VecDeque<Bytes>, Box<dyn std::error::Error + Send + Sync>> {
+        let mut chunks = VecDeque::new();
+
+        if !join_initial_state_chunking_enabled() {
+            chunks.push_back(self.build_initial_state_optimized(peer_id_str, shared_data)?);
+            return Ok(chunks);
+        }
+
+        let walls_chunk = self.build_initial_state_chunk_optimized(
+            peer_id_str,
+            shared_data,
+            InitialStateChunkBuildParams {
+                include_walls: true,
+                include_players: true,
+                include_projectiles: false,
+                include_pickups: false,
+                players_self_only: true,
+            },
+        )?;
+        chunks.push_back(walls_chunk);
+
+        let players_chunk = self.build_initial_state_chunk_optimized(
+            peer_id_str,
+            shared_data,
+            InitialStateChunkBuildParams {
+                include_walls: false,
+                include_players: true,
+                include_projectiles: false,
+                include_pickups: false,
+                players_self_only: false,
+            },
+        )?;
+        chunks.push_back(players_chunk);
+
+        let dynamic_chunk = self.build_initial_state_chunk_optimized(
+            peer_id_str,
+            shared_data,
+            InitialStateChunkBuildParams {
+                include_walls: false,
+                include_players: false,
+                include_projectiles: true,
+                include_pickups: true,
+                players_self_only: false,
+            },
+        )?;
+        chunks.push_back(dynamic_chunk);
+
+        Ok(chunks)
+    }
+
     pub(super) fn build_initial_state_optimized(
         &self,
         peer_id_str: &str,
         shared_data: &SharedBroadcastData,
+    ) -> Result<Bytes, Box<dyn std::error::Error + Send + Sync>> {
+        self.build_initial_state_chunk_optimized(
+            peer_id_str,
+            shared_data,
+            InitialStateChunkBuildParams {
+                include_walls: true,
+                include_players: true,
+                include_projectiles: true,
+                include_pickups: true,
+                players_self_only: false,
+            },
+        )
+    }
+
+    fn build_initial_state_chunk_optimized(
+        &self,
+        peer_id_str: &str,
+        shared_data: &SharedBroadcastData,
+        params: InitialStateChunkBuildParams,
     ) -> Result<Bytes, Box<dyn std::error::Error + Send + Sync>> {
         const MAX_MESSAGE_SIZE_BYTES: usize = 160000;
 
@@ -639,8 +721,14 @@ impl MassiveGameServer {
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
         let snapshot_caps = shared_data.initial_snapshot_caps;
         debug!(
-            "[Frame {}] Client {}: Building InitialStateMessage.",
-            frame, peer_id_str
+            "[Frame {}] Client {}: Building InitialStateMessage chunk (walls={}, players={}, projectiles={}, pickups={}, self_only={}).",
+            frame,
+            peer_id_str,
+            params.include_walls,
+            params.include_players,
+            params.include_projectiles,
+            params.include_pickups,
+            params.players_self_only
         );
 
         let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
@@ -655,38 +743,27 @@ impl MassiveGameServer {
             Cow::Borrowed(shared_data.active_walls_snapshot.as_slice())
         };
 
-        debug!(
-            "[Frame {} Client {}] InitialState: Collected {} active walls.",
-            frame,
-            peer_id_str,
-            active_walls_to_send.len()
-        );
-
-        let mut walls_fb_vec =
-            Vec::with_capacity(active_walls_to_send.len().min(snapshot_caps.max_walls));
-        for wall_data in active_walls_to_send.iter().take(snapshot_caps.max_walls) {
-            let id_fb = fb_safe_entity_id(&mut builder, wall_data.id);
-            walls_fb_vec.push(fb::Wall::create(
-                &mut builder,
-                &fb::WallArgs {
-                    id: Some(id_fb),
-                    x: wall_data.x,
-                    y: wall_data.y,
-                    width: wall_data.width,
-                    height: wall_data.height,
-                    is_destructible: wall_data.is_destructible,
-                    current_health: wall_data.current_health,
-                    max_health: wall_data.max_health,
-                },
-            ));
+        let mut walls_fb_vec = Vec::new();
+        if params.include_walls {
+            walls_fb_vec.reserve(active_walls_to_send.len().min(snapshot_caps.max_walls));
+            for wall_data in active_walls_to_send.iter().take(snapshot_caps.max_walls) {
+                let id_fb = fb_safe_entity_id(&mut builder, wall_data.id);
+                walls_fb_vec.push(fb::Wall::create(
+                    &mut builder,
+                    &fb::WallArgs {
+                        id: Some(id_fb),
+                        x: wall_data.x,
+                        y: wall_data.y,
+                        width: wall_data.width,
+                        height: wall_data.height,
+                        is_destructible: wall_data.is_destructible,
+                        current_health: wall_data.current_health,
+                        max_health: wall_data.max_health,
+                    },
+                ));
+            }
         }
         let walls_fb = builder.create_vector(&walls_fb_vec);
-        debug!(
-            "[Frame {} Client {}] InitialState: Serialized {} walls.",
-            frame,
-            peer_id_str,
-            walls_fb_vec.len()
-        );
 
         let mut players_fb_vec = Vec::new();
         let mut player_aoi_data_for_initial_state = Self::get_empty_player_aoi();
@@ -694,30 +771,35 @@ impl MassiveGameServer {
         if let Some(self_pstate_guard) =
             Self::lookup_player_state_from_shared(shared_data, &self_player_id_arc)
         {
-            players_fb_vec.push(create_fb_player_state_for_delta(
-                &mut builder,
-                self_pstate_guard,
-                0xFFFF,
-            ));
             player_aoi_data_for_initial_state =
                 self.resolve_player_aoi_for_player(shared_data, &self_player_id_arc);
+            if params.include_players {
+                players_fb_vec.push(create_fb_player_state_for_delta(
+                    &mut builder,
+                    self_pstate_guard,
+                    0xFFFF,
+                ));
+            }
         } else {
             warn!(
-                "[Frame {} Client {}] InitialState: Self player state not found!",
+                "[Frame {} Client {}] InitialState chunk: self player state not found!",
                 frame, peer_id_str
             );
         }
 
-        for visible_player_id in player_aoi_data_for_initial_state
-            .visible_players
-            .iter()
-            .take(
-                snapshot_caps
-                    .max_players
-                    .saturating_sub(players_fb_vec.len()),
-            )
-        {
-            if visible_player_id != &self_player_id_arc {
+        if params.include_players && !params.players_self_only {
+            for visible_player_id in player_aoi_data_for_initial_state
+                .visible_players
+                .iter()
+                .take(
+                    snapshot_caps
+                        .max_players
+                        .saturating_sub(players_fb_vec.len()),
+                )
+            {
+                if visible_player_id == &self_player_id_arc {
+                    continue;
+                }
                 if let Some(pstate_guard) =
                     Self::lookup_player_state_from_shared(shared_data, visible_player_id)
                 {
@@ -730,76 +812,62 @@ impl MassiveGameServer {
             }
         }
         let players_fb = builder.create_vector(&players_fb_vec);
-        debug!(
-            "[Frame {} Client {}] InitialState: Serialized {} player states.",
-            frame,
-            peer_id_str,
-            players_fb_vec.len()
-        );
 
         let mut projectiles_fb_vec = Vec::new();
-        for proj_id in player_aoi_data_for_initial_state
-            .visible_projectiles
-            .iter()
-            .take(snapshot_caps.max_projectiles)
-        {
-            if let Some(proj) = Self::lookup_projectile_from_shared(shared_data, proj_id) {
-                let id_fb = fb_safe_entity_id(&mut builder, proj.id);
-                let owner_id_fb = fb_safe_str(&mut builder, proj.owner_id.as_str());
-                projectiles_fb_vec.push(fb::ProjectileState::create(
-                    &mut builder,
-                    &fb::ProjectileStateArgs {
-                        id: Some(id_fb),
-                        x: proj.x,
-                        y: proj.y,
-                        owner_id: Some(owner_id_fb),
-                        weapon_type: map_server_weapon_to_fb(proj.weapon_type),
-                        velocity_x: proj.velocity_x,
-                        velocity_y: proj.velocity_y,
-                    },
-                ));
-            }
-        }
-        let projectiles_fb = builder.create_vector(&projectiles_fb_vec);
-        debug!(
-            "[Frame {} Client {}] InitialState: Serialized {} projectiles.",
-            frame,
-            peer_id_str,
-            projectiles_fb_vec.len()
-        );
-
-        let mut pickups_fb_vec = Vec::new();
-        for pickup_id in player_aoi_data_for_initial_state
-            .visible_pickups
-            .iter()
-            .take(snapshot_caps.max_pickups)
-        {
-            if let Some(pickup) = Self::lookup_pickup_from_shared(shared_data, pickup_id) {
-                if pickup.is_active {
-                    let (fb_pickup_type, fb_weapon_type_opt) =
-                        map_core_pickup_to_fb(&pickup.pickup_type);
-                    let id_fb = fb_safe_entity_id(&mut builder, pickup.id);
-                    pickups_fb_vec.push(fb::Pickup::create(
+        if params.include_projectiles {
+            for proj_id in player_aoi_data_for_initial_state
+                .visible_projectiles
+                .iter()
+                .take(snapshot_caps.max_projectiles)
+            {
+                if let Some(proj) = Self::lookup_projectile_from_shared(shared_data, proj_id) {
+                    let id_fb = fb_safe_entity_id(&mut builder, proj.id);
+                    let owner_id_fb = fb_safe_str(&mut builder, proj.owner_id.as_str());
+                    projectiles_fb_vec.push(fb::ProjectileState::create(
                         &mut builder,
-                        &fb::PickupArgs {
+                        &fb::ProjectileStateArgs {
                             id: Some(id_fb),
-                            x: pickup.x,
-                            y: pickup.y,
-                            pickup_type: fb_pickup_type,
-                            weapon_type: fb_weapon_type_opt.unwrap_or(fb::WeaponType::Pistol),
-                            is_active: pickup.is_active,
+                            x: proj.x,
+                            y: proj.y,
+                            owner_id: Some(owner_id_fb),
+                            weapon_type: map_server_weapon_to_fb(proj.weapon_type),
+                            velocity_x: proj.velocity_x,
+                            velocity_y: proj.velocity_y,
                         },
                     ));
                 }
             }
         }
+        let projectiles_fb = builder.create_vector(&projectiles_fb_vec);
+
+        let mut pickups_fb_vec = Vec::new();
+        if params.include_pickups {
+            for pickup_id in player_aoi_data_for_initial_state
+                .visible_pickups
+                .iter()
+                .take(snapshot_caps.max_pickups)
+            {
+                if let Some(pickup) = Self::lookup_pickup_from_shared(shared_data, pickup_id) {
+                    if pickup.is_active {
+                        let (fb_pickup_type, fb_weapon_type_opt) =
+                            map_core_pickup_to_fb(&pickup.pickup_type);
+                        let id_fb = fb_safe_entity_id(&mut builder, pickup.id);
+                        pickups_fb_vec.push(fb::Pickup::create(
+                            &mut builder,
+                            &fb::PickupArgs {
+                                id: Some(id_fb),
+                                x: pickup.x,
+                                y: pickup.y,
+                                pickup_type: fb_pickup_type,
+                                weapon_type: fb_weapon_type_opt.unwrap_or(fb::WeaponType::Pistol),
+                                is_active: pickup.is_active,
+                            },
+                        ));
+                    }
+                }
+            }
+        }
         let pickups_fb = builder.create_vector(&pickups_fb_vec);
-        debug!(
-            "[Frame {} Client {}] InitialState: Serialized {} active pickups.",
-            frame,
-            peer_id_str,
-            pickups_fb_vec.len()
-        );
 
         let match_snapshot = &shared_data.match_info_snapshot;
         let fb_team_scores_vec: Vec<_> = match_snapshot
@@ -886,12 +954,18 @@ impl MassiveGameServer {
 
         let finished_len = builder.finished_data().len();
         debug!(
-            "[Frame {} Client {}] InitialStateMessage built. Size: {} bytes.",
-            frame, peer_id_str, finished_len
+            "[Frame {} Client {}] InitialState chunk built. Size: {} bytes (walls={}, players={}, projectiles={}, pickups={}).",
+            frame,
+            peer_id_str,
+            finished_len,
+            walls_fb_vec.len(),
+            players_fb_vec.len(),
+            projectiles_fb_vec.len(),
+            pickups_fb_vec.len()
         );
 
         if finished_len > MAX_MESSAGE_SIZE_BYTES {
-            return Err("Initial state too large".into());
+            return Err("Initial state chunk too large".into());
         }
 
         let (buffer, root_index) = builder.collapse();

@@ -53,11 +53,11 @@ impl MassiveGameServer {
                 .client_states_map
                 .read()
                 .get(peer_id_str)
-                .and_then(|state| state.pending_initial_state_bytes.clone());
+                .and_then(|state| state.pending_initial_state_chunks.front().cloned());
 
             if let Some(cached_bytes) = cached_initial_state {
                 trace!(
-                    "[Frame {}] Reusing cached initial state for {} ({} bytes)",
+                    "[Frame {}] Reusing cached initial state chunk for {} ({} bytes)",
                     frame,
                     peer_id_str,
                     cached_bytes.len()
@@ -66,21 +66,33 @@ impl MassiveGameServer {
             } else {
                 server.mark_join_build_start(peer_id_str);
                 trace!(
-                    "[Frame {}] Building initial state for {}",
+                    "[Frame {}] Building initial state sequence for {}",
                     frame,
                     peer_id_str
                 );
-                let initial_result = server.build_initial_state_optimized(peer_id_str, shared_data);
-                if let Ok(initial_bytes) = initial_result.as_ref() {
+                let initial_result =
+                    server.build_initial_state_sequence_optimized(peer_id_str, shared_data);
+                if let Ok(initial_chunks) = initial_result.as_ref() {
                     server.mark_join_build_done(peer_id_str);
-                    let mut client_states = server.client_states_map.write();
-                    let state_entry = client_states
-                        .entry(peer_id_str.to_string())
-                        .or_insert_with(ClientState::default);
-                    state_entry.pending_initial_state_bytes = Some(initial_bytes.clone());
-                    state_entry.known_walls_sent = false;
+                    if let Some(first_chunk) = initial_chunks.front() {
+                        let mut client_states = server.client_states_map.write();
+                        let state_entry = client_states
+                            .entry(peer_id_str.to_string())
+                            .or_insert_with(ClientState::default);
+                        state_entry.pending_initial_state_chunks = initial_chunks.clone();
+                        state_entry.pending_initial_state_bytes = Some(first_chunk.clone());
+                        state_entry.known_walls_sent = false;
+                    }
                 }
-                initial_result
+                match initial_result {
+                    Ok(initial_chunks) => initial_chunks
+                        .front()
+                        .cloned()
+                        .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+                            "initial state chunk sequence is empty".into()
+                        }),
+                    Err(err) => Err(err),
+                }
             }
         } else {
             trace!("[Frame {}] Building delta state for {}", frame, peer_id_str);
@@ -244,7 +256,26 @@ impl MassiveGameServer {
             return Ok(());
         }
 
+        let mut initial_chunks_remaining = false;
         if client_info.needs_initial_state && send_succeeded {
+            let mut client_states = server.client_states_map.write();
+            if let Some(state) = client_states.get_mut(peer_id_str) {
+                if !state.pending_initial_state_chunks.is_empty() {
+                    let _ = state.pending_initial_state_chunks.pop_front();
+                }
+                state.pending_initial_state_bytes =
+                    state.pending_initial_state_chunks.front().cloned();
+                initial_chunks_remaining = !state.pending_initial_state_chunks.is_empty();
+            }
+
+            if initial_chunks_remaining {
+                trace!(
+                    "[Frame {}] Initial state chunk delivered for {}. Remaining chunks pending.",
+                    frame,
+                    peer_id_str
+                );
+                return Ok(());
+            }
             server.mark_join_send_done(peer_id_str);
         }
 
@@ -306,21 +337,33 @@ impl MassiveGameServer {
                 .client_states_map
                 .read()
                 .get(peer_id_str)
-                .and_then(|state| state.pending_initial_state_bytes.clone());
+                .and_then(|state| state.pending_initial_state_chunks.front().cloned());
 
             if let Some(cached_bytes) = cached_initial_state {
                 Ok(cached_bytes)
             } else {
-                let initial_result = server.build_initial_state_optimized(peer_id_str, shared_data);
-                if let Ok(initial_bytes) = initial_result.as_ref() {
-                    let mut client_states = server.client_states_map.write();
-                    let state_entry = client_states
-                        .entry(peer_id_str.to_string())
-                        .or_insert_with(ClientState::default);
-                    state_entry.pending_initial_state_bytes = Some(initial_bytes.clone());
-                    state_entry.known_walls_sent = false;
+                let initial_result =
+                    server.build_initial_state_sequence_optimized(peer_id_str, shared_data);
+                if let Ok(initial_chunks) = initial_result.as_ref() {
+                    if let Some(first_chunk) = initial_chunks.front() {
+                        let mut client_states = server.client_states_map.write();
+                        let state_entry = client_states
+                            .entry(peer_id_str.to_string())
+                            .or_insert_with(ClientState::default);
+                        state_entry.pending_initial_state_chunks = initial_chunks.clone();
+                        state_entry.pending_initial_state_bytes = Some(first_chunk.clone());
+                        state_entry.known_walls_sent = false;
+                    }
                 }
-                initial_result
+                match initial_result {
+                    Ok(initial_chunks) => initial_chunks
+                        .front()
+                        .cloned()
+                        .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
+                            "initial state chunk sequence is empty".into()
+                        }),
+                    Err(err) => Err(err),
+                }
             }
         } else {
             let client_state_snapshot = server
@@ -385,6 +428,21 @@ impl MassiveGameServer {
         }
 
         if needs_initial_state {
+            let mut client_states = server.client_states_map.write();
+            let mut chunks_remaining = false;
+            if let Some(state) = client_states.get_mut(peer_id_str) {
+                if !state.pending_initial_state_chunks.is_empty() {
+                    let _ = state.pending_initial_state_chunks.pop_front();
+                }
+                state.pending_initial_state_bytes =
+                    state.pending_initial_state_chunks.front().cloned();
+                chunks_remaining = !state.pending_initial_state_chunks.is_empty();
+            }
+
+            if chunks_remaining {
+                return Ok(());
+            }
+
             server.update_client_state_after_initial(
                 peer_id_str,
                 shared_data,

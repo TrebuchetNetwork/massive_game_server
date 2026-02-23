@@ -212,6 +212,11 @@ fn join_entity_soa_snapshot_enabled() -> bool {
     *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_ENTITY_SOA_SNAPSHOT"))
 }
 
+fn join_initial_state_chunking_enabled() -> bool {
+    static ENABLED: OnceCell<bool> = OnceCell::new();
+    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_INITIAL_CHUNKING"))
+}
+
 fn join_authoritative_aoi_snapshot_enabled() -> bool {
     static ENABLED: OnceCell<bool> = OnceCell::new();
     *ENABLED.get_or_init(|| {

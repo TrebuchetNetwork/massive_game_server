@@ -145,6 +145,7 @@ fn remove_webrtc_peer_state(peer_id: &str) {
 pub struct ClientState {
     pub known_walls_sent: bool,
     pub pending_initial_state_bytes: Option<Bytes>,
+    pub pending_initial_state_chunks: VecDeque<Bytes>,
     pub last_update_sent_time: Instant,
     pub last_known_player_states: HashMap<PlayerID, PlayerState>,
     pub last_known_projectile_ids: HashSet<EntityId>,
@@ -172,6 +173,7 @@ impl Default for ClientState {
         ClientState {
             known_walls_sent: false,
             pending_initial_state_bytes: None,
+            pending_initial_state_chunks: VecDeque::new(),
             last_update_sent_time: Instant::now(),
             last_known_player_states: HashMap::new(),
             last_known_projectile_ids: HashSet::new(),

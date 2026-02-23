@@ -2624,6 +2624,8 @@
                 audioManager.playSound(kind === 'enemy' ? 'flagDropped' : 'flagGrabbed', null, 0.24);
             }
             triggerHaptic(10);
+            inputState.ping_x = Number(worldPoint.x) || 0;
+            inputState.ping_y = Number(worldPoint.y) || 0;
 
             if (dataChannel && dataChannel.readyState === 'open' && (now - lastPingChatAt) >= TACTICAL_PING_CHAT_THROTTLE_MS) {
                 const pingLabel = kind === 'enemy' ? 'Enemy' : (kind === 'defend' ? 'Defend' : 'Group');
@@ -3227,7 +3229,9 @@
             rotation: 0,
             melee_attack: false,
             change_weapon_slot: 0,
-            use_ability_slot: 0
+            use_ability_slot: 0,
+            ping_x: 0,
+            ping_y: 0
         };
 
         // Tab overview mode
@@ -8772,7 +8776,9 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 !!inputState.reload ||
                 !!inputState.melee_attack ||
                 inputState.change_weapon_slot !== 0 ||
-                inputState.use_ability_slot !== 0;
+                inputState.use_ability_slot !== 0 ||
+                Number(inputState.ping_x) !== 0 ||
+                Number(inputState.ping_y) !== 0;
             const stickyStateChanged =
                 moveMask !== lastSentInputMoveMask ||
                 quantizedRotation !== lastSentInputRotationQuant ||
@@ -8804,6 +8810,8 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 melee_attack: inputState.melee_attack,
                 change_weapon_slot: inputState.change_weapon_slot,
                 use_ability_slot: inputState.use_ability_slot,
+                ping_x: Number(inputState.ping_x) || 0,
+                ping_y: Number(inputState.ping_y) || 0,
             };
 
             if (currentFrameInput.shooting && now - lastShotFeedbackTime >= 110) {
@@ -8833,6 +8841,8 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             if (inputState.melee_attack) inputState.melee_attack = false;
             if (inputState.change_weapon_slot !== 0) inputState.change_weapon_slot = 0;
             if (inputState.use_ability_slot !== 0) inputState.use_ability_slot = 0;
+            if (inputState.ping_x !== 0) inputState.ping_x = 0;
+            if (inputState.ping_y !== 0) inputState.ping_y = 0;
         }
 
         // UI Update functions
@@ -9120,6 +9130,27 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             }
             if (event.event_type === GP.GameEventType.FlagReturned) {
                 setObjectiveUrgency('Flag returned - push forward', 'positive', 1000);
+                return;
+            }
+            if (event.event_type === GP.GameEventType.TeamPing) {
+                const instigatorId = typeof event.instigator_id === 'string' ? event.instigator_id : '';
+                if (instigatorId && instigatorId !== myPlayerId) {
+                    const pingX = Number(event.position?.x);
+                    const pingY = Number(event.position?.y);
+                    if (Number.isFinite(pingX) && Number.isFinite(pingY)) {
+                        tacticalPings.push({
+                            kind: 'group',
+                            x: pingX,
+                            y: pingY,
+                            createdAt: Date.now(),
+                            expiresAt: Date.now() + TACTICAL_PING_MS
+                        });
+                        if (tacticalPings.length > 18) {
+                            tacticalPings.splice(0, tacticalPings.length - 18);
+                        }
+                        setObjectiveUrgency('Teammate pinged a location', 'info', 900);
+                    }
+                }
                 return;
             }
             if (event.event_type !== GP.GameEventType.PlayerDamageEffect) return;
