@@ -12,16 +12,35 @@ impl MassiveGameServer {
             });
         let current_bot_count = self.bot_players.len();
 
-        let max_players_in_match = self.config.max_players_per_match;
+        let max_players_in_match = self.effective_max_players();
         let effective_bot_capacity = max_players_in_match.saturating_sub(self.reserved_human_slots);
 
-        let desired_bot_count = if human_player_count >= effective_bot_capacity {
+        // Quick-match bot auto-fill: if the bot-fill delay has elapsed and we
+        // have fewer than the minimum human count, immediately fill remaining
+        // slots with bots up to the match-type cap.
+        let quick_fill_target = if self.should_quick_match_bot_fill() {
+            let fill_to = max_players_in_match.saturating_sub(human_player_count);
+            debug!(
+                "[Bot Management] QuickMatch auto-fill triggered: humans={}, fill_to={}",
+                human_player_count, fill_to,
+            );
+            Some(fill_to)
+        } else {
+            None
+        };
+
+        let base_desired = if human_player_count >= effective_bot_capacity {
             0
         } else {
             (effective_bot_capacity - human_player_count).min(
                 self.target_bot_count
                     .load(std::sync::atomic::Ordering::Relaxed) as usize,
             )
+        };
+
+        let desired_bot_count = match quick_fill_target {
+            Some(fill) => base_desired.max(fill),
+            None => base_desired,
         };
 
         if current_bot_count > desired_bot_count {
@@ -72,10 +91,11 @@ impl MassiveGameServer {
         joining_team: Option<u8>,
     ) -> bool {
         let participant_count = self.participant_count();
+        let max_players = self.effective_max_players();
         if !self.human_priority_enabled {
-            return participant_count < self.config.max_players_per_match;
+            return participant_count < max_players;
         }
-        if participant_count < self.config.max_players_per_match {
+        if participant_count < max_players {
             return true;
         }
         let selected_bot = match joining_team {
@@ -281,10 +301,11 @@ impl MassiveGameServer {
 
         for _i in 0..count_to_add {
             let current_total_players = self.player_manager.player_count();
-            if current_total_players >= self.config.max_players_per_match {
+            let max_players = self.effective_max_players();
+            if current_total_players >= max_players {
                 info!(
                     "[Bot Management] Max player limit ({}) reached, stopping additional bot spawn. Current players: {}",
-                    self.config.max_players_per_match,
+                    max_players,
                     current_total_players
                 );
                 break;
@@ -377,6 +398,7 @@ impl MassiveGameServer {
                     last_position: Vec2::new(spawn_pos.x, spawn_pos.y),
                     stuck_timer: 0.0,
                     stuck_check_position: Vec2::new(spawn_pos.x, spawn_pos.y),
+                    personality: crate::systems::ai::optimized_bot_ai::BotPersonality::random(),
                 };
                 self.bot_players.insert(player_id_arc, bot_controller);
                 debug!(

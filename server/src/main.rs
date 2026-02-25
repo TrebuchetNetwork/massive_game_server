@@ -64,6 +64,8 @@ struct WsAuthQuery {
     team: Option<String>,
     spectator: Option<String>,
     mode: Option<String>,
+    is_mobile: Option<bool>,
+    match_type: Option<String>,
 }
 
 impl WsAuthQuery {
@@ -827,6 +829,20 @@ async fn main() -> anyhow::Result<()> {
                 "killcam": server_inst.latest_killcam_for_player(&player_id),
             }))
         });
+    let server_for_match_type = game_server_instance.clone();
+    let match_type_route = warp::path!("api" / "ops" / "match-type")
+        .and(warp::get())
+        .and(warp::any().map(move || server_for_match_type.clone()))
+        .map(|server_inst: ServerInstanceRef| {
+            warp::reply::json(&serde_json::json!({
+                "ok": true,
+                "match_type": server_inst.match_type.label(),
+                "max_players": server_inst.effective_max_players(),
+                "match_duration_secs": server_inst.match_duration_secs,
+                "bot_fill_delay_secs": server_inst.match_type.bot_fill_delay_secs(),
+                "min_humans_for_bot_fill": server_inst.match_type.min_humans_for_bot_fill(),
+            }))
+        });
 
     let quic_primary_only = env_flag("MGS_QUIC_PRIMARY") && env_flag("MGS_QUIC_PRIMARY_ONLY");
     if quic_primary_only {
@@ -935,6 +951,17 @@ async fn main() -> anyhow::Result<()> {
                 );
                 ws_upgrade_span.set_parent(remote_context);
 
+                let is_mobile = ws_auth_query.is_mobile.unwrap_or(false);
+                let requested_match_type = ws_auth_query.match_type.as_deref().unwrap_or("full");
+                let match_type = massive_game_server_core::server::instance::MatchType::from_query_str(requested_match_type);
+                info!(
+                    "WS connection: peer={}, match_type={}, is_mobile={}",
+                    peer_id, match_type, is_mobile
+                );
+                // Record human queue arrival for quick-match bot-fill delay tracking.
+                if match_type == massive_game_server_core::server::instance::MatchType::QuickMatch {
+                    server_inst.note_human_queue_arrival();
+                }
                 ws.on_upgrade(move |socket| {
                     handle_signaling_connection(
                         socket,
@@ -952,6 +979,7 @@ async fn main() -> anyhow::Result<()> {
                         auth_user_id,
                         requested_team_id,
                         client_ip,
+                        is_mobile,
                     )
                     .instrument(ws_upgrade_span)
                 })
@@ -1042,6 +1070,7 @@ async fn main() -> anyhow::Result<()> {
         .or(live_replay_dispute_recent_route)
         .or(match_summary_latest_route)
         .or(killcam_latest_route)
+        .or(match_type_route)
         .map(warp::reply::Reply::into_response)
         .boxed();
 

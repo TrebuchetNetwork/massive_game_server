@@ -341,12 +341,9 @@ The server's `game.fbs` schema has not been updated to include V5 wire-protocol 
 
 ### Schema divergence between files
 
-| Difference | `protocol/schemas/game.fbs` | `server/schemas/game.fbs` |
-|-----------|----------------------------|--------------------------|
-| `GameEventType.TeamPing` | Missing | Present (= 11) |
-| `PlayerInput.ping_x/ping_y` | Missing | Present |
-
-The generated JS bindings (`static_client/generated_js/`) were generated from the **server** schema and include TeamPing + ping fields. The protocol-level schema is stale.
+No active divergence identified for TeamPing or ping input fields between:
+- `/Users/ivo/massive_game_server/protocol/schemas/game.fbs`
+- `/Users/ivo/massive_game_server/server/schemas/game.fbs`
 
 ---
 
@@ -378,45 +375,40 @@ The generated JS bindings (`static_client/generated_js/`) were generated from th
    - Add zones to `InitialStateMessage`
    - Render slow zones as dark overlay, damage zones as red pulse, boost pads as directional arrows
 
-3. **Sync protocol schema** (`protocol/schemas/game.fbs`)
-   - Add `TeamPing = 11` to `GameEventType`
-   - Add `ping_x`, `ping_y` to `PlayerInput`
-   - Regenerate any non-JS protocol bindings if used
-
-4. **Wire custom maps to match creation** (`server/src/server/instance.rs`, `server/src/network/signaling.rs`)
+3. **Wire custom maps to match creation** (`server/src/server/instance.rs`, `server/src/network/signaling.rs`)
    - Accept map JSON payload on match creation endpoint
    - Fall back to procedural generation when no custom map provided
 
-5. **Enforce SBMM in live join routing** (`server/src/main.rs`, `server/src/scaling/router.rs`)
+4. **Enforce SBMM in live join routing** (`server/src/main.rs`, `server/src/scaling/router.rs`)
    - Reconcile MMR band definitions (4-tier vs 5-tier)
    - Route join requests through `assign_with_mmr()` when multi-instance is available
 
 ### P2: Polish
 
-6. **Add ability/loadout fields to FlatBuffers PlayerState** (`server/schemas/game.fbs`)
+5. **Add ability/loadout fields to FlatBuffers PlayerState** (`server/schemas/game.fbs`)
    - Enables opponents to see dodge roll invulnerability, weapon swap animations
 
-7. **Expand map editor with zone tools** (`static_client/editor.html`)
+6. **Expand map editor with zone tools** (`static_client/editor.html`)
    - Zone placement/resize/delete with type selector and direction for boost pads
 
-8. **Build public bot arena code submission UI** (`static_client/arena.html`)
+7. **Build public bot arena code submission UI** (`static_client/arena.html`)
    - Monaco editor for Rust bot AI source
    - Source submission → server-side WASM compilation pipeline
 
-9. **Continue ECS migration** (`server/src/server/ecs_bridge.rs`, `server/src/server/instance.rs`)
+8. **Continue ECS migration** (`server/src/server/ecs_bridge.rs`, `server/src/server/instance.rs`)
    - Migrate pickup collection into ECS system (already decomposed into `pickup_pipeline.rs`)
    - Migrate projectile physics into ECS system
    - Goal: reduce `instance.rs` from 6300+ lines
 
 ### P3: Hardening
 
-10. **Extract commander/progressive-wall constants to `constants.rs`**
+9. **Extract commander/progressive-wall constants to `constants.rs`**
     - Currently defined as module-level `const` in `instance.rs` (lines 173-179)
     - Move to `core/constants.rs` for consistency with other gameplay constants
 
-11. **Add zone authoring to editor and spawn point placement**
+10. **Add zone authoring to editor and spawn point placement**
 
-12. **Automated load test harness** for 120-client validation with pass/fail criteria
+11. **Automated load test harness** for 120-client validation with pass/fail criteria
 
 ---
 

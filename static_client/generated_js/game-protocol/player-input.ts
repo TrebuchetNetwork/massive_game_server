@@ -82,8 +82,18 @@ useAbilitySlot():number {
   return offset ? this.bb!.readInt8(this.bb_pos + offset) : 0;
 }
 
+pingX():number {
+  const offset = this.bb!.__offset(this.bb_pos, 28);
+  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+}
+
+pingY():number {
+  const offset = this.bb!.__offset(this.bb_pos, 30);
+  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+}
+
 static startPlayerInput(builder:flatbuffers.Builder) {
-  builder.startObject(12);
+  builder.startObject(14);
 }
 
 static addTimestamp(builder:flatbuffers.Builder, timestamp:bigint) {
@@ -134,12 +144,20 @@ static addUseAbilitySlot(builder:flatbuffers.Builder, useAbilitySlot:number) {
   builder.addFieldInt8(11, useAbilitySlot, 0);
 }
 
+static addPingX(builder:flatbuffers.Builder, pingX:number) {
+  builder.addFieldFloat32(12, pingX, 0.0);
+}
+
+static addPingY(builder:flatbuffers.Builder, pingY:number) {
+  builder.addFieldFloat32(13, pingY, 0.0);
+}
+
 static endPlayerInput(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createPlayerInput(builder:flatbuffers.Builder, timestamp:bigint, sequence:number, moveForward:boolean, moveBackward:boolean, moveLeft:boolean, moveRight:boolean, shooting:boolean, reload:boolean, rotation:number, meleeAttack:boolean, changeWeaponSlot:number, useAbilitySlot:number):flatbuffers.Offset {
+static createPlayerInput(builder:flatbuffers.Builder, timestamp:bigint, sequence:number, moveForward:boolean, moveBackward:boolean, moveLeft:boolean, moveRight:boolean, shooting:boolean, reload:boolean, rotation:number, meleeAttack:boolean, changeWeaponSlot:number, useAbilitySlot:number, pingX:number, pingY:number):flatbuffers.Offset {
   PlayerInput.startPlayerInput(builder);
   PlayerInput.addTimestamp(builder, timestamp);
   PlayerInput.addSequence(builder, sequence);
@@ -153,6 +171,8 @@ static createPlayerInput(builder:flatbuffers.Builder, timestamp:bigint, sequence
   PlayerInput.addMeleeAttack(builder, meleeAttack);
   PlayerInput.addChangeWeaponSlot(builder, changeWeaponSlot);
   PlayerInput.addUseAbilitySlot(builder, useAbilitySlot);
+  PlayerInput.addPingX(builder, pingX);
+  PlayerInput.addPingY(builder, pingY);
   return PlayerInput.endPlayerInput(builder);
 }
 }

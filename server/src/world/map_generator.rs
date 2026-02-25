@@ -485,6 +485,152 @@ impl MapGenerator {
         walls
     }
 
+    /// "Corridors" - tight lanes, favors Shotgun/Melee
+    pub fn generate_corridors_map(seed: u64) -> (Vec<Wall>, String) {
+        let mut walls = Vec::new();
+        let mut rng = StdRng::seed_from_u64(seed ^ 0xC0_771D_025);
+
+        walls.extend(Self::create_border_walls());
+
+        let wall_hp = 400;
+        let corridor_width = 120.0;
+        let wall_thickness = 20.0;
+
+        // Create 3 horizontal corridors spanning the map
+        for i in 0..3 {
+            let y = WORLD_MIN_Y + (WORLD_MAX_Y - WORLD_MIN_Y) * (i as f32 + 1.0) / 4.0;
+            // Long horizontal walls with periodic gaps
+            let num_segments = 5;
+            let segment_len = (WORLD_MAX_X - WORLD_MIN_X - 200.0) / (num_segments as f32 + 1.0);
+            for s in 0..num_segments {
+                let x = WORLD_MIN_X + 100.0 + (s as f32 + 0.5) * segment_len;
+                walls.push(Wall {
+                    id: generate_entity_id(), x, y: y - corridor_width / 2.0,
+                    width: segment_len * 0.7, height: wall_thickness,
+                    is_destructible: false, current_health: wall_hp, max_health: wall_hp,
+                });
+                walls.push(Wall {
+                    id: generate_entity_id(), x, y: y + corridor_width / 2.0,
+                    width: segment_len * 0.7, height: wall_thickness,
+                    is_destructible: false, current_health: wall_hp, max_health: wall_hp,
+                });
+            }
+        }
+
+        // Add destructible cover blocks inside corridors
+        for _ in 0..12 {
+            let x = rng.gen_range(WORLD_MIN_X + 200.0..WORLD_MAX_X - 200.0);
+            let y = rng.gen_range(WORLD_MIN_Y + 150.0..WORLD_MAX_Y - 150.0);
+            walls.push(Wall {
+                id: generate_entity_id(), x, y,
+                width: rng.gen_range(30.0..50.0), height: rng.gen_range(30.0..50.0),
+                is_destructible: true, current_health: 120, max_health: 120,
+            });
+        }
+
+        (walls, "Corridors".to_string())
+    }
+
+    /// "Arena" - open center, favors Rifle/Sniper
+    pub fn generate_arena_map(seed: u64) -> (Vec<Wall>, String) {
+        let mut walls = Vec::new();
+        let mut rng = StdRng::seed_from_u64(seed ^ 0xA7E_7A);
+
+        walls.extend(Self::create_border_walls());
+
+        // Large open center with pillars for cover
+        let pillar_hp = 300;
+        let pillar_size = 40.0;
+        let ring_radius = 250.0;
+        let num_pillars = 8;
+        for i in 0..num_pillars {
+            let angle = (i as f32 / num_pillars as f32) * std::f32::consts::TAU;
+            let px = ring_radius * angle.cos() - pillar_size / 2.0;
+            let py = ring_radius * angle.sin() - pillar_size / 2.0;
+            walls.push(Wall {
+                id: generate_entity_id(), x: px, y: py,
+                width: pillar_size, height: pillar_size,
+                is_destructible: false, current_health: pillar_hp, max_health: pillar_hp,
+            });
+        }
+
+        // Outer ring of destructible barriers
+        let outer_radius = 450.0;
+        for i in 0..12 {
+            let angle = (i as f32 / 12.0) * std::f32::consts::TAU + 0.1;
+            let px = outer_radius * angle.cos();
+            let py = outer_radius * angle.sin();
+            walls.push(Wall {
+                id: generate_entity_id(), x: px, y: py,
+                width: rng.gen_range(50.0..90.0), height: rng.gen_range(15.0..25.0),
+                is_destructible: true, current_health: 150, max_health: 150,
+            });
+        }
+
+        // Small center obstacle
+        walls.push(Wall {
+            id: generate_entity_id(), x: -25.0, y: -25.0,
+            width: 50.0, height: 50.0,
+            is_destructible: true, current_health: 200, max_health: 200,
+        });
+
+        (walls, "Arena".to_string())
+    }
+
+    /// "Fortress" - asymmetric CTF, one team defends a fortified position
+    pub fn generate_fortress_map(seed: u64) -> (Vec<Wall>, String) {
+        let mut walls = Vec::new();
+        let mut rng = StdRng::seed_from_u64(seed ^ 0xF07_7E55);
+
+        walls.extend(Self::create_border_walls());
+
+        let fort_hp = 500;
+        let thick = 20.0;
+
+        // Fortress on the right side - walled compound
+        let fx = 200.0;
+        let fy = -200.0;
+        let fw = 400.0;
+        let fh = 400.0;
+
+        // Fort walls with entrance gaps
+        walls.push(Wall { id: generate_entity_id(), x: fx, y: fy, width: fw, height: thick, is_destructible: false, current_health: fort_hp, max_health: fort_hp });
+        walls.push(Wall { id: generate_entity_id(), x: fx, y: fy + fh - thick, width: fw, height: thick, is_destructible: false, current_health: fort_hp, max_health: fort_hp });
+        // Left wall with gap in middle
+        walls.push(Wall { id: generate_entity_id(), x: fx, y: fy, width: thick, height: fh * 0.35, is_destructible: false, current_health: fort_hp, max_health: fort_hp });
+        walls.push(Wall { id: generate_entity_id(), x: fx, y: fy + fh * 0.65, width: thick, height: fh * 0.35, is_destructible: false, current_health: fort_hp, max_health: fort_hp });
+        // Right wall (solid)
+        walls.push(Wall { id: generate_entity_id(), x: fx + fw - thick, y: fy, width: thick, height: fh, is_destructible: false, current_health: fort_hp, max_health: fort_hp });
+
+        // Internal fort structures
+        walls.push(Wall { id: generate_entity_id(), x: fx + fw * 0.4, y: fy + fh * 0.3, width: 60.0, height: thick, is_destructible: true, current_health: 200, max_health: 200 });
+        walls.push(Wall { id: generate_entity_id(), x: fx + fw * 0.4, y: fy + fh * 0.6, width: 60.0, height: thick, is_destructible: true, current_health: 200, max_health: 200 });
+
+        // Approach cover (left side, for attackers)
+        for _ in 0..8 {
+            let x = rng.gen_range(WORLD_MIN_X + 100.0..fx - 50.0);
+            let y = rng.gen_range(WORLD_MIN_Y + 150.0..WORLD_MAX_Y - 150.0);
+            walls.push(Wall {
+                id: generate_entity_id(), x, y,
+                width: rng.gen_range(40.0..70.0), height: rng.gen_range(20.0..40.0),
+                is_destructible: true, current_health: 100, max_health: 100,
+            });
+        }
+
+        (walls, "Fortress".to_string())
+    }
+
+    /// Select a random map template based on a seed
+    pub fn select_random_map(seed: u64, target_players: usize) -> (Vec<Wall>, String) {
+        let template_index = (seed % 4) as usize;
+        match template_index {
+            0 => Self::generate_corridors_map(seed),
+            1 => Self::generate_arena_map(seed),
+            2 => Self::generate_fortress_map(seed),
+            _ => Self::generate_dynamic_map_with_seed(target_players, seed),
+        }
+    }
+
     pub fn get_team_spawn_areas() -> Vec<(Vec2, u8)> {
         let mut spawns = Vec::new();
         let base_depth = 250.0;

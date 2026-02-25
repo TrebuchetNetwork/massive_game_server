@@ -264,6 +264,8 @@ impl MassiveGameServer {
                 .map(|state| (state.team_id, state.is_spectator))
                 .unwrap_or((0, false));
 
+        let quantize = client_state.is_mobile;
+
         trace!("[{}] DeltaBuilder: Started", peer_id_str);
 
         let player_aoi = self.resolve_player_aoi_for_player(shared_data, &player_id);
@@ -287,14 +289,20 @@ impl MassiveGameServer {
                 } else {
                     self_state.changed_fields
                 };
-                players_fb_vec.push(create_fb_player_state_for_delta(
+                players_fb_vec.push(create_fb_player_state_for_delta_ext(
                     &mut builder,
                     &self_state,
                     mask,
+                    quantize,
                 ));
                 player_fields_mask_vec.push(encode_changed_mask(mask));
             }
         }
+
+        // Variable-rate entity updates: skip position-only updates for other
+        // players based on their velocity magnitude.  New players and players
+        // with non-position field changes are always included.
+        let vr_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
 
         for visible_player_id in &player_aoi.visible_players {
             if visible_player_id != &player_id {
@@ -308,10 +316,39 @@ impl MassiveGameServer {
                         } else {
                             player_state.changed_fields
                         };
-                        players_fb_vec.push(create_fb_player_state_for_delta(
+
+                        // Variable-rate: if only position/rotation changed (no other
+                        // fields), gate the update on a velocity-dependent stride so
+                        // slow/stationary entities produce fewer redundant packets.
+                        if !is_new && mask == FIELD_POSITION_ROTATION {
+                            let speed_sq = player_state.velocity_x * player_state.velocity_x
+                                + player_state.velocity_y * player_state.velocity_y;
+                            let high_thresh_sq = VARIABLE_RATE_HIGH_VELOCITY_THRESHOLD
+                                * VARIABLE_RATE_HIGH_VELOCITY_THRESHOLD;
+                            let low_thresh_sq = VARIABLE_RATE_LOW_VELOCITY_THRESHOLD
+                                * VARIABLE_RATE_LOW_VELOCITY_THRESHOLD;
+
+                            if speed_sq > high_thresh_sq {
+                                // High-velocity: 30 Hz (every 2nd frame)
+                                if vr_frame % VARIABLE_RATE_HIGH_STRIDE != 0 {
+                                    continue;
+                                }
+                            } else if speed_sq > low_thresh_sq {
+                                // Low-velocity: 10 Hz (every 6th frame)
+                                if vr_frame % VARIABLE_RATE_LOW_STRIDE != 0 {
+                                    continue;
+                                }
+                            } else {
+                                // Stationary: skip position-only updates entirely
+                                continue;
+                            }
+                        }
+
+                        players_fb_vec.push(create_fb_player_state_for_delta_ext(
                             &mut builder,
                             &player_state,
                             mask,
+                            quantize,
                         ));
                         player_fields_mask_vec.push(encode_changed_mask(mask));
                     }
@@ -344,16 +381,29 @@ impl MassiveGameServer {
                     let id_str = fb_safe_entity_id(&mut builder, proj.id);
                     let owner_str = builder.create_string(proj.owner_id.as_str());
 
+                    // Apply mobile quantization to projectile positions/velocities
+                    let (px, py, vx, vy) = if quantize {
+                        use crate::core::constants::{quantize_position, quantize_velocity};
+                        (
+                            quantize_position(proj.x),
+                            quantize_position(proj.y),
+                            quantize_velocity(proj.velocity_x),
+                            quantize_velocity(proj.velocity_y),
+                        )
+                    } else {
+                        (proj.x, proj.y, proj.velocity_x, proj.velocity_y)
+                    };
+
                     let proj_fb = fb::ProjectileState::create(
                         &mut builder,
                         &fb::ProjectileStateArgs {
                             id: Some(id_str),
-                            x: proj.x,
-                            y: proj.y,
+                            x: px,
+                            y: py,
                             owner_id: Some(owner_str),
                             weapon_type: map_server_weapon_to_fb(proj.weapon_type),
-                            velocity_x: proj.velocity_x,
-                            velocity_y: proj.velocity_y,
+                            velocity_x: vx,
+                            velocity_y: vy,
                         },
                     );
                     new_projectiles_vec.push(proj_fb);
@@ -992,6 +1042,26 @@ impl MassiveGameServer {
             .collect();
         let flag_states_fb = builder.create_vector(&fb_flag_states_vec);
 
+        // Serialize zones
+        let fb_zones_vec: Vec<_> = self.zones.iter().map(|z| {
+            let zone_id_fb = fb_safe_str(&mut builder, &z.id.to_string());
+            let zone_type_fb = match z.zone_type {
+                crate::core::types::ZoneType::SlowZone => fb::ZoneType::SlowZone,
+                crate::core::types::ZoneType::DamageZone => fb::ZoneType::DamageZone,
+                crate::core::types::ZoneType::BoostPad => fb::ZoneType::BoostPad,
+            };
+            fb::Zone::create(&mut builder, &fb::ZoneArgs {
+                id: Some(zone_id_fb),
+                x: z.x,
+                y: z.y,
+                width: z.width,
+                height: z.height,
+                zone_type: zone_type_fb,
+                direction: z.direction,
+            })
+        }).collect();
+        let zones_fb = builder.create_vector(&fb_zones_vec);
+
         let map_name_fb = fb_safe_str(&mut builder, &self.map_name);
         let timestamp_initial = shared_data.timestamp_ms;
         let player_id_fb_initial = fb_safe_str(&mut builder, peer_id_str);
@@ -1004,6 +1074,7 @@ impl MassiveGameServer {
             pickups: Some(pickups_fb),
             match_info: Some(match_info_fb),
             flag_states: Some(flag_states_fb),
+            zones: Some(zones_fb),
             timestamp: timestamp_initial,
             map_name: Some(map_name_fb),
         };

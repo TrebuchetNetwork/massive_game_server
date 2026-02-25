@@ -37,22 +37,153 @@ pub const MAX_POSITION_DELTA_SLACK: f32 = 10.0; // Max allowed movement per tick
 pub const MIN_SHOT_INTERVAL_SECONDS: f32 = 0.05; // Minimum interval between shots
 pub const POSITION_VALIDATION_VIOLATION_THRESHOLD: u32 = 5;
 
-// Weapon specific constants (can be moved to a dedicated module later)
+// ── Weapon tuning constants ──────────────────────────────────────────
+// All weapon balance values centralized here for easy iteration.
+pub const PISTOL_DAMAGE: i32 = 8;
+pub const PISTOL_FIRE_RATE_SECS: f32 = 0.45; // was 0.6 – faster finisher
+pub const PISTOL_MAX_AMMO: i32 = 7;
+pub const PISTOL_RELOAD_SECS: f32 = 1.5;
+pub const PISTOL_FALLOFF_START: f32 = 150.0;
+pub const PISTOL_MAX_RANGE: f32 = 300.0;
+pub const PISTOL_MIN_MULTIPLIER: f32 = 0.60;
+
+pub const SHOTGUN_DAMAGE: i32 = 18; // was 12 – viable CQC (144 total)
+pub const SHOTGUN_FIRE_RATE_SECS: f32 = 0.6;
+pub const SHOTGUN_MAX_AMMO: i32 = 5;
+pub const SHOTGUN_RELOAD_SECS: f32 = 2.5;
 pub const SHOTGUN_PELLET_COUNT: i32 = 8;
 pub const SHOTGUN_SPREAD_ANGLE_RAD: f32 = 0.25;
+pub const SHOTGUN_FALLOFF_START: f32 = 40.0;
+pub const SHOTGUN_MAX_RANGE: f32 = 160.0;
+pub const SHOTGUN_MIN_MULTIPLIER: f32 = 0.10;
+
+pub const RIFLE_DAMAGE: i32 = 10;
+pub const RIFLE_FIRE_RATE_SECS: f32 = 0.1;
+pub const RIFLE_MAX_AMMO: i32 = 30;
+pub const RIFLE_RELOAD_SECS: f32 = 2.0;
+pub const RIFLE_FALLOFF_START: f32 = 200.0;
+pub const RIFLE_MAX_RANGE: f32 = 500.0;
+pub const RIFLE_MIN_MULTIPLIER: f32 = 0.15; // was 0.40 – kills Rifle dominance at range
+
+pub const SNIPER_DAMAGE: i32 = 50;
+pub const SNIPER_FIRE_RATE_SECS: f32 = 1.2;
+pub const SNIPER_MAX_AMMO: i32 = 5;
+pub const SNIPER_RELOAD_SECS: f32 = 3.0;
+pub const SNIPER_FALLOFF_START: f32 = 600.0;
+pub const SNIPER_MAX_RANGE: f32 = 1200.0;
+pub const SNIPER_MIN_MULTIPLIER: f32 = 0.80;
+
+pub const MELEE_DAMAGE: i32 = 30;
+pub const MELEE_FIRE_RATE_SECS: f32 = 0.5;
+pub const MELEE_MAX_AMMO: i32 = 0;
+pub const MELEE_RELOAD_SECS: f32 = 0.0;
+pub const MELEE_FALLOFF_START: f32 = 0.0;
+pub const MELEE_MAX_RANGE: f32 = 30.0;
+pub const MELEE_MIN_MULTIPLIER: f32 = 1.0;
+pub const MELEE_CONE_HALF_ANGLE_RAD: f32 = 0.7854; // π/4 (90° cone)
+
+pub const DAMAGE_BOOST_MULTIPLIER: f32 = 1.5;
+
 pub const WEAPON_SWAP_DURATION_SECS: f32 = 0.3;
-pub const ABILITY_DASH_COOLDOWN_SECS: f32 = 8.0;
+
+// ── Ability tuning ──────────────────────────────────────────────────
+pub const ABILITY_DASH_COOLDOWN_SECS: f32 = 6.0;  // was 8 – more outplay moments
 pub const ABILITY_DASH_DURATION_SECS: f32 = 0.2;
 pub const ABILITY_DASH_SPEED_MULTIPLIER: f32 = 2.0;
-pub const ABILITY_DODGE_COOLDOWN_SECS: f32 = 12.0;
+pub const ABILITY_DODGE_COOLDOWN_SECS: f32 = 9.0;  // was 12 – more outplay moments
 pub const ABILITY_DODGE_DURATION_SECS: f32 = 0.3;
 pub const ABILITY_DODGE_SPEED_MULTIPLIER: f32 = 1.6;
 pub const TEAM_PING_COOLDOWN_SECS: f32 = 3.0;
+
+// ── Zone tuning ─────────────────────────────────────────────────────
 pub const ZONE_SLOW_MULTIPLIER: f32 = 0.6;
-pub const ZONE_DAMAGE_PER_SEC: f32 = 5.0;
+pub const ZONE_DAMAGE_PER_SEC: f32 = 10.0; // was 5 – actually threatening
 pub const ZONE_BOOST_DURATION_SECS: f32 = 0.5;
 pub const ZONE_BOOST_SPEED_MULTIPLIER: f32 = 2.0;
 pub const ZONE_BOOST_RETRIGGER_COOLDOWN_SECS: f32 = 0.8;
+
+// ── Killstreak tuning ───────────────────────────────────────────────
+pub const KILLSTREAK_DAMAGE_BOOST_THRESHOLD: u32 = 3;
+pub const KILLSTREAK_DAMAGE_BOOST_MULTIPLIER: f32 = 1.10; // +10% damage
+pub const KILLSTREAK_DAMAGE_BOOST_DURATION_SECS: f32 = 30.0;
+pub const KILLSTREAK_SPEED_BOOST_THRESHOLD: u32 = 5;
+pub const KILLSTREAK_SPEED_BOOST_DURATION_SECS: f32 = 15.0;
+pub const KILLSTREAK_DOMINATING_THRESHOLD: u32 = 7;
+
+// ── Objective scoring ───────────────────────────────────────────────
+pub const POINTS_PER_KILL: i32 = 10;
+pub const POINTS_FLAG_CAPTURE: i32 = 100;
+pub const POINTS_FLAG_RETURN: i32 = 50;
+pub const POINTS_ASSIST: i32 = 3; // 25% of kill = ~2.5, round to 3
+pub const ASSIST_WINDOW_SECS: f32 = 5.0;
+pub const LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS: f32 = 0.5;
+
+// ── Projectile knockback ────────────────────────────────────────────
+pub const KNOCKBACK_FORCE_PER_DAMAGE: f32 = 0.8; // push force proportional to damage
+
+// ── Mobile bandwidth profile ────────────────────────────────────────
+pub const MOBILE_AOI_MAX_VISIBLE_PLAYERS: usize = 24;
+pub const MOBILE_AOI_MAX_VISIBLE_PROJECTILES: usize = 80;
+pub const MOBILE_AOI_MAX_VISIBLE_PICKUPS: usize = 16;
+pub const MOBILE_AOI_MAX_VISIBLE_WALLS: usize = 40;
+pub const MOBILE_DELTA_SKIP_MODULUS: usize = 3; // send every 3rd frame = ~20 Hz
+pub const MOBILE_COMPRESSION_LEVEL: u32 = 5;
+
+// ── Mobile position quantization ───────────────────────────────────
+// Reduces delta-compression entropy for mobile clients by snapping
+// position/velocity/rotation to a coarser grid.  Values are quantized
+// to integer representations, then converted back to f32 so the
+// FlatBuffers schema (which uses f32) remains unchanged.
+
+/// Maximum world coordinate representable by u16 quantization.
+/// Supports maps up to 4096x4096 units.
+pub const QUANTIZE_POSITION_MAX: f32 = 4096.0;
+
+/// Scale factor: maps [0, QUANTIZE_POSITION_MAX] -> [0, u16::MAX].
+pub const QUANTIZE_POSITION_SCALE: f32 = u16::MAX as f32 / QUANTIZE_POSITION_MAX;
+
+/// Maximum velocity magnitude representable by i8 quantization.
+/// Player speeds are typically 150-300 units/s; 127 * VELOCITY_SCALE covers that.
+pub const QUANTIZE_VELOCITY_MAX: f32 = 500.0;
+
+/// Scale factor: maps [-QUANTIZE_VELOCITY_MAX, +QUANTIZE_VELOCITY_MAX] -> [-127, 127].
+pub const QUANTIZE_VELOCITY_SCALE: f32 = 127.0 / QUANTIZE_VELOCITY_MAX;
+
+/// Quantize a world-space position component (x or y) to u16-grid precision.
+/// The value is clamped to [0, QUANTIZE_POSITION_MAX], quantized, then
+/// dequantized back to f32 on the same grid.
+#[inline]
+pub fn quantize_position(v: f32) -> f32 {
+    let clamped = v.clamp(0.0, QUANTIZE_POSITION_MAX);
+    let q = (clamped * QUANTIZE_POSITION_SCALE).round() as u16;
+    q as f32 / QUANTIZE_POSITION_SCALE
+}
+
+/// Dequantize a u16 fixed-point value back to world-space f32.
+#[inline]
+pub fn dequantize_position(q: u16) -> f32 {
+    q as f32 / QUANTIZE_POSITION_SCALE
+}
+
+/// Quantize a velocity component to i8-grid precision (-127..127 scaled).
+/// The result is snapped to the i8 grid, then dequantized back to f32.
+#[inline]
+pub fn quantize_velocity(v: f32) -> f32 {
+    let clamped = v.clamp(-QUANTIZE_VELOCITY_MAX, QUANTIZE_VELOCITY_MAX);
+    let q = (clamped * QUANTIZE_VELOCITY_SCALE).round() as i8;
+    q as f32 / QUANTIZE_VELOCITY_SCALE
+}
+
+/// Quantize a rotation (radians) to u8-grid precision (256 steps over 2*PI).
+/// The result is snapped to the u8 grid, then dequantized back to f32.
+#[inline]
+pub fn quantize_rotation(v: f32) -> f32 {
+    // Normalize to [0, 2*PI)
+    let two_pi = std::f32::consts::TAU;
+    let normalized = ((v % two_pi) + two_pi) % two_pi;
+    let q = (normalized / two_pi * 255.0).round() as u8;
+    q as f32 / 255.0 * two_pi
+}
 
 // Other game constants
 pub const DEFAULT_RESPAWN_DURATION_SECS: f32 = 2.5;
@@ -71,6 +202,15 @@ pub const AIMBOT_SUSPICION_THRESHOLD: f32 = 3.5;
 
 pub const SAFE_SPAWN_RADIUS_FROM_ENEMY: f32 = 300.0; // Example value, adjust as needed
 
+// ── Variable-rate entity updates ───────────────────────────────────
+// Entities moving faster than HIGH threshold get position updates every 2nd frame (30 Hz).
+// Entities between LOW and HIGH get updates every 6th frame (10 Hz).
+// Entities below LOW threshold only get updates when non-position fields change.
+pub const VARIABLE_RATE_HIGH_VELOCITY_THRESHOLD: f32 = 50.0; // pixels/sec
+pub const VARIABLE_RATE_LOW_VELOCITY_THRESHOLD: f32 = 5.0; // pixels/sec
+pub const VARIABLE_RATE_HIGH_STRIDE: u64 = 2; // every 2nd frame for fast entities
+pub const VARIABLE_RATE_LOW_STRIDE: u64 = 6; // every 6th frame for slow entities
+
 // Performance
 pub const TARGET_TICK_MS: u64 = 16; // 60 Hz
 pub const SLOW_TICK_LOG_MS: u64 = 12; // warn if physics+logic exceed this
@@ -84,6 +224,21 @@ pub const PISTOL_PROJECTILE_SPEED: f32 = 450.0;
 pub const SHOTGUN_PROJECTILE_SPEED: f32 = 450.0;
 pub const RIFLE_PROJECTILE_SPEED: f32 = 600.0;
 pub const SNIPER_PROJECTILE_SPEED: f32 = 800.0;
+
+// ── Quick Match mode ───────────────────────────────────────────────
+pub const QUICK_MATCH_MAX_PLAYERS: usize = 32;
+pub const QUICK_MATCH_DURATION_SECS: f32 = 300.0; // 5 minutes
+pub const QUICK_MATCH_BOT_FILL_DELAY_SECS: f32 = 15.0;
+pub const QUICK_MATCH_MIN_HUMANS: usize = 16;
+
+// ── Mobile match sizing ───────────────────────────────────────────
+pub const MOBILE_BLITZ_MAX_PLAYERS: usize = 16;
+pub const MOBILE_BLITZ_DURATION_SECS: f32 = 180.0; // 3 minutes
+pub const MOBILE_STANDARD_MAX_PLAYERS: usize = 32;
+pub const MOBILE_STANDARD_DURATION_SECS: f32 = 300.0; // 5 minutes
+
+// ── Default full match ────────────────────────────────────────────
+pub const FULL_MATCH_DURATION_SECS: f32 = 300.0; // 5 minutes (existing default)
 
 // AoI tuning for higher player counts: smaller radius + capped nearest entities per client.
 pub const AOI_RADIUS: f32 = 520.0;

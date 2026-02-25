@@ -30,6 +30,8 @@ pub(crate) fn event_instigator_id(event: &GameEvent) -> Option<PlayerID> {
         GameEvent::FlagGrabbed { player_id, .. } => Some(player_id.clone()),
         GameEvent::FlagCaptured { capturer_id, .. } => Some(capturer_id.clone()),
         GameEvent::TeamPing { player_id, .. } => Some(player_id.clone()),
+        GameEvent::Killstreak { player_id, .. } => Some(player_id.clone()),
+        GameEvent::AssistKill { assister_id, .. } => Some(assister_id.clone()),
         _ => None,
     }
 }
@@ -46,6 +48,7 @@ pub(crate) fn event_target_id(event: &GameEvent) -> Option<String> {
         GameEvent::FlagDropped { flag_team_id, .. } => Some(flag_team_id.to_string()),
         GameEvent::FlagReturned { flag_team_id, .. } => Some(flag_team_id.to_string()),
         GameEvent::TeamPing { team_id, .. } => Some(team_id.to_string()),
+        GameEvent::AssistKill { victim_id, .. } => Some(victim_id.to_string()),
         _ => None,
     }
 }
@@ -63,6 +66,8 @@ pub(crate) fn event_value(event: &GameEvent) -> Option<f32> {
     match event {
         GameEvent::PlayerDamaged { damage, .. } => Some(*damage as f32),
         GameEvent::WallImpact { damage, .. } => Some(*damage as f32),
+        GameEvent::Killstreak { streak, .. } => Some(*streak as f32),
+        GameEvent::AssistKill { points, .. } => Some(*points as f32),
         _ => None,
     }
 }
@@ -86,5 +91,7 @@ pub(crate) fn map_game_event_type_to_fb(event: &GameEvent) -> fb::GameEventType 
         }
         GameEvent::MeleeHit { .. } => fb::GameEventType::PlayerDamageEffect,
         GameEvent::Footstep { .. } => fb::GameEventType::BulletImpact,
+        GameEvent::Killstreak { .. } => fb::GameEventType::Killstreak,
+        GameEvent::AssistKill { .. } => fb::GameEventType::AssistKill,
     }
 }

@@ -66,8 +66,16 @@ export class PlayerInput {
         const offset = this.bb.__offset(this.bb_pos, 26);
         return offset ? this.bb.readInt8(this.bb_pos + offset) : 0;
     }
+    pingX() {
+        const offset = this.bb.__offset(this.bb_pos, 28);
+        return offset ? this.bb.readFloat32(this.bb_pos + offset) : 0.0;
+    }
+    pingY() {
+        const offset = this.bb.__offset(this.bb_pos, 30);
+        return offset ? this.bb.readFloat32(this.bb_pos + offset) : 0.0;
+    }
     static startPlayerInput(builder) {
-        builder.startObject(12);
+        builder.startObject(14);
     }
     static addTimestamp(builder, timestamp) {
         builder.addFieldInt64(0, timestamp, BigInt('0'));
@@ -105,11 +113,17 @@ export class PlayerInput {
     static addUseAbilitySlot(builder, useAbilitySlot) {
         builder.addFieldInt8(11, useAbilitySlot, 0);
     }
+    static addPingX(builder, pingX) {
+        builder.addFieldFloat32(12, pingX, 0.0);
+    }
+    static addPingY(builder, pingY) {
+        builder.addFieldFloat32(13, pingY, 0.0);
+    }
     static endPlayerInput(builder) {
         const offset = builder.endObject();
         return offset;
     }
-    static createPlayerInput(builder, timestamp, sequence, moveForward, moveBackward, moveLeft, moveRight, shooting, reload, rotation, meleeAttack, changeWeaponSlot, useAbilitySlot) {
+    static createPlayerInput(builder, timestamp, sequence, moveForward, moveBackward, moveLeft, moveRight, shooting, reload, rotation, meleeAttack, changeWeaponSlot, useAbilitySlot, pingX, pingY) {
         PlayerInput.startPlayerInput(builder);
         PlayerInput.addTimestamp(builder, timestamp);
         PlayerInput.addSequence(builder, sequence);
@@ -123,6 +137,8 @@ export class PlayerInput {
         PlayerInput.addMeleeAttack(builder, meleeAttack);
         PlayerInput.addChangeWeaponSlot(builder, changeWeaponSlot);
         PlayerInput.addUseAbilitySlot(builder, useAbilitySlot);
+        PlayerInput.addPingX(builder, pingX);
+        PlayerInput.addPingY(builder, pingY);
         return PlayerInput.endPlayerInput(builder);
     }
 }

@@ -26,6 +26,10 @@ static getSizePrefixedRootAsGameMessage(bb:flatbuffers.ByteBuffer, obj?:GameMess
   return (obj || new GameMessage()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
+static bufferHasIdentifier(bb:flatbuffers.ByteBuffer):boolean {
+  return bb.__has_identifier('MGS1');
+}
+
 msgType():MessageType {
   const offset = this.bb!.__offset(this.bb_pos, 4);
   return offset ? this.bb!.readInt8(this.bb_pos + offset) : MessageType.Welcome;
@@ -41,8 +45,13 @@ actualMessage<T extends flatbuffers.Table>(obj:any):any|null {
   return offset ? this.bb!.__union(obj, this.bb_pos + offset) : null;
 }
 
+protocolVersion():number {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.readUint32(this.bb_pos + offset) : 1;
+}
+
 static startGameMessage(builder:flatbuffers.Builder) {
-  builder.startObject(3);
+  builder.startObject(4);
 }
 
 static addMsgType(builder:flatbuffers.Builder, msgType:MessageType) {
@@ -57,24 +66,29 @@ static addActualMessage(builder:flatbuffers.Builder, actualMessageOffset:flatbuf
   builder.addFieldOffset(2, actualMessageOffset, 0);
 }
 
+static addProtocolVersion(builder:flatbuffers.Builder, protocolVersion:number) {
+  builder.addFieldInt32(3, protocolVersion, 1);
+}
+
 static endGameMessage(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
 static finishGameMessageBuffer(builder:flatbuffers.Builder, offset:flatbuffers.Offset) {
-  builder.finish(offset);
+  builder.finish(offset, 'MGS1');
 }
 
 static finishSizePrefixedGameMessageBuffer(builder:flatbuffers.Builder, offset:flatbuffers.Offset) {
-  builder.finish(offset, undefined, true);
+  builder.finish(offset, 'MGS1', true);
 }
 
-static createGameMessage(builder:flatbuffers.Builder, msgType:MessageType, actualMessageType:MessagePayload, actualMessageOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createGameMessage(builder:flatbuffers.Builder, msgType:MessageType, actualMessageType:MessagePayload, actualMessageOffset:flatbuffers.Offset, protocolVersion:number):flatbuffers.Offset {
   GameMessage.startGameMessage(builder);
   GameMessage.addMsgType(builder, msgType);
   GameMessage.addActualMessageType(builder, actualMessageType);
   GameMessage.addActualMessage(builder, actualMessageOffset);
+  GameMessage.addProtocolVersion(builder, protocolVersion);
   return GameMessage.endGameMessage(builder);
 }
 }

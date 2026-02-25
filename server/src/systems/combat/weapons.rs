@@ -1,5 +1,6 @@
 // massive_game_server/server/src/systems/combat/weapons.rs
 
+use crate::core::constants::*;
 use crate::core::types::ServerWeaponType;
 
 #[derive(Debug, Clone, Copy)]
@@ -19,29 +20,29 @@ pub struct WeaponFalloffProfile {
 pub fn profile(weapon: ServerWeaponType) -> WeaponProfile {
     match weapon {
         ServerWeaponType::Pistol => WeaponProfile {
-            damage: 8,
-            fire_rate_seconds: 0.6,
-            max_ammo: 7,
+            damage: PISTOL_DAMAGE,
+            fire_rate_seconds: PISTOL_FIRE_RATE_SECS,
+            max_ammo: PISTOL_MAX_AMMO,
         },
         ServerWeaponType::Shotgun => WeaponProfile {
-            damage: 12,
-            fire_rate_seconds: 0.6,
-            max_ammo: 5,
+            damage: SHOTGUN_DAMAGE,
+            fire_rate_seconds: SHOTGUN_FIRE_RATE_SECS,
+            max_ammo: SHOTGUN_MAX_AMMO,
         },
         ServerWeaponType::Rifle => WeaponProfile {
-            damage: 10,
-            fire_rate_seconds: 0.1,
-            max_ammo: 30,
+            damage: RIFLE_DAMAGE,
+            fire_rate_seconds: RIFLE_FIRE_RATE_SECS,
+            max_ammo: RIFLE_MAX_AMMO,
         },
         ServerWeaponType::Sniper => WeaponProfile {
-            damage: 50,
-            fire_rate_seconds: 1.2,
-            max_ammo: 5,
+            damage: SNIPER_DAMAGE,
+            fire_rate_seconds: SNIPER_FIRE_RATE_SECS,
+            max_ammo: SNIPER_MAX_AMMO,
         },
         ServerWeaponType::Melee => WeaponProfile {
-            damage: 30,
-            fire_rate_seconds: 0.5,
-            max_ammo: 0,
+            damage: MELEE_DAMAGE,
+            fire_rate_seconds: MELEE_FIRE_RATE_SECS,
+            max_ammo: MELEE_MAX_AMMO,
         },
     }
 }
@@ -49,29 +50,29 @@ pub fn profile(weapon: ServerWeaponType) -> WeaponProfile {
 pub fn falloff_profile(weapon: ServerWeaponType) -> WeaponFalloffProfile {
     match weapon {
         ServerWeaponType::Pistol => WeaponFalloffProfile {
-            falloff_start: 150.0,
-            max_range: 300.0,
-            min_multiplier: 0.60,
+            falloff_start: PISTOL_FALLOFF_START,
+            max_range: PISTOL_MAX_RANGE,
+            min_multiplier: PISTOL_MIN_MULTIPLIER,
         },
         ServerWeaponType::Shotgun => WeaponFalloffProfile {
-            falloff_start: 40.0,
-            max_range: 160.0,
-            min_multiplier: 0.10,
+            falloff_start: SHOTGUN_FALLOFF_START,
+            max_range: SHOTGUN_MAX_RANGE,
+            min_multiplier: SHOTGUN_MIN_MULTIPLIER,
         },
         ServerWeaponType::Rifle => WeaponFalloffProfile {
-            falloff_start: 200.0,
-            max_range: 500.0,
-            min_multiplier: 0.40,
+            falloff_start: RIFLE_FALLOFF_START,
+            max_range: RIFLE_MAX_RANGE,
+            min_multiplier: RIFLE_MIN_MULTIPLIER,
         },
         ServerWeaponType::Sniper => WeaponFalloffProfile {
-            falloff_start: 600.0,
-            max_range: 1_200.0,
-            min_multiplier: 0.80,
+            falloff_start: SNIPER_FALLOFF_START,
+            max_range: SNIPER_MAX_RANGE,
+            min_multiplier: SNIPER_MIN_MULTIPLIER,
         },
         ServerWeaponType::Melee => WeaponFalloffProfile {
-            falloff_start: 0.0,
-            max_range: 30.0,
-            min_multiplier: 1.0,
+            falloff_start: MELEE_FALLOFF_START,
+            max_range: MELEE_MAX_RANGE,
+            min_multiplier: MELEE_MIN_MULTIPLIER,
         },
     }
 }

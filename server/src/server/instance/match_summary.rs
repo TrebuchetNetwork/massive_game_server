@@ -86,7 +86,7 @@ impl MassiveGameServer {
             reason: reason.to_string(),
             map_name: self.map_name.clone(),
             game_mode: format!("{:?}", game_mode),
-            match_duration: (300.0 - time_remaining).clamp(0.0, 300.0),
+            match_duration: (self.match_duration_secs - time_remaining).clamp(0.0, self.match_duration_secs),
             winning_team,
             players,
             mvp_kills,

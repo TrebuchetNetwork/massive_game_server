@@ -56,6 +56,21 @@ pub(super) fn create_fb_player_state_for_delta<'a>(
     pstate: &PlayerState,
     changed_fields: u16,
 ) -> flatbuffers::WIPOffset<fb::PlayerState<'a>> {
+    create_fb_player_state_for_delta_ext(builder, pstate, changed_fields, false)
+}
+
+/// Extended version that supports optional mobile quantization.
+/// When `quantize_for_mobile` is true, position/velocity/rotation values are
+/// snapped to a coarser grid before being written as f32 into the FlatBuffer.
+/// This reduces delta-compression entropy and saves bandwidth for mobile clients.
+pub(super) fn create_fb_player_state_for_delta_ext<'a>(
+    builder: &mut flatbuffers::FlatBufferBuilder<'a>,
+    pstate: &PlayerState,
+    changed_fields: u16,
+    quantize_for_mobile: bool,
+) -> flatbuffers::WIPOffset<fb::PlayerState<'a>> {
+    use crate::core::constants::{quantize_position, quantize_rotation, quantize_velocity};
+
     let is_full_state = changed_fields == 0xFFFF || changed_fields == u8::MAX as u16;
     let has_position_delta = is_full_state || (changed_fields & FIELD_POSITION_ROTATION) != 0;
     let has_health_delta = is_full_state || (changed_fields & FIELD_HEALTH_ALIVE) != 0;
@@ -77,28 +92,37 @@ pub(super) fn create_fb_player_state_for_delta<'a>(
         fb::WeaponType::Pistol
     };
 
+    // Apply mobile quantization: snap to coarser grid to reduce entropy
+    let (px, py, rot, vx, vy) = if has_position_delta && quantize_for_mobile {
+        (
+            quantize_position(pstate.x),
+            quantize_position(pstate.y),
+            quantize_rotation(pstate.rotation),
+            quantize_velocity(pstate.velocity_x),
+            quantize_velocity(pstate.velocity_y),
+        )
+    } else if has_position_delta {
+        (
+            pstate.x,
+            pstate.y,
+            pstate.rotation,
+            pstate.velocity_x,
+            pstate.velocity_y,
+        )
+    } else {
+        (0.0, 0.0, 0.0, 0.0, 0.0)
+    };
+
     fb::PlayerState::create(
         builder,
         &fb::PlayerStateArgs {
             id: Some(id_fb),
             username: username_fb,
-            x: if has_position_delta { pstate.x } else { 0.0 },
-            y: if has_position_delta { pstate.y } else { 0.0 },
-            rotation: if has_position_delta {
-                pstate.rotation
-            } else {
-                0.0
-            },
-            velocity_x: if has_position_delta {
-                pstate.velocity_x
-            } else {
-                0.0
-            },
-            velocity_y: if has_position_delta {
-                pstate.velocity_y
-            } else {
-                0.0
-            },
+            x: px,
+            y: py,
+            rotation: rot,
+            velocity_x: vx,
+            velocity_y: vy,
             health: if has_health_delta { pstate.health } else { 0 },
             max_health: if has_health_delta {
                 pstate.max_health
@@ -154,6 +178,41 @@ pub(super) fn create_fb_player_state_for_delta<'a>(
                 pstate.is_carrying_flag_team_id as i8
             } else {
                 0
+            },
+            ability_1_cooldown_remaining: if has_powerup_delta {
+                pstate.ability_1_cooldown_remaining
+            } else {
+                0.0
+            },
+            ability_2_cooldown_remaining: if has_powerup_delta {
+                pstate.ability_2_cooldown_remaining
+            } else {
+                0.0
+            },
+            invulnerable_remaining: if has_powerup_delta {
+                pstate.invulnerable_remaining
+            } else {
+                0.0
+            },
+            secondary_weapon: if has_weapon_delta {
+                map_server_weapon_to_fb(pstate.secondary_weapon)
+            } else {
+                fb::WeaponType::Pistol
+            },
+            weapon_swap_progress: if has_weapon_delta {
+                pstate.weapon_swap_progress
+            } else {
+                0.0
+            },
+            current_streak: if has_score_delta {
+                pstate.current_streak
+            } else {
+                0
+            },
+            primary_weapon: if has_weapon_delta {
+                map_server_weapon_to_fb(pstate.primary_weapon)
+            } else {
+                fb::WeaponType::Rifle
             },
         },
     )

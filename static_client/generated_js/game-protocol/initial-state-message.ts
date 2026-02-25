@@ -10,6 +10,7 @@ import { Pickup } from '../game-protocol/pickup.js';
 import { PlayerState } from '../game-protocol/player-state.js';
 import { ProjectileState } from '../game-protocol/projectile-state.js';
 import { Wall } from '../game-protocol/wall.js';
+import { Zone } from '../game-protocol/zone.js';
 
 
 export class InitialStateMessage {
@@ -92,20 +93,30 @@ flagStatesLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
-timestamp():bigint {
+zones(index: number, obj?:Zone):Zone|null {
   const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? (obj || new Zone()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+zonesLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+timestamp():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
 mapName():string|null
 mapName(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 mapName(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 static startInitialStateMessage(builder:flatbuffers.Builder) {
-  builder.startObject(9);
+  builder.startObject(10);
 }
 
 static addPlayerId(builder:flatbuffers.Builder, playerIdOffset:flatbuffers.Offset) {
@@ -196,12 +207,28 @@ static startFlagStatesVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addZones(builder:flatbuffers.Builder, zonesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(7, zonesOffset, 0);
+}
+
+static createZonesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startZonesVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static addTimestamp(builder:flatbuffers.Builder, timestamp:bigint) {
-  builder.addFieldInt64(7, timestamp, BigInt('0'));
+  builder.addFieldInt64(8, timestamp, BigInt('0'));
 }
 
 static addMapName(builder:flatbuffers.Builder, mapNameOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, mapNameOffset, 0);
+  builder.addFieldOffset(9, mapNameOffset, 0);
 }
 
 static endInitialStateMessage(builder:flatbuffers.Builder):flatbuffers.Offset {

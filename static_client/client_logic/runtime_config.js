@@ -96,14 +96,16 @@ export function buildRuntimeConfig(search, GP) {
     const WEBGPU_INSTANCE_FORCE_ENABLED = WEBGPU_INSTANCES_TOGGLE.state === "on";
     const WEBGPU_FORCE_ACTIVE =
         parseToggleParam(uiModeParams.get("webgpu_force_active")).state === "on";
-    const WEBGPU_PROJECTILE_LAYER_ENABLED =
+    // Disable WebGPU layers on low-end mobile (unlikely to support it, saves GPU memory)
+    const isLowEndMobile = isMobileUA && (navigator.hardwareConcurrency || 2) < 4;
+    const WEBGPU_PROJECTILE_LAYER_ENABLED = !isLowEndMobile && (
         WEBGPU_PROJECTILES_TOGGLE.state === "on" ||
         (WEBGPU_PROJECTILES_TOGGLE.state !== "off" &&
-            (WEBGPU_INSTANCE_FORCE_ENABLED || WEBGPU_INSTANCE_AUTO_ENABLED));
-    const WEBGPU_PLAYER_LAYER_ENABLED =
+            (WEBGPU_INSTANCE_FORCE_ENABLED || WEBGPU_INSTANCE_AUTO_ENABLED)));
+    const WEBGPU_PLAYER_LAYER_ENABLED = !isLowEndMobile && (
         WEBGPU_PLAYERS_TOGGLE.state === "on" ||
         (WEBGPU_PLAYERS_TOGGLE.state !== "off" &&
-            (WEBGPU_INSTANCE_FORCE_ENABLED || WEBGPU_INSTANCE_AUTO_ENABLED));
+            (WEBGPU_INSTANCE_FORCE_ENABLED || WEBGPU_INSTANCE_AUTO_ENABLED)));
     const WEBGPU_REQUIRED = uiModeParams.get("require_webgpu") === "1";
     const WEBGL2_FALLBACK_TOGGLE = parseToggleParam(uiModeParams.get("webgl2_fallback"));
     const WEBGL2_FALLBACK_ENABLED = WEBGL2_FALLBACK_TOGGLE.state !== "off";
@@ -170,15 +172,16 @@ export function buildRuntimeConfig(search, GP) {
     const EFFECTS_ADAPTIVE_EVAL_INTERVAL_MS = 500;
 
     // Game constants
-    const INTERPOLATION_DELAY = 100; // ms
-    const MIN_INTERPOLATION_DELAY_MS = 70;
-    const MAX_INTERPOLATION_DELAY_MS = 180;
-    const PLAYER_EXTRAPOLATION_LIMIT_MS = 120;
-    const PROJECTILE_EXTRAPOLATION_LIMIT_MS = 160;
+    const isMobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    const INTERPOLATION_DELAY = isMobileUA ? 120 : 100; // ms - higher base for mobile jitter
+    const MIN_INTERPOLATION_DELAY_MS = isMobileUA ? 80 : 70;
+    const MAX_INTERPOLATION_DELAY_MS = isMobileUA ? 250 : 180;
+    const PLAYER_EXTRAPOLATION_LIMIT_MS = isMobileUA ? 250 : 120; // Extended for mobile networks
+    const PROJECTILE_EXTRAPOLATION_LIMIT_MS = isMobileUA ? 280 : 160;
     const PROJECTILE_CLIENT_PREDICTION_LIMIT_MS = 1200;
     const NETWORK_TIMING_EMA_ALPHA = 0.18;
-    const POSITION_SNAP_DISTANCE_SQ = 140 * 140;
-    const PROJECTILE_SNAP_DISTANCE_SQ = 220 * 220;
+    const POSITION_SNAP_DISTANCE_SQ = isMobileUA ? (200 * 200) : (140 * 140); // Wider snap threshold for mobile
+    const PROJECTILE_SNAP_DISTANCE_SQ = isMobileUA ? (300 * 300) : (220 * 220);
     const INPUT_SEND_RATE = 60; // Hz
     const RECONCILIATION_BUFFER_SIZE = 120;
     const PLAYER_RADIUS = 15;

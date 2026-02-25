@@ -80,6 +80,15 @@
                 <button id="mobileAbilityDash" class="mobile-button">Dash</button>
                 <button id="mobileAbilityDodge" class="mobile-button">Dodge</button>
             </div>
+            <div class="mobile-controls__settings">
+                <button id="mobileDataSaver" class="mobile-button mobile-button--small">Data Saver</button>
+                <button id="mobileAimAssistToggle" class="mobile-button mobile-button--small">Aim Assist</button>
+                <div id="mobileConnectionQuality" class="mobile-connection-indicator">
+                    <span class="mobile-connection-bar"></span>
+                    <span class="mobile-connection-bar"></span>
+                    <span class="mobile-connection-bar"></span>
+                </div>
+            </div>
         </div>
         <div id="deathRecap" class="death-recap">
             <div class="death-recap__title">Elimination Recap</div>
@@ -102,7 +111,9 @@
             </div>
             <div id="postMatchMeta" class="post-match-panel__meta"></div>
             <div id="postMatchMvp" class="post-match-panel__mvp"></div>
+            <div id="postMatchWeaponBreakdown" class="post-match-panel__weapons"></div>
             <div id="postMatchTable" class="post-match-panel__table"></div>
+            <div id="postMatchTrend" class="post-match-panel__trend"></div>
         </div>
         <div id="pingWheel" class="ping-wheel">
             <div class="ping-wheel__center">Ping</div>
@@ -743,7 +754,10 @@
         }
 
         function getForegroundTickerMaxFps() {
-            return BENCH_MODE ? BENCH_MAX_FPS : 60;
+            if (BENCH_MODE) return BENCH_MAX_FPS;
+            // Mobile/battery-aware FPS cap
+            if (typeof getEffectiveFPSCap === 'function') return getEffectiveFPSCap();
+            return 60;
         }
 
         function applyBackgroundThrottling(forceHidden = document.hidden) {
@@ -1114,6 +1128,10 @@
                 return PROJECTILE_RENDER_CAP_STABLE;
             }
             if (players.size > HIGH_POPULATION_PLAYER_COUNT) return PROJECTILE_RENDER_CAP_DENSE;
+            // Mobile-tier projectile caps
+            if (deviceClassification === 'low') return Math.min(PROJECTILE_RENDER_CAP_ULTRA, 80);
+            if (deviceClassification === 'mid') return Math.min(PROJECTILE_RENDER_CAP_DENSE, 160);
+            if (deviceClassification === 'high') return Math.min(PROJECTILE_RENDER_CAP_DEFAULT, 320);
             return PROJECTILE_RENDER_CAP_DEFAULT;
         }
 
@@ -1125,6 +1143,10 @@
                 return PLAYER_RENDER_CAP_STABLE;
             }
             if (players.size > HIGH_POPULATION_PLAYER_COUNT || smoothedFrameMs > 24) return PLAYER_RENDER_CAP_DENSE;
+            // Mobile-tier caps: reduce render load on constrained devices
+            if (deviceClassification === 'low') return Math.min(PLAYER_RENDER_CAP_ULTRA, 32);
+            if (deviceClassification === 'mid') return Math.min(PLAYER_RENDER_CAP_DENSE, 64);
+            if (deviceClassification === 'high') return Math.min(PLAYER_RENDER_CAP_DEFAULT, 96);
             return PLAYER_RENDER_CAP_DEFAULT;
         }
 
@@ -2317,6 +2339,98 @@
         const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
         let touchControlsInitialized = false;
 
+        // ── Mobile touch enhancements ───────────────────────────────────
+        let aimSensitivity = parseFloat(localStorage.getItem('aimSensitivity') || '1.0');
+        let aimAssistEnabled = localStorage.getItem('aimAssist') !== 'false';
+        const AIM_ASSIST_MAGNETISM = 0.15; // radians snap-to-nearest-enemy
+        const AIM_ASSIST_MAX_DISTANCE = 400;
+
+        // Virtual crosshair (rendered in game loop for mobile)
+        let virtualCrosshairSprite = null;
+
+        function createVirtualCrosshair() {
+            if (virtualCrosshairSprite || !isTouchDevice) return;
+            const g = new PIXI.Graphics();
+            g.lineStyle(2, 0xFF4444, 0.6);
+            // Crosshair lines
+            g.moveTo(-10, 0); g.lineTo(-4, 0);
+            g.moveTo(4, 0); g.lineTo(10, 0);
+            g.moveTo(0, -10); g.lineTo(0, -4);
+            g.moveTo(0, 4); g.lineTo(0, 10);
+            // Center dot
+            g.beginFill(0xFF4444, 0.8);
+            g.drawCircle(0, 0, 1.5);
+            g.endFill();
+            virtualCrosshairSprite = g;
+        }
+
+        function updateVirtualCrosshair() {
+            if (!virtualCrosshairSprite || !localPlayerState || !localPlayerState.alive) {
+                if (virtualCrosshairSprite) virtualCrosshairSprite.visible = false;
+                return;
+            }
+            virtualCrosshairSprite.visible = true;
+            const aimDist = 120;
+            const rot = localPlayerState.rotation || 0;
+            virtualCrosshairSprite.x = localPlayerState.x + Math.cos(rot) * aimDist;
+            virtualCrosshairSprite.y = localPlayerState.y + Math.sin(rot) * aimDist;
+        }
+
+        // Aim assist: find nearest enemy and slightly adjust aim toward them
+        function applyAimAssist(aimAngle) {
+            if (!aimAssistEnabled || !isTouchDevice || !localPlayerState) return aimAngle;
+            let bestAngleDiff = AIM_ASSIST_MAGNETISM;
+            let bestAngle = aimAngle;
+            for (const [pid, pdata] of players) {
+                if (pid === myPlayerId || !pdata.alive || pdata.team_id === localPlayerState.team_id) continue;
+                const dx = pdata.x - localPlayerState.x;
+                const dy = pdata.y - localPlayerState.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > AIM_ASSIST_MAX_DISTANCE || dist < 1) continue;
+                const angleToEnemy = Math.atan2(dy, dx);
+                let diff = angleToEnemy - aimAngle;
+                // Normalize to [-PI, PI]
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                if (Math.abs(diff) < bestAngleDiff) {
+                    bestAngleDiff = Math.abs(diff);
+                    // Blend toward enemy
+                    bestAngle = aimAngle + diff * 0.3;
+                }
+            }
+            return bestAngle;
+        }
+
+        // Landscape orientation lock for mobile
+        if (isMobileDevice && screen.orientation && screen.orientation.lock) {
+            screen.orientation.lock('landscape').catch(() => {});
+        }
+
+        // Connection quality indicator
+        let connectionQuality = 'good'; // good, fair, poor
+        function updateConnectionQuality(rtt, jitter) {
+            if (jitter > 50 || rtt > 200) connectionQuality = 'poor';
+            else if (jitter > 20 || rtt > 100) connectionQuality = 'fair';
+            else connectionQuality = 'good';
+        }
+
+        // Network type change detection (WiFi <-> cellular)
+        let lastNetworkType = null;
+        if (navigator.connection) {
+            lastNetworkType = navigator.connection.type || navigator.connection.effectiveType;
+            navigator.connection.addEventListener('change', () => {
+                const newType = navigator.connection.type || navigator.connection.effectiveType;
+                if (lastNetworkType && newType !== lastNetworkType) {
+                    log(`Network changed: ${lastNetworkType} -> ${newType}`, 'warn');
+                    // Widen interpolation buffer temporarily to absorb transition jitter
+                    if (typeof adaptiveInterpolationDelayMs !== 'undefined') {
+                        adaptiveInterpolationDelayMs = MAX_INTERPOLATION_DELAY_MS;
+                    }
+                }
+                lastNetworkType = newType;
+            });
+        }
+
         const connectionStatusTitles = {
             idle: 'Not connected',
             connecting: 'Connecting',
@@ -2567,7 +2681,7 @@
 
             const dx = touchLocal.x - (localPlayerState.render_x || localPlayerState.x);
             const dy = touchLocal.y - (localPlayerState.render_y || localPlayerState.y);
-            inputState.rotation = Math.atan2(dy, dx) * gameSettings.sensitivity;
+            inputState.rotation = Math.atan2(dy, dx) * gameSettings.sensitivity * aimSensitivity;
         }
 
         function syncMobileFireButtonState() {
@@ -2910,6 +3024,46 @@
                 event.preventDefault();
             }, { passive: false });
 
+            // Mobile settings buttons
+            const mobileDataSaverBtn = document.getElementById('mobileDataSaver');
+            const mobileAimAssistBtn = document.getElementById('mobileAimAssistToggle');
+            const mobileConnQualityDiv = document.getElementById('mobileConnectionQuality');
+
+            if (mobileDataSaverBtn) {
+                if (dataSaverMode) mobileDataSaverBtn.classList.add('mobile-button--active');
+                mobileDataSaverBtn.addEventListener('touchstart', (event) => {
+                    dataSaverMode = !dataSaverMode;
+                    localStorage.setItem('dataSaverMode', dataSaverMode);
+                    mobileDataSaverBtn.classList.toggle('mobile-button--active', dataSaverMode);
+                    // Update FPS cap and resolution
+                    if (app?.ticker) app.ticker.maxFPS = getForegroundTickerMaxFps();
+                    if (mobileProfile) {
+                        currentRenderResolution = dataSaverMode ? Math.min(0.4, mobileProfile.resolution) : mobileProfile.resolution;
+                        pendingRenderResolutionTarget = currentRenderResolution;
+                    }
+                    triggerHaptic(8);
+                    event.preventDefault();
+                }, { passive: false });
+            }
+
+            if (mobileAimAssistBtn) {
+                if (aimAssistEnabled) mobileAimAssistBtn.classList.add('mobile-button--active');
+                mobileAimAssistBtn.addEventListener('touchstart', (event) => {
+                    aimAssistEnabled = !aimAssistEnabled;
+                    localStorage.setItem('aimAssist', aimAssistEnabled);
+                    mobileAimAssistBtn.classList.toggle('mobile-button--active', aimAssistEnabled);
+                    triggerHaptic(8);
+                    event.preventDefault();
+                }, { passive: false });
+            }
+
+            // Update connection quality indicator periodically
+            if (mobileConnQualityDiv) {
+                setInterval(() => {
+                    mobileConnQualityDiv.setAttribute('data-quality', connectionQuality);
+                }, 2000);
+            }
+
             const schedulePingWheel = (touch, touchId = null) => {
                 if (!touch) return;
                 const anchor = getWorldPointFromMinimap(touch.clientX, touch.clientY);
@@ -3033,6 +3187,7 @@
         let worldContainer;
         let hudContainer;
         let wallGraphics;
+        let zoneContainer;
         let pickupContainer;
         let projectileContainer;
         let playerContainer;
@@ -3053,6 +3208,7 @@
         let walls = new Map();
         let pickups = new Map();
         let flagStates = new Map();
+        let zones = new Map();
         const playerSprites = new Map();
         const projectileSprites = new Map();
         const projectileSpritePool = [];
@@ -3133,6 +3289,56 @@
         const SYNTHETIC_PROJECTILE_PREFIX = '__synthetic_proj_';
         const GLOBAL_LIGHT_DIR = { x: 0.62, y: 0.78 };
         const PLAYER_SHADOW_BASE_OFFSET = 10;
+        // ── Device classification & mobile render profiles ──────────────
+        const deviceClassification = (() => {
+            const cores = navigator.hardwareConcurrency || 2;
+            const memoryGB = navigator.deviceMemory || 2;
+            const isMobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+            if (!isMobileUA) return 'desktop';
+            if (cores >= 6 && memoryGB >= 6) return 'high';
+            if (cores >= 4 && memoryGB >= 3) return 'mid';
+            return 'low';
+        })();
+        const isMobileDevice = deviceClassification !== 'desktop';
+
+        const MOBILE_RENDER_PROFILES = {
+            high:  { resolution: 0.75, maxFPS: 60, lodMult: 1.0,   effects: true,  fog: true,  shadows: true  },
+            mid:   { resolution: 0.50, maxFPS: 30, lodMult: 0.6,   effects: false, fog: false, shadows: false },
+            low:   { resolution: 0.40, maxFPS: 20, lodMult: 0.4,   effects: false, fog: false, shadows: false },
+        };
+        const mobileProfile = MOBILE_RENDER_PROFILES[deviceClassification] || null;
+
+        // Data saver mode (user toggle)
+        let dataSaverMode = localStorage.getItem('dataSaverMode') === 'true';
+
+        // Battery-aware throttling
+        let batteryLevel = 1.0;
+        let batteryCharging = true;
+        if (navigator.getBattery) {
+            navigator.getBattery().then(battery => {
+                batteryLevel = battery.level;
+                batteryCharging = battery.charging;
+                battery.addEventListener('levelchange', () => { batteryLevel = battery.level; });
+                battery.addEventListener('chargingchange', () => { batteryCharging = battery.charging; });
+            });
+        }
+
+        function getEffectiveFPSCap() {
+            let cap = mobileProfile ? mobileProfile.maxFPS : 60;
+            if (dataSaverMode) cap = Math.min(cap, 30);
+            if (!batteryCharging) {
+                if (batteryLevel < 0.10) cap = Math.min(cap, 20);
+                else if (batteryLevel < 0.20) cap = Math.min(cap, 30);
+            }
+            return cap;
+        }
+
+        function getEffectiveResolution() {
+            let res = mobileProfile ? mobileProfile.resolution : 1.0;
+            if (dataSaverMode) res = Math.min(res, 0.4);
+            return res * (window.devicePixelRatio || 1);
+        }
+
         let syntheticProjectileCount = 0;
         let lastVisiblePlayers = 0;
         let lastPlayerRenderCap = PLAYER_RENDER_CAP_DEFAULT;
@@ -3187,7 +3393,16 @@
             gunTextures: new Map(),
             projectileTextures: new Map(),
             carriedFlagPoleTexture: null,
-            carriedFlagClothTexture: null
+            carriedFlagClothTexture: null,
+            // Texture atlas: single spritesheet for player components
+            playerAtlasTexture: null,
+            playerAtlasRegions: {},
+            // Pre-rendered health bar textures at 10% increments (0-10 index = 0%-100%)
+            healthBarTextures: [],
+            healthBarBgTexture: null,
+            healthBarBorderTexture: null,
+            // Bitmap font name for username labels
+            bitmapFontName: 'MassiveUI'
         };
         let killFeed = [];
         let chatMessages = [];
@@ -3475,7 +3690,18 @@
                     const previousInterval = snapshotIntervalEma;
                     snapshotIntervalEma = lerp(snapshotIntervalEma, interval, NETWORK_TIMING_EMA_ALPHA);
                     snapshotJitterEma = lerp(snapshotJitterEma, Math.abs(interval - previousInterval), NETWORK_TIMING_EMA_ALPHA);
-                    const targetDelay = (snapshotIntervalEma * 1.4) + (snapshotJitterEma * 2.2);
+                    // Jitter-tiered adaptive delay (plan #25)
+                    let targetDelay;
+                    if (snapshotJitterEma < 20) {
+                        // Low jitter: tighter delay for responsiveness
+                        targetDelay = snapshotIntervalEma * 1.2 + snapshotJitterEma * 1.5;
+                    } else if (snapshotJitterEma < 50) {
+                        // Medium jitter: balanced
+                        targetDelay = snapshotIntervalEma * 1.4 + snapshotJitterEma * 2.2;
+                    } else {
+                        // High jitter (mobile/cellular): aggressive buffering
+                        targetDelay = snapshotIntervalEma * 1.8 + snapshotJitterEma * 3.0;
+                    }
                     adaptiveInterpolationDelayMs = clamp(
                         targetDelay,
                         MIN_INTERPOLATION_DELAY_MS,
@@ -3521,14 +3747,18 @@
         }
 
         function getAimAssistRotation(baseRotation) {
-            if (dynamicsTuning.aimAssistStrength <= 0 || !localPlayerState || !localPlayerState.alive) {
+            // Mobile touch devices get enhanced aim assist (stronger magnetism)
+            const mobileBoost = (isTouchDevice && aimAssistEnabled) ? 1.5 : 1.0;
+            const effectiveStrength = dynamicsTuning.aimAssistStrength * mobileBoost;
+            if (effectiveStrength <= 0 || !localPlayerState || !localPlayerState.alive) {
                 return baseRotation;
             }
 
             const fromX = localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x;
             const fromY = localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y;
-            const maxDistance = dynamicsTuning.aimAssistRange;
+            const maxDistance = isTouchDevice ? Math.max(dynamicsTuning.aimAssistRange, AIM_ASSIST_MAX_DISTANCE) : dynamicsTuning.aimAssistRange;
             const maxDistanceSq = maxDistance * maxDistance;
+            const coneLimit = isTouchDevice ? Math.max(dynamicsTuning.aimAssistConeRad, AIM_ASSIST_MAGNETISM) : dynamicsTuning.aimAssistConeRad;
             let bestDiff = null;
             let bestScore = Number.POSITIVE_INFINITY;
 
@@ -3546,7 +3776,7 @@
                 const targetRotation = Math.atan2(dy, dx);
                 const diff = normalizeAngle(targetRotation - baseRotation);
                 const absDiff = Math.abs(diff);
-                if (absDiff > dynamicsTuning.aimAssistConeRad) return;
+                if (absDiff > coneLimit) return;
 
                 const score = absDiff + Math.sqrt(distanceSq) / maxDistance;
                 if (score < bestScore) {
@@ -3556,7 +3786,7 @@
             });
 
             if (bestDiff === null) return baseRotation;
-            return normalizeAngle(baseRotation + bestDiff * dynamicsTuning.aimAssistStrength);
+            return normalizeAngle(baseRotation + bestDiff * effectiveStrength);
         }
 
         const peerConnectionConfig = buildPeerConnectionConfig(uiModeParams, log);
@@ -3699,6 +3929,137 @@
                 renderAssetCache.projectileTextures.set(weaponType, createProjectileTextureForWeapon(weaponType));
             });
 
+            // --- Texture Atlas: consolidate player visual components into a single RenderTexture ---
+            // This reduces draw calls by letting sprites share one BaseTexture.
+            {
+                const atlasSize = 512;
+                const atlasRT = PIXI.RenderTexture.create({ width: atlasSize, height: atlasSize, resolution: 2 });
+                const atlasContainer = new PIXI.Container();
+                const regions = {};
+
+                // Ship body at (64, 64)
+                const shipG = new PIXI.Graphics();
+                shipG.beginFill(0xFFFFFF, 1);
+                shipG.drawPolygon(SHIP_POINTS);
+                shipG.endFill();
+                shipG.position.set(64, 64);
+                atlasContainer.addChild(shipG);
+                regions.ship = { x: 64 - PLAYER_RADIUS * 1.3, y: 64 - PLAYER_RADIUS * 1.3, w: PLAYER_RADIUS * 2.6, h: PLAYER_RADIUS * 2.6 };
+
+                // Engine glow at (160, 64)
+                const engineG = new PIXI.Graphics();
+                engineG.beginFill(0xFFFFFF, 1);
+                engineG.drawCircle(0, 0, PLAYER_RADIUS * 0.3);
+                engineG.endFill();
+                engineG.position.set(160, 64);
+                atlasContainer.addChild(engineG);
+                regions.engineGlow = { x: 160 - PLAYER_RADIUS * 0.4, y: 64 - PLAYER_RADIUS * 0.4, w: PLAYER_RADIUS * 0.8, h: PLAYER_RADIUS * 0.8 };
+
+                // Local indicator ring at (256, 64)
+                const indG = new PIXI.Graphics();
+                indG.lineStyle(2, 0xFFFFFF, 1);
+                indG.drawCircle(0, 0, PLAYER_RADIUS + 4);
+                indG.position.set(256, 64);
+                atlasContainer.addChild(indG);
+                const indSize = (PLAYER_RADIUS + 6) * 2;
+                regions.localIndicator = { x: 256 - indSize / 2, y: 64 - indSize / 2, w: indSize, h: indSize };
+
+                // Shield hex at (384, 64)
+                const shieldG = new PIXI.Graphics();
+                shieldG.lineStyle(2, 0xFFFFFF, 1);
+                shieldG.beginFill(0xFFFFFF, 0.25);
+                drawRegularPolygon(shieldG, 0, 0, PLAYER_RADIUS + 10, 6);
+                shieldG.endFill();
+                shieldG.position.set(384, 64);
+                atlasContainer.addChild(shieldG);
+                const shieldSize = (PLAYER_RADIUS + 12) * 2;
+                regions.shield = { x: 384 - shieldSize / 2, y: 64 - shieldSize / 2, w: shieldSize, h: shieldSize };
+
+                app.renderer.render(atlasContainer, { renderTexture: atlasRT });
+                atlasContainer.destroy({ children: true });
+
+                renderAssetCache.playerAtlasTexture = atlasRT;
+
+                // Create sub-region Texture references from the single atlas BaseTexture
+                const bt = atlasRT.baseTexture;
+                const res = bt.resolution;
+                for (const [name, r] of Object.entries(regions)) {
+                    const frame = new PIXI.Rectangle(r.x * res, r.y * res, r.w * res, r.h * res);
+                    renderAssetCache.playerAtlasRegions[name] = new PIXI.Texture(bt, frame);
+                }
+            }
+
+            // --- Bitmap Font: pre-generate for username labels (10x faster than PIXI.Text) ---
+            PIXI.BitmapFont.from(renderAssetCache.bitmapFontName, {
+                fontFamily: 'Arial',
+                fontSize: 24,
+                fill: '#FFFFFF',
+                stroke: '#111827',
+                strokeThickness: 4,
+                fontWeight: 'normal'
+            }, {
+                // ASCII printable range plus Latin Extended for international player names
+                chars: [
+                    [' ', '~'],         // ASCII printable (space through tilde)
+                    ['\u00C0', '\u00FF'] // Latin-1 Supplement (accented chars)
+                ],
+                resolution: 2,
+                padding: 2
+            });
+
+            // --- Health Bar Textures: pre-render at 10% increments ---
+            {
+                const barWidth = PLAYER_RADIUS * 2;
+                const barHeight = 6;
+                const totalWidth = PLAYER_RADIUS * 2 + 4;
+                const totalHeight = 10;
+
+                // Background texture (dark)
+                renderAssetCache.healthBarBgTexture = buildRenderTexture((g) => {
+                    g.beginFill(0x1F2937, 0.9);
+                    g.drawRoundedRect(0, 0, totalWidth, totalHeight, 5);
+                    g.endFill();
+                });
+
+                // Border texture
+                renderAssetCache.healthBarBorderTexture = buildRenderTexture((g) => {
+                    g.lineStyle(1, 0x4B5563, 0.8);
+                    g.drawRoundedRect(0, 0, totalWidth, totalHeight, 5);
+                });
+
+                // 11 fill textures (0% through 100% in 10% steps)
+                for (let i = 0; i <= 10; i++) {
+                    const healthPercent = i / 10;
+                    const currentWidth = barWidth * healthPercent;
+
+                    if (i === 0) {
+                        // Empty texture for 0% health
+                        renderAssetCache.healthBarTextures.push(PIXI.Texture.EMPTY);
+                        continue;
+                    }
+
+                    let healthColor;
+                    if (healthPercent > 0.6) {
+                        healthColor = interpolateColor(0x22C55E, 0xFACC15, (healthPercent - 0.6) / 0.4);
+                    } else if (healthPercent > 0.3) {
+                        healthColor = interpolateColor(0xFACC15, 0xEF4444, (healthPercent - 0.3) / 0.3);
+                    } else {
+                        healthColor = 0xEF4444;
+                    }
+
+                    const tex = buildRenderTexture((g) => {
+                        g.beginFill(healthColor);
+                        g.drawRoundedRect(0, 0, currentWidth, barHeight, 3);
+                        g.endFill();
+                        // Highlight strip on top
+                        g.beginFill(0xFFFFFF, 0.3);
+                        g.drawRoundedRect(0, 0, currentWidth, 2, 1);
+                        g.endFill();
+                    });
+                    renderAssetCache.healthBarTextures.push(tex);
+                }
+            }
+
             renderAssetCache.initialized = true;
         }
 
@@ -3792,6 +4153,11 @@
                 }
 
                 const containerRect = pixiContainer.getBoundingClientRect();
+                // Apply mobile render profile resolution if applicable
+                if (mobileProfile) {
+                    currentRenderResolution = Math.min(currentRenderResolution, mobileProfile.resolution);
+                    pendingRenderResolutionTarget = currentRenderResolution;
+                }
                 app = new PIXI.Application({
                     width: containerRect.width,
                     height: containerRect.height,
@@ -3848,6 +4214,17 @@
                     syncParticlesBudget();
                 }
 
+                // Apply mobile render profile: disable heavy effects on mid/low devices
+                if (mobileProfile && !mobileProfile.fog && fogOfWarContainer) {
+                    fogOfWarContainer.visible = false;
+                }
+                if (mobileProfile && !mobileProfile.effects && effectsManager && typeof effectsManager.setPerformanceProfile === 'function') {
+                    activeEffectsProfileName = effectsManager.setPerformanceProfile('ultra');
+                }
+                if (mobileProfile && !mobileProfile.shadows && starfield) {
+                    starfield.visible = false;
+                }
+
                 // Add this to resume audio context on first user interaction
                 const resumeAudio = () => {
                     if (audioManager && audioManager.audioContext && audioManager.audioContext.state === 'suspended') {
@@ -3878,6 +4255,8 @@
                 playerContainer = new PIXI.Container();
                 flagContainer = new PIXI.Container();
 
+                zoneContainer = new PIXI.Container();
+                worldContainer.addChild(zoneContainer);
                 worldContainer.addChild(wallGraphics);
                 worldContainer.addChild(pickupContainer);
                 worldContainer.addChild(projectileContainer);
@@ -3904,6 +4283,12 @@
                 sniperRangeText.anchor.set(0.5);
                 sniperRangeText.visible = false;
                 worldContainer.addChild(sniperRangeText);
+
+                // Create virtual crosshair for mobile touch aiming
+                createVirtualCrosshair();
+                if (virtualCrosshairSprite) {
+                    worldContainer.addChild(virtualCrosshairSprite);
+                }
 
                 // Initialize Managers
                 //audioManager = new AudioManager();
@@ -4000,22 +4385,25 @@
     container.gun = gun;
 
     if (!lightweightRemote) {
+        // Health bar using pre-rendered textures (avoids per-frame Graphics.clear/redraw)
         const healthBarContainer = new PIXI.Container();
         healthBarContainer.position.set(0, -PLAYER_RADIUS - 15);
-        const healthBg = new PIXI.Graphics();
-        healthBg.beginFill(0x1F2937, 0.9);
-        healthBg.drawRoundedRect(-PLAYER_RADIUS - 2, -2, PLAYER_RADIUS * 2 + 4, 10, 5);
-        healthBg.endFill();
+        const healthBg = new PIXI.Sprite(renderAssetCache.healthBarBgTexture);
+        healthBg.anchor.set(0.5);
+        healthBg.position.set(0, 3);
         healthBarContainer.addChild(healthBg);
-        const healthBorder = new PIXI.Graphics();
-        healthBorder.lineStyle(1, 0x4B5563, 0.8);
-        healthBorder.drawRoundedRect(-PLAYER_RADIUS - 2, -2, PLAYER_RADIUS * 2 + 4, 10, 5);
+        const healthBorder = new PIXI.Sprite(renderAssetCache.healthBarBorderTexture);
+        healthBorder.anchor.set(0.5);
+        healthBorder.position.set(0, 3);
         healthBarContainer.addChild(healthBorder);
-        const healthFg = new PIXI.Graphics();
+        const healthFg = new PIXI.Sprite(renderAssetCache.healthBarTextures[10] || PIXI.Texture.EMPTY);
+        healthFg.anchor.set(0, 0.5);
+        healthFg.position.set(-PLAYER_RADIUS, 3);
         healthBarContainer.addChild(healthFg);
         container.addChild(healthBarContainer);
         container.healthFg = healthFg;
         container.healthBarContainer = healthBarContainer;
+        container._healthBarIndex = 10;
 
         const shieldVisual = new PIXI.Sprite(renderAssetCache.shieldTexture);
         shieldVisual.anchor.set(0.5);
@@ -4025,13 +4413,12 @@
         container.addChildAt(shieldVisual, 1);
         container.shieldVisual = shieldVisual;
 
-        const usernameStyle = new PIXI.TextStyle({
-            fontFamily: 'Arial', fontSize: 12, fill: [0xFFFFFF, 0xE5E7EB],
-            stroke: 0x111827, strokeThickness: 3,
-            dropShadow: true, dropShadowColor: 0x000000, dropShadowBlur: 3, dropShadowDistance: 1,
+        // Username label using BitmapText (10x faster than PIXI.Text on mobile)
+        const usernameText = new PIXI.BitmapText(player.username || 'Player', {
+            fontName: renderAssetCache.bitmapFontName,
+            fontSize: 12,
             align: 'center'
         });
-        const usernameText = new PIXI.Text(player.username || 'Player', usernameStyle);
         usernameText.anchor.set(0.5);
         usernameText.position.y = -PLAYER_RADIUS - 28;
         container.addChild(usernameText);
@@ -4040,6 +4427,8 @@
 
     container.speedBoostEffect = null;
     container.damageBoostEffect = null;
+    container.dodgeGlowEffect = null;
+    container.weaponSwapEffect = null;
     container._lastTeamId = null;
     container._lastAlive = null;
     container._lastWeapon = null;
@@ -4069,6 +4458,8 @@
     if (sprite.shieldVisual) sprite.shieldVisual.visible = false;
     if (sprite.speedBoostEffect) sprite.speedBoostEffect.visible = false;
     if (sprite.damageBoostEffect) sprite.damageBoostEffect.visible = false;
+    if (sprite.dodgeGlowEffect) sprite.dodgeGlowEffect.visible = false;
+    if (sprite.weaponSwapEffect) sprite.weaponSwapEffect.visible = false;
     if (sprite.carriedFlagSprite) sprite.carriedFlagSprite.visible = false;
     if (sprite.respawnText) sprite.respawnText.visible = false;
 }
@@ -4289,6 +4680,53 @@
         sprite.speedBoostEffect.visible = false;
     }
 
+    // --- Dodge roll invulnerability glow ---
+    if (player.invulnerable_remaining > 0 && player.alive) {
+        if (!sprite.dodgeGlowEffect && !farDetailMode) {
+            sprite.dodgeGlowEffect = createDodgeGlowEffect();
+            sprite.addChildAt(sprite.dodgeGlowEffect, 0);
+        }
+        if (sprite.dodgeGlowEffect) {
+            const glowVisible = !hideRemoteFxByDensity && !farDetailMode;
+            if (sprite.dodgeGlowEffect.visible !== glowVisible) {
+                sprite.dodgeGlowEffect.visible = glowVisible;
+            }
+            if (glowVisible) {
+                // Pulsing glow that fades as invulnerability expires
+                const pulse = 0.6 + 0.4 * Math.sin(frameNowMs * 0.012);
+                const fadeOut = Math.min(1, player.invulnerable_remaining * 4);
+                sprite.dodgeGlowEffect.alpha = pulse * fadeOut * 0.7;
+                const glowScale = 1.0 + 0.15 * Math.sin(frameNowMs * 0.008);
+                sprite.dodgeGlowEffect.scale.set(glowScale);
+            }
+        }
+    } else if (sprite.dodgeGlowEffect && sprite.dodgeGlowEffect.visible) {
+        sprite.dodgeGlowEffect.visible = false;
+    }
+
+    // --- Weapon swap indicator ---
+    if (player.weapon_swap_progress > 0 && player.alive) {
+        if (!sprite.weaponSwapEffect && !farDetailMode) {
+            sprite.weaponSwapEffect = createWeaponSwapEffect();
+            sprite.addChild(sprite.weaponSwapEffect);
+        }
+        if (sprite.weaponSwapEffect) {
+            const swapVisible = !hideRemoteFxByDensity && !farDetailMode;
+            if (sprite.weaponSwapEffect.visible !== swapVisible) {
+                sprite.weaponSwapEffect.visible = swapVisible;
+            }
+            if (swapVisible) {
+                // Rotate the swap icon and fade it based on progress
+                sprite.weaponSwapEffect.rotation += 0.15;
+                sprite.weaponSwapEffect.alpha = 0.5 + 0.5 * player.weapon_swap_progress;
+            }
+        }
+    } else if (sprite.weaponSwapEffect) {
+        if (sprite.weaponSwapEffect.visible) sprite.weaponSwapEffect.visible = false;
+        // Reset rotation so it starts fresh next time
+        sprite.weaponSwapEffect.rotation = 0;
+    }
+
     const carryingTeam = player.is_carrying_flag_team_id > 0 && player.alive ? player.is_carrying_flag_team_id : 0;
     if (carryingTeam > 0) {
         if (!sprite.carriedFlagSprite || sprite._lastCarryingFlagTeam !== carryingTeam) {
@@ -4358,31 +4796,18 @@
         }
 
         const healthPercent = Math.max(0, Math.min(1, player.health / Math.max(1, player.max_health)));
-        const last = sprite._lastHealthPercent;
-        const shouldRedraw = sprite._lastHealthAlive !== alive || last === null || Math.abs(last - healthPercent) > 0.01;
 
-        if (shouldRedraw) {
-            sprite.healthFg.clear();
-            const barWidth = PLAYER_RADIUS * 2;
-            const currentWidth = barWidth * healthPercent;
+        // Quantize to nearest 10% index (0-10) for pre-rendered texture lookup
+        const barIndex = Math.round(healthPercent * 10);
+        const shouldSwap = sprite._lastHealthAlive !== alive || sprite._healthBarIndex !== barIndex;
 
-            let healthColor;
-            if (healthPercent > 0.6) {
-                healthColor = interpolateColor(0x22C55E, 0xFACC15, (healthPercent - 0.6) / 0.4);
-            } else if (healthPercent > 0.3) {
-                healthColor = interpolateColor(0xFACC15, 0xEF4444, (healthPercent - 0.3) / 0.3);
-            } else {
-                healthColor = 0xEF4444;
+        if (shouldSwap) {
+            // Swap to the pre-rendered texture for this health level (no Graphics redraw)
+            const tex = renderAssetCache.healthBarTextures[barIndex];
+            if (tex) {
+                sprite.healthFg.texture = tex;
             }
-
-            sprite.healthFg.beginFill(healthColor);
-            sprite.healthFg.drawRoundedRect(-PLAYER_RADIUS, 0, currentWidth, 6, 3);
-            sprite.healthFg.endFill();
-
-            sprite.healthFg.beginFill(0xFFFFFF, 0.3);
-            sprite.healthFg.drawRoundedRect(-PLAYER_RADIUS, 0, currentWidth, 2, 1);
-            sprite.healthFg.endFill();
-
+            sprite._healthBarIndex = barIndex;
             sprite._lastHealthPercent = healthPercent;
             sprite._lastHealthAlive = alive;
         }
@@ -4426,6 +4851,46 @@
         effect.addChild(particleContainer);
         effect.particleContainer = particleContainer;
         
+        return effect;
+    }
+
+    // Creates a white/blue glow ring for dodge roll invulnerability
+    function createDodgeGlowEffect() {
+        const effect = new PIXI.Graphics();
+        // Outer soft glow ring
+        effect.beginFill(0x88CCFF, 0.15);
+        effect.drawCircle(0, 0, PLAYER_RADIUS * 2.0);
+        effect.endFill();
+        // Middle ring
+        effect.beginFill(0xAADDFF, 0.25);
+        effect.drawCircle(0, 0, PLAYER_RADIUS * 1.5);
+        effect.endFill();
+        // Inner bright core
+        effect.lineStyle(2, 0xFFFFFF, 0.5);
+        effect.drawCircle(0, 0, PLAYER_RADIUS * 1.15);
+        effect.blendMode = PIXI.BLEND_MODES.ADD;
+        return effect;
+    }
+
+    // Creates a spinning weapon-swap indicator (two crossing arrows)
+    function createWeaponSwapEffect() {
+        const effect = new PIXI.Graphics();
+        const r = PLAYER_RADIUS * 0.55;
+        // Draw two crossing arrows forming a swap icon
+        effect.lineStyle(2.5, 0xFFD700, 0.9);
+        // Arrow 1: left-to-right
+        effect.moveTo(-r, -r * 0.3);
+        effect.lineTo(r, -r * 0.3);
+        effect.lineTo(r * 0.55, -r * 0.7);
+        effect.moveTo(r, -r * 0.3);
+        effect.lineTo(r * 0.55, r * 0.1);
+        // Arrow 2: right-to-left
+        effect.moveTo(r, r * 0.3);
+        effect.lineTo(-r, r * 0.3);
+        effect.lineTo(-r * 0.55, -r * 0.1);
+        effect.moveTo(-r, r * 0.3);
+        effect.lineTo(-r * 0.55, r * 0.7);
+        effect.position.set(0, -PLAYER_RADIUS - 4);
         return effect;
     }
 
@@ -5179,6 +5644,77 @@ function updateStarfield(starfieldContainer, cameraX, cameraY, delta) {
     });
 }
 
+    // ── Zone rendering ────────────────────────────────────────────────
+    function drawZones() {
+        if (!zoneContainer) return;
+        zoneContainer.removeChildren();
+
+        for (const [zoneId, zone] of zones) {
+            const g = new PIXI.Graphics();
+            const ZT = GP.ZoneType;
+
+            if (zone.zone_type === ZT.SlowZone) {
+                // Dark translucent overlay
+                g.beginFill(0x2D1B69, 0.25);
+                g.drawRect(zone.x, zone.y, zone.width, zone.height);
+                g.endFill();
+                // Border
+                g.lineStyle(2, 0x6B3FA0, 0.6);
+                g.drawRect(zone.x, zone.y, zone.width, zone.height);
+            } else if (zone.zone_type === ZT.DamageZone) {
+                // Red pulsing boundary
+                g.beginFill(0x8B0000, 0.15);
+                g.drawRect(zone.x, zone.y, zone.width, zone.height);
+                g.endFill();
+                g.lineStyle(3, 0xFF2200, 0.7);
+                g.drawRect(zone.x, zone.y, zone.width, zone.height);
+                // Inner warning lines
+                g.lineStyle(1, 0xFF4444, 0.3);
+                g.drawRect(zone.x + 4, zone.y + 4, zone.width - 8, zone.height - 8);
+            } else if (zone.zone_type === ZT.BoostPad) {
+                // Directional arrows with highlight
+                g.beginFill(0x00AAFF, 0.20);
+                g.drawRect(zone.x, zone.y, zone.width, zone.height);
+                g.endFill();
+                g.lineStyle(2, 0x00DDFF, 0.8);
+                g.drawRect(zone.x, zone.y, zone.width, zone.height);
+                // Draw arrow chevrons in boost direction
+                const cx = zone.x + zone.width / 2;
+                const cy = zone.y + zone.height / 2;
+                const dir = zone.direction || 0;
+                const cos = Math.cos(dir), sin = Math.sin(dir);
+                for (let i = -1; i <= 1; i++) {
+                    const ox = cx + cos * i * 12;
+                    const oy = cy + sin * i * 12;
+                    g.lineStyle(2, 0x00FFFF, 0.6);
+                    g.moveTo(ox - sin * 6 - cos * 6, oy + cos * 6 - sin * 6);
+                    g.lineTo(ox, oy);
+                    g.lineTo(ox + sin * 6 - cos * 6, oy - cos * 6 - sin * 6);
+                }
+            }
+
+            zoneContainer.addChild(g);
+        }
+    }
+
+    // Animate damage zone pulsing
+    let zonePulsePhase = 0;
+    function updateZonePulse(dt) {
+        if (!zoneContainer || zones.size === 0) return;
+        zonePulsePhase += dt * 0.003;
+        const pulse = 0.5 + 0.5 * Math.sin(zonePulsePhase * 3);
+        let childIdx = 0;
+        for (const [, zone] of zones) {
+            if (childIdx < zoneContainer.children.length) {
+                const g = zoneContainer.children[childIdx];
+                if (zone.zone_type === GP.ZoneType.DamageZone) {
+                    g.alpha = 0.6 + 0.4 * pulse;
+                }
+            }
+            childIdx++;
+        }
+    }
+
     function drawWalls(force = false) {
         if (!wallGraphics) return;
 
@@ -5245,6 +5781,14 @@ function updateStarfield(starfieldContainer, cameraX, cameraY, delta) {
 
                 wallGraphics.lineStyle(1, mixColors(wallColor, 0x000000, 0.35), Math.min(1, wallAlpha + 0.1));
                 wallGraphics.drawRect(wall.x, wall.y, wall.width, wall.height);
+
+                // Simplified crack overlay for walls at 75% health or below
+                if (wall.is_destructible) {
+                    const hp = Math.max(0, Math.min(1, wall.current_health / Math.max(1, wall.max_health)));
+                    if (hp <= 0.75 && hp > 0) {
+                        drawSimplifiedWallCracks(wall, hp);
+                    }
+                }
             });
 
             minimapWallsCacheDirty = true;
@@ -5302,7 +5846,7 @@ function updateStarfield(starfieldContainer, cameraX, cameraY, delta) {
                     wallGraphics.lineTo(i, wall.y + wall.height);
                 }
 
-                if (healthPercent < 0.8) {
+                if (healthPercent <= 0.75) {
                     drawEnhancedWallCracks(wall, healthPercent);
                 }
 
@@ -5420,6 +5964,36 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             wallGraphics.drawRect(debrisX, debrisY, debrisSize, debrisSize);
         }
         wallGraphics.endFill();
+    }
+}
+
+// Lightweight crack overlay for the simplified wall render path.
+// Uses fewer segments than drawEnhancedWallCracks and skips debris particles.
+function drawSimplifiedWallCracks(wall, healthPercent) {
+    const severity = 1 - healthPercent; // 0..1  (higher = more damaged)
+    const numCracks = Math.max(1, Math.floor(severity * 6));
+    const crackColor = 0x1A1A2E;
+    const lineWidth = Math.max(1, 2 * severity);
+
+    wallGraphics.lineStyle(lineWidth, crackColor, 0.55 + severity * 0.25);
+
+    for (let i = 0; i < numCracks; i++) {
+        const startX = wall.x + ((i * 0.618) % 1) * wall.width;  // deterministic golden-ratio spacing
+        const startY = wall.y + ((i * 0.382) % 1) * wall.height;
+        wallGraphics.moveTo(startX, startY);
+
+        let cx = startX, cy = startY;
+        const crackLen = Math.min(wall.width, wall.height) * 0.35 * severity;
+        const segments = 2 + (i % 2);
+        for (let j = 0; j < segments; j++) {
+            // Use deterministic pseudo-random angles based on wall position + index
+            const seed = (wall.x * 31 + wall.y * 17 + i * 7 + j * 3) & 0xFFFF;
+            const angle = (seed / 0xFFFF) * Math.PI * 2;
+            const segLen = crackLen / segments;
+            cx = Math.max(wall.x, Math.min(wall.x + wall.width, cx + Math.cos(angle) * segLen));
+            cy = Math.max(wall.y, Math.min(wall.y + wall.height, cy + Math.sin(angle) * segLen));
+            wallGraphics.lineTo(cx, cy);
+        }
     }
 }
 
@@ -5649,11 +6223,10 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             chatDisplayDiv.style.opacity = '0.3';
             document.querySelector('.controls-panel').style.opacity = '0.3';
             
-            // Show all players' names more prominently
+            // Show all players' names more prominently (BitmapText uses .fontSize directly)
             playerContainer.children.forEach(sprite => {
                 if (sprite.usernameText) {
-                    sprite.usernameText.style.fontSize = 16;
-                    sprite.usernameText.style.strokeThickness = 4;
+                    sprite.usernameText.fontSize = 16;
                 }
             });
             
@@ -5673,11 +6246,10 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             chatDisplayDiv.style.opacity = '1';
             document.querySelector('.controls-panel').style.opacity = '1';
             
-            // Restore normal text size
+            // Restore normal text size (BitmapText uses .fontSize directly)
             playerContainer.children.forEach(sprite => {
                 if (sprite.usernameText) {
-                    sprite.usernameText.style.fontSize = 12;
-                    sprite.usernameText.style.strokeThickness = 3;
+                    sprite.usernameText.fontSize = 12;
                 }
             });
             
@@ -5943,6 +6515,12 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 }
             }
 
+            // Update virtual crosshair position for mobile touch aiming
+            updateVirtualCrosshair();
+
+            // Animate zone pulse effects (damage zones)
+            updateZonePulse(clientDeltaTime);
+
             if (!backgroundThrottleActive && !LOW_OVERHEAD_MODE && !ultraPerformanceMode && starfield && currentTime - lastStarfieldUpdateTime >= STARFIELD_UPDATE_INTERVAL_MS) {
                 lastStarfieldUpdateTime = currentTime;
                 if (perfEnabled) {
@@ -6175,9 +6753,11 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             const now = Date.now();
             const renderTime = now - adaptiveInterpolationDelayMs;
             const projectileInterpolationSet = projectileRawModeActive ? null : getProjectileInterpolationSet();
-            const playerPositionGain = smoothFollowGain(0.3, deltaSeconds);
-            const projectilePositionGain = smoothFollowGain(0.52, deltaSeconds);
-            const rotationGain = smoothFollowGain(0.34, deltaSeconds);
+            // On mobile, use smoother (lower) gains for gentler snap-back corrections
+            const mobileSmooth = isMobileDevice ? 0.7 : 1.0;
+            const playerPositionGain = smoothFollowGain(0.3 * mobileSmooth, deltaSeconds);
+            const projectilePositionGain = smoothFollowGain(0.52 * mobileSmooth, deltaSeconds);
+            const rotationGain = smoothFollowGain(0.34 * mobileSmooth, deltaSeconds);
 
             while (serverUpdates.length > 0 && serverUpdates[0].timestamp <= renderTime - INTERPOLATION_RETENTION_MS) {
                 serverUpdates.shift();
@@ -7026,6 +7606,14 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                     }
                 }
                 drawWalls();
+                // Parse zones from initial state
+                if (messageData.zones && messageData.zones.length > 0) {
+                    zones.clear();
+                    for (const zoneData of messageData.zones) {
+                        zones.set(zoneData.id, zoneData);
+                    }
+                    drawZones();
+                }
                 if (messageData.map_name) currentMapName = messageData.map_name;
                 minimapWallsCacheDirty = true;
                 if (minimap) minimap.wallsNeedUpdate = true;
@@ -7521,6 +8109,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 target.weapon = player.weapon();
                 target.ammo = player.ammo();
                 target.reload_progress = player.reloadProgress();
+                target.weapon_swap_progress = player.weaponSwapProgress();
             }
             if (hasScoreDelta) {
                 target.score = player.score();
@@ -7531,6 +8120,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             if (hasPowerupDelta) {
                 target.speed_boost_remaining = player.speedBoostRemaining();
                 target.damage_boost_remaining = player.damageBoostRemaining();
+                target.invulnerable_remaining = player.invulnerableRemaining();
             }
             if (hasShieldDelta) {
                 target.shield_current = player.shieldCurrent();
@@ -7575,6 +8165,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 target.weapon = player.weapon;
                 target.ammo = player.ammo;
                 target.reload_progress = player.reload_progress;
+                target.weapon_swap_progress = player.weapon_swap_progress;
             }
             if (hasScoreDelta) {
                 target.score = player.score;
@@ -7585,6 +8176,7 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             if (hasPowerupDelta) {
                 target.speed_boost_remaining = player.speed_boost_remaining;
                 target.damage_boost_remaining = player.damage_boost_remaining;
+                target.invulnerable_remaining = player.invulnerable_remaining;
             }
             if (hasShieldDelta) {
                 target.shield_current = player.shield_current;
@@ -8122,7 +8714,11 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             const mvpKills = summaryPayload.mvp_kills || summaryPayload.mvpKills || 'N/A';
             const mvpDamage = summaryPayload.mvp_damage || summaryPayload.mvpDamage || 'N/A';
             const mvpObjectives = summaryPayload.mvp_objectives || summaryPayload.mvpObjectives || 'N/A';
-            postMatchMvpDiv.textContent = `MVP Kills: ${mvpKills} | MVP Damage: ${mvpDamage} | MVP Objectives: ${mvpObjectives}`;
+            postMatchMvpDiv.innerHTML = [
+                `<span class="mvp-award"><b>Most Kills:</b> ${escapeHtml(String(mvpKills))}</span>`,
+                `<span class="mvp-award"><b>Most Damage:</b> ${escapeHtml(String(mvpDamage))}</span>`,
+                `<span class="mvp-award"><b>Most Objective:</b> ${escapeHtml(String(mvpObjectives))}</span>`,
+            ].join(' ');
 
             const playersRows = Array.isArray(summaryPayload.players) ? summaryPayload.players : [];
             const rows = playersRows.slice(0, 10).map((row) => {
@@ -8139,6 +8735,51 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                 postMatchTableDiv.innerHTML = '<div class="post-match-panel__empty">No match stats available.</div>';
             } else {
                 postMatchTableDiv.innerHTML = `<table class="post-match-table"><thead><tr><th>Player</th><th>Team</th><th>Score</th><th>K/D</th><th>Dmg</th><th>KD</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+            }
+
+            // Weapon breakdown for local player
+            const weaponBreakdownDiv = document.getElementById('postMatchWeaponBreakdown');
+            if (weaponBreakdownDiv) {
+                const localRow = playersRows.find(r => {
+                    const pid = r?.player_id || r?.playerId;
+                    return pid && pid === myPlayerId;
+                });
+                const weaponKills = localRow?.weapon_kills || localRow?.weaponKills || {};
+                const weaponEntries = Object.entries(weaponKills);
+                if (weaponEntries.length > 0) {
+                    const totalKills = weaponEntries.reduce((sum, [, k]) => sum + Number(k), 0) || 1;
+                    const bars = weaponEntries.map(([wName, k]) => {
+                        const pct = Math.round((Number(k) / totalKills) * 100);
+                        const color = weaponColors[wName] || '#94A3B8';
+                        return `<div class="weapon-bar" style="flex:${pct}; background:${color}" title="${escapeHtml(wName)}: ${k} kills (${pct}%)">${pct > 10 ? escapeHtml(wName) : ''}</div>`;
+                    }).join('');
+                    weaponBreakdownDiv.innerHTML = `<div class="weapon-breakdown-label">Weapon Kills</div><div class="weapon-breakdown-bars">${bars}</div>`;
+                } else {
+                    weaponBreakdownDiv.innerHTML = '';
+                }
+            }
+
+            // K/D trend across matches (localStorage)
+            const trendDiv = document.getElementById('postMatchTrend');
+            if (trendDiv) {
+                const localRow = playersRows.find(r => (r?.player_id || r?.playerId) === myPlayerId);
+                if (localRow) {
+                    const kd = Number(localRow?.kd_ratio || localRow?.kdRatio || 0);
+                    let history = [];
+                    try { history = JSON.parse(localStorage.getItem('kdTrend') || '[]'); } catch(e) {}
+                    history.push({ kd: Math.round(kd * 100) / 100, ts: Date.now() });
+                    if (history.length > 20) history = history.slice(-20);
+                    localStorage.setItem('kdTrend', JSON.stringify(history));
+                    if (history.length >= 2) {
+                        const maxKd = Math.max(...history.map(h => h.kd), 1);
+                        const w = 200, h = 60;
+                        const step = w / (history.length - 1);
+                        const points = history.map((p, i) => `${(i * step).toFixed(1)},${(h - (p.kd / maxKd) * h * 0.9).toFixed(1)}`).join(' ');
+                        trendDiv.innerHTML = `<div class="trend-label">K/D Trend (last ${history.length} matches)</div><svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block"><polyline points="${points}" fill="none" stroke="#60A5FA" stroke-width="2"/></svg>`;
+                    } else {
+                        trendDiv.innerHTML = '';
+                    }
+                }
             }
 
             postMatchSummaryVisible = true;
@@ -8452,7 +9093,14 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                                     damage_boost_remaining: player.damageBoostRemaining(),
                                     shield_current: player.shieldCurrent(),
                                     shield_max: player.shieldMax(),
-                                    is_carrying_flag_team_id: player.isCarryingFlagTeamId()
+                                    is_carrying_flag_team_id: player.isCarryingFlagTeamId(),
+                                    ability_1_cooldown_remaining: player.ability1CooldownRemaining(),
+                                    ability_2_cooldown_remaining: player.ability2CooldownRemaining(),
+                                    invulnerable_remaining: player.invulnerableRemaining(),
+                                    secondary_weapon: player.secondaryWeapon(),
+                                    weapon_swap_progress: player.weaponSwapProgress(),
+                                    current_streak: player.currentStreak(),
+                                    primary_weapon: player.primaryWeapon(),
                                 };
                             }
                             if (writeIdx > 0) {
@@ -8528,6 +9176,30 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                             if (writeIdx > 0) {
                                 rows.length = writeIdx;
                                 initialStateData.flag_states = rows;
+                            }
+                        }
+
+                        // Parse zones
+                        const zoneLength = initial.zonesLength();
+                        if (zoneLength > 0) {
+                            const rows = new Array(zoneLength);
+                            let writeIdx = 0;
+                            for (let i = 0; i < zoneLength; i += 1) {
+                                const zone = initial.zones(i);
+                                if (!zone) continue;
+                                rows[writeIdx++] = {
+                                    id: zone.id(),
+                                    x: zone.x(),
+                                    y: zone.y(),
+                                    width: zone.width(),
+                                    height: zone.height(),
+                                    zone_type: zone.zoneType(),
+                                    direction: zone.direction()
+                                };
+                            }
+                            if (writeIdx > 0) {
+                                rows.length = writeIdx;
+                                initialStateData.zones = rows;
                             }
                         }
 
@@ -8607,7 +9279,9 @@ function drawEnhancedWallCracks(wall, healthPercent) {
                                     damage_boost_remaining: player.damageBoostRemaining(),
                                     shield_current: player.shieldCurrent(),
                                     shield_max: player.shieldMax(),
-                                    is_carrying_flag_team_id: player.isCarryingFlagTeamId()
+                                    is_carrying_flag_team_id: player.isCarryingFlagTeamId(),
+                                    invulnerable_remaining: player.invulnerableRemaining(),
+                                    weapon_swap_progress: player.weaponSwapProgress(),
                                 };
                             }
                             if (writeIdx > 0) {
@@ -9169,7 +9843,8 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             if (now - lastInputSendTime < 1000 / inputSendRate) return;
 
             let effectiveRotation = inputState.rotation;
-            if (inputState.shooting) {
+            // On mobile touch, apply aim assist even when not shooting for smoother targeting
+            if (inputState.shooting || (isTouchDevice && aimAssistEnabled)) {
                 effectiveRotation = getAimAssistRotation(effectiveRotation);
             }
 
@@ -9539,6 +10214,33 @@ function drawEnhancedWallCracks(wall, healthPercent) {
             }
             if (event.event_type === GP.GameEventType.FlagReturned) {
                 setObjectiveUrgency('Flag returned - push forward', 'positive', 1000);
+                return;
+            }
+            if (event.event_type === GP.GameEventType.Killstreak) {
+                const streakCount = Math.round(event.value || 0);
+                const instigatorId = typeof event.instigator_id === 'string' ? event.instigator_id : '';
+                const isLocal = instigatorId === myPlayerId;
+                if (isLocal) {
+                    if (streakCount >= 7) {
+                        setObjectiveUrgency('DOMINATING! 7+ killstreak!', 'critical', 3000);
+                    } else if (streakCount >= 5) {
+                        setObjectiveUrgency('KILLING SPREE! Speed boost!', 'positive', 2500);
+                    } else if (streakCount >= 3) {
+                        setObjectiveUrgency('Triple kill! +10% damage!', 'positive', 2000);
+                    }
+                } else {
+                    if (streakCount >= 7) {
+                        const killerName = players.get(instigatorId)?.username || 'Unknown';
+                        setObjectiveUrgency(`${killerName} is DOMINATING!`, 'critical', 2000);
+                    }
+                }
+                return;
+            }
+            if (event.event_type === GP.GameEventType.AssistKill) {
+                const instigatorId = typeof event.instigator_id === 'string' ? event.instigator_id : '';
+                if (instigatorId === myPlayerId) {
+                    setObjectiveUrgency(`Assist! +${Math.round(event.value || 0)} pts`, 'positive', 1200);
+                }
                 return;
             }
             if (event.event_type === GP.GameEventType.TeamPing) {
@@ -10710,7 +11412,15 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
             }
 
             const url = normalized.url;
-            const wsConnectUrl = withJoinSelectionInUrl(withAuthTokenInUrl(url));
+            let wsConnectUrl = withJoinSelectionInUrl(withAuthTokenInUrl(url));
+            // Append is_mobile flag for server-side bandwidth profile selection
+            if (isMobileDevice || dataSaverMode) {
+                try {
+                    const mobileUrl = new URL(wsConnectUrl);
+                    mobileUrl.searchParams.set('is_mobile', 'true');
+                    wsConnectUrl = mobileUrl.toString();
+                } catch (_) { /* ignore malformed URL */ }
+            }
             activeSignalingUrl = url;
             wsUrlInput.value = url;
             if (window.__e2e) {
@@ -11267,8 +11977,12 @@ function updateFogOfWar(fogMask, playerX, playerY, app) {
                     }
                     markJoinTimingStage('firstPacketAtMs');
                     if (pingStartTime > 10) { // Calculate ping on message receipt
+                        const prevPing = ping;
                         ping = Date.now() - pingStartTime;
                         pingStartTime = Date.now(); // Reset for next measurement
+                        // Update connection quality based on RTT jitter
+                        const jitter = Math.abs(ping - prevPing);
+                        updateConnectionQuality(ping, jitter);
                     }
 
                     const packetFrames = unpackCoalescedPackets(event.data);

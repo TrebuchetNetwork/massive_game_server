@@ -591,6 +591,37 @@ impl MassiveGameServer {
                     ServerWeaponType::Pistol,
                 );
 
+                // Losing team respawn reduction for zone deaths
+                {
+                    let victim_team = player_state.team_id;
+                    if victim_team != 0 {
+                        let match_info_guard = self.match_info.read();
+                        let victim_team_score = match_info_guard
+                            .team_scores
+                            .get(&victim_team)
+                            .cloned()
+                            .unwrap_or(0);
+                        let max_enemy_score = match_info_guard
+                            .team_scores
+                            .iter()
+                            .filter(|(&tid, _)| tid != victim_team)
+                            .map(|(_, &s)| s)
+                            .max()
+                            .unwrap_or(0);
+                        drop(match_info_guard);
+
+                        let deficit = max_enemy_score - victim_team_score;
+                        if deficit > 0 {
+                            let reduction_ticks = (deficit / 5).max(0) as f32;
+                            let reduction =
+                                reduction_ticks * LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS;
+                            if let Some(ref mut timer) = player_state.respawn_timer {
+                                *timer = (*timer - reduction).max(0.5);
+                            }
+                        }
+                    }
+                }
+
                 if player_state.is_carrying_flag_team_id != 0 {
                     let dropped_flag_team = player_state.is_carrying_flag_team_id;
                     player_state.is_carrying_flag_team_id = 0;
@@ -1731,8 +1762,23 @@ impl MassiveGameServer {
                         continue;
                     }
 
+                    // Record damage source for assist tracking
+                    target_state_entry.record_incoming_damage(&attacker_id, damage, Instant::now());
+
                     let died = target_state_entry.apply_damage(damage);
                     let target_pos = Vec2::new(target_state_entry.x, target_state_entry.y);
+
+                    // Apply knockback on projectile hit
+                    if !died {
+                        let dx = target_state_entry.x - attacker_pos.x;
+                        let dy = target_state_entry.y - attacker_pos.y;
+                        let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+                        let kb_force = damage as f32 * crate::core::constants::KNOCKBACK_FORCE_PER_DAMAGE;
+                        target_state_entry.velocity_x += (dx / dist) * kb_force;
+                        target_state_entry.velocity_y += (dy / dist) * kb_force;
+                        target_state_entry.mark_field_changed(FIELD_POSITION_ROTATION);
+                    }
+
                     if let Some(mut attacker_state_entry) =
                         self.player_manager.get_player_state_mut(&attacker_id)
                     {
@@ -1792,10 +1838,60 @@ impl MassiveGameServer {
                                     );
                                 } else {
                                     // Normal kill: positive score
-                                    attacker_state_entry.score += 100;
+                                    attacker_state_entry.score += crate::core::constants::POINTS_PER_KILL;
+
+                                    // --- Killstreak system ---
+                                    attacker_state_entry.current_streak += 1;
+                                    let streak = attacker_state_entry.current_streak;
+
+                                    if streak == crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD {
+                                        attacker_state_entry.streak_damage_boost_remaining =
+                                            crate::core::constants::KILLSTREAK_DAMAGE_BOOST_DURATION_SECS;
+                                    }
+                                    if streak == crate::core::constants::KILLSTREAK_SPEED_BOOST_THRESHOLD {
+                                        attacker_state_entry.streak_speed_boost_remaining =
+                                            crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS;
+                                    }
+                                    if streak >= crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD {
+                                        let a_pos = Vec2::new(attacker_state_entry.x, attacker_state_entry.y);
+                                        drop(attacker_state_entry);
+                                        self.global_game_events.push(
+                                            GameEvent::Killstreak {
+                                                player_id: attacker_id.clone(),
+                                                streak,
+                                                position: a_pos,
+                                            },
+                                            EventPriority::High,
+                                        );
+                                    } else {
+                                        attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
+                                        drop(attacker_state_entry);
+                                    }
                                 }
 
-                                attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
+                                // We may have already dropped attacker_state_entry above
+                                if let Some(mut a) = self.player_manager.get_player_state_mut(&attacker_id) {
+                                    a.mark_field_changed(FIELD_SCORE_STATS);
+                                }
+                            }
+
+                            // --- Assist tracking ---
+                            {
+                                let assist_ids = target_state_entry.get_assist_ids(&attacker_id, Instant::now());
+                                for assister_id in assist_ids {
+                                    if let Some(mut assister) = self.player_manager.get_player_state_mut(&assister_id) {
+                                        assister.score += crate::core::constants::POINTS_ASSIST;
+                                        assister.mark_field_changed(FIELD_SCORE_STATS);
+                                    }
+                                    self.global_game_events.push(
+                                        GameEvent::AssistKill {
+                                            assister_id: assister_id.clone(),
+                                            victim_id: target_id.clone(),
+                                            points: crate::core::constants::POINTS_ASSIST,
+                                        },
+                                        EventPriority::Normal,
+                                    );
+                                }
                             }
                         }
 
@@ -1839,6 +1935,40 @@ impl MassiveGameServer {
                             },
                             EventPriority::High,
                         );
+
+                        // Losing team respawn reduction: reduce respawn timer
+                        // by LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS for every 5-point
+                        // deficit the victim's team has.
+                        {
+                            let victim_team = target_state_entry.team_id;
+                            if victim_team != 0 {
+                                let match_info_guard = self.match_info.read();
+                                let victim_team_score = match_info_guard
+                                    .team_scores
+                                    .get(&victim_team)
+                                    .cloned()
+                                    .unwrap_or(0);
+                                // Find the highest opposing team score
+                                let max_enemy_score = match_info_guard
+                                    .team_scores
+                                    .iter()
+                                    .filter(|(&tid, _)| tid != victim_team)
+                                    .map(|(_, &s)| s)
+                                    .max()
+                                    .unwrap_or(0);
+                                drop(match_info_guard);
+
+                                let deficit = max_enemy_score - victim_team_score;
+                                if deficit > 0 {
+                                    let reduction_ticks = (deficit / 5).max(0) as f32;
+                                    let reduction =
+                                        reduction_ticks * LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS;
+                                    if let Some(ref mut timer) = target_state_entry.respawn_timer {
+                                        *timer = (*timer - reduction).max(0.5);
+                                    }
+                                }
+                            }
+                        }
 
                         // Update kill feed
                         let killer_username = self

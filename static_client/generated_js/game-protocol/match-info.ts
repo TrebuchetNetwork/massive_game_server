@@ -129,6 +129,18 @@ static addTeamScores(builder:flatbuffers.Builder, teamScoresOffset:flatbuffers.O
   builder.addFieldOffset(5, teamScoresOffset, 0);
 }
 
+static createTeamScoresVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startTeamScoresVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static addTeam1CommanderId(builder:flatbuffers.Builder, team1CommanderIdOffset:flatbuffers.Offset) {
   builder.addFieldOffset(6, team1CommanderIdOffset, 0);
 }
@@ -153,37 +165,9 @@ static addTeam2CommanderAttackBias(builder:flatbuffers.Builder, team2CommanderAt
   builder.addFieldFloat32(11, team2CommanderAttackBias, 0.0);
 }
 
-static createTeamScoresVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startTeamScoresVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
 static endMatchInfo(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createMatchInfo(builder:flatbuffers.Builder, timeRemaining:number, matchState:MatchStateType, winnerIdOffset:flatbuffers.Offset, winnerNameOffset:flatbuffers.Offset, gameMode:GameModeType, teamScoresOffset:flatbuffers.Offset, team1CommanderIdOffset:flatbuffers.Offset, team2CommanderIdOffset:flatbuffers.Offset, team1CommanderWaypointOffset:flatbuffers.Offset, team2CommanderWaypointOffset:flatbuffers.Offset, team1CommanderAttackBias:number, team2CommanderAttackBias:number):flatbuffers.Offset {
-  MatchInfo.startMatchInfo(builder);
-  MatchInfo.addTimeRemaining(builder, timeRemaining);
-  MatchInfo.addMatchState(builder, matchState);
-  MatchInfo.addWinnerId(builder, winnerIdOffset);
-  MatchInfo.addWinnerName(builder, winnerNameOffset);
-  MatchInfo.addGameMode(builder, gameMode);
-  MatchInfo.addTeamScores(builder, teamScoresOffset);
-  MatchInfo.addTeam1CommanderId(builder, team1CommanderIdOffset);
-  MatchInfo.addTeam2CommanderId(builder, team2CommanderIdOffset);
-  MatchInfo.addTeam1CommanderWaypoint(builder, team1CommanderWaypointOffset);
-  MatchInfo.addTeam2CommanderWaypoint(builder, team2CommanderWaypointOffset);
-  MatchInfo.addTeam1CommanderAttackBias(builder, team1CommanderAttackBias);
-  MatchInfo.addTeam2CommanderAttackBias(builder, team2CommanderAttackBias);
-  return MatchInfo.endMatchInfo(builder);
-}
 }

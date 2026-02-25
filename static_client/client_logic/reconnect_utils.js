@@ -48,10 +48,13 @@ export function createReconnectHelpers(options) {
     function computeReconnectDelayMs(attemptNumber) {
         const safeAttempt = Math.max(1, attemptNumber);
         const backoff = Math.pow(1.6, safeAttempt - 1);
-        return Math.min(
+        const baseDelay = Math.min(
             getAutoReconnectMaxDelayMs(),
             Math.floor(getAutoReconnectBaseDelayMs() * backoff)
         );
+        // Add jitter (0-25% of base delay) to prevent thundering herd
+        const jitter = Math.floor(Math.random() * baseDelay * 0.25);
+        return baseDelay + jitter;
     }
 
     function scheduleAutoReconnect(reason = "") {

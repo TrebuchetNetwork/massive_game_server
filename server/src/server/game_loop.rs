@@ -14,9 +14,11 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 // Removed unused: use std::collections::HashSet;
 use crate::core::constants::{
     AOI_MAX_VISIBLE_PICKUPS, AOI_MAX_VISIBLE_PLAYERS, AOI_MAX_VISIBLE_PROJECTILES,
-    AOI_MAX_VISIBLE_WALLS, AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS, WORLD_MAX_X, WORLD_MAX_Y,
-    WORLD_MIN_X, WORLD_MIN_Y,
-}; // Assuming these are in constants
+    AOI_MAX_VISIBLE_WALLS, AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS,
+    MOBILE_AOI_MAX_VISIBLE_PLAYERS, MOBILE_AOI_MAX_VISIBLE_PROJECTILES,
+    MOBILE_AOI_MAX_VISIBLE_PICKUPS, MOBILE_AOI_MAX_VISIBLE_WALLS,
+    WORLD_MAX_X, WORLD_MAX_Y, WORLD_MIN_X, WORLD_MIN_Y,
+};
 use crate::core::types::{PlayerAoI, PlayerID};
 use crate::flatbuffers_generated::game_protocol as fb;
 use crate::network::signaling::{next_chat_message_seq, ChatMessage};
@@ -280,6 +282,18 @@ impl MassiveGameServer {
 
         let player_id_str = player_id.as_str();
 
+        // Determine per-client AoI limits (mobile vs desktop)
+        let is_mobile = self
+            .client_states_map
+            .read()
+            .get(player_id_str)
+            .map(|cs| cs.is_mobile)
+            .unwrap_or(false);
+        let max_visible_players = if is_mobile { MOBILE_AOI_MAX_VISIBLE_PLAYERS } else { AOI_MAX_VISIBLE_PLAYERS };
+        let max_visible_projectiles = if is_mobile { MOBILE_AOI_MAX_VISIBLE_PROJECTILES } else { AOI_MAX_VISIBLE_PROJECTILES };
+        let max_visible_pickups = if is_mobile { MOBILE_AOI_MAX_VISIBLE_PICKUPS } else { AOI_MAX_VISIBLE_PICKUPS };
+        let max_visible_walls = if is_mobile { MOBILE_AOI_MAX_VISIBLE_WALLS } else { AOI_MAX_VISIBLE_WALLS };
+
         let mut player_aoi_entry = self
             .player_aois
             .entry(player_id_str.to_string())
@@ -305,20 +319,20 @@ impl MassiveGameServer {
         if is_spectator {
             self.player_manager.for_each_player(|other_id, _| {
                 if other_id != player_id
-                    && player_aoi.visible_players.len() < AOI_MAX_VISIBLE_PLAYERS
+                    && player_aoi.visible_players.len() < max_visible_players
                 {
                     player_aoi.visible_players.insert(other_id.clone());
                 }
             });
             {
                 let projectiles = self.projectiles.read();
-                for projectile in projectiles.iter().take(AOI_MAX_VISIBLE_PROJECTILES) {
+                for projectile in projectiles.iter().take(max_visible_projectiles) {
                     player_aoi.visible_projectiles.insert(projectile.id);
                 }
             }
             {
                 let pickups = self.pickups.read();
-                for pickup in pickups.iter().take(AOI_MAX_VISIBLE_PICKUPS) {
+                for pickup in pickups.iter().take(max_visible_pickups) {
                     if pickup.is_active {
                         player_aoi.visible_pickups.insert(pickup.id);
                     }
@@ -330,7 +344,7 @@ impl MassiveGameServer {
                 WORLD_MAX_X,
                 WORLD_MAX_Y,
             );
-            for wall in active_walls.into_iter().take(AOI_MAX_VISIBLE_WALLS) {
+            for wall in active_walls.into_iter().take(max_visible_walls) {
                 player_aoi.visible_walls.insert(wall.id);
             }
             player_aoi.last_update = Instant::now();
@@ -343,11 +357,11 @@ impl MassiveGameServer {
             .query_nearby_players(x, y, effective_aoi_radius);
         for other_id_arc in nearby_player_ids
             .into_iter()
-            .take(AOI_MAX_VISIBLE_PLAYERS.saturating_add(1))
+            .take(max_visible_players.saturating_add(1))
         {
             if &other_id_arc != player_id {
                 player_aoi.visible_players.insert(other_id_arc);
-                if player_aoi.visible_players.len() >= AOI_MAX_VISIBLE_PLAYERS {
+                if player_aoi.visible_players.len() >= max_visible_players {
                     break;
                 }
             }
@@ -359,7 +373,7 @@ impl MassiveGameServer {
                 .query_nearby_projectiles(x, y, effective_aoi_radius);
         for proj_id in nearby_projectile_ids
             .into_iter()
-            .take(AOI_MAX_VISIBLE_PROJECTILES)
+            .take(max_visible_projectiles)
         {
             player_aoi.visible_projectiles.insert(proj_id);
         }
@@ -391,7 +405,7 @@ impl MassiveGameServer {
                     let dy = pickup.y - y;
                     if (dx * dx + dy * dy) <= effective_aoi_radius_sq {
                         player_aoi.visible_pickups.insert(pickup.id);
-                        if player_aoi.visible_pickups.len() >= AOI_MAX_VISIBLE_PICKUPS {
+                        if player_aoi.visible_pickups.len() >= max_visible_pickups {
                             break 'pickups;
                         }
                     }
@@ -411,7 +425,7 @@ impl MassiveGameServer {
         let candidate_walls = candidate_walls_query.len();
         for wall in candidate_walls_query
             .into_iter()
-            .take(AOI_MAX_VISIBLE_WALLS)
+            .take(max_visible_walls)
         {
             if wall.is_destructible && wall.current_health <= 0 {
                 continue;

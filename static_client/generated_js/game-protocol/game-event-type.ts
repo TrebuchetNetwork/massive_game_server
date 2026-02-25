@@ -14,5 +14,7 @@ export enum GameEventType {
   FlagDropped = 8,
   FlagReturned = 9,
   FlagCaptured = 10,
-  TeamPing = 11
+  TeamPing = 11,
+  Killstreak = 12,
+  AssistKill = 13
 }

@@ -144,8 +144,43 @@ isCarryingFlagTeamId():number {
   return offset ? this.bb!.readInt8(this.bb_pos + offset) : 0;
 }
 
+ability1CooldownRemaining():number {
+  const offset = this.bb!.__offset(this.bb_pos, 50);
+  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+}
+
+ability2CooldownRemaining():number {
+  const offset = this.bb!.__offset(this.bb_pos, 52);
+  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+}
+
+invulnerableRemaining():number {
+  const offset = this.bb!.__offset(this.bb_pos, 54);
+  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+}
+
+secondaryWeapon():WeaponType {
+  const offset = this.bb!.__offset(this.bb_pos, 56);
+  return offset ? this.bb!.readInt8(this.bb_pos + offset) : WeaponType.Pistol;
+}
+
+weaponSwapProgress():number {
+  const offset = this.bb!.__offset(this.bb_pos, 58);
+  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+}
+
+currentStreak():number {
+  const offset = this.bb!.__offset(this.bb_pos, 60);
+  return offset ? this.bb!.readUint32(this.bb_pos + offset) : 0;
+}
+
+primaryWeapon():WeaponType {
+  const offset = this.bb!.__offset(this.bb_pos, 62);
+  return offset ? this.bb!.readInt8(this.bb_pos + offset) : WeaponType.Rifle;
+}
+
 static startPlayerState(builder:flatbuffers.Builder) {
-  builder.startObject(23);
+  builder.startObject(30);
 }
 
 static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
@@ -240,12 +275,40 @@ static addIsCarryingFlagTeamId(builder:flatbuffers.Builder, isCarryingFlagTeamId
   builder.addFieldInt8(22, isCarryingFlagTeamId, 0);
 }
 
+static addAbility1CooldownRemaining(builder:flatbuffers.Builder, ability1CooldownRemaining:number) {
+  builder.addFieldFloat32(23, ability1CooldownRemaining, 0.0);
+}
+
+static addAbility2CooldownRemaining(builder:flatbuffers.Builder, ability2CooldownRemaining:number) {
+  builder.addFieldFloat32(24, ability2CooldownRemaining, 0.0);
+}
+
+static addInvulnerableRemaining(builder:flatbuffers.Builder, invulnerableRemaining:number) {
+  builder.addFieldFloat32(25, invulnerableRemaining, 0.0);
+}
+
+static addSecondaryWeapon(builder:flatbuffers.Builder, secondaryWeapon:WeaponType) {
+  builder.addFieldInt8(26, secondaryWeapon, WeaponType.Pistol);
+}
+
+static addWeaponSwapProgress(builder:flatbuffers.Builder, weaponSwapProgress:number) {
+  builder.addFieldFloat32(27, weaponSwapProgress, 0.0);
+}
+
+static addCurrentStreak(builder:flatbuffers.Builder, currentStreak:number) {
+  builder.addFieldInt32(28, currentStreak, 0);
+}
+
+static addPrimaryWeapon(builder:flatbuffers.Builder, primaryWeapon:WeaponType) {
+  builder.addFieldInt8(29, primaryWeapon, WeaponType.Rifle);
+}
+
 static endPlayerState(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createPlayerState(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, usernameOffset:flatbuffers.Offset, x:number, y:number, rotation:number, velocityX:number, velocityY:number, health:number, maxHealth:number, alive:boolean, respawnTimer:number, weapon:WeaponType, ammo:number, reloadProgress:number, score:number, kills:number, deaths:number, teamId:number, speedBoostRemaining:number, damageBoostRemaining:number, shieldCurrent:number, shieldMax:number, isCarryingFlagTeamId:number):flatbuffers.Offset {
+static createPlayerState(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, usernameOffset:flatbuffers.Offset, x:number, y:number, rotation:number, velocityX:number, velocityY:number, health:number, maxHealth:number, alive:boolean, respawnTimer:number, weapon:WeaponType, ammo:number, reloadProgress:number, score:number, kills:number, deaths:number, teamId:number, speedBoostRemaining:number, damageBoostRemaining:number, shieldCurrent:number, shieldMax:number, isCarryingFlagTeamId:number, ability1CooldownRemaining:number, ability2CooldownRemaining:number, invulnerableRemaining:number, secondaryWeapon:WeaponType, weaponSwapProgress:number, currentStreak:number, primaryWeapon:WeaponType):flatbuffers.Offset {
   PlayerState.startPlayerState(builder);
   PlayerState.addId(builder, idOffset);
   PlayerState.addUsername(builder, usernameOffset);
@@ -270,6 +333,13 @@ static createPlayerState(builder:flatbuffers.Builder, idOffset:flatbuffers.Offse
   PlayerState.addShieldCurrent(builder, shieldCurrent);
   PlayerState.addShieldMax(builder, shieldMax);
   PlayerState.addIsCarryingFlagTeamId(builder, isCarryingFlagTeamId);
+  PlayerState.addAbility1CooldownRemaining(builder, ability1CooldownRemaining);
+  PlayerState.addAbility2CooldownRemaining(builder, ability2CooldownRemaining);
+  PlayerState.addInvulnerableRemaining(builder, invulnerableRemaining);
+  PlayerState.addSecondaryWeapon(builder, secondaryWeapon);
+  PlayerState.addWeaponSwapProgress(builder, weaponSwapProgress);
+  PlayerState.addCurrentStreak(builder, currentStreak);
+  PlayerState.addPrimaryWeapon(builder, primaryWeapon);
   return PlayerState.endPlayerState(builder);
 }
 }

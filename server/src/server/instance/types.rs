@@ -1,6 +1,90 @@
 use super::constants::InitialSnapshotCaps;
 use super::*;
 
+/// Identifies the type of match being played.  Determines max player count,
+/// match duration and bot-fill behaviour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MatchType {
+    /// Full-size match (64+ players, 5-min rounds, desktop recommended).
+    FullMatch,
+    /// Quick match: 32 players, 5-min rounds, auto-fills bots after 15s queue.
+    QuickMatch,
+    /// Mobile Blitz: 16 players, 3-min rounds, small maps.
+    MobileBlitz,
+    /// Mobile Standard: 32 players, 5-min rounds, medium maps.
+    MobileStandard,
+}
+
+impl MatchType {
+    /// Parse a match type from a query-parameter string.
+    pub fn from_query_str(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "quick" | "quick_match" | "quickmatch" => MatchType::QuickMatch,
+            "mobile_blitz" | "mobileblitz" | "blitz" => MatchType::MobileBlitz,
+            "mobile_standard" | "mobilestandard" | "mobile" => MatchType::MobileStandard,
+            "full" | "full_match" | "fullmatch" | "desktop" => MatchType::FullMatch,
+            _ => MatchType::FullMatch,
+        }
+    }
+
+    /// Maximum players allowed for this match type.
+    pub fn max_players(&self) -> usize {
+        match self {
+            MatchType::FullMatch => 400, // server default, may be overridden by config
+            MatchType::QuickMatch => QUICK_MATCH_MAX_PLAYERS,
+            MatchType::MobileBlitz => MOBILE_BLITZ_MAX_PLAYERS,
+            MatchType::MobileStandard => MOBILE_STANDARD_MAX_PLAYERS,
+        }
+    }
+
+    /// Round duration in seconds for this match type.
+    pub fn duration_secs(&self) -> f32 {
+        match self {
+            MatchType::FullMatch => FULL_MATCH_DURATION_SECS,
+            MatchType::QuickMatch => QUICK_MATCH_DURATION_SECS,
+            MatchType::MobileBlitz => MOBILE_BLITZ_DURATION_SECS,
+            MatchType::MobileStandard => MOBILE_STANDARD_DURATION_SECS,
+        }
+    }
+
+    /// Delay in seconds before auto-filling bots (only applicable to QuickMatch).
+    pub fn bot_fill_delay_secs(&self) -> Option<f32> {
+        match self {
+            MatchType::QuickMatch => Some(QUICK_MATCH_BOT_FILL_DELAY_SECS),
+            _ => None,
+        }
+    }
+
+    /// Minimum human player count before bot auto-fill kicks in (QuickMatch only).
+    pub fn min_humans_for_bot_fill(&self) -> Option<usize> {
+        match self {
+            MatchType::QuickMatch => Some(QUICK_MATCH_MIN_HUMANS),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            MatchType::FullMatch => "FullMatch",
+            MatchType::QuickMatch => "QuickMatch",
+            MatchType::MobileBlitz => "MobileBlitz",
+            MatchType::MobileStandard => "MobileStandard",
+        }
+    }
+}
+
+impl Default for MatchType {
+    fn default() -> Self {
+        MatchType::FullMatch
+    }
+}
+
+impl std::fmt::Display for MatchType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServerFlagState {
     pub team_id: u8,                  // Which team this flag BELONGS to
@@ -22,7 +106,7 @@ pub struct ServerMatchInfo {
 impl Default for ServerMatchInfo {
     fn default() -> Self {
         ServerMatchInfo {
-            time_remaining: 300.0, // 5 minutes
+            time_remaining: FULL_MATCH_DURATION_SECS, // overridden per match_type when match starts
             match_state: fb::MatchStateType::Waiting,
             game_mode: fb::GameModeType::CaptureTheFlag, // Changed to CTF mode
             team_scores: HashMap::new(),
@@ -63,6 +147,8 @@ pub struct BotController {
     pub last_position: Vec2,
     pub stuck_timer: f32,
     pub stuck_check_position: Vec2,
+    /// Personality profile that influences weapon preferences, engagement ranges, and retreat behavior.
+    pub personality: crate::systems::ai::optimized_bot_ai::BotPersonality,
 }
 
 #[derive(Clone, Debug)]

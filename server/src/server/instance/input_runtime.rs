@@ -559,6 +559,7 @@ impl MassiveGameServer {
                     last_position: Vec2::new(spawn_pos.x, spawn_pos.y),
                     stuck_timer: 0.0,
                     stuck_check_position: Vec2::new(spawn_pos.x, spawn_pos.y),
+                    personality: crate::systems::ai::optimized_bot_ai::BotPersonality::random(),
                 };
                 self.bot_players.insert(player_id_arc, bot_controller);
                 debug!(

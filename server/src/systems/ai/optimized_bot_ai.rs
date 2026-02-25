@@ -18,7 +18,7 @@ use tracing::{debug, trace};
 
 // Optimized constants
 const BOT_SIMPLE_MOVEMENT_ONLY: bool = false; // Enable full AI with combat
-const BOT_MOVEMENT_CHANGE_INTERVAL: Duration = Duration::from_millis(2000); // Less frequent decision changes
+const BOT_MOVEMENT_CHANGE_INTERVAL: Duration = Duration::from_millis(500); // Reactive decisions every 0.5s
 const BOT_TARGET_ACQUISITION_RANGE: f32 = 600.0; // Increased combat range
 const BOT_FLAG_DETECTION_RANGE: f32 = 2000.0; // See flags from far away
 const BOT_SHOOT_ACCURACY: f32 = 0.80; // 80% accuracy
@@ -40,6 +40,91 @@ enum BotObjective {
     EngageNearbyEnemy,      // Fight nearby enemy
 }
 
+/// Personality profiles that influence bot decision-making, weapon preferences,
+/// engagement ranges, and retreat thresholds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BotPersonality {
+    /// Prefer Shotgun/Melee, rush targets, shorter engagement range (150u), chase fleeing enemies
+    Aggressive,
+    /// Prefer Rifle/Sniper, camp/hold position, longer engagement range (400u), retreat when health < 50%
+    Defensive,
+    /// Use current defaults, adapt weapon choice to situation
+    Balanced,
+}
+
+impl BotPersonality {
+    /// Randomly assign a personality at creation.
+    pub fn random() -> Self {
+        let mut rng = rand::thread_rng();
+        match rng.gen_range(0u8..3) {
+            0 => BotPersonality::Aggressive,
+            1 => BotPersonality::Defensive,
+            _ => BotPersonality::Balanced,
+        }
+    }
+
+    /// The engagement range threshold for this personality.
+    pub fn engagement_range(&self) -> f32 {
+        match self {
+            BotPersonality::Aggressive => 150.0,
+            BotPersonality::Defensive => 400.0,
+            BotPersonality::Balanced => 300.0,
+        }
+    }
+
+    /// Preferred weapon slot to switch to (1 = primary, 2 = secondary).
+    /// Returns None if the bot should keep its current weapon.
+    pub fn preferred_weapon_slot(&self, current_weapon: ServerWeaponType, enemy_distance: f32) -> Option<u8> {
+        match self {
+            BotPersonality::Aggressive => {
+                // Prefer Shotgun at close range, Melee at very close
+                if enemy_distance < 60.0 {
+                    if current_weapon != ServerWeaponType::Melee {
+                        return Some(2); // Switch to melee slot
+                    }
+                } else if enemy_distance < 200.0 {
+                    if current_weapon != ServerWeaponType::Shotgun {
+                        return Some(1); // Switch to shotgun slot
+                    }
+                }
+                None
+            }
+            BotPersonality::Defensive => {
+                // Prefer Sniper at long range, Rifle at medium
+                if enemy_distance > 400.0 {
+                    if current_weapon != ServerWeaponType::Sniper {
+                        return Some(2); // Switch to sniper slot
+                    }
+                } else if enemy_distance > 150.0 {
+                    if current_weapon != ServerWeaponType::Rifle {
+                        return Some(1); // Switch to rifle slot
+                    }
+                }
+                None
+            }
+            BotPersonality::Balanced => {
+                // Adapt to situation
+                if enemy_distance < 100.0 && current_weapon != ServerWeaponType::Shotgun {
+                    Some(1)
+                } else if enemy_distance > 350.0 && current_weapon != ServerWeaponType::Sniper {
+                    Some(2)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Whether this personality should retreat given current health (0-100 scale).
+    pub fn should_retreat(&self, health_pct: f32) -> bool {
+        match self {
+            BotPersonality::Aggressive => false, // Never retreat
+            BotPersonality::Defensive => health_pct < 50.0,
+            BotPersonality::Balanced => health_pct < 25.0,
+        }
+    }
+}
+
 pub struct OptimizedBotAI;
 
 #[derive(Clone)]
@@ -51,6 +136,7 @@ struct EnemySnapshot {
     velocity_y: f32,
     team_id: u8,
     carries_flag_team_id: u8,
+    weapon: ServerWeaponType,
 }
 
 #[derive(Clone)]
@@ -198,6 +284,7 @@ impl OptimizedBotAI {
                     velocity_y: player.velocity_y,
                     team_id: player.team_id,
                     carries_flag_team_id: player.is_carrying_flag_team_id,
+                    weapon: player.weapon,
                 };
 
                 live_players_by_id.insert(id.clone(), snapshot.clone());
@@ -611,35 +698,60 @@ impl OptimizedBotAI {
         nearest_enemy
     }
 
-    /// Enhanced movement decision with combat awareness
+    /// Enhanced movement decision with combat awareness, influenced by personality.
     fn make_simple_movement_decision(
         bot_controller: &mut BotController,
         bot_state: &BotSnapshotOwned,
     ) {
         let mut rng = rand::thread_rng();
+        let personality = bot_controller.personality;
 
-        // Randomly choose behavior
+        // Personality-weighted behavior distribution
+        let (engage_pct, flank_pct) = match personality {
+            BotPersonality::Aggressive => (60, 85), // 60% engage, 25% flank, 15% patrol
+            BotPersonality::Defensive => (15, 35),  // 15% engage, 20% flank, 65% patrol/hold
+            BotPersonality::Balanced => (40, 70),    // 40% engage, 30% flank, 30% patrol
+        };
+
         let behavior_choice = rng.gen_range(0..100);
 
-        if behavior_choice < 40 {
-            // 40% - Aggressive: Move towards center for action
-            let target_x = rng.gen_range(-200.0..200.0);
-            let target_y = rng.gen_range(-200.0..200.0);
+        if behavior_choice < engage_pct {
+            // Aggressive: Move towards center for action
+            let range = match personality {
+                BotPersonality::Aggressive => 100.0, // Rush closer to center
+                BotPersonality::Defensive => 300.0,  // Stay at range
+                BotPersonality::Balanced => 200.0,
+            };
+            let target_x = rng.gen_range(-range..range);
+            let target_y = rng.gen_range(-range..range);
             bot_controller.target_position = Some(Vec2::new(target_x, target_y));
             bot_controller.behavior_state = BotBehaviorState::Engaging;
-        } else if behavior_choice < 70 {
-            // 30% - Flanking: Move to sides
+        } else if behavior_choice < flank_pct {
+            // Flanking: Move to sides
             let side = if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
             let target_x = side * rng.gen_range(300.0..600.0);
             let target_y = rng.gen_range(-400.0..400.0);
             bot_controller.target_position = Some(Vec2::new(target_x, target_y));
             bot_controller.behavior_state = BotBehaviorState::Flanking;
         } else {
-            // 30% - Patrol: Random movement
-            let target_x = rng.gen_range(WORLD_MIN_X + 100.0..WORLD_MAX_X - 100.0);
-            let target_y = rng.gen_range(WORLD_MIN_Y + 100.0..WORLD_MAX_Y - 100.0);
-            bot_controller.target_position = Some(Vec2::new(target_x, target_y));
-            bot_controller.behavior_state = BotBehaviorState::Patrolling;
+            // Patrol / hold position
+            match personality {
+                BotPersonality::Defensive => {
+                    // Defensive bots hold near their current position
+                    let hold_x = bot_state.x + rng.gen_range(-80.0..80.0);
+                    let hold_y = bot_state.y + rng.gen_range(-80.0..80.0);
+                    let target_x = hold_x.clamp(WORLD_MIN_X + 100.0, WORLD_MAX_X - 100.0);
+                    let target_y = hold_y.clamp(WORLD_MIN_Y + 100.0, WORLD_MAX_Y - 100.0);
+                    bot_controller.target_position = Some(Vec2::new(target_x, target_y));
+                    bot_controller.behavior_state = BotBehaviorState::Defending;
+                }
+                _ => {
+                    let target_x = rng.gen_range(WORLD_MIN_X + 100.0..WORLD_MAX_X - 100.0);
+                    let target_y = rng.gen_range(WORLD_MIN_Y + 100.0..WORLD_MAX_Y - 100.0);
+                    bot_controller.target_position = Some(Vec2::new(target_x, target_y));
+                    bot_controller.behavior_state = BotBehaviorState::Patrolling;
+                }
+            }
         }
 
         // Randomly switch weapons occasionally
@@ -734,6 +846,17 @@ impl OptimizedBotAI {
             };
 
             let mut threat_score = threat_model.predict_threat_score(sample);
+
+            // Weapon-aware threat weighting based on distance
+            let distance = dist_sq.sqrt();
+            let weapon_threat_weight = match enemy.weapon {
+                ServerWeaponType::Sniper if distance > 400.0 => 2.0,
+                ServerWeaponType::Shotgun if distance < 100.0 => 1.5,
+                ServerWeaponType::Rifle if distance >= 200.0 && distance <= 400.0 => 1.3,
+                _ => 1.0,
+            };
+            threat_score *= weapon_threat_weight;
+
             if game_mode == fb::GameModeType::CaptureTheFlag
                 && enemy.carries_flag_team_id == bot_state.team_id
             {
@@ -804,12 +927,13 @@ impl OptimizedBotAI {
             ping_y: 0.0,
         };
 
-        // Weapon switching logic
+        // Weapon switching logic - personality-aware
         if current_time.duration_since(bot_controller.last_weapon_switch_time)
             < Duration::from_secs(1)
         {
             input.change_weapon_slot = rng.gen_range(1..=2);
         }
+        let personality = bot_controller.personality;
 
         // Reload if low on ammo
         if bot_state.ammo == 0 {
@@ -920,6 +1044,13 @@ impl OptimizedBotAI {
 
         // Combat behavior - only override rotation if we have a nearby enemy
         if has_enemy_target && nearest_enemy_dist < BOT_TARGET_ACQUISITION_RANGE.powi(2) {
+            let enemy_dist_linear = nearest_enemy_dist.sqrt();
+
+            // Personality-aware weapon switching when engaging
+            if let Some(preferred_slot) = personality.preferred_weapon_slot(bot_state.weapon, enemy_dist_linear) {
+                input.change_weapon_slot = preferred_slot;
+            }
+
             // Aim at enemy with some inaccuracy
             let aim_offset = rng.gen_range(-0.2..0.2) * (1.0 - BOT_SHOOT_ACCURACY);
             input.rotation = nearest_enemy_angle + aim_offset;
@@ -929,8 +1060,9 @@ impl OptimizedBotAI {
                 let predict_angle = (predicted.y - bot_state.y).atan2(predicted.x - bot_state.x);
                 input.rotation = (input.rotation + predict_angle) * 0.5;
                 trace!(
-                    "Bot {} engaging predicted target {}",
+                    "Bot {} ({:?}) engaging predicted target {}",
                     bot_state.username,
+                    personality,
                     target.enemy_id.as_str()
                 );
             }
@@ -947,8 +1079,13 @@ impl OptimizedBotAI {
                 if bot_controller.last_decision_time.elapsed() > BOT_REACTION_TIME {
                     input.shooting = rng.gen_bool(0.7); // 70% chance to shoot when in range
 
-                    // Sometimes use melee if very close
-                    if nearest_enemy_dist < 60.0 * 60.0 && rng.gen_bool(0.3) {
+                    // Aggressive bots prefer melee at very close range
+                    let melee_chance = match personality {
+                        BotPersonality::Aggressive => 0.5,
+                        BotPersonality::Defensive => 0.1,
+                        BotPersonality::Balanced => 0.3,
+                    };
+                    if nearest_enemy_dist < 60.0 * 60.0 && rng.gen_bool(melee_chance) {
                         input.melee_attack = true;
                         input.shooting = false;
                     }
@@ -965,23 +1102,64 @@ impl OptimizedBotAI {
                 input.use_ability_slot = 2; // Dodge roll disengage
             }
 
-            // Tactical movement during combat
+            // Tactical movement during combat - personality-aware
             if has_enemy_target && !movement_handled {
-                if nearest_enemy_dist < 200.0 * 200.0 {
-                    // Strafe at close range
-                    if rng.gen_bool(0.6) {
-                        input.move_left = rng.gen_bool(0.5);
-                        input.move_right = !input.move_left;
+                let engagement_range = personality.engagement_range();
+                let engagement_range_sq = engagement_range * engagement_range;
+
+                match personality {
+                    BotPersonality::Aggressive => {
+                        // Aggressive: rush towards enemy, minimal retreat
+                        if nearest_enemy_dist > engagement_range_sq {
+                            input.move_forward = true; // Close the gap
+                        } else {
+                            // Strafe aggressively at close range
+                            if rng.gen_bool(0.7) {
+                                input.move_left = rng.gen_bool(0.5);
+                                input.move_right = !input.move_left;
+                            }
+                            // Aggressive bots chase fleeing enemies
+                            input.move_forward = true;
+                        }
                     }
-                    // Sometimes retreat
-                    if nearest_enemy_dist < 100.0 * 100.0 && rng.gen_bool(0.3) {
-                        input.move_backward = true;
-                        input.move_forward = false;
+                    BotPersonality::Defensive => {
+                        // Defensive: maintain distance, retreat when too close
+                        if nearest_enemy_dist < engagement_range_sq {
+                            // Too close - retreat
+                            input.move_backward = true;
+                            input.move_forward = false;
+                            // Strafe while retreating
+                            if rng.gen_bool(0.4) {
+                                input.move_left = rng.gen_bool(0.5);
+                                input.move_right = !input.move_left;
+                            }
+                        } else {
+                            // Hold position, strafe to avoid being hit
+                            if rng.gen_bool(0.5) {
+                                input.move_left = rng.gen_bool(0.5);
+                                input.move_right = !input.move_left;
+                            }
+                        }
                     }
-                } else {
-                    // Move towards enemy if not too close
-                    if !bot_controller.target_position.is_some() {
-                        input.move_forward = true;
+                    BotPersonality::Balanced => {
+                        // Default balanced behavior
+                        if nearest_enemy_dist < 200.0 * 200.0 {
+                            // Strafe at close range
+                            if rng.gen_bool(0.6) {
+                                input.move_left = rng.gen_bool(0.5);
+                                input.move_right = !input.move_left;
+                            }
+                            // Sometimes retreat
+                            if nearest_enemy_dist < 100.0 * 100.0 && rng.gen_bool(0.3) {
+                                input.move_backward = true;
+                                input.move_forward = false;
+                            }
+                        } else {
+                            // Move towards enemy if not too close
+                            if bot_controller.target_position.is_none() {
+                                input.move_forward = true;
+                            }
+                        }
                     }
                 }
             }

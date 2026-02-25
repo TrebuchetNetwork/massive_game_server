@@ -164,6 +164,14 @@ pub struct PlayerState {
     pub violation_count: u32,
 
     pub changed_fields: u16,
+
+    // Killstreak tracking
+    pub current_streak: u32,
+    pub streak_damage_boost_remaining: f32,
+    pub streak_speed_boost_remaining: f32,
+
+    // Assist tracking: (attacker_id, damage_dealt, timestamp)
+    pub recent_damage_sources: Vec<(PlayerID, i32, Instant)>,
 }
 
 impl PlayerState {
@@ -226,6 +234,10 @@ impl PlayerState {
             last_valid_position: (initial_x, initial_y),
             violation_count: 0,
             changed_fields: 0xFFFF,
+            current_streak: 0,
+            streak_damage_boost_remaining: 0.0,
+            streak_speed_boost_remaining: 0.0,
+            recent_damage_sources: Vec::new(),
         }
     }
 
@@ -245,45 +257,85 @@ impl PlayerState {
     }
 
     pub fn get_max_ammo_for_weapon(weapon_type: ServerWeaponType) -> i32 {
+        use crate::core::constants::*;
         match weapon_type {
-            ServerWeaponType::Pistol => 7,
-            ServerWeaponType::Shotgun => 5,
-            ServerWeaponType::Rifle => 30,
-            ServerWeaponType::Sniper => 5,
-            ServerWeaponType::Melee => 0,
+            ServerWeaponType::Pistol => PISTOL_MAX_AMMO,
+            ServerWeaponType::Shotgun => SHOTGUN_MAX_AMMO,
+            ServerWeaponType::Rifle => RIFLE_MAX_AMMO,
+            ServerWeaponType::Sniper => SNIPER_MAX_AMMO,
+            ServerWeaponType::Melee => MELEE_MAX_AMMO,
         }
     }
 
     pub fn get_weapon_fire_rate_seconds(weapon_type: ServerWeaponType) -> f32 {
+        use crate::core::constants::*;
         match weapon_type {
-            ServerWeaponType::Pistol => 0.6,
-            ServerWeaponType::Shotgun => 0.6,
-            ServerWeaponType::Rifle => 0.1,
-            ServerWeaponType::Sniper => 1.2,
-            ServerWeaponType::Melee => 0.5,
+            ServerWeaponType::Pistol => PISTOL_FIRE_RATE_SECS,
+            ServerWeaponType::Shotgun => SHOTGUN_FIRE_RATE_SECS,
+            ServerWeaponType::Rifle => RIFLE_FIRE_RATE_SECS,
+            ServerWeaponType::Sniper => SNIPER_FIRE_RATE_SECS,
+            ServerWeaponType::Melee => MELEE_FIRE_RATE_SECS,
         }
     }
 
     pub fn get_weapon_reload_time_seconds(weapon_type: ServerWeaponType) -> f32 {
+        use crate::core::constants::*;
         match weapon_type {
-            ServerWeaponType::Pistol => 1.5,
-            ServerWeaponType::Shotgun => 2.5,
-            ServerWeaponType::Rifle => 2.0,
-            ServerWeaponType::Sniper => 3.0,
-            ServerWeaponType::Melee => 0.0,
+            ServerWeaponType::Pistol => PISTOL_RELOAD_SECS,
+            ServerWeaponType::Shotgun => SHOTGUN_RELOAD_SECS,
+            ServerWeaponType::Rifle => RIFLE_RELOAD_SECS,
+            ServerWeaponType::Sniper => SNIPER_RELOAD_SECS,
+            ServerWeaponType::Melee => MELEE_RELOAD_SECS,
         }
     }
 
     pub fn get_weapon_damage(weapon_type: ServerWeaponType, damage_boost_active: bool) -> i32 {
+        use crate::core::constants::*;
         let base_damage = match weapon_type {
-            ServerWeaponType::Pistol => 8,
-            ServerWeaponType::Shotgun => 12,
-            ServerWeaponType::Rifle => 10,
-            ServerWeaponType::Sniper => 50,
-            ServerWeaponType::Melee => 30,
+            ServerWeaponType::Pistol => PISTOL_DAMAGE,
+            ServerWeaponType::Shotgun => SHOTGUN_DAMAGE,
+            ServerWeaponType::Rifle => RIFLE_DAMAGE,
+            ServerWeaponType::Sniper => SNIPER_DAMAGE,
+            ServerWeaponType::Melee => MELEE_DAMAGE,
         };
-        let multiplier = if damage_boost_active { 1.5 } else { 1.0 };
+        let multiplier = if damage_boost_active { DAMAGE_BOOST_MULTIPLIER } else { 1.0 };
         (base_damage as f32 * multiplier) as i32
+    }
+
+    /// Total damage multiplier including streak bonus and pickup boost
+    pub fn effective_damage_multiplier(&self) -> f32 {
+        use crate::core::constants::*;
+        let mut mult = 1.0;
+        if self.damage_boost_remaining > 0.0 {
+            mult *= DAMAGE_BOOST_MULTIPLIER;
+        }
+        if self.streak_damage_boost_remaining > 0.0 {
+            mult *= KILLSTREAK_DAMAGE_BOOST_MULTIPLIER;
+        }
+        mult
+    }
+
+    /// Record an incoming damage event for assist tracking
+    pub fn record_incoming_damage(&mut self, attacker_id: &PlayerID, damage: i32, now: Instant) {
+        use crate::core::constants::ASSIST_WINDOW_SECS;
+        // Prune stale entries
+        self.recent_damage_sources.retain(|(_, _, t)| now.duration_since(*t).as_secs_f32() < ASSIST_WINDOW_SECS);
+        // Update existing or push new
+        if let Some(entry) = self.recent_damage_sources.iter_mut().find(|(id, _, _)| id == attacker_id) {
+            entry.1 += damage;
+            entry.2 = now;
+        } else {
+            self.recent_damage_sources.push((attacker_id.clone(), damage, now));
+        }
+    }
+
+    /// Get assist candidates (everyone who damaged this player in the window, excluding the killer)
+    pub fn get_assist_ids(&self, killer_id: &PlayerID, now: Instant) -> Vec<PlayerID> {
+        use crate::core::constants::ASSIST_WINDOW_SECS;
+        self.recent_damage_sources.iter()
+            .filter(|(id, _, t)| id != killer_id && now.duration_since(*t).as_secs_f32() < ASSIST_WINDOW_SECS)
+            .map(|(id, _, _)| id.clone())
+            .collect()
     }
 
     pub fn can_shoot(&self, current_time: Instant) -> bool {
@@ -371,8 +423,8 @@ impl PlayerState {
         self.alive = false;
         self.deaths += 1;
         self.respawn_timer = Some(crate::core::constants::DEFAULT_RESPAWN_DURATION_SECS);
-        self.velocity_x = 0.0; // Added for consistency
-        self.velocity_y = 0.0; // Added for consistency
+        self.velocity_x = 0.0;
+        self.velocity_y = 0.0;
         self.weapon_swap_progress = 0.0;
         self.pending_weapon_swap = None;
         self.dash_remaining = 0.0;
@@ -380,10 +432,13 @@ impl PlayerState {
         self.invulnerable_remaining = 0.0;
         self.ping_cooldown_remaining = 0.0;
         self.zone_boost_cooldown_remaining = 0.0;
-        // self.is_carrying_flag_team_id = 0; // <<<< REMOVE THIS LINE (or comment it out)
-        // Mark FIELD_FLAG changed if it was carried, this will be handled by the caller now.
+        // Reset streak on death
+        self.current_streak = 0;
+        self.streak_damage_boost_remaining = 0.0;
+        self.streak_speed_boost_remaining = 0.0;
+        // Clear assist tracking
+        self.recent_damage_sources.clear();
         self.mark_field_changed(FIELD_HEALTH_ALIVE | FIELD_SCORE_STATS | FIELD_POSITION_ROTATION);
-        // FIELD_FLAG will be marked by caller if changed
     }
 
     pub fn respawn(&mut self, new_x: f32, new_y: f32) {
@@ -410,7 +465,11 @@ impl PlayerState {
         self.ping_cooldown_remaining = 0.0;
         self.zone_boost_cooldown_remaining = 0.0;
         self.shield_current = 0;
-        self.is_carrying_flag_team_id = 0; // Reset flag carrying state on respawn
+        self.is_carrying_flag_team_id = 0;
+        self.current_streak = 0;
+        self.streak_damage_boost_remaining = 0.0;
+        self.streak_speed_boost_remaining = 0.0;
+        self.recent_damage_sources.clear();
         self.mark_field_changed(
             FIELD_HEALTH_ALIVE
                 | FIELD_POSITION_ROTATION
@@ -472,6 +531,14 @@ impl PlayerState {
         if self.zone_boost_cooldown_remaining > 0.0 {
             self.zone_boost_cooldown_remaining =
                 (self.zone_boost_cooldown_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.streak_damage_boost_remaining > 0.0 {
+            self.streak_damage_boost_remaining = (self.streak_damage_boost_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.streak_speed_boost_remaining > 0.0 {
+            self.streak_speed_boost_remaining = (self.streak_speed_boost_remaining - delta_time).max(0.0);
             changed_powerups = true;
         }
         if self.weapon_swap_progress > 0.0 {
@@ -593,6 +660,10 @@ impl PlayerState {
         self.flag_captures = 0;
         self.flag_returns = 0;
         self.kills_per_weapon = [0; 5];
+        self.current_streak = 0;
+        self.streak_damage_boost_remaining = 0.0;
+        self.streak_speed_boost_remaining = 0.0;
+        self.recent_damage_sources.clear();
     }
 
     #[inline]
@@ -745,6 +816,16 @@ pub enum GameEvent {
         player_id: PlayerID,
         team_id: u8,
         position: Vec2,
+    },
+    Killstreak {
+        player_id: PlayerID,
+        streak: u32,
+        position: Vec2,
+    },
+    AssistKill {
+        assister_id: PlayerID,
+        victim_id: PlayerID,
+        points: i32,
     },
 }
 

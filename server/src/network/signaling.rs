@@ -161,6 +161,9 @@ pub struct ClientState {
     pub last_known_wall_ids: Option<HashSet<EntityId>>,
     pub last_known_wall_states: HashMap<EntityId, (i32, i32)>, // wall_id -> (current_health, max_health)
     pub match_info_pending: bool,
+    pub is_mobile: bool,
+    /// Mobile clients get updates at a lower frequency (every N frames)
+    pub mobile_delta_skip_modulus: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -189,6 +192,8 @@ impl Default for ClientState {
             last_known_wall_ids: None,
             last_known_wall_states: HashMap::new(),
             match_info_pending: true,
+            is_mobile: false,
+            mobile_delta_skip_modulus: 1,
         }
     }
 }
@@ -780,6 +785,7 @@ pub async fn handle_signaling_connection(
     auth_user_id: Option<String>,
     requested_team_id: Option<u8>,
     remote_ip: Option<IpAddr>,
+    is_mobile: bool,
 ) {
     shared_connection_manager().upsert(ConnectionInfo::new(
         peer_id_str.clone(),
@@ -1049,6 +1055,8 @@ pub async fn handle_signaling_connection(
             let initial_client_state = ClientState {
                 known_walls_sent: false,
                 last_update_sent_time: Instant::now(),
+                is_mobile,
+                mobile_delta_skip_modulus: if is_mobile { crate::core::constants::MOBILE_DELTA_SKIP_MODULUS } else { 1 },
                 ..Default::default()
             };
             client_states_map_on_open

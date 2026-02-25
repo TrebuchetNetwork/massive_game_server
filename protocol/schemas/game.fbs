@@ -55,7 +55,16 @@ enum GameEventType : byte {
     FlagGrabbed = 7,
     FlagDropped = 8,
     FlagReturned = 9,
-    FlagCaptured = 10
+    FlagCaptured = 10,
+    TeamPing = 11,
+    Killstreak = 12,   // value = streak count (3/5/7+)
+    AssistKill = 13    // value = assist points awarded
+}
+
+enum ZoneType : byte {
+    SlowZone = 0,
+    DamageZone = 1,
+    BoostPad = 2
 }
 
 enum MatchStateType : byte {
@@ -133,6 +142,15 @@ table PlayerState {
 
     // CTF
     is_carrying_flag_team_id: byte = 0; // 0 if not carrying, otherwise team ID of the flag being carried
+
+    // V5 additions
+    ability_1_cooldown_remaining: float = 0.0;
+    ability_2_cooldown_remaining: float = 0.0;
+    invulnerable_remaining: float = 0.0;
+    secondary_weapon: WeaponType = Pistol;
+    weapon_swap_progress: float = 0.0;
+    current_streak: uint = 0;
+    primary_weapon: WeaponType = Rifle;
 }
 
 table ProjectileState {
@@ -163,6 +181,16 @@ table Pickup {
     pickup_type: PickupType;
     weapon_type: WeaponType; // Only used if pickup_type is WeaponCrate
     is_active: bool;
+}
+
+table Zone {
+    id: string;
+    x: float;
+    y: float;
+    width: float;
+    height: float;
+    zone_type: ZoneType;
+    direction: float = 0.0; // For BoostPad direction
 }
 
 // Represents a specific event that occurred in the game, for client effects
@@ -198,6 +226,8 @@ table PlayerInput {
     melee_attack: bool = false; // Added for melee
     change_weapon_slot: byte; // If players can switch weapons
     use_ability_slot: byte; // For future abilities
+    ping_x: float = 0.0;
+    ping_y: float = 0.0;
 }
 
 table ChatMessage {
@@ -232,6 +262,7 @@ table InitialStateMessage {
     pickups: [Pickup];
     match_info: MatchInfo;
     flag_states: [FlagState]; // Initial state of flags for CTF
+    zones: [Zone]; // Zone hazards and boost pads
     timestamp: ulong;
     map_name: string;
 }

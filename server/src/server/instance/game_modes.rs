@@ -44,7 +44,7 @@ impl MassiveGameServer {
             fb::MatchStateType::Waiting => {
                 if effective_participant_count >= MIN_PLAYERS_TO_START {
                     match_info_guard.match_state = fb::MatchStateType::Active;
-                    match_info_guard.time_remaining = 300.0;
+                    match_info_guard.time_remaining = self.match_duration_secs;
                     if dynamic_mode_transitions {
                         match_info_guard.game_mode = fb::GameModeType::FreeForAll;
                     }
@@ -76,8 +76,8 @@ impl MassiveGameServer {
                 let previous_time_remaining = match_info_guard.time_remaining;
                 match_info_guard.time_remaining -= delta_time;
                 if dynamic_mode_transitions {
-                    let elapsed = (300.0 - match_info_guard.time_remaining).max(0.0);
-                    let previous_elapsed = (300.0 - previous_time_remaining).max(0.0);
+                    let elapsed = (self.match_duration_secs - match_info_guard.time_remaining).max(0.0);
+                    let previous_elapsed = (self.match_duration_secs - previous_time_remaining).max(0.0);
                     if match_info_guard.game_mode == fb::GameModeType::FreeForAll
                         && previous_elapsed < 105.0
                         && elapsed >= 105.0
@@ -302,6 +302,7 @@ impl MassiveGameServer {
                                         let p_state_mut = &mut *p_state_mut_entry;
                                         p_state_mut.flag_returns =
                                             p_state_mut.flag_returns.saturating_add(1);
+                                        p_state_mut.score += POINTS_FLAG_RETURN;
                                         p_state_mut.mark_field_changed(FIELD_SCORE_STATS);
                                     }
                                     self.global_game_events.push(
@@ -361,7 +362,7 @@ impl MassiveGameServer {
                                 let p_state_mut = &mut *p_state_mut_entry;
                                 p_state_mut.is_carrying_flag_team_id = 0;
                                 p_state_mut.mark_field_changed(FIELD_FLAG);
-                                p_state_mut.score += 100;
+                                p_state_mut.score += POINTS_FLAG_CAPTURE;
                                 p_state_mut.flag_captures =
                                     p_state_mut.flag_captures.saturating_add(1);
                                 p_state_mut.mark_field_changed(FIELD_SCORE_STATS);
@@ -449,7 +450,7 @@ impl MassiveGameServer {
     }
 
     fn reset_match_state(&self, match_info: &mut ServerMatchInfo) {
-        match_info.time_remaining = 300.0;
+        match_info.time_remaining = self.match_duration_secs;
         // Don't clear team scores - preserve them between rounds
         // match_info.team_scores.clear();
         match_info.flag_states.clear();

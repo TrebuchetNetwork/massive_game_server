@@ -17,6 +17,8 @@ export declare class PlayerInput {
     meleeAttack(): boolean;
     changeWeaponSlot(): number;
     useAbilitySlot(): number;
+    pingX(): number;
+    pingY(): number;
     static startPlayerInput(builder: flatbuffers.Builder): void;
     static addTimestamp(builder: flatbuffers.Builder, timestamp: bigint): void;
     static addSequence(builder: flatbuffers.Builder, sequence: number): void;
@@ -30,7 +32,9 @@ export declare class PlayerInput {
     static addMeleeAttack(builder: flatbuffers.Builder, meleeAttack: boolean): void;
     static addChangeWeaponSlot(builder: flatbuffers.Builder, changeWeaponSlot: number): void;
     static addUseAbilitySlot(builder: flatbuffers.Builder, useAbilitySlot: number): void;
+    static addPingX(builder: flatbuffers.Builder, pingX: number): void;
+    static addPingY(builder: flatbuffers.Builder, pingY: number): void;
     static endPlayerInput(builder: flatbuffers.Builder): flatbuffers.Offset;
-    static createPlayerInput(builder: flatbuffers.Builder, timestamp: bigint, sequence: number, moveForward: boolean, moveBackward: boolean, moveLeft: boolean, moveRight: boolean, shooting: boolean, reload: boolean, rotation: number, meleeAttack: boolean, changeWeaponSlot: number, useAbilitySlot: number): flatbuffers.Offset;
+    static createPlayerInput(builder: flatbuffers.Builder, timestamp: bigint, sequence: number, moveForward: boolean, moveBackward: boolean, moveLeft: boolean, moveRight: boolean, shooting: boolean, reload: boolean, rotation: number, meleeAttack: boolean, changeWeaponSlot: number, useAbilitySlot: number, pingX: number, pingY: number): flatbuffers.Offset;
 }
 //# sourceMappingURL=player-input.d.ts.map

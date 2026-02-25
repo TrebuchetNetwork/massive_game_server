@@ -355,6 +355,16 @@ impl MassiveGameServer {
             if throttle_delta_broadcasts && current_frame % delta_skip_modulus != 0 {
                 continue;
             }
+            // Mobile clients: additional frame skipping for reduced update rate (~20 Hz)
+            let client_mobile_skip = self
+                .client_states_map
+                .read()
+                .get(&peer_id)
+                .map(|cs| cs.mobile_delta_skip_modulus)
+                .unwrap_or(1);
+            if client_mobile_skip > 1 && (current_frame as usize) % client_mobile_skip != 0 {
+                continue;
+            }
             if scheduled_delta_count >= max_delta_per_frame {
                 continue;
             }

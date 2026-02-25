@@ -95,8 +95,8 @@ pub use self::types::{
     BotBehaviorState, BotController, JoinStageLatencyStats, JoinStageReport, JoinStageWaveSummary,
     KillCamData, KillCamSample, LiveReplayDisputeAuditProof, LiveReplayDisputeFilter,
     LiveReplayDisputeReport, LiveReplayDisputeRequest, LiveReplayFrame, LiveReplayKillFeedEntry,
-    MatchEndSummary, PlayerMatchStats, QuicJoinSnapshot, ServerFlagState, ServerKillFeedEntry,
-    ServerMatchInfo,
+    MatchEndSummary, MatchType, PlayerMatchStats, QuicJoinSnapshot, ServerFlagState,
+    ServerKillFeedEntry, ServerMatchInfo,
 };
 use self::util::*;
 
@@ -384,6 +384,13 @@ pub struct MassiveGameServer {
     direct_packet_queue_cap: usize,
     commander_mode_enabled: bool,
     commander_runtime_state: Arc<ParkingLotRwLock<CommanderRuntimeState>>,
+    // ── Match sizing ──────────────────────────────────────────────────
+    pub match_type: MatchType,
+    /// Duration of a single round in seconds (derived from match_type).
+    pub match_duration_secs: f32,
+    /// For QuickMatch: tracks when the queue started so we can auto-fill bots
+    /// after the bot-fill delay elapses.  `None` until the first human joins.
+    quick_match_queue_start: Arc<ParkingLotRwLock<Option<Instant>>>,
 }
 
 impl MassiveGameServer {
@@ -396,6 +403,21 @@ impl MassiveGameServer {
         player_aois: PlayerAoIs,
     ) -> Self {
         info!("Initializing MassiveGameServer...");
+
+        // ── Match type & sizing ───────────────────────────────────────
+        let match_type = std::env::var("MGS_MATCH_TYPE")
+            .ok()
+            .map(|raw| MatchType::from_query_str(&raw))
+            .unwrap_or_default();
+        let match_duration_secs = match_type.duration_secs();
+        let effective_max_players = match match_type {
+            MatchType::FullMatch => config.max_players_per_match,
+            other => other.max_players().min(config.max_players_per_match),
+        };
+        info!(
+            "Match type: {} (max_players={}, duration={}s)",
+            match_type, effective_max_players, match_duration_secs,
+        );
 
         let spatial_index = Arc::new(ImprovedSpatialIndex::new(
             WORLD_MAX_X - WORLD_MIN_X,
@@ -428,7 +450,7 @@ impl MassiveGameServer {
         let map_target_players = std::env::var("MGS_MAP_TARGET_PLAYERS")
             .ok()
             .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(config.max_players_per_match.max(20));
+            .unwrap_or(effective_max_players.max(20));
         let map_seed = std::env::var("MGS_MAP_SEED")
             .ok()
             .and_then(|raw| raw.parse::<u64>().ok())
@@ -440,13 +462,22 @@ impl MassiveGameServer {
                 }
             });
 
+        let map_template = std::env::var("MGS_MAP_TEMPLATE")
+            .ok()
+            .unwrap_or_default();
         let (all_map_walls, map_name) = if force_10v10_map {
             (
                 MapGenerator::generate_10v10_map_with_seed(map_seed),
                 "Massive Arena 10v10".to_string(),
             )
         } else {
-            MapGenerator::generate_dynamic_map_with_seed(map_target_players, map_seed)
+            match map_template.to_ascii_lowercase().as_str() {
+                "corridors" => MapGenerator::generate_corridors_map(map_seed),
+                "arena" => MapGenerator::generate_arena_map(map_seed),
+                "fortress" => MapGenerator::generate_fortress_map(map_seed),
+                "random" => MapGenerator::select_random_map(map_seed, map_target_players),
+                _ => MapGenerator::generate_dynamic_map_with_seed(map_target_players, map_seed),
+            }
         };
         info!(
             "Generated {} walls for map '{}' (target players: {}, force_10v10: {}, seed: {}).",
@@ -567,7 +598,7 @@ impl MassiveGameServer {
                 .ok()
                 .and_then(|raw| raw.parse::<usize>().ok())
                 .unwrap_or(2)
-                .min(config.max_players_per_match)
+                .min(effective_max_players)
         } else {
             0
         };
@@ -757,6 +788,9 @@ impl MassiveGameServer {
             commander_runtime_state: Arc::new(ParkingLotRwLock::new(
                 CommanderRuntimeState::default(),
             )),
+            match_type,
+            match_duration_secs,
+            quick_match_queue_start: Arc::new(ParkingLotRwLock::new(None)),
         };
 
         server.maybe_refresh_navigation_mesh();
@@ -806,6 +840,55 @@ impl MassiveGameServer {
         self.player_manager
             .player_count()
             .saturating_sub(self.spectator_count())
+    }
+
+    /// Returns the effective max players for this server instance, taking
+    /// match type into account.
+    pub fn effective_max_players(&self) -> usize {
+        match self.match_type {
+            MatchType::FullMatch => self.config.max_players_per_match,
+            other => other.max_players().min(self.config.max_players_per_match),
+        }
+    }
+
+    /// Record that a human player has entered the queue (for quick match
+    /// bot-fill delay tracking).
+    pub fn note_human_queue_arrival(&self) {
+        let mut guard = self.quick_match_queue_start.write();
+        if guard.is_none() {
+            *guard = Some(Instant::now());
+        }
+    }
+
+    /// Returns `true` when the quick-match bot-fill delay has elapsed and the
+    /// lobby has fewer than the minimum required human players.
+    pub fn should_quick_match_bot_fill(&self) -> bool {
+        if self.match_type != MatchType::QuickMatch {
+            return false;
+        }
+        let Some(delay_secs) = self.match_type.bot_fill_delay_secs() else {
+            return false;
+        };
+        let Some(min_humans) = self.match_type.min_humans_for_bot_fill() else {
+            return false;
+        };
+        let guard = self.quick_match_queue_start.read();
+        let Some(queue_start) = *guard else {
+            return false;
+        };
+        let elapsed = queue_start.elapsed().as_secs_f32();
+        if elapsed < delay_secs {
+            return false;
+        }
+        // Count current human players
+        let mut human_count = 0usize;
+        self.player_manager
+            .for_each_player(|player_id, player_state| {
+                if !self.bot_players.contains_key(player_id) && !player_state.is_spectator {
+                    human_count += 1;
+                }
+            });
+        human_count < min_humans
     }
 
     pub(super) fn enqueue_direct_packet_for_peer(&self, peer_id: &str, packet: Bytes) {

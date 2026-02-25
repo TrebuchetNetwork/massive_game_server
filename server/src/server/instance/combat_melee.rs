@@ -187,7 +187,7 @@ impl MassiveGameServer {
                                               attacker_username, target_username);
                                     } else {
                                         // Normal kill: positive score
-                                        attacker_mut_state.score += 100;
+                                        attacker_mut_state.score += POINTS_PER_KILL;
                                     }
 
                                     attacker_mut_state.mark_field_changed(FIELD_SCORE_STATS);
@@ -204,6 +204,47 @@ impl MassiveGameServer {
                                 },
                                 EventPriority::High,
                             );
+
+                            // Losing team respawn reduction for melee kills
+                            {
+                                let victim_team = self
+                                    .player_manager
+                                    .get_player_state(&target_id_arc_nearby)
+                                    .map(|p| p.team_id)
+                                    .unwrap_or(0);
+                                if victim_team != 0 {
+                                    let match_info_guard = self.match_info.read();
+                                    let victim_team_score = match_info_guard
+                                        .team_scores
+                                        .get(&victim_team)
+                                        .cloned()
+                                        .unwrap_or(0);
+                                    let max_enemy_score = match_info_guard
+                                        .team_scores
+                                        .iter()
+                                        .filter(|(&tid, _)| tid != victim_team)
+                                        .map(|(_, &s)| s)
+                                        .max()
+                                        .unwrap_or(0);
+                                    drop(match_info_guard);
+
+                                    let deficit = max_enemy_score - victim_team_score;
+                                    if deficit > 0 {
+                                        let reduction_ticks = (deficit / 5).max(0) as f32;
+                                        let reduction = reduction_ticks
+                                            * LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS;
+                                        if let Some(mut victim_entry) = self
+                                            .player_manager
+                                            .get_player_state_mut(&target_id_arc_nearby)
+                                        {
+                                            if let Some(ref mut timer) = victim_entry.respawn_timer
+                                            {
+                                                *timer = (*timer - reduction).max(0.5);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
                             // Update kill feed
                             self.capture_killcam_for_victim(
