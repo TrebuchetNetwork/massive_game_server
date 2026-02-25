@@ -1337,7 +1337,15 @@
         function computeReconnectDelayMs(attemptNumber) { return reconnectHelpers.computeReconnectDelayMs(attemptNumber); }
         function scheduleAutoReconnect(reason = '') { return reconnectHelpers.scheduleAutoReconnect(reason); }
 
+        let inputManager = null;
+        let setupInputHandlers = () => {};
+        let teardownInputHandlers = () => {};
+
         function updateMobileControlsVisibility() {
+            if (inputManager) {
+                inputManager.updateMobileControlsVisibility();
+                return;
+            }
             if (!mobileControlsDiv) return;
             const shouldShow = forceMobileClient || isTouchDevice || window.innerWidth <= 900;
             mobileControlsDiv.classList.toggle('hidden', !shouldShow);
@@ -1351,6 +1359,9 @@
 
 
         function syncMobileFireButtonState() {
+            if (inputManager) {
+                mobileStickyFireArmed = !!inputManager.mobileStickyFireArmed;
+            }
             if (!mobileFireButton) return;
             mobileFireButton.classList.toggle('mobile-button--latched', mobileStickyFireArmed);
             if (mobileStickyFireArmed) {
@@ -1361,6 +1372,10 @@
         }
 
         function updateMobileButtonSizing() {
+            if (inputManager) {
+                inputManager.updateMobileButtonSizing();
+                return;
+            }
             if (!mobileControlsDiv) return;
             const shortestSide = Math.max(280, Math.min(window.innerWidth, window.innerHeight));
             const scale = clamp(shortestSide / 420, 0.9, 1.26);
@@ -1381,6 +1396,10 @@
 
 
         function closePingWheel() {
+            if (inputManager) {
+                inputManager.closePingWheel();
+                pingWheelOpen = !!inputManager.pingWheelOpen;
+            }
             if (pingWheelLongPressTimer) {
                 clearTimeout(pingWheelLongPressTimer);
                 pingWheelLongPressTimer = null;
@@ -1394,6 +1413,11 @@
 
 
         function sendTacticalPing(kind, worldPoint) {
+            if (inputManager) {
+                inputManager.sendTacticalPing(kind, worldPoint);
+                tacticalPings = inputManager.tacticalPings;
+                return;
+            }
             if (!worldPoint || !Number.isFinite(worldPoint.x) || !Number.isFinite(worldPoint.y)) return;
             const now = Date.now();
             const localCommander = isLocalTeamCommander();
@@ -1746,7 +1770,7 @@
             processedKillFeedKeys: new Set(),
             processedKillFeedQueue: []
         };
-        const tacticalPings = [];
+        let tacticalPings = [];
         let lastPingChatAt = 0;
         let pingWheelOpen = false;
         let pingWheelAnchorWorld = null;
@@ -1850,6 +1874,15 @@
         let overviewMode = false;
         let savedCameraState = null;
         let overviewScale = 0.2; // Zoom out scale for overview
+        function enterOverviewMode() {
+            if (overviewMode) return;
+            overviewMode = true;
+        }
+        function exitOverviewMode() {
+            if (!overviewMode) return;
+            overviewMode = false;
+            savedCameraState = null;
+        }
 
         // Timing
         let lastInputSendTime = 0;
@@ -2222,6 +2255,109 @@
             toggleSettings,
         } = uiManager;
         window.toggleScoreboard = toggleScoreboard;
+
+        function syncInputManagerState() {
+            if (!inputManager) return;
+            pendingInputs = inputManager.pendingInputs;
+            inputSequence = inputManager.inputSequence;
+            tacticalPings = inputManager.tacticalPings;
+            mobileAimActive = !!inputManager.mobileAimActive;
+            mobileFireTouchActive = !!inputManager.mobileFireTouchActive;
+            mobileStickyFireArmed = !!inputManager.mobileStickyFireArmed;
+            pingWheelOpen = !!inputManager.pingWheelOpen;
+            syncMobileFireButtonState();
+        }
+
+        function sendInputsToServer() {
+            if (!inputManager) return;
+            const cameraCombatImpulseRef = { value: cameraCombatImpulse };
+            inputManager.sendInputsToServer(
+                cameraCombatImpulseRef,
+                combatUiState,
+                EXCITEMENT_UI_ENABLED
+            );
+            cameraCombatImpulse = cameraCombatImpulseRef.value;
+            syncInputManagerState();
+        }
+
+        // ── Instantiate InputManager ───────────────────────────────────────
+        inputManager = createInputManager({
+            PIXI,
+            GP,
+            clamp,
+            normalizeAngle,
+            log,
+            getMaxAmmoForWeaponClient,
+            getApp: () => app,
+            getGameScene: () => gameScene,
+            getLocalPlayerState: () => localPlayerState,
+            getLocalPlayerSprite: () => localPlayerSprite,
+            getMyPlayerId: () => myPlayerId,
+            getPlayers: () => players,
+            getDataChannel: () => dataChannel,
+            getInputState: () => inputState,
+            getGameSettings: () => gameSettings,
+            getMouseWorldPos: () => mouseWorldPos,
+            getDynamicsTuning: () => dynamicsTuning,
+            getOverviewMode: () => overviewMode,
+            setOverviewMode: (enabled) => {
+                overviewMode = !!enabled;
+            },
+            mobileControlsDiv,
+            mobileMoveArea,
+            mobileMoveKnob,
+            mobileAimArea,
+            mobileFireButton,
+            mobileReloadButton,
+            mobileMeleeButton,
+            mobileWeaponPrimaryButton,
+            mobileWeaponSecondaryButton,
+            mobileAbilityDashButton,
+            mobileAbilityDodgeButton,
+            reloadPromptSpan,
+            minimapContainerDiv,
+            pingWheelDiv,
+            chatInput,
+            settingsMenuDiv,
+            isTouchDevice,
+            isMobileDevice,
+            forceMobileClient,
+            mobileDynamicsEnabled,
+            setObjectiveUrgency,
+            isLocalTeamCommander,
+            getCommanderIdForTeam,
+            createChatMessage,
+            triggerHapticFn: triggerHaptic,
+            enterOverviewMode,
+            exitOverviewMode,
+            toggleSettings,
+            setFocusMode,
+            getFocusModeEnabled: () => focusModeEnabled,
+            INPUT_SEND_RATE,
+            BACKGROUND_INPUT_SEND_RATE,
+            INPUT_ROTATION_QUANT_STEP,
+            INPUT_MOVEMENT_HEARTBEAT_MS,
+            INPUT_IDLE_HEARTBEAT_MS,
+            BACKGROUND_INPUT_HEARTBEAT_MS,
+            RECONCILIATION_BUFFER_SIZE,
+            createInputMessage,
+            getBackgroundThrottleActive: () => backgroundThrottleActive,
+            getAudioManager: () => audioManager,
+            getMinimap: () => minimap,
+            AIM_ASSIST_MAGNETISM,
+            AIM_ASSIST_MAX_DISTANCE,
+        });
+
+        setupInputHandlers = () => {
+            if (!inputManager) return;
+            inputManager.setupInputHandlers();
+            syncInputManagerState();
+        };
+        teardownInputHandlers = () => {
+            if (!inputManager) return;
+            inputManager.teardownInputHandlers();
+            syncInputManagerState();
+        };
 
         // ── Instantiate SpriteManager ──────────────────────────────────────
         const spriteManager = createSpriteManager(() => ({
@@ -3065,7 +3201,12 @@
             setMatchInfo: (v) => { matchInfo = v; },
             setKillFeed: (v) => { killFeed = v; },
             setLastProcessedInput: (v) => { lastProcessedInput = v; },
-            setPendingInputs: (v) => { pendingInputs = v; },
+            setPendingInputs: (v) => {
+                pendingInputs = v;
+                if (inputManager) {
+                    inputManager.setPendingInputsBuffer(v);
+                }
+            },
             setMinimapWallsCacheDirty: (v) => { minimapWallsCacheDirty = v; },
             setCurrentMapName: (v) => { currentMapName = v; },
         }));
@@ -3499,6 +3640,9 @@
             webgpuProjectileRenderPathActive = false;
             webgpuPlayerRenderPathActive = false;
             pendingInputs = [];
+            if (inputManager) {
+                inputManager.setPendingInputsBuffer(pendingInputs);
+            }
             serverUpdates = [];
             interpolationManager.resetSnapshotState();
             adaptiveInterpolationDelayMs = INTERPOLATION_DELAY;
@@ -3522,6 +3666,9 @@
                 networkProfilerDiv.classList.toggle('hidden', !gameSettings.showNetworkProfiler);
             }
             inputSequence = 0;
+            if (inputManager) {
+                inputManager.setInputSequenceValue(inputSequence);
+            }
             lastInputSendTime = 0;
             lastInputStateSentAt = 0;
             lastSentInputMoveMask = -1;

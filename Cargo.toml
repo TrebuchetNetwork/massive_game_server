@@ -7,7 +7,7 @@ members = [
     "server",
     "protocol",
     "stress-client",
-    #"admin-tools",
+    "admin-tools",
 ]
 
 [profile.release]
@@ -24,5 +24,4 @@ debug = true
 [profile.bench]
 inherits = "release"
 debug = true
-
 

@@ -96,6 +96,7 @@ export function buildRuntimeConfig(search, GP) {
     const WEBGPU_INSTANCE_FORCE_ENABLED = WEBGPU_INSTANCES_TOGGLE.state === "on";
     const WEBGPU_FORCE_ACTIVE =
         parseToggleParam(uiModeParams.get("webgpu_force_active")).state === "on";
+    const isMobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     // Disable WebGPU layers on low-end mobile (unlikely to support it, saves GPU memory)
     const isLowEndMobile = isMobileUA && (navigator.hardwareConcurrency || 2) < 4;
     const WEBGPU_PROJECTILE_LAYER_ENABLED = !isLowEndMobile && (
@@ -172,7 +173,6 @@ export function buildRuntimeConfig(search, GP) {
     const EFFECTS_ADAPTIVE_EVAL_INTERVAL_MS = 500;
 
     // Game constants
-    const isMobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     const INTERPOLATION_DELAY = isMobileUA ? 120 : 100; // ms - higher base for mobile jitter
     const MIN_INTERPOLATION_DELAY_MS = isMobileUA ? 80 : 70;
     const MAX_INTERPOLATION_DELAY_MS = isMobileUA ? 250 : 180;

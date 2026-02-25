@@ -110,7 +110,13 @@ export function createConnectionManager(getCtx) {
         signalingSocket.onmessage = async (event) => {
             const ctx2 = getCtx();
             const peerConnection = ctx2.peerConnection;
-            const msg = JSON.parse(event.data);
+            let msg;
+            try {
+                msg = JSON.parse(event.data);
+            } catch (error) {
+                log(`Ignoring malformed signaling message: ${error?.message || error}`, 'warn');
+                return;
+            }
             if (msg.event === 'sdp_offer_queue') {
                 const queueHint = Number(msg.queue_position_hint);
                 const queueText = Number.isFinite(queueHint) && queueHint > 0
@@ -170,6 +176,11 @@ export function createConnectionManager(getCtx) {
 
         signalingSocket.onclose = (event) => {
             ctx.setConnectAttemptInFlight(false);
+            const currentCtx = getCtx();
+            if (currentCtx.dataChannel && currentCtx.dataChannel.readyState === 'open') {
+                log('Signaling channel closed after negotiation; data channel remains open.', 'warn');
+                return;
+            }
             const closeCode = typeof event?.code === 'number' ? event.code : 'unknown';
             const closeReason = event?.reason ? ` reason="${event.reason}"` : '';
             const clean = event?.wasClean ? 'clean' : 'unclean';

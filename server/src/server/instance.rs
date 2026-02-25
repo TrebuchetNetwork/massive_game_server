@@ -1056,7 +1056,8 @@ impl MassiveGameServer {
             self.respawn_manager
                 .get_respawn_position(self, &player_id, Some(chosen_team), &[])
         };
-        let fallback_username = format!("QPlayer_{}", &peer_id[..peer_id.len().min(6)]);
+        let peer_id_short: String = peer_id.chars().take(6).collect();
+        let fallback_username = format!("QPlayer_{}", peer_id_short);
         let username = username_override
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -1094,7 +1095,7 @@ impl MassiveGameServer {
     pub fn enqueue_quic_input(&self, peer_id: &str, input: PlayerInputData) -> bool {
         let player_id = self.player_manager.id_pool.get_or_create(peer_id);
         if let Some(mut player_state) = self.player_manager.get_player_state_mut(&player_id) {
-            player_state.input_queue.push_back(input);
+            player_state.queue_input(input);
             return true;
         }
         false

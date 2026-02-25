@@ -207,10 +207,12 @@ impl MassiveGameServer {
         let update_aoi_this_frame = update_aoi && frame.is_multiple_of(aoi_stride);
 
         let mut players_to_update = Vec::with_capacity(self.player_manager.player_count());
+        let client_states = self.client_states_map.read();
         self.player_manager
             .for_each_player(|player_id, player_state| {
                 let is_connected_client = update_aoi_this_frame
-                    && self.data_channels_map.contains_key(player_id.as_str());
+                    && (self.data_channels_map.contains_key(player_id.as_str())
+                        || client_states.contains_key(player_id.as_str()));
                 let mut needs_full_aoi_update = false;
 
                 if is_connected_client {
@@ -246,6 +248,7 @@ impl MassiveGameServer {
                     needs_full_aoi_update,
                 ));
             });
+        drop(client_states);
 
         for (player_id, x, y, partition_idx, is_connected_client, needs_full_aoi_update) in
             players_to_update

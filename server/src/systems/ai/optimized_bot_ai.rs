@@ -29,6 +29,7 @@ const BOT_STUCK_THRESHOLD: f32 = 10.0; // Min distance to move to not be conside
 const BOT_STUCK_TIME_THRESHOLD: f32 = 2.0; // Seconds before considering bot stuck
 const BOT_STUCK_CHECK_INTERVAL: f32 = 0.5; // Check every half second
 const BOT_STUCK_TARGET_TOLERANCE: f32 = BOT_MOVEMENT_TOLERANCE + 20.0;
+const BOT_WEAPON_SWITCH_COOLDOWN: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 enum BotObjective {
@@ -752,11 +753,6 @@ impl OptimizedBotAI {
             }
         }
 
-        // Randomly switch weapons occasionally
-        if rng.gen_bool(0.1) {
-            bot_controller.last_weapon_switch_time = Instant::now();
-        }
-
         trace!(
             "Bot {} behavior: {:?}, target: {:?}",
             bot_state.username,
@@ -897,13 +893,16 @@ impl OptimizedBotAI {
     /// Generate enhanced combat input with shooting and movement
     fn generate_combat_input(
         bot_state: &BotSnapshotOwned,
-        bot_controller: &BotController,
+        bot_controller: &mut BotController,
         server_instance: &MassiveGameServer,
         game_mode: fb::GameModeType,
         enemies: &[EnemySnapshot],
     ) -> PlayerInputData {
         let mut rng = rand::thread_rng();
         let current_time = Instant::now();
+        let can_switch_weapon =
+            current_time.duration_since(bot_controller.last_weapon_switch_time)
+                >= BOT_WEAPON_SWITCH_COOLDOWN;
 
         let mut input = PlayerInputData {
             timestamp: SystemTime::now()
@@ -924,13 +923,6 @@ impl OptimizedBotAI {
             ping_x: 0.0,
             ping_y: 0.0,
         };
-
-        // Weapon switching logic - personality-aware
-        if current_time.duration_since(bot_controller.last_weapon_switch_time)
-            < Duration::from_secs(1)
-        {
-            input.change_weapon_slot = rng.gen_range(1..=2);
-        }
         let personality = bot_controller.personality;
 
         // Reload if low on ammo
@@ -1045,8 +1037,12 @@ impl OptimizedBotAI {
             let enemy_dist_linear = nearest_enemy_dist.sqrt();
 
             // Personality-aware weapon switching when engaging
-            if let Some(preferred_slot) = personality.preferred_weapon_slot(bot_state.weapon, enemy_dist_linear) {
-                input.change_weapon_slot = preferred_slot;
+            if can_switch_weapon {
+                if let Some(preferred_slot) =
+                    personality.preferred_weapon_slot(bot_state.weapon, enemy_dist_linear)
+                {
+                    input.change_weapon_slot = preferred_slot;
+                }
             }
 
             // Aim at enemy with some inaccuracy
@@ -1161,6 +1157,10 @@ impl OptimizedBotAI {
                     }
                 }
             }
+        }
+
+        if input.change_weapon_slot != 0 {
+            bot_controller.last_weapon_switch_time = current_time;
         }
 
         input

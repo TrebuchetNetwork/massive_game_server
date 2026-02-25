@@ -259,10 +259,16 @@ impl MassiveGameServer {
         let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(16384);
         let build_start = Instant::now();
         let player_id = self.player_manager.id_pool.get_or_create(peer_id_str);
-        let (own_team_id, own_is_spectator) =
+        let (own_team_id, own_is_spectator, own_last_processed_input_sequence) =
             Self::lookup_player_state_from_shared(shared_data, &player_id)
-                .map(|state| (state.team_id, state.is_spectator))
-                .unwrap_or((0, false));
+                .map(|state| {
+                    (
+                        state.team_id,
+                        state.is_spectator,
+                        state.last_processed_input_sequence,
+                    )
+                })
+                .unwrap_or((0, false, 0));
 
         let quantize = client_state.is_mobile;
 
@@ -686,7 +692,7 @@ impl MassiveGameServer {
             deactivated_pickup_ids: Some(deactivated_pickups_fb),
             game_events: game_events_fb,
             timestamp: shared_data.timestamp_ms,
-            last_processed_input_sequence: 0,
+            last_processed_input_sequence: own_last_processed_input_sequence,
             changed_player_fields: changed_player_fields_fb,
             kill_feed: Some(kill_feed_fb),
             match_info: match_info_fb,

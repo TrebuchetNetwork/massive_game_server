@@ -271,7 +271,7 @@ impl MassiveGameServer {
                 }
             }
             self.enqueue_system_chat_message(announcement);
-            let joiner_short = &joining_peer_id[..joining_peer_id.len().min(6)];
+            let joiner_short: String = joining_peer_id.chars().take(6).collect();
             self.push_kill_feed_entry(
                 format!("Human {}", joiner_short),
                 bot_name,

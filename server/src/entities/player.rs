@@ -111,6 +111,24 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     if original.ammo != updated.ammo {
         base.ammo = updated.ammo;
     }
+    if original.primary_weapon != updated.primary_weapon {
+        base.primary_weapon = updated.primary_weapon;
+    }
+    if original.primary_ammo != updated.primary_ammo {
+        base.primary_ammo = updated.primary_ammo;
+    }
+    if original.secondary_weapon != updated.secondary_weapon {
+        base.secondary_weapon = updated.secondary_weapon;
+    }
+    if original.secondary_ammo != updated.secondary_ammo {
+        base.secondary_ammo = updated.secondary_ammo;
+    }
+    if original.weapon_swap_progress != updated.weapon_swap_progress {
+        base.weapon_swap_progress = updated.weapon_swap_progress;
+    }
+    if original.pending_weapon_swap != updated.pending_weapon_swap {
+        base.pending_weapon_swap = updated.pending_weapon_swap;
+    }
     if original.respawn_timer != updated.respawn_timer {
         base.respawn_timer = updated.respawn_timer;
     }
@@ -119,6 +137,27 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     }
     if original.last_shot_time != updated.last_shot_time {
         base.last_shot_time = updated.last_shot_time;
+    }
+    if original.ability_1_cooldown_remaining != updated.ability_1_cooldown_remaining {
+        base.ability_1_cooldown_remaining = updated.ability_1_cooldown_remaining;
+    }
+    if original.ability_2_cooldown_remaining != updated.ability_2_cooldown_remaining {
+        base.ability_2_cooldown_remaining = updated.ability_2_cooldown_remaining;
+    }
+    if original.dash_remaining != updated.dash_remaining {
+        base.dash_remaining = updated.dash_remaining;
+    }
+    if original.dodge_roll_remaining != updated.dodge_roll_remaining {
+        base.dodge_roll_remaining = updated.dodge_roll_remaining;
+    }
+    if original.invulnerable_remaining != updated.invulnerable_remaining {
+        base.invulnerable_remaining = updated.invulnerable_remaining;
+    }
+    if original.ping_cooldown_remaining != updated.ping_cooldown_remaining {
+        base.ping_cooldown_remaining = updated.ping_cooldown_remaining;
+    }
+    if original.zone_boost_cooldown_remaining != updated.zone_boost_cooldown_remaining {
+        base.zone_boost_cooldown_remaining = updated.zone_boost_cooldown_remaining;
     }
     if original.speed_boost_remaining != updated.speed_boost_remaining {
         base.speed_boost_remaining = updated.speed_boost_remaining;
@@ -135,6 +174,21 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     if original.is_carrying_flag_team_id != updated.is_carrying_flag_team_id {
         base.is_carrying_flag_team_id = updated.is_carrying_flag_team_id;
     }
+    if original.damage_dealt != updated.damage_dealt {
+        base.damage_dealt = updated.damage_dealt;
+    }
+    if original.damage_taken != updated.damage_taken {
+        base.damage_taken = updated.damage_taken;
+    }
+    if original.flag_captures != updated.flag_captures {
+        base.flag_captures = updated.flag_captures;
+    }
+    if original.flag_returns != updated.flag_returns {
+        base.flag_returns = updated.flag_returns;
+    }
+    if original.kills_per_weapon != updated.kills_per_weapon {
+        base.kills_per_weapon = updated.kills_per_weapon;
+    }
     if original.last_valid_position != updated.last_valid_position {
         base.last_valid_position = updated.last_valid_position;
     }
@@ -143,6 +197,18 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     }
     if original.changed_fields != updated.changed_fields {
         base.changed_fields = updated.changed_fields;
+    }
+    if original.current_streak != updated.current_streak {
+        base.current_streak = updated.current_streak;
+    }
+    if original.streak_damage_boost_remaining != updated.streak_damage_boost_remaining {
+        base.streak_damage_boost_remaining = updated.streak_damage_boost_remaining;
+    }
+    if original.streak_speed_boost_remaining != updated.streak_speed_boost_remaining {
+        base.streak_speed_boost_remaining = updated.streak_speed_boost_remaining;
+    }
+    if original.recent_damage_sources != updated.recent_damage_sources {
+        base.recent_damage_sources = updated.recent_damage_sources.clone();
     }
 }
 

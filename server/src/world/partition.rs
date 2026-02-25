@@ -4,13 +4,12 @@ use crate::core::types::{
     BoundaryAction, BoundarySnapshot, BoundaryUpdate, Direction, EntityId, GameEvent,
     PartitionBounds, Pickup, PlayerID, Vec2, Wall,
 };
-use crossbeam_epoch::{self as epoch, Guard, Shared}; // Removed 'unprotected' as it's not directly needed with pinned guards
+use arc_swap::ArcSwap;
 use crossbeam_queue::{ArrayQueue, SegQueue};
 use dashmap::{DashMap, DashSet};
 // Removed unused: use parking_lot::RwLock;
 // Removed unused: use smallvec::SmallVec;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicPtr, Ordering}; // Removed unused AtomicU64
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::debug; // Removed unused warn, error
@@ -19,12 +18,11 @@ use tracing::debug; // Removed unused warn, error
 pub struct LockFreeBoundaryZone {
     width: f32,
     channels: [Arc<ArrayQueue<BoundaryUpdate>>; 4],
-    snapshots: [Arc<AtomicPtr<BoundarySnapshot>>; 4],
+    snapshots: [Arc<ArcSwap<BoundarySnapshot>>; 4],
 }
 
 impl LockFreeBoundaryZone {
     pub fn new(capacity_per_channel: usize, boundary_width: f32) -> Self {
-        let default_snapshot_ptr = Box::into_raw(Box::new(BoundarySnapshot::default()));
         Self {
             width: boundary_width,
             channels: [
@@ -34,16 +32,10 @@ impl LockFreeBoundaryZone {
                 Arc::new(ArrayQueue::new(capacity_per_channel)),
             ],
             snapshots: [
-                Arc::new(AtomicPtr::new(default_snapshot_ptr)),
-                Arc::new(AtomicPtr::new(Box::into_raw(Box::new(
-                    BoundarySnapshot::default(),
-                )))),
-                Arc::new(AtomicPtr::new(Box::into_raw(Box::new(
-                    BoundarySnapshot::default(),
-                )))),
-                Arc::new(AtomicPtr::new(Box::into_raw(Box::new(
-                    BoundarySnapshot::default(),
-                )))),
+                Arc::new(ArcSwap::from_pointee(BoundarySnapshot::default())),
+                Arc::new(ArcSwap::from_pointee(BoundarySnapshot::default())),
+                Arc::new(ArcSwap::from_pointee(BoundarySnapshot::default())),
+                Arc::new(ArcSwap::from_pointee(BoundarySnapshot::default())),
             ],
         }
     }
@@ -62,16 +54,24 @@ impl LockFreeBoundaryZone {
             position: (x, y),
         };
         if y - partition_bounds.min_y < self.width {
-            let _ = self.channels[Direction::North as usize].push(update.clone());
+            if let Some(idx) = Direction::North.cardinal_channel_index() {
+                let _ = self.channels[idx].push(update.clone());
+            }
         }
         if partition_bounds.max_x - x < self.width {
-            let _ = self.channels[Direction::East as usize].push(update.clone());
+            if let Some(idx) = Direction::East.cardinal_channel_index() {
+                let _ = self.channels[idx].push(update.clone());
+            }
         }
         if partition_bounds.max_y - y < self.width {
-            let _ = self.channels[Direction::South as usize].push(update.clone());
+            if let Some(idx) = Direction::South.cardinal_channel_index() {
+                let _ = self.channels[idx].push(update.clone());
+            }
         }
         if x - partition_bounds.min_x < self.width {
-            let _ = self.channels[Direction::West as usize].push(update.clone());
+            if let Some(idx) = Direction::West.cardinal_channel_index() {
+                let _ = self.channels[idx].push(update.clone());
+            }
         }
     }
 
@@ -86,32 +86,22 @@ impl LockFreeBoundaryZone {
     }
 
     fn update_direction_snapshot(&self, direction: Direction) {
-        let channel = &self.channels[direction as usize];
+        let Some(channel_idx) = direction.cardinal_channel_index() else {
+            return;
+        };
+        let channel = &self.channels[channel_idx];
         if channel.is_empty() {
             return;
         }
-        let snapshot_atomic_ptr = &self.snapshots[direction as usize];
-
-        // Pin the guard for safe dereferencing and defer_destroy
-        let guard = &epoch::pin();
+        let snapshot_cell = &self.snapshots[channel_idx];
 
         let mut current_players_map: HashMap<PlayerID, (f32, f32)> = {
-            let current_snapshot_raw_ptr = snapshot_atomic_ptr.load(Ordering::Acquire);
-            if !current_snapshot_raw_ptr.is_null() {
-                // Safely dereference the pointer. The guard ensures validity.
-                // Shared::from creates Shared<'static, T>, as_ref() on it is fine.
-                unsafe {
-                    Shared::from(current_snapshot_raw_ptr as *const BoundarySnapshot).as_ref()
-                }
-                .map_or_else(HashMap::new, |snap| {
-                    snap.players
-                        .iter()
-                        .map(|(id, x, y)| (id.clone(), (*x, *y)))
-                        .collect()
-                })
-            } else {
-                HashMap::new()
-            }
+            let current_snapshot = snapshot_cell.load_full();
+            current_snapshot
+                .players
+                .iter()
+                .map(|(id, x, y)| (id.clone(), (*x, *y)))
+                .collect()
         };
 
         while let Some(update) = channel.pop() {
@@ -130,36 +120,14 @@ impl LockFreeBoundaryZone {
             .map(|(id, (x, y))| (id, x, y))
             .collect();
 
-        let old_snapshot_version = {
-            let ptr_raw = snapshot_atomic_ptr.load(Ordering::Relaxed); // Relaxed is fine for version check
-            if !ptr_raw.is_null() {
-                // Safely dereference for version check. The guard ensures validity.
-                unsafe { Shared::from(ptr_raw as *const BoundarySnapshot).as_ref() }
-                    .map_or(0, |snap| snap.version)
-            } else {
-                0
-            }
-        };
+        let old_snapshot_version = snapshot_cell.load().version;
 
-        let new_snapshot = Box::new(BoundarySnapshot {
+        let new_snapshot = BoundarySnapshot {
             players: new_snapshot_data,
             version: old_snapshot_version + 1,
             timestamp: Instant::now(),
-        });
-        let new_snapshot_raw_ptr = Box::into_raw(new_snapshot);
-
-        // Swap the pointer
-        let old_snapshot_raw_ptr =
-            snapshot_atomic_ptr.swap(new_snapshot_raw_ptr, Ordering::Release);
-
-        // Defer destruction of the old snapshot using the pinned guard
-        if !old_snapshot_raw_ptr.is_null() {
-            unsafe {
-                guard.defer_destroy(Shared::from(
-                    old_snapshot_raw_ptr as *const BoundarySnapshot,
-                ));
-            }
-        }
+        };
+        snapshot_cell.store(Arc::new(new_snapshot));
     }
 
     #[inline]
@@ -167,24 +135,23 @@ impl LockFreeBoundaryZone {
         self.channels.iter().any(|channel| !channel.is_empty())
     }
 
-    pub fn get_snapshot<'g>(
-        &self,
-        direction: Direction,
-        _guard: &'g Guard,
-    ) -> Option<&'g BoundarySnapshot> {
-        let snapshot_ptr_raw = self.snapshots[direction as usize].load(Ordering::Acquire);
-        if snapshot_ptr_raw.is_null() {
-            None
-        } else {
-            // Convert the raw pointer to Shared and then use as_ref.
-            // The lifetime 'g of the returned reference is tied to the provided 'guard'.
-            // This is safe because the guard ensures the data is valid for its lifetime.
-            unsafe { Shared::from(snapshot_ptr_raw as *const BoundarySnapshot).as_ref() }
-        }
+    pub fn get_snapshot(&self, direction: Direction) -> Option<Arc<BoundarySnapshot>> {
+        let channel_idx = direction.cardinal_channel_index()?;
+        Some(self.snapshots[channel_idx].load_full())
     }
 }
 
 impl Direction {
+    fn cardinal_channel_index(self) -> Option<usize> {
+        match self {
+            Direction::North => Some(0),
+            Direction::East => Some(1),
+            Direction::South => Some(2),
+            Direction::West => Some(3),
+            _ => None,
+        }
+    }
+
     fn from_index(idx: usize) -> Option<Self> {
         match idx {
             0 => Some(Direction::North),

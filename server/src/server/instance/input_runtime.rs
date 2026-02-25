@@ -579,7 +579,10 @@ impl MassiveGameServer {
         current_server_time: Instant,
     ) {
         if player_state.is_spectator {
-            if input.sequence <= player_state.last_processed_input_sequence && input.sequence != 0 {
+            if input.sequence == 0 {
+                return;
+            }
+            if input.sequence <= player_state.last_processed_input_sequence {
                 return;
             }
             player_state.last_processed_input_sequence = input.sequence;
@@ -632,7 +635,11 @@ impl MassiveGameServer {
             return;
         }
 
-        if input.sequence <= player_state.last_processed_input_sequence && input.sequence != 0 {
+        if input.sequence == 0 {
+            return;
+        }
+
+        if input.sequence <= player_state.last_processed_input_sequence {
             // warn!("[{}]: Received out-of-order or duplicate input (seq: {}, last_processed: {}). Ignoring.", player_state.id, input.sequence, player_state.last_processed_input_sequence);
             return;
         }
@@ -892,7 +899,16 @@ impl MassiveGameServer {
         self.player_manager
             .for_each_player_mut(|player_id, player_state| {
                 player_state.clear_changed_fields();
-                let inputs: Vec<PlayerInputData> = player_state.input_queue.drain(..).collect();
+                let input_count = player_state
+                    .input_queue
+                    .len()
+                    .min(MAX_INPUTS_PROCESSED_PER_TICK_PER_PLAYER);
+                let mut inputs = Vec::with_capacity(input_count);
+                for _ in 0..input_count {
+                    if let Some(input) = player_state.input_queue.pop_front() {
+                        inputs.push(input);
+                    }
+                }
                 if !inputs.is_empty() {
                     all_inputs.push((player_id.clone(), inputs));
                 }

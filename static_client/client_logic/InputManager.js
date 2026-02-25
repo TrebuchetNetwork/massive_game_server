@@ -1043,6 +1043,16 @@ export function createInputManager({
         updateMobileControlsVisibility,
         updateMobileButtonSizing,
         getWorldPointFromMinimap,
+        setPendingInputsBuffer(nextPendingInputs) {
+            pendingInputs = Array.isArray(nextPendingInputs) ? nextPendingInputs : [];
+        },
+        setInputSequenceValue(nextInputSequence) {
+            if (Number.isFinite(nextInputSequence)) {
+                inputSequence = Math.max(0, Math.floor(nextInputSequence));
+            } else {
+                inputSequence = 0;
+            }
+        },
         // Expose mutable state getters
         get tacticalPings() { return tacticalPings; },
         get pendingInputs() { return pendingInputs; },
@@ -1051,6 +1061,7 @@ export function createInputManager({
         set aimAssistEnabled(v) { aimAssistEnabled = v; },
         get pingWheelOpen() { return pingWheelOpen; },
         get mobileAimActive() { return mobileAimActive; },
+        get mobileFireTouchActive() { return mobileFireTouchActive; },
         get mobileStickyFireArmed() { return mobileStickyFireArmed; },
     };
 }

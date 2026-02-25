@@ -201,6 +201,7 @@ pub fn quantize_rotation(v: f32) -> f32 {
 // Other game constants
 pub const DEFAULT_RESPAWN_DURATION_SECS: f32 = 2.5;
 pub const MAX_INPUT_QUEUE_SIZE_PER_PLAYER: usize = 32;
+pub const MAX_INPUTS_PROCESSED_PER_TICK_PER_PLAYER: usize = 8;
 pub const GAME_PROTOCOL_VERSION: u32 = 1;
 
 pub const DEFAULT_INPUT_RATE_LIMIT_PER_SEC: u32 = 240;
