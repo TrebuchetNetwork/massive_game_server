@@ -78,7 +78,7 @@ impl MassiveGameServer {
                         let mut client_states = server.client_states_map.write();
                         let state_entry = client_states
                             .entry(peer_id_str.to_string())
-                            .or_insert_with(ClientState::default);
+                            .or_default();
                         state_entry.pending_initial_state_chunks = initial_chunks.clone();
                         state_entry.pending_initial_state_bytes = Some(first_chunk.clone());
                         state_entry.known_walls_sent = false;
@@ -98,8 +98,7 @@ impl MassiveGameServer {
             let client_state_snapshot = server
                 .client_states_map
                 .read()
-                .get(peer_id_str)
-                .map(|cs_state_ref| cs_state_ref.clone())
+                .get(peer_id_str).cloned()
                 .unwrap_or_else(|| {
                     debug!(
                         "[Frame {}] ClientState not found for {} during delta build, using default.",
@@ -348,7 +347,7 @@ impl MassiveGameServer {
                         let mut client_states = server.client_states_map.write();
                         let state_entry = client_states
                             .entry(peer_id_str.to_string())
-                            .or_insert_with(ClientState::default);
+                            .or_default();
                         state_entry.pending_initial_state_chunks = initial_chunks.clone();
                         state_entry.pending_initial_state_bytes = Some(first_chunk.clone());
                         state_entry.known_walls_sent = false;

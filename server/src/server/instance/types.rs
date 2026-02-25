@@ -4,8 +4,10 @@ use super::*;
 /// Identifies the type of match being played.  Determines max player count,
 /// match duration and bot-fill behaviour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum MatchType {
     /// Full-size match (64+ players, 5-min rounds, desktop recommended).
+    #[default]
     FullMatch,
     /// Quick match: 32 players, 5-min rounds, auto-fills bots after 15s queue.
     QuickMatch,
@@ -73,11 +75,6 @@ impl MatchType {
     }
 }
 
-impl Default for MatchType {
-    fn default() -> Self {
-        MatchType::FullMatch
-    }
-}
 
 impl std::fmt::Display for MatchType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

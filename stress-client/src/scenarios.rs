@@ -84,7 +84,6 @@ pub async fn tail_wave(server_url: &str, run_duration: Duration) -> Result<Scena
         let metrics = metrics.clone();
         let shutdown = shutdown.clone();
         let server_url = server_url_owned.clone();
-        let run_duration = run_duration;
 
         let handle = tokio::spawn(async move {
             if let Err(e) = run_bot(bot_id, &server_url, metrics.clone(), shutdown, run_duration).await {
@@ -107,7 +106,6 @@ pub async fn tail_wave(server_url: &str, run_duration: Duration) -> Result<Scena
         let metrics = metrics.clone();
         let shutdown = shutdown.clone();
         let server_url = server_url_owned.clone();
-        let run_duration = run_duration;
 
         let handle = tokio::spawn(async move {
             if let Err(e) = run_bot(bot_id, &server_url, metrics.clone(), shutdown, run_duration).await {

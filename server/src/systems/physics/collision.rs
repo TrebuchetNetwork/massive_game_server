@@ -15,8 +15,8 @@ use tracing::{debug, warn}; // For logging
 /// * `projectile` - A reference to the projectile involved in the collision.
 /// * `wall_id` - The ID of the wall that was hit.
 /// * `walls_map` - A DashMap or similar structure to get/update wall state.
-///                 Using a generic approach here; you'll need to adapt it to how you store walls.
-///                 For this example, assuming it's a DashMap<EntityId, Wall>.
+///   Using a generic approach here; you'll need to adapt it to how you store walls.
+///   For this example, assuming it's a DashMap<EntityId, Wall>.
 /// * `respawn_manager` - A reference to the WallRespawnManager to handle wall destruction.
 ///
 /// # Returns

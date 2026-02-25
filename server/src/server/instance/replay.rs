@@ -33,10 +33,10 @@ impl MassiveGameServer {
 
         let mut selected_frames: Vec<LiveReplayFrame> = replay
             .iter()
-            .filter(|frame| request.from_frame.map_or(true, |from| frame.frame >= from))
-            .filter(|frame| request.to_frame.map_or(true, |to| frame.frame <= to))
+            .filter(|frame| request.from_frame.is_none_or(|from| frame.frame >= from))
+            .filter(|frame| request.to_frame.is_none_or(|to| frame.frame <= to))
             .filter(|frame| {
-                player_filter.map_or(true, |player_id| {
+                player_filter.is_none_or(|player_id| {
                     frame
                         .sampled_players
                         .iter()
@@ -62,8 +62,8 @@ impl MassiveGameServer {
             .kill_feed
             .read()
             .iter()
-            .filter(|entry| effective_from.map_or(true, |from| entry.timestamp >= from))
-            .filter(|entry| effective_to.map_or(true, |to| entry.timestamp <= to))
+            .filter(|entry| effective_from.is_none_or(|from| entry.timestamp >= from))
+            .filter(|entry| effective_to.is_none_or(|to| entry.timestamp <= to))
             .map(|entry| LiveReplayKillFeedEntry {
                 killer_name: entry.killer_name.clone(),
                 victim_name: entry.victim_name.clone(),

@@ -66,6 +66,7 @@ impl MassiveGameServer {
 
     pub(super) async fn get_active_walls_cached(&self, frame: u64) -> Arc<Vec<Wall>> {
         // Cache walls for a few frames since they don't change often
+        #[allow(clippy::type_complexity)]
         static WALL_CACHE: OnceCell<Arc<ParkingLotRwLock<(u64, Arc<Vec<Wall>>)>>> = OnceCell::new();
         let cache =
             WALL_CACHE.get_or_init(|| Arc::new(ParkingLotRwLock::new((0, Arc::new(Vec::new())))));

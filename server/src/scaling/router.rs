@@ -4,15 +4,15 @@ pub type ShardId = usize;
 
 pub fn classify_mmr_band(mmr: f32) -> &'static str {
     if mmr < 100.0 {
-        "rookie"
+        "Rookie"
     } else if mmr < 250.0 {
-        "bronze"
+        "Bronze"
     } else if mmr < 500.0 {
-        "silver"
+        "Silver"
     } else if mmr < 900.0 {
-        "gold"
+        "Gold"
     } else {
-        "elite"
+        "Elite"
     }
 }
 
@@ -112,7 +112,7 @@ mod tests {
         let router = RendezvousShardRouter::new(8);
         let low_mmr = router.assign_with_mmr("match:abc", 80.0);
         let high_mmr = router.assign_with_mmr("match:abc", 980.0);
-        assert_eq!(low_mmr, router.assign("mmr:rookie:match:abc"));
-        assert_eq!(high_mmr, router.assign("mmr:elite:match:abc"));
+        assert_eq!(low_mmr, router.assign("mmr:Rookie:match:abc"));
+        assert_eq!(high_mmr, router.assign("mmr:Elite:match:abc"));
     }
 }

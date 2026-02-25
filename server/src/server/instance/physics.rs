@@ -7,7 +7,7 @@ impl MassiveGameServer {
 
         // Stage 1: Wall Respawns (example)
         let respawn_stage_start = Instant::now();
-        let respawned_walls = if frame % 30 == 0 {
+        let respawned_walls = if frame.is_multiple_of(30) {
             //
             let templates = self.wall_respawn_manager.as_ref().check_respawns(); //
             if !templates.is_empty() {

@@ -19,7 +19,7 @@ use crate::core::constants::{
     MOBILE_AOI_MAX_VISIBLE_PICKUPS, MOBILE_AOI_MAX_VISIBLE_WALLS,
     WORLD_MAX_X, WORLD_MAX_Y, WORLD_MIN_X, WORLD_MIN_Y,
 };
-use crate::core::types::{PlayerAoI, PlayerID};
+use crate::core::types::PlayerID;
 use crate::flatbuffers_generated::game_protocol as fb;
 use crate::network::signaling::{next_chat_message_seq, ChatMessage};
 use std::collections::HashSet;
@@ -297,7 +297,7 @@ impl MassiveGameServer {
         let mut player_aoi_entry = self
             .player_aois
             .entry(player_id_str.to_string())
-            .or_insert_with(PlayerAoI::new);
+            .or_default();
 
         if player_aoi_entry.value().last_update.elapsed().as_secs_f32() < AOI_UPDATE_INTERVAL_SECS {
             return;
@@ -459,7 +459,7 @@ impl MassiveGameServer {
         let mut player_aoi_entry = self
             .player_aois
             .entry(player_id_str.to_string())
-            .or_insert_with(PlayerAoI::new);
+            .or_default();
 
         if player_aoi_entry.value().last_update.elapsed().as_secs_f32() < AOI_UPDATE_INTERVAL_SECS {
             return;

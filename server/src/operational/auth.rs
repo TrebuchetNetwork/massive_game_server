@@ -515,9 +515,9 @@ impl AuthService {
                     AuthError::CodeNotRequested
                 })?;
 
-            if now > challenge_entry.expires_at {
-                remove_after_check = true;
-            } else if challenge_entry.attempts >= self.inner.max_verify_attempts {
+            if now > challenge_entry.expires_at
+                || challenge_entry.attempts >= self.inner.max_verify_attempts
+            {
                 remove_after_check = true;
             } else if challenge_entry.code != code {
                 challenge_entry.attempts = challenge_entry.attempts.saturating_add(1);
@@ -1059,15 +1059,7 @@ fn compute_mmr(
 }
 
 fn classify_mmr_band(mmr: f32) -> &'static str {
-    if mmr < 100.0 {
-        "Bronze"
-    } else if mmr < 250.0 {
-        "Silver"
-    } else if mmr < 500.0 {
-        "Gold"
-    } else {
-        "Diamond"
-    }
+    crate::scaling::router::classify_mmr_band(mmr)
 }
 
 fn progression_reward_from_match(player_state: &PlayerState) -> (u64, u64) {

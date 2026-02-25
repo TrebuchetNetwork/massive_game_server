@@ -27,6 +27,12 @@ pub struct WallSpatialIndex {
     last_update_frame: Arc<RwLock<u64>>,
 }
 
+impl Default for WallSpatialIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WallSpatialIndex {
     pub fn new() -> Self {
         WallSpatialIndex {

@@ -83,4 +83,5 @@ impl InitialSnapshotCaps {
     };
 }
 
+#[allow(clippy::type_complexity)]
 pub(super) static CACHED_WALLS: OnceCell<Arc<ParkingLotRwLock<(u64, Vec<Wall>)>>> = OnceCell::new();

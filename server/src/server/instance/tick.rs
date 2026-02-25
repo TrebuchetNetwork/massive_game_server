@@ -20,14 +20,13 @@ impl MassiveGameServer {
                     server_clone.process_network_input().await;
                 })
                 .await;
-                if result.is_err() {
-                    if frame % 60 == 0 {
+                if result.is_err()
+                    && frame.is_multiple_of(60) {
                         warn!(
                             "[Frame {}] Task '{}' timed out after {}ms",
                             frame, task_name, NET_IO_TIMEOUT_MS
                         );
                     }
-                }
                 trace!("[Frame {}] Finished task: {}", frame, task_name);
             }
         });
@@ -37,7 +36,7 @@ impl MassiveGameServer {
         } else {
             AI_UPDATE_STRIDE * 3
         };
-        if frame % ai_stride == 0 {
+        if frame.is_multiple_of(ai_stride) {
             set.spawn({
                 let server_clone = Arc::clone(&self);
                 async move {
@@ -47,14 +46,13 @@ impl MassiveGameServer {
                         server_clone.run_ai_update().await;
                     })
                     .await;
-                    if result.is_err() {
-                        if frame % 60 == 0 {
+                    if result.is_err()
+                        && frame.is_multiple_of(60) {
                             warn!(
                                 "[Frame {}] Task '{}' timed out after {}ms",
                                 frame, task_name, AI_TIMEOUT_MS
                             );
                         }
-                    }
                     trace!("[Frame {}] Finished task: {}", frame, task_name);
                 }
             });
@@ -95,7 +93,7 @@ impl MassiveGameServer {
         );
 
         let stage2_elapsed = stage2_start.elapsed();
-        if stage2_elapsed > Duration::from_millis(SLOW_TICK_LOG_MS) && frame % 60 == 0 {
+        if stage2_elapsed > Duration::from_millis(SLOW_TICK_LOG_MS) && frame.is_multiple_of(60) {
             warn!(
                 ?frame,
                 ms = stage2_elapsed.as_micros() as f64 / 1000.0,
@@ -108,7 +106,7 @@ impl MassiveGameServer {
 
         let should_rebuild_ecs = self.ecs_bridge.is_enabled()
             && (self.ecs_bridge.is_authoritative()
-                || frame % self.ecs_bridge.rebuild_stride_frames() == 0);
+                || frame.is_multiple_of(self.ecs_bridge.rebuild_stride_frames()));
         if should_rebuild_ecs {
             let projectiles_snapshot = self.projectiles.read().clone();
             let pickups_snapshot = self.pickups.read().clone();
@@ -197,14 +195,13 @@ impl MassiveGameServer {
             broadcast_timed_out_flag
         );
 
-        if broadcast_timed_out_flag {
-            if frame % 60 == 0 {
+        if broadcast_timed_out_flag
+            && frame.is_multiple_of(60) {
                 error!(
                     "[Frame {}] Broadcast stage timed out after {}ms (actual: {:?})",
                     frame, FAN_OUT_TIMEOUT_MS, broadcast_elapsed_duration
                 );
             }
-        }
         let _stage3_elapsed = stage3_start.elapsed();
         self.capture_live_replay_frame(frame);
 
@@ -215,8 +212,8 @@ impl MassiveGameServer {
 
         let total_tick_processing_elapsed = tick_started.elapsed();
 
-        if total_tick_processing_elapsed > Duration::from_millis(TARGET_TICK_MS + 4) {
-            if frame % 10 == 0 {
+        if total_tick_processing_elapsed > Duration::from_millis(TARGET_TICK_MS + 4)
+            && frame.is_multiple_of(10) {
                 warn!(
                     "Frame {} timing breakdown:\n\
                      Total: {:.2}ms\n\
@@ -237,10 +234,9 @@ impl MassiveGameServer {
                     TARGET_TICK_MS
                 );
             }
-        }
 
-        if total_tick_processing_elapsed > Duration::from_millis(TARGET_TICK_MS) {
-            if frame % 60 == 0 {
+        if total_tick_processing_elapsed > Duration::from_millis(TARGET_TICK_MS)
+            && frame.is_multiple_of(60) {
                 warn!(
                     ?frame,
                     ms = total_tick_processing_elapsed.as_micros() as f64 / 1000.0,
@@ -248,7 +244,6 @@ impl MassiveGameServer {
                     "Tick processing WORK exceeded hard budget (game_loop will log wall-clock overrun)"
                 );
             }
-        }
 
         Ok(())
     }

@@ -32,6 +32,12 @@ pub struct RespawnManager {
     spawn_protection_duration: Duration,
 }
 
+impl Default for RespawnManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RespawnManager {
     pub fn new() -> Self {
         // Removed server parameter for now, will be passed to get_respawn_position
@@ -261,7 +267,7 @@ impl RespawnManager {
 
         if spawn_idx < spawn_points_guard.len() {
             spawn_points_guard[spawn_idx].last_used = now;
-            return spawn_points_guard[spawn_idx].position;
+            spawn_points_guard[spawn_idx].position
         } else {
             warn!(
                 "[RESPAWN_WARN] Chosen spawn_idx {} is out of bounds (len: {}). Player: {:?}",
@@ -279,7 +285,7 @@ impl RespawnManager {
                 "[RESPAWN_WARN] Critical fallback in respawn logic. Returning (0,0). Player: {:?}",
                 player_id
             );
-            return Vec2::new(0.0, 0.0);
+            Vec2::new(0.0, 0.0)
         }
     }
 }
@@ -299,6 +305,12 @@ pub struct WallRespawnManager {
     destroyed_walls: Arc<DashMap<EntityId, DestroyedWallInfo>>,
     respawn_queue: Arc<RwLock<Vec<(EntityId, Instant)>>>,
     wall_templates: Arc<DashMap<EntityId, Wall>>,
+}
+
+impl Default for WallRespawnManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WallRespawnManager {

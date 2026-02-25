@@ -194,7 +194,6 @@ impl MassiveGameServer {
                     }
                     drop(match_info_guard);
                     self.capture_match_end_summary("time_expired");
-                    return;
                 }
             }
             fb::MatchStateType::Ended => {
@@ -333,7 +332,7 @@ impl MassiveGameServer {
                     let own_flag_at_base = match_info_write_guard
                         .flag_states
                         .get(&own_player_team_id)
-                        .map_or(false, |ofs| ofs.status == fb::FlagStatus::AtBase);
+                        .is_some_and(|ofs| ofs.status == fb::FlagStatus::AtBase);
 
                     if own_flag_at_base {
                         let own_flag_base_pos = Self::get_flag_base_position(own_player_team_id);

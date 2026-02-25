@@ -16,7 +16,9 @@ pub fn generate_entity_id() -> EntityId {
 
 // --- Server-Side Enums ---
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum ServerWeaponType {
+    #[default]
     Pistol,
     Shotgun,
     Rifle,
@@ -24,11 +26,6 @@ pub enum ServerWeaponType {
     Melee,
 }
 
-impl Default for ServerWeaponType {
-    fn default() -> Self {
-        ServerWeaponType::Pistol
-    }
-}
 
 // --- PlayerInputData ---
 #[derive(Debug, Clone, PartialEq)]
@@ -908,6 +905,12 @@ pub struct PlayerAoI {
     pub last_update: Instant,
 }
 
+impl Default for PlayerAoI {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlayerAoI {
     pub fn new() -> Self {
         PlayerAoI {
@@ -988,6 +991,12 @@ pub enum EventPriority {
     pub fn finished_data(&self) -> &[u8] { &[] }
 }*/
 pub struct PerformanceMetrics;
+impl Default for PerformanceMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerformanceMetrics {
     pub fn new() -> Self {
         PerformanceMetrics
@@ -1010,6 +1019,12 @@ pub type ThreadId = std::thread::ThreadId;
 pub struct ThreadState {
     pub last_progress: Instant,
 }
+impl Default for ThreadState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ThreadState {
     pub fn new() -> Self {
         ThreadState {

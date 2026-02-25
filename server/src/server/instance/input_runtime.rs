@@ -905,7 +905,7 @@ impl MassiveGameServer {
             {
                 for input in inputs {
                     self.apply_input_to_player_state(
-                        &mut *player_state_entry,
+                        &mut player_state_entry,
                         &input,
                         current_server_time,
                     );

@@ -117,6 +117,7 @@ fn shortest_angle_diff_radians(a: f32, b: f32) -> f32 {
 }
 
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn segment_first_hit_fraction_with_aabb(
     start_x: f32,
     start_y: f32,
@@ -600,7 +601,7 @@ impl MassiveGameServer {
             for wall_entry in partition.all_walls_in_partition.iter() {
                 let wall = wall_entry.value();
                 // Only include non-destructible walls and active destructible walls
-                if !wall.is_destructible || (wall.is_destructible && wall.current_health > 0) {
+                if !wall.is_destructible || wall.current_health > 0 {
                     active_walls_for_index.push(wall.clone());
                 }
             }
@@ -927,7 +928,7 @@ impl MassiveGameServer {
         let mut queue = self
             .direct_packets
             .entry(peer_id.to_owned())
-            .or_insert_with(VecDeque::new);
+            .or_default();
         while queue.len() >= self.direct_packet_queue_cap {
             let _ = queue.pop_front();
         }
@@ -1010,7 +1011,7 @@ impl MassiveGameServer {
         self.client_states_map
             .write()
             .entry(peer_id.to_string())
-            .or_insert_with(ClientState::default);
+            .or_default();
 
         let player_id = self.player_manager.id_pool.get_or_create(peer_id);
         if let Some(player_state) = self.player_manager.get_player_state(&player_id) {

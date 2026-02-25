@@ -210,13 +210,11 @@ impl BotAISystem {
                         actual_bot_player_state.queue_input(input);
                     }
                 }
-            } else {
-                if server_instance.bot_players.remove(&bot_id_arc).is_some() {
-                    trace!(
-                        "[Bot {}]: Cleaned up controller as bot state was not in snapshot.",
-                        bot_id_arc.as_str()
-                    );
-                }
+            } else if server_instance.bot_players.remove(&bot_id_arc).is_some() {
+                trace!(
+                    "[Bot {}]: Cleaned up controller as bot state was not in snapshot.",
+                    bot_id_arc.as_str()
+                );
             }
         }
     }
@@ -260,11 +258,7 @@ impl BotAISystem {
             let mut team_bots_going_for_flag = 0;
             let mut total_team_bots = 0;
             let enemy_team = if bot_state.team_id == 1 { 2 } else { 1 };
-            let enemy_flag_pos = if let Some(enemy_flag_state) = ctf_flag_states.get(&enemy_team) {
-                Some(enemy_flag_state.position)
-            } else {
-                None
-            };
+            let enemy_flag_pos = ctf_flag_states.get(&enemy_team).map(|enemy_flag_state| enemy_flag_state.position);
 
             // Count how many bots are going for the flag
             for entry in server.bot_players.iter() {
@@ -967,16 +961,14 @@ impl BotAISystem {
         }
 
         // Reload management
-        if bot_state.weapon != ServerWeaponType::Melee {
-            if bot_state.ammo == 0 && bot_state.reload_progress.is_none() {
-                input.reload = true;
-            } else if bot_state.ammo < PlayerState::get_max_ammo_for_weapon(bot_state.weapon) / 3
-                && bot_controller.behavior_state != BotBehaviorState::Engaging
-                && bot_state.reload_progress.is_none()
-                && rng.gen_bool(0.4)
-            {
-                input.reload = true;
-            }
+        if bot_state.weapon != ServerWeaponType::Melee
+            && (( bot_state.ammo == 0 && bot_state.reload_progress.is_none() )
+                || ( bot_state.ammo < PlayerState::get_max_ammo_for_weapon(bot_state.weapon) / 3
+                    && bot_controller.behavior_state != BotBehaviorState::Engaging
+                    && bot_state.reload_progress.is_none()
+                    && rng.gen_bool(0.4) ))
+        {
+            input.reload = true;
         }
 
         // Dynamic weapon switching
@@ -1094,6 +1086,6 @@ impl BotAISystem {
         let u =
             -((l1p1.x - l1p2.x) * (l1p1.y - l2p1.y) - (l1p1.y - l1p2.y) * (l1p1.x - l2p1.x)) / den;
 
-        t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0
+        (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)
     }
 }

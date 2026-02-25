@@ -336,8 +336,7 @@ impl BotSandbox {
         let mut warnings = Vec::new();
         let max_ticks = requested_ticks
             .unwrap_or(self.default_max_ticks)
-            .max(1)
-            .min(MAX_ALLOWED_TICKS);
+            .clamp(1, MAX_ALLOWED_TICKS);
         let replay_capacity = self
             .replay_max_frames
             .min(max_ticks as usize)
@@ -537,6 +536,7 @@ impl BotSandbox {
         BotMatchExecution { outcome, replay }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_team_battle(
         &self,
         model_a_id: &str,
@@ -552,8 +552,7 @@ impl BotSandbox {
         let normalized_rounds = rounds.clamp(1, MAX_TEAM_BATTLE_ROUNDS);
         let max_ticks = requested_ticks
             .unwrap_or(self.default_max_ticks)
-            .max(1)
-            .min(MAX_ALLOWED_TICKS);
+            .clamp(1, MAX_ALLOWED_TICKS);
 
         let mut team_a_round_wins = 0u32;
         let mut team_b_round_wins = 0u32;
@@ -935,7 +934,7 @@ fn apply_mode_objectives(
                 b.score += 70;
             }
 
-            if tick % 24 == 0 {
+            if tick.is_multiple_of(24) {
                 objectives.ctf_progress_a = objectives.ctf_progress_a.saturating_sub(1);
                 objectives.ctf_progress_b = objectives.ctf_progress_b.saturating_sub(1);
             }
@@ -952,7 +951,7 @@ fn apply_mode_objectives(
                 objectives.koth_control_b += gain;
                 b.score += 1 + gain / 2;
             }
-            if tick % 10 == 0 {
+            if tick.is_multiple_of(10) {
                 if objectives.koth_control_a > objectives.koth_control_b {
                     a.score += 2;
                 } else if objectives.koth_control_b > objectives.koth_control_a {
@@ -1085,7 +1084,7 @@ fn fallback_action(
             if score_delta < 0 && self_health > 40 {
                 return BotAction::Charge as i32;
             }
-            if tick % 4 == 0 {
+            if tick.is_multiple_of(4) {
                 return BotAction::Defend as i32;
             }
             if enemy_health < 30 {
@@ -1096,7 +1095,7 @@ fn fallback_action(
             if score_delta > 12 {
                 return BotAction::Defend as i32;
             }
-            if tick % 3 == 0 {
+            if tick.is_multiple_of(3) {
                 return BotAction::Defend as i32;
             }
             if score_delta < -8 {

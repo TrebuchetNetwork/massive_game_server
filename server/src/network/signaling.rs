@@ -675,9 +675,7 @@ async fn acquire_sdp_admission_permit(
     peer_id: &str,
     sender: &mpsc::Sender<Result<Message, warp::Error>>,
 ) -> Option<OwnedSemaphorePermit> {
-    let Some(semaphore) = sdp_admission_semaphore() else {
-        return None;
-    };
+    let semaphore = sdp_admission_semaphore()?;
     match semaphore.clone().try_acquire_owned() {
         Ok(permit) => Some(permit),
         Err(_) => {
@@ -769,6 +767,7 @@ fn validate_signaling_payload(payload: &SignalingMessageJson) -> Result<(), &'st
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_signaling_connection(
     ws: WebSocket,
     peer_id_str: String,
@@ -1157,7 +1156,7 @@ pub async fn handle_signaling_connection(
             if let Some(mut p_state_entry) =
                 player_manager_on_open.get_player_state_mut(&new_player_id_arc_for_team)
             {
-                let p_state: &mut PlayerState = &mut *p_state_entry;
+                let p_state: &mut PlayerState = &mut p_state_entry;
                 p_state.team_id = team_to_assign;
                 p_state.is_spectator = requested_spectator;
                 if requested_spectator {
@@ -1463,7 +1462,7 @@ pub async fn handle_signaling_connection(
                                         );
                                         continue;
                                     }
-                                    if pc_signal_receiver.remote_description().await.map_or(false, |rd| rd.sdp_type == webrtc::peer_connection::sdp::sdp_type::RTCSdpType::Offer) {
+                                    if pc_signal_receiver.remote_description().await.is_some_and(|rd| rd.sdp_type == webrtc::peer_connection::sdp::sdp_type::RTCSdpType::Offer) {
                                         match pc_signal_receiver.create_answer(None).await {
                                             Ok(answer) => {
                                                 if pc_signal_receiver.set_local_description(answer.clone()).await.is_ok() {

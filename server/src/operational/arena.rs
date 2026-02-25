@@ -1288,7 +1288,7 @@ impl ArenaService {
                 *self.inner.worker_last_error.write() = None;
                 Ok(Some(response))
             }
-            Err(ArenaError::NotFound(code, _)) if code == "no_pending_match" => {
+            Err(ArenaError::NotFound("no_pending_match", _)) => {
                 self.inner.worker_idle.fetch_add(1, Ordering::Relaxed);
                 Ok(None)
             }

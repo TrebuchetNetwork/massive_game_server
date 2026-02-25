@@ -117,7 +117,7 @@ impl MassiveGameServer {
             let wave_traces: Vec<&JoinStageTrace> = traces
                 .iter()
                 .filter(|trace| trace.join_sequence >= wave_start)
-                .filter(|trace| wave_end.map_or(true, |end| trace.join_sequence <= end))
+                .filter(|trace| wave_end.is_none_or(|end| trace.join_sequence <= end))
                 .collect();
 
             let open_channel_wait_ms: Vec<f64> = wave_traces

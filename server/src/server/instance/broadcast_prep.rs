@@ -1,6 +1,7 @@
 use super::*;
 
 impl MassiveGameServer {
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn prepare_shared_broadcast_data(
         &self,
         include_active_walls_snapshot: bool,

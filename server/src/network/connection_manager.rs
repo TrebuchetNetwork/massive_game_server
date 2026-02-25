@@ -71,6 +71,10 @@ impl ConnectionManager {
         self.connections.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.connections.is_empty()
+    }
+
     pub fn len_by_transport(&self, transport: TransportKind) -> usize {
         self.connections
             .iter()

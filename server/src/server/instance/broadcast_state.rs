@@ -22,16 +22,16 @@ impl MassiveGameServer {
             frame_num,
             peer_id_str
         );
-        let mut client_state = ClientState::default();
-        client_state.known_walls_sent = true;
-        client_state.last_update_sent_time = Instant::now();
-        client_state.last_chat_message_seq_sent = last_chat_message_seq_sent;
-
-        client_state.last_known_match_state = Some(shared_data.match_info_snapshot.match_state);
-        client_state.last_known_match_time_remaining =
-            Some(shared_data.match_info_snapshot.time_remaining);
-        client_state.last_known_team_scores = shared_data.match_info_snapshot.team_scores.clone();
-        client_state.match_info_pending = false;
+        let mut client_state = ClientState {
+            known_walls_sent: true,
+            last_update_sent_time: Instant::now(),
+            last_chat_message_seq_sent,
+            last_known_match_state: Some(shared_data.match_info_snapshot.match_state),
+            last_known_match_time_remaining: Some(shared_data.match_info_snapshot.time_remaining),
+            last_known_team_scores: shared_data.match_info_snapshot.team_scores.clone(),
+            match_info_pending: false,
+            ..ClientState::default()
+        };
 
         let snapshot_caps = shared_data.initial_snapshot_caps;
         let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
@@ -291,7 +291,7 @@ impl MassiveGameServer {
                 };
                 players_fb_vec.push(create_fb_player_state_for_delta_ext(
                     &mut builder,
-                    &self_state,
+                    self_state,
                     mask,
                     quantize,
                 ));
@@ -330,12 +330,12 @@ impl MassiveGameServer {
 
                             if speed_sq > high_thresh_sq {
                                 // High-velocity: 30 Hz (every 2nd frame)
-                                if vr_frame % VARIABLE_RATE_HIGH_STRIDE != 0 {
+                                if !vr_frame.is_multiple_of(VARIABLE_RATE_HIGH_STRIDE) {
                                     continue;
                                 }
                             } else if speed_sq > low_thresh_sq {
                                 // Low-velocity: 10 Hz (every 6th frame)
-                                if vr_frame % VARIABLE_RATE_LOW_STRIDE != 0 {
+                                if !vr_frame.is_multiple_of(VARIABLE_RATE_LOW_STRIDE) {
                                     continue;
                                 }
                             } else {
@@ -346,7 +346,7 @@ impl MassiveGameServer {
 
                         players_fb_vec.push(create_fb_player_state_for_delta_ext(
                             &mut builder,
-                            &player_state,
+                            player_state,
                             mask,
                             quantize,
                         ));
@@ -455,7 +455,7 @@ impl MassiveGameServer {
             }
         }
 
-        for (known_pickup_id, _) in &client_state.last_known_pickup_states {
+        for known_pickup_id in client_state.last_known_pickup_states.keys() {
             if !player_aoi.visible_pickups.contains(known_pickup_id) {
                 let id_str = fb_safe_entity_id(&mut builder, *known_pickup_id);
                 deactivated_pickup_ids_vec.push(id_str);
@@ -516,10 +516,9 @@ impl MassiveGameServer {
                 client_state.last_known_team_scores != match_snapshot.team_scores;
             let time_changed = client_state
                 .last_known_match_time_remaining
-                .map_or(true, |t| (t - match_snapshot.time_remaining).abs() > 0.5);
+                .is_none_or(|t| (t - match_snapshot.time_remaining).abs() > 0.5);
             let state_changed = client_state
-                .last_known_match_state
-                .map_or(true, |s| s != match_snapshot.match_state);
+                .last_known_match_state != Some(match_snapshot.match_state);
             if client_state.match_info_pending
                 || state_changed
                 || time_changed
@@ -642,7 +641,7 @@ impl MassiveGameServer {
                 let should_send = client_state
                     .last_known_wall_states
                     .get(visible_wall_id)
-                    .map_or(true, |(known_health, known_max_health)| {
+                    .is_none_or(|(known_health, known_max_health)| {
                         *known_health != wall_data.current_health
                             || *known_max_health != wall_data.max_health
                     });

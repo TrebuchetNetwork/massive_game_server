@@ -25,6 +25,12 @@ pub struct AsyncBotAI {
     decision_receiver: mpsc::UnboundedReceiver<BotDecision>,
 }
 
+impl Default for AsyncBotAI {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AsyncBotAI {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -209,7 +215,7 @@ impl AsyncBotAI {
             new_behavior = BotBehaviorState::Patrolling;
             // Move to strategic positions or random patrol
             if target_pos.is_none() || rng.gen_bool(0.1) {
-                let patrol_points = vec![
+                let patrol_points = [
                     Vec2::new(0.0, 0.0), // Center
                     Vec2::new(-500.0, -500.0),
                     Vec2::new(500.0, -500.0),

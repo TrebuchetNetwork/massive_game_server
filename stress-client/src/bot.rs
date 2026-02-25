@@ -68,7 +68,7 @@ pub async fn run_bot(
     let connect_start = Instant::now();
 
     // --- 1. WebSocket signaling connection ---
-    let ws_url = format!("{}", server_url);
+    let ws_url = server_url.to_string();
     let (ws_stream, _) = tokio_tungstenite::connect_async(&ws_url)
         .await
         .with_context(|| format!("bot#{}: WebSocket connect to {}", bot_id, ws_url))?;
@@ -115,8 +115,6 @@ pub async fn run_bot(
         let dc_open = dc_open.clone();
         let dc_open_notify = dc_open_notify.clone();
         let metrics = metrics.clone();
-        let connect_start = connect_start;
-        let bot_id = bot_id;
 
         data_channel.on_open(Box::new(move || {
             info!("bot#{}: DataChannel OPENED", bot_id);
@@ -134,8 +132,6 @@ pub async fn run_bot(
     {
         let metrics = metrics.clone();
         let welcome_received = welcome_received.clone();
-        let connect_start = connect_start;
-        let bot_id = bot_id;
 
         data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
             let metrics = metrics.clone();
@@ -182,7 +178,6 @@ pub async fn run_bot(
 
     {
         let ice_tx = ice_tx.clone();
-        let bot_id = bot_id;
         peer_connection.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
             let ice_tx = ice_tx.clone();
             Box::pin(async move {
@@ -216,7 +211,6 @@ pub async fn run_bot(
     {
         let shutdown = shutdown.clone();
         let metrics = metrics.clone();
-        let bot_id = bot_id;
         peer_connection.on_peer_connection_state_change(Box::new(
             move |s: RTCPeerConnectionState| {
                 info!("bot#{}: PeerConnection state: {}", bot_id, s);
@@ -258,7 +252,6 @@ pub async fn run_bot(
         let peer_connection = peer_connection.clone();
         let dc_open = dc_open.clone();
         let dc_open_notify = dc_open_notify.clone();
-        let bot_id = bot_id;
 
         tokio::spawn(async move {
             loop {

@@ -362,7 +362,7 @@ impl MapGenerator {
             if x.abs() < 250.0 && y.abs() < 250.0 {
                 continue;
             }
-            if x < WORLD_MIN_X + 400.0 || x > WORLD_MAX_X - 400.0 {
+            if !(WORLD_MIN_X + 400.0..=WORLD_MAX_X - 400.0).contains(&x) {
                 continue;
             }
 

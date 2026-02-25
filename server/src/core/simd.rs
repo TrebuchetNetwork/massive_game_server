@@ -268,16 +268,12 @@ fn first_index_aabb_containing_point_scalar(
     point_x: f32,
     point_y: f32,
 ) -> Option<usize> {
-    for idx in 0..min_xs.len() {
-        if point_x >= min_xs[idx]
+    (0..min_xs.len()).find(|&idx| {
+        point_x >= min_xs[idx]
             && point_x <= max_xs[idx]
             && point_y >= min_ys[idx]
             && point_y <= max_ys[idx]
-        {
-            return Some(idx);
-        }
-    }
-    None
+    })
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -498,8 +494,8 @@ unsafe fn first_index_within_segment_radius_neon(
         let cmp_v = neon_arch::vcleq_f32(dist_sq_v, radius_v);
         let mut cmp_arr = [0u32; 4];
         neon_arch::vst1q_u32(cmp_arr.as_mut_ptr(), cmp_v);
-        for lane in 0..4usize {
-            if cmp_arr[lane] != 0 {
+        for (lane, &cmp_val) in cmp_arr.iter().enumerate() {
+            if cmp_val != 0 {
                 return Some(idx + lane);
             }
         }
@@ -599,8 +595,8 @@ unsafe fn filter_indices_within_radius_neon(
         let cmp_v = neon_arch::vcleq_f32(dist_sq_v, radius_v);
         let mut cmp_arr = [0u32; 4];
         neon_arch::vst1q_u32(cmp_arr.as_mut_ptr(), cmp_v);
-        for lane in 0..4usize {
-            if cmp_arr[lane] != 0 {
+        for (lane, &cmp_val) in cmp_arr.iter().enumerate() {
+            if cmp_val != 0 {
                 out_indices.push(idx + lane);
             }
         }
@@ -644,8 +640,8 @@ unsafe fn first_index_within_radius_neon(
         let cmp_v = neon_arch::vcleq_f32(dist_sq_v, radius_v);
         let mut cmp_arr = [0u32; 4];
         neon_arch::vst1q_u32(cmp_arr.as_mut_ptr(), cmp_v);
-        for lane in 0..4usize {
-            if cmp_arr[lane] != 0 {
+        for (lane, &cmp_val) in cmp_arr.iter().enumerate() {
+            if cmp_val != 0 {
                 return Some(idx + lane);
             }
         }
@@ -693,24 +689,20 @@ unsafe fn first_index_aabb_containing_point_neon(
 
         let mut cmp_arr = [0u32; 4];
         neon_arch::vst1q_u32(cmp_arr.as_mut_ptr(), inside);
-        for lane in 0..4usize {
-            if cmp_arr[lane] != 0 {
+        for (lane, &cmp_val) in cmp_arr.iter().enumerate() {
+            if cmp_val != 0 {
                 return Some(idx + lane);
             }
         }
         idx += 4;
     }
 
-    for tail_idx in idx..min_xs.len() {
-        if point_x >= min_xs[tail_idx]
+    (idx..min_xs.len()).find(|&tail_idx| {
+        point_x >= min_xs[tail_idx]
             && point_x <= max_xs[tail_idx]
             && point_y >= min_ys[tail_idx]
             && point_y <= max_ys[tail_idx]
-        {
-            return Some(tail_idx);
-        }
-    }
-    None
+    })
 }
 
 #[cfg(test)]

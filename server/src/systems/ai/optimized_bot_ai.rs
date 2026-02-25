@@ -82,11 +82,10 @@ impl BotPersonality {
                     if current_weapon != ServerWeaponType::Melee {
                         return Some(2); // Switch to melee slot
                     }
-                } else if enemy_distance < 200.0 {
-                    if current_weapon != ServerWeaponType::Shotgun {
+                } else if enemy_distance < 200.0
+                    && current_weapon != ServerWeaponType::Shotgun {
                         return Some(1); // Switch to shotgun slot
                     }
-                }
                 None
             }
             BotPersonality::Defensive => {
@@ -95,11 +94,10 @@ impl BotPersonality {
                     if current_weapon != ServerWeaponType::Sniper {
                         return Some(2); // Switch to sniper slot
                     }
-                } else if enemy_distance > 150.0 {
-                    if current_weapon != ServerWeaponType::Rifle {
+                } else if enemy_distance > 150.0
+                    && current_weapon != ServerWeaponType::Rifle {
                         return Some(1); // Switch to rifle slot
                     }
-                }
                 None
             }
             BotPersonality::Balanced => {
@@ -220,7 +218,7 @@ impl OptimizedBotAI {
 
         // Get list of bot IDs (reuse allocation)
         thread_local! {
-            static BOT_IDS: RefCell<Vec<PlayerID>> = RefCell::new(Vec::new());
+            static BOT_IDS: RefCell<Vec<PlayerID>> = const { RefCell::new(Vec::new()) };
         }
         let mut bot_ids = BOT_IDS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
         bot_ids.clear();
@@ -448,7 +446,7 @@ impl OptimizedBotAI {
                 }
             }
         }
-        if frame_count % 120 == 0 {
+        if frame_count.is_multiple_of(120) {
             let mut live_ids: HashSet<PlayerID> = HashSet::with_capacity(live_players_by_id.len());
             for id in live_players_by_id.keys() {
                 live_ids.insert(id.clone());
@@ -647,7 +645,7 @@ impl OptimizedBotAI {
             // Most bots should attack
             BotObjective::AttackEnemyFlag
         } else if defenders_at_base < 2
-            && own_flag.map_or(false, |f| f.status == fb::FlagStatus::Dropped)
+            && own_flag.is_some_and(|f| f.status == fb::FlagStatus::Dropped)
         {
             // If our flag is dropped, help return it
             BotObjective::DefendOwnFlag
@@ -852,7 +850,7 @@ impl OptimizedBotAI {
             let weapon_threat_weight = match enemy.weapon {
                 ServerWeaponType::Sniper if distance > 400.0 => 2.0,
                 ServerWeaponType::Shotgun if distance < 100.0 => 1.5,
-                ServerWeaponType::Rifle if distance >= 200.0 && distance <= 400.0 => 1.3,
+                ServerWeaponType::Rifle if (200.0..=400.0).contains(&distance) => 1.3,
                 _ => 1.0,
             };
             threat_score *= weapon_threat_weight;
@@ -887,7 +885,7 @@ impl OptimizedBotAI {
 
             let should_replace = selected
                 .as_ref()
-                .map_or(true, |(best_score, _)| threat_score > *best_score);
+                .is_none_or(|(best_score, _)| threat_score > *best_score);
             if should_replace {
                 selected = Some((threat_score, candidate));
             }

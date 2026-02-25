@@ -345,7 +345,7 @@ impl MassiveGameServer {
 
             let potential_spawns_for_team: Vec<Vec2> = team_spawn_areas
                 .iter()
-                .filter(|(_, sp_team_id)| *sp_team_id == team_id as u8)
+                .filter(|(_, sp_team_id)| *sp_team_id == team_id)
                 .map(|(pos, _)| *pos)
                 .collect();
 
@@ -366,7 +366,7 @@ impl MassiveGameServer {
                 self.respawn_manager.get_respawn_position(
                     self,
                     &Arc::new(bot_player_id_str.clone()),
-                    Some(team_id as u8),
+                    Some(team_id),
                     &[],
                 )
             };

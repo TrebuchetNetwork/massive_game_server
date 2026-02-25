@@ -73,7 +73,7 @@ impl MassiveGameServer {
             for peer_id in &quic_peer_ids {
                 client_states_guard
                     .entry(peer_id.clone())
-                    .or_insert_with(ClientState::default);
+                    .or_default();
             }
         }
 
@@ -82,7 +82,7 @@ impl MassiveGameServer {
             .len()
             .saturating_add(quic_peer_ids.len());
         if connected_clients_total == 0 {
-            if current_frame % 30 == 0 {
+            if current_frame.is_multiple_of(30) {
                 // Log every 30 frames
                 // Debug: List all keys in the map to see if there's a mismatch
                 info!(
@@ -127,7 +127,7 @@ impl MassiveGameServer {
                     let data_channel = Arc::clone(entry.value());
                     let needs_initial = !client_states_guard
                         .get(&peer_id)
-                        .map_or(false, |cs_state| cs_state.known_walls_sent);
+                        .is_some_and(|cs_state| cs_state.known_walls_sent);
                     let channel_open = data_channel.is_open();
                     (peer_id, data_channel, needs_initial, channel_open)
                 })
@@ -176,7 +176,7 @@ impl MassiveGameServer {
                 .map(|peer_id| {
                     let needs_initial = !client_states_guard
                         .get(peer_id.as_str())
-                        .map_or(false, |cs_state| cs_state.known_walls_sent);
+                        .is_some_and(|cs_state| cs_state.known_walls_sent);
                     (peer_id.clone(), needs_initial)
                 })
                 .collect()
@@ -352,7 +352,7 @@ impl MassiveGameServer {
         let mut scheduled_client_entries = scheduled_initial_entries;
         let mut scheduled_delta_count = 0usize;
         for (peer_id, data_channel, needs_initial) in delta_entries {
-            if throttle_delta_broadcasts && current_frame % delta_skip_modulus != 0 {
+            if throttle_delta_broadcasts && !current_frame.is_multiple_of(delta_skip_modulus) {
                 continue;
             }
             // Mobile clients: additional frame skipping for reduced update rate (~20 Hz)
@@ -362,7 +362,7 @@ impl MassiveGameServer {
                 .get(&peer_id)
                 .map(|cs| cs.mobile_delta_skip_modulus)
                 .unwrap_or(1);
-            if client_mobile_skip > 1 && (current_frame as usize) % client_mobile_skip != 0 {
+            if client_mobile_skip > 1 && !(current_frame as usize).is_multiple_of(client_mobile_skip) {
                 continue;
             }
             if scheduled_delta_count >= max_delta_per_frame {
@@ -532,13 +532,11 @@ impl MassiveGameServer {
                 });
 
                 if fanout_tasks.len() >= broadcast_concurrency {
-                    if let Some(join_result) = fanout_tasks.join_next().await {
-                        if let Err(join_err) = join_result {
-                            error!(
-                                "[Frame {}] Broadcast fanout task join error: {}",
-                                current_frame, join_err
-                            );
-                        }
+                    if let Some(Err(join_err)) = fanout_tasks.join_next().await {
+                        error!(
+                            "[Frame {}] Broadcast fanout task join error: {}",
+                            current_frame, join_err
+                        );
                     }
                 }
             }
@@ -576,13 +574,11 @@ impl MassiveGameServer {
                 });
 
                 if quic_tasks.len() >= broadcast_concurrency {
-                    if let Some(join_result) = quic_tasks.join_next().await {
-                        if let Err(join_err) = join_result {
-                            error!(
-                                "[Frame {}] QUIC broadcast task join error: {}",
-                                current_frame, join_err
-                            );
-                        }
+                    if let Some(Err(join_err)) = quic_tasks.join_next().await {
+                        error!(
+                            "[Frame {}] QUIC broadcast task join error: {}",
+                            current_frame, join_err
+                        );
                     }
                 }
             }
