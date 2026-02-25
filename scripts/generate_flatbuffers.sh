@@ -27,7 +27,9 @@ flatc --version
 echo ""
 
 # Set variables
-SCHEMA_FILE="../server/schemas/game.fbs"
+CANONICAL_SCHEMA_FILE="../protocol/schemas/game.fbs"
+SERVER_SCHEMA_MIRROR_FILE="../server/schemas/game.fbs"
+SCHEMA_FILE="$CANONICAL_SCHEMA_FILE"
 OUTPUT_DIR="../static_client/generated_js"
 SERVER_OUTPUT_DIR="../target/flatbuffers"
 
@@ -54,10 +56,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check if schema file exists
-if [ ! -f "$SCHEMA_FILE" ]; then
-    echo -e "${RED}Error: Schema file '$SCHEMA_FILE' not found!${NC}"
-    echo "Please ensure the FlatBuffers schema file exists in the correct location."
+# Check if canonical schema file exists
+if [ ! -f "$CANONICAL_SCHEMA_FILE" ]; then
+    echo -e "${RED}Error: Canonical schema file '$CANONICAL_SCHEMA_FILE' not found!${NC}"
+    echo "Please ensure protocol/schemas/game.fbs exists."
+    exit 1
+fi
+if [ ! -f "$SERVER_SCHEMA_MIRROR_FILE" ]; then
+    echo -e "${RED}Error: Server schema mirror '$SERVER_SCHEMA_MIRROR_FILE' not found!${NC}"
+    echo "Please ensure server/schemas/game.fbs exists."
+    exit 1
+fi
+
+if ! cmp -s "$CANONICAL_SCHEMA_FILE" "$SERVER_SCHEMA_MIRROR_FILE"; then
+    echo -e "${RED}Error: Schema drift detected between:${NC}"
+    echo "  $CANONICAL_SCHEMA_FILE"
+    echo "  $SERVER_SCHEMA_MIRROR_FILE"
+    echo ""
+    echo "Sync the server mirror from the canonical protocol schema and re-run."
+    echo "Example:"
+    echo "  cp $CANONICAL_SCHEMA_FILE $SERVER_SCHEMA_MIRROR_FILE"
     exit 1
 fi
 

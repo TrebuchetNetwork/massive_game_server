@@ -40,6 +40,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y flatbuffers-compiler
 
+      - name: Repository hygiene guard
+        run: scripts/check_repo_hygiene.sh
+
+      - name: FlatBuffers consistency guard
+        run: scripts/check_flatbuffers_consistency.sh
+
       - name: Cargo check (workspace)
         env:
           RUSTFLAGS: -D warnings
@@ -195,6 +201,12 @@ jobs:
         run: |
           brew update
           brew install flatbuffers
+
+      - name: Repository hygiene guard
+        run: scripts/check_repo_hygiene.sh
+
+      - name: FlatBuffers consistency guard
+        run: scripts/check_flatbuffers_consistency.sh
 
       - name: Cargo check (workspace)
         env:

@@ -1,5 +1,6 @@
 // server/build.rs
 use flatc_rust::{Args, Flatc};
+use std::fs;
 use std::path::Path;
 
 fn main() {
@@ -11,14 +12,40 @@ fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .expect("CARGO_MANIFEST_DIR environment variable not set.");
 
-    // Assuming game.fbs is at massive_game_server/server/schemas/game.fbs
-    // User confirmed this path in the latest interaction.
-    let schema_file = Path::new(&manifest_dir).join("schemas/game.fbs");
+    // Canonical schema source lives in protocol/schemas.
+    // Keep server/schemas as a mirror and enforce byte-for-byte parity.
+    let schema_file = Path::new(&manifest_dir).join("../protocol/schemas/game.fbs");
+    let server_schema_mirror = Path::new(&manifest_dir).join("schemas/game.fbs");
 
     if !schema_file.exists() {
         panic!(
-            "FlatBuffers schema file not found at {:?}. Ensure 'schemas/game.fbs' exists in the server directory.",
+            "Canonical FlatBuffers schema file not found at {:?}. Ensure '../protocol/schemas/game.fbs' exists.",
             schema_file
+        );
+    }
+    if !server_schema_mirror.exists() {
+        panic!(
+            "Server schema mirror file not found at {:?}. Ensure 'server/schemas/game.fbs' exists.",
+            server_schema_mirror
+        );
+    }
+
+    let canonical_schema_bytes = fs::read(&schema_file).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read canonical schema file {:?}: {}",
+            schema_file, e
+        )
+    });
+    let mirror_schema_bytes = fs::read(&server_schema_mirror).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read server schema mirror file {:?}: {}",
+            server_schema_mirror, e
+        )
+    });
+    if canonical_schema_bytes != mirror_schema_bytes {
+        panic!(
+            "Schema drift detected between {:?} and {:?}. Sync server mirror from canonical protocol schema before building.",
+            schema_file, server_schema_mirror
         );
     }
 
@@ -34,6 +61,10 @@ fn main() {
     });
 
     println!("cargo:rerun-if-changed={}", schema_file.to_str().unwrap());
+    println!(
+        "cargo:rerun-if-changed={}",
+        server_schema_mirror.to_str().unwrap()
+    );
 
     println!(
         "Attempting to compile FlatBuffers schema: {} into output directory: {}",

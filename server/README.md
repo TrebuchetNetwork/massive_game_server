@@ -44,7 +44,7 @@ Follow these steps to get the server up and running:
     cd server
     cargo build --release
     ```
-    * **Note on FlatBuffers:** The `server/build.rs` script automatically uses `flatc` to compile the FlatBuffers schema (`server/schemas/game.fbs`) into Rust code during the build process. You generally don't need to run `flatc` manually for the server.
+    * **Note on FlatBuffers:** The `server/build.rs` script automatically uses `flatc` to compile the canonical FlatBuffers schema (`protocol/schemas/game.fbs`) into Rust code during the build process. `server/schemas/game.fbs` is a required mirror and must stay byte-identical.
 
 3.  **Run the Server:**
     After a successful build:
@@ -63,12 +63,13 @@ Follow these steps to get the server up and running:
 
 The static web client (`static_client/`) uses JavaScript code generated from the FlatBuffers schema.
 * The pre-generated JavaScript files are located in `static_client/generated_js/`.
-* If you modify the FlatBuffers schema (`server/schemas/game.fbs`), you need to regenerate these client-side files. Run the script:
+* If you modify the FlatBuffers schema (`protocol/schemas/game.fbs`), you need to regenerate these client-side files. Keep `server/schemas/game.fbs` mirrored, then run:
     ```bash
     cd scripts
     ./generate_flatbuffers.sh
     ```
     This script uses `flatc` to generate TypeScript files and then (optionally, if `tsc` is installed) compiles them to JavaScript.
+* Schema policy and enforcement details: `docs/flatbuffers_schema_policy.md`.
 
 ## Configuration
 
@@ -215,7 +216,8 @@ A brief overview of the main directories:
     * `/server/src/network`: WebRTC signaling, data channel management, and network message handling.
     * `/server/src/concurrent`: Thread pools, concurrent data structures.
     * `/server/src/operational`: Monitoring, diagnostics, and tuning utilities.
-    * `/server/schemas/game.fbs`: The FlatBuffers schema defining the network protocol.
+    * `/protocol/schemas/game.fbs`: Canonical FlatBuffers schema defining the network protocol.
+    * `/server/schemas/game.fbs`: Mirror copy used for compatibility checks.
     * `/server/src/main.rs`: The main entry point for the server application.
     * `/server/src/lib.rs`: The library crate root for `massive_game_server_core`.
 * `/static_client`: Contains the HTML, JavaScript, and CSS for the static web client.

@@ -48,7 +48,7 @@ There are many paths to glory and contributing to the Massive Game Server:
 5.  **Make Your Changes (The Magic Happens Here!):**
     * Write code that's cleaner than your room after a visit from your parents. Well-commented too!
     * We bow to the mighty `rustfmt` for Rust. Let its wisdom guide your formatting.
-    * **FlatBuffers Alert!** If you meddle with the sacred scrolls of `server/schemas/game.fbs`:
+    * **FlatBuffers Alert!** If you meddle with the sacred scrolls of `protocol/schemas/game.fbs` (and keep `server/schemas/game.fbs` mirrored):
         * Server-side Rust code: `cargo build` will magically invoke `build.rs` to do your bidding.
         * Client-side JS/TS: Unleash `scripts/generate_flatbuffers.sh` to appease the client gods.
     * Unit tests are your friends. They catch regressions before they embarrass you in a PR.

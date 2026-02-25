@@ -5,3 +5,11 @@ scripts/e2e/node_modules/
 artifacts/
 static_client/node_modules/
 static_client/client_logic_ts_build/
+.DS_Store
+*.log
+*.zip
+data/
+server/data/
+test-results/
+panic.log
+runtime_server.log
