@@ -28,3 +28,19 @@ export {
     applyConnectionStatusUi,
     normalizeConnectionErrorDetail,
 } from './connection_status.js';
+export { createGameRenderer } from './GameRenderer.js';
+export { createProtocolHandler } from './ProtocolHandler.js';
+export { createInputManager } from './InputManager.js';
+export { createGameState } from './GameState.js';
+export { createCombatFeedback } from './CombatFeedback.js';
+export { createAimingSystem } from './AimingSystem.js';
+export { createUIManager } from './UIManager.js';
+export { createSpriteManager } from './SpriteManager.js';
+export { createServerUpdateHandler } from './ServerUpdateHandler.js';
+export { createConnectionManager } from './ConnectionManager.js';
+export { createWorldRenderer } from './WorldRenderer.js';
+export { createInterpolationManager } from './InterpolationManager.js';
+export { createDiagnosticsManager } from './DiagnosticsManager.js';
+export { createRenderAssetManager } from './RenderAssetManager.js';
+export { createUpdateSprites } from './UpdateSprites.js';
+export { createPerformanceBudget } from './PerformanceBudget.js';

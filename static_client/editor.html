@@ -16,6 +16,9 @@
       --wall: #8fc5ff;
       --wall-d: #ffc66d;
       --pickup: #8dffb4;
+      --zone-slow: rgba(255, 200, 60, 0.35);
+      --zone-damage: rgba(255, 80, 80, 0.35);
+      --zone-boost: rgba(80, 255, 180, 0.35);
     }
     * { box-sizing: border-box; }
     body {
@@ -95,6 +98,7 @@
     <div class="row">
       <button id="toolWall" class="active">Wall</button>
       <button id="toolPickup">Pickup</button>
+      <button id="toolZone">Zone</button>
       <button id="toolDelete">Delete</button>
       <button id="toolPan">Pan</button>
     </div>
@@ -110,6 +114,16 @@
       <option value="weaponcrate_rifle">Weapon Crate (Rifle)</option>
       <option value="weaponcrate_sniper">Weapon Crate (Sniper)</option>
     </select>
+
+    <label for="zoneType">Zone Type</label>
+    <select id="zoneType">
+      <option value="slow_zone">Slow Zone</option>
+      <option value="damage_zone">Damage Zone</option>
+      <option value="boost_pad">Boost Pad</option>
+    </select>
+    <label id="directionLabel" style="display:none">Boost direction (degrees)
+      <input id="boostDirection" type="number" value="0" min="0" max="360" step="15" style="width:80px" />
+    </label>
 
     <label><input id="destructible" type="checkbox" /> Destructible wall</label>
 
@@ -134,10 +148,14 @@
     const io = document.getElementById("io");
     const pickupTypeEl = document.getElementById("pickupType");
     const destructibleEl = document.getElementById("destructible");
+    const zoneTypeEl = document.getElementById("zoneType");
+    const boostDirectionEl = document.getElementById("boostDirection");
+    const directionLabel = document.getElementById("directionLabel");
 
     const state = {
       walls: [],
       pickups: [],
+      zones: [],
       nextId: 10000,
       tool: "wall",
       dragStart: null,
@@ -147,12 +165,23 @@
       panStart: null,
     };
 
+    const ZONE_COLORS = {
+      slow_zone:   { fill: "rgba(255, 200, 60, 0.25)",  stroke: "rgba(255, 200, 60, 0.8)" },
+      damage_zone: { fill: "rgba(255, 80, 80, 0.25)",   stroke: "rgba(255, 80, 80, 0.8)" },
+      boost_pad:   { fill: "rgba(80, 255, 180, 0.25)",  stroke: "rgba(80, 255, 180, 0.8)" },
+    };
+
     const toolButtons = {
       wall: document.getElementById("toolWall"),
       pickup: document.getElementById("toolPickup"),
+      zone: document.getElementById("toolZone"),
       delete: document.getElementById("toolDelete"),
       pan: document.getElementById("toolPan"),
     };
+
+    zoneTypeEl.addEventListener("change", () => {
+      directionLabel.style.display = zoneTypeEl.value === "boost_pad" ? "" : "none";
+    });
 
     function setTool(tool) {
       state.tool = tool;
@@ -254,6 +283,52 @@
       }
     }
 
+    function drawZones() {
+      for (const zone of state.zones) {
+        const a = worldToScreen(zone.x, zone.y);
+        const b = worldToScreen(zone.x + zone.width, zone.y + zone.height);
+        const colors = ZONE_COLORS[zone.zone_type] || ZONE_COLORS.slow_zone;
+        ctx.fillStyle = colors.fill;
+        ctx.strokeStyle = colors.stroke;
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([6, 4]);
+        ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+        ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+        ctx.setLineDash([]);
+
+        // Label
+        ctx.fillStyle = colors.stroke;
+        ctx.font = "11px sans-serif";
+        const label = zone.zone_type.replace("_", " ");
+        ctx.fillText(label, a.x + 4, a.y + 14);
+
+        // Direction arrow for boost pads
+        if (zone.zone_type === "boost_pad") {
+          const cx = (a.x + b.x) / 2;
+          const cy = (a.y + b.y) / 2;
+          const rad = zone.direction || 0;
+          const arrowLen = Math.min(b.x - a.x, b.y - a.y) * 0.35;
+          const tipX = cx + Math.cos(rad) * arrowLen;
+          const tipY = cy + Math.sin(rad) * arrowLen;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(tipX, tipY);
+          ctx.strokeStyle = colors.stroke;
+          ctx.lineWidth = 2.4;
+          ctx.setLineDash([]);
+          ctx.stroke();
+          // Arrowhead
+          const headLen = 6;
+          ctx.beginPath();
+          ctx.moveTo(tipX, tipY);
+          ctx.lineTo(tipX - headLen * Math.cos(rad - 0.4), tipY - headLen * Math.sin(rad - 0.4));
+          ctx.moveTo(tipX, tipY);
+          ctx.lineTo(tipX - headLen * Math.cos(rad + 0.4), tipY - headLen * Math.sin(rad + 0.4));
+          ctx.stroke();
+        }
+      }
+    }
+
     function drawPreview() {
       if (!state.preview) return;
       const wall = state.preview;
@@ -268,13 +343,14 @@
     }
 
     function updateStatus() {
-      statusEl.textContent = `Walls: ${state.walls.length} | Pickups: ${state.pickups.length} | Tool: ${state.tool}`;
+      statusEl.textContent = `Walls: ${state.walls.length} | Pickups: ${state.pickups.length} | Zones: ${state.zones.length} | Tool: ${state.tool}`;
     }
 
     function draw() {
       const rect = canvas.getBoundingClientRect();
       ctx.clearRect(0, 0, rect.width, rect.height);
       drawGrid();
+      drawZones();
       drawWalls();
       drawPickups();
       drawPreview();
@@ -295,6 +371,9 @@
     }
     function hitPickup(world) {
       return state.pickups.findIndex((p) => (p.x - world.x) ** 2 + (p.y - world.y) ** 2 <= 14 ** 2);
+    }
+    function hitZone(world) {
+      return state.zones.findIndex((z) => world.x >= z.x && world.x <= z.x + z.width && world.y >= z.y && world.y <= z.y + z.height);
     }
 
     canvas.addEventListener("wheel", (e) => {
@@ -321,10 +400,14 @@
         if (wi >= 0) { state.walls.splice(wi, 1); draw(); return; }
         const pi = hitPickup(world);
         if (pi >= 0) { state.pickups.splice(pi, 1); draw(); return; }
+        const zi = hitZone(world);
+        if (zi >= 0) { state.zones.splice(zi, 1); draw(); return; }
         return;
       }
-      state.dragStart = world;
-      state.preview = { id: 0, x: world.x, y: world.y, width: 1, height: 1, is_destructible: destructibleEl.checked };
+      if (state.tool === "wall" || state.tool === "zone") {
+        state.dragStart = world;
+        state.preview = { id: 0, x: world.x, y: world.y, width: 1, height: 1, is_destructible: destructibleEl.checked };
+      }
     });
 
     canvas.addEventListener("mousemove", (e) => {
@@ -334,7 +417,7 @@
         draw();
         return;
       }
-      if (!state.dragStart || state.tool !== "wall") return;
+      if (!state.dragStart || (state.tool !== "wall" && state.tool !== "zone")) return;
       const world = screenToWorld(e.offsetX, e.offsetY);
       const rect = normalizeRect(state.dragStart, world);
       state.preview = { id: 0, x: rect.x, y: rect.y, width: rect.width, height: rect.height, is_destructible: destructibleEl.checked };
@@ -347,17 +430,27 @@
         state.panStart = null;
         return;
       }
-      if (!state.dragStart || state.tool !== "wall") return;
+      if (!state.dragStart || (state.tool !== "wall" && state.tool !== "zone")) return;
       const world = screenToWorld(e.offsetX, e.offsetY);
       const rect = normalizeRect(state.dragStart, world);
       if (rect.width >= 2 && rect.height >= 2) {
-        state.walls.push({
-          id: newId(),
-          x: rect.x, y: rect.y, width: rect.width, height: rect.height,
-          is_destructible: destructibleEl.checked,
-          max_health: destructibleEl.checked ? 150 : 1000,
-          current_health: destructibleEl.checked ? 150 : 1000,
-        });
+        if (state.tool === "zone") {
+          const dirDeg = parseFloat(boostDirectionEl.value) || 0;
+          state.zones.push({
+            id: newId(),
+            x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+            zone_type: zoneTypeEl.value,
+            direction: dirDeg * (Math.PI / 180),
+          });
+        } else {
+          state.walls.push({
+            id: newId(),
+            x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+            is_destructible: destructibleEl.checked,
+            max_health: destructibleEl.checked ? 150 : 1000,
+            current_health: destructibleEl.checked ? 150 : 1000,
+          });
+        }
       }
       state.dragStart = null;
       state.preview = null;
@@ -382,6 +475,15 @@
           y: +p.y.toFixed(2),
           pickup_type: p.pickup_type,
         })),
+        zones: state.zones.map((z) => ({
+          id: z.id,
+          x: +z.x.toFixed(2),
+          y: +z.y.toFixed(2),
+          width: +z.width.toFixed(2),
+          height: +z.height.toFixed(2),
+          zone_type: z.zone_type,
+          direction: +(z.direction || 0).toFixed(4),
+        })),
       };
       io.value = JSON.stringify(payload, null, 2);
     }
@@ -396,9 +498,11 @@
       }
       state.walls = Array.isArray(parsed.walls) ? parsed.walls : [];
       state.pickups = Array.isArray(parsed.pickups) ? parsed.pickups : [];
+      state.zones = Array.isArray(parsed.zones) ? parsed.zones : [];
       let maxId = 10000;
       for (const w of state.walls) maxId = Math.max(maxId, Number(w.id) || 0);
       for (const p of state.pickups) maxId = Math.max(maxId, Number(p.id) || 0);
+      for (const z of state.zones) maxId = Math.max(maxId, Number(z.id) || 0);
       state.nextId = maxId + 1;
       draw();
     }
@@ -406,9 +510,10 @@
     document.getElementById("btnExport").addEventListener("click", exportJson);
     document.getElementById("btnImport").addEventListener("click", importJson);
     document.getElementById("btnClear").addEventListener("click", () => {
-      if (!confirm("Clear all walls and pickups?")) return;
+      if (!confirm("Clear all walls, pickups, and zones?")) return;
       state.walls = [];
       state.pickups = [];
+      state.zones = [];
       draw();
     });
 

@@ -31,11 +31,12 @@ pub const MIN_PLAYERS_TO_START: usize = 1; // Reduced to 1 so single player can 
 pub const PICKUP_COLLECTION_RADIUS: f32 = 25.0;
 pub const PICKUP_DEFAULT_RESPAWN_TIME_SECS: f32 = 10.0;
 
-// Anti-cheat constants (example values)
-pub const MAX_PLAYER_SPEED_MULTIPLIER: f32 = 1.5; // For speed boosts
-pub const MAX_POSITION_DELTA_SLACK: f32 = 10.0; // Max allowed movement per tick if not moving via velocity
+// Anti-cheat constants – tightened from V5 defaults (dash/dodge are server-side
+// so client speed should never legitimately exceed 1.15× base).
+pub const MAX_PLAYER_SPEED_MULTIPLIER: f32 = 1.15;
+pub const MAX_POSITION_DELTA_SLACK: f32 = 3.0;
 pub const MIN_SHOT_INTERVAL_SECONDS: f32 = 0.05; // Minimum interval between shots
-pub const POSITION_VALIDATION_VIOLATION_THRESHOLD: u32 = 5;
+pub const POSITION_VALIDATION_VIOLATION_THRESHOLD: u32 = 3;
 
 // ── Weapon tuning constants ──────────────────────────────────────────
 // All weapon balance values centralized here for easy iteration.
@@ -120,6 +121,18 @@ pub const LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS: f32 = 0.5;
 
 // ── Projectile knockback ────────────────────────────────────────────
 pub const KNOCKBACK_FORCE_PER_DAMAGE: f32 = 0.8; // push force proportional to damage
+pub const KNOCKBACK_MAX_VELOCITY: f32 = 450.0; // 3x base speed – prevents wallclip on stacked hits
+
+// ── Commander constants ────────────────────────────────────────────
+pub const COMMANDER_MAX_WAYPOINTS_PER_TEAM: usize = 3;
+pub const COMMANDER_WAYPOINT_TTL_MS: u64 = 20_000;
+pub const COMMANDER_SUPPLY_DROP_COOLDOWN_MS: u64 = 60_000;
+pub const COMMANDER_SUPPLY_DROP_PICKUPS: usize = 6;
+
+// ── Progressive destructible wall constants ────────────────────────
+pub const PROGRESSIVE_WALL_STAGE1_HEALTH_RATIO: f32 = 0.50;
+pub const PROGRESSIVE_WALL_STAGE2_HEALTH_RATIO: f32 = 0.25;
+pub const PROGRESSIVE_WALL_MIN_FRAGMENT_LENGTH: f32 = 12.0;
 
 // ── Mobile bandwidth profile ────────────────────────────────────────
 pub const MOBILE_AOI_MAX_VISIBLE_PLAYERS: usize = 24;

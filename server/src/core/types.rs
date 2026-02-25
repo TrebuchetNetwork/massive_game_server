@@ -1086,3 +1086,309 @@ impl RTCDataChannel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    fn make_player(name: &str) -> PlayerState {
+        PlayerState::new(name.to_string(), name.to_string(), 100.0, 100.0)
+    }
+
+    // ── apply_damage tests ─────────────────────────────────────────
+
+    #[test]
+    fn apply_damage_reduces_health() {
+        let mut p = make_player("p1");
+        let died = p.apply_damage(30);
+        assert!(!died);
+        assert_eq!(p.health, 70);
+        assert!(p.alive);
+    }
+
+    #[test]
+    fn apply_damage_kills_at_zero() {
+        let mut p = make_player("p1");
+        let died = p.apply_damage(100);
+        assert!(died);
+        assert_eq!(p.health, 0);
+        assert!(!p.alive);
+        assert_eq!(p.deaths, 1);
+    }
+
+    #[test]
+    fn apply_damage_overkill_clamps_to_zero() {
+        let mut p = make_player("p1");
+        let died = p.apply_damage(500);
+        assert!(died);
+        assert_eq!(p.health, 0);
+        assert!(!p.alive);
+    }
+
+    #[test]
+    fn apply_damage_shield_absorbs_fully() {
+        let mut p = make_player("p1");
+        p.shield_current = 50;
+        p.shield_max = 50;
+        let died = p.apply_damage(30);
+        assert!(!died);
+        assert_eq!(p.shield_current, 20);
+        assert_eq!(p.health, 100); // no health lost
+    }
+
+    #[test]
+    fn apply_damage_shield_absorbs_partially() {
+        let mut p = make_player("p1");
+        p.shield_current = 10;
+        p.shield_max = 50;
+        let died = p.apply_damage(30);
+        assert!(!died);
+        assert_eq!(p.shield_current, 0);
+        assert_eq!(p.health, 80); // 30 - 10 shield = 20 to health
+    }
+
+    #[test]
+    fn apply_damage_shield_overflow_kills() {
+        let mut p = make_player("p1");
+        p.shield_current = 10;
+        p.health = 20;
+        let died = p.apply_damage(50);
+        assert!(died);
+        assert_eq!(p.shield_current, 0);
+        assert_eq!(p.health, 0);
+    }
+
+    #[test]
+    fn apply_damage_invulnerable_blocks_all() {
+        let mut p = make_player("p1");
+        p.invulnerable_remaining = 2.0;
+        let died = p.apply_damage(100);
+        assert!(!died);
+        assert_eq!(p.health, 100);
+        assert!(p.alive);
+    }
+
+    #[test]
+    fn apply_damage_dead_player_no_effect() {
+        let mut p = make_player("p1");
+        p.alive = false;
+        let died = p.apply_damage(50);
+        assert!(!died);
+        assert_eq!(p.health, 100); // unchanged
+    }
+
+    #[test]
+    fn apply_damage_tracks_damage_taken() {
+        let mut p = make_player("p1");
+        p.apply_damage(25);
+        p.apply_damage(15);
+        assert_eq!(p.damage_taken, 40);
+    }
+
+    #[test]
+    fn apply_damage_marks_changed_fields_on_death() {
+        let mut p = make_player("p1");
+        p.clear_changed_fields();
+        p.apply_damage(100);
+        // die() sets FIELD_HEALTH_ALIVE | FIELD_SCORE_STATS | FIELD_POSITION_ROTATION
+        assert_ne!(p.changed_fields & FIELD_HEALTH_ALIVE, 0);
+        assert_ne!(p.changed_fields & FIELD_SCORE_STATS, 0);
+    }
+
+    // ── can_shoot tests ───────────────────────────────────────────
+
+    #[test]
+    fn can_shoot_alive_with_ammo() {
+        let p = make_player("p1");
+        let now = Instant::now();
+        assert!(p.can_shoot(now));
+    }
+
+    #[test]
+    fn can_shoot_dead_player_cannot() {
+        let mut p = make_player("p1");
+        p.alive = false;
+        assert!(!p.can_shoot(Instant::now()));
+    }
+
+    #[test]
+    fn can_shoot_reloading_blocks() {
+        let mut p = make_player("p1");
+        p.reload_progress = Some(0.5);
+        assert!(!p.can_shoot(Instant::now()));
+    }
+
+    #[test]
+    fn can_shoot_weapon_swap_blocks() {
+        let mut p = make_player("p1");
+        p.weapon_swap_progress = 0.2;
+        assert!(!p.can_shoot(Instant::now()));
+    }
+
+    #[test]
+    fn can_shoot_zero_ammo_blocks_ranged() {
+        let mut p = make_player("p1");
+        p.weapon = ServerWeaponType::Pistol;
+        p.ammo = 0;
+        assert!(!p.can_shoot(Instant::now()));
+    }
+
+    #[test]
+    fn can_shoot_melee_ignores_ammo() {
+        let mut p = make_player("p1");
+        p.weapon = ServerWeaponType::Melee;
+        p.ammo = 0;
+        assert!(p.can_shoot(Instant::now()));
+    }
+
+    #[test]
+    fn can_shoot_cooldown_not_elapsed() {
+        let mut p = make_player("p1");
+        p.weapon = ServerWeaponType::Sniper;
+        p.ammo = 5;
+        let shot_time = Instant::now();
+        p.last_shot_time = Some(shot_time);
+        // Sniper fire rate is 1.2s; check immediately after should fail
+        assert!(!p.can_shoot(shot_time));
+    }
+
+    #[test]
+    fn can_shoot_cooldown_elapsed() {
+        let mut p = make_player("p1");
+        p.weapon = ServerWeaponType::Pistol;
+        p.ammo = 5;
+        let shot_time = Instant::now();
+        p.last_shot_time = Some(shot_time);
+        // Pistol fire rate is 0.45s; well past cooldown
+        let future_time = shot_time + Duration::from_millis(500);
+        assert!(p.can_shoot(future_time));
+    }
+
+    // ── assist tracking tests ─────────────────────────────────────
+
+    #[test]
+    fn record_incoming_damage_creates_entry() {
+        let mut p = make_player("victim");
+        let attacker_id: PlayerID = Arc::new("attacker1".to_string());
+        let now = Instant::now();
+        p.record_incoming_damage(&attacker_id, 25, now);
+        assert_eq!(p.recent_damage_sources.len(), 1);
+        assert_eq!(p.recent_damage_sources[0].1, 25);
+    }
+
+    #[test]
+    fn record_incoming_damage_accumulates_same_attacker() {
+        let mut p = make_player("victim");
+        let attacker_id: PlayerID = Arc::new("attacker1".to_string());
+        let now = Instant::now();
+        p.record_incoming_damage(&attacker_id, 20, now);
+        p.record_incoming_damage(&attacker_id, 15, now);
+        assert_eq!(p.recent_damage_sources.len(), 1);
+        assert_eq!(p.recent_damage_sources[0].1, 35); // accumulated
+    }
+
+    #[test]
+    fn record_incoming_damage_separate_attackers() {
+        let mut p = make_player("victim");
+        let a1: PlayerID = Arc::new("a1".to_string());
+        let a2: PlayerID = Arc::new("a2".to_string());
+        let now = Instant::now();
+        p.record_incoming_damage(&a1, 20, now);
+        p.record_incoming_damage(&a2, 30, now);
+        assert_eq!(p.recent_damage_sources.len(), 2);
+    }
+
+    #[test]
+    fn get_assist_ids_excludes_killer() {
+        let mut p = make_player("victim");
+        let killer: PlayerID = Arc::new("killer".to_string());
+        let assister: PlayerID = Arc::new("assister".to_string());
+        let now = Instant::now();
+        p.record_incoming_damage(&killer, 60, now);
+        p.record_incoming_damage(&assister, 30, now);
+        let assists = p.get_assist_ids(&killer, now);
+        assert_eq!(assists.len(), 1);
+        assert_eq!(*assists[0], "assister");
+    }
+
+    #[test]
+    fn get_assist_ids_stale_entries_pruned() {
+        let mut p = make_player("victim");
+        let old_attacker: PlayerID = Arc::new("old".to_string());
+        let recent_attacker: PlayerID = Arc::new("recent".to_string());
+        let killer: PlayerID = Arc::new("killer".to_string());
+        let old_time = Instant::now();
+        p.record_incoming_damage(&old_attacker, 20, old_time);
+        // Simulate time passing beyond ASSIST_WINDOW_SECS (5s)
+        let now = old_time + Duration::from_secs(6);
+        p.record_incoming_damage(&recent_attacker, 30, now);
+        let assists = p.get_assist_ids(&killer, now);
+        // old_attacker should be expired
+        assert_eq!(assists.len(), 1);
+        assert_eq!(*assists[0], "recent");
+    }
+
+    // ── effective_damage_multiplier / streak tests ────────────────
+
+    #[test]
+    fn effective_damage_multiplier_no_boosts() {
+        let p = make_player("p1");
+        assert!((p.effective_damage_multiplier() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn effective_damage_multiplier_damage_boost_only() {
+        let mut p = make_player("p1");
+        p.damage_boost_remaining = 5.0;
+        let mult = p.effective_damage_multiplier();
+        assert!((mult - crate::core::constants::DAMAGE_BOOST_MULTIPLIER).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn effective_damage_multiplier_streak_boost_only() {
+        let mut p = make_player("p1");
+        p.streak_damage_boost_remaining = 10.0;
+        let mult = p.effective_damage_multiplier();
+        assert!((mult - crate::core::constants::KILLSTREAK_DAMAGE_BOOST_MULTIPLIER).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn effective_damage_multiplier_both_boosts_stack() {
+        let mut p = make_player("p1");
+        p.damage_boost_remaining = 5.0;
+        p.streak_damage_boost_remaining = 10.0;
+        let mult = p.effective_damage_multiplier();
+        let expected = crate::core::constants::DAMAGE_BOOST_MULTIPLIER
+            * crate::core::constants::KILLSTREAK_DAMAGE_BOOST_MULTIPLIER;
+        assert!((mult - expected).abs() < 0.001);
+    }
+
+    // ── die / respawn / reset tests ──────────────────────────────
+
+    #[test]
+    fn die_resets_streak_and_state() {
+        let mut p = make_player("p1");
+        p.current_streak = 5;
+        p.streak_damage_boost_remaining = 10.0;
+        p.apply_damage(100); // triggers die()
+        assert_eq!(p.current_streak, 0);
+        assert_eq!(p.streak_damage_boost_remaining, 0.0);
+        assert!(!p.alive);
+        assert!(p.respawn_timer.is_some());
+    }
+
+    #[test]
+    fn respawn_restores_full_state() {
+        let mut p = make_player("p1");
+        p.apply_damage(100); // kill
+        p.respawn(200.0, 300.0);
+        assert!(p.alive);
+        assert_eq!(p.health, 100);
+        assert_eq!(p.x, 200.0);
+        assert_eq!(p.y, 300.0);
+        assert!(p.respawn_timer.is_none());
+        assert_eq!(p.current_streak, 0);
+        assert_eq!(p.shield_current, 0);
+    }
+}

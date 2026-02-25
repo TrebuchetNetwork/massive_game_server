@@ -1,5 +1,44 @@
 use super::*;
 
+/// Pure geometric check: is the target within the melee cone arc?
+/// Returns true if the angle between the attacker's facing direction and
+/// the direction to the target is within half the arc angle.
+#[inline]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn is_within_melee_arc(
+    attacker_x: f32,
+    attacker_y: f32,
+    attacker_rotation: f32,
+    target_x: f32,
+    target_y: f32,
+    arc_half_angle: f32,
+) -> bool {
+    let dx = target_x - attacker_x;
+    let dy = target_y - attacker_y;
+    let angle_to_target = dy.atan2(dx);
+    let mut angle_diff = (angle_to_target - attacker_rotation)
+        .rem_euclid(2.0 * std::f32::consts::PI);
+    if angle_diff > std::f32::consts::PI {
+        angle_diff = 2.0 * std::f32::consts::PI - angle_diff;
+    }
+    angle_diff <= arc_half_angle
+}
+
+/// Pure geometric check: is the target within melee range (squared distance)?
+#[inline]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn is_within_melee_range(
+    attacker_x: f32,
+    attacker_y: f32,
+    target_x: f32,
+    target_y: f32,
+    max_range: f32,
+) -> bool {
+    let dx = target_x - attacker_x;
+    let dy = target_y - attacker_y;
+    (dx * dx + dy * dy) < max_range * max_range
+}
+
 impl MassiveGameServer {
     // Extracted melee processing logic
     pub(super) fn process_melee_hits(&self, melee_hit_events: Vec<GameEvent>) {
@@ -317,5 +356,97 @@ impl MassiveGameServer {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MELEE_MAX_RANGE: f32 = 30.0;
+    // The arc used in process_melee_hits is FRAC_PI_3 / 2 = pi/6 as half-angle
+    // (60 degree total cone). We test with that value from the actual code.
+    const ARC_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_3 / 2.0; // ~0.5236 rad = 30 degrees
+
+    // ── Range tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn within_range_at_zero_distance() {
+        assert!(is_within_melee_range(0.0, 0.0, 0.0, 0.0, MELEE_MAX_RANGE));
+    }
+
+    #[test]
+    fn within_range_just_inside() {
+        assert!(is_within_melee_range(0.0, 0.0, 29.0, 0.0, MELEE_MAX_RANGE));
+    }
+
+    #[test]
+    fn out_of_range_at_boundary() {
+        // At exactly max_range, dist_sq == range_sq, the check is strict <
+        assert!(!is_within_melee_range(0.0, 0.0, MELEE_MAX_RANGE, 0.0, MELEE_MAX_RANGE));
+    }
+
+    #[test]
+    fn out_of_range_far_away() {
+        assert!(!is_within_melee_range(0.0, 0.0, 100.0, 0.0, MELEE_MAX_RANGE));
+    }
+
+    #[test]
+    fn within_range_diagonal() {
+        // diagonal distance = sqrt(20^2 + 20^2) = ~28.28 < 30
+        assert!(is_within_melee_range(0.0, 0.0, 20.0, 20.0, MELEE_MAX_RANGE));
+    }
+
+    // ── Cone angle tests ─────────────────────────────────────────────
+
+    #[test]
+    fn within_arc_directly_ahead() {
+        // Attacker facing right (rotation=0), target directly to the right
+        assert!(is_within_melee_arc(0.0, 0.0, 0.0, 10.0, 0.0, ARC_HALF_ANGLE));
+    }
+
+    #[test]
+    fn within_arc_at_edge() {
+        // Target at almost exactly the arc boundary
+        let angle = ARC_HALF_ANGLE - 0.01;
+        let tx = 10.0 * angle.cos();
+        let ty = 10.0 * angle.sin();
+        assert!(is_within_melee_arc(0.0, 0.0, 0.0, tx, ty, ARC_HALF_ANGLE));
+    }
+
+    #[test]
+    fn outside_arc_just_beyond() {
+        // Target just outside the arc boundary
+        let angle = ARC_HALF_ANGLE + 0.05;
+        let tx = 10.0 * angle.cos();
+        let ty = 10.0 * angle.sin();
+        assert!(!is_within_melee_arc(0.0, 0.0, 0.0, tx, ty, ARC_HALF_ANGLE));
+    }
+
+    #[test]
+    fn outside_arc_behind_attacker() {
+        // Target directly behind the attacker
+        assert!(!is_within_melee_arc(0.0, 0.0, 0.0, -10.0, 0.0, ARC_HALF_ANGLE));
+    }
+
+    #[test]
+    fn within_arc_with_rotated_attacker() {
+        // Attacker facing up (rotation=PI/2), target directly above
+        let rot = std::f32::consts::FRAC_PI_2;
+        assert!(is_within_melee_arc(0.0, 0.0, rot, 0.0, 10.0, ARC_HALF_ANGLE));
+    }
+
+    #[test]
+    fn cone_check_uses_frac_pi_4_from_constants() {
+        // Verify with the MELEE_CONE_HALF_ANGLE_RAD from constants (pi/4)
+        let half = crate::core::constants::MELEE_CONE_HALF_ANGLE_RAD;
+        // Target at exactly half angle should be within
+        let tx = 10.0 * (half - 0.01_f32).cos();
+        let ty = 10.0 * (half - 0.01_f32).sin();
+        assert!(is_within_melee_arc(0.0, 0.0, 0.0, tx, ty, half));
+        // Target beyond half angle should be outside
+        let tx2 = 10.0 * (half + 0.05_f32).cos();
+        let ty2 = 10.0 * (half + 0.05_f32).sin();
+        assert!(!is_within_melee_arc(0.0, 0.0, 0.0, tx2, ty2, half));
     }
 }

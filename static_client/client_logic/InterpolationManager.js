@@ -1,0 +1,341 @@
+/**
+ * InterpolationManager.js - Entity interpolation, prediction, snapshots
+ *
+ * Extracted from client.html. Contains updateLocalPlayerPrediction,
+ * interpolateEntities, and maybeRecordInterpolationSnapshot.
+ * Uses getCtx callback pattern.
+ */
+
+import { clamp, lerp, normalizeAngle, smoothFollowGain } from './math_utils.js';
+
+export function createInterpolationManager(getCtx) {
+
+    function updateLocalPlayerPrediction(deltaTime) {
+        const ctx = getCtx();
+        const { localPlayerState, inputState } = ctx;
+        if (!localPlayerState || !localPlayerState.alive) return;
+
+        let moveXIntent = 0;
+        let moveYIntent = 0;
+        if (inputState.move_forward) moveYIntent -= 1;
+        if (inputState.move_backward) moveYIntent += 1;
+        if (inputState.move_left) moveXIntent -= 1;
+        if (inputState.move_right) moveXIntent += 1;
+
+        const effectiveSpeed = localPlayerState.speed_boost_remaining > 0 ? 225 : 150;
+        let predictedVelocityX = 0;
+        let predictedVelocityY = 0;
+
+        if (moveXIntent !== 0 || moveYIntent !== 0) {
+            const magnitude = Math.sqrt(moveXIntent * moveXIntent + moveYIntent * moveYIntent);
+            const normX = moveXIntent / magnitude;
+            const normY = moveYIntent / magnitude;
+            predictedVelocityX = normX * effectiveSpeed;
+            predictedVelocityY = normY * effectiveSpeed;
+            localPlayerState.x += predictedVelocityX * deltaTime;
+            localPlayerState.y += predictedVelocityY * deltaTime;
+        }
+
+        localPlayerState.velocity_x = predictedVelocityX;
+        localPlayerState.velocity_y = predictedVelocityY;
+        localPlayerState.rotation = inputState.rotation;
+        localPlayerState.render_x = localPlayerState.x;
+        localPlayerState.render_y = localPlayerState.y;
+        localPlayerState.render_rotation = localPlayerState.rotation;
+    }
+
+    function interpolateEntities(deltaSeconds) {
+        const ctx = getCtx();
+        const {
+            players, projectiles, myPlayerId, localPlayerState,
+            adaptiveInterpolationDelayMs, projectileRawModeActive,
+            serverUpdates, isMobileDevice, applyRenderTarget,
+            getProjectileInterpolationSet, forEachInterpolatedProjectile,
+            INTERPOLATION_RETENTION_MS, POSITION_SNAP_DISTANCE_SQ,
+            PROJECTILE_SNAP_DISTANCE_SQ, PLAYER_EXTRAPOLATION_LIMIT_MS,
+            PROJECTILE_EXTRAPOLATION_LIMIT_MS,
+        } = ctx;
+
+        const now = Date.now();
+        const renderTime = now - adaptiveInterpolationDelayMs;
+        const projectileInterpolationSet = projectileRawModeActive ? null : getProjectileInterpolationSet();
+        // On mobile, use smoother (lower) gains for gentler snap-back corrections
+        const mobileSmooth = isMobileDevice ? 0.7 : 1.0;
+        const playerPositionGain = smoothFollowGain(0.3 * mobileSmooth, deltaSeconds);
+        const projectilePositionGain = smoothFollowGain(0.52 * mobileSmooth, deltaSeconds);
+        const rotationGain = smoothFollowGain(0.34 * mobileSmooth, deltaSeconds);
+
+        while (serverUpdates.length > 0 && serverUpdates[0].timestamp <= renderTime - INTERPOLATION_RETENTION_MS) {
+            serverUpdates.shift();
+        }
+
+        if (serverUpdates.length === 0) {
+            return;
+        }
+
+        let update1 = null;
+        let update2 = null;
+        for (let i = serverUpdates.length - 1; i >= 1; i--) {
+            if (serverUpdates[i].timestamp >= renderTime && serverUpdates[i - 1].timestamp <= renderTime) {
+                update2 = serverUpdates[i];
+                update1 = serverUpdates[i - 1];
+                break;
+            }
+        }
+
+        const latestUpdate = serverUpdates[serverUpdates.length - 1];
+        if (!update1 || !update2) {
+            if (renderTime >= latestUpdate.timestamp) {
+                const playerExtraSec = clamp(
+                    renderTime - latestUpdate.timestamp,
+                    0,
+                    PLAYER_EXTRAPOLATION_LIMIT_MS
+                ) / 1000;
+                const projectileExtraSec = clamp(
+                    renderTime - latestUpdate.timestamp,
+                    0,
+                    PROJECTILE_EXTRAPOLATION_LIMIT_MS
+                ) / 1000;
+
+                players.forEach((currentPlayerState, playerId) => {
+                    if (playerId === myPlayerId) return;
+                    const latestState = latestUpdate.players.get(playerId);
+                    if (!latestState) return;
+
+                    const velocityX = latestState.velocity_x || 0;
+                    const velocityY = latestState.velocity_y || 0;
+                    const targetX = latestState.x + velocityX * playerExtraSec;
+                    const targetY = latestState.y + velocityY * playerExtraSec;
+                    applyRenderTarget(
+                        currentPlayerState,
+                        targetX,
+                        targetY,
+                        latestState.rotation,
+                        playerPositionGain,
+                        rotationGain,
+                        POSITION_SNAP_DISTANCE_SQ
+                    );
+                    currentPlayerState.velocity_x = velocityX;
+                    currentPlayerState.velocity_y = velocityY;
+                });
+
+                if (!projectileRawModeActive) {
+                    forEachInterpolatedProjectile(projectileInterpolationSet, (currentProjState, projId) => {
+                        const latestState = latestUpdate.projectiles.get(projId);
+                        if (!latestState) return;
+                        const vx = latestState.velocity_x || 0;
+                        const vy = latestState.velocity_y || 0;
+                        const targetX = latestState.x + vx * projectileExtraSec;
+                        const targetY = latestState.y + vy * projectileExtraSec;
+                        const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
+                        applyRenderTarget(
+                            currentProjState,
+                            targetX,
+                            targetY,
+                            targetRotation,
+                            projectilePositionGain,
+                            rotationGain,
+                            PROJECTILE_SNAP_DISTANCE_SQ
+                        );
+                        currentProjState.velocity_x = vx;
+                        currentProjState.velocity_y = vy;
+                    });
+                }
+            } else {
+                const oldestUpdate = serverUpdates[0];
+                players.forEach((currentPlayerState, playerId) => {
+                    if (playerId === myPlayerId) return;
+                    const state = oldestUpdate.players.get(playerId);
+                    if (!state) return;
+                    applyRenderTarget(
+                        currentPlayerState,
+                        state.x,
+                        state.y,
+                        state.rotation,
+                        playerPositionGain,
+                        rotationGain,
+                        POSITION_SNAP_DISTANCE_SQ
+                    );
+                });
+                if (!projectileRawModeActive) {
+                    forEachInterpolatedProjectile(projectileInterpolationSet, (currentProjState, projId) => {
+                        const state = oldestUpdate.projectiles.get(projId);
+                        if (!state) return;
+                        const vx = state.velocity_x || 0;
+                        const vy = state.velocity_y || 0;
+                        const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
+                        applyRenderTarget(
+                            currentProjState,
+                            state.x,
+                            state.y,
+                            targetRotation,
+                            projectilePositionGain,
+                            rotationGain,
+                            PROJECTILE_SNAP_DISTANCE_SQ
+                        );
+                    });
+                }
+            }
+            return;
+        }
+
+        const t = (update1.timestamp === update2.timestamp)
+            ? 1
+            : (renderTime - update1.timestamp) / (update2.timestamp - update1.timestamp);
+        const clampedT = Math.max(0, Math.min(1, t));
+
+        players.forEach((currentPlayerState, playerId) => {
+            if (playerId === myPlayerId) return;
+
+            const state1 = update1.players.get(playerId);
+            const state2 = update2.players.get(playerId);
+
+            if (state1 && state2) {
+                const targetX = lerp(state1.x, state2.x, clampedT);
+                const targetY = lerp(state1.y, state2.y, clampedT);
+                const rot1 = state1.rotation;
+                const rot2 = state2.rotation;
+                const rotDiff = normalizeAngle(rot2 - rot1);
+                const targetRotation = rot1 + rotDiff * clampedT;
+                applyRenderTarget(
+                    currentPlayerState,
+                    targetX,
+                    targetY,
+                    targetRotation,
+                    playerPositionGain,
+                    rotationGain,
+                    POSITION_SNAP_DISTANCE_SQ
+                );
+                currentPlayerState.velocity_x = lerp(state1.velocity_x || 0, state2.velocity_x || 0, clampedT);
+                currentPlayerState.velocity_y = lerp(state1.velocity_y || 0, state2.velocity_y || 0, clampedT);
+            } else if (state2 || state1) {
+                const fallback = state2 || state1;
+                applyRenderTarget(
+                    currentPlayerState,
+                    fallback.x,
+                    fallback.y,
+                    fallback.rotation,
+                    playerPositionGain,
+                    rotationGain,
+                    POSITION_SNAP_DISTANCE_SQ
+                );
+                currentPlayerState.velocity_x = fallback.velocity_x || 0;
+                currentPlayerState.velocity_y = fallback.velocity_y || 0;
+            }
+        });
+
+        if (!projectileRawModeActive) {
+            forEachInterpolatedProjectile(projectileInterpolationSet, (currentProjState, projId) => {
+                const state1 = update1.projectiles.get(projId);
+                const state2 = update2.projectiles.get(projId);
+
+                if (state1 && state2) {
+                    const targetX = lerp(state1.x, state2.x, clampedT);
+                    const targetY = lerp(state1.y, state2.y, clampedT);
+                    const vx = lerp(state1.velocity_x || 0, state2.velocity_x || 0, clampedT);
+                    const vy = lerp(state1.velocity_y || 0, state2.velocity_y || 0, clampedT);
+                    const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
+                    applyRenderTarget(
+                        currentProjState,
+                        targetX,
+                        targetY,
+                        targetRotation,
+                        projectilePositionGain,
+                        rotationGain,
+                        PROJECTILE_SNAP_DISTANCE_SQ
+                    );
+                    currentProjState.velocity_x = vx;
+                    currentProjState.velocity_y = vy;
+                } else if (state2 || state1) {
+                    const fallback = state2 || state1;
+                    const vx = fallback.velocity_x || 0;
+                    const vy = fallback.velocity_y || 0;
+                    const targetRotation = (vx !== 0 || vy !== 0) ? Math.atan2(vy, vx) : currentProjState.render_rotation;
+                    applyRenderTarget(
+                        currentProjState,
+                        fallback.x,
+                        fallback.y,
+                        targetRotation,
+                        projectilePositionGain,
+                        rotationGain,
+                        PROJECTILE_SNAP_DISTANCE_SQ
+                    );
+                    currentProjState.velocity_x = vx;
+                    currentProjState.velocity_y = vy;
+                }
+            });
+        }
+    }
+
+    function maybeRecordInterpolationSnapshot(serverTime) {
+        const ctx = getCtx();
+        const {
+            players, projectiles, myPlayerId, serverUpdates,
+            INTERPOLATION_PLAYER_LIMIT, INTERPOLATION_PROJECTILE_LIMIT,
+            INTERPOLATION_SNAPSHOT_INTERVAL_MS, MAX_INTERPOLATION_SNAPSHOTS,
+            updateAdaptiveInterpolationDelay,
+        } = ctx;
+
+        if (players.size > INTERPOLATION_PLAYER_LIMIT || projectiles.size > INTERPOLATION_PROJECTILE_LIMIT) {
+            serverUpdates.length = 0;
+            return;
+        }
+
+        const nowTs = Date.now();
+        const baseTs = Number.isFinite(serverTime) && serverTime > 0 ? serverTime : nowTs;
+        if (baseTs - _lastInterpolationSnapshotAt < INTERPOLATION_SNAPSHOT_INTERVAL_MS) {
+            return;
+        }
+
+        const lastSnapshot = serverUpdates.length > 0 ? serverUpdates[serverUpdates.length - 1] : null;
+        const snapshotTimestamp = lastSnapshot ? Math.max(baseTs, lastSnapshot.timestamp + 1) : baseTs;
+        _lastInterpolationSnapshotAt = snapshotTimestamp;
+        updateAdaptiveInterpolationDelay(snapshotTimestamp);
+
+        const playersSnapshot = new Map();
+        players.forEach((pState, playerId) => {
+            if (playerId === myPlayerId) return;
+            playersSnapshot.set(playerId, {
+                x: pState.x,
+                y: pState.y,
+                rotation: pState.rotation,
+                velocity_x: pState.velocity_x || 0,
+                velocity_y: pState.velocity_y || 0
+            });
+        });
+
+        const projectilesSnapshot = new Map();
+        projectiles.forEach((pState, projectileId) => {
+            projectilesSnapshot.set(projectileId, {
+                x: pState.x,
+                y: pState.y,
+                velocity_x: pState.velocity_x || 0,
+                velocity_y: pState.velocity_y || 0
+            });
+        });
+
+        serverUpdates.push({
+            timestamp: snapshotTimestamp,
+            players: playersSnapshot,
+            projectiles: projectilesSnapshot
+        });
+
+        while (serverUpdates.length > MAX_INTERPOLATION_SNAPSHOTS) {
+            serverUpdates.shift();
+        }
+    }
+
+    // Internal mutable state
+    let _lastInterpolationSnapshotAt = 0;
+
+    function resetSnapshotState() {
+        _lastInterpolationSnapshotAt = 0;
+    }
+
+    return {
+        updateLocalPlayerPrediction,
+        interpolateEntities,
+        maybeRecordInterpolationSnapshot,
+        resetSnapshotState,
+    };
+}

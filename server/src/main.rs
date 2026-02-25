@@ -633,6 +633,10 @@ async fn main() -> anyhow::Result<()> {
     ));
     info!("Game server instance created.");
 
+    if let Ok(map_path) = std::env::var("MGS_MAP_PATH") {
+        info!("Custom map loaded from: {}", map_path);
+    }
+
     if env_flag("MGS_DIAGNOSTICS_ENABLED") {
         deadlock::spawn_frame_progress_watchdog(
             game_server_instance.frame_counter.clone(),

@@ -38,6 +38,7 @@ use crate::state_sync::interpolation::InterpolationBuffer;
 use crate::systems::ai::optimized_bot_ai::OptimizedBotAI;
 use crate::systems::respawn::{RespawnManager, WallRespawnManager};
 use crate::world::map_generator::MapGenerator;
+use crate::world::map_loader;
 use crate::world::navigation::NavMesh;
 use crate::world::partition::WorldPartitionManager; // Removed unused ImprovedWorldPartition
 use std::borrow::Cow;
@@ -80,8 +81,12 @@ mod join_stage;
 mod match_info;
 mod match_summary;
 mod navigation_mesh;
+mod collision_utils;
 mod physics;
+mod player_physics;
+mod projectile_physics;
 mod replay;
+mod wall_lifecycle;
 mod serialization;
 mod snapshot_publish;
 mod tick;
@@ -170,13 +175,8 @@ fn segment_first_hit_fraction_with_aabb(
     Some(t_min.clamp(0.0, 1.0))
 }
 
-const PROGRESSIVE_WALL_STAGE1_HEALTH_RATIO: f32 = 0.50;
-const PROGRESSIVE_WALL_STAGE2_HEALTH_RATIO: f32 = 0.25;
-const PROGRESSIVE_WALL_MIN_FRAGMENT_LENGTH: f32 = 12.0;
-const COMMANDER_MAX_WAYPOINTS_PER_TEAM: usize = 3;
-const COMMANDER_WAYPOINT_TTL_MS: u64 = 20_000;
-const COMMANDER_SUPPLY_DROP_COOLDOWN_MS: u64 = 60_000;
-const COMMANDER_SUPPLY_DROP_PICKUPS: usize = 6;
+// Commander & progressive-wall constants now live in core::constants
+// (imported via the wildcard `use crate::core::constants::*` above).
 
 fn env_bool_value(name: &str) -> bool {
     std::env::var(name)
@@ -462,33 +462,65 @@ impl MassiveGameServer {
                 }
             });
 
-        let map_template = std::env::var("MGS_MAP_TEMPLATE")
-            .ok()
-            .unwrap_or_default();
-        let (all_map_walls, map_name) = if force_10v10_map {
-            (
-                MapGenerator::generate_10v10_map_with_seed(map_seed),
-                "Massive Arena 10v10".to_string(),
-            )
-        } else {
-            match map_template.to_ascii_lowercase().as_str() {
-                "corridors" => MapGenerator::generate_corridors_map(map_seed),
-                "arena" => MapGenerator::generate_arena_map(map_seed),
-                "fortress" => MapGenerator::generate_fortress_map(map_seed),
-                "random" => MapGenerator::select_random_map(map_seed, map_target_players),
-                _ => MapGenerator::generate_dynamic_map_with_seed(map_target_players, map_seed),
+        // Check for custom map JSON before falling back to procedural generation
+        let custom_map_path = std::env::var("MGS_MAP_PATH").ok();
+        let (all_map_walls, zones, map_name) = if let Some(ref map_path) = custom_map_path {
+            match map_loader::load_map_from_json(map_path) {
+                Ok(loaded) => {
+                    info!(
+                        "Loaded custom map from '{}': {} walls, {} pickups, {} zones.",
+                        map_path,
+                        loaded.walls.len(),
+                        loaded.pickups.len(),
+                        loaded.zones.len()
+                    );
+                    (loaded.walls, loaded.zones, format!("Custom: {}", map_path))
+                }
+                Err(err) => {
+                    error!(
+                        "Failed to load custom map '{}': {:#}. Falling back to procedural generation.",
+                        map_path, err
+                    );
+                    let map_template = std::env::var("MGS_MAP_TEMPLATE").ok().unwrap_or_default();
+                    let (walls, name) = match map_template.to_ascii_lowercase().as_str() {
+                        "corridors" => MapGenerator::generate_corridors_map(map_seed),
+                        "arena" => MapGenerator::generate_arena_map(map_seed),
+                        "fortress" => MapGenerator::generate_fortress_map(map_seed),
+                        "random" => MapGenerator::select_random_map(map_seed, map_target_players),
+                        _ => MapGenerator::generate_dynamic_map_with_seed(map_target_players, map_seed),
+                    };
+                    let zones = MapGenerator::generate_environment_zones_with_seed(map_seed);
+                    (walls, zones, name)
+                }
             }
+        } else {
+            let map_template = std::env::var("MGS_MAP_TEMPLATE").ok().unwrap_or_default();
+            let (walls, name) = if force_10v10_map {
+                (
+                    MapGenerator::generate_10v10_map_with_seed(map_seed),
+                    "Massive Arena 10v10".to_string(),
+                )
+            } else {
+                match map_template.to_ascii_lowercase().as_str() {
+                    "corridors" => MapGenerator::generate_corridors_map(map_seed),
+                    "arena" => MapGenerator::generate_arena_map(map_seed),
+                    "fortress" => MapGenerator::generate_fortress_map(map_seed),
+                    "random" => MapGenerator::select_random_map(map_seed, map_target_players),
+                    _ => MapGenerator::generate_dynamic_map_with_seed(map_target_players, map_seed),
+                }
+            };
+            info!(
+                "Generated {} walls for map '{}' (target players: {}, force_10v10: {}, seed: {}).",
+                walls.len(),
+                name,
+                map_target_players,
+                force_10v10_map,
+                map_seed
+            );
+            let zones = MapGenerator::generate_environment_zones_with_seed(map_seed);
+            info!("Generated {} environmental zones.", zones.len());
+            (walls, zones, name)
         };
-        info!(
-            "Generated {} walls for map '{}' (target players: {}, force_10v10: {}, seed: {}).",
-            all_map_walls.len(),
-            map_name,
-            map_target_players,
-            force_10v10_map,
-            map_seed
-        );
-        let zones = MapGenerator::generate_environment_zones_with_seed(map_seed);
-        info!("Generated {} environmental zones.", zones.len());
 
         let world_partition_manager = Arc::new(WorldPartitionManager::new(
             config.world_partition_grid_dim,

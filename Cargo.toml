@@ -6,7 +6,7 @@ resolver = "2"
 members = [
     "server",
     "protocol",
-    #"stress-client",
+    "stress-client",
     #"admin-tools",
 ]
 

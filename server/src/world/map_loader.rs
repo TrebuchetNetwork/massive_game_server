@@ -1,7 +1,7 @@
 // massive_game_server/server/src/world/map_loader.rs
 
 use crate::core::constants::{WORLD_MAX_X, WORLD_MAX_Y, WORLD_MIN_X, WORLD_MIN_Y};
-use crate::core::types::{CorePickupType, Pickup, Wall};
+use crate::core::types::{CorePickupType, EntityId, Pickup, Wall, Zone, ZoneType};
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -18,6 +18,20 @@ const DEFAULT_WALL_MAX_HEALTH: i32 = 100;
 struct MapFile {
     walls: Vec<MapWall>,
     pickups: Vec<MapPickup>,
+    #[serde(default)]
+    zones: Vec<MapZone>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MapZone {
+    id: u64,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    zone_type: String,
+    #[serde(default)]
+    direction: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +58,7 @@ struct MapPickup {
 pub struct LoadedMap {
     pub walls: Vec<Wall>,
     pub pickups: Vec<Pickup>,
+    pub zones: Vec<Zone>,
 }
 
 pub fn load_map_from_json(path: &str) -> Result<LoadedMap> {
@@ -75,7 +90,21 @@ pub fn load_map_from_json(path: &str) -> Result<LoadedMap> {
         pickups.push(Pickup::new(pickup.id, pickup.x, pickup.y, pickup_type));
     }
 
-    Ok(LoadedMap { walls, pickups })
+    let mut zones = Vec::new();
+    for zone in parsed.zones {
+        let zone_type = parse_zone_type(&zone.zone_type)?;
+        zones.push(Zone {
+            id: zone.id as EntityId,
+            x: zone.x,
+            y: zone.y,
+            width: zone.width,
+            height: zone.height,
+            zone_type,
+            direction: zone.direction,
+        });
+    }
+
+    Ok(LoadedMap { walls, pickups, zones })
 }
 
 fn map_entity_limits() -> (usize, usize) {
@@ -222,6 +251,15 @@ fn validate_finite_coord(value: f32, field: &str, entity_id: u64) -> Result<()> 
     Ok(())
 }
 
+fn parse_zone_type(raw: &str) -> Result<ZoneType> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "slow" | "slowzone" | "slow_zone" => Ok(ZoneType::SlowZone),
+        "damage" | "damagezone" | "damage_zone" => Ok(ZoneType::DamageZone),
+        "boost" | "boostpad" | "boost_pad" => Ok(ZoneType::BoostPad),
+        other => Err(anyhow!("unsupported zone_type '{}'", other)),
+    }
+}
+
 fn parse_pickup_type(raw: &str) -> Result<CorePickupType> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "health" => Ok(CorePickupType::Health),
@@ -268,6 +306,7 @@ mod tests {
                 y: 0.0,
                 pickup_type: "health".to_string(),
             }],
+            zones: vec![],
         };
         let err = validate_map_file(&map).expect_err("duplicate ids should be rejected");
         assert!(err.to_string().contains("duplicate entity id"));
@@ -287,6 +326,7 @@ mod tests {
                 max_health: Some(100),
             }],
             pickups: vec![],
+            zones: vec![],
         };
         let err = validate_map_file(&map).expect_err("out-of-bounds walls should be rejected");
         assert!(err.to_string().contains("out of world bounds"));
@@ -306,6 +346,7 @@ mod tests {
                 max_health: Some(100),
             }],
             pickups: vec![],
+            zones: vec![],
         };
         let err = validate_map_file(&map).expect_err("invalid health range should fail");
         assert!(err.to_string().contains("invalid current_health"));
@@ -330,6 +371,7 @@ mod tests {
                 y: 0.0,
                 pickup_type: "ammo".to_string(),
             }],
+            zones: vec![],
         };
         validate_map_file(&map).expect("valid map should pass validation");
     }

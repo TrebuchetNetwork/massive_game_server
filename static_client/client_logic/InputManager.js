@@ -1,0 +1,1056 @@
+/**
+ * InputManager.js - Input handling extracted from client.html
+ *
+ * Contains keyboard, mouse, and touch input setup/teardown,
+ * touch controls (joystick, aim, fire, ability), aim assist,
+ * mobile button sizing, virtual crosshair, ping wheel,
+ * and the sendInputsToServer loop.
+ */
+
+export function createInputManager({
+    PIXI,
+    GP,
+    clamp,
+    normalizeAngle,
+    log,
+    getMaxAmmoForWeaponClient,
+    // DOM elements (passed as getters or refs)
+    getApp,
+    getGameScene,
+    getLocalPlayerState,
+    getLocalPlayerSprite,
+    getMyPlayerId,
+    getPlayers,
+    getDataChannel,
+    getInputState,
+    getGameSettings,
+    getMouseWorldPos,
+    getDynamicsTuning,
+    getOverviewMode,
+    setOverviewMode,
+    // Mobile DOM elements
+    mobileControlsDiv,
+    mobileMoveArea,
+    mobileMoveKnob,
+    mobileAimArea,
+    mobileFireButton,
+    mobileReloadButton,
+    mobileMeleeButton,
+    mobileWeaponPrimaryButton,
+    mobileWeaponSecondaryButton,
+    mobileAbilityDashButton,
+    mobileAbilityDodgeButton,
+    reloadPromptSpan,
+    minimapContainerDiv,
+    pingWheelDiv,
+    chatInput,
+    settingsMenuDiv,
+    // Touch/mobile constants and state
+    isTouchDevice,
+    isMobileDevice,
+    forceMobileClient,
+    mobileDynamicsEnabled,
+    // Functions called from input handlers
+    setObjectiveUrgency,
+    isLocalTeamCommander,
+    getCommanderIdForTeam,
+    createChatMessage,
+    triggerHapticFn,
+    enterOverviewMode,
+    exitOverviewMode,
+    toggleSettings,
+    setFocusMode,
+    getFocusModeEnabled,
+    // Input timing constants
+    INPUT_SEND_RATE,
+    BACKGROUND_INPUT_SEND_RATE,
+    INPUT_ROTATION_QUANT_STEP,
+    INPUT_MOVEMENT_HEARTBEAT_MS,
+    INPUT_IDLE_HEARTBEAT_MS,
+    BACKGROUND_INPUT_HEARTBEAT_MS,
+    RECONCILIATION_BUFFER_SIZE,
+    // Callbacks
+    createInputMessage,
+    getBackgroundThrottleActive,
+    getAudioManager,
+    getMinimap,
+    // Aim assist
+    AIM_ASSIST_MAGNETISM,
+    AIM_ASSIST_MAX_DISTANCE,
+}) {
+    // ── Local state ───────────────────────────────────────────────────
+    let aimSensitivity = parseFloat(localStorage.getItem('aimSensitivity') || '1.0');
+    let aimAssistEnabled = localStorage.getItem('aimAssist') !== 'false';
+    let touchControlsInitialized = false;
+    let virtualCrosshairSprite = null;
+
+    let inputHandlersInitialized = false;
+    let inputGameplayKeyDownHandler = null;
+    let inputGameplayKeyUpHandler = null;
+    let inputMouseMoveHandler = null;
+    let inputMouseDownHandler = null;
+    let inputMouseUpHandler = null;
+    let inputContextMenuHandler = null;
+    let inputUiKeyDownHandler = null;
+    let inputUiKeyUpHandler = null;
+
+    let mobileAimActive = false;
+    let mobileStickyFireArmed = false;
+    let mobileFireTouchActive = false;
+    let mobileActionReachPx = 0;
+    let mobileActionReachSamples = 0;
+    let mobileLastAdaptiveSizingAt = 0;
+    let fireButtonTapCount = 0;
+    let fireButtonTapWindowUntil = 0;
+
+    let pingWheelOpen = false;
+    let pingWheelAnchorWorld = null;
+    let pingWheelLongPressTimer = null;
+    let pingWheelTouchId = null;
+
+    let lastInputSendTime = 0;
+    let lastInputStateSentAt = 0;
+    let lastSentInputMoveMask = -1;
+    let lastSentInputRotationQuant = Number.NaN;
+    let lastSentInputShooting = false;
+    let inputSequence = 0;
+    let pendingInputs = [];
+    let lastShotFeedbackTime = 0;
+
+    // Tactical pings
+    const tacticalPings = [];
+    let lastPingChatAt = 0;
+    const TACTICAL_PING_MS = 6200;
+    const TACTICAL_PING_CHAT_THROTTLE_MS = 900;
+
+    // ── Virtual crosshair ─────────────────────────────────────────────
+
+    function createVirtualCrosshair() {
+        if (virtualCrosshairSprite || !isTouchDevice) return;
+        const g = new PIXI.Graphics();
+        g.lineStyle(2, 0xFF4444, 0.6);
+        g.moveTo(-10, 0); g.lineTo(-4, 0);
+        g.moveTo(4, 0); g.lineTo(10, 0);
+        g.moveTo(0, -10); g.lineTo(0, -4);
+        g.moveTo(0, 4); g.lineTo(0, 10);
+        g.beginFill(0xFF4444, 0.8);
+        g.drawCircle(0, 0, 1.5);
+        g.endFill();
+        virtualCrosshairSprite = g;
+    }
+
+    function updateVirtualCrosshair() {
+        const localPlayerState = getLocalPlayerState();
+        if (!virtualCrosshairSprite || !localPlayerState || !localPlayerState.alive) {
+            if (virtualCrosshairSprite) virtualCrosshairSprite.visible = false;
+            return;
+        }
+        virtualCrosshairSprite.visible = true;
+        const aimDist = 120;
+        const rot = localPlayerState.rotation || 0;
+        virtualCrosshairSprite.x = localPlayerState.x + Math.cos(rot) * aimDist;
+        virtualCrosshairSprite.y = localPlayerState.y + Math.sin(rot) * aimDist;
+    }
+
+    function getVirtualCrosshairSprite() {
+        return virtualCrosshairSprite;
+    }
+
+    // ── Aim assist ────────────────────────────────────────────────────
+
+    function applyAimAssist(aimAngle) {
+        const localPlayerState = getLocalPlayerState();
+        const players = getPlayers();
+        const myPlayerId = getMyPlayerId();
+        if (!aimAssistEnabled || !isTouchDevice || !localPlayerState) return aimAngle;
+        let bestAngleDiff = AIM_ASSIST_MAGNETISM;
+        let bestAngle = aimAngle;
+        for (const [pid, pdata] of players) {
+            if (pid === myPlayerId || !pdata.alive || pdata.team_id === localPlayerState.team_id) continue;
+            const dx = pdata.x - localPlayerState.x;
+            const dy = pdata.y - localPlayerState.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist > AIM_ASSIST_MAX_DISTANCE || dist < 1) continue;
+            const angleToEnemy = Math.atan2(dy, dx);
+            let diff = angleToEnemy - aimAngle;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            if (Math.abs(diff) < bestAngleDiff) {
+                bestAngleDiff = Math.abs(diff);
+                bestAngle = aimAngle + diff * 0.3;
+            }
+        }
+        return bestAngle;
+    }
+
+    function getAimAssistRotation(baseRotation) {
+        const localPlayerState = getLocalPlayerState();
+        const players = getPlayers();
+        const myPlayerId = getMyPlayerId();
+        const dynamicsTuning = getDynamicsTuning();
+        const mobileBoost = (isTouchDevice && aimAssistEnabled) ? 1.5 : 1.0;
+        const effectiveStrength = dynamicsTuning.aimAssistStrength * mobileBoost;
+        if (effectiveStrength <= 0 || !localPlayerState || !localPlayerState.alive) {
+            return baseRotation;
+        }
+
+        const fromX = localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x;
+        const fromY = localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y;
+        const maxDistance = isTouchDevice ? Math.max(dynamicsTuning.aimAssistRange, AIM_ASSIST_MAX_DISTANCE) : dynamicsTuning.aimAssistRange;
+        const maxDistanceSq = maxDistance * maxDistance;
+        const coneLimit = isTouchDevice ? Math.max(dynamicsTuning.aimAssistConeRad, AIM_ASSIST_MAGNETISM) : dynamicsTuning.aimAssistConeRad;
+        let bestDiff = null;
+        let bestScore = Number.POSITIVE_INFINITY;
+
+        players.forEach((player, playerId) => {
+            if (playerId === myPlayerId || !player || !player.alive) return;
+            if (localPlayerState.team_id !== 0 && player.team_id === localPlayerState.team_id) return;
+
+            const targetX = player.render_x !== undefined ? player.render_x : player.x;
+            const targetY = player.render_y !== undefined ? player.render_y : player.y;
+            const dx = targetX - fromX;
+            const dy = targetY - fromY;
+            const distanceSq = dx * dx + dy * dy;
+            if (distanceSq <= 1 || distanceSq > maxDistanceSq) return;
+
+            const targetRotation = Math.atan2(dy, dx);
+            const diff = normalizeAngle(targetRotation - baseRotation);
+            const absDiff = Math.abs(diff);
+            if (absDiff > coneLimit) return;
+
+            const score = absDiff + Math.sqrt(distanceSq) / maxDistance;
+            if (score < bestScore) {
+                bestScore = score;
+                bestDiff = diff;
+            }
+        });
+
+        if (bestDiff === null) return baseRotation;
+        return normalizeAngle(baseRotation + bestDiff * effectiveStrength);
+    }
+
+    // ── Mobile helper functions ───────────────────────────────────────
+
+    function setMoveInputFromVector(dx, dy, deadzone = 10) {
+        const inputState = getInputState();
+        inputState.move_left = dx < -deadzone;
+        inputState.move_right = dx > deadzone;
+        inputState.move_forward = dy < -deadzone;
+        inputState.move_backward = dy > deadzone;
+    }
+
+    function updateAimFromTouch(touch) {
+        const app = getApp();
+        const gameScene = getGameScene();
+        const localPlayerState = getLocalPlayerState();
+        const mouseWorldPos = getMouseWorldPos();
+        const inputState = getInputState();
+        const gameSettings = getGameSettings();
+        if (!app || !app.view || !gameScene || !localPlayerState) return;
+        const rect = app.view.getBoundingClientRect();
+        const touchGlobal = new PIXI.Point(touch.clientX - rect.left, touch.clientY - rect.top);
+        const touchLocal = gameScene.toLocal(touchGlobal);
+        mouseWorldPos.x = touchLocal.x;
+        mouseWorldPos.y = touchLocal.y;
+
+        const dx = touchLocal.x - (localPlayerState.render_x || localPlayerState.x);
+        const dy = touchLocal.y - (localPlayerState.render_y || localPlayerState.y);
+        inputState.rotation = Math.atan2(dy, dx) * gameSettings.sensitivity * aimSensitivity;
+    }
+
+    function syncMobileFireButtonState() {
+        if (!mobileFireButton) return;
+        mobileFireButton.classList.toggle('mobile-button--latched', mobileStickyFireArmed);
+        mobileFireButton.textContent = mobileStickyFireArmed ? 'Fire (Lock)' : 'Fire';
+    }
+
+    function updateMobileButtonSizing() {
+        if (!mobileControlsDiv) return;
+        const shortestSide = Math.max(280, Math.min(window.innerWidth, window.innerHeight));
+        const scale = clamp(shortestSide / 420, 0.9, 1.26);
+        const baseBottom = Math.round(24 * Math.min(scale, 1.15));
+        let adaptiveBottom = baseBottom;
+        if (mobileActionReachSamples >= 3) {
+            const desiredBottom = clamp(
+                Math.round(mobileActionReachPx - (52 * scale)),
+                12,
+                Math.round(window.innerHeight * 0.34)
+            );
+            adaptiveBottom = Math.round((baseBottom * 0.68) + (desiredBottom * 0.32));
+        }
+        mobileControlsDiv.style.setProperty('--mobile-button-width', `${Math.round(110 * scale)}px`);
+        mobileControlsDiv.style.setProperty('--mobile-button-height', `${Math.round(48 * scale)}px`);
+        mobileControlsDiv.style.setProperty('--mobile-buttons-bottom', `${adaptiveBottom}px`);
+    }
+
+    function recordMobileActionReachSample(touch) {
+        if (!touch || !Number.isFinite(touch.clientY)) return;
+        const fromBottom = clamp(window.innerHeight - touch.clientY, 0, window.innerHeight);
+        if (fromBottom <= 0) return;
+        mobileActionReachPx = mobileActionReachSamples === 0
+            ? fromBottom
+            : ((mobileActionReachPx * 0.8) + (fromBottom * 0.2));
+        mobileActionReachSamples = Math.min(240, mobileActionReachSamples + 1);
+        const now = (typeof performance !== 'undefined' && performance.now)
+            ? performance.now()
+            : Date.now();
+        if ((now - mobileLastAdaptiveSizingAt) >= 120) {
+            mobileLastAdaptiveSizingAt = now;
+            updateMobileButtonSizing();
+        }
+    }
+
+    function updateMobileControlsVisibility() {
+        if (!mobileControlsDiv) return;
+        const shouldShow = forceMobileClient || isTouchDevice || window.innerWidth <= 900;
+        mobileControlsDiv.classList.toggle('hidden', !shouldShow);
+        document.body.classList.toggle('mobile', shouldShow);
+        document.body.classList.toggle('mobile-mode', shouldShow);
+        if (shouldShow) {
+            updateMobileButtonSizing();
+        }
+    }
+
+    // ── Ping wheel ────────────────────────────────────────────────────
+
+    function closePingWheel() {
+        if (pingWheelLongPressTimer) {
+            clearTimeout(pingWheelLongPressTimer);
+            pingWheelLongPressTimer = null;
+        }
+        pingWheelOpen = false;
+        pingWheelTouchId = null;
+        pingWheelAnchorWorld = null;
+        if (pingWheelDiv) pingWheelDiv.classList.remove('ping-wheel--visible');
+    }
+
+    function openPingWheel(clientX, clientY, worldX, worldY) {
+        if (!pingWheelDiv) return;
+        pingWheelOpen = true;
+        pingWheelAnchorWorld = { x: worldX, y: worldY };
+        pingWheelDiv.style.left = `${clientX}px`;
+        pingWheelDiv.style.top = `${clientY}px`;
+        pingWheelDiv.classList.add('ping-wheel--visible');
+    }
+
+    function getWorldPointFromMinimap(clientX, clientY) {
+        const minimap = getMinimap();
+        const localPlayerState = getLocalPlayerState();
+        if (!minimap || !localPlayerState || !minimapContainerDiv) return null;
+        const rect = minimapContainerDiv.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+        const localOffsetX = clientX - rect.left - (rect.width / 2);
+        const localOffsetY = clientY - rect.top - (rect.height / 2);
+        return {
+            x: (Number(localPlayerState.x) || 0) + (localOffsetX / minimap.mapScale),
+            y: (Number(localPlayerState.y) || 0) + (localOffsetY / minimap.mapScale)
+        };
+    }
+
+    function sendTacticalPing(kind, worldPoint) {
+        const dataChannel = getDataChannel();
+        const audioManager = getAudioManager();
+        const gameSettings = getGameSettings();
+        const inputState = getInputState();
+        if (!worldPoint || !Number.isFinite(worldPoint.x) || !Number.isFinite(worldPoint.y)) return;
+        const now = Date.now();
+        const localCommander = isLocalTeamCommander();
+        tacticalPings.push({
+            kind: localCommander
+                ? 'defend'
+                : (kind === 'enemy' ? 'enemy' : (kind === 'defend' ? 'defend' : 'group')),
+            x: worldPoint.x,
+            y: worldPoint.y,
+            createdAt: now,
+            expiresAt: now + TACTICAL_PING_MS
+        });
+        if (tacticalPings.length > 18) {
+            tacticalPings.splice(0, tacticalPings.length - 18);
+        }
+
+        if (audioManager && gameSettings.soundEnabled) {
+            audioManager.playSound(kind === 'enemy' ? 'flagDropped' : 'flagGrabbed', null, 0.24);
+        }
+        triggerHapticFn(10);
+        inputState.ping_x = Number(worldPoint.x) || 0;
+        inputState.ping_y = Number(worldPoint.y) || 0;
+
+        if (dataChannel && dataChannel.readyState === 'open' && (now - lastPingChatAt) >= TACTICAL_PING_CHAT_THROTTLE_MS) {
+            const pingLabel = localCommander
+                ? 'Commander'
+                : (kind === 'enemy' ? 'Enemy' : (kind === 'defend' ? 'Defend' : 'Group'));
+            const msg = `[PING] ${pingLabel} @ ${Math.round(worldPoint.x)}, ${Math.round(worldPoint.y)}`;
+            try {
+                dataChannel.send(createChatMessage(msg));
+                lastPingChatAt = now;
+            } catch (_) {}
+        }
+    }
+
+    function issueCommanderOrder(worldPoint) {
+        if (!worldPoint || !Number.isFinite(worldPoint.x) || !Number.isFinite(worldPoint.y)) {
+            return false;
+        }
+        if (!isLocalTeamCommander()) {
+            setObjectiveUrgency('Only the team commander can issue global orders', 'info', 800);
+            return false;
+        }
+        sendTacticalPing('defend', worldPoint);
+        setObjectiveUrgency('Commander order issued', 'positive', 950);
+        return true;
+    }
+
+    // ── Core input handlers ───────────────────────────────────────────
+
+    function handleKeyInput(event, isDown) {
+        if (document.activeElement === chatInput || !settingsMenuDiv.classList.contains('hidden')) return;
+        const localPlayerState = getLocalPlayerState();
+        const inputState = getInputState();
+        const gameSettings = getGameSettings();
+        const audioManager = getAudioManager();
+        const mouseWorldPos = getMouseWorldPos();
+
+        let gameKeyProcessed = true;
+        switch (event.code) {
+            case 'KeyW':
+            case 'ArrowUp':
+                inputState.move_forward = isDown;
+                break;
+            case 'KeyS':
+            case 'ArrowDown':
+                inputState.move_backward = isDown;
+                break;
+            case 'KeyA':
+            case 'ArrowLeft':
+                inputState.move_left = isDown;
+                break;
+            case 'KeyD':
+            case 'ArrowRight':
+                inputState.move_right = isDown;
+                break;
+            case 'KeyR':
+                if (isDown && localPlayerState && localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo < getMaxAmmoForWeaponClient(localPlayerState.weapon) && localPlayerState.reload_progress === -1) {
+                    inputState.reload = true;
+                    if (reloadPromptSpan) reloadPromptSpan.textContent = ' (Reloading...)';
+                    if (audioManager && gameSettings.soundEnabled) audioManager.playSound('reloadStart', null, 0.3);
+                }
+                break;
+            case 'KeyV':
+                if (isDown) inputState.melee_attack = true;
+                break;
+            case 'Digit1':
+                if (isDown && !event.repeat) {
+                    inputState.change_weapon_slot = 1;
+                    setObjectiveUrgency('Swapping to primary weapon', 'info', 650);
+                }
+                break;
+            case 'Digit2':
+                if (isDown && !event.repeat) {
+                    inputState.change_weapon_slot = 2;
+                    setObjectiveUrgency('Swapping to secondary weapon', 'info', 650);
+                }
+                break;
+            case 'KeyQ':
+                if (isDown && !event.repeat && localPlayerState && localPlayerState.alive) {
+                    inputState.use_ability_slot = 1;
+                    setObjectiveUrgency('Dash ability activated', 'positive', 600);
+                }
+                break;
+            case 'KeyE':
+                if (isDown && !event.repeat && localPlayerState && localPlayerState.alive) {
+                    inputState.use_ability_slot = 2;
+                    setObjectiveUrgency('Dodge ability activated', 'positive', 600);
+                }
+                break;
+            case 'KeyC':
+                if (isDown && localPlayerState && localPlayerState.alive) {
+                    const commandPoint = (Number.isFinite(mouseWorldPos.x) && Number.isFinite(mouseWorldPos.y))
+                        ? { x: mouseWorldPos.x, y: mouseWorldPos.y }
+                        : { x: Number(localPlayerState.x) || 0, y: Number(localPlayerState.y) || 0 };
+                    issueCommanderOrder(commandPoint);
+                }
+                break;
+            default:
+                gameKeyProcessed = false;
+                break;
+        }
+        if (gameKeyProcessed) event.preventDefault();
+    }
+
+    function handleMouseMove(event) {
+        const app = getApp();
+        const gameScene = getGameScene();
+        const localPlayerSprite = getLocalPlayerSprite();
+        const localPlayerState = getLocalPlayerState();
+        const mouseWorldPos = getMouseWorldPos();
+        const inputState = getInputState();
+        const gameSettings = getGameSettings();
+        if (!app || !app.view || !localPlayerSprite || !localPlayerState) return;
+        const rect = app.view.getBoundingClientRect();
+        const mouseGlobal = new PIXI.Point(event.clientX - rect.left, event.clientY - rect.top);
+        const mouseLocalToGameScene = gameScene.toLocal(mouseGlobal);
+
+        mouseWorldPos.x = mouseLocalToGameScene.x;
+        mouseWorldPos.y = mouseLocalToGameScene.y;
+
+        const dx = mouseLocalToGameScene.x - (localPlayerState.render_x || localPlayerState.x);
+        const dy = mouseLocalToGameScene.y - (localPlayerState.render_y || localPlayerState.y);
+        inputState.rotation = Math.atan2(dy, dx) * gameSettings.sensitivity;
+    }
+
+    // ── Send inputs to server ─────────────────────────────────────────
+
+    function sendInputsToServer(cameraCombatImpulseRef, combatUiStateRef, EXCITEMENT_UI_ENABLED) {
+        const dataChannel = getDataChannel();
+        const localPlayerState = getLocalPlayerState();
+        const inputState = getInputState();
+        const dynamicsTuning = getDynamicsTuning();
+        const backgroundThrottleActive = getBackgroundThrottleActive();
+        if (!dataChannel || dataChannel.readyState !== 'open' || !localPlayerState || !localPlayerState.alive) return;
+
+        const now = Date.now();
+        const inputSendRate = backgroundThrottleActive ? BACKGROUND_INPUT_SEND_RATE : INPUT_SEND_RATE;
+        if (now - lastInputSendTime < 1000 / inputSendRate) return;
+
+        let effectiveRotation = inputState.rotation;
+        if (inputState.shooting || (isTouchDevice && aimAssistEnabled)) {
+            effectiveRotation = getAimAssistRotation(effectiveRotation);
+        }
+
+        const moveMask =
+            (inputState.move_forward ? 1 : 0) |
+            (inputState.move_backward ? 2 : 0) |
+            (inputState.move_left ? 4 : 0) |
+            (inputState.move_right ? 8 : 0);
+        const quantizedRotation = Number.isFinite(effectiveRotation)
+            ? Math.round(effectiveRotation / INPUT_ROTATION_QUANT_STEP)
+            : 0;
+        const hasOneShotInput =
+            !!inputState.reload ||
+            !!inputState.melee_attack ||
+            inputState.change_weapon_slot !== 0 ||
+            inputState.use_ability_slot !== 0 ||
+            Number(inputState.ping_x) !== 0 ||
+            Number(inputState.ping_y) !== 0;
+        const stickyStateChanged =
+            moveMask !== lastSentInputMoveMask ||
+            quantizedRotation !== lastSentInputRotationQuant ||
+            !!inputState.shooting !== !!lastSentInputShooting;
+
+        let heartbeatMs = inputState.shooting
+            ? (1000 / inputSendRate)
+            : (moveMask !== 0 ? INPUT_MOVEMENT_HEARTBEAT_MS : INPUT_IDLE_HEARTBEAT_MS);
+        if (backgroundThrottleActive) {
+            heartbeatMs = Math.max(heartbeatMs, BACKGROUND_INPUT_HEARTBEAT_MS);
+        }
+        const sinceLastStateMs = now - lastInputStateSentAt;
+        if (!hasOneShotInput && !stickyStateChanged && sinceLastStateMs < heartbeatMs) {
+            return;
+        }
+
+        lastInputSendTime = now;
+
+        const currentFrameInput = {
+            timestamp: now,
+            sequence: ++inputSequence,
+            move_forward: inputState.move_forward,
+            move_backward: inputState.move_backward,
+            move_left: inputState.move_left,
+            move_right: inputState.move_right,
+            shooting: inputState.shooting,
+            reload: inputState.reload,
+            rotation: effectiveRotation,
+            melee_attack: inputState.melee_attack,
+            change_weapon_slot: inputState.change_weapon_slot,
+            use_ability_slot: inputState.use_ability_slot,
+            ping_x: Number(inputState.ping_x) || 0,
+            ping_y: Number(inputState.ping_y) || 0,
+        };
+
+        if (currentFrameInput.shooting && now - lastShotFeedbackTime >= 110) {
+            cameraCombatImpulseRef.value = Math.min(
+                dynamicsTuning.cameraMaxSpeedZoomOut,
+                cameraCombatImpulseRef.value + dynamicsTuning.cameraCombatKick
+            );
+            if (EXCITEMENT_UI_ENABLED) {
+                combatUiStateRef.momentum = Math.min(1, combatUiStateRef.momentum + 0.016);
+                combatUiStateRef.speedPulse = Math.min(1, combatUiStateRef.speedPulse + 0.08);
+            }
+            lastShotFeedbackTime = now;
+        }
+
+        pendingInputs.push(currentFrameInput);
+        if (pendingInputs.length > RECONCILIATION_BUFFER_SIZE) pendingInputs.shift();
+
+        const bytes = createInputMessage(currentFrameInput);
+        dataChannel.send(bytes);
+        lastInputStateSentAt = now;
+        lastSentInputMoveMask = moveMask;
+        lastSentInputRotationQuant = quantizedRotation;
+        lastSentInputShooting = !!inputState.shooting;
+
+        // Reset one-time inputs
+        if (inputState.reload) inputState.reload = false;
+        if (inputState.melee_attack) inputState.melee_attack = false;
+        if (inputState.change_weapon_slot !== 0) inputState.change_weapon_slot = 0;
+        if (inputState.use_ability_slot !== 0) inputState.use_ability_slot = 0;
+        if (inputState.ping_x !== 0) inputState.ping_x = 0;
+        if (inputState.ping_y !== 0) inputState.ping_y = 0;
+    }
+
+    // ── Setup / teardown ──────────────────────────────────────────────
+
+    function teardownInputHandlers() {
+        if (!inputHandlersInitialized) return;
+        const app = getApp();
+        if (inputGameplayKeyDownHandler) {
+            document.removeEventListener('keydown', inputGameplayKeyDownHandler);
+        }
+        if (inputGameplayKeyUpHandler) {
+            document.removeEventListener('keyup', inputGameplayKeyUpHandler);
+        }
+        if (inputUiKeyDownHandler) {
+            document.removeEventListener('keydown', inputUiKeyDownHandler);
+        }
+        if (inputUiKeyUpHandler) {
+            document.removeEventListener('keyup', inputUiKeyUpHandler);
+        }
+        const view = app?.view || null;
+        if (view && inputMouseMoveHandler) {
+            view.removeEventListener('mousemove', inputMouseMoveHandler);
+        }
+        if (view && inputMouseDownHandler) {
+            view.removeEventListener('mousedown', inputMouseDownHandler);
+        }
+        if (view && inputMouseUpHandler) {
+            view.removeEventListener('mouseup', inputMouseUpHandler);
+        }
+        if (view && inputContextMenuHandler) {
+            view.removeEventListener('contextmenu', inputContextMenuHandler);
+        }
+        inputGameplayKeyDownHandler = null;
+        inputGameplayKeyUpHandler = null;
+        inputMouseMoveHandler = null;
+        inputMouseDownHandler = null;
+        inputMouseUpHandler = null;
+        inputContextMenuHandler = null;
+        inputUiKeyDownHandler = null;
+        inputUiKeyUpHandler = null;
+        inputHandlersInitialized = false;
+    }
+
+    function setupInputHandlers() {
+        const app = getApp();
+        if (inputHandlersInitialized || !app || !app.view) return;
+        inputHandlersInitialized = true;
+        const inputState = getInputState();
+        const gameSettings = getGameSettings();
+
+        inputGameplayKeyDownHandler = (e) => handleKeyInput(e, true);
+        inputGameplayKeyUpHandler = (e) => handleKeyInput(e, false);
+        inputMouseMoveHandler = handleMouseMove;
+        inputMouseDownHandler = (e) => {
+            const localPlayerState = getLocalPlayerState();
+            const audioManager = getAudioManager();
+            if (e.button === 0) {
+                if (localPlayerState && localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo === 0) {
+                    if (audioManager && gameSettings.soundEnabled && !window.playedOutOfAmmoSoundRecently) {
+                        audioManager.playSound('outOfAmmo', null, 0.4);
+                        window.playedOutOfAmmoSoundRecently = true;
+                        setTimeout(() => { window.playedOutOfAmmoSoundRecently = false; }, 1000);
+                    }
+                    if (reloadPromptSpan && localPlayerState.reload_progress === -1) {
+                        reloadPromptSpan.textContent = ' (Press R to Reload!)';
+                        if (audioManager && gameSettings.soundEnabled && !window.playedReloadNeededSoundRecently) {
+                            audioManager.playSound('reloadNeeded', null, 0.5);
+                            window.playedReloadNeededSoundRecently = true;
+                            setTimeout(() => { window.playedReloadNeededSoundRecently = false; }, 2000);
+                        }
+                    }
+                } else {
+                    inputState.shooting = true;
+                }
+            }
+        };
+        inputMouseUpHandler = (e) => {
+            if (e.button === 0) inputState.shooting = false;
+        };
+        inputContextMenuHandler = (e) => e.preventDefault();
+
+        inputUiKeyDownHandler = (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                if (!getOverviewMode()) enterOverviewMode();
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                toggleSettings();
+            }
+            if (e.code === 'KeyH' && !e.repeat) {
+                e.preventDefault();
+                setFocusMode(!getFocusModeEnabled());
+            }
+        };
+
+        inputUiKeyUpHandler = (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                if (getOverviewMode()) exitOverviewMode();
+            }
+        };
+
+        document.addEventListener('keydown', inputGameplayKeyDownHandler);
+        document.addEventListener('keyup', inputGameplayKeyUpHandler);
+        document.addEventListener('keydown', inputUiKeyDownHandler);
+        document.addEventListener('keyup', inputUiKeyUpHandler);
+        app.view.addEventListener('mousemove', inputMouseMoveHandler);
+        app.view.addEventListener('mousedown', inputMouseDownHandler);
+        app.view.addEventListener('mouseup', inputMouseUpHandler);
+        app.view.addEventListener('contextmenu', inputContextMenuHandler);
+
+        setupTouchControls();
+    }
+
+    // ── Touch controls setup ──────────────────────────────────────────
+
+    function setupTouchControls() {
+        if (touchControlsInitialized || !mobileControlsDiv) return;
+        touchControlsInitialized = true;
+        const inputState = getInputState();
+        const gameSettings = getGameSettings();
+
+        updateMobileControlsVisibility();
+        updateMobileButtonSizing();
+        syncMobileFireButtonState();
+
+        let moveTouchId = null;
+        let moveOrigin = { x: 0, y: 0 };
+        const moveMaxRadius = 45;
+
+        const resetMoveStick = () => {
+            if (mobileMoveKnob) {
+                mobileMoveKnob.style.transform = 'translate(-50%, -50%)';
+            }
+            setMoveInputFromVector(0, 0, 10);
+            moveTouchId = null;
+        };
+
+        const handleMoveTouch = (touch) => {
+            const dx = touch.clientX - moveOrigin.x;
+            const dy = touch.clientY - moveOrigin.y;
+            const distance = Math.hypot(dx, dy);
+            const clampedDistance = Math.min(distance, moveMaxRadius);
+            const angle = Math.atan2(dy, dx);
+            const clampedX = Math.cos(angle) * clampedDistance;
+            const clampedY = Math.sin(angle) * clampedDistance;
+
+            if (mobileMoveKnob) {
+                mobileMoveKnob.style.transform = `translate(calc(-50% + ${clampedX}px), calc(-50% + ${clampedY}px))`;
+            }
+            setMoveInputFromVector(clampedX, clampedY);
+        };
+
+        mobileMoveArea?.addEventListener('touchstart', (event) => {
+            if (moveTouchId !== null) return;
+            const touch = event.changedTouches[0];
+            moveTouchId = touch.identifier;
+            moveOrigin = { x: touch.clientX, y: touch.clientY };
+            handleMoveTouch(touch);
+            event.preventDefault();
+        }, { passive: false });
+
+        mobileMoveArea?.addEventListener('touchmove', (event) => {
+            if (moveTouchId === null) return;
+            for (const touch of event.changedTouches) {
+                if (touch.identifier === moveTouchId) {
+                    handleMoveTouch(touch);
+                    event.preventDefault();
+                    break;
+                }
+            }
+        }, { passive: false });
+
+        mobileMoveArea?.addEventListener('touchend', (event) => {
+            if (moveTouchId === null) return;
+            for (const touch of event.changedTouches) {
+                if (touch.identifier === moveTouchId) {
+                    resetMoveStick();
+                    event.preventDefault();
+                    break;
+                }
+            }
+        }, { passive: false });
+
+        mobileMoveArea?.addEventListener('touchcancel', resetMoveStick, { passive: true });
+
+        let aimTouchId = null;
+        mobileAimArea?.addEventListener('touchstart', (event) => {
+            if (aimTouchId !== null) return;
+            const touch = event.changedTouches[0];
+            aimTouchId = touch.identifier;
+            mobileAimActive = true;
+            recordMobileActionReachSample(touch);
+            updateAimFromTouch(touch);
+            if (gameSettings.mobileAutoFireAim) inputState.shooting = true;
+            event.preventDefault();
+        }, { passive: false });
+
+        mobileAimArea?.addEventListener('touchmove', (event) => {
+            if (aimTouchId === null) return;
+            for (const touch of event.changedTouches) {
+                if (touch.identifier === aimTouchId) {
+                    recordMobileActionReachSample(touch);
+                    updateAimFromTouch(touch);
+                    if (gameSettings.mobileAutoFireAim) inputState.shooting = true;
+                    event.preventDefault();
+                    break;
+                }
+            }
+        }, { passive: false });
+
+        const endAimTouch = (event) => {
+            if (aimTouchId === null) return;
+            for (const touch of event.changedTouches) {
+                if (touch.identifier === aimTouchId) {
+                    aimTouchId = null;
+                    mobileAimActive = false;
+                    if (gameSettings.mobileAutoFireAim && !mobileStickyFireArmed && !mobileFireTouchActive) {
+                        inputState.shooting = false;
+                    }
+                    event.preventDefault();
+                    break;
+                }
+            }
+        };
+        mobileAimArea?.addEventListener('touchend', endAimTouch, { passive: false });
+        mobileAimArea?.addEventListener('touchcancel', endAimTouch, { passive: false });
+
+        let fireTouchId = null;
+        const endFire = () => {
+            mobileFireTouchActive = false;
+            if (!mobileStickyFireArmed && !mobileAimActive) inputState.shooting = false;
+            fireTouchId = null;
+        };
+
+        mobileFireButton?.addEventListener('touchstart', (event) => {
+            if (fireTouchId !== null) return;
+            const touch = event.changedTouches[0];
+            fireTouchId = touch.identifier;
+            mobileFireTouchActive = true;
+            recordMobileActionReachSample(touch);
+
+            const now = Date.now();
+            if (now <= fireButtonTapWindowUntil) {
+                fireButtonTapCount += 1;
+            } else {
+                fireButtonTapCount = 1;
+            }
+            fireButtonTapWindowUntil = now + 420;
+            if (gameSettings.mobileStickyFire && fireButtonTapCount >= 2) {
+                fireButtonTapCount = 0;
+                mobileStickyFireArmed = !mobileStickyFireArmed;
+                syncMobileFireButtonState();
+                inputState.shooting = mobileStickyFireArmed || gameSettings.mobileAutoFireAim;
+                triggerHapticFn(mobileStickyFireArmed ? [10, 12] : 8);
+            } else {
+                inputState.shooting = true;
+            }
+            event.preventDefault();
+        }, { passive: false });
+
+        mobileFireButton?.addEventListener('touchend', (event) => {
+            if (fireTouchId === null) return;
+            for (const touch of event.changedTouches) {
+                if (touch.identifier === fireTouchId) {
+                    endFire();
+                    event.preventDefault();
+                    break;
+                }
+            }
+        }, { passive: false });
+        mobileFireButton?.addEventListener('touchcancel', endFire, { passive: true });
+
+        mobileReloadButton?.addEventListener('touchstart', (event) => {
+            const localPlayerState = getLocalPlayerState();
+            const audioManager = getAudioManager();
+            recordMobileActionReachSample(event.changedTouches[0]);
+            if (localPlayerState && localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo < getMaxAmmoForWeaponClient(localPlayerState.weapon) && localPlayerState.reload_progress === -1) {
+                inputState.reload = true;
+                if (reloadPromptSpan) reloadPromptSpan.textContent = ' (Reloading...)';
+                if (audioManager && gameSettings.soundEnabled) audioManager.playSound('reloadStart', null, 0.3);
+                triggerHapticFn([8, 10]);
+            }
+            event.preventDefault();
+        }, { passive: false });
+
+        mobileMeleeButton?.addEventListener('touchstart', (event) => {
+            recordMobileActionReachSample(event.changedTouches[0]);
+            inputState.melee_attack = true;
+            triggerHapticFn(8);
+            event.preventDefault();
+        }, { passive: false });
+
+        mobileWeaponPrimaryButton?.addEventListener('touchstart', (event) => {
+            recordMobileActionReachSample(event.changedTouches[0]);
+            inputState.change_weapon_slot = 1;
+            setObjectiveUrgency('Swapping to primary weapon', 'info', 650);
+            triggerHapticFn(8);
+            event.preventDefault();
+        }, { passive: false });
+
+        mobileWeaponSecondaryButton?.addEventListener('touchstart', (event) => {
+            recordMobileActionReachSample(event.changedTouches[0]);
+            inputState.change_weapon_slot = 2;
+            setObjectiveUrgency('Swapping to secondary weapon', 'info', 650);
+            triggerHapticFn(8);
+            event.preventDefault();
+        }, { passive: false });
+
+        mobileAbilityDashButton?.addEventListener('touchstart', (event) => {
+            recordMobileActionReachSample(event.changedTouches[0]);
+            inputState.use_ability_slot = 1;
+            setObjectiveUrgency('Dash ability activated', 'positive', 600);
+            triggerHapticFn([8, 10]);
+            event.preventDefault();
+        }, { passive: false });
+
+        mobileAbilityDodgeButton?.addEventListener('touchstart', (event) => {
+            recordMobileActionReachSample(event.changedTouches[0]);
+            inputState.use_ability_slot = 2;
+            setObjectiveUrgency('Dodge ability activated', 'positive', 600);
+            triggerHapticFn([8, 12]);
+            event.preventDefault();
+        }, { passive: false });
+
+        // Mobile settings buttons
+        const mobileDataSaverBtn = document.getElementById('mobileDataSaver');
+        const mobileAimAssistBtn = document.getElementById('mobileAimAssistToggle');
+        const mobileConnQualityDiv = document.getElementById('mobileConnectionQuality');
+
+        if (mobileDataSaverBtn) {
+            mobileDataSaverBtn.addEventListener('touchstart', (event) => {
+                triggerHapticFn(8);
+                event.preventDefault();
+            }, { passive: false });
+        }
+
+        if (mobileAimAssistBtn) {
+            if (aimAssistEnabled) mobileAimAssistBtn.classList.add('mobile-button--active');
+            mobileAimAssistBtn.addEventListener('touchstart', (event) => {
+                aimAssistEnabled = !aimAssistEnabled;
+                localStorage.setItem('aimAssist', aimAssistEnabled);
+                mobileAimAssistBtn.classList.toggle('mobile-button--active', aimAssistEnabled);
+                triggerHapticFn(8);
+                event.preventDefault();
+            }, { passive: false });
+        }
+
+        if (mobileConnQualityDiv) {
+            // Connection quality indicator updated elsewhere via updateConnectionQuality
+        }
+
+        // Ping wheel
+        const schedulePingWheel = (touch, touchId = null) => {
+            if (!touch) return;
+            const anchor = getWorldPointFromMinimap(touch.clientX, touch.clientY);
+            if (!anchor) return;
+            pingWheelTouchId = touchId;
+            pingWheelLongPressTimer = setTimeout(() => {
+                pingWheelLongPressTimer = null;
+                openPingWheel(touch.clientX, touch.clientY, anchor.x, anchor.y);
+                triggerHapticFn(8);
+            }, 320);
+        };
+
+        minimapContainerDiv?.addEventListener('touchstart', (event) => {
+            if (pingWheelOpen) return;
+            const touch = event.changedTouches[0];
+            schedulePingWheel(touch, touch.identifier);
+        }, { passive: true });
+
+        minimapContainerDiv?.addEventListener('touchmove', (event) => {
+            if (pingWheelOpen || pingWheelTouchId === null) return;
+            for (const touch of event.changedTouches) {
+                if (touch.identifier === pingWheelTouchId) {
+                    const anchor = getWorldPointFromMinimap(touch.clientX, touch.clientY);
+                    if (!anchor) { closePingWheel(); return; }
+                    const rect = minimapContainerDiv.getBoundingClientRect();
+                    if (touch.clientX < rect.left - 12 || touch.clientX > rect.right + 12 ||
+                        touch.clientY < rect.top - 12 || touch.clientY > rect.bottom + 12) {
+                        closePingWheel();
+                    }
+                }
+            }
+        }, { passive: true });
+
+        minimapContainerDiv?.addEventListener('touchend', () => {
+            if (!pingWheelOpen) closePingWheel();
+        }, { passive: true });
+        minimapContainerDiv?.addEventListener('touchcancel', closePingWheel, { passive: true });
+
+        minimapContainerDiv?.addEventListener('mousedown', (event) => {
+            if (event.button !== 0 || pingWheelOpen) return;
+            const anchor = getWorldPointFromMinimap(event.clientX, event.clientY);
+            if (!anchor) return;
+            pingWheelLongPressTimer = setTimeout(() => {
+                pingWheelLongPressTimer = null;
+                openPingWheel(event.clientX, event.clientY, anchor.x, anchor.y);
+            }, 320);
+        });
+        minimapContainerDiv?.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+        });
+        window.addEventListener('mouseup', (event) => {
+            if (!pingWheelOpen) { closePingWheel(); return; }
+            if (pingWheelDiv && event?.target && !pingWheelDiv.contains(event.target)) {
+                closePingWheel();
+            }
+        });
+
+        pingWheelDiv?.querySelectorAll('[data-ping-kind]')?.forEach((btn) => {
+            btn.addEventListener('click', (event) => {
+                event.preventDefault();
+                const kind = btn.getAttribute('data-ping-kind') || 'group';
+                if (pingWheelAnchorWorld) sendTacticalPing(kind, pingWheelAnchorWorld);
+                closePingWheel();
+            });
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && pingWheelOpen) closePingWheel();
+        });
+
+        window.addEventListener('resize', () => {
+            updateMobileControlsVisibility();
+            updateMobileButtonSizing();
+        });
+    }
+
+    return {
+        setupInputHandlers,
+        teardownInputHandlers,
+        sendInputsToServer,
+        handleKeyInput,
+        handleMouseMove,
+        createVirtualCrosshair,
+        updateVirtualCrosshair,
+        getVirtualCrosshairSprite,
+        applyAimAssist,
+        getAimAssistRotation,
+        closePingWheel,
+        openPingWheel,
+        sendTacticalPing,
+        issueCommanderOrder,
+        updateMobileControlsVisibility,
+        updateMobileButtonSizing,
+        getWorldPointFromMinimap,
+        // Expose mutable state getters
+        get tacticalPings() { return tacticalPings; },
+        get pendingInputs() { return pendingInputs; },
+        get inputSequence() { return inputSequence; },
+        get aimAssistEnabled() { return aimAssistEnabled; },
+        set aimAssistEnabled(v) { aimAssistEnabled = v; },
+        get pingWheelOpen() { return pingWheelOpen; },
+        get mobileAimActive() { return mobileAimActive; },
+        get mobileStickyFireArmed() { return mobileStickyFireArmed; },
+    };
+}

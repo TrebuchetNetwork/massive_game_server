@@ -1265,3 +1265,130 @@ impl OptimizedBotAI {
         bot_controller.last_position = current_pos;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── BotPersonality engagement_range tests ────────────────────
+
+    #[test]
+    fn aggressive_engagement_range() {
+        assert!((BotPersonality::Aggressive.engagement_range() - 150.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn defensive_engagement_range() {
+        assert!((BotPersonality::Defensive.engagement_range() - 400.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn balanced_engagement_range() {
+        assert!((BotPersonality::Balanced.engagement_range() - 300.0).abs() < f32::EPSILON);
+    }
+
+    // ── BotPersonality weapon preference tests ──────────────────
+
+    #[test]
+    fn aggressive_prefers_melee_at_very_close() {
+        let slot = BotPersonality::Aggressive.preferred_weapon_slot(ServerWeaponType::Rifle, 30.0);
+        assert_eq!(slot, Some(2)); // switch to melee
+    }
+
+    #[test]
+    fn aggressive_prefers_shotgun_at_close() {
+        let slot = BotPersonality::Aggressive.preferred_weapon_slot(ServerWeaponType::Rifle, 120.0);
+        assert_eq!(slot, Some(1)); // switch to shotgun
+    }
+
+    #[test]
+    fn aggressive_keeps_weapon_at_long_range() {
+        let slot = BotPersonality::Aggressive.preferred_weapon_slot(ServerWeaponType::Rifle, 300.0);
+        assert_eq!(slot, None);
+    }
+
+    #[test]
+    fn defensive_prefers_sniper_at_long_range() {
+        let slot = BotPersonality::Defensive.preferred_weapon_slot(ServerWeaponType::Rifle, 500.0);
+        assert_eq!(slot, Some(2)); // switch to sniper
+    }
+
+    #[test]
+    fn defensive_prefers_rifle_at_medium_range() {
+        let slot = BotPersonality::Defensive.preferred_weapon_slot(ServerWeaponType::Shotgun, 250.0);
+        assert_eq!(slot, Some(1)); // switch to rifle
+    }
+
+    #[test]
+    fn defensive_keeps_weapon_at_close_range() {
+        let slot = BotPersonality::Defensive.preferred_weapon_slot(ServerWeaponType::Shotgun, 100.0);
+        assert_eq!(slot, None);
+    }
+
+    #[test]
+    fn balanced_prefers_shotgun_at_close() {
+        let slot = BotPersonality::Balanced.preferred_weapon_slot(ServerWeaponType::Rifle, 80.0);
+        assert_eq!(slot, Some(1)); // switch to shotgun
+    }
+
+    #[test]
+    fn balanced_prefers_sniper_at_long_range() {
+        let slot = BotPersonality::Balanced.preferred_weapon_slot(ServerWeaponType::Rifle, 400.0);
+        assert_eq!(slot, Some(2)); // switch to sniper
+    }
+
+    #[test]
+    fn balanced_keeps_weapon_at_medium() {
+        let slot = BotPersonality::Balanced.preferred_weapon_slot(ServerWeaponType::Rifle, 200.0);
+        assert_eq!(slot, None);
+    }
+
+    // ── BotPersonality should_retreat tests ──────────────────────
+
+    #[test]
+    fn aggressive_never_retreats() {
+        assert!(!BotPersonality::Aggressive.should_retreat(10.0));
+        assert!(!BotPersonality::Aggressive.should_retreat(1.0));
+    }
+
+    #[test]
+    fn defensive_retreats_below_50_pct() {
+        assert!(BotPersonality::Defensive.should_retreat(49.0));
+        assert!(!BotPersonality::Defensive.should_retreat(50.0));
+        assert!(!BotPersonality::Defensive.should_retreat(80.0));
+    }
+
+    #[test]
+    fn balanced_retreats_below_25_pct() {
+        assert!(BotPersonality::Balanced.should_retreat(24.0));
+        assert!(!BotPersonality::Balanced.should_retreat(25.0));
+        assert!(!BotPersonality::Balanced.should_retreat(60.0));
+    }
+
+    // ── BotPersonality random covers all variants ───────────────
+
+    #[test]
+    fn random_personality_produces_valid_variant() {
+        // Run a handful of times to ensure no panic / invalid state
+        for _ in 0..20 {
+            let p = BotPersonality::random();
+            // Just ensure the engagement range is one of the valid values
+            let r = p.engagement_range();
+            assert!(r == 150.0 || r == 300.0 || r == 400.0);
+        }
+    }
+
+    // ── Stuck detection constants are consistent ────────────────
+
+    #[test]
+    fn stuck_target_tolerance_greater_than_movement_tolerance() {
+        assert!(BOT_STUCK_TARGET_TOLERANCE > BOT_MOVEMENT_TOLERANCE);
+        assert!((BOT_STUCK_TARGET_TOLERANCE - BOT_MOVEMENT_TOLERANCE - 20.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn stuck_time_threshold_is_multiple_of_check_interval() {
+        // 2.0 / 0.5 = 4 checks before stuck is triggered
+        assert!((BOT_STUCK_TIME_THRESHOLD / BOT_STUCK_CHECK_INTERVAL - 4.0).abs() < f32::EPSILON);
+    }
+}

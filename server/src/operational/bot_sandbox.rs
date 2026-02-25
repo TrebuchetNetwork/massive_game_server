@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
-use tracing::warn;
+use tracing::{error, warn};
 use wasmtime::{Config, Engine, ExternType, Module, Store, TypedFunc, ValType};
 
 const DEFAULT_WASM_DIR: &str = "data/arena_bots";
@@ -243,7 +243,13 @@ impl BotSandbox {
 
         let mut config = Config::new();
         config.consume_fuel(true);
-        let engine = Engine::new(&config).expect("failed to create wasmtime engine");
+        let engine = match Engine::new(&config) {
+            Ok(e) => e,
+            Err(err) => {
+                error!("Failed to create wasmtime engine: {err}. Using default config.");
+                Engine::default()
+            }
+        };
 
         Self {
             engine,
