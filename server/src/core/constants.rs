@@ -80,7 +80,7 @@ pub const MELEE_RELOAD_SECS: f32 = 0.0;
 pub const MELEE_FALLOFF_START: f32 = 0.0;
 pub const MELEE_MAX_RANGE: f32 = 30.0;
 pub const MELEE_MIN_MULTIPLIER: f32 = 1.0;
-pub const MELEE_CONE_HALF_ANGLE_RAD: f32 = 0.7854; // π/4 (90° cone)
+pub const MELEE_CONE_HALF_ANGLE_RAD: f32 = std::f32::consts::FRAC_PI_4; // π/4 (90° cone)
 
 pub const DAMAGE_BOOST_MULTIPLIER: f32 = 1.5;
 
