@@ -136,7 +136,7 @@ impl MassiveGameServer {
             }
 
             // Log every 60 frames (1 second at 60 FPS)
-            if current_frame % 60 == 0 {
+            if current_frame.is_multiple_of(60) {
                 info!("Game loop running - Frame: {}", current_frame);
             }
 
@@ -152,7 +152,7 @@ impl MassiveGameServer {
             let frame_time = frame_start_time.elapsed();
             self.record_tick_metrics(frame_time);
 
-            if current_frame % 120 == 0 {
+            if current_frame.is_multiple_of(120) {
                 let quality = self.current_quality_settings();
                 if quality.delta_skip_modulus != last_logged_quality.delta_skip_modulus
                     || (quality.aoi_radius_scale - last_logged_quality.aoi_radius_scale).abs()
@@ -172,7 +172,7 @@ impl MassiveGameServer {
             }
 
             if frame_time > dynamic_tick_duration + Duration::from_millis(5)
-                && current_frame % 60 == 0
+                && current_frame.is_multiple_of(60)
             {
                 warn!("Frame {} took too long: {:?}", current_frame, frame_time);
             }
@@ -204,7 +204,7 @@ impl MassiveGameServer {
         let aoi_stride = (AOI_UPDATE_INTERVAL_SECS * self.config.tick_rate as f32)
             .round()
             .max(1.0) as u64;
-        let update_aoi_this_frame = update_aoi && frame % aoi_stride == 0;
+        let update_aoi_this_frame = update_aoi && frame.is_multiple_of(aoi_stride);
 
         let mut players_to_update = Vec::with_capacity(self.player_manager.player_count());
         self.player_manager
@@ -264,7 +264,7 @@ impl MassiveGameServer {
             }
         }
 
-        if update_aoi_this_frame && frame % 30 == 0 {
+        if update_aoi_this_frame && frame.is_multiple_of(30) {
             self.world_partition_manager.update_all_boundary_snapshots();
         }
 

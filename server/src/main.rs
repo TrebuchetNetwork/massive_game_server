@@ -313,7 +313,7 @@ fn parse_admin_ip_allowlist() -> Vec<IpNet> {
             entry
         );
     }
-    allowlist.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+    allowlist.sort_by_key(|a| a.to_string());
     allowlist.dedup_by(|a, b| a == b);
     allowlist
 }
@@ -772,7 +772,7 @@ async fn main() -> anyhow::Result<()> {
         .map(|query: LiveReplayRecentQuery, server_inst: ServerInstanceRef| {
             let limit = query.limit.unwrap_or(256).clamp(1, 4096);
             warp::reply::json(&serde_json::json!({
-                "enabled": server_inst.recent_live_replay_frames(1).len() > 0 || env_flag("MGS_LIVE_REPLAY_ENABLED"),
+                "enabled": !server_inst.recent_live_replay_frames(1).is_empty() || env_flag("MGS_LIVE_REPLAY_ENABLED"),
                 "frames": server_inst.recent_live_replay_frames(limit),
                 "limit": limit,
             }))

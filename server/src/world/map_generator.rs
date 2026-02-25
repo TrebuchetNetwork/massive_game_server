@@ -488,7 +488,7 @@ impl MapGenerator {
     /// "Corridors" - tight lanes, favors Shotgun/Melee
     pub fn generate_corridors_map(seed: u64) -> (Vec<Wall>, String) {
         let mut walls = Vec::new();
-        let mut rng = StdRng::seed_from_u64(seed ^ 0xC0_771D_025);
+        let mut rng = StdRng::seed_from_u64(seed ^ 0x000C_0771_D025);
 
         walls.extend(Self::create_border_walls());
 
@@ -534,7 +534,7 @@ impl MapGenerator {
     /// "Arena" - open center, favors Rifle/Sniper
     pub fn generate_arena_map(seed: u64) -> (Vec<Wall>, String) {
         let mut walls = Vec::new();
-        let mut rng = StdRng::seed_from_u64(seed ^ 0xA7E_7A);
+        let mut rng = StdRng::seed_from_u64(seed ^ 0x000A_7E7A);
 
         walls.extend(Self::create_border_walls());
 
