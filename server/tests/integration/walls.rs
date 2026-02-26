@@ -7,16 +7,13 @@ use massive_game_server_core::server::instance::MassiveGameServer;
 // Removed unused DataChannelsMap, ClientStatesMap, ChatMessagesQueue (type aliases)
 // Removed unused PlayerAoIs
 use massive_game_server_core::core::types::PlayerAoIs;
-use massive_game_server_core::network::signaling::ChatMessagesQueue; // Keep this if it's the Arc<TokioRwLock<...>> type for the variable // Keep this if it's the Arc<DashMap<...>> type for the variable
+use massive_game_server_core::network::signaling::{BoundedChatQueue, ChatMessagesQueue, MAX_CHAT_QUEUE_SIZE};
 
 use std::sync::Arc;
-// Removed unused std::time::Duration
-// Removed unused tokio::time::sleep
 use dashmap::DashMap;
 use parking_lot::RwLock as ParkingLotRwLock;
 use std::collections::HashMap;
-use std::collections::VecDeque; // For ChatMessagesQueue initialization
-use tokio::sync::RwLock as TokioRwLock; // Use Tokio's RwLock
+use tokio::sync::RwLock as TokioRwLock;
 use tracing::info; // For debug logging in test
 
 struct TestServerContext {
@@ -36,7 +33,7 @@ async fn setup_test_server() -> TestServerContext {
     let data_channels_map = Arc::new(DashMap::new());
     let client_states_map = Arc::new(ParkingLotRwLock::new(HashMap::new()));
 
-    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(VecDeque::new()));
+    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
     let server = Arc::new(MassiveGameServer::new(

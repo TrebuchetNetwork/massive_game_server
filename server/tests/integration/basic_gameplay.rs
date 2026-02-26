@@ -10,7 +10,7 @@ use massive_game_server_core::core::types::{
     EntityId, EventPriority, PlayerID, PlayerInputData, Projectile, ServerWeaponType, Vec2, Wall,
 }; // Added PlayerState, PlayerInputData
 use massive_game_server_core::network::signaling::{
-    ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap,
+    BoundedChatQueue, ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE,
 };
 use massive_game_server_core::server::instance::MassiveGameServer;
 use massive_game_server_core::systems::physics::collision; // Import PLAYER_RADIUS
@@ -18,7 +18,6 @@ use massive_game_server_core::systems::physics::collision; // Import PLAYER_RADI
 use dashmap::DashMap;
 use parking_lot::RwLock as ParkingLotRwLock;
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime}; // For PlayerInputData timestamp
 use tokio::sync::RwLock as TokioRwLock;
@@ -33,7 +32,7 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
 
     let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(VecDeque::new()));
+    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
     let server = Arc::new(MassiveGameServer::new(

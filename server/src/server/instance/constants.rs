@@ -28,7 +28,6 @@ pub(super) const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PICKUPS: usize = 14
 pub(super) const MAX_CHAT_PER_BATCH: usize = 10;
 
 pub(super) const MAX_KILL_FEED_HISTORY: usize = 10;
-pub(super) const MAX_CHAT_MESSAGES_HISTORY: usize = 50;
 pub(super) const MAX_MELEE_EVENTS_PER_TICK: usize = 200;
 
 pub(super) const JOIN_STAGE_WAVES: [(&str, &str, u64, Option<u64>); 4] = [

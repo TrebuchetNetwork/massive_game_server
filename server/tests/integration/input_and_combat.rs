@@ -9,12 +9,12 @@ use massive_game_server_core::core::constants::{
 use massive_game_server_core::core::types::{
     EntityId, PlayerAoIs, PlayerID, PlayerInputData, Projectile, ServerWeaponType, Wall,
 };
-use massive_game_server_core::network::signaling::{ChatMessagesQueue, ClientStatesMap, DataChannelsMap};
+use massive_game_server_core::network::signaling::{BoundedChatQueue, ChatMessagesQueue, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE};
 use massive_game_server_core::server::instance::MassiveGameServer;
 
 use dashmap::DashMap;
 use parking_lot::RwLock as ParkingLotRwLock;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
 
@@ -24,7 +24,7 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
         Arc::new(ThreadPoolSystem::new(config.clone()).expect("Failed to create thread pools"));
     let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(VecDeque::new()));
+    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
     Arc::new(MassiveGameServer::new(

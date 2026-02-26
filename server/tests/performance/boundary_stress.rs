@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -8,7 +8,7 @@ use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
 use massive_game_server_core::core::types::PlayerAoIs;
 use massive_game_server_core::network::signaling::{
-    ChatMessagesQueue, ClientStatesMap, DataChannelsMap,
+    BoundedChatQueue, ChatMessagesQueue, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE,
 };
 use massive_game_server_core::server::instance::MassiveGameServer;
 use metrics::histogram;
@@ -175,7 +175,7 @@ fn setup_test_server() -> MassiveGameServer {
         Arc::new(ThreadPoolSystem::new(config.clone()).expect("Failed to create thread pools"));
     let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(VecDeque::new()));
+    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
     MassiveGameServer::new(

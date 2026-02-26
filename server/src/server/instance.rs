@@ -1084,6 +1084,16 @@ impl MassiveGameServer {
         self.player_aois.remove(peer_id);
         self.data_channels_map.remove(peer_id);
         self.direct_packets.remove(peer_id);
+        // Clean up interpolation history to prevent memory leak on disconnect.
+        let pid: crate::core::types::PlayerID = std::sync::Arc::new(peer_id.to_owned());
+        self.player_position_history.remove(&pid);
+    }
+
+    /// Remove interpolation history for a disconnected player.
+    /// Called from both QUIC and WebRTC disconnect paths to prevent memory leaks.
+    pub fn cleanup_player_position_history(&self, peer_id: &str) {
+        let pid: crate::core::types::PlayerID = std::sync::Arc::new(peer_id.to_owned());
+        self.player_position_history.remove(&pid);
     }
 
     pub async fn run_game_logic_update(&self, delta_time: f32) {

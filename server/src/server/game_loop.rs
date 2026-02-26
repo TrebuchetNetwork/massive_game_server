@@ -25,7 +25,6 @@ use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
-const SHUTDOWN_CHAT_HISTORY_LIMIT: usize = 50;
 const SHUTDOWN_CHAT_PLAYER_ID: &str = "__server__";
 const SHUTDOWN_CHAT_USERNAME: &str = "Server";
 const SHUTDOWN_CHAT_MESSAGE: &str = "Server is shutting down. Please reconnect shortly.";
@@ -50,9 +49,6 @@ impl MassiveGameServer {
         {
             let mut chat_q = self.chat_messages_queue.write().await;
             chat_q.push_back(shutdown_chat);
-            while chat_q.len() > SHUTDOWN_CHAT_HISTORY_LIMIT {
-                chat_q.pop_front();
-            }
         }
         {
             let mut match_info = self.match_info.write();

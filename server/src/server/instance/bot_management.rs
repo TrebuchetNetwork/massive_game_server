@@ -188,9 +188,6 @@ impl MassiveGameServer {
 
         if let Ok(mut chat_q_guard) = self.chat_messages_queue.try_write() {
             chat_q_guard.push_back(entry);
-            if chat_q_guard.len() > MAX_CHAT_MESSAGES_HISTORY {
-                chat_q_guard.pop_front();
-            }
             return;
         }
 
@@ -199,9 +196,6 @@ impl MassiveGameServer {
             handle.spawn(async move {
                 let mut chat_q_guard = queue.write().await;
                 chat_q_guard.push_back(entry);
-                if chat_q_guard.len() > MAX_CHAT_MESSAGES_HISTORY {
-                    chat_q_guard.pop_front();
-                }
             });
         } else {
             warn!(

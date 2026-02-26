@@ -60,13 +60,57 @@ pub struct ChatMessage {
     pub message: String,
     pub timestamp: u64,
 }
-pub type ChatMessagesQueue = Arc<RwLock<VecDeque<ChatMessage>>>;
+/// Maximum number of chat messages retained in the bounded queue.
+pub const MAX_CHAT_QUEUE_SIZE: usize = 1000;
+
+/// A chat message queue that enforces a maximum size. When the queue is full,
+/// the oldest messages are dropped to make room. This prevents unbounded memory
+/// growth regardless of message ingestion rate.
+#[derive(Debug, Clone)]
+pub struct BoundedChatQueue {
+    inner: VecDeque<ChatMessage>,
+    max_size: usize,
+}
+
+impl BoundedChatQueue {
+    pub fn new(max_size: usize) -> Self {
+        Self {
+            inner: VecDeque::with_capacity(max_size.min(1024)),
+            max_size,
+        }
+    }
+
+    /// Push a message, dropping the oldest if the queue is at capacity.
+    pub fn push_back(&mut self, msg: ChatMessage) {
+        if self.inner.len() >= self.max_size {
+            self.inner.pop_front();
+        }
+        self.inner.push_back(msg);
+    }
+
+    pub fn pop_front(&mut self) -> Option<ChatMessage> {
+        self.inner.pop_front()
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn iter(&self) -> std::collections::vec_deque::Iter<'_, ChatMessage> {
+        self.inner.iter()
+    }
+}
+
+pub type ChatMessagesQueue = Arc<RwLock<BoundedChatQueue>>;
 static NEXT_CHAT_MESSAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 static SHARED_WEBRTC_API: OnceLock<Result<Arc<API>, String>> = OnceLock::new();
 static WEBRTC_PEER_STATES: OnceLock<DashMap<String, &'static str>> = OnceLock::new();
 const MAX_CHAT_MESSAGE_CHARS: usize = 160;
 const MAX_CHAT_USERNAME_CHARS: usize = 32;
-const CHAT_HISTORY_LIMIT: usize = 50;
 const WEBRTC_STATE_LABELS: [&str; 7] = [
     "new",
     "connecting",
@@ -1378,9 +1422,6 @@ pub async fn handle_signaling_connection(
                                         );
                                         let mut chat_q_guard = chat_q_on_msg.write().await;
                                         chat_q_guard.push_back(chat_entry);
-                                        if chat_q_guard.len() > CHAT_HISTORY_LIMIT {
-                                            chat_q_guard.pop_front();
-                                        }
                                     }
                                 }
                             }
@@ -1545,6 +1586,8 @@ pub async fn handle_signaling_connection(
         &player_aois,
         &auth_service,
     );
+    // Clean up interpolation history to prevent memory leak after disconnect.
+    server_instance.cleanup_player_position_history(&peer_id_str);
     if let Err(e) = peer_connection.close().await {
         error!("[{}]: Error closing PeerConnection: {}", peer_id_str, e);
     }
