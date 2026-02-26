@@ -8,12 +8,12 @@ use proptest::prelude::*;
 
 use massive_game_server_core::core::constants::{
     quantize_position, quantize_velocity, quantize_rotation,
-    QUANTIZE_POSITION_MAX, QUANTIZE_VELOCITY_MAX,
+    QUANTIZE_POSITION_MIN, QUANTIZE_POSITION_MAX, QUANTIZE_VELOCITY_MAX,
     AOI_RADIUS, AOI_EXIT_RADIUS, AOI_UPDATE_DIVISOR_DEFAULT,
     PISTOL_DAMAGE, SHOTGUN_DAMAGE, RIFLE_DAMAGE, SNIPER_DAMAGE, MELEE_DAMAGE,
     PISTOL_FIRE_RATE_SECS, SHOTGUN_FIRE_RATE_SECS, RIFLE_FIRE_RATE_SECS,
     SNIPER_FIRE_RATE_SECS, MELEE_FIRE_RATE_SECS,
-    MIN_SHOT_INTERVAL_SECONDS,
+    MIN_SHOT_INTERVAL_SECONDS, FIRE_RATE_JITTER_TOLERANCE_SECS,
 };
 use massive_game_server_core::core::types::{PlayerState, ServerWeaponType};
 use massive_game_server_core::systems::combat::weapons::{
@@ -42,25 +42,24 @@ proptest! {
     }
 
     /// For any f32 position in [-4096, 4096], quantize then dequantize
-    /// should be within 0.25 of original (negative values are clamped to 0).
+    /// should be within 0.25 of original.
     #[test]
     fn position_quantize_roundtrip_extended(v in -4096.0f32..=4096.0f32) {
         let q = quantize_position(v);
-        let clamped = v.clamp(0.0, QUANTIZE_POSITION_MAX);
-        let error = (q - clamped).abs();
+        let error = (q - v).abs();
         prop_assert!(
             error <= 0.25,
-            "quantize_position({}) = {} (clamped={}, error {})",
-            v, q, clamped, error
+            "quantize_position({}) = {} (error {})",
+            v, q, error
         );
     }
 
-    /// Quantized position is always within valid world bounds.
+    /// Quantized position is always within valid world bounds [-4096, 4096].
     #[test]
     fn position_quantize_stays_in_bounds(v in prop::num::f32::ANY) {
         if v.is_finite() {
             let q = quantize_position(v);
-            prop_assert!(q >= 0.0, "quantize_position({}) = {} < 0", v, q);
+            prop_assert!(q >= QUANTIZE_POSITION_MIN - 0.01, "quantize_position({}) = {} < min", v, q);
             prop_assert!(
                 q <= QUANTIZE_POSITION_MAX + 0.01,
                 "quantize_position({}) = {} > max",
@@ -221,7 +220,7 @@ proptest! {
             ServerWeaponType::Sniper => SNIPER_FIRE_RATE_SECS,
             ServerWeaponType::Melee => MELEE_FIRE_RATE_SECS,
         };
-        let effective_cooldown = cooldown.max(MIN_SHOT_INTERVAL_SECONDS);
+        let effective_cooldown = (cooldown.max(MIN_SHOT_INTERVAL_SECONDS) - FIRE_RATE_JITTER_TOLERANCE_SECS).max(0.0);
         let effective_cooldown_ms = (effective_cooldown * 1000.0) as u64;
 
         // Create a player state that just shot
@@ -313,7 +312,7 @@ proptest! {
     ) {
         let mut arena = Arena::with_capacity(4);
         let h1 = arena.alloc(first_val);
-        let idx = h1.0;
+        let idx = h1.index;
 
         // Dealloc frees the slot
         let removed = arena.dealloc(h1);
@@ -322,9 +321,9 @@ proptest! {
         // Next alloc should reuse the same index
         let h2 = arena.alloc(second_val);
         prop_assert_eq!(
-            h2.0, idx,
+            h2.index, idx,
             "Expected reuse of slot {} but got {}",
-            idx, h2.0
+            idx, h2.index
         );
         prop_assert_eq!(arena.get(h2), Some(&second_val));
     }

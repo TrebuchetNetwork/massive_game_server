@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 544bd668377f1eaf0aa59be245828c196a0f0c04a9298cba07f48c2f3a810ba7 # shrinks to v = -2975.7625
+cc 61044e5ee5fe90ff92358a8d77e22f961c70041fcff32e4b3cc58b990119cda4 # shrinks to weapon = Sniper, wait_ms = 1151
