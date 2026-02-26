@@ -435,16 +435,13 @@ mod tests {
 
     #[test]
     fn partition_grid_size_is_nonzero() {
-        assert!(
-            PARTITION_GRID_SIZE >= 1,
-            "PARTITION_GRID_SIZE must be >= 1"
-        );
+        const { assert!(PARTITION_GRID_SIZE >= 1, "PARTITION_GRID_SIZE must be >= 1") };
     }
 
     #[test]
     fn partition_sizes_are_positive() {
-        assert!(PARTITION_SIZE_X > 0.0, "PARTITION_SIZE_X must be > 0");
-        assert!(PARTITION_SIZE_Y > 0.0, "PARTITION_SIZE_Y must be > 0");
+        const { assert!(PARTITION_SIZE_X > 0.0, "PARTITION_SIZE_X must be > 0") };
+        const { assert!(PARTITION_SIZE_Y > 0.0, "PARTITION_SIZE_Y must be > 0") };
     }
 
     #[test]

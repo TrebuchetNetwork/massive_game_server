@@ -1205,8 +1205,6 @@ mod packet_batch_tests {
 #[cfg(test)]
 mod instance_tests {
     use super::*;
-    use crate::core::types::Vec2;
-
     // ── shortest_angle_diff_radians tests ───────────────────────────
 
     #[test]
@@ -1738,7 +1736,7 @@ mod instance_tests {
     #[test]
     fn bot_behavior_state_variants_exist() {
         // Just verify the enum variants exist and are distinguishable
-        let states = vec![
+        let states = [
             BotBehaviorState::Idle,
             BotBehaviorState::MovingToPosition,
             BotBehaviorState::Engaging,
@@ -1846,16 +1844,16 @@ mod instance_tests {
 
     #[test]
     fn max_chat_per_batch_positive() {
-        assert!(MAX_CHAT_PER_BATCH > 0);
+        const { assert!(MAX_CHAT_PER_BATCH > 0) };
     }
 
     #[test]
     fn max_kill_feed_history_positive() {
-        assert!(MAX_KILL_FEED_HISTORY > 0);
+        const { assert!(MAX_KILL_FEED_HISTORY > 0) };
     }
 
     #[test]
     fn max_melee_events_per_tick_positive() {
-        assert!(MAX_MELEE_EVENTS_PER_TICK > 0);
+        const { assert!(MAX_MELEE_EVENTS_PER_TICK > 0) };
     }
 }

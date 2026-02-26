@@ -1622,6 +1622,6 @@ mod tests {
         // (We can't unset env vars safely in parallel tests, so just check the
         // function returns a value in the valid range.)
         let tol = crate::core::constants::speed_hack_tolerance();
-        assert!(tol >= 1.0 && tol < 2.0);
+        assert!((1.0..2.0).contains(&tol));
     }
 }

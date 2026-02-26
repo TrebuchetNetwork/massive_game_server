@@ -506,8 +506,8 @@ fn load_pem_private_key(
         "No PEM key sections found in '{}'; treating as raw DER key.",
         path
     );
-    Ok(quinn::rustls::pki_types::PrivateKeyDer::try_from(der)
-        .map_err(|e| anyhow!("failed to parse DER key: {}", e))?)
+    quinn::rustls::pki_types::PrivateKeyDer::try_from(der)
+        .map_err(|e| anyhow!("failed to parse DER key: {}", e))
 }
 
 pub fn start_quic_runtime_from_env(default_bind_addr: SocketAddr) -> Result<Option<QuicRuntime>> {
@@ -890,14 +890,8 @@ mod tests {
 
     #[test]
     fn test_bounded_channel_capacity_constant() {
-        assert!(
-            OUTBOUND_CHANNEL_CAPACITY > 0,
-            "outbound channel capacity must be positive"
-        );
-        assert!(
-            OUTBOUND_CHANNEL_CAPACITY <= 8192,
-            "outbound channel capacity should be reasonable"
-        );
+        const { assert!(OUTBOUND_CHANNEL_CAPACITY > 0, "outbound channel capacity must be positive") };
+        const { assert!(OUTBOUND_CHANNEL_CAPACITY <= 8192, "outbound channel capacity should be reasonable") };
     }
 
     #[test]

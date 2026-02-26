@@ -174,7 +174,7 @@ proptest! {
     ) {
         let mult = distance_damage_multiplier(weapon, distance);
         prop_assert!(
-            mult >= 0.0 && mult <= 1.0,
+            (0.0..=1.0).contains(&mult),
             "multiplier out of [0,1]: weapon={:?}, distance={}, mult={}",
             weapon, distance, mult
         );
@@ -239,7 +239,7 @@ proptest! {
         let check_time = base_time + Duration::from_millis(wait_ms);
         let can = player.can_shoot(check_time);
 
-        if wait_ms >= effective_cooldown_ms + 1 {
+        if wait_ms > effective_cooldown_ms {
             // After cooldown has fully elapsed, we should be able to shoot
             prop_assert!(
                 can,

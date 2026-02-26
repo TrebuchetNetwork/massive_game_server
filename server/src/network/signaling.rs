@@ -1919,13 +1919,13 @@ mod tests {
 
     #[test]
     fn datachannel_message_limit_is_reasonable() {
-        assert!(MAX_DATACHANNEL_MESSAGE_BYTES >= 64 * 1024, "limit too small for game messages");
-        assert!(MAX_DATACHANNEL_MESSAGE_BYTES <= 8 * 1024 * 1024, "limit too large to be protective");
+        const { assert!(MAX_DATACHANNEL_MESSAGE_BYTES >= 64 * 1024, "limit too small for game messages") };
+        const { assert!(MAX_DATACHANNEL_MESSAGE_BYTES <= 8 * 1024 * 1024, "limit too large to be protective") };
     }
 
     #[test]
     fn signaling_text_limit_is_below_datachannel_limit() {
-        assert!(MAX_SIGNALING_TEXT_BYTES <= MAX_DATACHANNEL_MESSAGE_BYTES);
+        const { assert!(MAX_SIGNALING_TEXT_BYTES <= MAX_DATACHANNEL_MESSAGE_BYTES) };
     }
 
     #[test]

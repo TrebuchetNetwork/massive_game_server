@@ -132,8 +132,8 @@ impl BotAiLodTier {
     pub fn should_process(self, frame_count: u64) -> bool {
         match self {
             BotAiLodTier::Near => true,
-            BotAiLodTier::Medium => frame_count % BOT_LOD_MEDIUM_STRIDE == 0,
-            BotAiLodTier::Far => frame_count % BOT_LOD_FAR_STRIDE == 0,
+            BotAiLodTier::Medium => frame_count.is_multiple_of(BOT_LOD_MEDIUM_STRIDE),
+            BotAiLodTier::Far => frame_count.is_multiple_of(BOT_LOD_FAR_STRIDE),
         }
     }
 }
@@ -2116,14 +2116,14 @@ mod tests {
     #[test]
     fn pathfinding_constants_are_sane() {
         // Grid cell size should be positive
-        assert!(BOT_NAV_GRID_CELL_SIZE > 0.0);
+        const { assert!(BOT_NAV_GRID_CELL_SIZE > 0.0) };
         // Waypoint arrival distance should be smaller than movement tolerance
         // to avoid "jitter" between waypoints and "at target" detection
-        assert!(BOT_WAYPOINT_ARRIVAL_DIST < BOT_MOVEMENT_TOLERANCE);
+        const { assert!(BOT_WAYPOINT_ARRIVAL_DIST < BOT_MOVEMENT_TOLERANCE) };
         // Recompute interval should be positive
-        assert!(BOT_PATH_RECOMPUTE_INTERVAL_TICKS > 0);
+        const { assert!(BOT_PATH_RECOMPUTE_INTERVAL_TICKS > 0) };
         // Max waypoints should be reasonable
-        assert!(BOT_PATH_MAX_WAYPOINTS >= 4);
+        const { assert!(BOT_PATH_MAX_WAYPOINTS >= 4) };
     }
 
     #[test]
