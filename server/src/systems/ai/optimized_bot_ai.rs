@@ -1,15 +1,17 @@
 // Optimized Bot AI with CTF Support
 
 use crate::core::constants::*;
-use crate::core::types::{PlayerID, PlayerInputData, ServerWeaponType, Vec2};
+use crate::core::types::{EntityId, PlayerID, PlayerInputData, ServerWeaponType, Vec2, Wall};
 use crate::flatbuffers_generated::game_protocol as fb;
 use crate::server::instance::{BotBehaviorState, BotController, MassiveGameServer};
 use crate::systems::ai::commander::{
     MotionSample, PredictiveMotionModel, ThreatPredictor, ThreatSample,
 };
+use crate::world::navigation::GridNav;
 
 use crate::core::deterministic_rng::DeterministicRng;
 use dashmap::DashMap;
+use parking_lot::RwLock as ParkingLotRwLock;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -42,6 +44,43 @@ const BOT_STUCK_THRESHOLD: f32 = 10.0; // Min distance to move to not be conside
 const BOT_STUCK_TIME_THRESHOLD: f32 = 2.0; // Seconds before considering bot stuck
 const BOT_STUCK_CHECK_INTERVAL: f32 = 0.5; // Check every half second
 const BOT_STUCK_TARGET_TOLERANCE: f32 = BOT_MOVEMENT_TOLERANCE + 20.0;
+
+// ── A* pathfinding constants ─────────────────────────────────────────
+/// Cell size for the A* navigation grid (world units per cell).
+const BOT_NAV_GRID_CELL_SIZE: f32 = 20.0;
+/// Maximum number of waypoints to keep in a bot's path (longer paths are
+/// down-sampled by striding).
+const BOT_PATH_MAX_WAYPOINTS: usize = 18;
+/// Distance (world units) at which a bot considers it has reached a waypoint
+/// and advances to the next one.
+const BOT_WAYPOINT_ARRIVAL_DIST: f32 = 30.0;
+/// Ticks between forced path recomputation (60 ticks = 1 second at 60 Hz).
+const BOT_PATH_RECOMPUTE_INTERVAL_TICKS: u64 = 60;
+/// If the target moves more than this distance squared since last path compute,
+/// recompute the path immediately.
+const BOT_PATH_TARGET_MOVED_THRESHOLD_SQ: f32 = 150.0 * 150.0;
+
+// ── Cached GridNav for A* pathfinding ────────────────────────────────
+#[derive(Clone)]
+struct BotNavGridCache {
+    grid: Option<GridNav>,
+    wall_index_frame: u64,
+}
+
+impl Default for BotNavGridCache {
+    fn default() -> Self {
+        Self {
+            grid: None,
+            wall_index_frame: u64::MAX,
+        }
+    }
+}
+
+static BOT_NAV_GRID_CACHE: OnceLock<ParkingLotRwLock<BotNavGridCache>> = OnceLock::new();
+
+fn bot_nav_grid_cache() -> &'static ParkingLotRwLock<BotNavGridCache> {
+    BOT_NAV_GRID_CACHE.get_or_init(|| ParkingLotRwLock::new(BotNavGridCache::default()))
+}
 
 // ── Tick-based timing constants ──────────────────────────────────────
 // At 60 Hz, 30 ticks = 0.5s decision interval, 6 ticks = 100ms reaction time,
@@ -482,6 +521,9 @@ impl OptimizedBotAI {
                     // Keep the Instant for any legacy/external code that might reference it.
                     bot_controller.last_decision_time = Instant::now();
 
+                    // Remember old target so we can detect if the decision changed it.
+                    let old_target = bot_controller.target_position;
+
                     match lod_tier {
                         BotAiLodTier::Far => {
                             // Far tier: basic wander only
@@ -537,6 +579,12 @@ impl OptimizedBotAI {
                                 commander_waypoint,
                             );
                         }
+                    }
+
+                    // If the decision changed the target, invalidate the A* path
+                    // so it will be recomputed with the new destination.
+                    if bot_controller.target_position != old_target {
+                        Self::invalidate_path(bot_controller);
                     }
 
                     debug!(
@@ -1169,17 +1217,35 @@ impl OptimizedBotAI {
             has_enemy_target = Self::has_line_of_sight(bot_pos, enemy_position, server_instance);
         }
 
-        // Movement towards objective - THIS IS THE KEY PART
+        // Movement towards objective using A* waypoint following
         let mut movement_handled = false;
 
         if let Some(target_pos) = bot_controller.target_position {
-            let nav_target = server_instance
-                .navigation_waypoint_towards(Vec2::new(bot_state.x, bot_state.y), target_pos);
+            let bot_pos = Vec2::new(bot_state.x, bot_state.y);
+
+            // Check line-of-sight to target: if clear, move directly
+            let los_to_target = Self::has_line_of_sight(bot_pos, target_pos, server_instance);
+
+            let nav_target = if los_to_target {
+                // Direct path is clear -- skip A* overhead
+                target_pos
+            } else {
+                // Use A* to compute / follow waypoints around obstacles
+                Self::ensure_path(
+                    bot_controller,
+                    bot_pos,
+                    target_pos,
+                    frame_count,
+                    server_instance,
+                );
+                Self::next_waypoint(bot_controller, bot_pos)
+            };
+
             let dx = nav_target.x - bot_state.x;
             let dy = nav_target.y - bot_state.y;
             let dist_sq = dx * dx + dy * dy;
 
-            // Always set rotation towards target
+            // Always set rotation towards next waypoint
             let target_angle = dy.atan2(dx);
             input.rotation = target_angle;
 
@@ -1209,7 +1275,7 @@ impl OptimizedBotAI {
                 }
 
                 trace!(
-                    "Bot {} moving to target at ({:.0}, {:.0}), distance: {:.0}",
+                    "Bot {} following waypoint at ({:.0}, {:.0}), distance: {:.0}",
                     bot_state.username,
                     nav_target.x,
                     nav_target.y,
@@ -1446,13 +1512,17 @@ impl OptimizedBotAI {
             if distance_moved < BOT_STUCK_THRESHOLD {
                 // Bot is potentially stuck
                 if bot_controller.stuck_timer >= BOT_STUCK_TIME_THRESHOLD {
-                    // Bot is definitely stuck - take action
+                    // Bot is definitely stuck - invalidate current path and
+                    // pick a new escape target so A* can try a different route.
                     debug!(
-                        "Bot {} is stuck at ({:.0}, {:.0}), generating new target",
+                        "Bot {} is stuck at ({:.0}, {:.0}), invalidating path and picking escape target",
                         bot_state.username, current_pos.x, current_pos.y
                     );
 
-                    // Try to move in a random direction away from current position
+                    // Invalidate the current A* path so it will be recomputed
+                    Self::invalidate_path(bot_controller);
+
+                    // Pick a random nearby escape target
                     let (escape_angle, escape_distance) = with_bot_rng(|rng| {
                         (
                             rng.gen_range_f32(0.0, 2.0 * std::f32::consts::PI),
@@ -1493,6 +1563,211 @@ impl OptimizedBotAI {
 
         // Always update last position
         bot_controller.last_position = current_pos;
+    }
+
+    // ── A* pathfinding helpers ───────────────────────────────────────
+
+    /// Get or lazily build the shared navigation grid.  The grid is cached and
+    /// only rebuilt when the wall spatial index version changes (i.e. walls are
+    /// destroyed / created).
+    fn get_or_build_nav_grid(server_instance: &MassiveGameServer) -> Option<GridNav> {
+        let wall_index_frame = server_instance.wall_spatial_index.last_update_frame();
+        {
+            let cache = bot_nav_grid_cache().read();
+            if cache.wall_index_frame == wall_index_frame {
+                if let Some(grid) = cache.grid.as_ref() {
+                    return Some(grid.clone());
+                }
+            }
+        }
+
+        let rebuilt = Self::build_nav_grid(server_instance);
+        {
+            let mut cache = bot_nav_grid_cache().write();
+            cache.wall_index_frame = wall_index_frame;
+            cache.grid = rebuilt.clone();
+        }
+        rebuilt
+    }
+
+    /// Build a fresh navigation grid from the current wall layout.
+    fn build_nav_grid(server_instance: &MassiveGameServer) -> Option<GridNav> {
+        if BOT_NAV_GRID_CELL_SIZE <= 0.0 {
+            return None;
+        }
+
+        let world_width = (WORLD_MAX_X - WORLD_MIN_X).max(BOT_NAV_GRID_CELL_SIZE);
+        let world_height = (WORLD_MAX_Y - WORLD_MIN_Y).max(BOT_NAV_GRID_CELL_SIZE);
+        let grid_width = (world_width / BOT_NAV_GRID_CELL_SIZE).ceil() as i32;
+        let grid_height = (world_height / BOT_NAV_GRID_CELL_SIZE).ceil() as i32;
+        let mut nav_grid = GridNav::with_origin(
+            grid_width.max(1),
+            grid_height.max(1),
+            BOT_NAV_GRID_CELL_SIZE,
+            WORLD_MIN_X,
+            WORLD_MIN_Y,
+        );
+
+        let partitions = server_instance
+            .world_partition_manager
+            .get_partitions_for_processing();
+        let mut seen_wall_ids: HashSet<EntityId> = HashSet::new();
+        for partition in partitions {
+            for wall_entry in partition.all_walls_in_partition.iter() {
+                let wall = wall_entry.value();
+                if wall.is_destructible && wall.current_health <= 0 {
+                    continue;
+                }
+                if !seen_wall_ids.insert(wall.id) {
+                    continue;
+                }
+                Self::mark_wall_cells_blocked(&mut nav_grid, wall);
+            }
+        }
+        Some(nav_grid)
+    }
+
+    /// Mark grid cells covered by a wall (inflated by PLAYER_RADIUS) as blocked.
+    fn mark_wall_cells_blocked(nav_grid: &mut GridNav, wall: &Wall) {
+        let max_world_x = WORLD_MAX_X - f32::EPSILON;
+        let max_world_y = WORLD_MAX_Y - f32::EPSILON;
+        let inflated_min_x = wall.x - PLAYER_RADIUS;
+        let inflated_min_y = wall.y - PLAYER_RADIUS;
+        let inflated_max_x = wall.x + wall.width + PLAYER_RADIUS;
+        let inflated_max_y = wall.y + wall.height + PLAYER_RADIUS;
+
+        let Some((min_cell_x, min_cell_y)) = nav_grid.world_to_grid(
+            inflated_min_x.clamp(WORLD_MIN_X, WORLD_MAX_X),
+            inflated_min_y.clamp(WORLD_MIN_Y, WORLD_MAX_Y),
+        ) else {
+            return;
+        };
+        let Some((max_cell_x, max_cell_y)) = nav_grid.world_to_grid(
+            inflated_max_x.clamp(WORLD_MIN_X, max_world_x),
+            inflated_max_y.clamp(WORLD_MIN_Y, max_world_y),
+        ) else {
+            return;
+        };
+
+        for gy in min_cell_y.min(max_cell_y)..=min_cell_y.max(max_cell_y) {
+            for gx in min_cell_x.min(max_cell_x)..=min_cell_x.max(max_cell_x) {
+                nav_grid.set_blocked(gx, gy, true);
+            }
+        }
+    }
+
+    /// Compute (or reuse) an A* path from the bot's position to its target.
+    /// Populates `bot_controller.current_path` with a down-sampled waypoint list.
+    /// Returns `true` if a valid path was found (or already exists).
+    fn ensure_path(
+        bot_controller: &mut BotController,
+        bot_pos: Vec2,
+        target: Vec2,
+        frame_count: u64,
+        server_instance: &MassiveGameServer,
+    ) -> bool {
+        // Check if we need to recompute
+        let ticks_since_compute = frame_count.saturating_sub(bot_controller.path_compute_tick);
+        let target_moved = bot_controller
+            .last_path_target
+            .map(|old| {
+                let dx = target.x - old.x;
+                let dy = target.y - old.y;
+                dx * dx + dy * dy > BOT_PATH_TARGET_MOVED_THRESHOLD_SQ
+            })
+            .unwrap_or(true);
+
+        let needs_recompute = bot_controller.current_path.is_empty()
+            || ticks_since_compute >= BOT_PATH_RECOMPUTE_INTERVAL_TICKS
+            || target_moved;
+
+        if !needs_recompute {
+            return true;
+        }
+
+        // Try A* pathfinding via the cached GridNav
+        if let Some(nav_grid) = Self::get_or_build_nav_grid(server_instance) {
+            if let Some(grid_path) = nav_grid.find_path_world(bot_pos, target) {
+                let path_len = grid_path.len();
+                bot_controller.current_path.clear();
+
+                if path_len <= 1 {
+                    bot_controller.current_path.push_back(target);
+                } else {
+                    // Down-sample long paths to BOT_PATH_MAX_WAYPOINTS
+                    let stride = if path_len > BOT_PATH_MAX_WAYPOINTS {
+                        (path_len / BOT_PATH_MAX_WAYPOINTS).max(1)
+                    } else {
+                        1
+                    };
+
+                    for (idx, waypoint) in grid_path.iter().enumerate().skip(1) {
+                        let is_last = idx + 1 == path_len;
+                        if is_last || idx % stride == 0 {
+                            bot_controller.current_path.push_back(*waypoint);
+                        }
+                    }
+
+                    // Ensure the final waypoint is exactly the goal
+                    if let Some(last) = bot_controller.current_path.back_mut() {
+                        *last = target;
+                    } else {
+                        bot_controller.current_path.push_back(target);
+                    }
+                }
+
+                bot_controller.path_compute_tick = frame_count;
+                bot_controller.last_path_target = Some(target);
+                trace!(
+                    "A* path computed: {} waypoints from ({:.0},{:.0}) to ({:.0},{:.0})",
+                    bot_controller.current_path.len(),
+                    bot_pos.x,
+                    bot_pos.y,
+                    target.x,
+                    target.y,
+                );
+                return true;
+            }
+        }
+
+        // A* failed (no grid or no path) -- fall back to direct movement
+        bot_controller.current_path.clear();
+        bot_controller.current_path.push_back(target);
+        bot_controller.path_compute_tick = frame_count;
+        bot_controller.last_path_target = Some(target);
+        false
+    }
+
+    /// Advance through the waypoint list and return the next position the bot
+    /// should steer towards.  Pops completed waypoints along the way.
+    fn next_waypoint(bot_controller: &mut BotController, bot_pos: Vec2) -> Vec2 {
+        // Pop any waypoints we've already reached
+        while bot_controller.current_path.len() > 1 {
+            if let Some(wp) = bot_controller.current_path.front() {
+                let dx = wp.x - bot_pos.x;
+                let dy = wp.y - bot_pos.y;
+                if dx * dx + dy * dy <= BOT_WAYPOINT_ARRIVAL_DIST * BOT_WAYPOINT_ARRIVAL_DIST {
+                    bot_controller.current_path.pop_front();
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Return the current waypoint, or fall back to bot's own position (no movement)
+        bot_controller
+            .current_path
+            .front()
+            .copied()
+            .unwrap_or(bot_pos)
+    }
+
+    /// Invalidate the current path so it will be recomputed on the next tick.
+    fn invalidate_path(bot_controller: &mut BotController) {
+        bot_controller.current_path.clear();
+        bot_controller.last_path_target = None;
     }
 }
 
@@ -1720,5 +1995,142 @@ mod tests {
     fn weapon_switch_cooldown_ticks_matches_1s() {
         // 60 ticks at 60Hz = 1.0s
         assert_eq!(BOT_WEAPON_SWITCH_COOLDOWN_TICKS, 60);
+    }
+
+    // ── A* pathfinding / waypoint-following tests ─────────────────
+
+    use std::collections::VecDeque;
+
+    /// Helper: create a minimal BotController at a given position with an
+    /// optional pre-loaded path.
+    fn make_test_bot_controller(
+        pos: Vec2,
+        path: Vec<Vec2>,
+    ) -> BotController {
+        let mut bc = BotController {
+            player_id: std::sync::Arc::new("test-bot".to_string()),
+            target_position: None,
+            target_enemy_id: None,
+            last_decision_time: Instant::now(),
+            last_decision_tick: 0,
+            ai_update_accumulator_secs: 0.0,
+            behavior_state: BotBehaviorState::Idle,
+            current_path: VecDeque::from(path),
+            path_recalculation_timer: Instant::now(),
+            last_weapon_switch_time: Instant::now(),
+            last_weapon_switch_tick: 0,
+            last_position: pos,
+            stuck_timer: 0.0,
+            stuck_check_position: pos,
+            personality: BotPersonality::Balanced,
+            path_compute_tick: 0,
+            last_path_target: None,
+        };
+        bc.target_position = bc.current_path.back().copied();
+        bc
+    }
+
+    #[test]
+    fn next_waypoint_returns_first_when_far_away() {
+        let bot_pos = Vec2::new(0.0, 0.0);
+        let wp1 = Vec2::new(100.0, 0.0);
+        let wp2 = Vec2::new(200.0, 0.0);
+        let mut bc = make_test_bot_controller(bot_pos, vec![wp1, wp2]);
+
+        let next = OptimizedBotAI::next_waypoint(&mut bc, bot_pos);
+        assert!((next.x - wp1.x).abs() < 1.0 && (next.y - wp1.y).abs() < 1.0,
+            "Should return first waypoint when bot is far from it");
+        assert_eq!(bc.current_path.len(), 2, "Path should not be consumed yet");
+    }
+
+    #[test]
+    fn next_waypoint_advances_past_reached_waypoints() {
+        let wp1 = Vec2::new(10.0, 0.0);
+        let wp2 = Vec2::new(100.0, 0.0);
+        let wp3 = Vec2::new(200.0, 0.0);
+        let bot_pos = Vec2::new(12.0, 0.0); // very close to wp1
+        let mut bc = make_test_bot_controller(bot_pos, vec![wp1, wp2, wp3]);
+
+        let next = OptimizedBotAI::next_waypoint(&mut bc, bot_pos);
+        // wp1 should be popped (within BOT_WAYPOINT_ARRIVAL_DIST=30)
+        assert!((next.x - wp2.x).abs() < 1.0,
+            "Should advance past wp1 to wp2, got ({:.1}, {:.1})", next.x, next.y);
+        assert_eq!(bc.current_path.len(), 2, "wp1 should have been popped");
+    }
+
+    #[test]
+    fn next_waypoint_does_not_pop_last_waypoint() {
+        let wp1 = Vec2::new(5.0, 5.0);
+        let bot_pos = Vec2::new(5.0, 5.0); // exactly at wp1
+        let mut bc = make_test_bot_controller(bot_pos, vec![wp1]);
+
+        let next = OptimizedBotAI::next_waypoint(&mut bc, bot_pos);
+        // Should NOT pop the last waypoint, even if we're on top of it
+        assert_eq!(bc.current_path.len(), 1, "Last waypoint must not be popped");
+        assert!((next.x - wp1.x).abs() < 1.0);
+    }
+
+    #[test]
+    fn next_waypoint_returns_bot_pos_when_path_empty() {
+        let bot_pos = Vec2::new(42.0, 99.0);
+        let mut bc = make_test_bot_controller(bot_pos, vec![]);
+
+        let next = OptimizedBotAI::next_waypoint(&mut bc, bot_pos);
+        assert!((next.x - bot_pos.x).abs() < f32::EPSILON);
+        assert!((next.y - bot_pos.y).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn next_waypoint_pops_multiple_reached_waypoints() {
+        let wp1 = Vec2::new(0.0, 0.0);
+        let wp2 = Vec2::new(5.0, 0.0);
+        let wp3 = Vec2::new(10.0, 0.0);
+        let wp4 = Vec2::new(500.0, 0.0);
+        let bot_pos = Vec2::new(8.0, 0.0); // close to wp1, wp2, wp3
+        let mut bc = make_test_bot_controller(bot_pos, vec![wp1, wp2, wp3, wp4]);
+
+        let next = OptimizedBotAI::next_waypoint(&mut bc, bot_pos);
+        // wp1, wp2, wp3 are all within BOT_WAYPOINT_ARRIVAL_DIST of bot_pos.
+        // wp3 should NOT be popped because it's the second-to-last and close,
+        // but wp4 is the one we want to reach.
+        // Actually wp1 (dist=8), wp2 (dist=3), wp3 (dist=2) are all within 30u.
+        // But we don't pop the last one. So wp1, wp2, wp3 get popped leaving wp4.
+        assert_eq!(bc.current_path.len(), 1, "Should have popped 3 waypoints, 1 remaining");
+        assert!((next.x - wp4.x).abs() < 1.0);
+    }
+
+    #[test]
+    fn invalidate_path_clears_state() {
+        let mut bc = make_test_bot_controller(
+            Vec2::new(0.0, 0.0),
+            vec![Vec2::new(100.0, 100.0)],
+        );
+        bc.path_compute_tick = 42;
+        bc.last_path_target = Some(Vec2::new(100.0, 100.0));
+
+        OptimizedBotAI::invalidate_path(&mut bc);
+        assert!(bc.current_path.is_empty());
+        assert!(bc.last_path_target.is_none());
+    }
+
+    #[test]
+    fn pathfinding_constants_are_sane() {
+        // Grid cell size should be positive
+        assert!(BOT_NAV_GRID_CELL_SIZE > 0.0);
+        // Waypoint arrival distance should be smaller than movement tolerance
+        // to avoid "jitter" between waypoints and "at target" detection
+        assert!(BOT_WAYPOINT_ARRIVAL_DIST < BOT_MOVEMENT_TOLERANCE);
+        // Recompute interval should be positive
+        assert!(BOT_PATH_RECOMPUTE_INTERVAL_TICKS > 0);
+        // Max waypoints should be reasonable
+        assert!(BOT_PATH_MAX_WAYPOINTS >= 4);
+    }
+
+    #[test]
+    fn path_target_moved_threshold_is_significant() {
+        // The threshold should correspond to a meaningful distance (>50u)
+        let threshold_dist = BOT_PATH_TARGET_MOVED_THRESHOLD_SQ.sqrt();
+        assert!(threshold_dist >= 100.0,
+            "Path recompute distance threshold should be >= 100 units, got {}", threshold_dist);
     }
 }
