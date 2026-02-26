@@ -174,7 +174,7 @@ impl ScenarioMetrics {
         let total_deltas = self.total_deltas.load(Ordering::Relaxed);
         let total_inputs = self.total_inputs_sent.load(Ordering::Relaxed);
 
-        println!("\n{}", "=".repeat(60));
+        println!("\n{}", "=".repeat(72));
         println!("  Scenario: {}", self.scenario_name);
         println!("  Duration: {:.1}s", elapsed.as_secs_f64());
         println!(
@@ -184,19 +184,49 @@ impl ScenarioMetrics {
         println!("  Total deltas received: {}", total_deltas);
         println!("  Total inputs sent:     {}", total_inputs);
 
-        // Join latency stats
+        // --- Connection statistics ---
+        println!("\n  --- Connection Statistics ---");
+        println!(
+            "  Connections attempted: {}",
+            bots.iter().filter(|b| !b.username.is_empty()).count()
+        );
+        println!("  Connections successful (welcomed): {}", welcomed);
+        let failed_count = bots
+            .iter()
+            .filter(|b| !b.username.is_empty() && !b.connected && !b.completed)
+            .count();
+        println!("  Connections failed:    {}", failed_count);
+
+        // --- Join latency statistics ---
         let join_latencies: Vec<f64> = bots
             .iter()
             .filter_map(|b| b.join_latency.map(|d| d.as_secs_f64() * 1000.0))
             .collect();
         if !join_latencies.is_empty() {
-            let mean = join_latencies.iter().sum::<f64>() / join_latencies.len() as f64;
-            let max = join_latencies.iter().cloned().fold(f64::MIN, f64::max);
-            let min = join_latencies.iter().cloned().fold(f64::MAX, f64::min);
-            println!(
-                "  Join latency (ms):     min={:.0}  mean={:.0}  max={:.0}",
-                min, mean, max
-            );
+            let stats = compute_latency_stats(&join_latencies);
+            println!("\n  --- Join Latency (ms) ---");
+            println!("  min:  {:.1}", stats.min);
+            println!("  avg:  {:.1}", stats.avg);
+            println!("  p50:  {:.1}", stats.p50);
+            println!("  p95:  {:.1}", stats.p95);
+            println!("  p99:  {:.1}", stats.p99);
+            println!("  max:  {:.1}", stats.max);
+        }
+
+        // --- DC open latency statistics ---
+        let dc_latencies: Vec<f64> = bots
+            .iter()
+            .filter_map(|b| b.dc_open_latency.map(|d| d.as_secs_f64() * 1000.0))
+            .collect();
+        if !dc_latencies.is_empty() {
+            let stats = compute_latency_stats(&dc_latencies);
+            println!("\n  --- DataChannel Open Latency (ms) ---");
+            println!("  min:  {:.1}", stats.min);
+            println!("  avg:  {:.1}", stats.avg);
+            println!("  p50:  {:.1}", stats.p50);
+            println!("  p95:  {:.1}", stats.p95);
+            println!("  p99:  {:.1}", stats.p99);
+            println!("  max:  {:.1}", stats.max);
         }
 
         // Delta interval stats
@@ -210,21 +240,29 @@ impl ScenarioMetrics {
                 all_p95_intervals.push(p95.as_secs_f64() * 1000.0);
             }
         }
+        if !all_mean_intervals.is_empty() || !all_p95_intervals.is_empty() {
+            println!("\n  --- Delta Interval (ms) ---");
+        }
         if !all_mean_intervals.is_empty() {
-            let avg_mean =
-                all_mean_intervals.iter().sum::<f64>() / all_mean_intervals.len() as f64;
-            println!("  Avg mean delta interval: {:.1}ms", avg_mean);
+            let avg_mean = all_mean_intervals.iter().sum::<f64>() / all_mean_intervals.len() as f64;
+            println!("  Avg mean delta interval: {:.1}", avg_mean);
         }
         if !all_p95_intervals.is_empty() {
             let avg_p95 = all_p95_intervals.iter().sum::<f64>() / all_p95_intervals.len() as f64;
-            println!("  Avg p95 delta interval:  {:.1}ms", avg_p95);
+            println!("  Avg p95 delta interval:  {:.1}", avg_p95);
         }
 
         // Completed vs disconnected
         let completed_count = bots.iter().filter(|b| b.completed).count();
-        println!("  Completed gracefully:  {}/{}", completed_count, self.target_bots);
+        println!(
+            "\n  Completed gracefully:  {}/{}",
+            completed_count, self.target_bots
+        );
 
-        let disconnected: Vec<&BotMetrics> = bots.iter().filter(|b| !b.connected && !b.completed).collect();
+        let disconnected: Vec<&BotMetrics> = bots
+            .iter()
+            .filter(|b| !b.connected && !b.completed && !b.username.is_empty())
+            .collect();
         if !disconnected.is_empty() {
             println!("  Disconnected bots: {}", disconnected.len());
             for d in disconnected.iter().take(10) {
@@ -239,7 +277,7 @@ impl ScenarioMetrics {
             }
         }
 
-        println!("{}\n", "=".repeat(60));
+        println!("{}\n", "=".repeat(72));
 
         // Pass criteria:
         // - At least 90% of target bots received a welcome message
@@ -275,4 +313,57 @@ impl ScenarioMetrics {
 
         pass
     }
+}
+
+/// Summary statistics for a latency distribution.
+struct LatencyStats {
+    min: f64,
+    avg: f64,
+    p50: f64,
+    p95: f64,
+    p99: f64,
+    max: f64,
+}
+
+/// Compute min/avg/p50/p95/p99/max from a slice of f64 latency values.
+fn compute_latency_stats(values: &[f64]) -> LatencyStats {
+    if values.is_empty() {
+        return LatencyStats {
+            min: 0.0,
+            avg: 0.0,
+            p50: 0.0,
+            p95: 0.0,
+            p99: 0.0,
+            max: 0.0,
+        };
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+
+    let n = sorted.len();
+    let avg = sorted.iter().sum::<f64>() / n as f64;
+    let min = sorted[0];
+    let max = sorted[n - 1];
+
+    let p50 = percentile_sorted(&sorted, 0.50);
+    let p95 = percentile_sorted(&sorted, 0.95);
+    let p99 = percentile_sorted(&sorted, 0.99);
+
+    LatencyStats {
+        min,
+        avg,
+        p50,
+        p95,
+        p99,
+        max,
+    }
+}
+
+/// Compute a percentile from a pre-sorted slice.
+fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
+    sorted[idx.min(sorted.len() - 1)]
 }

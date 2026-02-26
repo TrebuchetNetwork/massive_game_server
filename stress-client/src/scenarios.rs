@@ -28,14 +28,18 @@ pub struct ScenarioResult {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario: ramp_120
-// Connect 2 clients per second until 120 total are connected.
+// Scenario: ramp
+// Connect 2 clients per second until total_bots are connected.
 // ---------------------------------------------------------------------------
-pub async fn ramp_120(server_url: &str, run_duration: Duration) -> Result<ScenarioResult> {
+pub async fn ramp(
+    server_url: &str,
+    total_bots: usize,
+    run_duration: Duration,
+) -> Result<ScenarioResult> {
     let config = ScenarioConfig {
-        name: "ramp_120".to_string(),
+        name: "ramp".to_string(),
         server_url: server_url.to_string(),
-        total_bots: 120,
+        total_bots,
         run_duration,
     };
     let bots_per_sec = 2;
@@ -43,14 +47,18 @@ pub async fn ramp_120(server_url: &str, run_duration: Duration) -> Result<Scenar
 }
 
 // ---------------------------------------------------------------------------
-// Scenario: burst_120
-// Connect all 120 bots simultaneously.
+// Scenario: burst
+// Connect all bots simultaneously.
 // ---------------------------------------------------------------------------
-pub async fn burst_120(server_url: &str, run_duration: Duration) -> Result<ScenarioResult> {
+pub async fn burst(
+    server_url: &str,
+    total_bots: usize,
+    run_duration: Duration,
+) -> Result<ScenarioResult> {
     let config = ScenarioConfig {
-        name: "burst_120".to_string(),
+        name: "burst".to_string(),
         server_url: server_url.to_string(),
-        total_bots: 120,
+        total_bots,
         run_duration,
     };
     run_burst_scenario(config).await
@@ -58,14 +66,17 @@ pub async fn burst_120(server_url: &str, run_duration: Duration) -> Result<Scena
 
 // ---------------------------------------------------------------------------
 // Scenario: tail_wave
-// Connect 96 bots at a steady rate (4/sec), then burst 24 more.
+// Connect 80% bots at a steady rate (4/sec), then burst remaining 20%.
 // ---------------------------------------------------------------------------
-pub async fn tail_wave(server_url: &str, run_duration: Duration) -> Result<ScenarioResult> {
+pub async fn tail_wave(
+    server_url: &str,
+    total_bots: usize,
+    run_duration: Duration,
+) -> Result<ScenarioResult> {
     let name = "tail_wave".to_string();
-    let total_bots = 120;
-    let steady_count = 96;
-    let burst_count = 24;
-    let steady_rate = 4; // per second
+    let steady_count = (total_bots as f64 * 0.8).ceil() as usize;
+    let burst_count = total_bots - steady_count;
+    let steady_rate: u32 = 4; // per second
 
     let metrics = ScenarioMetrics::new(&name, total_bots);
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -73,12 +84,12 @@ pub async fn tail_wave(server_url: &str, run_duration: Duration) -> Result<Scena
 
     let server_url_owned = server_url.to_string();
 
-    // Phase 1: Steady ramp of 96 bots at 4/sec
+    // Phase 1: Steady ramp of steady_count bots at steady_rate/sec
     info!(
         "[{}] Phase 1: ramping {} bots at {}/sec",
         name, steady_count, steady_rate
     );
-    let interval = Duration::from_secs(1) / steady_rate as u32;
+    let interval = Duration::from_secs(1) / steady_rate;
 
     for bot_id in 0..steady_count {
         let metrics = metrics.clone();
@@ -86,7 +97,9 @@ pub async fn tail_wave(server_url: &str, run_duration: Duration) -> Result<Scena
         let server_url = server_url_owned.clone();
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = run_bot(bot_id, &server_url, metrics.clone(), shutdown, run_duration).await {
+            if let Err(e) =
+                run_bot(bot_id, &server_url, metrics.clone(), shutdown, run_duration).await
+            {
                 error!("bot#{}: fatal error: {:#}", bot_id, e);
                 metrics.mark_disconnected(bot_id, &format!("{:#}", e)).await;
             }
@@ -100,7 +113,7 @@ pub async fn tail_wave(server_url: &str, run_duration: Duration) -> Result<Scena
     info!("[{}] Phase 1 complete. Settling for 2s...", name);
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Phase 2: Burst remaining 24 bots
+    // Phase 2: Burst remaining bots
     info!("[{}] Phase 2: bursting {} bots", name, burst_count);
     for bot_id in steady_count..total_bots {
         let metrics = metrics.clone();
@@ -108,7 +121,9 @@ pub async fn tail_wave(server_url: &str, run_duration: Duration) -> Result<Scena
         let server_url = server_url_owned.clone();
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = run_bot(bot_id, &server_url, metrics.clone(), shutdown, run_duration).await {
+            if let Err(e) =
+                run_bot(bot_id, &server_url, metrics.clone(), shutdown, run_duration).await
+            {
                 error!("bot#{}: fatal error: {:#}", bot_id, e);
                 metrics.mark_disconnected(bot_id, &format!("{:#}", e)).await;
             }
@@ -125,19 +140,13 @@ pub async fn tail_wave(server_url: &str, run_duration: Duration) -> Result<Scena
     shutdown.store(true, Ordering::SeqCst);
     let passed = metrics.summarize_and_evaluate().await;
 
-    Ok(ScenarioResult {
-        name,
-        passed,
-    })
+    Ok(ScenarioResult { name, passed })
 }
 
 // ---------------------------------------------------------------------------
 // Internal: ramp scenario implementation
 // ---------------------------------------------------------------------------
-async fn run_ramp_scenario(
-    config: ScenarioConfig,
-    bots_per_sec: usize,
-) -> Result<ScenarioResult> {
+async fn run_ramp_scenario(config: ScenarioConfig, bots_per_sec: usize) -> Result<ScenarioResult> {
     let metrics = ScenarioMetrics::new(&config.name, config.total_bots);
     let shutdown = Arc::new(AtomicBool::new(false));
     let mut handles = Vec::with_capacity(config.total_bots);
@@ -156,7 +165,9 @@ async fn run_ramp_scenario(
         let run_duration = config.run_duration;
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = run_bot(bot_id, &server_url, metrics.clone(), shutdown, run_duration).await {
+            if let Err(e) =
+                run_bot(bot_id, &server_url, metrics.clone(), shutdown, run_duration).await
+            {
                 error!("bot#{}: fatal error: {:#}", bot_id, e);
                 metrics.mark_disconnected(bot_id, &format!("{:#}", e)).await;
             }
@@ -204,7 +215,9 @@ async fn run_burst_scenario(config: ScenarioConfig) -> Result<ScenarioResult> {
         let run_duration = config.run_duration;
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = run_bot(bot_id, &server_url, metrics.clone(), shutdown, run_duration).await {
+            if let Err(e) =
+                run_bot(bot_id, &server_url, metrics.clone(), shutdown, run_duration).await
+            {
                 error!("bot#{}: fatal error: {:#}", bot_id, e);
                 metrics.mark_disconnected(bot_id, &format!("{:#}", e)).await;
             }

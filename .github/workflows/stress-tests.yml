@@ -42,7 +42,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y flatbuffers-compiler
 
-      - name: Run stress tests (release mode)
+      - name: Build stress-client binary
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo build --release -p massive_game_server_stress_client --locked
+
+      - name: Stress-client dry-run validation
+        run: |
+          ./target/release/massive_game_server_stress_client \
+            --dry-run --scenario ramp120 -n 20 -d 3
+
+      - name: Run boundary stress tests (release mode)
         env:
           RUN_STRESS_TEST: "1"
           STRESS_BOTS: ${{ github.event.inputs.stress_bots || '200' }}
@@ -54,6 +64,13 @@ jobs:
           STRESS_TICK_TIMEOUT_SECS: "30"
           RUSTFLAGS: -D warnings
         run: cargo test --release -p massive_game_server_core --test boundary_stress --locked -- --nocapture
+
+      - name: Run stress validation tests (release mode)
+        env:
+          RUN_STRESS_TEST: "1"
+          MGS_TARGET_BOT_COUNT: "0"
+          RUSTFLAGS: -D warnings
+        run: cargo test --release -p massive_game_server_core --test stress_validation --locked -- --nocapture
 
       - name: Upload stress test logs on failure
         if: failure()

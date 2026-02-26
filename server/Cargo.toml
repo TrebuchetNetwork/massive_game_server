@@ -167,6 +167,10 @@ name = "boundary_stress"
 path = "tests/performance/boundary_stress.rs"
 
 [[test]]
+name = "stress_validation"
+path = "tests/performance/stress_validation.rs"
+
+[[test]]
 name = "property_tests"
 path = "tests/property_tests.rs"
 
