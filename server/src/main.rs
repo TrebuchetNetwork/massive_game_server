@@ -11,6 +11,7 @@ use massive_game_server_core::network::connection_manager::shared_connection_man
 use massive_game_server_core::network::signaling::{
     cleanup_connection,
     handle_signaling_connection,
+    BoundedChatQueue,
     ChatMessagesQueue,
     ClientStatesMap,
     DataChannelsMap,
@@ -18,6 +19,7 @@ use massive_game_server_core::network::signaling::{
     ServerInstanceRef, // Added ServerInstanceRef
     SignalingPeers,
     WorldPartitionManagerRef,
+    MAX_CHAT_QUEUE_SIZE,
 };
 use massive_game_server_core::operational::arena::{build_arena_routes, ArenaService};
 use massive_game_server_core::operational::auth::{build_auth_routes, AuthService};
@@ -40,7 +42,6 @@ use massive_game_server_core::server::lifecycle;
 use parking_lot::RwLock as ParkingLotRwLock;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
@@ -646,7 +647,7 @@ async fn main() -> anyhow::Result<()> {
     let data_channels_state: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_state: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
     let chat_messages_state: ChatMessagesQueue =
-        Arc::new(tokio::sync::RwLock::new(VecDeque::with_capacity(100)));
+        Arc::new(tokio::sync::RwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois_state: Arc<DashMap<String, PlayerAoI>> = Arc::new(DashMap::new());
 
     let game_server_instance: ServerInstanceRef = Arc::new(MassiveGameServer::new(

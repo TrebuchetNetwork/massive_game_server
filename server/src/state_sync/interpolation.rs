@@ -89,6 +89,22 @@ impl<T: Interpolate> InterpolationBuffer<T> {
         result.reverse();
         result
     }
+
+    /// Clear all samples. Call this when the entity disconnects or is removed
+    /// so that the buffer does not leak memory for departed players.
+    pub fn clear(&mut self) {
+        self.samples.clear();
+    }
+
+    /// Returns true if the buffer contains no samples.
+    pub fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
+
+    /// Number of samples currently stored.
+    pub fn sample_count(&self) -> usize {
+        self.samples.len()
+    }
 }
 
 #[cfg(test)]
