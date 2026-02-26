@@ -11,8 +11,8 @@ impl MassiveGameServer {
             .for_each_player(|player_id, player_state| {
                 owned_states.push((player_id.clone(), player_state.clone()));
             });
-        self.player_soa_snapshot
-            .publish(PlayerSoASnapshot::from_owned_player_states(owned_states));
+        // Use double-buffered publish to avoid per-tick allocation churn.
+        self.player_soa_snapshot.publish_owned(owned_states);
     }
 
     fn publish_entity_soa_snapshots_if_enabled(&self) {
@@ -21,15 +21,14 @@ impl MassiveGameServer {
         }
 
         let projectiles_guard = self.projectiles.read();
+        // Use double-buffered publish to reuse snapshot allocations.
         self.projectile_soa_snapshot
-            .publish(ProjectileSoASnapshot::from_projectiles_slice(
-                &projectiles_guard,
-            ));
+            .publish_from_slice(&projectiles_guard);
         drop(projectiles_guard);
 
         let pickups_guard = self.pickups.read();
         self.pickup_soa_snapshot
-            .publish(PickupSoASnapshot::from_pickups_slice(&pickups_guard));
+            .publish_from_slice(&pickups_guard);
     }
     pub(super) fn publish_player_aoi_snapshot_if_enabled(&self) {
         if !join_authoritative_aoi_snapshot_enabled() {
@@ -41,8 +40,8 @@ impl MassiveGameServer {
             let player_id = self.player_manager.id_pool.get_or_create(aoi_entry.key());
             owned_aois.push((player_id, aoi_entry.value().clone()));
         }
-        self.player_aoi_snapshot
-            .publish(PlayerAoISnapshot::from_owned_player_aois(owned_aois));
+        // Use double-buffered publish to reuse snapshot allocations.
+        self.player_aoi_snapshot.publish_owned(owned_aois);
     }
     pub(super) fn publish_authoritative_lock_free_snapshots(&self) {
         self.publish_player_soa_snapshot_if_enabled();
