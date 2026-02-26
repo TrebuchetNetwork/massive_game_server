@@ -307,7 +307,13 @@ pub const FULL_MATCH_DURATION_SECS: f32 = 300.0; // 5 minutes (existing default)
 
 // AoI tuning for higher player counts: smaller radius + capped nearest entities per client.
 pub const AOI_RADIUS: f32 = 520.0;
-pub const AOI_UPDATE_INTERVAL_SECS: f32 = 0.1;
+pub const AOI_EXIT_RADIUS: f32 = 560.0;
+/// Default AoI update interval.  At 60 Hz tick rate this means AoI is
+/// refreshed every 3 ticks (~20 Hz).  Override at runtime with the
+/// `MGS_AOI_UPDATE_DIVISOR` env var (tick divisor, e.g. 3 = 20 Hz, 6 = 10 Hz).
+pub const AOI_UPDATE_INTERVAL_SECS: f32 = 0.05;
+/// Default tick divisor for AoI updates (60 / 3 = 20 Hz).
+pub const AOI_UPDATE_DIVISOR_DEFAULT: u64 = 3;
 pub const AOI_MAX_VISIBLE_PLAYERS: usize = 96;
 pub const AOI_MAX_VISIBLE_PROJECTILES: usize = 420;
 pub const AOI_MAX_VISIBLE_PICKUPS: usize = 64;

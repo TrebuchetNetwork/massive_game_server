@@ -14,6 +14,7 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use crate::core::constants::{
     AOI_MAX_VISIBLE_PICKUPS, AOI_MAX_VISIBLE_PLAYERS, AOI_MAX_VISIBLE_PROJECTILES,
     AOI_MAX_VISIBLE_WALLS, AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS,
+    AOI_UPDATE_DIVISOR_DEFAULT,
     MOBILE_AOI_MAX_VISIBLE_PLAYERS, MOBILE_AOI_MAX_VISIBLE_PROJECTILES,
     MOBILE_AOI_MAX_VISIBLE_PICKUPS, MOBILE_AOI_MAX_VISIBLE_WALLS,
     WORLD_MAX_X, WORLD_MAX_Y, WORLD_MIN_X, WORLD_MIN_Y,
@@ -245,9 +246,14 @@ impl MassiveGameServer {
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
         trace!("[Frame {}] Starting synchronize_state", frame);
         let sync_loop_start = Instant::now();
-        let aoi_stride = (AOI_UPDATE_INTERVAL_SECS * self.config.tick_rate as f32)
-            .round()
-            .max(1.0) as u64;
+        // AoI update divisor: configurable via MGS_AOI_UPDATE_DIVISOR env var.
+        // Default = 3 ticks (20 Hz at 60 Hz tick rate). Previous default was 6 (10 Hz)
+        // which caused visibility glitches for fast-moving entities.
+        let aoi_stride = std::env::var("MGS_AOI_UPDATE_DIVISOR")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(AOI_UPDATE_DIVISOR_DEFAULT)
+            .max(1);
         let update_aoi_this_frame = update_aoi && frame.is_multiple_of(aoi_stride);
 
         let mut players_to_update = Vec::with_capacity(self.player_manager.player_count());
