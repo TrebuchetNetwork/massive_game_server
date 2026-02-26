@@ -315,6 +315,8 @@ pub struct MassiveGameServer {
     pub active_connections: Arc<DashMap<String, NetworkConnection>>,
 
     pub frame_counter: Arc<AtomicU64>,
+    /// Epoch millis of the most recent completed game tick (0 = no tick yet).
+    pub last_tick_epoch_ms: Arc<AtomicU64>,
     pub tick_durations_history: Arc<ParkingLotRwLock<VecDeque<Duration>>>,
     pub projectiles: Arc<ParkingLotRwLock<Vec<Projectile>>>,
     pub pickups: Arc<ParkingLotRwLock<Vec<Pickup>>>,
@@ -747,6 +749,7 @@ impl MassiveGameServer {
             melee_hit_events: Arc::new(SegQueue::new()),
             active_connections: Arc::new(DashMap::new()),
             frame_counter: Arc::new(AtomicU64::new(0)),
+            last_tick_epoch_ms: Arc::new(AtomicU64::new(0)),
             tick_durations_history: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(1000))),
             projectiles: Arc::new(ParkingLotRwLock::new(Vec::new())),
             pickups: Arc::new(ParkingLotRwLock::new(initial_pickups)),
