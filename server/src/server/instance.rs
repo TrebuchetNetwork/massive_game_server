@@ -355,6 +355,11 @@ pub struct MassiveGameServer {
     direct_packet_queue_cap: usize,
     commander_mode_enabled: bool,
     commander_runtime_state: Arc<ParkingLotRwLock<CommanderRuntimeState>>,
+    /// Set to `true` when a critical task panics inside a game tick.
+    /// The match continues but monitoring/health-check endpoints can report
+    /// the degraded state so operators can investigate.
+    pub match_degraded: Arc<AtomicBool>,
+
     // ── Match sizing ──────────────────────────────────────────────────
     pub match_type: MatchType,
     /// Duration of a single round in seconds (derived from match_type).
@@ -792,6 +797,7 @@ impl MassiveGameServer {
             commander_runtime_state: Arc::new(ParkingLotRwLock::new(
                 CommanderRuntimeState::default(),
             )),
+            match_degraded: Arc::new(AtomicBool::new(false)),
             match_type,
             match_duration_secs,
             quick_match_queue_start: Arc::new(ParkingLotRwLock::new(None)),
@@ -803,11 +809,17 @@ impl MassiveGameServer {
     }
 
     pub fn request_shutdown(&self) {
-        self.is_shutting_down.store(true, AtomicOrdering::SeqCst);
+        self.is_shutting_down.store(true, AtomicOrdering::Release);
     }
 
     pub fn is_shutdown_requested(&self) -> bool {
         self.is_shutting_down.load(AtomicOrdering::Acquire)
+    }
+
+    /// Returns `true` if a critical task has panicked during a game tick,
+    /// indicating the match state may be corrupted.
+    pub fn is_match_degraded(&self) -> bool {
+        self.match_degraded.load(AtomicOrdering::Acquire)
     }
 
     pub fn current_quality_settings(&self) -> QualitySettings {
@@ -1084,16 +1096,18 @@ impl MassiveGameServer {
         self.player_aois.remove(peer_id);
         self.data_channels_map.remove(peer_id);
         self.direct_packets.remove(peer_id);
-        // Clean up interpolation history to prevent memory leak on disconnect.
-        let pid: crate::core::types::PlayerID = std::sync::Arc::new(peer_id.to_owned());
-        self.player_position_history.remove(&pid);
+        // Clean up per-player tracking state to prevent unbounded growth
+        self.cleanup_player_tracking_state(peer_id);
     }
 
-    /// Remove interpolation history for a disconnected player.
-    /// Called from both QUIC and WebRTC disconnect paths to prevent memory leaks.
-    pub fn cleanup_player_position_history(&self, peer_id: &str) {
-        let pid: crate::core::types::PlayerID = std::sync::Arc::new(peer_id.to_owned());
-        self.player_position_history.remove(&pid);
+    /// Remove per-player tracking data (position history, aim anomaly state, etc.)
+    /// to prevent unbounded memory growth after a player disconnects.
+    /// Called from both QUIC and WebRTC disconnect paths.
+    pub fn cleanup_player_tracking_state(&self, peer_id: &str) {
+        let player_id: PlayerID = Arc::new(peer_id.to_owned());
+        self.player_position_history.remove(&player_id);
+        self.aim_anomaly_states.remove(&player_id);
+        self.player_last_sync_positions.remove(&player_id);
     }
 
     pub async fn run_game_logic_update(&self, delta_time: f32) {

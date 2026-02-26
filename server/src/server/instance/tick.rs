@@ -60,7 +60,18 @@ impl MassiveGameServer {
 
         while let Some(res) = set.join_next().await {
             if let Err(e) = res {
-                error!("[Frame {}] Task join error in Stage 1: {}", frame, e);
+                if e.is_panic() {
+                    // A task panicked -- flag the match as degraded so health
+                    // checks and monitoring can detect the corrupted state.
+                    error!(
+                        "[Frame {}] CRITICAL: Task panicked in Stage 1: {}. Match flagged as degraded.",
+                        frame, e
+                    );
+                    self.match_degraded.store(true, AtomicOrdering::Release);
+                } else {
+                    // Task was cancelled (not a panic) -- less severe but still log.
+                    error!("[Frame {}] Task join error in Stage 1: {}", frame, e);
+                }
             }
         }
         let stage1_elapsed = stage1_start.elapsed();

@@ -243,6 +243,8 @@ impl MassiveGameServer {
         self.data_channels_map.remove(bot_id.as_str());
         self.client_states_map.write().remove(bot_id.as_str());
         self.player_aois.remove(bot_id.as_str());
+        // Clean up per-player tracking state to prevent unbounded memory growth
+        self.cleanup_player_tracking_state(bot_id.as_str());
 
         info!(
             "[Human Priority] Evicted bot '{}' to free a slot for human '{}'.",
@@ -293,6 +295,11 @@ impl MassiveGameServer {
             "Sierra", "Tango", "Uniform", "Victor", "Whiskey", "Xray", "Yankee", "Zulu",
         ];
 
+        // Pre-compute team counts once before the loop to avoid O(n^2)
+        // behavior when spawning many bots (previously iterated all players
+        // for every single bot spawn).
+        let (mut team1_player_count, mut team2_player_count) = self.team_player_counts();
+
         for _i in 0..count_to_add {
             let current_total_players = self.player_manager.player_count();
             let max_players = self.effective_max_players();
@@ -320,16 +327,6 @@ impl MassiveGameServer {
             );
 
             let bot_player_id_str = format!("bot_{}", uuid::Uuid::new_v4());
-
-            let mut team1_player_count = 0;
-            let mut team2_player_count = 0;
-            self.player_manager.for_each_player(|_id, p_state| {
-                if p_state.team_id == 1 {
-                    team1_player_count += 1;
-                } else if p_state.team_id == 2 {
-                    team2_player_count += 1;
-                }
-            });
 
             let team_id = if team1_player_count <= team2_player_count {
                 1
@@ -377,6 +374,14 @@ impl MassiveGameServer {
                     let p_state = &mut *p_state_entry;
                     p_state.team_id = team_id;
                     p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
+                }
+
+                // Incrementally maintain team counts so we don't need to
+                // re-scan all players on each iteration.
+                if team_id == 1 {
+                    team1_player_count += 1;
+                } else {
+                    team2_player_count += 1;
                 }
 
                 let bot_controller = BotController {

@@ -1661,7 +1661,7 @@ pub async fn handle_signaling_connection(
     // Defuse the drop guard since we are closing the connection explicitly.
     pc_drop_guard.defuse();
     // Clean up interpolation history to prevent memory leak after disconnect.
-    server_instance.cleanup_player_position_history(&peer_id_str);
+    server_instance.cleanup_player_tracking_state(&peer_id_str);
     if let Err(e) = peer_connection.close().await {
         error!("[{}]: Error closing PeerConnection: {}", peer_id_str, e);
     }

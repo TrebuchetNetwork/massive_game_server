@@ -1079,12 +1079,15 @@ async fn main() -> anyhow::Result<()> {
             // during startup; the readyz endpoint covers that case.
             let game_loop_alive = last_tick == 0 || tick_age_ms <= 2_000;
 
+            let match_degraded = server_for_healthz.is_match_degraded();
+
             if game_loop_alive {
                 warp::reply::with_status(
                     warp::reply::json(&serde_json::json!({
                         "ok": true,
                         "service": "massive_game_server",
                         "last_tick_age_ms": tick_age_ms,
+                        "match_degraded": match_degraded,
                     })),
                     StatusCode::OK,
                 )

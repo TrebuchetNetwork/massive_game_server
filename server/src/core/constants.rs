@@ -11,6 +11,11 @@ pub const WORLD_MAX_X: f32 = 800.0; // Example
 pub const WORLD_MIN_Y: f32 = -600.0; // Example
 pub const WORLD_MAX_Y: f32 = 600.0; // Example
 pub const PARTITION_GRID_SIZE: usize = 8;
+
+// Compile-time assertion: PARTITION_GRID_SIZE must be at least 1 to avoid division by zero
+// in PARTITION_SIZE_X / PARTITION_SIZE_Y calculations below.
+const _: () = assert!(PARTITION_GRID_SIZE >= 1, "PARTITION_GRID_SIZE must be >= 1");
+
 pub const PARTITION_SIZE_X: f32 = (WORLD_MAX_X - WORLD_MIN_X) / PARTITION_GRID_SIZE as f32;
 pub const PARTITION_SIZE_Y: f32 = (WORLD_MAX_Y - WORLD_MIN_Y) / PARTITION_GRID_SIZE as f32;
 pub const BOUNDARY_ZONE_WIDTH: f32 = 100.0;
@@ -208,6 +213,16 @@ pub fn quantize_rotation(v: f32) -> f32 {
     q as f32 / 255.0 * two_pi
 }
 
+/// Runtime validation for partition grid size (for values loaded from config).
+/// Panics if `grid_size` is zero.
+pub fn validate_partition_grid_size(grid_size: usize) {
+    assert!(
+        grid_size >= 1,
+        "Partition grid size must be >= 1, got {}",
+        grid_size
+    );
+}
+
 // Other game constants
 pub const DEFAULT_RESPAWN_DURATION_SECS: f32 = 2.5;
 pub const MAX_INPUT_QUEUE_SIZE_PER_PLAYER: usize = 32;
@@ -388,5 +403,40 @@ mod tests {
         let q = quantize_rotation(-std::f32::consts::FRAC_PI_2);
         // Should wrap to ~3*PI/2
         assert!(q > 0.0, "quantize_rotation(-PI/2) should wrap to positive");
+    }
+
+    // ── partition & tick tests ──────────────────────────────────
+
+    #[test]
+    fn partition_grid_size_is_nonzero() {
+        assert!(
+            PARTITION_GRID_SIZE >= 1,
+            "PARTITION_GRID_SIZE must be >= 1"
+        );
+    }
+
+    #[test]
+    fn partition_sizes_are_positive() {
+        assert!(PARTITION_SIZE_X > 0.0, "PARTITION_SIZE_X must be > 0");
+        assert!(PARTITION_SIZE_Y > 0.0, "PARTITION_SIZE_Y must be > 0");
+    }
+
+    #[test]
+    fn validate_partition_grid_size_accepts_valid() {
+        validate_partition_grid_size(1);
+        validate_partition_grid_size(8);
+        validate_partition_grid_size(128);
+    }
+
+    #[test]
+    #[should_panic(expected = "Partition grid size must be >= 1")]
+    fn validate_partition_grid_size_rejects_zero() {
+        validate_partition_grid_size(0);
+    }
+
+    #[test]
+    fn tick_duration_is_consistent() {
+        assert_eq!(TICK_DURATION_MS, 1000 / SERVER_TICK_RATE);
+        assert_eq!(TICK_DURATION.as_millis() as u64, TICK_DURATION_MS);
     }
 }
