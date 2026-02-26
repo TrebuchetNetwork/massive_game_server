@@ -352,6 +352,9 @@ fn with_service(
 pub fn build_feature_flag_routes(
     service: FeatureFlagService,
 ) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
+    // 64 KB body limit for all JSON endpoints to prevent resource exhaustion
+    let json_body_limit = 1024 * 64;
+
     let list = warp::path!("api" / "ops" / "feature-flags")
         .and(warp::get())
         .and(with_service(service.clone()))
@@ -359,6 +362,7 @@ pub fn build_feature_flag_routes(
 
     let set = warp::path!("api" / "ops" / "feature-flags" / "set")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
@@ -370,6 +374,7 @@ pub fn build_feature_flag_routes(
 
     let evaluate = warp::path!("api" / "ops" / "feature-flags" / "evaluate")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service))
         .map(

@@ -7,7 +7,9 @@ use massive_game_server_core::core::types::{PlayerAoI, PlayerInputData};
 use massive_game_server_core::network::quic::{
     connected_quic_peer_count, start_quic_runtime_from_env_with_handler, QuicRequestHandler,
 };
+use massive_game_server_core::network::connection_manager::shared_connection_manager;
 use massive_game_server_core::network::signaling::{
+    cleanup_connection,
     handle_signaling_connection,
     ChatMessagesQueue,
     ClientStatesMap,
@@ -1232,6 +1234,47 @@ async fn main() -> anyhow::Result<()> {
         game_server_for_loop.run_game_loop().await;
         info!("Game loop stopped.");
     });
+
+    // Periodic idle connection cleanup: evict peers that have not sent any
+    // traffic for 120 seconds.  This calls stale_peer_ids() which was previously
+    // defined but never wired into the runtime.
+    {
+        let stale_signaling_peers = signaling_peers_state.clone();
+        let stale_player_manager = game_server_instance.player_manager.clone();
+        let stale_data_channels = game_server_instance.data_channels_map.clone();
+        let stale_client_states = game_server_instance.client_states_map.clone();
+        let stale_player_aois = game_server_instance.player_aois.clone();
+        let stale_auth_service = auth_service.clone();
+        let stale_shutdown_flag = game_server_instance.is_shutting_down.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(30));
+            let stale_threshold = Duration::from_secs(120);
+            loop {
+                ticker.tick().await;
+                if stale_shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let stale_ids = shared_connection_manager().stale_peer_ids(stale_threshold);
+                if !stale_ids.is_empty() {
+                    info!(
+                        "Idle connection cleanup: evicting {} stale peer(s).",
+                        stale_ids.len()
+                    );
+                    for peer_id in &stale_ids {
+                        cleanup_connection(
+                            peer_id,
+                            &stale_signaling_peers,
+                            &stale_player_manager,
+                            &stale_data_channels,
+                            &stale_client_states,
+                            &stale_player_aois,
+                            &stale_auth_service,
+                        );
+                    }
+                }
+            }
+        });
+    }
 
     let arena_worker_shutdown_server = game_server_instance.clone();
     let arena_worker_enabled = std::env::var("MGS_ARENA_WORKER_ENABLED")

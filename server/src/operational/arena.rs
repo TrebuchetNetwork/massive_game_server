@@ -1939,8 +1939,14 @@ fn with_service(
 pub fn build_arena_routes(
     service: ArenaService,
 ) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
+    // 64 KB body limit for standard JSON endpoints; upload_wasm uses a larger
+    // limit since base64-encoded wasm can be up to ~2.7 MB (2 MB decoded).
+    let json_body_limit = 1024 * 64;
+    let wasm_upload_body_limit = 4 * 1024 * 1024; // 4 MB for base64-encoded wasm
+
     let register_model = warp::path!("api" / "arena" / "models" / "register")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
@@ -1952,6 +1958,7 @@ pub fn build_arena_routes(
 
     let model_heartbeat = warp::path!("api" / "arena" / "models" / "heartbeat")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
@@ -1963,6 +1970,7 @@ pub fn build_arena_routes(
 
     let upload_model_wasm = warp::path!("api" / "arena" / "models" / "upload_wasm")
         .and(warp::post())
+        .and(warp::body::content_length_limit(wasm_upload_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(|body: UploadModelWasmBody, arena: ArenaService| {
@@ -1988,6 +1996,7 @@ pub fn build_arena_routes(
 
     let queue_match = warp::path!("api" / "arena" / "matches" / "queue")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
@@ -1999,6 +2008,7 @@ pub fn build_arena_routes(
 
     let queue_round_robin = warp::path!("api" / "arena" / "matches" / "queue_round_robin")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(|body: QueueRoundRobinBody, arena: ArenaService| {
@@ -2016,7 +2026,8 @@ pub fn build_arena_routes(
     let execute_next = warp::path!("api" / "arena" / "matches" / "execute_next")
         .and(warp::post())
         .and(
-            warp::body::json::<ExecuteNextBody>()
+            warp::body::content_length_limit(json_body_limit)
+                .and(warp::body::json::<ExecuteNextBody>())
                 .or(warp::any().map(ExecuteNextBody::default))
                 .unify(),
         )
@@ -2031,7 +2042,8 @@ pub fn build_arena_routes(
     let simulate_team_battle = warp::path!("api" / "arena" / "matches" / "simulate_team_battle")
         .and(warp::post())
         .and(
-            warp::body::json::<SimulateTeamBattleBody>()
+            warp::body::content_length_limit(json_body_limit)
+                .and(warp::body::json::<SimulateTeamBattleBody>())
                 .or(warp::any().map(SimulateTeamBattleBody::default))
                 .unify(),
         )
@@ -2112,6 +2124,7 @@ pub fn build_arena_routes(
 
     let report_match = warp::path!("api" / "arena" / "matches" / "report")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
