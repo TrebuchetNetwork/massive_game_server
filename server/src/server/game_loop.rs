@@ -4,7 +4,6 @@ use super::instance::MassiveGameServer;
 // Removed unused: use crate::flatbuffers_generated::game_protocol as fb;
 use std::sync::Arc;
 use std::time::{Duration, Instant}; // Removed unused SystemTime, UNIX_EPOCH
-use tokio::time::interval;
 use tracing::{error, info, trace, warn};
 // Removed unused: use std::collections::VecDeque;
 use std::sync::atomic::Ordering as AtomicOrdering;
@@ -100,88 +99,130 @@ impl MassiveGameServer {
 
     pub async fn run_game_loop(self: Arc<Self>) {
         let delta_time_fixed = 1.0 / self.config.tick_rate as f32;
-        let dynamic_tick_duration = Duration::from_secs_f64(1.0 / self.config.tick_rate as f64);
-        let mut tick_timer = interval(dynamic_tick_duration);
+        let tick_duration = Duration::from_secs_f64(1.0 / self.config.tick_rate as f64);
+        // Cap accumulator to prevent spiral-of-death: process at most 3 ticks
+        // per iteration so a single long frame cannot snowball into unbounded
+        // catch-up work that starves the event loop.
+        let max_accumulator = tick_duration * 3;
         let mut bots_spawned = false;
 
         info!(
-            "Game loop started. Tick rate: {}ms, Delta time: {}s",
-            dynamic_tick_duration.as_millis(),
+            "Game loop started (accumulator mode). Tick rate: {}ms, Delta time: {}s",
+            tick_duration.as_millis(),
             delta_time_fixed
         );
         let mut last_logged_quality = self.current_quality_settings();
 
+        // Accumulator-based fixed timestep: instead of relying solely on
+        // tokio::time::interval (which can queue up missed ticks and burst
+        // them all at once), we measure real elapsed time, feed it into an
+        // accumulator, and drain exactly one tick_duration per game tick.
+        // This gives consistent dt to the simulation regardless of scheduling
+        // jitter or occasional long frames.
+        let mut accumulator = Duration::ZERO;
+        let mut last_iteration = Instant::now();
+
+        // We still use a short sleep to yield to the tokio runtime between
+        // iterations, but the authoritative pacing comes from the accumulator.
+        let sleep_duration = tick_duration.mul_f64(0.5).min(Duration::from_millis(4));
+
         loop {
-            tick_timer.tick().await;
+            // Yield to the runtime so other tasks (networking, I/O) can progress.
+            tokio::time::sleep(sleep_duration).await;
+
             if crate::server::lifecycle::is_shutdown_requested(self.as_ref()) {
                 Arc::clone(&self).notify_players_of_shutdown().await;
                 info!("Shutdown requested; exiting game loop.");
                 break;
             }
-            let frame_start_time = Instant::now();
 
-            let current_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+            let now = Instant::now();
+            let elapsed = now.duration_since(last_iteration);
+            last_iteration = now;
 
-            // Spawn bots after 10 frames to let server stabilize
-            if !bots_spawned && current_frame == 10 {
-                let initial_bot_count =
-                    self.target_bot_count.load(AtomicOrdering::Relaxed) as usize;
-                info!(
-                    "Spawning {} bots after server stabilization (frame {})",
-                    initial_bot_count, current_frame
-                );
-                self.spawn_initial_bots(initial_bot_count);
-                bots_spawned = true;
-            }
-
-            // Log every 60 frames (1 second at 60 FPS)
-            if current_frame.is_multiple_of(60) {
-                info!("Game loop running - Frame: {}", current_frame);
-            }
-
-            // Process game tick
-            if let Err(e) = Arc::clone(&self).process_game_tick(delta_time_fixed).await {
-                error!("Game tick failed: {:?}", e);
-                continue; // Don't stop the game loop on error
-            }
-
-            self.frame_counter.fetch_add(1, AtomicOrdering::Relaxed);
-
-            // Stamp the epoch time so health checks can detect a stalled loop.
-            let tick_epoch_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or(Duration::ZERO)
-                .as_millis() as u64;
-            self.last_tick_epoch_ms
-                .store(tick_epoch_ms, AtomicOrdering::Relaxed);
-
-            // Log frame time if it's too long (sampled to avoid log-induced stalls under load).
-            let frame_time = frame_start_time.elapsed();
-            self.record_tick_metrics(frame_time);
-
-            if current_frame.is_multiple_of(120) {
-                let quality = self.current_quality_settings();
-                if quality.delta_skip_modulus != last_logged_quality.delta_skip_modulus
-                    || (quality.aoi_radius_scale - last_logged_quality.aoi_radius_scale).abs()
-                        > 0.01
-                    || (quality.max_projectiles_scale - last_logged_quality.max_projectiles_scale)
-                        .abs()
-                        > 0.01
-                {
-                    info!(
-                        "Adaptive quality updated: aoi_scale={:.2}, projectile_scale={:.2}, delta_skip={}",
-                        quality.aoi_radius_scale,
-                        quality.max_projectiles_scale,
-                        quality.delta_skip_modulus
+            // Feed elapsed wall-clock time into accumulator (clamped to avoid
+            // spiral-of-death when a frame takes much longer than expected).
+            accumulator += elapsed;
+            if accumulator > max_accumulator {
+                let dropped = accumulator - max_accumulator;
+                if dropped > tick_duration {
+                    warn!(
+                        "Accumulator overflow: dropping {:?} of simulation time",
+                        dropped
                     );
-                    last_logged_quality = quality;
                 }
+                accumulator = max_accumulator;
             }
 
-            if frame_time > dynamic_tick_duration + Duration::from_millis(5)
-                && current_frame.is_multiple_of(60)
-            {
-                warn!("Frame {} took too long: {:?}", current_frame, frame_time);
+            // Process as many fixed-step ticks as the accumulator allows.
+            while accumulator >= tick_duration {
+                accumulator -= tick_duration;
+
+                let frame_start_time = Instant::now();
+                let current_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+
+                // Spawn bots after 10 frames to let server stabilize
+                if !bots_spawned && current_frame == 10 {
+                    let initial_bot_count =
+                        self.target_bot_count.load(AtomicOrdering::Relaxed) as usize;
+                    info!(
+                        "Spawning {} bots after server stabilization (frame {})",
+                        initial_bot_count, current_frame
+                    );
+                    self.spawn_initial_bots(initial_bot_count);
+                    bots_spawned = true;
+                }
+
+                // Log every 60 frames (1 second at 60 FPS)
+                if current_frame.is_multiple_of(60) {
+                    info!("Game loop running - Frame: {}", current_frame);
+                }
+
+                // Process game tick with fixed delta_time
+                if let Err(e) = Arc::clone(&self).process_game_tick(delta_time_fixed).await {
+                    error!("Game tick failed: {:?}", e);
+                    continue; // Don't stop the game loop on error
+                }
+
+                self.frame_counter.fetch_add(1, AtomicOrdering::Relaxed);
+
+                // Stamp the epoch time so health checks can detect a stalled loop.
+                let tick_epoch_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or(Duration::ZERO)
+                    .as_millis() as u64;
+                self.last_tick_epoch_ms
+                    .store(tick_epoch_ms, AtomicOrdering::Relaxed);
+
+                // Record frame metrics
+                let frame_time = frame_start_time.elapsed();
+                self.record_tick_metrics(frame_time);
+
+                if current_frame.is_multiple_of(120) {
+                    let quality = self.current_quality_settings();
+                    if quality.delta_skip_modulus != last_logged_quality.delta_skip_modulus
+                        || (quality.aoi_radius_scale - last_logged_quality.aoi_radius_scale).abs()
+                            > 0.01
+                        || (quality.max_projectiles_scale
+                            - last_logged_quality.max_projectiles_scale)
+                            .abs()
+                            > 0.01
+                    {
+                        info!(
+                            "Adaptive quality updated: aoi_scale={:.2}, projectile_scale={:.2}, delta_skip={}",
+                            quality.aoi_radius_scale,
+                            quality.max_projectiles_scale,
+                            quality.delta_skip_modulus
+                        );
+                        last_logged_quality = quality;
+                    }
+                }
+
+                if frame_time > tick_duration + Duration::from_millis(5)
+                    && current_frame.is_multiple_of(60)
+                {
+                    warn!("Frame {} took too long: {:?}", current_frame, frame_time);
+                }
             }
         }
 
