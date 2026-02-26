@@ -147,6 +147,14 @@ impl MassiveGameServer {
 
             self.frame_counter.fetch_add(1, AtomicOrdering::Relaxed);
 
+            // Stamp the epoch time so health checks can detect a stalled loop.
+            let tick_epoch_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_millis() as u64;
+            self.last_tick_epoch_ms
+                .store(tick_epoch_ms, AtomicOrdering::Relaxed);
+
             // Log frame time if it's too long (sampled to avoid log-induced stalls under load).
             let frame_time = frame_start_time.elapsed();
             self.record_tick_metrics(frame_time);

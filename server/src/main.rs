@@ -325,6 +325,25 @@ fn admin_ip_allowed(ip_allowlist: &[IpNet], source_ip: IpAddr) -> bool {
     ip_allowlist.iter().any(|cidr| cidr.contains(&source_ip))
 }
 
+fn is_trusted_proxy(ip: IpAddr) -> bool {
+    use std::net::Ipv6Addr;
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.octets()[0] == 10
+                || (v4.octets()[0] == 172 && (v4.octets()[1] & 0xf0) == 16)
+                || (v4.octets()[0] == 192 && v4.octets()[1] == 168)
+        }
+        IpAddr::V6(v6) => {
+            v6 == Ipv6Addr::LOCALHOST
+                || match v6.to_ipv4_mapped() {
+                    Some(v4) => is_trusted_proxy(IpAddr::V4(v4)),
+                    None => false,
+                }
+        }
+    }
+}
+
 fn env_flag(var_name: &str) -> bool {
     std::env::var(var_name)
         .ok()
@@ -366,17 +385,23 @@ fn requires_admin_auth(
                     };
 
                     if !config.ip_allowlist.is_empty() {
-                        let forwarded_ip = headers
-                            .get("x-forwarded-for")
-                            .and_then(|value| value.to_str().ok())
-                            .and_then(parse_forwarded_for_ip);
-                        let real_ip = headers
-                            .get("x-real-ip")
-                            .and_then(|value| value.to_str().ok())
-                            .and_then(|value| value.trim().parse::<IpAddr>().ok());
-                        let source_ip = forwarded_ip
-                            .or(real_ip)
-                            .or_else(|| remote_addr.map(|addr| addr.ip()));
+                        let socket_ip = remote_addr.map(|addr| addr.ip());
+
+                        // Only trust X-Forwarded-For / X-Real-IP if the direct
+                        // connecting IP is a known trusted proxy (private/loopback).
+                        let source_ip = if socket_ip.map_or(false, is_trusted_proxy) {
+                            let forwarded_ip = headers
+                                .get("x-forwarded-for")
+                                .and_then(|value| value.to_str().ok())
+                                .and_then(parse_forwarded_for_ip);
+                            let real_ip = headers
+                                .get("x-real-ip")
+                                .and_then(|value| value.to_str().ok())
+                                .and_then(|value| value.trim().parse::<IpAddr>().ok());
+                            forwarded_ip.or(real_ip).or(socket_ip)
+                        } else {
+                            socket_ip
+                        };
 
                         let Some(source_ip) = source_ip else {
                             return Err(warp::reject::custom(AdminAuthRejection::forbidden(
@@ -1027,12 +1052,85 @@ async fn main() -> anyhow::Result<()> {
         .and(warp::get())
         .map(|| warp::redirect::temporary(Uri::from_static("/index.html")));
 
+    let server_for_healthz = game_server_instance.clone();
     let healthz_route = warp::path("healthz")
         .and(warp::path::end())
         .and(warp::get())
-        .map(|| {
-            warp::reply::json(&serde_json::json!({ "ok": true, "service": "massive_game_server" }))
-        });
+        .map(move || {
+            let last_tick = server_for_healthz
+                .last_tick_epoch_ms
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_millis() as u64;
+            let tick_age_ms = now_ms.saturating_sub(last_tick);
+
+            // Consider the game loop stalled if no tick completed in the last 2 seconds.
+            // A last_tick of 0 means the loop hasn't started yet which is acceptable
+            // during startup; the readyz endpoint covers that case.
+            let game_loop_alive = last_tick == 0 || tick_age_ms <= 2_000;
+
+            if game_loop_alive {
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "ok": true,
+                        "service": "massive_game_server",
+                        "last_tick_age_ms": tick_age_ms,
+                    })),
+                    StatusCode::OK,
+                )
+            } else {
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "ok": false,
+                        "service": "massive_game_server",
+                        "error": "game_loop_stalled",
+                        "last_tick_age_ms": tick_age_ms,
+                    })),
+                    StatusCode::SERVICE_UNAVAILABLE,
+                )
+            }
+        })
+        .map(warp::reply::Reply::into_response);
+
+    let server_for_readyz = game_server_instance.clone();
+    let readyz_route = warp::path("readyz")
+        .and(warp::path::end())
+        .and(warp::get())
+        .map(move || {
+            let last_tick = server_for_readyz
+                .last_tick_epoch_ms
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let frame = server_for_readyz
+                .frame_counter
+                .load(std::sync::atomic::Ordering::Relaxed);
+
+            // Server is ready once the game loop has completed at least one tick.
+            let ready = last_tick > 0 && frame > 0;
+
+            if ready {
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "ok": true,
+                        "service": "massive_game_server",
+                        "frame": frame,
+                    })),
+                    StatusCode::OK,
+                )
+            } else {
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "ok": false,
+                        "service": "massive_game_server",
+                        "error": "not_ready",
+                        "frame": frame,
+                    })),
+                    StatusCode::SERVICE_UNAVAILABLE,
+                )
+            }
+        })
+        .map(warp::reply::Reply::into_response);
 
     let static_files_route =
         warp::fs::dir("static_client").map(move |reply: warp::filters::fs::File| {
@@ -1066,6 +1164,7 @@ async fn main() -> anyhow::Result<()> {
 
     let admin_auth_config = AdminAuthConfig::from_env();
     let admin_routes = arena_routes
+        .or(code_generation_routes)
         .or(feature_flag_routes)
         .or(join_stage_report_route)
         .or(join_stage_reset_route)
@@ -1084,10 +1183,10 @@ async fn main() -> anyhow::Result<()> {
         .boxed();
 
     let public_routes = auth_routes
-        .or(code_generation_routes)
         .or(signaling_route)
         .or(root_route)
         .or(healthz_route)
+        .or(readyz_route)
         .or(static_files_route)
         .map(warp::reply::Reply::into_response)
         .boxed();
