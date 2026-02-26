@@ -11,7 +11,15 @@ pub type EntityId = u64;
 static ENTITY_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub fn generate_entity_id() -> EntityId {
-    ENTITY_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst)
+    loop {
+        let prev = ENTITY_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
+        // Guard against u64 wrapping back to 0 (practically impossible at 60 Hz,
+        // but defensively correct).  ID 0 is reserved as a sentinel / "no entity".
+        if prev != 0 {
+            return prev;
+        }
+        // fetch_add already advanced the counter past 0; just retry to skip it.
+    }
 }
 
 // --- Server-Side Enums ---
@@ -169,6 +177,10 @@ pub struct PlayerState {
 
     // Assist tracking: (attacker_id, damage_dealt, timestamp)
     pub recent_damage_sources: Vec<(PlayerID, i32, Instant)>,
+
+    // Sequence validation: tracks the last accepted input sequence to reject
+    // replayed or suspiciously-jumped inputs at queue time.
+    pub last_queued_input_sequence: u32,
 }
 
 impl PlayerState {
@@ -235,14 +247,35 @@ impl PlayerState {
             streak_damage_boost_remaining: 0.0,
             streak_speed_boost_remaining: 0.0,
             recent_damage_sources: Vec::new(),
+            last_queued_input_sequence: 0,
         }
     }
 
-    pub fn queue_input(&mut self, input: PlayerInputData) {
+    /// Queue a player input after validating its sequence number.
+    /// Returns `true` if the input was accepted, `false` if rejected.
+    ///
+    /// Rejection reasons:
+    /// - `sequence <= last_queued_input_sequence` (replay / duplicate)
+    /// - `sequence > last_queued_input_sequence + MAX_INPUT_SEQUENCE_GAP` (suspicious jump)
+    pub fn queue_input(&mut self, input: PlayerInputData) -> bool {
+        let seq = input.sequence;
+        // Reject replayed or duplicate inputs.
+        if seq > 0 && seq <= self.last_queued_input_sequence {
+            return false;
+        }
+        // Reject suspiciously large sequence jumps.
+        if self.last_queued_input_sequence > 0
+            && seq > self.last_queued_input_sequence + crate::core::constants::MAX_INPUT_SEQUENCE_GAP
+        {
+            return false;
+        }
+
         if self.input_queue.len() >= crate::core::constants::MAX_INPUT_QUEUE_SIZE_PER_PLAYER {
             self.input_queue.pop_front();
         }
+        self.last_queued_input_sequence = seq;
         self.input_queue.push_back(input);
+        true
     }
 
     pub fn mark_field_changed(&mut self, field_flag: u16) {

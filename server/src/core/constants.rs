@@ -202,6 +202,11 @@ pub fn quantize_rotation(v: f32) -> f32 {
 pub const DEFAULT_RESPAWN_DURATION_SECS: f32 = 2.5;
 pub const MAX_INPUT_QUEUE_SIZE_PER_PLAYER: usize = 32;
 pub const MAX_INPUTS_PROCESSED_PER_TICK_PER_PLAYER: usize = 8;
+
+// Input sequence validation – prevents replay attacks and suspicious jumps.
+// Inputs with sequence <= last accepted are rejected (replay).
+// Inputs with sequence > last accepted + MAX_SEQUENCE_GAP are rejected (suspicious jump).
+pub const MAX_INPUT_SEQUENCE_GAP: u32 = 60;
 pub const GAME_PROTOCOL_VERSION: u32 = 1;
 
 pub const DEFAULT_INPUT_RATE_LIMIT_PER_SEC: u32 = 240;

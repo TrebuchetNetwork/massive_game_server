@@ -28,8 +28,14 @@ impl<T> ObjectPool<T> {
     }
 
     pub fn acquire(&self) -> T {
-        let mut free = self.free.lock();
-        let value = free.pop().unwrap_or_else(|| (self.factory)());
+        let cached = {
+            let mut free = self.free.lock();
+            free.pop()
+        };
+        // Call the factory outside the lock and before incrementing the counter.
+        // If the factory panics, the counter stays consistent and the Mutex
+        // is not held across the unwinding call.
+        let value = cached.unwrap_or_else(|| (self.factory)());
         self.in_use.fetch_add(1, Ordering::Relaxed);
         value
     }

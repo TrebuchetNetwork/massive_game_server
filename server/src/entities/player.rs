@@ -210,6 +210,9 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     if original.recent_damage_sources != updated.recent_damage_sources {
         base.recent_damage_sources = updated.recent_damage_sources.clone();
     }
+    if original.last_queued_input_sequence != updated.last_queued_input_sequence {
+        base.last_queued_input_sequence = updated.last_queued_input_sequence;
+    }
 }
 
 pub struct PlayerStateReadGuard {

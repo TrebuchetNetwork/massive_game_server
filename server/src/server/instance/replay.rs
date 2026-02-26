@@ -175,32 +175,40 @@ impl MassiveGameServer {
             }
         };
 
-        if let Err(err) = fs::create_dir_all(self.live_replay_match_store_dir.as_path()) {
-            warn!(
-                "failed to create live replay match store directory '{}': {}",
-                self.live_replay_match_store_dir.display(),
-                err
-            );
-            return;
-        }
-
+        // Offload blocking file I/O to a dedicated thread to avoid blocking the
+        // async / game-loop runtime.  The compressed payload and path data are
+        // moved into the closure so no references to `self` are needed.
+        let store_dir = Arc::clone(&self.live_replay_match_store_dir);
+        let retention = self.live_replay_match_retention;
         let file_name = format!("replay_{}_{}.json.zst", now_ms, safe_reason);
-        let target_path = self.live_replay_match_store_dir.as_path().join(file_name);
-        if let Err(err) = fs::write(&target_path, compressed) {
-            warn!(
-                "failed to persist match replay to '{}': {}",
-                target_path.display(),
-                err
-            );
-            return;
-        }
 
-        self.enforce_live_replay_match_retention();
+        tokio::task::spawn_blocking(move || {
+            if let Err(err) = fs::create_dir_all(store_dir.as_path()) {
+                warn!(
+                    "failed to create live replay match store directory '{}': {}",
+                    store_dir.display(),
+                    err
+                );
+                return;
+            }
+
+            let target_path = store_dir.as_path().join(file_name);
+            if let Err(err) = fs::write(&target_path, compressed) {
+                warn!(
+                    "failed to persist match replay to '{}': {}",
+                    target_path.display(),
+                    err
+                );
+                return;
+            }
+
+            Self::enforce_live_replay_match_retention_sync(&store_dir, retention);
+        });
     }
 
-    fn enforce_live_replay_match_retention(&self) {
+    fn enforce_live_replay_match_retention_sync(store_dir: &Path, retention: usize) {
         let mut replay_files = Vec::new();
-        let read_dir = match fs::read_dir(self.live_replay_match_store_dir.as_path()) {
+        let read_dir = match fs::read_dir(store_dir) {
             Ok(entries) => entries,
             Err(_) => return,
         };
@@ -211,14 +219,14 @@ impl MassiveGameServer {
                 replay_files.push((path, modified));
             }
         }
-        if replay_files.len() <= self.live_replay_match_retention {
+        if replay_files.len() <= retention {
             return;
         }
 
         replay_files.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
         let delete_count = replay_files
             .len()
-            .saturating_sub(self.live_replay_match_retention);
+            .saturating_sub(retention);
         for (path, _) in replay_files.into_iter().take(delete_count) {
             if let Err(err) = fs::remove_file(&path) {
                 warn!(
