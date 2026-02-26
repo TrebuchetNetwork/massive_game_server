@@ -735,12 +735,13 @@ impl AuthService {
                 "Auth store is inconsistent: user record missing.".to_owned(),
             ));
         };
-        persist_persistent_store(
-            &self.inner.store_path,
-            &persistent_guard,
-            self.inner.redis_cache.as_ref(),
-        );
+        let store_snapshot = persistent_guard.clone();
         drop(persistent_guard);
+        spawn_persist_auth_store(
+            self.inner.store_path.clone(),
+            store_snapshot,
+            self.inner.clone(),
+        );
 
         let session_token = format!("mgs_{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let token_expires_at = now.saturating_add(self.inner.session_ttl_seconds);
@@ -880,10 +881,12 @@ impl AuthService {
             if !player_state.username.trim().is_empty() {
                 user.last_game_username = Some(player_state.username.clone());
             }
-            persist_persistent_store(
-                &self.inner.store_path,
-                &persistent_guard,
-                self.inner.redis_cache.as_ref(),
+            let store_snapshot = persistent_guard.clone();
+            drop(persistent_guard);
+            spawn_persist_auth_store(
+                self.inner.store_path.clone(),
+                store_snapshot,
+                self.inner.clone(),
             );
         }
     }
@@ -1272,6 +1275,25 @@ fn load_persistent_store(path: &Path, redis_cache: Option<&AuthRedisCache>) -> P
             );
             PersistentAuthStore::default()
         }
+    }
+}
+
+/// Offloads auth store persistence (file I/O + Redis) to a blocking thread
+/// so that tokio worker threads are not stalled.
+/// Falls back to synchronous persistence when no tokio runtime is
+/// available (e.g. in unit tests).
+fn spawn_persist_auth_store(
+    path: PathBuf,
+    store: PersistentAuthStore,
+    inner: Arc<AuthInner>,
+) {
+    let do_persist = move || {
+        persist_persistent_store(&path, &store, inner.redis_cache.as_ref());
+    };
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::spawn_blocking(do_persist);
+    } else {
+        do_persist();
     }
 }
 

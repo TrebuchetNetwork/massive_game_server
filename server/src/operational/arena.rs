@@ -645,8 +645,7 @@ impl ArenaService {
             }
         }
 
-        self.persist_store()
-            .map_err(|err| ArenaError::Internal(format!("failed to persist model: {}", err)))?;
+        self.spawn_persist_store();
 
         self.get_model_view(&model_id).ok_or_else(|| {
             ArenaError::Internal("model registration verification failed".to_owned())
@@ -668,8 +667,7 @@ impl ArenaService {
             model.active = true;
         }
 
-        self.persist_store()
-            .map_err(|err| ArenaError::Internal(format!("failed to persist heartbeat: {}", err)))?;
+        self.spawn_persist_store();
 
         self.get_model_view(body.model_id.trim())
             .ok_or_else(|| ArenaError::Internal("heartbeat verification failed".to_owned()))
@@ -767,7 +765,7 @@ impl ArenaService {
                 model.last_seen_at = now;
             }
         }
-        self.persist_store().map_err(ArenaError::Internal)?;
+        self.spawn_persist_store();
 
         Ok(UploadModelWasmResponse {
             model_id: model_id.to_owned(),
@@ -1112,12 +1110,7 @@ impl ArenaService {
             .total_matches_reported
             .fetch_add(1, Ordering::Relaxed);
 
-        self.persist_store().map_err(|err| {
-            ArenaError::Internal(format!(
-                "failed to persist match report '{}': {}",
-                body.match_id, err
-            ))
-        })?;
+        self.spawn_persist_store();
 
         Ok(ReportMatchResponse {
             match_id: body.match_id.trim().to_owned(),
@@ -1679,12 +1672,26 @@ impl ArenaService {
         store.models.get(model_id).map(to_model_view)
     }
 
-    fn persist_store(&self) -> Result<(), String> {
+    /// Offloads arena store persistence to a blocking thread so that
+    /// tokio worker threads are not stalled by file I/O.
+    /// Falls back to synchronous persistence when no tokio runtime is
+    /// available (e.g. in unit tests).
+    fn spawn_persist_store(&self) {
         let snapshot = {
             let store = self.inner.persistent_store.read();
             store.clone()
         };
-        persist_store(&self.inner.store_path, &snapshot)
+        let path = self.inner.store_path.clone();
+        let do_persist = move || {
+            if let Err(err) = persist_store(&path, &snapshot) {
+                warn!("Background arena persist failed: {}", err);
+            }
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::spawn_blocking(do_persist);
+        } else {
+            do_persist();
+        }
     }
 }
 
