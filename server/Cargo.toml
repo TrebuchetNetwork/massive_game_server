@@ -32,7 +32,7 @@ env_logger = "0.11.8" # Optional, for easier porting of webrtc_shooter_server lo
 
 # Networking
 webrtc = "0.11" # Or your preferred version
-quinn = "0.10"  # Or your preferred version
+quinn = "0.11"  # Upgraded for ring/rustls security fixes
 # warp = "0.3" # If needed
 bytes = "1.6" # Or your preferred version
 
@@ -80,7 +80,7 @@ opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.17", features = ["grpc-tonic", "trace"] }
 metrics = "0.22" # Or your preferred version
 metrics-exporter-prometheus = "0.13" # Or your preferred version
-prometheus = "0.13" # For PerformanceMonitor
+# prometheus crate removed: unused (metrics stack uses metrics + metrics-exporter-prometheus)
 
 # Utils
 uuid = { version = "1.8", features = ["v4", "serde"] } # Or your preferred version
@@ -88,16 +88,16 @@ rand = "0.8"
 anyhow = "1.0.81" # Or your preferred version
 thiserror = "1.0.58" # Or your preferred version
 once_cell = "1.19" # Or your preferred version
-wasmtime = "20.0"
+wasmtime = "24.0.6"
 itoa = "1.0"
 shell-escape = "0.1"
 rcgen = "0.13"
-rustls = "0.21"
+# rustls direct dep removed: quinn 0.11 bundles its own rustls internally
 ipnet = "2.10"
 # atomic = "0.6" # Usually not needed
 
 # Spatial Indexing
-rstar = "0.11.0"
+rstar = "0.12"
 aabb-quadtree = "0.2.0"
 hecs = "0.10"
 

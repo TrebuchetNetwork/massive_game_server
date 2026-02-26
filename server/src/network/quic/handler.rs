@@ -8,7 +8,7 @@ use crate::operational::monitoring::tracing as monitoring_tracing;
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use dashmap::DashMap;
-use quinn::{Connecting, Endpoint, RecvStream, SendStream};
+use quinn::{Endpoint, Incoming, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -301,12 +301,14 @@ pub fn start_quic_runtime(
             );
             let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
                 .context("failed to generate self-signed QUIC certificate")?;
-            let cert_der = certified_key.cert.der().to_vec();
-            let key_der = certified_key.key_pair.serialize_der();
-            (
-                vec![rustls::Certificate(cert_der)],
-                rustls::PrivateKey(key_der),
+            let cert_der = quinn::rustls::pki_types::CertificateDer::from(
+                certified_key.cert.der().to_vec(),
+            );
+            let key_der = quinn::rustls::pki_types::PrivateKeyDer::try_from(
+                certified_key.key_pair.serialize_der(),
             )
+            .map_err(|err| anyhow!("failed to parse self-signed key DER: {}", err))?;
+            (vec![cert_der], key_der)
         }
     };
 
@@ -314,7 +316,7 @@ pub fn start_quic_runtime(
         .context("failed to create QUIC server config")?;
     let mut transport = quinn::TransportConfig::default();
     transport.max_concurrent_bidi_streams(config.max_concurrent_bidi_streams.into());
-    server_config.transport = Arc::new(transport);
+    server_config.transport_config(Arc::new(transport));
 
     let endpoint = quinn::Endpoint::server(server_config, config.bind_addr)
         .context("failed to bind QUIC endpoint")?;
@@ -344,7 +346,7 @@ pub fn start_quic_runtime(
 
     tokio::spawn(async move {
         loop {
-            let Some(connecting) = endpoint_for_accept.accept().await else {
+            let Some(incoming) = endpoint_for_accept.accept().await else {
                 break;
             };
             let remote_addr = connecting.remote_address();
@@ -365,7 +367,7 @@ pub fn start_quic_runtime(
             let request_handler = request_handler.clone();
             tokio::spawn(async move {
                 if let Err(err) =
-                    handle_connecting(connecting, request_handler, max_stream_payload_bytes).await
+                    handle_incoming(incoming, request_handler, max_stream_payload_bytes).await
                 {
                     warn!("QUIC connection handler failed: {}", err);
                 }
@@ -384,7 +386,12 @@ pub fn start_quic_runtime(
     })
 }
 
-fn load_quic_identity_from_env() -> Result<Option<(Vec<rustls::Certificate>, rustls::PrivateKey)>> {
+fn load_quic_identity_from_env() -> Result<
+    Option<(
+        Vec<quinn::rustls::pki_types::CertificateDer<'static>>,
+        quinn::rustls::pki_types::PrivateKeyDer<'static>,
+    )>,
+> {
     let cert_path = std::env::var("MGS_QUIC_CERT_PATH")
         .or_else(|_| std::env::var("QUIC_CERT_PATH"))
         .ok()
@@ -410,10 +417,10 @@ fn load_quic_identity_from_env() -> Result<Option<(Vec<rustls::Certificate>, rus
                 "Loaded QUIC TLS identity from files cert='{}' key='{}'.",
                 cert_path, key_path
             );
-            Ok(Some((
-                vec![rustls::Certificate(cert_der)],
-                rustls::PrivateKey(key_der),
-            )))
+            let cert = quinn::rustls::pki_types::CertificateDer::from(cert_der);
+            let key = quinn::rustls::pki_types::PrivateKeyDer::try_from(key_der)
+                .map_err(|err| anyhow!("failed to parse QUIC key DER: {}", err))?;
+            Ok(Some((vec![cert], key)))
         }
     }
 }
@@ -452,12 +459,12 @@ struct QuicControlAck {
     detail: String,
 }
 
-async fn handle_connecting(
-    connecting: Connecting,
+async fn handle_incoming(
+    incoming: Incoming,
     request_handler: Option<QuicRequestHandler>,
     max_stream_payload_bytes: usize,
 ) -> Result<()> {
-    let connection = connecting
+    let connection = incoming
         .await
         .context("failed to establish QUIC connection")?;
     let remote_addr = connection.remote_address();
@@ -677,9 +684,7 @@ async fn handle_bidi_stream(
             .await
             .context("failed writing QUIC stream payload")?;
         send.flush().await.context("failed flushing QUIC stream")?;
-        send.finish()
-            .await
-            .context("failed finishing QUIC stream")?;
+        send.finish().context("failed finishing QUIC stream")?;
         Ok(())
     }
     .instrument(stream_span)
@@ -723,7 +728,7 @@ async fn run_connection_writer(
             );
             break;
         }
-        if let Err(err) = send_stream.finish().await {
+        if let Err(err) = send_stream.finish() {
             debug!(
                 "QUIC writer token={} failed finishing payload to {}: {}",
                 connection_token, remote_addr, err
