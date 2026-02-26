@@ -1,0 +1,63 @@
+name: Stress Tests
+
+on:
+  schedule:
+    # Run weekly on Sundays at 03:00 UTC
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      stress_bots:
+        description: "Number of bots for the stress test"
+        required: false
+        default: "200"
+      stress_ticks:
+        description: "Number of game ticks to simulate"
+        required: false
+        default: "120"
+
+concurrency:
+  group: stress-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Install FlatBuffers compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatbuffers-compiler
+
+      - name: Run stress tests (release mode)
+        env:
+          RUN_STRESS_TEST: "1"
+          STRESS_BOTS: ${{ github.event.inputs.stress_bots || '200' }}
+          STRESS_TICKS: ${{ github.event.inputs.stress_ticks || '120' }}
+          STRESS_P95_BUDGET_MS: "16.67"
+          STRESS_MAX_TICK_MS: "50.0"
+          STRESS_BOT_P95_BUDGET_MS: "16.67"
+          STRESS_BOT_MAX_TICK_MS: "50.0"
+          STRESS_TICK_TIMEOUT_SECS: "30"
+          RUSTFLAGS: -D warnings
+        run: cargo test --release -p massive_game_server_core --test boundary_stress --locked -- --nocapture
+
+      - name: Upload stress test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: stress-test-logs
+          path: /tmp/mgs_stress_*.log

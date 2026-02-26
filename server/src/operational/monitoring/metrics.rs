@@ -22,16 +22,24 @@ fn parse_bool_env(var_name: &str, default_value: bool) -> bool {
 }
 
 fn parse_listener_addr() -> SocketAddr {
-    let raw = std::env::var("MGS_PROMETHEUS_LISTEN")
+    // Check MGS_METRICS_BIND_ADDR first (preferred), then legacy MGS_PROMETHEUS_LISTEN.
+    // Default to localhost-only to avoid exposing internal telemetry on all interfaces.
+    // In production behind a service mesh, operators can set MGS_METRICS_BIND_ADDR=0.0.0.0:9090.
+    let raw = std::env::var("MGS_METRICS_BIND_ADDR")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "0.0.0.0:9090".to_owned());
+        .or_else(|| {
+            std::env::var("MGS_PROMETHEUS_LISTEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "127.0.0.1:9090".to_owned());
     raw.parse::<SocketAddr>().unwrap_or_else(|err| {
         warn!(
-            "Invalid MGS_PROMETHEUS_LISTEN='{}' ({}), falling back to 0.0.0.0:9090",
+            "Invalid metrics bind address '{}' ({}), falling back to 127.0.0.1:9090",
             raw, err
         );
-        SocketAddr::from(([0, 0, 0, 0], 9090))
+        SocketAddr::from(([127, 0, 0, 1], 9090))
     })
 }
 

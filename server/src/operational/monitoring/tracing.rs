@@ -101,16 +101,25 @@ fn env_flag(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns true when the operator requests JSON-formatted log output.
+///
+/// Controlled by `MGS_LOG_FORMAT` env var.  Accepted values: `"json"` for
+/// structured JSON output, `"text"` (or any other / unset) for the default
+/// human-readable format.
+fn use_json_format() -> bool {
+    std::env::var("MGS_LOG_FORMAT")
+        .ok()
+        .map(|v| v.trim().eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
+}
+
 pub fn init_tracing_subscriber(default_filter: &str) -> anyhow::Result<()> {
     global::set_text_map_propagator(TraceContextPropagator::new());
 
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| default_filter.to_string().into());
-    let fmt_layer = fmt::layer()
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_thread_names(true)
-        .with_line_number(true);
+
+    let json_mode = use_json_format();
 
     if env_flag("MGS_OTEL_ENABLED") {
         let otlp_endpoint = std::env::var("MGS_OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -141,25 +150,61 @@ pub fn init_tracing_subscriber(default_filter: &str) -> anyhow::Result<()> {
         let tracer = tracer_provider.tracer("massive_game_server_core");
         global::set_tracer_provider(tracer_provider);
         let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+        // Note: tracing-opentelemetry v0.25 requires the JSON fmt layer
+        // (JsonFields) for its Layer trait bound, so OTEL mode always uses
+        // structured JSON output regardless of MGS_LOG_FORMAT.
+        let json_layer = fmt::layer()
+            .json()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_line_number(true)
+            .with_span_list(true)
+            .with_current_span(true);
         let subscriber = Registry::default()
             .with(env_filter)
-            .with(fmt_layer)
+            .with(json_layer)
             .with(otel_layer);
         tracing::subscriber::set_global_default(subscriber).map_err(|e| {
-            anyhow::anyhow!("failed to set tracing subscriber with OpenTelemetry: {}", e)
+            anyhow::anyhow!(
+                "failed to set tracing subscriber with OpenTelemetry: {}",
+                e
+            )
         })?;
 
         tracing::info!(
             otlp_endpoint = %otlp_endpoint,
             timeout_ms = otlp_timeout_ms,
+            log_format = "json",
             "Tracing subscriber initialized with OTLP export."
         );
         return Ok(());
     }
 
-    let subscriber = Registry::default().with(env_filter).with(fmt_layer);
-    tracing::subscriber::set_global_default(subscriber)
-        .map_err(|e| anyhow::anyhow!("failed to set tracing subscriber: {}", e))?;
-    tracing::info!("Tracing subscriber initialized.");
+    if json_mode {
+        let json_layer = fmt::layer()
+            .json()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_line_number(true)
+            .with_span_list(true)
+            .with_current_span(true);
+        let subscriber = Registry::default().with(env_filter).with(json_layer);
+        tracing::subscriber::set_global_default(subscriber)
+            .map_err(|e| anyhow::anyhow!("failed to set JSON tracing subscriber: {}", e))?;
+        tracing::info!(log_format = "json", "Tracing subscriber initialized.");
+    } else {
+        let fmt_layer = fmt::layer()
+            .with_target(true)
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_line_number(true);
+        let subscriber = Registry::default().with(env_filter).with(fmt_layer);
+        tracing::subscriber::set_global_default(subscriber)
+            .map_err(|e| anyhow::anyhow!("failed to set tracing subscriber: {}", e))?;
+        tracing::info!("Tracing subscriber initialized.");
+    }
     Ok(())
 }
