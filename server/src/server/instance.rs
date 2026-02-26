@@ -1066,7 +1066,13 @@ impl MassiveGameServer {
     pub fn enqueue_quic_input(&self, peer_id: &str, input: PlayerInputData) -> bool {
         let player_id = self.player_manager.id_pool.get_or_create(peer_id);
         if let Some(mut player_state) = self.player_manager.get_player_state_mut(&player_id) {
-            player_state.queue_input(input);
+            if !player_state.queue_input(input) {
+                debug!(
+                    "[{}]: Rejected QUIC input (seq replay or gap)",
+                    peer_id
+                );
+                return false;
+            }
             return true;
         }
         false

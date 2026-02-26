@@ -1309,11 +1309,18 @@ pub async fn handle_signaling_connection(
                                     if let Some(mut player_entry) =
                                         players_map_on_msg.get_player_state_mut(&player_id_arc)
                                     {
-                                        debug!(
-                                            "[{}]: Received player input (seq: {})",
-                                            pid_msg_inner_str, p_input_data.sequence
-                                        );
-                                        player_entry.queue_input(p_input_data);
+                                        let seq = p_input_data.sequence;
+                                        if player_entry.queue_input(p_input_data) {
+                                            debug!(
+                                                "[{}]: Accepted player input (seq: {})",
+                                                pid_msg_inner_str, seq
+                                            );
+                                        } else {
+                                            debug!(
+                                                "[{}]: Rejected player input (seq: {}, last_accepted: {}) – replay or sequence gap",
+                                                pid_msg_inner_str, seq, player_entry.last_queued_input_sequence
+                                            );
+                                        }
                                     } else {
                                         warn!(
                                             "[{}]: Player state not found for input processing.",
