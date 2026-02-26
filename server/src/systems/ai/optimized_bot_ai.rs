@@ -8,13 +8,28 @@ use crate::systems::ai::commander::{
     MotionSample, PredictiveMotionModel, ThreatPredictor, ThreatSample,
 };
 
+use crate::core::deterministic_rng::DeterministicRng;
 use dashmap::DashMap;
-use rand::Rng;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, trace};
+
+thread_local! {
+    /// Per-thread deterministic RNG for bot AI.  Re-seeded each frame in
+    /// `update_bots_batch` so that given the same frame counter the entire
+    /// bot decision sequence is reproducible.
+    static BOT_RNG: RefCell<DeterministicRng> = RefCell::new(DeterministicRng::new(0));
+}
+
+/// Convenience: borrow the thread-local deterministic RNG for the duration of
+/// the closure.  All bot AI randomness should go through this so that the
+/// simulation is fully reproducible from a given seed.
+#[inline]
+fn with_bot_rng<R>(f: impl FnOnce(&mut DeterministicRng) -> R) -> R {
+    BOT_RNG.with(|cell| f(&mut *cell.borrow_mut()))
+}
 
 // Optimized constants
 const BOT_SIMPLE_MOVEMENT_ONLY: bool = false; // Enable full AI with combat
@@ -54,14 +69,13 @@ pub enum BotPersonality {
 }
 
 impl BotPersonality {
-    /// Randomly assign a personality at creation.
+    /// Deterministically assign a personality at creation.
     pub fn random() -> Self {
-        let mut rng = rand::thread_rng();
-        match rng.gen_range(0u8..3) {
+        with_bot_rng(|rng| match rng.gen_range_u8(0, 3) {
             0 => BotPersonality::Aggressive,
             1 => BotPersonality::Defensive,
             _ => BotPersonality::Balanced,
-        }
+        })
     }
 
     /// The engagement range threshold for this personality.
@@ -213,9 +227,25 @@ impl OptimizedBotAI {
         let frame_count = server_instance
             .frame_counter
             .load(std::sync::atomic::Ordering::Relaxed);
+        // TODO(determinism): current_time uses wall clock (Instant::now()) for
+        // bot decision scheduling (last_decision_time, last_weapon_switch_time,
+        // stuck detection).  Replacing with a logical tick counter would make
+        // the AI fully deterministic but requires refactoring BotController
+        // timing fields.  For now we keep Instant-based timing and only fix
+        // the RNG source.
         let current_time = Instant::now();
         let now_ms = server_instance.get_server_timestamp_ms();
         let predictive_models = runtime_predictive_models();
+
+        // Seed the deterministic RNG from the frame counter so that all bot
+        // decisions this tick are reproducible given the same frame number.
+        // The constant is an arbitrary mixer to avoid degenerate patterns for
+        // small frame numbers.
+        BOT_RNG.with(|cell| {
+            *cell.borrow_mut() = DeterministicRng::new(
+                (frame_count as u64).wrapping_mul(2654435761), // Knuth multiplicative hash
+            );
+        });
 
         // Get list of bot IDs (reuse allocation)
         thread_local! {
@@ -474,7 +504,6 @@ impl OptimizedBotAI {
         enemies: &[EnemySnapshot],
         commander_attack_bias: Option<f32>,
     ) {
-        let mut rng = rand::thread_rng();
         let bot_team = bot_state.team_id;
         let enemy_team = if bot_team == 1 { 2 } else { 1 };
 
@@ -518,8 +547,12 @@ impl OptimizedBotAI {
                 // Stay near own flag base with some variation
                 let base_pos = MassiveGameServer::get_flag_base_position(bot_team);
                 let defend_radius = 150.0;
-                let angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
-                let distance = rng.gen_range(50.0..defend_radius);
+                let (angle, distance) = with_bot_rng(|rng| {
+                    (
+                        rng.gen_range_f32(0.0, 2.0 * std::f32::consts::PI),
+                        rng.gen_range_f32(50.0, defend_radius),
+                    )
+                });
                 bot_controller.target_position = Some(Vec2::new(
                     base_pos.x + distance * angle.cos(),
                     base_pos.y + distance * angle.sin(),
@@ -545,7 +578,9 @@ impl OptimizedBotAI {
                     if let Some(carrier_id) = &enemy_flag.carrier_id {
                         if let Some(carrier_state) = live_players_by_id.get(carrier_id) {
                             // Move near the carrier but not too close
-                            let offset_angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
+                            let offset_angle = with_bot_rng(|rng| {
+                                rng.gen_range_f32(0.0, 2.0 * std::f32::consts::PI)
+                            });
                             let offset_dist = 100.0;
                             bot_controller.target_position = Some(Vec2::new(
                                 carrier_state.x + offset_dist * offset_angle.cos(),
@@ -558,8 +593,9 @@ impl OptimizedBotAI {
             }
             BotObjective::PatrolMidfield => {
                 // Patrol center area
-                let patrol_x = rng.gen_range(-400.0..400.0);
-                let patrol_y = rng.gen_range(-400.0..400.0);
+                let (patrol_x, patrol_y) = with_bot_rng(|rng| {
+                    (rng.gen_range_f32(-400.0, 400.0), rng.gen_range_f32(-400.0, 400.0))
+                });
                 bot_controller.target_position = Some(Vec2::new(patrol_x, patrol_y));
                 bot_controller.behavior_state = BotBehaviorState::Patrolling;
             }
@@ -631,8 +667,7 @@ impl OptimizedBotAI {
         });
 
         // More aggressive role distribution
-        let mut rng = rand::thread_rng();
-        let role_choice = rng.gen_range(0..100);
+        let role_choice = with_bot_rng(|rng| rng.gen_range_i32(0, 100));
 
         let attack_bias = commander_attack_bias.unwrap_or(0.60).clamp(0.25, 0.85);
         let defend_roll_threshold = ((1.0 - attack_bias) * 40.0) as i32;
@@ -671,8 +706,7 @@ impl OptimizedBotAI {
             return;
         };
 
-        let mut rng = rand::thread_rng();
-        if rng.gen_bool(0.72) {
+        if with_bot_rng(|rng| rng.gen_bool(0.72)) {
             bot_controller.target_position = Some(waypoint);
             bot_controller.behavior_state = BotBehaviorState::MovingToObjective;
         }
@@ -702,7 +736,6 @@ impl OptimizedBotAI {
         bot_controller: &mut BotController,
         bot_state: &BotSnapshotOwned,
     ) {
-        let mut rng = rand::thread_rng();
         let personality = bot_controller.personality;
 
         // Personality-weighted behavior distribution
@@ -712,7 +745,7 @@ impl OptimizedBotAI {
             BotPersonality::Balanced => (40, 70),    // 40% engage, 30% flank, 30% patrol
         };
 
-        let behavior_choice = rng.gen_range(0..100);
+        let behavior_choice = with_bot_rng(|rng| rng.gen_range_i32(0, 100));
 
         if behavior_choice < engage_pct {
             // Aggressive: Move towards center for action
@@ -721,15 +754,18 @@ impl OptimizedBotAI {
                 BotPersonality::Defensive => 300.0,  // Stay at range
                 BotPersonality::Balanced => 200.0,
             };
-            let target_x = rng.gen_range(-range..range);
-            let target_y = rng.gen_range(-range..range);
+            let (target_x, target_y) = with_bot_rng(|rng| {
+                (rng.gen_range_f32(-range, range), rng.gen_range_f32(-range, range))
+            });
             bot_controller.target_position = Some(Vec2::new(target_x, target_y));
             bot_controller.behavior_state = BotBehaviorState::Engaging;
         } else if behavior_choice < flank_pct {
             // Flanking: Move to sides
-            let side = if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
-            let target_x = side * rng.gen_range(300.0..600.0);
-            let target_y = rng.gen_range(-400.0..400.0);
+            let (side, target_x_abs, target_y) = with_bot_rng(|rng| {
+                let side = if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
+                (side, rng.gen_range_f32(300.0, 600.0), rng.gen_range_f32(-400.0, 400.0))
+            });
+            let target_x = side * target_x_abs;
             bot_controller.target_position = Some(Vec2::new(target_x, target_y));
             bot_controller.behavior_state = BotBehaviorState::Flanking;
         } else {
@@ -737,16 +773,24 @@ impl OptimizedBotAI {
             match personality {
                 BotPersonality::Defensive => {
                     // Defensive bots hold near their current position
-                    let hold_x = bot_state.x + rng.gen_range(-80.0..80.0);
-                    let hold_y = bot_state.y + rng.gen_range(-80.0..80.0);
+                    let (hold_x, hold_y) = with_bot_rng(|rng| {
+                        (
+                            bot_state.x + rng.gen_range_f32(-80.0, 80.0),
+                            bot_state.y + rng.gen_range_f32(-80.0, 80.0),
+                        )
+                    });
                     let target_x = hold_x.clamp(WORLD_MIN_X + 100.0, WORLD_MAX_X - 100.0);
                     let target_y = hold_y.clamp(WORLD_MIN_Y + 100.0, WORLD_MAX_Y - 100.0);
                     bot_controller.target_position = Some(Vec2::new(target_x, target_y));
                     bot_controller.behavior_state = BotBehaviorState::Defending;
                 }
                 _ => {
-                    let target_x = rng.gen_range(WORLD_MIN_X + 100.0..WORLD_MAX_X - 100.0);
-                    let target_y = rng.gen_range(WORLD_MIN_Y + 100.0..WORLD_MAX_Y - 100.0);
+                    let (target_x, target_y) = with_bot_rng(|rng| {
+                        (
+                            rng.gen_range_f32(WORLD_MIN_X + 100.0, WORLD_MAX_X - 100.0),
+                            rng.gen_range_f32(WORLD_MIN_Y + 100.0, WORLD_MAX_Y - 100.0),
+                        )
+                    });
                     bot_controller.target_position = Some(Vec2::new(target_x, target_y));
                     bot_controller.behavior_state = BotBehaviorState::Patrolling;
                 }
@@ -898,8 +942,7 @@ impl OptimizedBotAI {
         game_mode: fb::GameModeType,
         enemies: &[EnemySnapshot],
     ) -> PlayerInputData {
-        let mut rng = rand::thread_rng();
-        let current_time = Instant::now();
+        let current_time = Instant::now(); // TODO(determinism): wall-clock timing for weapon cooldowns
         let can_switch_weapon =
             current_time.duration_since(bot_controller.last_weapon_switch_time)
                 >= BOT_WEAPON_SWITCH_COOLDOWN;
@@ -970,8 +1013,8 @@ impl OptimizedBotAI {
                 movement_handled = true;
 
                 // Add some zigzag movement occasionally
-                if rng.gen_bool(0.1) {
-                    if rng.gen_bool(0.5) {
+                if with_bot_rng(|rng| rng.gen_bool(0.1)) {
+                    if with_bot_rng(|rng| rng.gen_bool(0.5)) {
                         input.move_left = true;
                     } else {
                         input.move_right = true;
@@ -982,8 +1025,8 @@ impl OptimizedBotAI {
                 if bot_state.is_carrying_flag_team_id != 0 {
                     input.move_forward = true;
                     // Less zigzag when carrying flag
-                    if rng.gen_bool(0.05) {
-                        input.move_left = rng.gen_bool(0.5);
+                    if with_bot_rng(|rng| rng.gen_bool(0.05)) {
+                        input.move_left = with_bot_rng(|rng| rng.gen_bool(0.5));
                         input.move_right = !input.move_left;
                     }
                 }
@@ -1000,35 +1043,41 @@ impl OptimizedBotAI {
                 match bot_controller.behavior_state {
                     BotBehaviorState::Defending => {
                         // Look around while defending
-                        if rng.gen_bool(0.02) {
-                            input.rotation += rng.gen_range(-1.5..1.5);
+                        if with_bot_rng(|rng| rng.gen_bool(0.02)) {
+                            input.rotation += with_bot_rng(|rng| rng.gen_range_f32(-1.5, 1.5));
                         }
                         // Small movements to avoid being static
-                        if rng.gen_bool(0.1) {
-                            input.move_forward = rng.gen_bool(0.3);
-                            input.move_backward = rng.gen_bool(0.3);
-                            input.move_left = rng.gen_bool(0.3);
-                            input.move_right = rng.gen_bool(0.3);
+                        if with_bot_rng(|rng| rng.gen_bool(0.1)) {
+                            with_bot_rng(|rng| {
+                                input.move_forward = rng.gen_bool(0.3);
+                                input.move_backward = rng.gen_bool(0.3);
+                                input.move_left = rng.gen_bool(0.3);
+                                input.move_right = rng.gen_bool(0.3);
+                            });
                         }
                     }
                     _ => {
                         // Patrol movement
-                        if rng.gen_bool(0.05) {
-                            input.move_forward = rng.gen_bool(0.5);
-                            input.move_left = rng.gen_bool(0.5);
-                            input.move_right = !input.move_left && rng.gen_bool(0.5);
+                        if with_bot_rng(|rng| rng.gen_bool(0.05)) {
+                            with_bot_rng(|rng| {
+                                input.move_forward = rng.gen_bool(0.5);
+                                input.move_left = rng.gen_bool(0.5);
+                                input.move_right = !input.move_left && rng.gen_bool(0.5);
+                            });
                         }
                     }
                 }
             }
         } else {
             // No target - wander randomly
-            if rng.gen_bool(0.1) {
-                input.move_forward = rng.gen_bool(0.7);
-                input.move_backward = !input.move_forward && rng.gen_bool(0.3);
-                input.move_left = rng.gen_bool(0.3);
-                input.move_right = !input.move_left && rng.gen_bool(0.3);
-                input.rotation += rng.gen_range(-0.5..0.5);
+            if with_bot_rng(|rng| rng.gen_bool(0.1)) {
+                with_bot_rng(|rng| {
+                    input.move_forward = rng.gen_bool(0.7);
+                    input.move_backward = !input.move_forward && rng.gen_bool(0.3);
+                    input.move_left = rng.gen_bool(0.3);
+                    input.move_right = !input.move_left && rng.gen_bool(0.3);
+                    input.rotation += rng.gen_range_f32(-0.5, 0.5);
+                });
             }
         }
 
@@ -1046,7 +1095,7 @@ impl OptimizedBotAI {
             }
 
             // Aim at enemy with some inaccuracy
-            let aim_offset = rng.gen_range(-0.2..0.2) * (1.0 - BOT_SHOOT_ACCURACY);
+            let aim_offset = with_bot_rng(|rng| rng.gen_range_f32(-0.2, 0.2)) * (1.0 - BOT_SHOOT_ACCURACY);
             input.rotation = nearest_enemy_angle + aim_offset;
             if let Some(target) = selected_target.as_ref() {
                 // Tighten movement vector around predicted enemy motion when engaging.
@@ -1071,7 +1120,7 @@ impl OptimizedBotAI {
             if nearest_enemy_dist < shoot_range.powi(2) {
                 // Apply reaction time
                 if bot_controller.last_decision_time.elapsed() > BOT_REACTION_TIME {
-                    input.shooting = rng.gen_bool(0.7); // 70% chance to shoot when in range
+                    input.shooting = with_bot_rng(|rng| rng.gen_bool(0.7)); // 70% chance to shoot when in range
 
                     // Aggressive bots prefer melee at very close range
                     let melee_chance = match personality {
@@ -1079,7 +1128,7 @@ impl OptimizedBotAI {
                         BotPersonality::Defensive => 0.1,
                         BotPersonality::Balanced => 0.3,
                     };
-                    if nearest_enemy_dist < 60.0 * 60.0 && rng.gen_bool(melee_chance) {
+                    if nearest_enemy_dist < 60.0 * 60.0 && with_bot_rng(|rng| rng.gen_bool(melee_chance)) {
                         input.melee_attack = true;
                         input.shooting = false;
                     }
@@ -1089,10 +1138,10 @@ impl OptimizedBotAI {
             // Use movement abilities for outplay opportunities.
             if nearest_enemy_dist > 180.0 * 180.0
                 && nearest_enemy_dist < 420.0 * 420.0
-                && rng.gen_bool(0.06)
+                && with_bot_rng(|rng| rng.gen_bool(0.06))
             {
                 input.use_ability_slot = 1; // Dash engage
-            } else if nearest_enemy_dist < 120.0 * 120.0 && rng.gen_bool(0.08) {
+            } else if nearest_enemy_dist < 120.0 * 120.0 && with_bot_rng(|rng| rng.gen_bool(0.08)) {
                 input.use_ability_slot = 2; // Dodge roll disengage
             }
 
@@ -1108,8 +1157,8 @@ impl OptimizedBotAI {
                             input.move_forward = true; // Close the gap
                         } else {
                             // Strafe aggressively at close range
-                            if rng.gen_bool(0.7) {
-                                input.move_left = rng.gen_bool(0.5);
+                            if with_bot_rng(|rng| rng.gen_bool(0.7)) {
+                                input.move_left = with_bot_rng(|rng| rng.gen_bool(0.5));
                                 input.move_right = !input.move_left;
                             }
                             // Aggressive bots chase fleeing enemies
@@ -1123,14 +1172,14 @@ impl OptimizedBotAI {
                             input.move_backward = true;
                             input.move_forward = false;
                             // Strafe while retreating
-                            if rng.gen_bool(0.4) {
-                                input.move_left = rng.gen_bool(0.5);
+                            if with_bot_rng(|rng| rng.gen_bool(0.4)) {
+                                input.move_left = with_bot_rng(|rng| rng.gen_bool(0.5));
                                 input.move_right = !input.move_left;
                             }
                         } else {
                             // Hold position, strafe to avoid being hit
-                            if rng.gen_bool(0.5) {
-                                input.move_left = rng.gen_bool(0.5);
+                            if with_bot_rng(|rng| rng.gen_bool(0.5)) {
+                                input.move_left = with_bot_rng(|rng| rng.gen_bool(0.5));
                                 input.move_right = !input.move_left;
                             }
                         }
@@ -1139,12 +1188,12 @@ impl OptimizedBotAI {
                         // Default balanced behavior
                         if nearest_enemy_dist < 200.0 * 200.0 {
                             // Strafe at close range
-                            if rng.gen_bool(0.6) {
-                                input.move_left = rng.gen_bool(0.5);
+                            if with_bot_rng(|rng| rng.gen_bool(0.6)) {
+                                input.move_left = with_bot_rng(|rng| rng.gen_bool(0.5));
                                 input.move_right = !input.move_left;
                             }
                             // Sometimes retreat
-                            if nearest_enemy_dist < 100.0 * 100.0 && rng.gen_bool(0.3) {
+                            if nearest_enemy_dist < 100.0 * 100.0 && with_bot_rng(|rng| rng.gen_bool(0.3)) {
                                 input.move_backward = true;
                                 input.move_forward = false;
                             }
@@ -1224,11 +1273,13 @@ impl OptimizedBotAI {
                         bot_state.username, current_pos.x, current_pos.y
                     );
 
-                    let mut rng = rand::thread_rng();
-
                     // Try to move in a random direction away from current position
-                    let escape_angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
-                    let escape_distance = rng.gen_range(100.0..300.0);
+                    let (escape_angle, escape_distance) = with_bot_rng(|rng| {
+                        (
+                            rng.gen_range_f32(0.0, 2.0 * std::f32::consts::PI),
+                            rng.gen_range_f32(100.0, 300.0),
+                        )
+                    });
 
                     let new_x = (current_pos.x + escape_distance * escape_angle.cos())
                         .clamp(WORLD_MIN_X + 100.0, WORLD_MAX_X - 100.0);
