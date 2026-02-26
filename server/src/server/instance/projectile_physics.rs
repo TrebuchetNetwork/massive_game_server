@@ -333,7 +333,15 @@ impl MassiveGameServer {
             );
         }
 
-        // Process hits - reuse existing game logic
+        // Process hits sequentially with a local health tracker to prevent the
+        // concurrent damage race condition: two projectiles from parallel chunks
+        // can both detect the same target as alive, producing duplicate hit entries.
+        // The local tracker ensures that once a player's tracked HP reaches 0,
+        // subsequent hits in the same tick see them as dead and skip kill logic.
+        //
+        // Map: target_id -> (tracked_health, tracked_shield, already_dead)
+        let mut health_tracker: HashMap<PlayerID, (i32, i32, bool)> = HashMap::new();
+
         for (attacker_id, target_id, base_damage, weapon, hit_x, hit_y) in hits {
             let Some(attacker_state_entry) = self.player_manager.get_player_state(&attacker_id)
             else {
@@ -352,81 +360,206 @@ impl MassiveGameServer {
             if let Some(mut target_state_entry) =
                 self.player_manager.get_player_state_mut(&target_id)
             {
-                if target_state_entry.alive && !target_state_entry.is_spectator {
-                    let distance = ((hit_x - attacker_pos.x).powi(2)
-                        + (hit_y - attacker_pos.y).powi(2))
+                // Initialize health tracker entry from authoritative state if not yet seen.
+                let tracker = health_tracker
+                    .entry(target_id.clone())
+                    .or_insert_with(|| {
+                        (
+                            target_state_entry.health,
+                            target_state_entry.shield_current,
+                            !target_state_entry.alive,
+                        )
+                    });
+
+                // Skip if player is already dead (from authoritative state or earlier
+                // hit in this tick) or is a spectator.
+                if tracker.2 || target_state_entry.is_spectator {
+                    continue;
+                }
+
+                let distance = ((hit_x - attacker_pos.x).powi(2)
+                    + (hit_y - attacker_pos.y).powi(2))
+                .sqrt();
+                let damage = crate::systems::combat::weapons::apply_distance_falloff(
+                    weapon,
+                    base_damage,
+                    distance,
+                );
+                if damage <= 0 {
+                    continue;
+                }
+
+                // Apply damage to local tracker first to determine if this hit
+                // causes death, preventing duplicate kill events.
+                let mut remaining_damage = damage;
+                if tracker.1 > 0 {
+                    let shield_absorbed = remaining_damage.min(tracker.1);
+                    tracker.1 -= shield_absorbed;
+                    remaining_damage -= shield_absorbed;
+                }
+                tracker.0 = (tracker.0 - remaining_damage).max(0);
+                let died_from_this_hit = tracker.0 == 0;
+                if died_from_this_hit {
+                    tracker.2 = true; // Mark as dead for subsequent hits in this tick
+                }
+
+                // Now apply the damage to the authoritative player state.
+                // record_incoming_damage for assist tracking, then apply_damage
+                // which handles shield, health, and die() internally.
+                target_state_entry.record_incoming_damage(&attacker_id, damage, Instant::now());
+
+                let died = target_state_entry.apply_damage(damage);
+                let target_pos = Vec2::new(target_state_entry.x, target_state_entry.y);
+
+                // Apply knockback on projectile hit
+                if !died {
+                    let dx = target_state_entry.x - attacker_pos.x;
+                    let dy = target_state_entry.y - attacker_pos.y;
+                    let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+                    let kb_force = damage as f32 * crate::core::constants::KNOCKBACK_FORCE_PER_DAMAGE;
+                    target_state_entry.velocity_x += (dx / dist) * kb_force;
+                    target_state_entry.velocity_y += (dy / dist) * kb_force;
+
+                    // Clamp velocity to prevent wall-clipping on stacked knockback
+                    let speed = (target_state_entry.velocity_x.powi(2)
+                        + target_state_entry.velocity_y.powi(2))
                     .sqrt();
-                    let damage = crate::systems::combat::weapons::apply_distance_falloff(
+                    if speed > crate::core::constants::KNOCKBACK_MAX_VELOCITY {
+                        let scale =
+                            crate::core::constants::KNOCKBACK_MAX_VELOCITY / speed;
+                        target_state_entry.velocity_x *= scale;
+                        target_state_entry.velocity_y *= scale;
+                    }
+
+                    target_state_entry.mark_field_changed(FIELD_POSITION_ROTATION);
+                }
+
+                if let Some(mut attacker_state_entry) =
+                    self.player_manager.get_player_state_mut(&attacker_id)
+                {
+                    attacker_state_entry.record_damage_dealt(damage);
+                    attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
+                }
+
+                self.global_game_events.push(
+                    GameEvent::PlayerDamaged {
+                        target_id: target_id.clone(),
+                        attacker_id: Some(attacker_id.clone()),
+                        damage,
                         weapon,
-                        base_damage,
-                        distance,
-                    );
-                    if damage <= 0 {
-                        continue;
+                        position: target_pos,
+                    },
+                    EventPriority::Normal,
+                );
+
+                // Only process kill logic if the local tracker determined this
+                // specific hit caused the death. This prevents duplicate kills
+                // when multiple projectiles hit the same target in one tick.
+                if died_from_this_hit && died {
+                    // Store flag carry state before clearing it
+                    let victim_was_carrying_flag_id =
+                        target_state_entry.is_carrying_flag_team_id;
+                    let victim_username = target_state_entry.username.clone();
+
+                    // Clear flag carry state on the victim
+                    if victim_was_carrying_flag_id != 0 {
+                        target_state_entry.is_carrying_flag_team_id = 0;
+                        target_state_entry.mark_field_changed(FIELD_FLAG);
                     }
 
-                    // Record damage source for assist tracking
-                    target_state_entry.record_incoming_damage(&attacker_id, damage, Instant::now());
+                    // Handle death (existing logic from run_physics_update)
+                    if attacker_id != target_id {
+                        // Get team information for friendly fire check
+                        let attacker_team = self
+                            .player_manager
+                            .get_player_state(&attacker_id)
+                            .map(|p| p.team_id)
+                            .unwrap_or(0);
+                        let victim_team = target_state_entry.team_id;
 
-                    let died = target_state_entry.apply_damage(damage);
-                    let target_pos = Vec2::new(target_state_entry.x, target_state_entry.y);
+                        if let Some(mut attacker_state_entry) =
+                            self.player_manager.get_player_state_mut(&attacker_id)
+                        {
+                            attacker_state_entry.kills += 1;
+                            attacker_state_entry.record_kill_with_weapon(weapon);
 
-                    // Apply knockback on projectile hit
-                    if !died {
-                        let dx = target_state_entry.x - attacker_pos.x;
-                        let dy = target_state_entry.y - attacker_pos.y;
-                        let dist = (dx * dx + dy * dy).sqrt().max(1.0);
-                        let kb_force = damage as f32 * crate::core::constants::KNOCKBACK_FORCE_PER_DAMAGE;
-                        target_state_entry.velocity_x += (dx / dist) * kb_force;
-                        target_state_entry.velocity_y += (dy / dist) * kb_force;
+                            // Check for friendly fire
+                            if attacker_team != 0
+                                && victim_team != 0
+                                && attacker_team == victim_team
+                            {
+                                // Friendly fire: double negative score
+                                attacker_state_entry.score -= 200;
+                                info!(
+                                    "Friendly fire penalty: {} killed teammate {}, -200 score",
+                                    attacker_state_entry.username, victim_username
+                                );
+                            } else {
+                                // Normal kill: positive score
+                                attacker_state_entry.score += crate::core::constants::POINTS_PER_KILL;
 
-                        // Clamp velocity to prevent wall-clipping on stacked knockback
-                        let speed = (target_state_entry.velocity_x.powi(2)
-                            + target_state_entry.velocity_y.powi(2))
-                        .sqrt();
-                        if speed > crate::core::constants::KNOCKBACK_MAX_VELOCITY {
-                            let scale =
-                                crate::core::constants::KNOCKBACK_MAX_VELOCITY / speed;
-                            target_state_entry.velocity_x *= scale;
-                            target_state_entry.velocity_y *= scale;
+                                // --- Killstreak system ---
+                                attacker_state_entry.current_streak += 1;
+                                let streak = attacker_state_entry.current_streak;
+
+                                if streak == crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD {
+                                    attacker_state_entry.streak_damage_boost_remaining =
+                                        crate::core::constants::KILLSTREAK_DAMAGE_BOOST_DURATION_SECS;
+                                }
+                                if streak == crate::core::constants::KILLSTREAK_SPEED_BOOST_THRESHOLD {
+                                    attacker_state_entry.streak_speed_boost_remaining =
+                                        crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS;
+                                }
+                                if streak >= crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD {
+                                    let a_pos = Vec2::new(attacker_state_entry.x, attacker_state_entry.y);
+                                    drop(attacker_state_entry);
+                                    self.global_game_events.push(
+                                        GameEvent::Killstreak {
+                                            player_id: attacker_id.clone(),
+                                            streak,
+                                            position: a_pos,
+                                        },
+                                        EventPriority::High,
+                                    );
+                                } else {
+                                    attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
+                                    drop(attacker_state_entry);
+                                }
+                            }
+
+                            // We may have already dropped attacker_state_entry above
+                            if let Some(mut a) = self.player_manager.get_player_state_mut(&attacker_id) {
+                                a.mark_field_changed(FIELD_SCORE_STATS);
+                            }
                         }
 
-                        target_state_entry.mark_field_changed(FIELD_POSITION_ROTATION);
+                        // --- Assist tracking ---
+                        {
+                            let assist_ids = target_state_entry.get_assist_ids(&attacker_id, Instant::now());
+                            for assister_id in assist_ids {
+                                if let Some(mut assister) = self.player_manager.get_player_state_mut(&assister_id) {
+                                    assister.score += crate::core::constants::POINTS_ASSIST;
+                                    assister.mark_field_changed(FIELD_SCORE_STATS);
+                                }
+                                self.global_game_events.push(
+                                    GameEvent::AssistKill {
+                                        assister_id: assister_id.clone(),
+                                        victim_id: target_id.clone(),
+                                        points: crate::core::constants::POINTS_ASSIST,
+                                    },
+                                    EventPriority::Normal,
+                                );
+                            }
+                        }
                     }
 
-                    if let Some(mut attacker_state_entry) =
-                        self.player_manager.get_player_state_mut(&attacker_id)
+                    // Update team scores for TeamDeathmatch
                     {
-                        attacker_state_entry.record_damage_dealt(damage);
-                        attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
-                    }
+                        let match_info_guard = self.match_info.read();
+                        if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch {
+                            drop(match_info_guard);
 
-                    self.global_game_events.push(
-                        GameEvent::PlayerDamaged {
-                            target_id: target_id.clone(),
-                            attacker_id: Some(attacker_id.clone()),
-                            damage,
-                            weapon,
-                            position: target_pos,
-                        },
-                        EventPriority::Normal,
-                    );
-
-                    if died {
-                        // Store flag carry state before clearing it
-                        let victim_was_carrying_flag_id =
-                            target_state_entry.is_carrying_flag_team_id;
-                        let victim_username = target_state_entry.username.clone();
-
-                        // Clear flag carry state on the victim
-                        if victim_was_carrying_flag_id != 0 {
-                            target_state_entry.is_carrying_flag_team_id = 0;
-                            target_state_entry.mark_field_changed(FIELD_FLAG);
-                        }
-
-                        // Handle death (existing logic from run_physics_update)
-                        if attacker_id != target_id {
-                            // Get team information for friendly fire check
+                            // Get attacker and victim team IDs
                             let attacker_team = self
                                 .player_manager
                                 .get_player_state(&attacker_id)
@@ -434,202 +567,111 @@ impl MassiveGameServer {
                                 .unwrap_or(0);
                             let victim_team = target_state_entry.team_id;
 
-                            if let Some(mut attacker_state_entry) =
-                                self.player_manager.get_player_state_mut(&attacker_id)
+                            // Award point to attacker's team if it's a valid team kill
+                            if attacker_team != 0
+                                && victim_team != 0
+                                && attacker_team != victim_team
                             {
-                                attacker_state_entry.kills += 1;
-                                attacker_state_entry.record_kill_with_weapon(weapon);
-
-                                // Check for friendly fire
-                                if attacker_team != 0
-                                    && victim_team != 0
-                                    && attacker_team == victim_team
-                                {
-                                    // Friendly fire: double negative score
-                                    attacker_state_entry.score -= 200;
-                                    info!(
-                                        "Friendly fire penalty: {} killed teammate {}, -200 score",
-                                        attacker_state_entry.username, victim_username
-                                    );
-                                } else {
-                                    // Normal kill: positive score
-                                    attacker_state_entry.score += crate::core::constants::POINTS_PER_KILL;
-
-                                    // --- Killstreak system ---
-                                    attacker_state_entry.current_streak += 1;
-                                    let streak = attacker_state_entry.current_streak;
-
-                                    if streak == crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD {
-                                        attacker_state_entry.streak_damage_boost_remaining =
-                                            crate::core::constants::KILLSTREAK_DAMAGE_BOOST_DURATION_SECS;
-                                    }
-                                    if streak == crate::core::constants::KILLSTREAK_SPEED_BOOST_THRESHOLD {
-                                        attacker_state_entry.streak_speed_boost_remaining =
-                                            crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS;
-                                    }
-                                    if streak >= crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD {
-                                        let a_pos = Vec2::new(attacker_state_entry.x, attacker_state_entry.y);
-                                        drop(attacker_state_entry);
-                                        self.global_game_events.push(
-                                            GameEvent::Killstreak {
-                                                player_id: attacker_id.clone(),
-                                                streak,
-                                                position: a_pos,
-                                            },
-                                            EventPriority::High,
-                                        );
-                                    } else {
-                                        attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
-                                        drop(attacker_state_entry);
-                                    }
-                                }
-
-                                // We may have already dropped attacker_state_entry above
-                                if let Some(mut a) = self.player_manager.get_player_state_mut(&attacker_id) {
-                                    a.mark_field_changed(FIELD_SCORE_STATS);
-                                }
-                            }
-
-                            // --- Assist tracking ---
-                            {
-                                let assist_ids = target_state_entry.get_assist_ids(&attacker_id, Instant::now());
-                                for assister_id in assist_ids {
-                                    if let Some(mut assister) = self.player_manager.get_player_state_mut(&assister_id) {
-                                        assister.score += crate::core::constants::POINTS_ASSIST;
-                                        assister.mark_field_changed(FIELD_SCORE_STATS);
-                                    }
-                                    self.global_game_events.push(
-                                        GameEvent::AssistKill {
-                                            assister_id: assister_id.clone(),
-                                            victim_id: target_id.clone(),
-                                            points: crate::core::constants::POINTS_ASSIST,
-                                        },
-                                        EventPriority::Normal,
-                                    );
-                                }
+                                let mut match_info_write = self.match_info.write();
+                                let team_score = match_info_write
+                                    .team_scores
+                                    .entry(attacker_team)
+                                    .or_insert(0);
+                                *team_score += 1;
+                                info!("Team {} scored! New score: {} (kill by player on victim from team {})",
+                                      attacker_team, *team_score, victim_team);
                             }
                         }
+                    }
 
-                        // Update team scores for TeamDeathmatch
-                        {
+                    self.global_game_events.push(
+                        GameEvent::PlayerKilled {
+                            victim_id: target_id.clone(),
+                            killer_id: attacker_id.clone(),
+                            weapon,
+                            position: target_pos,
+                        },
+                        EventPriority::High,
+                    );
+
+                    // Losing team respawn reduction
+                    {
+                        let victim_team = target_state_entry.team_id;
+                        if victim_team != 0 {
                             let match_info_guard = self.match_info.read();
-                            if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch {
-                                drop(match_info_guard);
+                            let victim_team_score = match_info_guard
+                                .team_scores
+                                .get(&victim_team)
+                                .cloned()
+                                .unwrap_or(0);
+                            let max_enemy_score = match_info_guard
+                                .team_scores
+                                .iter()
+                                .filter(|(&tid, _)| tid != victim_team)
+                                .map(|(_, &s)| s)
+                                .max()
+                                .unwrap_or(0);
+                            drop(match_info_guard);
 
-                                // Get attacker and victim team IDs
-                                let attacker_team = self
-                                    .player_manager
-                                    .get_player_state(&attacker_id)
-                                    .map(|p| p.team_id)
-                                    .unwrap_or(0);
-                                let victim_team = target_state_entry.team_id;
-
-                                // Award point to attacker's team if it's a valid team kill
-                                if attacker_team != 0
-                                    && victim_team != 0
-                                    && attacker_team != victim_team
-                                {
-                                    let mut match_info_write = self.match_info.write();
-                                    let team_score = match_info_write
-                                        .team_scores
-                                        .entry(attacker_team)
-                                        .or_insert(0);
-                                    *team_score += 1;
-                                    info!("Team {} scored! New score: {} (kill by player on victim from team {})",
-                                          attacker_team, *team_score, victim_team);
+                            let deficit = max_enemy_score - victim_team_score;
+                            if deficit > 0 {
+                                let reduction_ticks = (deficit / 5).max(0) as f32;
+                                let reduction =
+                                    reduction_ticks * LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS;
+                                if let Some(ref mut timer) = target_state_entry.respawn_timer {
+                                    *timer = (*timer - reduction).max(0.5);
                                 }
                             }
                         }
+                    }
 
-                        self.global_game_events.push(
-                            GameEvent::PlayerKilled {
-                                victim_id: target_id.clone(),
-                                killer_id: attacker_id.clone(),
-                                weapon,
-                                position: target_pos,
-                            },
-                            EventPriority::High,
-                        );
+                    // Update kill feed
+                    let killer_username = self
+                        .player_manager
+                        .get_player_state(&attacker_id)
+                        .map_or_else(|| "World".to_string(), |p| p.username.clone());
 
-                        // Losing team respawn reduction
+                    self.capture_killcam_for_victim(
+                        &target_id,
+                        &victim_username,
+                        &attacker_id,
+                        weapon,
+                    );
+
+                    self.push_kill_feed_entry(
+                        killer_username.clone(),
+                        victim_username.clone(),
+                        weapon,
+                    );
+
+                    // Handle flag dropping if victim was carrying a flag
+                    if victim_was_carrying_flag_id != 0 {
+                        let mut match_info_guard = self.match_info.write();
+
+                        // Drop the flag
+                        if let Some(flag_state) = match_info_guard
+                            .flag_states
+                            .get_mut(&victim_was_carrying_flag_id)
                         {
-                            let victim_team = target_state_entry.team_id;
-                            if victim_team != 0 {
-                                let match_info_guard = self.match_info.read();
-                                let victim_team_score = match_info_guard
-                                    .team_scores
-                                    .get(&victim_team)
-                                    .cloned()
-                                    .unwrap_or(0);
-                                let max_enemy_score = match_info_guard
-                                    .team_scores
-                                    .iter()
-                                    .filter(|(&tid, _)| tid != victim_team)
-                                    .map(|(_, &s)| s)
-                                    .max()
-                                    .unwrap_or(0);
-                                drop(match_info_guard);
+                            flag_state.status = fb::FlagStatus::Dropped;
+                            flag_state.position = target_pos;
+                            flag_state.carrier_id = None;
+                            flag_state.respawn_timer = 30.0;
 
-                                let deficit = max_enemy_score - victim_team_score;
-                                if deficit > 0 {
-                                    let reduction_ticks = (deficit / 5).max(0) as f32;
-                                    let reduction =
-                                        reduction_ticks * LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS;
-                                    if let Some(ref mut timer) = target_state_entry.respawn_timer {
-                                        *timer = (*timer - reduction).max(0.5);
-                                    }
-                                }
-                            }
-                        }
+                            // Push flag dropped event after releasing match_info lock
+                            drop(match_info_guard);
 
-                        // Update kill feed
-                        let killer_username = self
-                            .player_manager
-                            .get_player_state(&attacker_id)
-                            .map_or_else(|| "World".to_string(), |p| p.username.clone());
+                            self.global_game_events.push(
+                                GameEvent::FlagDropped {
+                                    player_id: target_id.clone(),
+                                    flag_team_id: victim_was_carrying_flag_id,
+                                    position: target_pos,
+                                },
+                                EventPriority::High,
+                            );
 
-                        self.capture_killcam_for_victim(
-                            &target_id,
-                            &victim_username,
-                            &attacker_id,
-                            weapon,
-                        );
-
-                        self.push_kill_feed_entry(
-                            killer_username.clone(),
-                            victim_username.clone(),
-                            weapon,
-                        );
-
-                        // Handle flag dropping if victim was carrying a flag
-                        if victim_was_carrying_flag_id != 0 {
-                            let mut match_info_guard = self.match_info.write();
-
-                            // Drop the flag
-                            if let Some(flag_state) = match_info_guard
-                                .flag_states
-                                .get_mut(&victim_was_carrying_flag_id)
-                            {
-                                flag_state.status = fb::FlagStatus::Dropped;
-                                flag_state.position = target_pos;
-                                flag_state.carrier_id = None;
-                                flag_state.respawn_timer = 30.0;
-
-                                // Push flag dropped event after releasing match_info lock
-                                drop(match_info_guard);
-
-                                self.global_game_events.push(
-                                    GameEvent::FlagDropped {
-                                        player_id: target_id.clone(),
-                                        flag_team_id: victim_was_carrying_flag_id,
-                                        position: target_pos,
-                                    },
-                                    EventPriority::High,
-                                );
-
-                                info!("(Projectile Kill) Flag of team {} dropped at ({:.1}, {:.1}) by {} killing {}",
-                                      victim_was_carrying_flag_id, target_pos.x, target_pos.y, killer_username, victim_username);
-                            }
+                            info!("(Projectile Kill) Flag of team {} dropped at ({:.1}, {:.1}) by {} killing {}",
+                                  victim_was_carrying_flag_id, target_pos.x, target_pos.y, killer_username, victim_username);
                         }
                     }
                 }
