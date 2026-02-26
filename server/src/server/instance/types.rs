@@ -135,11 +135,15 @@ pub struct BotController {
     pub target_position: Option<Vec2>,
     pub target_enemy_id: Option<PlayerID>,
     pub last_decision_time: Instant,
+    /// Tick-based decision timing: the frame_count at which the last decision was made.
+    pub last_decision_tick: u64,
     pub ai_update_accumulator_secs: f32,
     pub behavior_state: BotBehaviorState,
     pub current_path: VecDeque<Vec2>,
     pub path_recalculation_timer: Instant,
     pub last_weapon_switch_time: Instant,
+    /// Tick-based weapon switch timing: the frame_count of the last weapon switch.
+    pub last_weapon_switch_tick: u64,
     // Stuck detection fields
     pub last_position: Vec2,
     pub stuck_timer: f32,
