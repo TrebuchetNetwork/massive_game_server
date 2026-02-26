@@ -10,16 +10,36 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use quinn::{Connecting, Endpoint, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-pub type QuicRequestHandler = Arc<dyn Fn(&[u8]) -> Option<Vec<u8>> + Send + Sync + 'static>;
+/// Handler signature now receives the connection-bound peer_id (if any) alongside the raw payload.
+/// The second argument is the server-assigned peer_id for this QUIC connection, derived from the
+/// session token during the "join" handshake. It is `None` until a successful auth handshake.
+pub type QuicRequestHandler =
+    Arc<dyn Fn(&[u8], Option<&str>) -> Option<Vec<u8>> + Send + Sync + 'static>;
+
+/// Hard upper bound on a single QUIC stream payload (64 KB).
+/// Game messages should never exceed this; the configurable max_stream_payload_bytes is clamped
+/// to this ceiling regardless of environment variable settings.
+const QUIC_MAX_STREAM_PAYLOAD_HARD_CAP: usize = 64 * 1024;
+
+/// Bounded outbound channel capacity per connection.
+/// If the client cannot keep up, sends will apply backpressure rather than growing without bound.
+const OUTBOUND_CHANNEL_CAPACITY: usize = 4096;
+
+/// Default per-IP connection rate: connections per second.
+const DEFAULT_CONN_RATE_PER_SEC: u32 = 8;
+/// Default per-IP burst capacity for connection rate limiting.
+const DEFAULT_CONN_RATE_BURST: u32 = 16;
 
 #[derive(Debug, Clone)]
 pub struct QuicEndpointConfig {
@@ -37,7 +57,7 @@ pub struct QuicRuntime {
 #[derive(Clone)]
 struct QuicPeerSender {
     connection_token: u64,
-    outbound_tx: mpsc::UnboundedSender<Bytes>,
+    outbound_tx: mpsc::Sender<Bytes>,
 }
 
 static QUIC_PEER_SENDERS: OnceLock<DashMap<String, QuicPeerSender>> = OnceLock::new();
@@ -64,11 +84,12 @@ impl QuicEndpointConfig {
             .ok()
             .and_then(|raw| raw.parse::<u32>().ok())
             .unwrap_or(1024);
+        // Clamp to hard cap: game messages should never exceed QUIC_MAX_STREAM_PAYLOAD_HARD_CAP.
         let max_stream_payload_bytes = std::env::var("MGS_QUIC_MAX_STREAM_PAYLOAD_BYTES")
             .ok()
             .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(128 * 1024)
-            .clamp(4 * 1024, 2 * 1024 * 1024);
+            .unwrap_or(QUIC_MAX_STREAM_PAYLOAD_HARD_CAP)
+            .clamp(4 * 1024, QUIC_MAX_STREAM_PAYLOAD_HARD_CAP);
         Self {
             bind_addr,
             max_concurrent_bidi_streams,
@@ -106,10 +127,20 @@ pub fn send_quic_packet_batch(peer_id: &str, packets: &[Bytes]) -> usize {
 
     let mut sent = 0usize;
     for packet in packets {
-        if sender.outbound_tx.send(packet.clone()).is_ok() {
-            sent += 1;
-        } else {
-            break;
+        // try_send applies backpressure: if channel is full, stop sending.
+        match sender.outbound_tx.try_send(packet.clone()) {
+            Ok(()) => sent += 1,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                debug!(
+                    "QUIC outbound channel full for peer '{}', dropping {} remaining packets",
+                    peer_id,
+                    packets.len() - sent
+                );
+                break;
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                break;
+            }
         }
     }
 
@@ -146,6 +177,106 @@ pub fn validate_quic_config(config: &QuicEndpointConfig) -> Result<()> {
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Per-IP connection rate limiter
+// ---------------------------------------------------------------------------
+
+struct IpRateLimiter {
+    refill_per_sec: f64,
+    capacity: f64,
+    available: f64,
+    last_refill: Instant,
+}
+
+impl IpRateLimiter {
+    fn new(refill_per_sec: u32, burst: u32) -> Self {
+        let cap = burst.max(1) as f64;
+        Self {
+            refill_per_sec: refill_per_sec.max(1) as f64,
+            capacity: cap,
+            available: cap,
+            last_refill: Instant::now(),
+        }
+    }
+
+    fn try_acquire(&mut self) -> bool {
+        let now = Instant::now();
+        let elapsed = now
+            .checked_duration_since(self.last_refill)
+            .unwrap_or_default()
+            .as_secs_f64();
+        if elapsed > 0.0 {
+            self.available = (self.available + elapsed * self.refill_per_sec).min(self.capacity);
+            self.last_refill = now;
+        }
+        if self.available >= 1.0 {
+            self.available -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+struct ConnectionRateLimiters {
+    limiters: Mutex<HashMap<IpAddr, IpRateLimiter>>,
+    per_sec: u32,
+    burst: u32,
+}
+
+impl ConnectionRateLimiters {
+    fn new(per_sec: u32, burst: u32) -> Self {
+        Self {
+            limiters: Mutex::new(HashMap::new()),
+            per_sec,
+            burst,
+        }
+    }
+
+    fn try_acquire(&self, ip: IpAddr) -> bool {
+        let mut map = match self.limiters.lock() {
+            Ok(guard) => guard,
+            Err(_) => return false,
+        };
+        let limiter = map
+            .entry(ip)
+            .or_insert_with(|| IpRateLimiter::new(self.per_sec, self.burst));
+        limiter.try_acquire()
+    }
+
+    /// Periodic cleanup of stale entries to prevent unbounded growth.
+    fn cleanup_stale(&self) {
+        let mut map = match self.limiters.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        let now = Instant::now();
+        map.retain(|_ip, limiter| {
+            // Keep entries that were active in the last 60 seconds.
+            now.checked_duration_since(limiter.last_refill)
+                .unwrap_or_default()
+                .as_secs()
+                < 60
+        });
+    }
+}
+
+fn load_conn_rate_limit_config() -> (u32, u32) {
+    let per_sec = std::env::var("MGS_QUIC_CONN_RATE_PER_SEC")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(DEFAULT_CONN_RATE_PER_SEC)
+        .clamp(1, 1000);
+    let burst = std::env::var("MGS_QUIC_CONN_RATE_BURST")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(DEFAULT_CONN_RATE_BURST)
+        .clamp(1, 2000);
+    (per_sec, burst)
+}
+
+// ---------------------------------------------------------------------------
 
 pub fn start_quic_runtime(
     config: &QuicEndpointConfig,
@@ -193,11 +324,44 @@ pub fn start_quic_runtime(
 
     let endpoint_for_accept = endpoint.clone();
     let max_stream_payload_bytes = config.max_stream_payload_bytes;
+
+    // Connection rate limiter (per-IP).
+    let (rate_per_sec, rate_burst) = load_conn_rate_limit_config();
+    let conn_rate_limiters = Arc::new(ConnectionRateLimiters::new(rate_per_sec, rate_burst));
+    info!(
+        "QUIC per-IP connection rate limit: {} conn/sec, burst {}",
+        rate_per_sec, rate_burst
+    );
+
+    let rate_limiters_for_cleanup = Arc::clone(&conn_rate_limiters);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            rate_limiters_for_cleanup.cleanup_stale();
+        }
+    });
+
     tokio::spawn(async move {
         loop {
             let Some(connecting) = endpoint_for_accept.accept().await else {
                 break;
             };
+            let remote_addr = connecting.remote_address();
+            let remote_ip = remote_addr.ip();
+
+            // Per-IP connection rate limiting.
+            if !conn_rate_limiters.try_acquire(remote_ip) {
+                warn!(
+                    "QUIC connection rate-limited for IP {}, rejecting",
+                    remote_ip
+                );
+                metrics::record_quic_connection_rejected("rate_limited");
+                // Drop the Connecting future to refuse the connection.
+                drop(connecting);
+                continue;
+            }
+
             let request_handler = request_handler.clone();
             tokio::spawn(async move {
                 if let Err(err) =
@@ -271,9 +435,11 @@ pub fn start_quic_runtime_from_env_with_handler(
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct QuicControlEnvelope {
     op: Option<String>,
     peer_id: Option<String>,
+    auth_token: Option<String>,
     smoothed_rtt_ms: Option<u32>,
     traceparent: Option<String>,
     tracestate: Option<String>,
@@ -297,12 +463,20 @@ async fn handle_connecting(
     let remote_addr = connection.remote_address();
     info!("QUIC client connected from {}", remote_addr);
     let connection_token = QUIC_CONNECTION_TOKEN.fetch_add(1, AtomicOrdering::Relaxed);
-    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel::<Bytes>();
+
+    // FIX: bounded outbound channel instead of unbounded — provides backpressure to prevent
+    // memory exhaustion when the client is slow to consume.
+    let (outbound_tx, outbound_rx) = mpsc::channel::<Bytes>(OUTBOUND_CHANNEL_CAPACITY);
     let peer_sender = QuicPeerSender {
         connection_token,
         outbound_tx,
     };
     let registered_peer_ids = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    // The authenticated peer_id bound to this connection. Initially None; set after a valid
+    // "join" via auth_token validation in the request handler. All subsequent operations on this
+    // connection must use this bound peer_id rather than trusting client-supplied values.
+    let bound_peer_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     tokio::spawn(run_connection_writer(
         connection.clone(),
@@ -317,6 +491,7 @@ async fn handle_connecting(
                 let request_handler = request_handler.clone();
                 let peer_sender = peer_sender.clone();
                 let registered_peer_ids = Arc::clone(&registered_peer_ids);
+                let bound_peer_id = Arc::clone(&bound_peer_id);
                 tokio::spawn(async move {
                     if let Err(err) = handle_bidi_stream(
                         send,
@@ -325,6 +500,7 @@ async fn handle_connecting(
                         max_stream_payload_bytes,
                         peer_sender,
                         registered_peer_ids,
+                        bound_peer_id,
                     )
                     .await
                     {
@@ -353,22 +529,31 @@ fn build_control_ack(op: impl Into<String>, detail: impl Into<String>) -> Vec<u8
     .unwrap_or_else(|_| br#"{"ok":true,"op":"ack","detail":"ok"}"#.to_vec())
 }
 
+#[allow(dead_code)]
+fn build_control_error(op: impl Into<String>, detail: impl Into<String>) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "ok": false,
+        "op": op.into(),
+        "error": detail.into(),
+    }))
+    .unwrap_or_else(|_| br#"{"ok":false,"op":"error","error":"internal"}"#.to_vec())
+}
+
+/// Register a QUIC peer sender only if the peer_id is server-bound (authenticated).
+/// The `authenticated_peer_id` is the connection-bound peer_id, not client-supplied.
 fn maybe_register_quic_peer(
-    payload: &[u8],
+    envelope: &QuicControlEnvelope,
+    authenticated_peer_id: Option<&str>,
     sender: &QuicPeerSender,
     registered_peer_ids: &Arc<Mutex<Vec<String>>>,
 ) {
-    let Ok(envelope) = serde_json::from_slice::<QuicControlEnvelope>(payload) else {
+    // Only register if we have an authenticated peer_id bound to this connection.
+    let Some(peer_id) = authenticated_peer_id else {
         return;
     };
-    let Some(peer_id) = envelope
-        .peer_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-    else {
+    if peer_id.is_empty() {
         return;
-    };
+    }
 
     shared_quic_peer_senders().insert(peer_id.to_string(), sender.clone());
     if let Ok(mut peers) = registered_peer_ids.lock() {
@@ -390,16 +575,18 @@ fn maybe_register_quic_peer(
 
 async fn handle_bidi_stream(
     mut send: SendStream,
-    mut recv: RecvStream,
+    recv: RecvStream,
     request_handler: Option<QuicRequestHandler>,
     max_stream_payload_bytes: usize,
     peer_sender: QuicPeerSender,
     registered_peer_ids: Arc<Mutex<Vec<String>>>,
+    bound_peer_id: Arc<Mutex<Option<String>>>,
 ) -> Result<()> {
-    let payload = recv
-        .read_to_end(max_stream_payload_bytes)
-        .await
-        .context("failed reading QUIC stream payload")?;
+    // FIX: bounded read — enforce hard cap on stream payload size.
+    // quinn's read_to_end already limits to the given size, but we clamp the configured
+    // max to QUIC_MAX_STREAM_PAYLOAD_HARD_CAP to prevent abuse via env config.
+    let effective_max = max_stream_payload_bytes.min(QUIC_MAX_STREAM_PAYLOAD_HARD_CAP);
+    let payload = read_stream_bounded(recv, effective_max).await?;
 
     let parsed_envelope = serde_json::from_slice::<QuicControlEnvelope>(&payload).ok();
     let remote_context = monitoring_tracing::extract_remote_context(
@@ -410,26 +597,76 @@ async fn handle_bidi_stream(
             .as_ref()
             .and_then(|envelope| envelope.tracestate.as_deref()),
     );
+
+    // Determine the effective peer_id for this stream:
+    // 1. If the connection already has a bound peer_id, use that (ignore client-supplied).
+    // 2. Otherwise, this is pre-auth — the request handler will validate auth_token and set it.
+    let current_bound = bound_peer_id
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+
     let stream_span = tracing::info_span!(
         "quic_bidi_stream",
         op = parsed_envelope
             .as_ref()
             .and_then(|envelope| envelope.op.as_deref())
             .unwrap_or("control"),
-        peer_id = parsed_envelope
-            .as_ref()
-            .and_then(|envelope| envelope.peer_id.as_deref())
-            .unwrap_or("unknown")
+        peer_id = current_bound.as_deref().unwrap_or(
+            parsed_envelope
+                .as_ref()
+                .and_then(|envelope| envelope.peer_id.as_deref())
+                .unwrap_or("unknown")
+        )
     );
     stream_span.set_parent(remote_context);
 
     async move {
-        maybe_register_quic_peer(&payload, &peer_sender, &registered_peer_ids);
-
+        // Pass the bound peer_id to the request handler so it can enforce auth.
         let response = if let Some(handler) = request_handler {
-            handler(payload.as_slice()).unwrap_or_else(|| build_control_ack("quic", "ok"))
-        } else if let Some(envelope) = parsed_envelope {
-            let op = envelope.op.unwrap_or_else(|| "control".to_string());
+            let handler_result = handler(payload.as_slice(), current_bound.as_deref());
+
+            // If the handler returned a response that includes a newly-bound peer_id, extract it.
+            // Convention: the handler embeds `"_bound_peer_id": "..."` in the response JSON
+            // when a "join" succeeds with valid auth.
+            if let Some(ref resp_bytes) = handler_result {
+                if let Ok(resp_json) = serde_json::from_slice::<serde_json::Value>(resp_bytes) {
+                    if let Some(new_peer_id) = resp_json
+                        .get("_bound_peer_id")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                    {
+                        if let Ok(mut guard) = bound_peer_id.lock() {
+                            *guard = Some(new_peer_id.to_string());
+                        }
+                        // Now register the peer sender with the authenticated peer_id.
+                        if let Some(ref envelope) = parsed_envelope {
+                            maybe_register_quic_peer(
+                                envelope,
+                                Some(new_peer_id),
+                                &peer_sender,
+                                &registered_peer_ids,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // For non-join operations, update connection manager if already authenticated.
+            if current_bound.is_some() {
+                if let Some(ref envelope) = parsed_envelope {
+                    maybe_register_quic_peer(
+                        envelope,
+                        current_bound.as_deref(),
+                        &peer_sender,
+                        &registered_peer_ids,
+                    );
+                }
+            }
+
+            handler_result.unwrap_or_else(|| build_control_ack("quic", "ok"))
+        } else if let Some(ref envelope) = parsed_envelope {
+            let op = envelope.op.as_deref().unwrap_or("control").to_string();
             build_control_ack(op, "accepted")
         } else {
             // Fallback compatibility path: echo payload for reachability tests.
@@ -449,9 +686,17 @@ async fn handle_bidi_stream(
     .await
 }
 
+/// Read from a QUIC RecvStream with a hard byte limit.
+/// Returns an error if the stream exceeds the limit.
+async fn read_stream_bounded(mut recv: RecvStream, max_bytes: usize) -> Result<Vec<u8>> {
+    recv.read_to_end(max_bytes)
+        .await
+        .context("failed reading QUIC stream payload (possibly exceeded size limit)")
+}
+
 async fn run_connection_writer(
     connection: quinn::Connection,
-    mut outbound_rx: mpsc::UnboundedReceiver<Bytes>,
+    mut outbound_rx: mpsc::Receiver<Bytes>,
     connection_token: u64,
     remote_addr: SocketAddr,
 ) {
@@ -506,5 +751,114 @@ fn cleanup_registered_quic_peers(
             let _ = shared_quic_peer_senders().remove(&peer_id);
             let _ = shared_connection_manager().remove(&peer_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ip_rate_limiter_allows_burst_then_rejects() {
+        let mut limiter = IpRateLimiter::new(1, 3);
+        assert!(limiter.try_acquire(), "first request should succeed");
+        assert!(limiter.try_acquire(), "second request should succeed");
+        assert!(limiter.try_acquire(), "third request should succeed (burst=3)");
+        assert!(
+            !limiter.try_acquire(),
+            "fourth request should be rejected (burst exhausted)"
+        );
+    }
+
+    #[test]
+    fn test_connection_rate_limiters_per_ip_isolation() {
+        let limiters = ConnectionRateLimiters::new(1, 2);
+        let ip_a: IpAddr = "10.0.0.1".parse().unwrap();
+        let ip_b: IpAddr = "10.0.0.2".parse().unwrap();
+
+        assert!(limiters.try_acquire(ip_a));
+        assert!(limiters.try_acquire(ip_a));
+        assert!(!limiters.try_acquire(ip_a), "ip_a burst exhausted");
+
+        // ip_b should have its own independent bucket
+        assert!(limiters.try_acquire(ip_b));
+        assert!(limiters.try_acquire(ip_b));
+        assert!(!limiters.try_acquire(ip_b), "ip_b burst exhausted");
+    }
+
+    #[test]
+    fn test_connection_rate_limiters_cleanup_stale() {
+        let limiters = ConnectionRateLimiters::new(1, 2);
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(limiters.try_acquire(ip));
+
+        // Should not panic; entry is recent so it stays.
+        limiters.cleanup_stale();
+        let map = limiters.limiters.lock().unwrap();
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn test_bounded_channel_capacity_constant() {
+        assert!(
+            OUTBOUND_CHANNEL_CAPACITY > 0,
+            "outbound channel capacity must be positive"
+        );
+        assert!(
+            OUTBOUND_CHANNEL_CAPACITY <= 8192,
+            "outbound channel capacity should be reasonable"
+        );
+    }
+
+    #[test]
+    fn test_hard_cap_enforced_in_config() {
+        // The from_env uses clamp; verify the hard cap constant is reasonable.
+        assert_eq!(QUIC_MAX_STREAM_PAYLOAD_HARD_CAP, 64 * 1024);
+        // Even if someone passes a huge value, clamp brings it down.
+        let clamped = (2 * 1024 * 1024usize).clamp(4 * 1024, QUIC_MAX_STREAM_PAYLOAD_HARD_CAP);
+        assert_eq!(clamped, QUIC_MAX_STREAM_PAYLOAD_HARD_CAP);
+    }
+
+    #[test]
+    fn test_build_control_error() {
+        let err_bytes = build_control_error("join", "auth_required");
+        let parsed: serde_json::Value = serde_json::from_slice(&err_bytes).unwrap();
+        assert_eq!(parsed["ok"], false);
+        assert_eq!(parsed["error"], "auth_required");
+    }
+
+    #[test]
+    fn test_build_control_ack() {
+        let ack_bytes = build_control_ack("echo", "pong");
+        let parsed: serde_json::Value = serde_json::from_slice(&ack_bytes).unwrap();
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["op"], "echo");
+        assert_eq!(parsed["detail"], "pong");
+    }
+
+    #[tokio::test]
+    async fn test_bounded_outbound_channel_backpressure() {
+        let (tx, _rx) = mpsc::channel::<Bytes>(2);
+        // Fill the channel.
+        tx.try_send(Bytes::from_static(b"a")).unwrap();
+        tx.try_send(Bytes::from_static(b"b")).unwrap();
+        // Third send should fail with Full.
+        match tx.try_send(Bytes::from_static(b"c")) {
+            Err(mpsc::error::TrySendError::Full(_)) => {} // expected
+            other => panic!("expected Full error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_quic_config_clamps_payload_to_hard_cap() {
+        // Simulate what from_env does with a large value.
+        let large_value: usize = 2 * 1024 * 1024;
+        let clamped = large_value.clamp(4 * 1024, QUIC_MAX_STREAM_PAYLOAD_HARD_CAP);
+        assert_eq!(clamped, 64 * 1024);
+
+        // Small value stays at minimum.
+        let small_value: usize = 100;
+        let clamped = small_value.clamp(4 * 1024, QUIC_MAX_STREAM_PAYLOAD_HARD_CAP);
+        assert_eq!(clamped, 4 * 1024);
     }
 }

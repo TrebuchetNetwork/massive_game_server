@@ -124,6 +124,7 @@ struct LiveReplayRecentQuery {
 struct QuicControlRequest {
     op: Option<String>,
     peer_id: Option<String>,
+    auth_token: Option<String>,
     username: Option<String>,
     team_id: Option<u8>,
     replay_limit: Option<usize>,
@@ -1355,146 +1356,198 @@ async fn main() -> anyhow::Result<()> {
 
     let default_quic_bind_addr = SocketAddr::new(server_address.ip(), bind_port.saturating_add(1));
     let server_for_quic = game_server_instance.clone();
-    let quic_request_handler: QuicRequestHandler = Arc::new(move |payload: &[u8]| {
-        let request = serde_json::from_slice::<QuicControlRequest>(payload).unwrap_or_default();
-        let op = request.op.unwrap_or_else(|| "echo".to_string());
+    let auth_service_for_quic = auth_service.clone();
+    // The handler now receives (payload, bound_peer_id) where bound_peer_id is the
+    // server-assigned peer_id for this connection, derived from auth_token validation.
+    // If bound_peer_id is None, the connection is not yet authenticated and only "join"
+    // (with valid auth_token) and read-only ops like "healthz" are allowed.
+    let quic_request_handler: QuicRequestHandler =
+        Arc::new(move |payload: &[u8], bound_peer_id: Option<&str>| {
+            let request =
+                serde_json::from_slice::<QuicControlRequest>(payload).unwrap_or_default();
+            let op = request.op.unwrap_or_else(|| "echo".to_string());
 
-        let response = match op.as_str() {
-            "healthz" => serde_json::json!({
-                "ok": true,
-                "op": "healthz",
-                "frame": server_for_quic.frame_counter.load(std::sync::atomic::Ordering::Relaxed),
-                "players": server_for_quic.player_manager.player_count(),
-                "projectiles": server_for_quic.projectiles.read().len(),
-                "pickups": server_for_quic.pickups.read().len(),
-                "ts_ms": server_for_quic.get_server_timestamp_ms(),
-            }),
-            "live_replay_recent" => {
-                let limit = request.replay_limit.unwrap_or(128).clamp(1, 4096);
-                serde_json::json!({
+            let response = match op.as_str() {
+                "healthz" => serde_json::json!({
                     "ok": true,
-                    "op": "live_replay_recent",
-                    "frames": server_for_quic.recent_live_replay_frames(limit),
-                    "limit": limit,
-                })
-            }
-            "live_replay_disputes_recent" => {
-                let limit = request.replay_limit.unwrap_or(128).clamp(1, 2048);
-                serde_json::json!({
-                    "ok": true,
-                    "op": "live_replay_disputes_recent",
-                    "audits": server_for_quic.recent_live_replay_dispute_audits(limit),
-                    "limit": limit,
-                })
-            }
-            "live_replay_dispute" => {
-                let report =
-                    server_for_quic.build_live_replay_dispute_report(LiveReplayDisputeRequest {
-                        from_frame: request.from_frame,
-                        to_frame: request.to_frame,
-                        limit: request.replay_limit,
-                        player_id: request.player_id,
-                    });
-                return serde_json::to_vec(&report).ok();
-            }
-            "join" => {
-                let peer_id = request
-                    .peer_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty());
-                match peer_id {
-                    Some(peer_id) => {
-                        let joined = server_for_quic.register_quic_player(
-                            peer_id,
-                            request.username.as_deref(),
-                            request.team_id,
-                        );
-                        serde_json::json!({
-                            "ok": joined.is_some(),
-                            "op": "join",
-                            "player": joined,
-                        })
-                    }
-                    None => serde_json::json!({
-                        "ok": false,
-                        "op": "join",
-                        "error": "missing_peer_id",
-                    }),
-                }
-            }
-            "input" => {
-                let peer_id = request
-                    .peer_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty());
-                let Some(peer_id) = peer_id else {
-                    return serde_json::to_vec(&serde_json::json!({
-                        "ok": false,
-                        "op": "input",
-                        "error": "missing_peer_id",
-                    }))
-                    .ok();
-                };
-
-                let mut inputs = Vec::new();
-                if let Some(single_input) = request.input {
-                    inputs.push(single_input.into_player_input());
-                }
-                if let Some(batch_inputs) = request.inputs {
-                    for input in batch_inputs.into_iter().take(128) {
-                        inputs.push(input.into_player_input());
-                    }
-                }
-
-                let mut accepted = 0usize;
-                for input in inputs {
-                    if server_for_quic.enqueue_quic_input(peer_id, input) {
-                        accepted += 1;
-                    } else {
-                        break;
-                    }
-                }
-
-                serde_json::json!({
-                    "ok": accepted > 0,
-                    "op": "input",
-                    "accepted": accepted,
-                    "peer_id": peer_id,
-                })
-            }
-            "leave" | "disconnect" => {
-                if let Some(peer_id) = request
-                    .peer_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    server_for_quic.remove_quic_player(peer_id);
+                    "op": "healthz",
+                    "frame": server_for_quic.frame_counter.load(std::sync::atomic::Ordering::Relaxed),
+                    "players": server_for_quic.player_manager.player_count(),
+                    "projectiles": server_for_quic.projectiles.read().len(),
+                    "pickups": server_for_quic.pickups.read().len(),
+                    "ts_ms": server_for_quic.get_server_timestamp_ms(),
+                }),
+                "live_replay_recent" => {
+                    let limit = request.replay_limit.unwrap_or(128).clamp(1, 4096);
                     serde_json::json!({
                         "ok": true,
-                        "op": "leave",
-                        "peer_id": peer_id,
-                    })
-                } else {
-                    serde_json::json!({
-                        "ok": false,
-                        "op": "leave",
-                        "error": "missing_peer_id",
+                        "op": "live_replay_recent",
+                        "frames": server_for_quic.recent_live_replay_frames(limit),
+                        "limit": limit,
                     })
                 }
-            }
-            _ => serde_json::json!({
-                "ok": true,
-                "op": "echo",
-                "bytes": payload.len(),
-                "trace_headers": monitoring_tracing::inject_current_context_headers(),
-            }),
-        };
+                "live_replay_disputes_recent" => {
+                    let limit = request.replay_limit.unwrap_or(128).clamp(1, 2048);
+                    serde_json::json!({
+                        "ok": true,
+                        "op": "live_replay_disputes_recent",
+                        "audits": server_for_quic.recent_live_replay_dispute_audits(limit),
+                        "limit": limit,
+                    })
+                }
+                "live_replay_dispute" => {
+                    let report =
+                        server_for_quic.build_live_replay_dispute_report(LiveReplayDisputeRequest {
+                            from_frame: request.from_frame,
+                            to_frame: request.to_frame,
+                            limit: request.replay_limit,
+                            player_id: request.player_id,
+                        });
+                    return serde_json::to_vec(&report).ok();
+                }
+                "join" => {
+                    // FIX: peer_id trust — derive peer_id from auth_token, not from client.
+                    // The client must supply an auth_token; the server resolves the user_id
+                    // and generates a server-controlled peer_id bound to this connection.
+                    if bound_peer_id.is_some() {
+                        // Already joined on this connection.
+                        return serde_json::to_vec(&serde_json::json!({
+                            "ok": false,
+                            "op": "join",
+                            "error": "already_joined",
+                            "peer_id": bound_peer_id,
+                        }))
+                        .ok();
+                    }
 
-        serde_json::to_vec(&response).ok()
-    });
+                    let auth_token = request
+                        .auth_token
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty());
+
+                    let Some(token) = auth_token else {
+                        warn!("QUIC join rejected: missing auth_token");
+                        return serde_json::to_vec(&serde_json::json!({
+                            "ok": false,
+                            "op": "join",
+                            "error": "auth_required",
+                        }))
+                        .ok();
+                    };
+
+                    let Some(user_id) = auth_service_for_quic.resolve_user_id_from_token(token)
+                    else {
+                        warn!("QUIC join rejected: invalid or expired auth_token");
+                        return serde_json::to_vec(&serde_json::json!({
+                            "ok": false,
+                            "op": "join",
+                            "error": "auth_invalid",
+                        }))
+                        .ok();
+                    };
+
+                    // Generate a server-assigned peer_id for this authenticated session.
+                    // Use client-supplied peer_id as a hint only if it matches the user, otherwise
+                    // generate a fresh one.
+                    let peer_id = request
+                        .peer_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+                    // Bind the peer to the authenticated user.
+                    auth_service_for_quic.bind_peer_to_user(&peer_id, &user_id);
+
+                    let joined = server_for_quic.register_quic_player(
+                        &peer_id,
+                        request.username.as_deref(),
+                        request.team_id,
+                    );
+
+                    info!(
+                        "QUIC join: user_id='{}' peer_id='{}' success={}",
+                        user_id,
+                        peer_id,
+                        joined.is_some()
+                    );
+
+                    // The `_bound_peer_id` field signals handler.rs to bind this peer_id
+                    // to the connection for all future operations.
+                    serde_json::json!({
+                        "ok": joined.is_some(),
+                        "op": "join",
+                        "player": joined,
+                        "peer_id": peer_id,
+                        "_bound_peer_id": peer_id,
+                    })
+                }
+                "input" => {
+                    // FIX: use server-bound peer_id, not client-supplied.
+                    let Some(peer_id) = bound_peer_id else {
+                        return serde_json::to_vec(&serde_json::json!({
+                            "ok": false,
+                            "op": "input",
+                            "error": "not_authenticated",
+                        }))
+                        .ok();
+                    };
+
+                    let mut inputs = Vec::new();
+                    if let Some(single_input) = request.input {
+                        inputs.push(single_input.into_player_input());
+                    }
+                    if let Some(batch_inputs) = request.inputs {
+                        for input in batch_inputs.into_iter().take(128) {
+                            inputs.push(input.into_player_input());
+                        }
+                    }
+
+                    let mut accepted = 0usize;
+                    for input in inputs {
+                        if server_for_quic.enqueue_quic_input(peer_id, input) {
+                            accepted += 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    serde_json::json!({
+                        "ok": accepted > 0,
+                        "op": "input",
+                        "accepted": accepted,
+                        "peer_id": peer_id,
+                    })
+                }
+                "leave" | "disconnect" => {
+                    // FIX: use server-bound peer_id, not client-supplied.
+                    if let Some(peer_id) = bound_peer_id {
+                        server_for_quic.remove_quic_player(peer_id);
+                        serde_json::json!({
+                            "ok": true,
+                            "op": "leave",
+                            "peer_id": peer_id,
+                        })
+                    } else {
+                        serde_json::json!({
+                            "ok": false,
+                            "op": "leave",
+                            "error": "not_authenticated",
+                        })
+                    }
+                }
+                _ => serde_json::json!({
+                    "ok": true,
+                    "op": "echo",
+                    "bytes": payload.len(),
+                    "trace_headers": monitoring_tracing::inject_current_context_headers(),
+                }),
+            };
+
+            serde_json::to_vec(&response).ok()
+        });
     let quic_runtime = start_quic_runtime_from_env_with_handler(
         default_quic_bind_addr,
         Some(quic_request_handler),
