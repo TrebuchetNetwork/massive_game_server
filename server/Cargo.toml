@@ -166,6 +166,10 @@ path = "tests/integration/game_tick.rs"
 name = "boundary_stress"
 path = "tests/performance/boundary_stress.rs"
 
+[[test]]
+name = "property_tests"
+path = "tests/property_tests.rs"
+
 [[bench]]
 name = "physics"
 harness = false

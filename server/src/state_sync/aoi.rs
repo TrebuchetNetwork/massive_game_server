@@ -1,5 +1,6 @@
 // massive_game_server/server/src/state_sync/aoi.rs
 
+use crate::core::constants::{AOI_RADIUS, AOI_EXIT_RADIUS};
 use crate::core::math::squared_distance_2d;
 use crate::core::types::EntityId;
 use std::collections::HashSet;
@@ -14,8 +15,8 @@ pub struct AoiConfig {
 impl Default for AoiConfig {
     fn default() -> Self {
         Self {
-            enter_radius: 520.0,
-            exit_radius: 560.0,
+            enter_radius: AOI_RADIUS,
+            exit_radius: AOI_EXIT_RADIUS,
             max_visible_entities: 256,
         }
     }
