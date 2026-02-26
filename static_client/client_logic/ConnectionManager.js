@@ -6,7 +6,26 @@
  * and withJoinSelectionInUrl. Uses getCtx callback pattern.
  */
 
+/** Default timeout for WebRTC connection setup (ms). */
+const CONNECTION_TIMEOUT_MS = 15000;
+
+/** Maximum ICE restart attempts before falling back to full reconnect. */
+const MAX_ICE_RESTART_ATTEMPTS = 2;
+
 export function createConnectionManager(getCtx) {
+
+    /** Timer id for the connection setup timeout. */
+    let connectionTimeoutId = null;
+
+    /** Counter for ICE restart attempts on the current peer connection. */
+    let iceRestartAttempts = 0;
+
+    function clearConnectionTimeout() {
+        if (connectionTimeoutId !== null) {
+            clearTimeout(connectionTimeoutId);
+            connectionTimeoutId = null;
+        }
+    }
 
     function withJoinSelectionInUrl(rawUrl) {
         const ctx = getCtx();
@@ -52,6 +71,16 @@ export function createConnectionManager(getCtx) {
         if (!canStartConnectionAttempt()) {
             return false;
         }
+
+        // (#30) On retry, clear any residual game state from the previous
+        // session so ghost entities do not persist across reconnections.
+        if (isRetry && typeof ctx.clearGameStateForReconnect === 'function') {
+            ctx.clearGameStateForReconnect();
+        }
+
+        // Reset ICE restart counter for the new connection attempt.
+        iceRestartAttempts = 0;
+
         if (!cullWorker && WORKER_CULL_ENABLED) {
             initCullWorker();
         }
@@ -93,6 +122,23 @@ export function createConnectionManager(getCtx) {
         log(`${isRetry ? 'Reconnecting' : 'Connecting'} to signaling server: ${url}`);
         const signalingSocket = new WebSocket(wsConnectUrl);
         ctx.setSignalingSocket(signalingSocket);
+
+        // (#52) Start a connection timeout. If the data channel is not open
+        // within CONNECTION_TIMEOUT_MS, abort and schedule a reconnect.
+        clearConnectionTimeout();
+        connectionTimeoutId = setTimeout(() => {
+            connectionTimeoutId = null;
+            const currentCtx = getCtx();
+            const dc = currentCtx.dataChannel;
+            if (dc && dc.readyState === 'open') {
+                return; // Connection succeeded before timeout fired.
+            }
+            const detail = `Connection timed out after ${CONNECTION_TIMEOUT_MS / 1000}s`;
+            log(detail, 'error');
+            currentCtx.setConnectionError(detail);
+            markJoinTimingAborted(detail);
+            resetConnectionUI({ allowReconnect: true, reconnectReason: detail });
+        }, CONNECTION_TIMEOUT_MS);
 
         signalingSocket.onopen = () => {
             ctx.setConnectAttemptInFlight(false);
@@ -167,6 +213,7 @@ export function createConnectionManager(getCtx) {
 
         signalingSocket.onerror = (e) => {
             ctx.setConnectAttemptInFlight(false);
+            clearConnectionTimeout();
             const detail = summarizeSignalingError(e, signalingSocket, url);
             log(detail, 'error');
             setConnectionError(detail);
@@ -181,6 +228,7 @@ export function createConnectionManager(getCtx) {
                 log('Signaling channel closed after negotiation; data channel remains open.', 'warn');
                 return;
             }
+            clearConnectionTimeout();
             const closeCode = typeof event?.code === 'number' ? event.code : 'unknown';
             const closeReason = event?.reason ? ` reason="${event.reason}"` : '';
             const clean = event?.wasClean ? 'clean' : 'unclean';
@@ -197,6 +245,23 @@ export function createConnectionManager(getCtx) {
     function initializePeerConnection() {
         const ctx = getCtx();
         const { log, peerConnectionConfig, setupDataChannelEvents: _sdc } = ctx;
+
+        // (#55) Close any existing peer connection before creating a new one
+        // to prevent resource leaks (media streams, ICE agents, etc.).
+        const existingPc = ctx.peerConnection;
+        if (existingPc) {
+            log('Closing previous RTCPeerConnection before creating a new one.', 'info');
+            try {
+                existingPc.onicecandidate = null;
+                existingPc.oniceconnectionstatechange = null;
+                existingPc.ondatachannel = null;
+                existingPc.close();
+            } catch (e) {
+                log(`Error closing previous peer connection: ${e?.message || e}`, 'warn');
+            }
+            ctx.setPeerConnection(null);
+        }
+
         log(`Initializing RTCPeerConnection (${peerConnectionConfig.iceServers.length} ICE server(s))...`);
         const peerConnection = new RTCPeerConnection(peerConnectionConfig);
         ctx.setPeerConnection(peerConnection);
@@ -225,11 +290,34 @@ export function createConnectionManager(getCtx) {
         peerConnection.oniceconnectionstatechange = () => {
             const currentCtx = getCtx();
             log(`ICE state: ${peerConnection.iceConnectionState}`, 'info');
+
+            // (#32) On ICE failure or disconnection, attempt an ICE restart
+            // before falling back to a full reconnect. This avoids tearing
+            // down the entire session for transient network blips.
             if (peerConnection.iceConnectionState === 'failed' || peerConnection.iceConnectionState === 'disconnected') {
-                const detail = `ICE connection ${peerConnection.iceConnectionState}`;
+                if (iceRestartAttempts < MAX_ICE_RESTART_ATTEMPTS) {
+                    iceRestartAttempts += 1;
+                    const attempt = iceRestartAttempts;
+                    log(`Attempting ICE restart (${attempt}/${MAX_ICE_RESTART_ATTEMPTS})...`, 'warn');
+                    currentCtx.applyConnectionStatus(
+                        'negotiating',
+                        `ICE ${peerConnection.iceConnectionState} - restarting (${attempt}/${MAX_ICE_RESTART_ATTEMPTS})...`
+                    );
+                    attemptIceRestart(peerConnection);
+                    return;
+                }
+                const detail = `ICE connection ${peerConnection.iceConnectionState} (after ${MAX_ICE_RESTART_ATTEMPTS} restart attempts)`;
                 log(detail, 'error');
                 currentCtx.setConnectionError(detail);
                 resetConnectionUI({ allowReconnect: true, reconnectReason: detail });
+            }
+
+            // Reset ICE restart counter on successful reconnection.
+            if (peerConnection.iceConnectionState === 'connected' || peerConnection.iceConnectionState === 'completed') {
+                if (iceRestartAttempts > 0) {
+                    log(`ICE restart succeeded after ${iceRestartAttempts} attempt(s).`, 'success');
+                }
+                iceRestartAttempts = 0;
             }
         };
         peerConnection.ondatachannel = (event) => {
@@ -237,6 +325,34 @@ export function createConnectionManager(getCtx) {
             ctx.setDataChannel(event.channel);
             setupDataChannelEvents(event.channel);
         };
+    }
+
+    /**
+     * (#32) Attempt an ICE restart by creating a new offer with
+     * { iceRestart: true } and sending it over the signaling socket.
+     */
+    async function attemptIceRestart(peerConnection) {
+        const ctx = getCtx();
+        const { log } = ctx;
+        try {
+            const offer = await peerConnection.createOffer({ iceRestart: true });
+            await peerConnection.setLocalDescription(offer);
+            const currentSocket = getCtx().signalingSocket;
+            if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
+                currentSocket.send(JSON.stringify({ 'sdp': peerConnection.localDescription }));
+                log('ICE restart offer sent.', 'info');
+            } else {
+                log('Cannot send ICE restart offer: signaling socket not open. Falling back to full reconnect.', 'warn');
+                const detail = 'ICE restart failed (signaling socket closed)';
+                ctx.setConnectionError(detail);
+                resetConnectionUI({ allowReconnect: true, reconnectReason: detail });
+            }
+        } catch (e) {
+            log(`ICE restart failed: ${e?.message || e}. Falling back to full reconnect.`, 'error');
+            const detail = `ICE restart error: ${e?.message || e}`;
+            ctx.setConnectionError(detail);
+            resetConnectionUI({ allowReconnect: true, reconnectReason: detail });
+        }
     }
 
     function setupDataChannelEvents(dcInstance) {
@@ -253,6 +369,8 @@ export function createConnectionManager(getCtx) {
         dcInstance.binaryType = 'arraybuffer';
         dcInstance.onopen = () => {
             log('Data channel open!', 'success');
+            // Connection is established; cancel any pending timeout.
+            clearConnectionTimeout();
             markJoinTimingStage('dataChannelOpenAtMs');
             applyConnectionStatus('waiting', 'Waiting for initial state...');
             controlsDiv.classList.remove('hidden');
@@ -260,6 +378,14 @@ export function createConnectionManager(getCtx) {
             ensureHudWidgets();
             loadSettings();
             initRenderAssetCache();
+
+            // (#30) Reset reconnect state on successful connection so the
+            // next disconnect starts with a clean attempt counter.
+            const currentCtx = getCtx();
+            if (typeof currentCtx.resetReconnectState === 'function') {
+                currentCtx.resetReconnectState();
+            }
+
             if (window.__e2e) {
                 window.__e2e.dataChannelOpen = true;
                 window.__e2e.dataChannelLabel = dcInstance.label || '';
@@ -312,6 +438,7 @@ export function createConnectionManager(getCtx) {
 
         dcInstance.onclose = () => {
             log('Data channel closed.', 'warn');
+            clearConnectionTimeout();
             const detail = 'Data channel closed unexpectedly';
             const currentCtx = getCtx();
             currentCtx.setConnectionError(detail);
@@ -323,6 +450,8 @@ export function createConnectionManager(getCtx) {
     }
 
     function resetConnectionUI(options = {}) {
+        clearConnectionTimeout();
+        iceRestartAttempts = 0;
         const ctx = getCtx();
         ctx.resetConnectionUIImpl(options);
     }
