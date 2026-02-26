@@ -18,10 +18,13 @@ use crate::server::instance::MassiveGameServer; // Added for server access for i
 use crate::world::partition::WorldPartitionManager;
 use parking_lot::RwLock as ParkingLotRwLock;
 
+use base64::Engine as _;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha1::Sha1;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     net::IpAddr,
@@ -445,6 +448,70 @@ fn parse_ice_servers_env(raw: &str) -> Vec<RTCIceServer> {
         .collect()
 }
 
+/// HMAC-SHA1 type alias for TURN credential generation (RFC 5389).
+type HmacSha1 = Hmac<Sha1>;
+
+/// Default TURN credential TTL: 24 hours (in seconds).
+const TURN_CREDENTIAL_TTL_SECS: u64 = 86400;
+
+/// TURN credential type parsed from `MGS_TURN_CREDENTIAL_TYPE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TurnCredentialType {
+    /// Static password — credential is sent as-is.
+    Password,
+    /// HMAC time-limited credentials — credential is HMAC-SHA1(secret, username)
+    /// where username = "expiry_timestamp:random_suffix".
+    Hmac,
+}
+
+impl TurnCredentialType {
+    fn from_env() -> Self {
+        match std::env::var("MGS_TURN_CREDENTIAL_TYPE")
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("hmac") | Some("hmac-sha1") => Self::Hmac,
+            _ => Self::Password,
+        }
+    }
+}
+
+/// Generate time-limited TURN credentials using HMAC-SHA1.
+///
+/// The username is `expiry_timestamp:suffix` and the credential is
+/// `Base64(HMAC-SHA1(shared_secret, username))`.
+///
+/// This follows the ephemeral credential mechanism described in
+/// [RFC draft: A REST API For Access To TURN Services](https://datatracker.ietf.org/doc/html/draft-uberti-behave-turn-rest-00)
+/// and used by coturn, Twilio, Xirsys, and other TURN providers.
+pub fn generate_turn_hmac_credentials(shared_secret: &str, suffix: &str) -> (String, String) {
+    let expiry = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::from_secs(0))
+        .as_secs()
+        + TURN_CREDENTIAL_TTL_SECS;
+    let username = format!("{expiry}:{suffix}");
+
+    let mut mac =
+        HmacSha1::new_from_slice(shared_secret.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(username.as_bytes());
+    let result = mac.finalize();
+    let credential = base64::engine::general_purpose::STANDARD.encode(result.into_bytes());
+
+    (username, credential)
+}
+
+/// A serializable ICE server entry sent to the client during signaling.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ClientIceServer {
+    pub urls: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
 fn build_ice_servers() -> Vec<RTCIceServer> {
     let disable_stun = env_bool("MGS_DISABLE_STUN");
     let mut ice_servers: Vec<RTCIceServer> = Vec::new();
@@ -466,18 +533,35 @@ fn build_ice_servers() -> Vec<RTCIceServer> {
         .map(|raw| parse_csv(&raw))
         .unwrap_or_default();
     if !turn_urls.is_empty() {
+        let credential_type = TurnCredentialType::from_env();
         let mut turn_server = RTCIceServer {
             urls: turn_urls,
             ..Default::default()
         };
-        if let Ok(username) = std::env::var("MGS_TURN_USERNAME") {
-            if !username.trim().is_empty() {
-                turn_server.username = username.trim().to_owned();
+        match credential_type {
+            TurnCredentialType::Password => {
+                if let Ok(username) = std::env::var("MGS_TURN_USERNAME") {
+                    if !username.trim().is_empty() {
+                        turn_server.username = username.trim().to_owned();
+                    }
+                }
+                if let Ok(credential) = std::env::var("MGS_TURN_CREDENTIAL") {
+                    if !credential.trim().is_empty() {
+                        turn_server.credential = credential.trim().to_owned();
+                    }
+                }
             }
-        }
-        if let Ok(credential) = std::env::var("MGS_TURN_CREDENTIAL") {
-            if !credential.trim().is_empty() {
-                turn_server.credential = credential.trim().to_owned();
+            TurnCredentialType::Hmac => {
+                if let Ok(secret) = std::env::var("MGS_TURN_CREDENTIAL") {
+                    if !secret.trim().is_empty() {
+                        let suffix = std::env::var("MGS_TURN_USERNAME")
+                            .unwrap_or_else(|_| "server".to_owned());
+                        let (username, credential) =
+                            generate_turn_hmac_credentials(secret.trim(), suffix.trim());
+                        turn_server.username = username;
+                        turn_server.credential = credential;
+                    }
+                }
             }
         }
         ice_servers.push(turn_server);
@@ -488,6 +572,70 @@ fn build_ice_servers() -> Vec<RTCIceServer> {
     }
 
     ice_servers
+}
+
+/// Build the ICE server configuration to send to a connecting client.
+///
+/// When HMAC credential mode is active, this generates fresh per-session
+/// credentials so each client gets a unique short-lived TURN token.
+fn build_client_ice_config(session_id: &str) -> Vec<ClientIceServer> {
+    let disable_stun = env_bool("MGS_DISABLE_STUN");
+    let mut servers: Vec<ClientIceServer> = Vec::new();
+
+    if !disable_stun {
+        let stun_urls = std::env::var("MGS_STUN_URLS")
+            .ok()
+            .map(|raw| parse_csv(&raw))
+            .filter(|urls| !urls.is_empty())
+            .unwrap_or_else(|| vec!["stun:stun.l.google.com:19302".to_owned()]);
+        servers.push(ClientIceServer {
+            urls: stun_urls,
+            username: None,
+            credential: None,
+        });
+    }
+
+    let turn_urls = std::env::var("MGS_TURN_URLS")
+        .ok()
+        .map(|raw| parse_csv(&raw))
+        .unwrap_or_default();
+    if !turn_urls.is_empty() {
+        let credential_type = TurnCredentialType::from_env();
+        let mut turn_entry = ClientIceServer {
+            urls: turn_urls,
+            username: None,
+            credential: None,
+        };
+        match credential_type {
+            TurnCredentialType::Password => {
+                if let Ok(username) = std::env::var("MGS_TURN_USERNAME") {
+                    let trimmed = username.trim().to_owned();
+                    if !trimmed.is_empty() {
+                        turn_entry.username = Some(trimmed);
+                    }
+                }
+                if let Ok(credential) = std::env::var("MGS_TURN_CREDENTIAL") {
+                    let trimmed = credential.trim().to_owned();
+                    if !trimmed.is_empty() {
+                        turn_entry.credential = Some(trimmed);
+                    }
+                }
+            }
+            TurnCredentialType::Hmac => {
+                if let Ok(secret) = std::env::var("MGS_TURN_CREDENTIAL") {
+                    if !secret.trim().is_empty() {
+                        let (username, credential) =
+                            generate_turn_hmac_credentials(secret.trim(), session_id);
+                        turn_entry.username = Some(username);
+                        turn_entry.credential = Some(credential);
+                    }
+                }
+            }
+        }
+        servers.push(turn_entry);
+    }
+
+    servers
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -987,6 +1135,40 @@ pub async fn handle_signaling_connection(
         peer_id_str,
         ice_servers.len()
     );
+
+    // Send ICE server configuration (including TURN with credentials) to the
+    // client so it can configure its RTCPeerConnection before creating an offer.
+    let client_ice_config = build_client_ice_config(&peer_id_str);
+    if !client_ice_config.is_empty() {
+        let turn_count = client_ice_config
+            .iter()
+            .filter(|s| s.urls.iter().any(|u| u.starts_with("turn:")))
+            .count();
+        let ice_config_msg = serde_json::json!({
+            "event": "ice_servers",
+            "ice_servers": client_ice_config,
+        })
+        .to_string();
+        if !try_queue_signaling_message(
+            &client_signaling_tx,
+            Ok(Message::text(ice_config_msg)),
+            &peer_id_str,
+            "ice_servers",
+        ) {
+            warn!(
+                "[{}]: Failed to send ICE server config to client.",
+                peer_id_str
+            );
+        } else {
+            info!(
+                "[{}]: Sent {} ICE server(s) to client ({} TURN).",
+                peer_id_str,
+                client_ice_config.len(),
+                turn_count,
+            );
+        }
+    }
+
     let rtc_config = RTCConfiguration {
         ice_servers,
         ..Default::default()
@@ -2258,5 +2440,127 @@ mod tests {
         let ice = parsed.ice.unwrap();
         assert_eq!(ice.sdp_mid, Some("audio".to_owned()));
         assert_eq!(ice.username_fragment, Some("frag123".to_owned()));
+    }
+
+    // ── TURN HMAC credential generation tests ───────────────────────
+
+    #[test]
+    fn generate_turn_hmac_credentials_returns_valid_format() {
+        let (username, credential) = generate_turn_hmac_credentials("mysecret", "player123");
+        // Username must be "timestamp:suffix"
+        let parts: Vec<&str> = username.splitn(2, ':').collect();
+        assert_eq!(parts.len(), 2, "username must be timestamp:suffix");
+        let timestamp: u64 = parts[0].parse().expect("first part must be a timestamp");
+        assert_eq!(parts[1], "player123");
+
+        // Timestamp should be in the future (now + TTL)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(timestamp > now, "expiry must be in the future");
+        assert!(
+            timestamp <= now + TURN_CREDENTIAL_TTL_SECS + 1,
+            "expiry must not exceed TTL"
+        );
+
+        // Credential must be valid base64
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&credential)
+            .expect("credential must be valid base64");
+        // HMAC-SHA1 output is 20 bytes
+        assert_eq!(decoded.len(), 20, "HMAC-SHA1 output must be 20 bytes");
+    }
+
+    #[test]
+    fn generate_turn_hmac_credentials_deterministic_for_same_inputs() {
+        // Two calls within the same second should produce the same output
+        // (assuming system clock doesn't tick between calls).
+        let (u1, c1) = generate_turn_hmac_credentials("secret", "session1");
+        let (u2, c2) = generate_turn_hmac_credentials("secret", "session1");
+        // They will match if the system clock second is the same.
+        // We verify at least that the suffix and credential algorithm are consistent.
+        assert!(u1.ends_with(":session1"));
+        assert!(u2.ends_with(":session1"));
+        // The credentials should match if timestamps match (same second)
+        if u1 == u2 {
+            assert_eq!(c1, c2, "same username must produce same credential");
+        }
+    }
+
+    #[test]
+    fn generate_turn_hmac_credentials_different_secrets_differ() {
+        let (u1, c1) = generate_turn_hmac_credentials("secret_a", "player");
+        let (_u2, c2) = generate_turn_hmac_credentials("secret_b", "player");
+        // Even if timestamps happen to match, different secrets produce different credentials.
+        // There is a negligible chance of collision, but practically impossible for HMAC-SHA1.
+        if u1.split(':').next() == _u2.split(':').next() {
+            assert_ne!(c1, c2, "different secrets must produce different credentials");
+        }
+    }
+
+    #[test]
+    fn generate_turn_hmac_credentials_different_suffixes_differ() {
+        let (u1, c1) = generate_turn_hmac_credentials("secret", "player_a");
+        let (u2, c2) = generate_turn_hmac_credentials("secret", "player_b");
+        assert_ne!(u1, u2, "different suffixes must produce different usernames");
+        // Credentials will differ because the username (HMAC input) differs.
+        assert_ne!(
+            c1, c2,
+            "different usernames must produce different credentials"
+        );
+    }
+
+    #[test]
+    fn generate_turn_hmac_credential_verifiable() {
+        // Verify that the credential is a correct HMAC-SHA1 of the username.
+        let secret = "test_shared_secret";
+        let (username, credential) = generate_turn_hmac_credentials(secret, "verify_me");
+
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&credential)
+            .unwrap();
+
+        let mut mac =
+            HmacSha1::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(username.as_bytes());
+        // verify() consumes the mac and checks against the expected bytes
+        mac.verify_slice(&decoded)
+            .expect("HMAC verification must succeed");
+    }
+
+    #[test]
+    fn turn_credential_type_from_env_defaults_to_password() {
+        // When MGS_TURN_CREDENTIAL_TYPE is not set, it defaults to Password.
+        std::env::remove_var("MGS_TURN_CREDENTIAL_TYPE");
+        assert_eq!(TurnCredentialType::from_env(), TurnCredentialType::Password);
+    }
+
+    #[test]
+    fn client_ice_server_serialization_omits_empty_credentials() {
+        let server = ClientIceServer {
+            urls: vec!["stun:stun.example.com:3478".to_owned()],
+            username: None,
+            credential: None,
+        };
+        let json = serde_json::to_string(&server).unwrap();
+        assert!(json.contains("urls"));
+        assert!(!json.contains("username"), "null username must be omitted");
+        assert!(
+            !json.contains("credential"),
+            "null credential must be omitted"
+        );
+    }
+
+    #[test]
+    fn client_ice_server_serialization_includes_credentials() {
+        let server = ClientIceServer {
+            urls: vec!["turn:turn.example.com:3478".to_owned()],
+            username: Some("user".to_owned()),
+            credential: Some("pass".to_owned()),
+        };
+        let json = serde_json::to_string(&server).unwrap();
+        assert!(json.contains(r#""username":"user""#));
+        assert!(json.contains(r#""credential":"pass""#));
     }
 }
