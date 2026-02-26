@@ -26,4 +26,6 @@ export { Vec2 } from './game-protocol/vec2.js';
 export { Wall } from './game-protocol/wall.js';
 export { WeaponType } from './game-protocol/weapon-type.js';
 export { WelcomeMessage } from './game-protocol/welcome-message.js';
+export { Zone } from './game-protocol/zone.js';
+export { ZoneType } from './game-protocol/zone-type.js';
 //# sourceMappingURL=game-protocol.js.map

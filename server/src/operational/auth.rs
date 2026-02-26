@@ -6,8 +6,6 @@ use rand::Rng;
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use shell_escape::escape as shell_escape;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fs;
@@ -1223,13 +1221,8 @@ impl AuthService {
             (self.inner.otp_ttl_seconds / 60).max(1)
         );
 
-        if let Some(command_template) = &self.inner.sms_command {
-            let escaped_phone = shell_escape(Cow::Borrowed(phone_number));
-            let escaped_message = shell_escape(Cow::Borrowed(message.as_str()));
-            let rendered = command_template
-                .replace("{phone}", escaped_phone.as_ref())
-                .replace("{message}", escaped_message.as_ref());
-            match Command::new("sh").arg("-c").arg(&rendered).status() {
+        if let Some(command_executable) = &self.inner.sms_command {
+            match Command::new(command_executable).arg(phone_number).arg(&message).status() {
                 Ok(status) if status.success() => {
                     info!("SMS command delivered code to {}", mask_phone_number(phone_number));
                     if self.inner.sms_dev_mode {

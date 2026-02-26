@@ -29,12 +29,9 @@ impl MassiveGameServer {
         // Update wall spatial index if walls were respawned, destroyed, or if it needs periodic rebuild
         let destroyed_walls_count = self.destroyed_wall_ids_this_tick.read().len();
         let updated_walls_count = self.updated_walls_this_tick.read().len();
-        let needs_wall_index_rebuild = !respawned_walls.is_empty()
-            || destroyed_walls_count > 0
-            || updated_walls_count > 0
-            || self.wall_spatial_index.needs_rebuild(frame, 150); // Rebuild every 150 frames
+        let needs_periodic_rebuild = self.wall_spatial_index.needs_rebuild(frame, 150); // Rebuild every 150 frames
 
-        if needs_wall_index_rebuild {
+        if needs_periodic_rebuild {
             let index_rebuild_start = Instant::now();
             let active_walls = self.collect_active_walls_optimized();
             self.wall_spatial_index.rebuild(&active_walls, frame);
@@ -42,6 +39,23 @@ impl MassiveGameServer {
                 "[Frame {}] Wall spatial index rebuilt in {:?} (respawned: {}, destroyed: {}, updated: {})",
                 frame,
                 index_rebuild_start.elapsed(),
+                respawned_walls.len(),
+                destroyed_walls_count,
+                updated_walls_count
+            );
+        } else if !respawned_walls.is_empty() || destroyed_walls_count > 0 || updated_walls_count > 0 {
+            let index_update_start = Instant::now();
+            let destroyed_ids: Vec<_> = self.destroyed_wall_ids_this_tick.read().iter().copied().collect();
+            let updated_walls: Vec<_> = self.updated_walls_this_tick.read().values().cloned().collect();
+            
+            let mut removed_ids = destroyed_ids;
+            removed_ids.extend(updated_walls.iter().map(|w| w.id));
+            
+            self.wall_spatial_index.update_walls(&removed_ids, &updated_walls, frame);
+            debug!(
+                "[Frame {}] Wall spatial index updated in {:?} (respawned: {}, destroyed: {}, updated: {})",
+                frame,
+                index_update_start.elapsed(),
                 respawned_walls.len(),
                 destroyed_walls_count,
                 updated_walls_count

@@ -145,7 +145,7 @@ lastProcessedInputSequence():number {
 
 changedPlayerFields(index: number):number|null {
   const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index) : 0;
+  return offset ? this.bb!.readUint16(this.bb!.__vector(this.bb_pos + offset) + index * 2) : 0;
 }
 
 changedPlayerFieldsLength():number {
@@ -153,9 +153,9 @@ changedPlayerFieldsLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
-changedPlayerFieldsArray():Uint8Array|null {
+changedPlayerFieldsArray():Uint16Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
+  return offset ? new Uint16Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 removedPlayerIds(index: number):string
@@ -344,16 +344,21 @@ static addChangedPlayerFields(builder:flatbuffers.Builder, changedPlayerFieldsOf
   builder.addFieldOffset(12, changedPlayerFieldsOffset, 0);
 }
 
-static createChangedPlayerFieldsVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset {
-  builder.startVector(1, data.length, 1);
+static createChangedPlayerFieldsVector(builder:flatbuffers.Builder, data:number[]|Uint16Array):flatbuffers.Offset;
+/**
+ * @deprecated This Uint8Array overload will be removed in the future.
+ */
+static createChangedPlayerFieldsVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
+static createChangedPlayerFieldsVector(builder:flatbuffers.Builder, data:number[]|Uint16Array|Uint8Array):flatbuffers.Offset {
+  builder.startVector(2, data.length, 2);
   for (let i = data.length - 1; i >= 0; i--) {
-    builder.addInt8(data[i]!);
+    builder.addInt16(data[i]!);
   }
   return builder.endVector();
 }
 
 static startChangedPlayerFieldsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(1, numElems, 1);
+  builder.startVector(2, numElems, 2);
 }
 
 static addRemovedPlayerIds(builder:flatbuffers.Builder, removedPlayerIdsOffset:flatbuffers.Offset) {

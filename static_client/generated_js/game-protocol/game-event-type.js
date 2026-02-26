@@ -14,5 +14,7 @@ export var GameEventType;
     GameEventType[GameEventType["FlagReturned"] = 9] = "FlagReturned";
     GameEventType[GameEventType["FlagCaptured"] = 10] = "FlagCaptured";
     GameEventType[GameEventType["TeamPing"] = 11] = "TeamPing";
+    GameEventType[GameEventType["Killstreak"] = 12] = "Killstreak";
+    GameEventType[GameEventType["AssistKill"] = 13] = "AssistKill";
 })(GameEventType || (GameEventType = {}));
 //# sourceMappingURL=game-event-type.js.map

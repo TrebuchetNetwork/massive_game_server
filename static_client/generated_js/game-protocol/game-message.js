@@ -20,6 +20,9 @@ export class GameMessage {
         bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
         return (obj || new GameMessage()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
     }
+    static bufferHasIdentifier(bb) {
+        return bb.__has_identifier('MGS1');
+    }
     msgType() {
         const offset = this.bb.__offset(this.bb_pos, 4);
         return offset ? this.bb.readInt8(this.bb_pos + offset) : MessageType.Welcome;
@@ -32,8 +35,12 @@ export class GameMessage {
         const offset = this.bb.__offset(this.bb_pos, 8);
         return offset ? this.bb.__union(obj, this.bb_pos + offset) : null;
     }
+    protocolVersion() {
+        const offset = this.bb.__offset(this.bb_pos, 10);
+        return offset ? this.bb.readUint32(this.bb_pos + offset) : 1;
+    }
     static startGameMessage(builder) {
-        builder.startObject(3);
+        builder.startObject(4);
     }
     static addMsgType(builder, msgType) {
         builder.addFieldInt8(0, msgType, MessageType.Welcome);
@@ -44,21 +51,25 @@ export class GameMessage {
     static addActualMessage(builder, actualMessageOffset) {
         builder.addFieldOffset(2, actualMessageOffset, 0);
     }
+    static addProtocolVersion(builder, protocolVersion) {
+        builder.addFieldInt32(3, protocolVersion, 1);
+    }
     static endGameMessage(builder) {
         const offset = builder.endObject();
         return offset;
     }
     static finishGameMessageBuffer(builder, offset) {
-        builder.finish(offset);
+        builder.finish(offset, 'MGS1');
     }
     static finishSizePrefixedGameMessageBuffer(builder, offset) {
-        builder.finish(offset, undefined, true);
+        builder.finish(offset, 'MGS1', true);
     }
-    static createGameMessage(builder, msgType, actualMessageType, actualMessageOffset) {
+    static createGameMessage(builder, msgType, actualMessageType, actualMessageOffset, protocolVersion) {
         GameMessage.startGameMessage(builder);
         GameMessage.addMsgType(builder, msgType);
         GameMessage.addActualMessageType(builder, actualMessageType);
         GameMessage.addActualMessage(builder, actualMessageOffset);
+        GameMessage.addProtocolVersion(builder, protocolVersion);
         return GameMessage.endGameMessage(builder);
     }
 }

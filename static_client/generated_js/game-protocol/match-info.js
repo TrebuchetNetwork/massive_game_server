@@ -95,6 +95,16 @@ export class MatchInfo {
     static addTeamScores(builder, teamScoresOffset) {
         builder.addFieldOffset(5, teamScoresOffset, 0);
     }
+    static createTeamScoresVector(builder, data) {
+        builder.startVector(4, data.length, 4);
+        for (let i = data.length - 1; i >= 0; i--) {
+            builder.addOffset(data[i]);
+        }
+        return builder.endVector();
+    }
+    static startTeamScoresVector(builder, numElems) {
+        builder.startVector(4, numElems, 4);
+    }
     static addTeam1CommanderId(builder, team1CommanderIdOffset) {
         builder.addFieldOffset(6, team1CommanderIdOffset, 0);
     }
@@ -113,35 +123,9 @@ export class MatchInfo {
     static addTeam2CommanderAttackBias(builder, team2CommanderAttackBias) {
         builder.addFieldFloat32(11, team2CommanderAttackBias, 0.0);
     }
-    static createTeamScoresVector(builder, data) {
-        builder.startVector(4, data.length, 4);
-        for (let i = data.length - 1; i >= 0; i--) {
-            builder.addOffset(data[i]);
-        }
-        return builder.endVector();
-    }
-    static startTeamScoresVector(builder, numElems) {
-        builder.startVector(4, numElems, 4);
-    }
     static endMatchInfo(builder) {
         const offset = builder.endObject();
         return offset;
-    }
-    static createMatchInfo(builder, timeRemaining, matchState, winnerIdOffset, winnerNameOffset, gameMode, teamScoresOffset, team1CommanderIdOffset, team2CommanderIdOffset, team1CommanderWaypointOffset, team2CommanderWaypointOffset, team1CommanderAttackBias, team2CommanderAttackBias) {
-        MatchInfo.startMatchInfo(builder);
-        MatchInfo.addTimeRemaining(builder, timeRemaining);
-        MatchInfo.addMatchState(builder, matchState);
-        MatchInfo.addWinnerId(builder, winnerIdOffset);
-        MatchInfo.addWinnerName(builder, winnerNameOffset);
-        MatchInfo.addGameMode(builder, gameMode);
-        MatchInfo.addTeamScores(builder, teamScoresOffset);
-        MatchInfo.addTeam1CommanderId(builder, team1CommanderIdOffset);
-        MatchInfo.addTeam2CommanderId(builder, team2CommanderIdOffset);
-        MatchInfo.addTeam1CommanderWaypoint(builder, team1CommanderWaypointOffset);
-        MatchInfo.addTeam2CommanderWaypoint(builder, team2CommanderWaypointOffset);
-        MatchInfo.addTeam1CommanderAttackBias(builder, team1CommanderAttackBias);
-        MatchInfo.addTeam2CommanderAttackBias(builder, team2CommanderAttackBias);
-        return MatchInfo.endMatchInfo(builder);
     }
 }
 //# sourceMappingURL=match-info.js.map

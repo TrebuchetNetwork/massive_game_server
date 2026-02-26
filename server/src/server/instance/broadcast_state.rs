@@ -277,14 +277,10 @@ impl MassiveGameServer {
         let player_aoi = self.resolve_player_aoi_for_player(shared_data, &player_id);
 
         let mut players_fb_vec = Vec::new();
-        let mut player_fields_mask_vec: Vec<u8> = Vec::new();
+        let mut player_fields_mask_vec: Vec<u16> = Vec::new();
         let mut removed_player_ids_vec = Vec::new();
-        let encode_changed_mask = |mask: u16| -> u8 {
-            if mask == 0xFFFF {
-                u8::MAX
-            } else {
-                (mask & 0x00FF) as u8
-            }
+        let encode_changed_mask = |mask: u16| -> u16 {
+            mask
         };
 
         if let Some(self_state) = Self::lookup_player_state_from_shared(shared_data, &player_id) {

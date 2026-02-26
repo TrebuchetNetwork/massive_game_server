@@ -288,7 +288,7 @@ table DeltaStateMessage {
     last_processed_input_sequence: uint; // For client reconciliation
 
     // Delta compression fields
-    changed_player_fields: [ubyte]; // Bitmask of which fields changed per player in the 'players' list.
+    changed_player_fields: [ushort]; // Bitmask of which fields changed per player in the 'players' list.
     removed_player_ids: [string]; // Players who left the AoI or disconnected
     updated_walls: [Wall]; // Walls that were updated (e.g., respawned)
 }

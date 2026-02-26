@@ -25,6 +25,7 @@ struct Shard<T> {
 pub struct ObjectPool<T> {
     shards: Vec<Shard<T>>,
     in_use: AtomicUsize,
+    total_free: AtomicUsize,
     factory: Arc<dyn Fn() -> T + Send + Sync>,
     max_pool_size: usize,
 }
@@ -46,8 +47,10 @@ impl<T> ObjectPool<T> {
         let remainder = initial_capacity % POOL_SHARD_COUNT;
 
         let mut shards = Vec::with_capacity(POOL_SHARD_COUNT);
+        let mut actual_initial_capacity = 0;
         for i in 0..POOL_SHARD_COUNT {
             let count = per_shard + if i < remainder { 1 } else { 0 };
+            actual_initial_capacity += count;
             let mut free = Vec::with_capacity(count);
             for _ in 0..count {
                 free.push(factory_arc());
@@ -60,6 +63,7 @@ impl<T> ObjectPool<T> {
         Self {
             shards,
             in_use: AtomicUsize::new(0),
+            total_free: AtomicUsize::new(actual_initial_capacity),
             factory: factory_arc,
             max_pool_size: max_pool_size.max(1),
         }
@@ -86,6 +90,7 @@ impl<T> ObjectPool<T> {
             };
             if let Some(value) = cached {
                 self.in_use.fetch_add(1, Ordering::Relaxed);
+                self.total_free.fetch_sub(1, Ordering::Relaxed);
                 return value;
             }
         }
@@ -100,12 +105,21 @@ impl<T> ObjectPool<T> {
     pub fn release(&self, value: T) {
         self.in_use.fetch_sub(1, Ordering::Relaxed);
 
-        // Check total free count across shards. If we are at or above
-        // max_pool_size, just drop the value instead of growing the pool.
-        let total_free = self.free_count();
-        if total_free >= self.max_pool_size {
-            drop(value);
-            return;
+        let mut current_free = self.total_free.load(Ordering::Relaxed);
+        loop {
+            if current_free >= self.max_pool_size {
+                drop(value);
+                return;
+            }
+            match self.total_free.compare_exchange_weak(
+                current_free,
+                current_free + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current_free = actual,
+            }
         }
 
         let idx = self.shard_index();
@@ -118,10 +132,7 @@ impl<T> ObjectPool<T> {
     }
 
     pub fn free_count(&self) -> usize {
-        self.shards
-            .iter()
-            .map(|s| s.free.lock().len())
-            .sum()
+        self.total_free.load(Ordering::Relaxed)
     }
 
     pub fn max_pool_size(&self) -> usize {

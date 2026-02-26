@@ -7,6 +7,7 @@ import { Pickup } from '../game-protocol/pickup.js';
 import { PlayerState } from '../game-protocol/player-state.js';
 import { ProjectileState } from '../game-protocol/projectile-state.js';
 import { Wall } from '../game-protocol/wall.js';
+import { Zone } from '../game-protocol/zone.js';
 export class InitialStateMessage {
     constructor() {
         this.bb = null;
@@ -72,16 +73,24 @@ export class InitialStateMessage {
         const offset = this.bb.__offset(this.bb_pos, 16);
         return offset ? this.bb.__vector_len(this.bb_pos + offset) : 0;
     }
-    timestamp() {
+    zones(index, obj) {
         const offset = this.bb.__offset(this.bb_pos, 18);
+        return offset ? (obj || new Zone()).__init(this.bb.__indirect(this.bb.__vector(this.bb_pos + offset) + index * 4), this.bb) : null;
+    }
+    zonesLength() {
+        const offset = this.bb.__offset(this.bb_pos, 18);
+        return offset ? this.bb.__vector_len(this.bb_pos + offset) : 0;
+    }
+    timestamp() {
+        const offset = this.bb.__offset(this.bb_pos, 20);
         return offset ? this.bb.readUint64(this.bb_pos + offset) : BigInt('0');
     }
     mapName(optionalEncoding) {
-        const offset = this.bb.__offset(this.bb_pos, 20);
+        const offset = this.bb.__offset(this.bb_pos, 22);
         return offset ? this.bb.__string(this.bb_pos + offset, optionalEncoding) : null;
     }
     static startInitialStateMessage(builder) {
-        builder.startObject(9);
+        builder.startObject(10);
     }
     static addPlayerId(builder, playerIdOffset) {
         builder.addFieldOffset(0, playerIdOffset, 0);
@@ -154,11 +163,24 @@ export class InitialStateMessage {
     static startFlagStatesVector(builder, numElems) {
         builder.startVector(4, numElems, 4);
     }
+    static addZones(builder, zonesOffset) {
+        builder.addFieldOffset(7, zonesOffset, 0);
+    }
+    static createZonesVector(builder, data) {
+        builder.startVector(4, data.length, 4);
+        for (let i = data.length - 1; i >= 0; i--) {
+            builder.addOffset(data[i]);
+        }
+        return builder.endVector();
+    }
+    static startZonesVector(builder, numElems) {
+        builder.startVector(4, numElems, 4);
+    }
     static addTimestamp(builder, timestamp) {
-        builder.addFieldInt64(7, timestamp, BigInt('0'));
+        builder.addFieldInt64(8, timestamp, BigInt('0'));
     }
     static addMapName(builder, mapNameOffset) {
-        builder.addFieldOffset(8, mapNameOffset, 0);
+        builder.addFieldOffset(9, mapNameOffset, 0);
     }
     static endInitialStateMessage(builder) {
         const offset = builder.endObject();

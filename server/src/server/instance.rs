@@ -40,6 +40,7 @@ use crate::systems::respawn::{RespawnManager, WallRespawnManager};
 use crate::world::map_generator::MapGenerator;
 use crate::world::map_loader;
 use crate::world::navigation::NavMesh;
+use arc_swap::ArcSwapOption;
 use crate::world::partition::WorldPartitionManager; // Removed unused ImprovedWorldPartition
 use std::borrow::Cow;
 
@@ -334,7 +335,7 @@ pub struct MassiveGameServer {
     navmesh_enabled: bool,
     navmesh_rebuild_interval_frames: u64,
     navmesh_cell_wall_limit: usize,
-    navmesh: Arc<ParkingLotRwLock<Option<NavMesh>>>,
+    navmesh: Arc<ArcSwapOption<NavMesh>>,
     navmesh_last_rebuild_frame: Arc<AtomicU64>,
     live_replay_enabled: bool,
     live_replay_frames: Arc<ParkingLotRwLock<VecDeque<LiveReplayFrame>>>,
@@ -768,7 +769,7 @@ impl MassiveGameServer {
             navmesh_enabled,
             navmesh_rebuild_interval_frames,
             navmesh_cell_wall_limit,
-            navmesh: Arc::new(ParkingLotRwLock::new(None)),
+            navmesh: Arc::new(ArcSwapOption::empty()),
             navmesh_last_rebuild_frame: Arc::new(AtomicU64::new(0)),
             live_replay_enabled,
             live_replay_frames: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(

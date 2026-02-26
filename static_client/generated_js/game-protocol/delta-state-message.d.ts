@@ -39,7 +39,7 @@ export declare class DeltaStateMessage {
     lastProcessedInputSequence(): number;
     changedPlayerFields(index: number): number | null;
     changedPlayerFieldsLength(): number;
-    changedPlayerFieldsArray(): Uint8Array | null;
+    changedPlayerFieldsArray(): Uint16Array | null;
     removedPlayerIds(index: number): string;
     removedPlayerIds(index: number, optionalEncoding: flatbuffers.Encoding): string | Uint8Array;
     removedPlayerIdsLength(): number;
@@ -77,6 +77,10 @@ export declare class DeltaStateMessage {
     static addTimestamp(builder: flatbuffers.Builder, timestamp: bigint): void;
     static addLastProcessedInputSequence(builder: flatbuffers.Builder, lastProcessedInputSequence: number): void;
     static addChangedPlayerFields(builder: flatbuffers.Builder, changedPlayerFieldsOffset: flatbuffers.Offset): void;
+    static createChangedPlayerFieldsVector(builder: flatbuffers.Builder, data: number[] | Uint16Array): flatbuffers.Offset;
+    /**
+     * @deprecated This Uint8Array overload will be removed in the future.
+     */
     static createChangedPlayerFieldsVector(builder: flatbuffers.Builder, data: number[] | Uint8Array): flatbuffers.Offset;
     static startChangedPlayerFieldsVector(builder: flatbuffers.Builder, numElems: number): void;
     static addRemovedPlayerIds(builder: flatbuffers.Builder, removedPlayerIdsOffset: flatbuffers.Offset): void;

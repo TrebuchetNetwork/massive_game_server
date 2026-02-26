@@ -8,7 +8,7 @@ impl MassiveGameServer {
 
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
         let should_rebuild = {
-            if self.navmesh.read().is_none() {
+            if self.navmesh.load().is_none() {
                 true
             } else {
                 let last = self
@@ -62,7 +62,7 @@ impl MassiveGameServer {
             Some(NavMesh::from_convex_polygons(polygons))
         };
         let polygon_count = navmesh.as_ref().map_or(0, NavMesh::polygon_count);
-        *self.navmesh.write() = navmesh;
+        self.navmesh.store(navmesh.map(Arc::new));
         self.navmesh_last_rebuild_frame
             .store(frame, AtomicOrdering::Relaxed);
 
@@ -80,8 +80,8 @@ impl MassiveGameServer {
             return goal;
         }
 
-        let navmesh_guard = self.navmesh.read();
-        let Some(navmesh) = navmesh_guard.as_ref() else {
+        let navmesh_guard = self.navmesh.load();
+        let Some(navmesh) = navmesh_guard.as_deref() else {
             return goal;
         };
 

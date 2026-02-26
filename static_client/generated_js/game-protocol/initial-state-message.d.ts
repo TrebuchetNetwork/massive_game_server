@@ -5,6 +5,7 @@ import { Pickup } from '../game-protocol/pickup.js';
 import { PlayerState } from '../game-protocol/player-state.js';
 import { ProjectileState } from '../game-protocol/projectile-state.js';
 import { Wall } from '../game-protocol/wall.js';
+import { Zone } from '../game-protocol/zone.js';
 export declare class InitialStateMessage {
     bb: flatbuffers.ByteBuffer | null;
     bb_pos: number;
@@ -24,6 +25,8 @@ export declare class InitialStateMessage {
     matchInfo(obj?: MatchInfo): MatchInfo | null;
     flagStates(index: number, obj?: FlagState): FlagState | null;
     flagStatesLength(): number;
+    zones(index: number, obj?: Zone): Zone | null;
+    zonesLength(): number;
     timestamp(): bigint;
     mapName(): string | null;
     mapName(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
@@ -45,6 +48,9 @@ export declare class InitialStateMessage {
     static addFlagStates(builder: flatbuffers.Builder, flagStatesOffset: flatbuffers.Offset): void;
     static createFlagStatesVector(builder: flatbuffers.Builder, data: flatbuffers.Offset[]): flatbuffers.Offset;
     static startFlagStatesVector(builder: flatbuffers.Builder, numElems: number): void;
+    static addZones(builder: flatbuffers.Builder, zonesOffset: flatbuffers.Offset): void;
+    static createZonesVector(builder: flatbuffers.Builder, data: flatbuffers.Offset[]): flatbuffers.Offset;
+    static startZonesVector(builder: flatbuffers.Builder, numElems: number): void;
     static addTimestamp(builder: flatbuffers.Builder, timestamp: bigint): void;
     static addMapName(builder: flatbuffers.Builder, mapNameOffset: flatbuffers.Offset): void;
     static endInitialStateMessage(builder: flatbuffers.Builder): flatbuffers.Offset;

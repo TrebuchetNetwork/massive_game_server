@@ -1,7 +1,21 @@
 use crate::core::types::Wall;
 use parking_lot::RwLock;
-use rstar::{RTree, RTreeObject, AABB};
+use rstar::{RTree, RTreeObject, AABB, SelectionFunction};
 use std::sync::Arc;
+
+struct SelectById {
+    id: crate::core::types::EntityId,
+}
+
+impl SelectionFunction<SpatialWall> for SelectById {
+    fn should_unpack_parent(&self, _envelope: &<SpatialWall as RTreeObject>::Envelope) -> bool {
+        true
+    }
+
+    fn should_unpack_leaf(&self, leaf: &SpatialWall) -> bool {
+        leaf.wall.id == self.id
+    }
+}
 use tracing::debug;
 
 #[derive(Clone, Debug)]
@@ -62,6 +76,27 @@ impl WallSpatialIndex {
             frame,
             tree_guard.size()
         );
+    }
+
+    pub fn update_walls(&self, removed_ids: &[crate::core::types::EntityId], added_walls: &[Wall], frame: u64) {
+        if removed_ids.is_empty() && added_walls.is_empty() {
+            return;
+        }
+
+        let mut tree_guard = self.rtree.write();
+
+        for id in removed_ids {
+            tree_guard.remove_with_selection_function(SelectById { id: *id });
+        }
+
+        for wall in added_walls {
+            if !wall.is_destructible || wall.current_health > 0 {
+                tree_guard.insert(SpatialWall { wall: wall.clone() });
+            }
+        }
+
+        let mut frame_guard = self.last_update_frame.write();
+        *frame_guard = frame;
     }
 
     /// Query walls that intersect with a given AABB

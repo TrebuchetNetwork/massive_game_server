@@ -352,41 +352,52 @@ impl MassiveGameServer {
         let mut accumulated_push: HashMap<PlayerID, (f32, f32)> =
             HashMap::with_capacity(alive_positions.len());
 
-        for i in 0..alive_positions.len() {
-            for j in (i + 1)..alive_positions.len() {
-                let (left_id, left_x, left_y) = &alive_positions[i];
-                let (right_id, right_x, right_y) = &alive_positions[j];
-                let dx = right_x - left_x;
-                let dy = right_y - left_y;
-                let dist_sq = dx * dx + dy * dy;
+        let mut new_positions = HashMap::with_capacity(alive_positions.len());
+        for (id, x, y) in &alive_positions {
+            new_positions.insert(id.clone(), (*x, *y));
+        }
 
-                if dist_sq >= min_distance_sq {
+        for (left_id, left_x, left_y) in &alive_positions {
+            // Use spatial index for fast nearby player lookup instead of O(N^2)
+            let nearby = self.spatial_index.query_nearby_players(*left_x, *left_y, min_distance * 2.0);
+            
+            for right_id in nearby {
+                if left_id >= &right_id {
                     continue;
                 }
+                
+                if let Some(&(right_x, right_y)) = new_positions.get(&right_id) {
+                    let dx = right_x - left_x;
+                    let dy = right_y - left_y;
+                    let dist_sq = dx * dx + dy * dy;
 
-                let dist = dist_sq.sqrt().max(0.001);
-                let overlap = (min_distance - dist).max(0.0);
-                if overlap <= 0.0 {
-                    continue;
+                    if dist_sq >= min_distance_sq {
+                        continue;
+                    }
+
+                    let dist = dist_sq.sqrt().max(0.001);
+                    let overlap = (min_distance - dist).max(0.0);
+                    if overlap <= 0.0 {
+                        continue;
+                    }
+
+                    let push = (overlap * 0.5).min(max_push_per_player);
+                    let normal_x = dx / dist;
+                    let normal_y = dy / dist;
+                    let left_push = (-normal_x * push, -normal_y * push);
+                    let right_push = (normal_x * push, normal_y * push);
+
+                    let left_entry = accumulated_push
+                        .entry(left_id.clone())
+                        .or_insert((0.0, 0.0));
+                    left_entry.0 += left_push.0;
+                    left_entry.1 += left_push.1;
+                    let right_entry = accumulated_push
+                        .entry(right_id.clone())
+                        .or_insert((0.0, 0.0));
+                    right_entry.0 += right_push.0;
+                    right_entry.1 += right_push.1;
                 }
-
-                // Resolve overlap by pushing each player half the overlap.
-                let push = (overlap * 0.5).min(max_push_per_player);
-                let normal_x = dx / dist;
-                let normal_y = dy / dist;
-                let left_push = (-normal_x * push, -normal_y * push);
-                let right_push = (normal_x * push, normal_y * push);
-
-                let left_entry = accumulated_push
-                    .entry(left_id.clone())
-                    .or_insert((0.0, 0.0));
-                left_entry.0 += left_push.0;
-                left_entry.1 += left_push.1;
-                let right_entry = accumulated_push
-                    .entry(right_id.clone())
-                    .or_insert((0.0, 0.0));
-                right_entry.0 += right_push.0;
-                right_entry.1 += right_push.1;
             }
         }
 

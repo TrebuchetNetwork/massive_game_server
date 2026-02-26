@@ -166,11 +166,11 @@ fn env_flag(var_name: &str) -> bool {
 }
 
 fn allow_self_signed_quic_identity_fallback() -> bool {
-    // MGS_QUIC_REQUIRE_REAL_CERT=true forces real certificates even in debug builds.
-    if env_flag("MGS_QUIC_REQUIRE_REAL_CERT") {
-        return false;
+    if env_flag("MGS_QUIC_ALLOW_SELF_SIGNED_TESTING") {
+        tracing::warn!("DANGER: Self-signed certificates enabled for QUIC");
+        return true;
     }
-    cfg!(debug_assertions)
+    false
 }
 
 pub fn validate_quic_config(config: &QuicEndpointConfig) -> Result<()> {

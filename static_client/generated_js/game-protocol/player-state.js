@@ -111,8 +111,36 @@ export class PlayerState {
         const offset = this.bb.__offset(this.bb_pos, 48);
         return offset ? this.bb.readInt8(this.bb_pos + offset) : 0;
     }
+    ability1CooldownRemaining() {
+        const offset = this.bb.__offset(this.bb_pos, 50);
+        return offset ? this.bb.readFloat32(this.bb_pos + offset) : 0.0;
+    }
+    ability2CooldownRemaining() {
+        const offset = this.bb.__offset(this.bb_pos, 52);
+        return offset ? this.bb.readFloat32(this.bb_pos + offset) : 0.0;
+    }
+    invulnerableRemaining() {
+        const offset = this.bb.__offset(this.bb_pos, 54);
+        return offset ? this.bb.readFloat32(this.bb_pos + offset) : 0.0;
+    }
+    secondaryWeapon() {
+        const offset = this.bb.__offset(this.bb_pos, 56);
+        return offset ? this.bb.readInt8(this.bb_pos + offset) : WeaponType.Pistol;
+    }
+    weaponSwapProgress() {
+        const offset = this.bb.__offset(this.bb_pos, 58);
+        return offset ? this.bb.readFloat32(this.bb_pos + offset) : 0.0;
+    }
+    currentStreak() {
+        const offset = this.bb.__offset(this.bb_pos, 60);
+        return offset ? this.bb.readUint32(this.bb_pos + offset) : 0;
+    }
+    primaryWeapon() {
+        const offset = this.bb.__offset(this.bb_pos, 62);
+        return offset ? this.bb.readInt8(this.bb_pos + offset) : WeaponType.Rifle;
+    }
     static startPlayerState(builder) {
-        builder.startObject(23);
+        builder.startObject(30);
     }
     static addId(builder, idOffset) {
         builder.addFieldOffset(0, idOffset, 0);
@@ -183,11 +211,32 @@ export class PlayerState {
     static addIsCarryingFlagTeamId(builder, isCarryingFlagTeamId) {
         builder.addFieldInt8(22, isCarryingFlagTeamId, 0);
     }
+    static addAbility1CooldownRemaining(builder, ability1CooldownRemaining) {
+        builder.addFieldFloat32(23, ability1CooldownRemaining, 0.0);
+    }
+    static addAbility2CooldownRemaining(builder, ability2CooldownRemaining) {
+        builder.addFieldFloat32(24, ability2CooldownRemaining, 0.0);
+    }
+    static addInvulnerableRemaining(builder, invulnerableRemaining) {
+        builder.addFieldFloat32(25, invulnerableRemaining, 0.0);
+    }
+    static addSecondaryWeapon(builder, secondaryWeapon) {
+        builder.addFieldInt8(26, secondaryWeapon, WeaponType.Pistol);
+    }
+    static addWeaponSwapProgress(builder, weaponSwapProgress) {
+        builder.addFieldFloat32(27, weaponSwapProgress, 0.0);
+    }
+    static addCurrentStreak(builder, currentStreak) {
+        builder.addFieldInt32(28, currentStreak, 0);
+    }
+    static addPrimaryWeapon(builder, primaryWeapon) {
+        builder.addFieldInt8(29, primaryWeapon, WeaponType.Rifle);
+    }
     static endPlayerState(builder) {
         const offset = builder.endObject();
         return offset;
     }
-    static createPlayerState(builder, idOffset, usernameOffset, x, y, rotation, velocityX, velocityY, health, maxHealth, alive, respawnTimer, weapon, ammo, reloadProgress, score, kills, deaths, teamId, speedBoostRemaining, damageBoostRemaining, shieldCurrent, shieldMax, isCarryingFlagTeamId) {
+    static createPlayerState(builder, idOffset, usernameOffset, x, y, rotation, velocityX, velocityY, health, maxHealth, alive, respawnTimer, weapon, ammo, reloadProgress, score, kills, deaths, teamId, speedBoostRemaining, damageBoostRemaining, shieldCurrent, shieldMax, isCarryingFlagTeamId, ability1CooldownRemaining, ability2CooldownRemaining, invulnerableRemaining, secondaryWeapon, weaponSwapProgress, currentStreak, primaryWeapon) {
         PlayerState.startPlayerState(builder);
         PlayerState.addId(builder, idOffset);
         PlayerState.addUsername(builder, usernameOffset);
@@ -212,6 +261,13 @@ export class PlayerState {
         PlayerState.addShieldCurrent(builder, shieldCurrent);
         PlayerState.addShieldMax(builder, shieldMax);
         PlayerState.addIsCarryingFlagTeamId(builder, isCarryingFlagTeamId);
+        PlayerState.addAbility1CooldownRemaining(builder, ability1CooldownRemaining);
+        PlayerState.addAbility2CooldownRemaining(builder, ability2CooldownRemaining);
+        PlayerState.addInvulnerableRemaining(builder, invulnerableRemaining);
+        PlayerState.addSecondaryWeapon(builder, secondaryWeapon);
+        PlayerState.addWeaponSwapProgress(builder, weaponSwapProgress);
+        PlayerState.addCurrentStreak(builder, currentStreak);
+        PlayerState.addPrimaryWeapon(builder, primaryWeapon);
         return PlayerState.endPlayerState(builder);
     }
 }
