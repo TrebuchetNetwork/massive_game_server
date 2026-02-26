@@ -2397,6 +2397,7 @@ dependencies = [
  "reqwest",
  "rstar",
  "rustls 0.21.12",
+ "rustls-pemfile",
  "seahash",
  "serde",
  "serde_json",

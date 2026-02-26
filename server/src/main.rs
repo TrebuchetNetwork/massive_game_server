@@ -933,9 +933,26 @@ async fn main() -> anyhow::Result<()> {
                 // Accept server instance Arc
                 let peer_id = Uuid::new_v4().to_string();
                 let requested_team_id = ws_auth_query.requested_team_id();
+                // Token resolution priority: query params > cookie.
+                // (Authorization header is not available on WebSocket upgrade.)
                 let auth_token = ws_auth_query
                     .auth_token
                     .or(ws_auth_query.token)
+                    .or_else(|| {
+                        // Fall back to mgs_session cookie when
+                        // MGS_AUTH_USE_COOKIES is enabled.
+                        request_headers
+                            .get("cookie")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|cookie_hdr| {
+                                cookie_hdr.split(';').find_map(|pair| {
+                                    let pair = pair.trim();
+                                    pair.strip_prefix("mgs_session=")
+                                        .map(|v| v.trim().to_owned())
+                                        .filter(|v| !v.is_empty())
+                                })
+                            })
+                    })
                     .unwrap_or_default();
                 let auth_user_id = auth_service.resolve_user_id_from_token(&auth_token);
                 if let Some(bound_user_id) = auth_user_id.as_deref() {

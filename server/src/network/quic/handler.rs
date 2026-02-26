@@ -11,12 +11,13 @@ use dashmap::DashMap;
 use quinn::{Connecting, Endpoint, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::BufReader;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn, Instrument};
+use tracing::{debug, error, info, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 pub type QuicRequestHandler = Arc<dyn Fn(&[u8]) -> Option<Vec<u8>> + Send + Sync + 'static>;
@@ -134,6 +135,10 @@ fn env_flag(var_name: &str) -> bool {
 }
 
 fn allow_self_signed_quic_identity_fallback() -> bool {
+    // MGS_QUIC_REQUIRE_REAL_CERT=true forces real certificates even in debug builds.
+    if env_flag("MGS_QUIC_REQUIRE_REAL_CERT") {
+        return false;
+    }
     cfg!(debug_assertions)
 }
 
@@ -159,14 +164,22 @@ pub fn start_quic_runtime(
         Some(identity) => identity,
         None => {
             if !allow_self_signed_quic_identity_fallback() {
+                if env_flag("MGS_QUIC_REQUIRE_REAL_CERT") {
+                    error!(
+                        "MGS_QUIC_REQUIRE_REAL_CERT is set but no certificate files were provided. \
+                         Set MGS_QUIC_CERT_PATH and MGS_QUIC_KEY_PATH to valid PEM files."
+                    );
+                }
                 return Err(anyhow!(
-                    "QUIC certificates are required in this build. Set MGS_QUIC_CERT_PATH and \
-                     MGS_QUIC_KEY_PATH."
+                    "QUIC certificates are required in this build/configuration. Set MGS_QUIC_CERT_PATH \
+                     and MGS_QUIC_KEY_PATH to PEM certificate/key files, or unset \
+                     MGS_QUIC_REQUIRE_REAL_CERT to allow self-signed fallback in debug builds."
                 ));
             }
             warn!(
-                "QUIC identity files were not configured; falling back to a self-signed certificate. \
-                 This should only be used in local/dev environments."
+                "Using self-signed QUIC certificates - not recommended for production. \
+                 Set MGS_QUIC_CERT_PATH and MGS_QUIC_KEY_PATH to PEM files, or \
+                 set MGS_QUIC_REQUIRE_REAL_CERT=true to refuse startup without real certificates."
             );
             let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
                 .context("failed to generate self-signed QUIC certificate")?;
@@ -238,20 +251,85 @@ fn load_quic_identity_from_env() -> Result<Option<(Vec<rustls::Certificate>, rus
             "both MGS_QUIC_CERT_PATH and MGS_QUIC_KEY_PATH must be set"
         )),
         (Some(cert_path), Some(key_path)) => {
-            let cert_der = fs::read(&cert_path)
-                .with_context(|| format!("failed reading QUIC cert path {}", cert_path))?;
-            let key_der = fs::read(&key_path)
-                .with_context(|| format!("failed reading QUIC key path {}", key_path))?;
+            let certs = load_pem_certs(&cert_path)
+                .with_context(|| format!("failed loading QUIC cert from {}", cert_path))?;
+            if certs.is_empty() {
+                return Err(anyhow!(
+                    "no certificates found in PEM file '{}'",
+                    cert_path
+                ));
+            }
+            let key = load_pem_private_key(&key_path)
+                .with_context(|| format!("failed loading QUIC key from {}", key_path))?;
             info!(
-                "Loaded QUIC TLS identity from files cert='{}' key='{}'.",
-                cert_path, key_path
+                "Loaded QUIC TLS identity from PEM files cert='{}' ({} cert(s)) key='{}'.",
+                cert_path,
+                certs.len(),
+                key_path
             );
-            Ok(Some((
-                vec![rustls::Certificate(cert_der)],
-                rustls::PrivateKey(key_der),
-            )))
+            Ok(Some((certs, key)))
         }
     }
+}
+
+/// Reads PEM-encoded certificates from a file.  Falls back to treating the
+/// whole file as a single DER certificate if no PEM sections are found.
+fn load_pem_certs(path: &str) -> Result<Vec<rustls::Certificate>> {
+    let file = fs::File::open(path)
+        .with_context(|| format!("cannot open certificate file '{}'", path))?;
+    let mut reader = BufReader::new(file);
+    let certs = rustls_pemfile::certs(&mut reader)
+        .with_context(|| format!("failed parsing PEM certificates from '{}'", path))?;
+    if certs.is_empty() {
+        // Fallback: the file may be raw DER rather than PEM.
+        let der = fs::read(path)
+            .with_context(|| format!("failed reading DER cert from '{}'", path))?;
+        info!(
+            "No PEM sections found in '{}'; treating as raw DER certificate.",
+            path
+        );
+        return Ok(vec![rustls::Certificate(der)]);
+    }
+    Ok(certs.into_iter().map(rustls::Certificate).collect())
+}
+
+/// Reads a PEM-encoded private key from a file.  Supports PKCS#8, RSA,
+/// and EC key formats.  Falls back to raw DER if no PEM sections are found.
+fn load_pem_private_key(path: &str) -> Result<rustls::PrivateKey> {
+    let file = fs::File::open(path)
+        .with_context(|| format!("cannot open key file '{}'", path))?;
+    let mut reader = BufReader::new(file);
+
+    // Try PKCS#8 first (most common for modern certs).
+    let pkcs8_keys = rustls_pemfile::pkcs8_private_keys(&mut reader)
+        .with_context(|| format!("failed parsing PKCS#8 keys from '{}'", path))?;
+    if let Some(key) = pkcs8_keys.into_iter().next() {
+        return Ok(rustls::PrivateKey(key));
+    }
+
+    // Re-read and try RSA keys.
+    let file = fs::File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let rsa_keys = rustls_pemfile::rsa_private_keys(&mut reader)
+        .with_context(|| format!("failed parsing RSA keys from '{}'", path))?;
+    if let Some(key) = rsa_keys.into_iter().next() {
+        return Ok(rustls::PrivateKey(key));
+    }
+
+    // Fallback: raw DER.
+    let der = fs::read(path)
+        .with_context(|| format!("failed reading DER key from '{}'", path))?;
+    if der.is_empty() {
+        return Err(anyhow!(
+            "no private key found in '{}' (tried PEM PKCS#8, RSA, and raw DER)",
+            path
+        ));
+    }
+    info!(
+        "No PEM key sections found in '{}'; treating as raw DER key.",
+        path
+    );
+    Ok(rustls::PrivateKey(der))
 }
 
 pub fn start_quic_runtime_from_env(default_bind_addr: SocketAddr) -> Result<Option<QuicRuntime>> {
