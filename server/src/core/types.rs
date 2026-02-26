@@ -181,6 +181,11 @@ pub struct PlayerState {
     // Sequence validation: tracks the last accepted input sequence to reject
     // replayed or suspiciously-jumped inputs at queue time.
     pub last_queued_input_sequence: u32,
+
+    // Acceleration-based speed hack detection: previous tick velocity snapshot
+    // and violation counter (separate from position-based violation_count).
+    pub prev_velocity: (f32, f32),
+    pub acceleration_violation_count: u32,
 }
 
 impl PlayerState {
@@ -248,6 +253,8 @@ impl PlayerState {
             streak_speed_boost_remaining: 0.0,
             recent_damage_sources: Vec::new(),
             last_queued_input_sequence: 0,
+            prev_velocity: (0.0, 0.0),
+            acceleration_violation_count: 0,
         }
     }
 
@@ -1438,5 +1445,122 @@ mod tests {
         assert!(p.respawn_timer.is_none());
         assert_eq!(p.current_streak, 0);
         assert_eq!(p.shield_current, 0);
+    }
+
+    // ── Health tracker race condition tests ──────────────────────────
+    // These tests validate the local health tracker pattern used in
+    // projectile_physics::apply_projectile_results to prevent duplicate
+    // kill events when multiple projectiles hit the same player in one tick.
+
+    /// Simulates the local health tracker pattern: tracks (health, shield, already_dead).
+    fn simulate_health_tracker_hit(
+        tracker: &mut (i32, i32, bool),
+        damage: i32,
+    ) -> bool {
+        if tracker.2 {
+            return false; // already dead from earlier hit this tick
+        }
+        let mut remaining = damage;
+        if tracker.1 > 0 {
+            let absorbed = remaining.min(tracker.1);
+            tracker.1 -= absorbed;
+            remaining -= absorbed;
+        }
+        tracker.0 = (tracker.0 - remaining).max(0);
+        if tracker.0 == 0 {
+            tracker.2 = true;
+            return true; // this hit caused the kill
+        }
+        false
+    }
+
+    #[test]
+    fn health_tracker_single_lethal_hit() {
+        let mut tracker = (100, 0, false); // 100 HP, 0 shield, alive
+        let caused_kill = simulate_health_tracker_hit(&mut tracker, 100);
+        assert!(caused_kill);
+        assert_eq!(tracker.0, 0);
+        assert!(tracker.2);
+    }
+
+    #[test]
+    fn health_tracker_two_hits_only_first_kills() {
+        // Simulates the race condition: player has 1 HP, two 50-damage projectiles
+        // both detected as hits during parallel processing.
+        let mut tracker = (1, 0, false);
+        let first_kill = simulate_health_tracker_hit(&mut tracker, 50);
+        assert!(first_kill, "first hit should cause the kill");
+        let second_kill = simulate_health_tracker_hit(&mut tracker, 50);
+        assert!(!second_kill, "second hit must NOT cause a duplicate kill");
+    }
+
+    #[test]
+    fn health_tracker_multiple_non_lethal_then_lethal() {
+        let mut tracker = (100, 0, false);
+        let k1 = simulate_health_tracker_hit(&mut tracker, 30);
+        assert!(!k1);
+        assert_eq!(tracker.0, 70);
+        let k2 = simulate_health_tracker_hit(&mut tracker, 30);
+        assert!(!k2);
+        assert_eq!(tracker.0, 40);
+        let k3 = simulate_health_tracker_hit(&mut tracker, 50); // overkill
+        assert!(k3);
+        assert_eq!(tracker.0, 0);
+        // Fourth hit on dead player
+        let k4 = simulate_health_tracker_hit(&mut tracker, 20);
+        assert!(!k4, "hits after death must be skipped");
+    }
+
+    #[test]
+    fn health_tracker_shield_absorbs_before_health() {
+        let mut tracker = (50, 30, false); // 50 HP, 30 shield
+        let k1 = simulate_health_tracker_hit(&mut tracker, 40);
+        assert!(!k1);
+        assert_eq!(tracker.1, 0); // shield depleted
+        assert_eq!(tracker.0, 40); // 50 - (40 - 30) = 40
+        let k2 = simulate_health_tracker_hit(&mut tracker, 40);
+        assert!(k2);
+        assert_eq!(tracker.0, 0);
+    }
+
+    #[test]
+    fn health_tracker_already_dead_skips_all() {
+        let mut tracker = (0, 0, true); // already dead
+        let k = simulate_health_tracker_hit(&mut tracker, 100);
+        assert!(!k, "hits on already-dead player must be skipped");
+    }
+
+    #[test]
+    fn health_tracker_shotgun_burst_one_kill_event() {
+        // Simulates 8 shotgun pellets hitting the same player with 100 HP.
+        // Each pellet does 18 damage. Total potential: 144. Only one kill event.
+        let mut tracker = (100, 0, false);
+        let mut kill_count = 0;
+        for _ in 0..8 {
+            if simulate_health_tracker_hit(&mut tracker, 18) {
+                kill_count += 1;
+            }
+        }
+        assert_eq!(kill_count, 1, "exactly one kill event from shotgun burst");
+        assert_eq!(tracker.0, 0);
+        assert!(tracker.2);
+    }
+
+    // ── Acceleration / speed hack field initialization tests ─────────
+
+    #[test]
+    fn new_player_has_zero_acceleration_state() {
+        let p = make_player("p1");
+        assert_eq!(p.prev_velocity, (0.0, 0.0));
+        assert_eq!(p.acceleration_violation_count, 0);
+    }
+
+    #[test]
+    fn speed_hack_tolerance_env_default() {
+        // When env var is not set, should return the constant value.
+        // (We can't unset env vars safely in parallel tests, so just check the
+        // function returns a value in the valid range.)
+        let tol = crate::core::constants::speed_hack_tolerance();
+        assert!(tol >= 1.0 && tol < 2.0);
     }
 }

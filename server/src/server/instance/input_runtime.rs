@@ -693,7 +693,7 @@ impl MassiveGameServer {
         }
 
         let effective_speed = if player_state.speed_boost_remaining > 0.0 {
-            PLAYER_BASE_SPEED * MAX_PLAYER_SPEED_MULTIPLIER
+            PLAYER_BASE_SPEED * SPEED_BOOST_MULTIPLIER
         } else {
             PLAYER_BASE_SPEED
         };

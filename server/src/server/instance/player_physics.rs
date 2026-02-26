@@ -176,8 +176,9 @@ impl MassiveGameServer {
             }
         }
 
-        // Anti-cheat validation
-        let max_speed_dist = PLAYER_BASE_SPEED * MAX_PLAYER_SPEED_MULTIPLIER * delta_time;
+        // Anti-cheat validation – position-based
+        let tolerance = crate::core::constants::speed_hack_tolerance();
+        let max_speed_dist = PLAYER_BASE_SPEED * tolerance * delta_time;
         // Fixed slack per tick allowed excessive burst distance; scale with expected movement instead.
         let adaptive_slack = (max_speed_dist * 0.15).clamp(1.0, MAX_POSITION_DELTA_SLACK);
         let max_dist = max_speed_dist + adaptive_slack;
@@ -198,6 +199,35 @@ impl MassiveGameServer {
             player_state.last_valid_position = (player_state.x, player_state.y);
             player_state.violation_count = player_state.violation_count.saturating_sub(1);
         }
+
+        // Anti-cheat validation – acceleration-based
+        // Detect impossible velocity changes between ticks that indicate speed hacking.
+        let dvx = player_state.velocity_x - player_state.prev_velocity.0;
+        let dvy = player_state.velocity_y - player_state.prev_velocity.1;
+        let accel_magnitude = (dvx * dvx + dvy * dvy).sqrt();
+
+        if accel_magnitude > MAX_ACCELERATION_PER_TICK {
+            player_state.acceleration_violation_count += 1;
+            if player_state.acceleration_violation_count > ACCELERATION_VIOLATION_THRESHOLD {
+                warn!(
+                    "[{}]: Acceleration anomaly (accel={:.1}, threshold={:.1}, count={}).",
+                    player_state.id.as_str(),
+                    accel_magnitude,
+                    MAX_ACCELERATION_PER_TICK,
+                    player_state.acceleration_violation_count
+                );
+                player_state.violation_count =
+                    player_state.violation_count.saturating_add(1);
+                // Snap velocity back to previous valid velocity
+                player_state.velocity_x = player_state.prev_velocity.0;
+                player_state.velocity_y = player_state.prev_velocity.1;
+                player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+            }
+        } else {
+            player_state.acceleration_violation_count =
+                player_state.acceleration_violation_count.saturating_sub(1);
+        }
+        player_state.prev_velocity = (player_state.velocity_x, player_state.velocity_y);
 
         // Mark as changed if moved
         if (old_x - player_state.x).abs() > 0.01 || (old_y - player_state.y).abs() > 0.01 {

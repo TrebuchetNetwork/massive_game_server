@@ -31,12 +31,31 @@ pub const MIN_PLAYERS_TO_START: usize = 1; // Reduced to 1 so single player can 
 pub const PICKUP_COLLECTION_RADIUS: f32 = 25.0;
 pub const PICKUP_DEFAULT_RESPAWN_TIME_SECS: f32 = 10.0;
 
-// Anti-cheat constants – tightened from V5 defaults (dash/dodge are server-side
-// so client speed should never legitimately exceed 1.15× base).
-pub const MAX_PLAYER_SPEED_MULTIPLIER: f32 = 1.15;
+// Anti-cheat constants – tightened from V6 defaults (dash/dodge are server-side
+// so client speed should never legitimately exceed 1.08× base).
+// Override at runtime via MGS_SPEED_HACK_TOLERANCE env var (e.g. "1.10").
+pub const MAX_PLAYER_SPEED_MULTIPLIER: f32 = 1.08;
 pub const MAX_POSITION_DELTA_SLACK: f32 = 3.0;
 pub const MIN_SHOT_INTERVAL_SECONDS: f32 = 0.05; // Minimum interval between shots
 pub const POSITION_VALIDATION_VIOLATION_THRESHOLD: u32 = 3;
+
+// Acceleration-based speed hack detection: maximum allowed velocity change per tick.
+// Legitimate sources of acceleration: input direction reversal (2× base speed change
+// per tick) plus small tolerance for knockback settling and boost edges.
+// Anything exceeding this is flagged as suspicious.
+pub const MAX_ACCELERATION_PER_TICK: f32 = PLAYER_BASE_SPEED * 3.5; // ~525 units/s per tick
+pub const ACCELERATION_VIOLATION_THRESHOLD: u32 = 3;
+
+/// Read the speed-hack tolerance multiplier from the `MGS_SPEED_HACK_TOLERANCE`
+/// environment variable, falling back to `MAX_PLAYER_SPEED_MULTIPLIER` if unset
+/// or unparseable.
+pub fn speed_hack_tolerance() -> f32 {
+    std::env::var("MGS_SPEED_HACK_TOLERANCE")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .filter(|&v| v > 1.0 && v < 2.0)
+        .unwrap_or(MAX_PLAYER_SPEED_MULTIPLIER)
+}
 
 // ── Weapon tuning constants ──────────────────────────────────────────
 // All weapon balance values centralized here for easy iteration.
@@ -83,6 +102,7 @@ pub const MELEE_MAX_RANGE: f32 = 30.0;
 pub const MELEE_MIN_MULTIPLIER: f32 = 1.0;
 pub const MELEE_CONE_HALF_ANGLE_RAD: f32 = std::f32::consts::FRAC_PI_4; // π/4 (90° cone)
 
+pub const SPEED_BOOST_MULTIPLIER: f32 = 1.15; // Speed boost powerup multiplier (separate from anti-cheat tolerance)
 pub const DAMAGE_BOOST_MULTIPLIER: f32 = 1.5;
 
 pub const WEAPON_SWAP_DURATION_SECS: f32 = 0.3;

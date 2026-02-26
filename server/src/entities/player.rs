@@ -213,6 +213,12 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     if original.last_queued_input_sequence != updated.last_queued_input_sequence {
         base.last_queued_input_sequence = updated.last_queued_input_sequence;
     }
+    if original.prev_velocity != updated.prev_velocity {
+        base.prev_velocity = updated.prev_velocity;
+    }
+    if original.acceleration_violation_count != updated.acceleration_violation_count {
+        base.acceleration_violation_count = updated.acceleration_violation_count;
+    }
 }
 
 pub struct PlayerStateReadGuard {
