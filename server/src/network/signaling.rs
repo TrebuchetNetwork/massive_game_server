@@ -720,6 +720,11 @@ fn try_acquire_join_rate_limit_token() -> bool {
     limiter_guard.try_acquire()
 }
 
+/// Maximum number of tracked IPs in the signaling IP rate limiter map before cleanup triggers.
+const IP_RATE_LIMITER_MAX_ENTRIES: usize = 10_000;
+/// Entries idle for longer than this are eligible for eviction during cleanup.
+const IP_RATE_LIMITER_IDLE_SECS: u64 = 300;
+
 fn try_acquire_ip_rate_limit_token(client_ip: &IpAddr) -> bool {
     let Some(cfg) = ip_rate_limit_config() else {
         return true;
@@ -727,6 +732,16 @@ fn try_acquire_ip_rate_limit_token(client_ip: &IpAddr) -> bool {
 
     static IP_RATE_LIMITERS: OnceLock<DashMap<IpAddr, JoinRateLimiter>> = OnceLock::new();
     let limiters = IP_RATE_LIMITERS.get_or_init(DashMap::new);
+
+    // Periodic cleanup: evict entries that have been idle for over 5 minutes.
+    if limiters.len() > IP_RATE_LIMITER_MAX_ENTRIES {
+        let now = Instant::now();
+        let idle_threshold = Duration::from_secs(IP_RATE_LIMITER_IDLE_SECS);
+        limiters.retain(|_ip, limiter| {
+            now.saturating_duration_since(limiter.last_refill_at) < idle_threshold
+        });
+    }
+
     let mut limiter = limiters
         .entry(*client_ip)
         .or_insert_with(|| JoinRateLimiter::new(cfg.per_sec, cfg.burst));

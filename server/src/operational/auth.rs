@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fs;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, OnceLock};
@@ -33,11 +33,22 @@ const PROGRESSION_BASE_XP_PER_MATCH: u64 = 50;
 const PROGRESSION_XP_PER_KILL: u64 = 30;
 const PROGRESSION_BASE_CREDITS_PER_MATCH: u64 = 20;
 const PROGRESSION_CREDITS_PER_KILL: u64 = 8;
+
+/// Per-IP OTP rate limiting: max 5 OTP requests per 10 minutes (short window).
+const OTP_IP_SHORT_WINDOW_SECS: u64 = 600;
+const OTP_IP_SHORT_WINDOW_MAX: u32 = 5;
+/// Per-IP OTP rate limiting: max 20 OTP requests per hour (long window).
+const OTP_IP_LONG_WINDOW_SECS: u64 = 3600;
+const OTP_IP_LONG_WINDOW_MAX: u32 = 20;
+/// Maximum number of tracked IPs in the OTP IP rate limiter before cleanup triggers.
+const OTP_IP_RATE_LIMITER_MAX_ENTRIES: usize = 10_000;
+
 static TOKEN_VALIDATION_RATE_LIMITERS: OnceLock<
     DashMap<String, Arc<ParkingLotMutex<TokenValidationRateLimiter>>>,
 > = OnceLock::new();
 static TOKEN_VALIDATION_RATE_LIMIT_CONFIG: OnceLock<TokenValidationRateLimitConfig> =
     OnceLock::new();
+static OTP_IP_RATE_LIMITERS: OnceLock<DashMap<IpAddr, OtpIpRateState>> = OnceLock::new();
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -114,6 +125,7 @@ enum AuthError {
     CodeMismatch { remaining_attempts: u32 },
     TooManyAttempts,
     RateLimited { retry_after_seconds: u64 },
+    OtpIpRateLimited { retry_after_seconds: u64 },
     TokenValidationRateLimited { retry_after_seconds: u64 },
     DeliveryFailed(String),
     SessionInvalid,
@@ -143,7 +155,7 @@ pub struct AuthProfileView {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestCodeResult {
-    pub phone_number: String,
+    pub phone_masked: String,
     pub expires_at: u64,
     pub retry_after_seconds: u64,
 }
@@ -264,6 +276,15 @@ impl AuthError {
                 Some(*retry_after_seconds),
                 None,
             ),
+            AuthError::OtpIpRateLimited {
+                retry_after_seconds,
+            } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "ip_rate_limited",
+                "Too many OTP requests from this address. Please try again later.".to_owned(),
+                Some(*retry_after_seconds),
+                None,
+            ),
             AuthError::TokenValidationRateLimited {
                 retry_after_seconds,
             } => (
@@ -368,7 +389,14 @@ fn token_validation_rate_limit_key(remote_addr: Option<SocketAddr>) -> String {
 fn try_acquire_token_validation_token(remote_addr: Option<SocketAddr>) -> bool {
     let config = token_validation_rate_limit_config();
     let key = token_validation_rate_limit_key(remote_addr);
-    let limiter_arc = shared_token_validation_rate_limiters()
+    let limiters = shared_token_validation_rate_limiters();
+
+    // Periodic cleanup: evict stale entries when map exceeds threshold.
+    if limiters.len() > OTP_IP_RATE_LIMITER_MAX_ENTRIES {
+        cleanup_token_validation_rate_limiters();
+    }
+
+    let limiter_arc = limiters
         .entry(key)
         .or_insert_with(|| {
             Arc::new(ParkingLotMutex::new(TokenValidationRateLimiter::new(
@@ -379,6 +407,112 @@ fn try_acquire_token_validation_token(remote_addr: Option<SocketAddr>) -> bool {
         .clone();
     let mut limiter = limiter_arc.lock();
     limiter.try_acquire()
+}
+
+/// Remove token validation rate limiter entries that have been idle for over 5 minutes.
+fn cleanup_token_validation_rate_limiters() {
+    let limiters = shared_token_validation_rate_limiters();
+    let now = Instant::now();
+    let idle_threshold = std::time::Duration::from_secs(300);
+    limiters.retain(|_key, limiter_arc| {
+        let limiter = limiter_arc.lock();
+        now.saturating_duration_since(limiter.last_refill_at) < idle_threshold
+    });
+}
+
+// ── OTP per-IP rate limiting (sliding window counters) ───────────────────────
+
+/// Tracks per-IP OTP request timestamps using two sliding windows (short and long).
+#[derive(Debug, Clone)]
+struct OtpIpRateState {
+    /// Timestamps of recent OTP requests within the short window.
+    short_window_timestamps: Vec<u64>,
+    /// Timestamps of recent OTP requests within the long window.
+    long_window_timestamps: Vec<u64>,
+}
+
+impl OtpIpRateState {
+    fn new() -> Self {
+        Self {
+            short_window_timestamps: Vec::new(),
+            long_window_timestamps: Vec::new(),
+        }
+    }
+
+    /// Try to record a new OTP request. Returns Ok(()) if allowed, or
+    /// Err(retry_after_seconds) if the IP has exceeded its quota.
+    fn try_record(&mut self, now: u64) -> Result<(), u64> {
+        // Evict expired entries from both windows.
+        let short_cutoff = now.saturating_sub(OTP_IP_SHORT_WINDOW_SECS);
+        self.short_window_timestamps.retain(|&ts| ts > short_cutoff);
+
+        let long_cutoff = now.saturating_sub(OTP_IP_LONG_WINDOW_SECS);
+        self.long_window_timestamps.retain(|&ts| ts > long_cutoff);
+
+        // Check short window (5 per 10 min).
+        if self.short_window_timestamps.len() >= OTP_IP_SHORT_WINDOW_MAX as usize {
+            let oldest = self.short_window_timestamps.first().copied().unwrap_or(now);
+            let retry_after = oldest
+                .saturating_add(OTP_IP_SHORT_WINDOW_SECS)
+                .saturating_sub(now)
+                .max(1);
+            return Err(retry_after);
+        }
+
+        // Check long window (20 per hour).
+        if self.long_window_timestamps.len() >= OTP_IP_LONG_WINDOW_MAX as usize {
+            let oldest = self.long_window_timestamps.first().copied().unwrap_or(now);
+            let retry_after = oldest
+                .saturating_add(OTP_IP_LONG_WINDOW_SECS)
+                .saturating_sub(now)
+                .max(1);
+            return Err(retry_after);
+        }
+
+        self.short_window_timestamps.push(now);
+        self.long_window_timestamps.push(now);
+        Ok(())
+    }
+
+    /// Returns true if this entry has no timestamps in either window (fully expired).
+    fn is_empty(&self) -> bool {
+        self.short_window_timestamps.is_empty() && self.long_window_timestamps.is_empty()
+    }
+}
+
+fn shared_otp_ip_rate_limiters() -> &'static DashMap<IpAddr, OtpIpRateState> {
+    OTP_IP_RATE_LIMITERS.get_or_init(DashMap::new)
+}
+
+/// Check (and record) whether this IP is allowed to make another OTP request.
+/// Returns Ok(()) if allowed, Err(retry_after_seconds) if rate-limited.
+fn check_otp_ip_rate_limit(client_ip: Option<IpAddr>) -> Result<(), u64> {
+    let Some(ip) = client_ip else {
+        // If we cannot determine the IP, allow the request but do not track.
+        return Ok(());
+    };
+
+    let limiters = shared_otp_ip_rate_limiters();
+    let now = unix_now();
+
+    // Periodic cleanup when the map grows too large.
+    if limiters.len() > OTP_IP_RATE_LIMITER_MAX_ENTRIES {
+        cleanup_otp_ip_rate_limiters(now);
+    }
+
+    let mut entry = limiters.entry(ip).or_insert_with(OtpIpRateState::new);
+    entry.try_record(now)
+}
+
+/// Evict OTP IP rate state entries that have fully expired.
+fn cleanup_otp_ip_rate_limiters(now: u64) {
+    let limiters = shared_otp_ip_rate_limiters();
+    let long_cutoff = now.saturating_sub(OTP_IP_LONG_WINDOW_SECS);
+    limiters.retain(|_ip, state| {
+        state.short_window_timestamps.retain(|&ts| ts > now.saturating_sub(OTP_IP_SHORT_WINDOW_SECS));
+        state.long_window_timestamps.retain(|&ts| ts > long_cutoff);
+        !state.is_empty()
+    });
 }
 
 impl AuthService {
@@ -473,7 +607,7 @@ impl AuthService {
 
         metrics::record_auth_attempt("request_code", "success");
         Ok(RequestCodeResult {
-            phone_number,
+            phone_masked: mask_phone_number(&phone_number),
             expires_at,
             retry_after_seconds: self.inner.resend_interval_seconds,
         })
@@ -796,7 +930,7 @@ impl AuthService {
                 .replace("{message}", escaped_message.as_ref());
             match Command::new("sh").arg("-c").arg(&rendered).status() {
                 Ok(status) if status.success() => {
-                    info!("SMS command delivered code to {}", phone_number);
+                    info!("SMS command delivered code to {}", mask_phone_number(phone_number));
                     if self.inner.sms_dev_mode {
                         info!("[AUTH_SMS_DEV] phone={} code={}", phone_number, code);
                     }
@@ -832,6 +966,7 @@ pub fn build_auth_routes(
     let request_code = warp::path!("auth" / "phone" / "request-code")
         .and(warp::post())
         .and(warp::body::json::<RequestCodeBody>())
+        .and(warp::addr::remote())
         .and(with_auth_service(auth_service.clone()))
         .and_then(handle_request_code);
 
@@ -890,8 +1025,19 @@ fn with_auth_service(
 
 async fn handle_request_code(
     body: RequestCodeBody,
+    remote_addr: Option<SocketAddr>,
     auth_service: AuthService,
 ) -> Result<impl Reply, Infallible> {
+    let client_ip = remote_addr.map(|addr| addr.ip());
+
+    // Per-IP OTP rate limiting: reject before any phone-level logic.
+    if let Err(retry_after) = check_otp_ip_rate_limit(client_ip) {
+        metrics::record_auth_attempt("request_code", "ip_rate_limited");
+        return Ok(error_response(AuthError::OtpIpRateLimited {
+            retry_after_seconds: retry_after,
+        }));
+    }
+
     let reply = match auth_service.request_phone_code(&body.phone_number) {
         Ok(result) => ok_response(result),
         Err(error) => error_response(error),
@@ -1316,17 +1462,14 @@ fn mask_phone_number(phone_number: &str) -> String {
             digits_only.push(ch);
         }
     }
-    if digits_only.len() <= 4 {
-        return phone_number.to_owned();
+    if digits_only.len() <= 2 {
+        // Too short to mask meaningfully; return fully masked.
+        return "+***".to_owned();
     }
-    let last4 = &digits_only[digits_only.len() - 4..];
-    let country_len = digits_only.len().saturating_sub(10);
-    let country = if country_len > 0 {
-        &digits_only[..country_len]
-    } else {
-        ""
-    };
-    format!("+{}******{}", country, last4)
+    let last2 = &digits_only[digits_only.len() - 2..];
+    let masked_count = digits_only.len().saturating_sub(2);
+    let stars: String = std::iter::repeat_n('*', masked_count).collect();
+    format!("+{}{}", stars, last2)
 }
 
 fn phone_last4(phone_number: &str) -> String {
@@ -1399,5 +1542,152 @@ mod tests {
         let (high_xp, high_credits) = progression_reward_from_match(&high);
         assert!(high_xp > low_xp);
         assert!(high_credits > low_credits);
+    }
+
+    // ── Phone number masking tests ───────────────────────────────────────
+
+    #[test]
+    fn mask_phone_shows_only_last_two_digits() {
+        // Standard US number: +15551234567 (11 digits)
+        assert_eq!(mask_phone_number("+15551234567"), "+*********67");
+    }
+
+    #[test]
+    fn mask_phone_international_number() {
+        // UK number: +447911123456 (12 digits)
+        assert_eq!(mask_phone_number("+447911123456"), "+**********56");
+    }
+
+    #[test]
+    fn mask_phone_short_number() {
+        // Very short number (3 digits): only last 2 visible.
+        assert_eq!(mask_phone_number("+123"), "+*23");
+    }
+
+    #[test]
+    fn mask_phone_two_digit_returns_fully_masked() {
+        assert_eq!(mask_phone_number("+12"), "+***");
+    }
+
+    #[test]
+    fn mask_phone_single_digit_returns_fully_masked() {
+        assert_eq!(mask_phone_number("+1"), "+***");
+    }
+
+    // ── OTP per-IP rate limiting tests ───────────────────────────────────
+
+    #[test]
+    fn otp_ip_rate_state_allows_within_short_window_limit() {
+        let mut state = OtpIpRateState::new();
+        let base_time = 1_000_000u64;
+
+        // Should allow up to OTP_IP_SHORT_WINDOW_MAX requests.
+        for i in 0..OTP_IP_SHORT_WINDOW_MAX {
+            assert!(
+                state.try_record(base_time + u64::from(i)).is_ok(),
+                "Request {} within short window limit should be allowed",
+                i + 1
+            );
+        }
+    }
+
+    #[test]
+    fn otp_ip_rate_state_blocks_after_short_window_exceeded() {
+        let mut state = OtpIpRateState::new();
+        let base_time = 1_000_000u64;
+
+        // Fill up the short window.
+        for i in 0..OTP_IP_SHORT_WINDOW_MAX {
+            assert!(state.try_record(base_time + u64::from(i)).is_ok());
+        }
+
+        // Next request should be blocked.
+        let result = state.try_record(base_time + u64::from(OTP_IP_SHORT_WINDOW_MAX));
+        assert!(result.is_err(), "Should be rate-limited after exceeding short window");
+        let retry_after = result.unwrap_err();
+        assert!(retry_after > 0, "retry_after should be positive");
+        assert!(
+            retry_after <= OTP_IP_SHORT_WINDOW_SECS,
+            "retry_after should not exceed the short window duration"
+        );
+    }
+
+    #[test]
+    fn otp_ip_rate_state_allows_after_short_window_expires() {
+        let mut state = OtpIpRateState::new();
+        let base_time = 1_000_000u64;
+
+        // Fill up the short window.
+        for i in 0..OTP_IP_SHORT_WINDOW_MAX {
+            assert!(state.try_record(base_time + u64::from(i)).is_ok());
+        }
+
+        // Should be blocked now.
+        assert!(state.try_record(base_time + 10).is_err());
+
+        // After the short window expires, should be allowed again.
+        let after_window = base_time + OTP_IP_SHORT_WINDOW_SECS + 1;
+        assert!(
+            state.try_record(after_window).is_ok(),
+            "Should be allowed after short window expires"
+        );
+    }
+
+    #[test]
+    fn otp_ip_rate_state_blocks_after_long_window_exceeded() {
+        let mut state = OtpIpRateState::new();
+        let base_time = 1_000_000u64;
+
+        // Fill up the long window by spreading requests across multiple short windows.
+        for i in 0..OTP_IP_LONG_WINDOW_MAX {
+            // Space requests every (short_window + 1) seconds so short window resets
+            // but long window accumulates.
+            let ts = base_time + u64::from(i) * (OTP_IP_SHORT_WINDOW_SECS / OTP_IP_SHORT_WINDOW_MAX as u64 + 1);
+            assert!(
+                state.try_record(ts).is_ok(),
+                "Request {} within long window should be allowed",
+                i + 1
+            );
+        }
+
+        // Compute a timestamp that is still within the long window for the earliest entry
+        // but won't hit the short window limit.
+        let last_ts = base_time
+            + u64::from(OTP_IP_LONG_WINDOW_MAX - 1)
+                * (OTP_IP_SHORT_WINDOW_SECS / OTP_IP_SHORT_WINDOW_MAX as u64 + 1);
+        let next_ts = last_ts + 1;
+
+        // Should be blocked by long window.
+        let result = state.try_record(next_ts);
+        assert!(result.is_err(), "Should be rate-limited after exceeding long window");
+    }
+
+    #[test]
+    fn otp_ip_rate_state_is_empty_after_expiry() {
+        let mut state = OtpIpRateState::new();
+        let base_time = 1_000_000u64;
+
+        assert!(state.try_record(base_time).is_ok());
+        assert!(!state.is_empty());
+
+        // Simulate time passing beyond both windows.
+        let far_future = base_time + OTP_IP_LONG_WINDOW_SECS + 100;
+        // Trigger internal cleanup by calling try_record at far_future.
+        assert!(state.try_record(far_future).is_ok());
+
+        // After removing the far_future entry (simulating cleanup), the old entries
+        // should have been evicted. Create a fresh state to test is_empty.
+        let mut fresh_state = OtpIpRateState::new();
+        assert!(fresh_state.try_record(base_time).is_ok());
+        // Evict by retaining only entries after far_future.
+        fresh_state.short_window_timestamps.retain(|&ts| ts > far_future.saturating_sub(OTP_IP_SHORT_WINDOW_SECS));
+        fresh_state.long_window_timestamps.retain(|&ts| ts > far_future.saturating_sub(OTP_IP_LONG_WINDOW_SECS));
+        assert!(fresh_state.is_empty(), "State should be empty after all entries expire");
+    }
+
+    #[test]
+    fn check_otp_ip_rate_limit_allows_none_ip() {
+        // When no IP is provided, rate limiting is bypassed.
+        assert!(check_otp_ip_rate_limit(None).is_ok());
     }
 }

@@ -953,17 +953,22 @@ async fn main() -> anyhow::Result<()> {
                         );
                     }
                 }
-                let forwarded_ip = request_headers
-                    .get("x-forwarded-for")
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(parse_forwarded_for_ip);
-                let real_ip = request_headers
-                    .get("x-real-ip")
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(|value| value.trim().parse::<IpAddr>().ok());
-                let client_ip = forwarded_ip
-                    .or(real_ip)
-                    .or_else(|| remote_addr.map(|addr| addr.ip()));
+                // Only trust X-Forwarded-For / X-Real-IP if the direct
+                // connecting IP is a known trusted proxy (private/loopback).
+                let socket_ip = remote_addr.map(|addr| addr.ip());
+                let client_ip = if socket_ip.is_some_and(is_trusted_proxy) {
+                    let forwarded_ip = request_headers
+                        .get("x-forwarded-for")
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(parse_forwarded_for_ip);
+                    let real_ip = request_headers
+                        .get("x-real-ip")
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.trim().parse::<IpAddr>().ok());
+                    forwarded_ip.or(real_ip).or(socket_ip)
+                } else {
+                    socket_ip
+                };
                 let remote_context = monitoring_tracing::extract_remote_context(
                     request_headers
                         .get("traceparent")
