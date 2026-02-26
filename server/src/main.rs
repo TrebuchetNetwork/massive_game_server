@@ -389,7 +389,7 @@ fn requires_admin_auth(
 
                         // Only trust X-Forwarded-For / X-Real-IP if the direct
                         // connecting IP is a known trusted proxy (private/loopback).
-                        let source_ip = if socket_ip.map_or(false, is_trusted_proxy) {
+                        let source_ip = if socket_ip.is_some_and(is_trusted_proxy) {
                             let forwarded_ip = headers
                                 .get("x-forwarded-for")
                                 .and_then(|value| value.to_str().ok())

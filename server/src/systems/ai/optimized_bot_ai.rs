@@ -28,7 +28,7 @@ thread_local! {
 /// simulation is fully reproducible from a given seed.
 #[inline]
 fn with_bot_rng<R>(f: impl FnOnce(&mut DeterministicRng) -> R) -> R {
-    BOT_RNG.with(|cell| f(&mut *cell.borrow_mut()))
+    BOT_RNG.with(|cell| f(&mut cell.borrow_mut()))
 }
 
 // Optimized constants
@@ -243,7 +243,7 @@ impl OptimizedBotAI {
         // small frame numbers.
         BOT_RNG.with(|cell| {
             *cell.borrow_mut() = DeterministicRng::new(
-                (frame_count as u64).wrapping_mul(2654435761), // Knuth multiplicative hash
+                frame_count.wrapping_mul(2654435761), // Knuth multiplicative hash
             );
         });
 
