@@ -246,6 +246,12 @@ impl AdminAuthRejection {
 
 impl warp::reject::Reject for AdminAuthRejection {}
 
+/// Rejection returned when a WebSocket upgrade request has a disallowed Origin header.
+#[derive(Debug)]
+struct OriginRejection;
+
+impl warp::reject::Reject for OriginRejection {}
+
 fn parse_bearer_token(authorization_header: Option<&str>) -> Option<String> {
     let raw = authorization_header?.trim();
     if raw.is_empty() {
@@ -292,6 +298,65 @@ fn parse_list_env(var_name: &str) -> Vec<String> {
         })
         .filter(|item| !item.is_empty())
         .collect()
+}
+
+/// Validate the Origin header on a WebSocket upgrade request to prevent
+/// Cross-Site WebSocket Hijacking (CSWSH). Returns `true` if the origin is
+/// acceptable.
+///
+/// Allowed origins:
+///   - No Origin header at all (non-browser clients, curl, etc.)
+///   - Same-origin: the Origin host matches the request Host header
+///   - Any origin listed in `MGS_ALLOWED_ORIGINS` (comma-separated env var)
+///   - localhost / 127.0.0.1 origins when `MGS_DEV_MODE` is enabled
+fn is_allowed_ws_origin(
+    origin: Option<&str>,
+    host: Option<&str>,
+    allowed_origins: &[String],
+    dev_mode: bool,
+) -> bool {
+    let origin = match origin {
+        Some(o) if !o.is_empty() => o,
+        // No Origin header (non-browser client) -- allow
+        _ => return true,
+    };
+
+    // Parse the origin to extract its host[:port] portion.
+    let origin_host = origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))
+        .unwrap_or(origin);
+
+    // Same-origin check: compare against the Host header of the request.
+    if let Some(host_value) = host {
+        if !host_value.is_empty()
+            && origin_host.eq_ignore_ascii_case(host_value)
+        {
+            return true;
+        }
+    }
+
+    // Explicit allowlist from MGS_ALLOWED_ORIGINS.
+    for allowed in allowed_origins {
+        let allowed_host = allowed
+            .strip_prefix("https://")
+            .or_else(|| allowed.strip_prefix("http://"))
+            .unwrap_or(allowed);
+        if origin_host.eq_ignore_ascii_case(allowed_host) {
+            return true;
+        }
+    }
+
+    // In dev mode, accept localhost / 127.0.0.1 origins.
+    if dev_mode {
+        let lower = origin_host.to_ascii_lowercase();
+        let host_part = lower.split(':').next().unwrap_or(&lower);
+        if host_part == "localhost" || host_part == "127.0.0.1" || host_part == "[::1]" {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn parse_admin_ip_allowlist() -> Vec<IpNet> {
@@ -438,6 +503,17 @@ fn requires_admin_auth(
 }
 
 async fn handle_route_rejection(rejection: warp::Rejection) -> Result<impl Reply, Infallible> {
+    if rejection.find::<OriginRejection>().is_some() {
+        let body = warp::reply::json(&serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "origin_not_allowed",
+                "message": "WebSocket upgrade rejected: Origin not in allowlist."
+            }
+        }));
+        return Ok(warp::reply::with_status(body, StatusCode::FORBIDDEN));
+    }
+
     if let Some(admin_rejection) = rejection.find::<AdminAuthRejection>() {
         let body = warp::reply::json(&serde_json::json!({
             "ok": false,
@@ -880,6 +956,52 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // --- WebSocket Origin validation (CSWSH protection) ---
+    // TLS termination is expected at the nginx / load-balancer layer (see docker/nginx.conf).
+    // When MGS_BEHIND_TLS_PROXY is set, the server adds HSTS headers to HTTP responses
+    // and assumes all traffic arrives over a secure channel.
+    let behind_tls_proxy = env_flag("MGS_BEHIND_TLS_PROXY");
+    let ws_dev_mode = env_flag("MGS_DEV_MODE");
+    let ws_allowed_origins: Arc<Vec<String>> = Arc::new(parse_list_env("MGS_ALLOWED_ORIGINS"));
+    if behind_tls_proxy {
+        info!("MGS_BEHIND_TLS_PROXY enabled: HSTS headers will be added to HTTP responses.");
+    }
+    if ws_dev_mode {
+        info!("MGS_DEV_MODE enabled: localhost/127.0.0.1 WebSocket origins are permitted.");
+    }
+    if !ws_allowed_origins.is_empty() {
+        info!(
+            "WebSocket Origin allowlist ({} entries): {:?}",
+            ws_allowed_origins.len(),
+            *ws_allowed_origins
+        );
+    }
+
+    let ws_allowed_origins_for_filter = ws_allowed_origins.clone();
+    let origin_check_filter = warp::header::headers_cloned()
+        .and_then(move |headers: HeaderMap| {
+            let allowed = ws_allowed_origins_for_filter.clone();
+            let dev = ws_dev_mode;
+            async move {
+                let origin = headers
+                    .get("origin")
+                    .and_then(|v| v.to_str().ok());
+                let host = headers
+                    .get("host")
+                    .and_then(|v| v.to_str().ok());
+                if is_allowed_ws_origin(origin, host, &allowed, dev) {
+                    Ok(())
+                } else {
+                    warn!(
+                        "WebSocket upgrade rejected: origin={:?} host={:?}",
+                        origin, host
+                    );
+                    Err(warp::reject::custom(OriginRejection))
+                }
+            }
+        })
+        .untuple_one();
+
     let config_for_ws = config.clone();
     let signaling_peers_for_ws = signaling_peers_state.clone();
     // Pass the Arc<MassiveGameServer> directly for its components
@@ -895,6 +1017,7 @@ async fn main() -> anyhow::Result<()> {
     let scaling_coordinator_for_ws = scaling_coordinator.clone();
 
     let signaling_route_ws = warp::path("ws")
+        .and(origin_check_filter)
         .and(warp::ws())
         .and(
             warp::query::<WsAuthQuery>()
@@ -1224,6 +1347,37 @@ async fn main() -> anyhow::Result<()> {
             )
             .map(warp::reply::Reply::into_response)
             .boxed()
+    };
+
+    // When running behind a TLS-terminating proxy (nginx, ALB, etc.), inject
+    // Strict-Transport-Security and security headers into every HTTP response
+    // from the application server. The proxy handles the actual TLS handshake;
+    // these headers instruct browsers to only use HTTPS for future requests.
+    let routes = if behind_tls_proxy {
+        routes
+            .map(|mut response: warp::http::Response<warp::hyper::Body>| {
+                let headers = response.headers_mut();
+                headers.insert(
+                    HeaderName::from_static("strict-transport-security"),
+                    HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"),
+                );
+                headers.insert(
+                    HeaderName::from_static("x-content-type-options"),
+                    HeaderValue::from_static("nosniff"),
+                );
+                headers.insert(
+                    HeaderName::from_static("x-frame-options"),
+                    HeaderValue::from_static("DENY"),
+                );
+                headers.insert(
+                    HeaderName::from_static("referrer-policy"),
+                    HeaderValue::from_static("strict-origin-when-cross-origin"),
+                );
+                response
+            })
+            .boxed()
+    } else {
+        routes
     };
 
     let game_server_for_loop = Arc::clone(&game_server_instance); // Use the renamed variable
