@@ -95,6 +95,7 @@ fn create_destructible_wall(
 }
 
 // Helper function to create a projectile
+#[allow(clippy::too_many_arguments)]
 fn create_projectile(
     server: &MassiveGameServer,
     owner_player_id_str: &str,

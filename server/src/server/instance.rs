@@ -268,38 +268,6 @@ fn collect_pending_chat_packets(
         .collect()
 }
 
-#[cfg(test)]
-mod packet_batch_tests {
-    use super::*;
-
-    #[test]
-    fn collect_pending_chat_packets_applies_seq_filter_and_cap() {
-        let chat_packets: Vec<SerializedChatPacket> = (1..=64)
-            .map(|seq| SerializedChatPacket {
-                seq,
-                bytes: Bytes::from_static(b"x"),
-            })
-            .collect();
-
-        let pending = collect_pending_chat_packets(24, &chat_packets);
-        assert_eq!(pending.len(), MAX_CHAT_PER_BATCH);
-        assert_eq!(pending.first().map(|p| p.seq), Some(25));
-        assert_eq!(pending.last().map(|p| p.seq), Some(34));
-    }
-
-    #[test]
-    fn segment_first_hit_fraction_detects_entry_time() {
-        let hit_t = segment_first_hit_fraction_with_aabb(0.0, 0.0, 10.0, 0.0, 4.0, 6.0, -1.0, 1.0);
-        assert_eq!(hit_t, Some(0.4));
-    }
-
-    #[test]
-    fn segment_first_hit_fraction_returns_none_for_miss() {
-        let hit_t = segment_first_hit_fraction_with_aabb(0.0, 0.0, 3.0, 0.0, 4.0, 6.0, -1.0, 1.0);
-        assert_eq!(hit_t, None);
-    }
-}
-
 pub struct MassiveGameServer {
     pub config: Arc<ServerConfig>,
     pub thread_pools: Arc<ThreadPoolSystem>,
@@ -1164,5 +1132,39 @@ impl MassiveGameServer {
         timeout_ms: u64,
     ) -> usize {
         send_packet_batch_over_channel(data_channel, packets, timeout_ms).await
+    }
+}
+
+#[cfg(test)]
+mod packet_batch_tests {
+    use super::*;
+
+    #[test]
+    fn collect_pending_chat_packets_applies_seq_filter_and_cap() {
+        let chat_packets: Vec<SerializedChatPacket> = (1..=64)
+            .map(|seq| SerializedChatPacket {
+                seq,
+                bytes: Bytes::from_static(b"x"),
+            })
+            .collect();
+
+        let pending = collect_pending_chat_packets(24, &chat_packets);
+        assert_eq!(pending.len(), MAX_CHAT_PER_BATCH);
+        assert_eq!(pending.first().map(|p| p.seq), Some(25));
+        assert_eq!(pending.last().map(|p| p.seq), Some(34));
+    }
+
+    #[test]
+    fn segment_first_hit_fraction_detects_entry_time() {
+        let hit_t =
+            segment_first_hit_fraction_with_aabb(0.0, 0.0, 10.0, 0.0, 4.0, 6.0, -1.0, 1.0);
+        assert_eq!(hit_t, Some(0.4));
+    }
+
+    #[test]
+    fn segment_first_hit_fraction_returns_none_for_miss() {
+        let hit_t =
+            segment_first_hit_fraction_with_aabb(0.0, 0.0, 3.0, 0.0, 4.0, 6.0, -1.0, 1.0);
+        assert_eq!(hit_t, None);
     }
 }

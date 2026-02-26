@@ -131,7 +131,7 @@ impl MassiveGameServer {
                     );
                     write_guard.1.clone()
                 } else {
-                    info!(
+                    debug!(
                         "[Frame {}] Rebuilding structural wall cache (was for frame {}).",
                         frame, write_guard.0
                     );
@@ -142,7 +142,7 @@ impl MassiveGameServer {
                             new_cache_walls.push(entry.value().clone());
                         }
                     }
-                    info!(
+                    debug!(
                         "[Frame {}] Structural wall cache rebuilt with {} walls.",
                         frame,
                         new_cache_walls.len()

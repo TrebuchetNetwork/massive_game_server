@@ -1380,7 +1380,9 @@ mod tests {
 
     #[test]
     fn stuck_target_tolerance_greater_than_movement_tolerance() {
-        assert!(BOT_STUCK_TARGET_TOLERANCE > BOT_MOVEMENT_TOLERANCE);
+        const {
+            assert!(BOT_STUCK_TARGET_TOLERANCE > BOT_MOVEMENT_TOLERANCE);
+        }
         assert!((BOT_STUCK_TARGET_TOLERANCE - BOT_MOVEMENT_TOLERANCE - 20.0).abs() < f32::EPSILON);
     }
 

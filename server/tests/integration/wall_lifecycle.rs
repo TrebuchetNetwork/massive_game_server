@@ -32,6 +32,7 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_wall(
     server: &MassiveGameServer,
     wall_id: EntityId,

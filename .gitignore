@@ -1,5 +1,4 @@
 target/
-Cargo.lock
 scripts/ui_bench/node_modules/
 scripts/e2e/node_modules/
 artifacts/
