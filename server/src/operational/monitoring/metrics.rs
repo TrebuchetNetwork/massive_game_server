@@ -240,6 +240,13 @@ pub fn record_shutdown_duration(duration_seconds: f64) {
     histogram!("game_shutdown_duration_seconds").record(duration_seconds.max(0.0));
 }
 
+pub fn record_quic_connection_rejected(reason: &'static str) {
+    if !enabled() {
+        return;
+    }
+    counter!("game_quic_connections_rejected_total", "reason" => reason).increment(1);
+}
+
 pub struct MetricsSystem {
     pub start_time: Instant,
 }
