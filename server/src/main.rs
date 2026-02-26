@@ -853,6 +853,8 @@ async fn main() -> anyhow::Result<()> {
     let code_generation_service = CodeGenerationService::new_from_env();
     let feature_flag_service = FeatureFlagService::new_from_env();
     let auth_routes = build_auth_routes(auth_service.clone());
+    // Start the background GDPR deletion processor (runs hourly)
+    auth_service.clone().start_deletion_processor();
     let arena_routes = build_arena_routes(arena_service.clone());
     let code_generation_routes = build_code_generation_routes(code_generation_service);
     let feature_flag_routes = build_feature_flag_routes(feature_flag_service);

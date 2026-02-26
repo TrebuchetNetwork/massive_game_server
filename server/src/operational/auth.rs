@@ -5,6 +5,7 @@ use parking_lot::{Mutex as ParkingLotMutex, RwLock};
 use rand::Rng;
 use redis::Commands;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use shell_escape::escape as shell_escape;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -35,6 +36,9 @@ const PROGRESSION_BASE_XP_PER_MATCH: u64 = 50;
 const PROGRESSION_XP_PER_KILL: u64 = 30;
 const PROGRESSION_BASE_CREDITS_PER_MATCH: u64 = 20;
 const PROGRESSION_CREDITS_PER_KILL: u64 = 8;
+const DEFAULT_ACCOUNT_DELETION_GRACE_PERIOD_HOURS: u64 = 72;
+/// Interval for the periodic task that processes queued account deletions.
+const DELETION_PROCESSING_INTERVAL_SECS: u64 = 3600;
 
 /// Per-IP OTP rate limiting: max 5 OTP requests per 10 minutes (short window).
 const OTP_IP_SHORT_WINDOW_SECS: u64 = 600;
@@ -64,10 +68,14 @@ struct AuthInner {
     otp_challenges: DashMap<String, OtpChallenge>,
     sessions: DashMap<String, SessionRecord>,
     peer_bindings: DashMap<String, String>,
+    /// Queued account deletions: user_id -> PendingDeletion
+    deletion_queue: DashMap<String, PendingDeletion>,
     otp_ttl_seconds: u64,
     session_ttl_seconds: u64,
     resend_interval_seconds: u64,
     max_verify_attempts: u32,
+    /// Grace period (in hours) before a queued deletion is executed.
+    deletion_grace_period_hours: u64,
     sms_command: Option<String>,
     sms_dev_mode: bool,
     /// When true, the verify-code endpoint sets the session token as an
@@ -76,6 +84,14 @@ struct AuthInner {
     /// authenticated endpoints will then also accept the cookie as a token
     /// source.  Enable via MGS_AUTH_USE_COOKIES=true.
     use_auth_cookies: bool,
+}
+
+/// A pending account deletion that is within the grace period.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingDeletion {
+    user_id: String,
+    requested_at: u64,
+    scheduled_deletion_time: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -103,6 +119,9 @@ struct UserRecord {
     experience_points: u64,
     #[serde(default)]
     credits: u64,
+    /// True if this account has been anonymized/deleted per GDPR request.
+    #[serde(default)]
+    deleted: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -137,6 +156,9 @@ enum AuthError {
     TokenValidationRateLimited { retry_after_seconds: u64 },
     DeliveryFailed(String),
     SessionInvalid,
+    AccountDeleted,
+    DeletionAlreadyPending,
+    DeletionNotPending,
     Internal(String),
 }
 
@@ -184,6 +206,22 @@ pub struct AuthMeResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct LeaderboardResult {
     pub players: Vec<AuthProfileView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountDeletionResult {
+    pub user_id: String,
+    pub requested_at: u64,
+    pub scheduled_deletion_time: u64,
+    pub grace_period_hours: u64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CancelDeletionResult {
+    pub user_id: String,
+    pub cancelled: bool,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -313,6 +351,27 @@ impl AuthError {
                 StatusCode::UNAUTHORIZED,
                 "session_invalid",
                 "Session token is missing, invalid, or expired.".to_owned(),
+                None,
+                None,
+            ),
+            AuthError::AccountDeleted => (
+                StatusCode::GONE,
+                "account_deleted",
+                "This account has been deleted and anonymized.".to_owned(),
+                None,
+                None,
+            ),
+            AuthError::DeletionAlreadyPending => (
+                StatusCode::CONFLICT,
+                "deletion_already_pending",
+                "Account deletion is already scheduled. Use cancel-deletion to abort.".to_owned(),
+                None,
+                None,
+            ),
+            AuthError::DeletionNotPending => (
+                StatusCode::BAD_REQUEST,
+                "deletion_not_pending",
+                "No pending account deletion to cancel.".to_owned(),
                 None,
                 None,
             ),
@@ -546,6 +605,11 @@ impl AuthService {
             .filter(|raw| !raw.is_empty());
         let sms_dev_mode = parse_bool_env("MGS_SMS_DEV_MODE", false);
         let use_auth_cookies = parse_bool_env("MGS_AUTH_USE_COOKIES", false);
+        let deletion_grace_period_hours = parse_u64_env(
+            "MGS_ACCOUNT_DELETION_GRACE_PERIOD_HOURS",
+            DEFAULT_ACCOUNT_DELETION_GRACE_PERIOD_HOURS,
+        )
+        .max(1);
         let redis_cache = init_redis_cache_from_env();
 
         let persistent_store = load_persistent_store(&store_path, redis_cache.as_ref());
@@ -571,10 +635,12 @@ impl AuthService {
                 otp_challenges: DashMap::new(),
                 sessions: DashMap::new(),
                 peer_bindings: DashMap::new(),
+                deletion_queue: DashMap::new(),
                 otp_ttl_seconds,
                 session_ttl_seconds,
                 resend_interval_seconds,
                 max_verify_attempts,
+                deletion_grace_period_hours,
                 sms_command,
                 sms_dev_mode,
                 use_auth_cookies,
@@ -731,6 +797,7 @@ impl AuthService {
                     last_game_username: None,
                     experience_points: 0,
                     credits: 0,
+                    deleted: false,
                 };
                 persistent_guard
                     .phone_to_user_id
@@ -922,6 +989,7 @@ impl AuthService {
             persistent_guard
                 .users
                 .values()
+                .filter(|user| !user.deleted)
                 .map(to_profile_view)
                 .collect()
         };
@@ -941,6 +1009,211 @@ impl AuthService {
             profiles.truncate(bounded_limit);
         }
         profiles
+    }
+
+    /// Queue an account for deletion after the grace period.
+    /// Returns the deletion schedule details on success.
+    fn request_account_deletion(&self, user_id: &str) -> Result<AccountDeletionResult, AuthError> {
+        // Check if already pending
+        if self.inner.deletion_queue.contains_key(user_id) {
+            return Err(AuthError::DeletionAlreadyPending);
+        }
+
+        // Check the user exists and is not already deleted
+        {
+            let store = self.inner.persistent_store.read();
+            match store.users.get(user_id) {
+                Some(user) if user.deleted => return Err(AuthError::AccountDeleted),
+                Some(_) => {}
+                None => return Err(AuthError::SessionInvalid),
+            }
+        }
+
+        let now = unix_now();
+        let grace_seconds = self.inner.deletion_grace_period_hours.saturating_mul(3600);
+        let scheduled_deletion_time = now.saturating_add(grace_seconds);
+
+        let pending = PendingDeletion {
+            user_id: user_id.to_owned(),
+            requested_at: now,
+            scheduled_deletion_time,
+        };
+
+        self.inner
+            .deletion_queue
+            .insert(user_id.to_owned(), pending);
+
+        info!(
+            "Account deletion queued for user_id={}, scheduled_at={}",
+            user_id, scheduled_deletion_time
+        );
+
+        Ok(AccountDeletionResult {
+            user_id: user_id.to_owned(),
+            requested_at: now,
+            scheduled_deletion_time,
+            grace_period_hours: self.inner.deletion_grace_period_hours,
+            message: format!(
+                "Account deletion scheduled. You have {} hours to cancel. After that, your data will be permanently anonymized.",
+                self.inner.deletion_grace_period_hours
+            ),
+        })
+    }
+
+    /// Cancel a pending account deletion within the grace period.
+    fn cancel_account_deletion(&self, user_id: &str) -> Result<CancelDeletionResult, AuthError> {
+        match self.inner.deletion_queue.remove(user_id) {
+            Some((_key, pending)) => {
+                info!(
+                    "Account deletion cancelled for user_id={} (was scheduled for {})",
+                    user_id, pending.scheduled_deletion_time
+                );
+                Ok(CancelDeletionResult {
+                    user_id: user_id.to_owned(),
+                    cancelled: true,
+                    message: "Account deletion has been cancelled. Your account is safe.".to_owned(),
+                })
+            }
+            None => Err(AuthError::DeletionNotPending),
+        }
+    }
+
+    /// Anonymize user data: replace PII with hashed/generic values.
+    /// This is the core GDPR "right to erasure" implementation.
+    fn anonymize_user_data(&self, user_id: &str) {
+        let mut store = self.inner.persistent_store.write();
+
+        // Extract the original phone number for removal, then mutate the user.
+        let original_phone = store
+            .users
+            .get(user_id)
+            .map(|u| u.phone_number.clone());
+
+        // Remove the original phone->user_id mapping
+        if let Some(ref phone) = original_phone {
+            store.phone_to_user_id.remove(phone);
+        }
+
+        if let Some(user) = store.users.get_mut(user_id) {
+            // Hash the phone number so we can detect re-registration
+            // but can never reverse it.
+            let phone_hash = hash_phone_for_anonymization(
+                original_phone.as_deref().unwrap_or(""),
+            );
+            let hash_last4 = &phone_hash[phone_hash.len().saturating_sub(4)..];
+
+            // Store the hash in phone_number field for re-registration detection
+            user.phone_number = format!("deleted:{}", phone_hash);
+            user.phone_last4 = "0000".to_owned();
+            user.display_name = format!("Deleted User #{}", hash_last4);
+            user.last_game_username = None;
+            user.deleted = true;
+            user.updated_at = unix_now();
+
+            // Add the hashed phone to phone_to_user_id so we can detect
+            // re-registration attempts from the same phone.
+            store
+                .phone_to_user_id
+                .insert(format!("deleted:{}", phone_hash), user_id.to_owned());
+
+            info!("User data anonymized for user_id={}", user_id);
+        }
+
+        let store_snapshot = store.clone();
+        drop(store);
+
+        // Clear all session tokens for this user
+        self.revoke_all_sessions_for_user(user_id);
+
+        // Persist the anonymized store
+        spawn_persist_auth_store(
+            self.inner.store_path.clone(),
+            store_snapshot,
+            self.inner.clone(),
+        );
+    }
+
+    /// Revoke all active session tokens belonging to a specific user.
+    fn revoke_all_sessions_for_user(&self, user_id: &str) {
+        let tokens_to_remove: Vec<String> = self
+            .inner
+            .sessions
+            .iter()
+            .filter(|entry| entry.value().user_id == user_id)
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        let count = tokens_to_remove.len();
+        for token in tokens_to_remove {
+            self.inner.sessions.remove(&token);
+        }
+        if count > 0 {
+            debug!(
+                "Revoked {} session token(s) for user_id={}",
+                count, user_id
+            );
+        }
+    }
+
+    /// Process all queued deletions whose grace period has expired.
+    /// Returns the number of accounts that were anonymized.
+    pub fn process_pending_deletions(&self) -> usize {
+        let now = unix_now();
+        let mut processed = 0usize;
+
+        // Collect user IDs that are past their grace period
+        let ready: Vec<String> = self
+            .inner
+            .deletion_queue
+            .iter()
+            .filter(|entry| now >= entry.value().scheduled_deletion_time)
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        for user_id in &ready {
+            if let Some((_key, pending)) = self.inner.deletion_queue.remove(user_id) {
+                info!(
+                    "Processing scheduled deletion for user_id={} (requested_at={}, scheduled_for={})",
+                    pending.user_id, pending.requested_at, pending.scheduled_deletion_time
+                );
+                self.anonymize_user_data(user_id);
+                processed += 1;
+            }
+        }
+
+        if processed > 0 {
+            info!(
+                "Processed {} pending account deletion(s), {} remaining in queue",
+                processed,
+                self.inner.deletion_queue.len()
+            );
+        }
+
+        processed
+    }
+
+    /// Start the background task that periodically processes queued deletions.
+    /// Should be called once at server startup.
+    pub fn start_deletion_processor(self) {
+        let interval_secs = DELETION_PROCESSING_INTERVAL_SECS;
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::spawn(async move {
+                let mut interval =
+                    tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+                // The first tick completes immediately; skip it so we don't
+                // run on startup before any deletions could be queued.
+                interval.tick().await;
+                loop {
+                    interval.tick().await;
+                    let count = self.process_pending_deletions();
+                    if count > 0 {
+                        info!("Deletion processor: anonymized {} account(s)", count);
+                    }
+                }
+            });
+        } else {
+            debug!("No tokio runtime available; deletion processor not started (test environment).");
+        }
     }
 
     fn dispatch_sms_code(&self, phone_number: &str, code: &str) -> Result<(), String> {
@@ -1042,14 +1315,42 @@ pub fn build_auth_routes(
                 .or(warp::any().map(LeaderboardQuery::default))
                 .unify(),
         )
-        .and(with_auth_service(auth_service))
+        .and(with_auth_service(auth_service.clone()))
         .and_then(handle_auth_leaderboard);
+
+    let delete_account = warp::path!("auth" / "delete-account")
+        .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::optional::<String>("cookie"))
+        .and(
+            warp::query::<TokenQuery>()
+                .or(warp::any().map(TokenQuery::default))
+                .unify(),
+        )
+        .and(warp::addr::remote())
+        .and(with_auth_service(auth_service.clone()))
+        .and_then(handle_delete_account);
+
+    let cancel_deletion = warp::path!("auth" / "cancel-deletion")
+        .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::optional::<String>("cookie"))
+        .and(
+            warp::query::<TokenQuery>()
+                .or(warp::any().map(TokenQuery::default))
+                .unify(),
+        )
+        .and(warp::addr::remote())
+        .and(with_auth_service(auth_service))
+        .and_then(handle_cancel_deletion);
 
     request_code
         .or(verify_code)
         .or(me)
         .or(logout)
         .or(leaderboard)
+        .or(delete_account)
+        .or(cancel_deletion)
 }
 
 fn with_auth_service(
@@ -1111,11 +1412,12 @@ async fn handle_auth_me(
     query: TokenQuery,
     remote_addr: Option<SocketAddr>,
     auth_service: AuthService,
-) -> Result<impl Reply, Infallible> {
+) -> Result<warp::reply::Response, Infallible> {
     if !try_acquire_token_validation_token(remote_addr) {
         return Ok(error_response(AuthError::TokenValidationRateLimited {
             retry_after_seconds: 1,
-        }));
+        })
+        .into_response());
     }
     let token = resolve_token_with_cookie(
         authorization_header.as_deref(),
@@ -1132,7 +1434,15 @@ async fn handle_auth_me(
         },
         None => error_response(AuthError::SessionInvalid),
     };
-    Ok(reply)
+    Ok(warp::reply::with_header(
+        reply,
+        "X-Data-Retention-Policy",
+        format!(
+            "{}h-grace-period",
+            auth_service.inner.deletion_grace_period_hours
+        ),
+    )
+    .into_response())
 }
 
 async fn handle_auth_logout(
@@ -1166,6 +1476,84 @@ async fn handle_auth_leaderboard(
     let limit = query.limit.unwrap_or(DEFAULT_LEADERBOARD_LIMIT);
     let players = auth_service.leaderboard(limit);
     Ok(ok_response(LeaderboardResult { players }))
+}
+
+async fn handle_delete_account(
+    authorization_header: Option<String>,
+    cookie_header: Option<String>,
+    query: TokenQuery,
+    remote_addr: Option<SocketAddr>,
+    auth_service: AuthService,
+) -> Result<warp::reply::Response, Infallible> {
+    if !try_acquire_token_validation_token(remote_addr) {
+        return Ok(error_response(AuthError::TokenValidationRateLimited {
+            retry_after_seconds: 1,
+        })
+        .into_response());
+    }
+    let token = resolve_token_with_cookie(
+        authorization_header.as_deref(),
+        &query,
+        cookie_header.as_deref(),
+    );
+    let Some(token_value) = token else {
+        return Ok(error_response(AuthError::SessionInvalid).into_response());
+    };
+    let Some(user_id) = auth_service.resolve_user_id_from_token(&token_value) else {
+        return Ok(error_response(AuthError::SessionInvalid).into_response());
+    };
+
+    match auth_service.request_account_deletion(&user_id) {
+        Ok(result) => Ok(warp::reply::with_header(
+            ok_response(result),
+            "X-Data-Retention-Policy",
+            format!(
+                "{}h-grace-period",
+                auth_service.inner.deletion_grace_period_hours
+            ),
+        )
+        .into_response()),
+        Err(error) => Ok(error_response(error).into_response()),
+    }
+}
+
+async fn handle_cancel_deletion(
+    authorization_header: Option<String>,
+    cookie_header: Option<String>,
+    query: TokenQuery,
+    remote_addr: Option<SocketAddr>,
+    auth_service: AuthService,
+) -> Result<warp::reply::Response, Infallible> {
+    if !try_acquire_token_validation_token(remote_addr) {
+        return Ok(error_response(AuthError::TokenValidationRateLimited {
+            retry_after_seconds: 1,
+        })
+        .into_response());
+    }
+    let token = resolve_token_with_cookie(
+        authorization_header.as_deref(),
+        &query,
+        cookie_header.as_deref(),
+    );
+    let Some(token_value) = token else {
+        return Ok(error_response(AuthError::SessionInvalid).into_response());
+    };
+    let Some(user_id) = auth_service.resolve_user_id_from_token(&token_value) else {
+        return Ok(error_response(AuthError::SessionInvalid).into_response());
+    };
+
+    match auth_service.cancel_account_deletion(&user_id) {
+        Ok(result) => Ok(warp::reply::with_header(
+            ok_response(result),
+            "X-Data-Retention-Policy",
+            format!(
+                "{}h-grace-period",
+                auth_service.inner.deletion_grace_period_hours
+            ),
+        )
+        .into_response()),
+        Err(error) => Ok(error_response(error).into_response()),
+    }
 }
 
 fn ok_response<T: Serialize>(data: T) -> warp::reply::WithStatus<warp::reply::Json> {
@@ -1576,6 +1964,18 @@ fn mask_phone_number(phone_number: &str) -> String {
     format!("+{}{}", stars, last2)
 }
 
+/// Produce a one-way SHA-256 hash of a phone number for anonymization.
+/// The result is a hex-encoded hash that cannot be reversed to the original
+/// phone number but can be used to detect re-registration from the same phone.
+fn hash_phone_for_anonymization(phone_number: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(phone_number.as_bytes());
+    // Use a fixed salt so the hash is deterministic for the same phone
+    hasher.update(b"mgs-gdpr-anonymization-salt");
+    let result = hasher.finalize();
+    format!("{:x}", result)
+}
+
 fn phone_last4(phone_number: &str) -> String {
     let digits: String = phone_number
         .chars()
@@ -1844,5 +2244,349 @@ mod tests {
     fn check_otp_ip_rate_limit_allows_none_ip() {
         // When no IP is provided, rate limiting is bypassed.
         assert!(check_otp_ip_rate_limit(None).is_ok());
+    }
+
+    // ── GDPR account deletion & anonymization tests ──────────────────────
+
+    /// Create a test AuthService with an in-memory store (no Redis, no file).
+    fn make_test_auth_service() -> AuthService {
+        AuthService {
+            inner: Arc::new(AuthInner {
+                store_path: PathBuf::from("/tmp/mgs_test_auth_store_nonexistent.json"),
+                persistent_store: RwLock::new(PersistentAuthStore::default()),
+                redis_cache: None,
+                otp_challenges: DashMap::new(),
+                sessions: DashMap::new(),
+                peer_bindings: DashMap::new(),
+                deletion_queue: DashMap::new(),
+                otp_ttl_seconds: 300,
+                session_ttl_seconds: 86400,
+                resend_interval_seconds: 30,
+                max_verify_attempts: 5,
+                deletion_grace_period_hours: 72,
+                sms_command: None,
+                sms_dev_mode: true,
+                use_auth_cookies: false,
+            }),
+        }
+    }
+
+    /// Insert a test user directly into the persistent store and create a session.
+    fn insert_test_user(
+        auth: &AuthService,
+        user_id: &str,
+        phone: &str,
+        display_name: &str,
+    ) -> String {
+        let now = unix_now();
+        let user = UserRecord {
+            user_id: user_id.to_owned(),
+            phone_number: phone.to_owned(),
+            phone_last4: phone_last4(phone),
+            display_name: display_name.to_owned(),
+            created_at: now,
+            updated_at: now,
+            last_seen_at: now,
+            matches_played: 10,
+            cumulative_score: 500,
+            best_score: 80,
+            total_kills: 30,
+            total_deaths: 20,
+            last_game_username: Some("TestPlayer".to_owned()),
+            experience_points: 1000,
+            credits: 200,
+            deleted: false,
+        };
+        {
+            let mut store = auth.inner.persistent_store.write();
+            store.users.insert(user_id.to_owned(), user);
+            store
+                .phone_to_user_id
+                .insert(phone.to_owned(), user_id.to_owned());
+        }
+        // Create a session token
+        let token = format!("mgs_test_{}", Uuid::new_v4().simple());
+        auth.inner.sessions.insert(
+            token.clone(),
+            SessionRecord {
+                user_id: user_id.to_owned(),
+                expires_at: now + 86400,
+            },
+        );
+        token
+    }
+
+    #[test]
+    fn hash_phone_for_anonymization_is_deterministic() {
+        let hash1 = hash_phone_for_anonymization("+15551234567");
+        let hash2 = hash_phone_for_anonymization("+15551234567");
+        assert_eq!(hash1, hash2);
+        // Different phone produces different hash
+        let hash3 = hash_phone_for_anonymization("+15559999999");
+        assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn hash_phone_for_anonymization_is_hex_string() {
+        let hash = hash_phone_for_anonymization("+15551234567");
+        assert!(
+            hash.len() == 64,
+            "SHA-256 hex should be 64 chars, got {}",
+            hash.len()
+        );
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash should be hex"
+        );
+    }
+
+    #[test]
+    fn anonymize_user_data_replaces_pii() {
+        let auth = make_test_auth_service();
+        let token = insert_test_user(&auth, "user1", "+15551234567", "Alice");
+
+        // Verify user exists before anonymization
+        assert!(auth.resolve_user_id_from_token(&token).is_some());
+
+        auth.anonymize_user_data("user1");
+
+        // Check user record is anonymized
+        let store = auth.inner.persistent_store.read();
+        let user = store.users.get("user1").expect("user should still exist");
+        assert!(user.deleted, "User should be marked as deleted");
+        assert!(
+            user.phone_number.starts_with("deleted:"),
+            "Phone should be hashed"
+        );
+        assert_eq!(user.phone_last4, "0000");
+        assert!(
+            user.display_name.starts_with("Deleted User #"),
+            "Display name should be anonymized, got: {}",
+            user.display_name
+        );
+        assert!(user.last_game_username.is_none());
+
+        // Original phone mapping should be removed
+        assert!(
+            !store.phone_to_user_id.contains_key("+15551234567"),
+            "Original phone mapping should be removed"
+        );
+
+        // Hashed phone mapping should exist
+        let phone_hash = hash_phone_for_anonymization("+15551234567");
+        assert!(
+            store
+                .phone_to_user_id
+                .contains_key(&format!("deleted:{}", phone_hash)),
+            "Hashed phone mapping should exist for re-registration detection"
+        );
+        drop(store);
+
+        // Session tokens should be revoked
+        assert!(
+            auth.resolve_user_id_from_token(&token).is_none(),
+            "Session should be revoked after anonymization"
+        );
+    }
+
+    #[test]
+    fn anonymize_preserves_stats() {
+        let auth = make_test_auth_service();
+        insert_test_user(&auth, "user1", "+15551234567", "Alice");
+
+        auth.anonymize_user_data("user1");
+
+        let store = auth.inner.persistent_store.read();
+        let user = store.users.get("user1").unwrap();
+        // Stats should be preserved (anonymized, not deleted)
+        assert_eq!(user.matches_played, 10);
+        assert_eq!(user.cumulative_score, 500);
+        assert_eq!(user.total_kills, 30);
+        assert_eq!(user.total_deaths, 20);
+    }
+
+    #[test]
+    fn request_account_deletion_queues_correctly() {
+        let auth = make_test_auth_service();
+        insert_test_user(&auth, "user1", "+15551234567", "Alice");
+
+        let result = auth.request_account_deletion("user1").unwrap();
+        assert_eq!(result.user_id, "user1");
+        assert_eq!(result.grace_period_hours, 72);
+        assert!(result.scheduled_deletion_time > result.requested_at);
+        assert_eq!(
+            result.scheduled_deletion_time - result.requested_at,
+            72 * 3600
+        );
+
+        // Should be in the queue
+        assert!(auth.inner.deletion_queue.contains_key("user1"));
+    }
+
+    #[test]
+    fn request_account_deletion_rejects_duplicate() {
+        let auth = make_test_auth_service();
+        insert_test_user(&auth, "user1", "+15551234567", "Alice");
+
+        auth.request_account_deletion("user1").unwrap();
+        let err = auth.request_account_deletion("user1").unwrap_err();
+        match err {
+            AuthError::DeletionAlreadyPending => {}
+            other => panic!("Expected DeletionAlreadyPending, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn request_account_deletion_rejects_already_deleted() {
+        let auth = make_test_auth_service();
+        insert_test_user(&auth, "user1", "+15551234567", "Alice");
+        auth.anonymize_user_data("user1");
+
+        let err = auth.request_account_deletion("user1").unwrap_err();
+        match err {
+            AuthError::AccountDeleted => {}
+            other => panic!("Expected AccountDeleted, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn cancel_account_deletion_works() {
+        let auth = make_test_auth_service();
+        insert_test_user(&auth, "user1", "+15551234567", "Alice");
+
+        auth.request_account_deletion("user1").unwrap();
+        assert!(auth.inner.deletion_queue.contains_key("user1"));
+
+        let result = auth.cancel_account_deletion("user1").unwrap();
+        assert!(result.cancelled);
+        assert!(!auth.inner.deletion_queue.contains_key("user1"));
+
+        // User should still be intact
+        let store = auth.inner.persistent_store.read();
+        let user = store.users.get("user1").unwrap();
+        assert!(!user.deleted);
+        assert_eq!(user.display_name, "Alice");
+    }
+
+    #[test]
+    fn cancel_account_deletion_rejects_when_not_pending() {
+        let auth = make_test_auth_service();
+        insert_test_user(&auth, "user1", "+15551234567", "Alice");
+
+        let err = auth.cancel_account_deletion("user1").unwrap_err();
+        match err {
+            AuthError::DeletionNotPending => {}
+            other => panic!("Expected DeletionNotPending, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn process_pending_deletions_respects_grace_period() {
+        let auth = make_test_auth_service();
+        insert_test_user(&auth, "user1", "+15551234567", "Alice");
+
+        auth.request_account_deletion("user1").unwrap();
+
+        // Grace period not yet elapsed -- should not process
+        let processed = auth.process_pending_deletions();
+        assert_eq!(processed, 0);
+
+        // User should still be intact
+        let store = auth.inner.persistent_store.read();
+        assert!(!store.users.get("user1").unwrap().deleted);
+        drop(store);
+    }
+
+    #[test]
+    fn process_pending_deletions_executes_after_grace_period() {
+        let auth = make_test_auth_service();
+        insert_test_user(&auth, "user1", "+15551234567", "Alice");
+
+        // Manually insert a pending deletion with a past scheduled time
+        let past_time = unix_now().saturating_sub(1);
+        auth.inner.deletion_queue.insert(
+            "user1".to_owned(),
+            PendingDeletion {
+                user_id: "user1".to_owned(),
+                requested_at: past_time.saturating_sub(72 * 3600),
+                scheduled_deletion_time: past_time,
+            },
+        );
+
+        let processed = auth.process_pending_deletions();
+        assert_eq!(processed, 1);
+
+        // User should now be anonymized
+        let store = auth.inner.persistent_store.read();
+        let user = store.users.get("user1").unwrap();
+        assert!(user.deleted);
+        assert!(user.display_name.starts_with("Deleted User #"));
+        drop(store);
+
+        // Queue should be empty
+        assert!(!auth.inner.deletion_queue.contains_key("user1"));
+    }
+
+    #[test]
+    fn revoke_all_sessions_for_user_clears_all_tokens() {
+        let auth = make_test_auth_service();
+        let now = unix_now();
+
+        // Create multiple sessions for the same user
+        for i in 0..5 {
+            auth.inner.sessions.insert(
+                format!("token_{}", i),
+                SessionRecord {
+                    user_id: "user1".to_owned(),
+                    expires_at: now + 86400,
+                },
+            );
+        }
+        // One session for a different user
+        auth.inner.sessions.insert(
+            "other_token".to_owned(),
+            SessionRecord {
+                user_id: "user2".to_owned(),
+                expires_at: now + 86400,
+            },
+        );
+
+        assert_eq!(auth.inner.sessions.len(), 6);
+        auth.revoke_all_sessions_for_user("user1");
+        assert_eq!(auth.inner.sessions.len(), 1);
+        assert!(auth.inner.sessions.contains_key("other_token"));
+    }
+
+    #[test]
+    fn deleted_users_excluded_from_leaderboard() {
+        let auth = make_test_auth_service();
+        insert_test_user(&auth, "user1", "+15551234567", "Alice");
+        insert_test_user(&auth, "user2", "+15559999999", "Bob");
+
+        let leaders = auth.leaderboard(50);
+        assert_eq!(leaders.len(), 2);
+
+        auth.anonymize_user_data("user1");
+
+        let leaders = auth.leaderboard(50);
+        assert_eq!(leaders.len(), 1);
+        assert_eq!(leaders[0].user_id, "user2");
+    }
+
+    #[test]
+    fn deletion_grace_period_env_default() {
+        assert_eq!(DEFAULT_ACCOUNT_DELETION_GRACE_PERIOD_HOURS, 72);
+    }
+
+    #[test]
+    fn pending_deletion_struct_stores_correct_fields() {
+        let now = unix_now();
+        let pending = PendingDeletion {
+            user_id: "u1".to_owned(),
+            requested_at: now,
+            scheduled_deletion_time: now + 72 * 3600,
+        };
+        assert_eq!(pending.user_id, "u1");
+        assert_eq!(pending.scheduled_deletion_time - pending.requested_at, 72 * 3600);
     }
 }
