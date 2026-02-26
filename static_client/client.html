@@ -1322,6 +1322,8 @@
             log,
             applyConnectionStatus,
             startConnectionAttempt: (...args) => startConnectionAttempt(...args),
+            // (#30) Called by resetReconnectState to flush stale game entities
+            clearGameState: () => clearGameStateForReconnect(),
         });
 
         function updateAuthUi(profile = null) { return authHelpers.updateAuthUi(profile); }
@@ -3500,6 +3502,12 @@
             trackFastDeltaPacket: () => { networkProfilerFastDeltaPackets += 1; networkProfilerStateUpdates += 1; },
             trackFullParsePacket: () => { networkProfilerFullParsePackets += 1; },
             handleParsedMessage,
+            // (#30) Callback to flush entity state on reconnect
+            clearGameStateForReconnect,
+            // (#30) Reset reconnect bookkeeping on successful connection
+            resetReconnectState,
+            // Delegate from ConnectionManager.resetConnectionUI -> client.html resetConnectionUI
+            resetConnectionUIImpl: resetConnectionUI,
         }));
         const {
             withJoinSelectionInUrl,
@@ -3552,6 +3560,52 @@
                 resetConnectionUI({ allowReconnect: false, destroyRenderer: true });
             } catch (_) {}
         });
+
+        /**
+         * (#30) Lightweight game-state flush used by the reconnect path.
+         * Clears entity maps, sprite containers, kill feed, and related
+         * bookkeeping so stale data from a previous session does not leak
+         * into a new connection.  Unlike resetConnectionUI this does NOT
+         * touch connections, buttons, or the renderer.
+         */
+        function clearGameStateForReconnect() {
+            myPlayerId = null;
+            localPlayerState = null;
+            players.clear();
+            projectiles.clear();
+            projectileWorkerCullGraceUntil.clear();
+            syntheticProjectileCount = 0;
+            pickups.clear();
+            walls.clear();
+            flagStates.clear();
+            killFeed = [];
+            chatMessages = [];
+            matchInfo = null;
+            serverUpdates = [];
+            if (playerContainer) {
+                playerContainer.removeChildren().forEach(child => child.destroy?.({ children: true }));
+            }
+            if (projectileContainer) {
+                projectileContainer.removeChildren().forEach(child => releaseProjectileSprite(child));
+            }
+            if (pickupContainer) {
+                pickupContainer.removeChildren().forEach(child => child.destroy?.({ children: true }));
+            }
+            if (flagContainer) {
+                flagContainer.removeChildren().forEach(child => child.destroy?.({ children: true }));
+            }
+            if (wallGraphics) wallGraphics.clear();
+            if (effectsManager) effectsManager.clearAllEffects();
+            playerSprites.clear();
+            projectileSprites.clear();
+            pickupSprites.clear();
+            localPlayerSprite = null;
+            cachedMinimapWalls = [];
+            cachedMinimapFlags = [];
+            minimapWallsCacheDirty = true;
+            minimapFlagsCacheDirty = true;
+            log('Game state cleared for reconnect.', 'info');
+        }
 
         function resetConnectionUI(options = {}) {
             const allowReconnect = options.allowReconnect === true;

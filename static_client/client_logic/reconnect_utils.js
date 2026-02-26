@@ -15,6 +15,10 @@ export function createReconnectHelpers(options) {
         log,
         applyConnectionStatus,
         startConnectionAttempt,
+        // (#30) Optional callback to clear local game state (players, projectiles,
+        // pickups, walls, kill feed, etc.) so stale entities from the previous
+        // session do not persist across reconnections.
+        clearGameState,
     } = options;
 
     function clearReconnectTimer() {
@@ -25,9 +29,18 @@ export function createReconnectHelpers(options) {
         }
     }
 
+    /**
+     * Reset reconnect bookkeeping AND flush residual game state so that a
+     * subsequent connection attempt starts with a clean slate.
+     */
     function resetReconnectState() {
         setReconnectAttemptCount(0);
         clearReconnectTimer();
+        // (#30) Clear local entity maps / UI state left over from the
+        // previous session to prevent ghost players and stale projectiles.
+        if (typeof clearGameState === 'function') {
+            clearGameState();
+        }
     }
 
     function canStartConnectionAttempt() {
