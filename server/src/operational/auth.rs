@@ -234,10 +234,7 @@ struct VerifyCodeBody {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-struct TokenQuery {
-    token: Option<String>,
-    auth_token: Option<String>,
-}
+struct TokenQuery {}
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct LeaderboardQuery {
@@ -934,6 +931,13 @@ impl AuthService {
             .insert(peer_id.to_owned(), user_id.to_owned());
     }
 
+    pub fn resolve_user_id_from_peer(&self, peer_id: &str) -> Option<String> {
+        self.inner
+            .peer_bindings
+            .get(peer_id)
+            .map(|r| r.value().clone())
+    }
+
     pub fn clear_peer_binding(&self, peer_id: &str) {
         if peer_id.is_empty() {
             return;
@@ -1575,22 +1579,15 @@ fn error_response(error: AuthError) -> warp::reply::WithStatus<warp::reply::Json
 
 fn resolve_token_with_cookie(
     authorization_header: Option<&str>,
-    query: &TokenQuery,
+    _query: &TokenQuery,
     cookie_header: Option<&str>,
 ) -> Option<String> {
-    // Priority: Authorization header > Cookie > query parameter (deprecated).
+    // Priority: Authorization header > Cookie. Query parameter is strictly ignored to prevent leaking tokens in URLs.
     if let Some(token) = parse_bearer_token(authorization_header) {
         return Some(token);
     }
     if let Some(token) = parse_session_cookie(cookie_header) {
         return Some(token);
-    }
-    if let Some(raw) = query.auth_token.as_ref().or(query.token.as_ref()) {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            warn!("Session token provided via query parameter — this is deprecated and will be removed. Use the Authorization header instead.");
-            return Some(trimmed.to_owned());
-        }
     }
     None
 }
@@ -2125,35 +2122,26 @@ mod tests {
         assert_eq!(parse_session_cookie(Some("mgs_session=")), None);
     }
 
-    #[test]
-    fn resolve_token_with_cookie_priority() {
-        let query_empty = TokenQuery::default();
-        let query_with_token = TokenQuery {
-            token: Some("query_tok".to_owned()),
-            auth_token: None,
-        };
-
-        assert_eq!(
-            resolve_token_with_cookie(
-                Some("Bearer header_tok"),
-                &query_empty,
-                Some("mgs_session=cookie_tok"),
-            ),
-            Some("header_tok".to_owned())
-        );
-        assert_eq!(
-            resolve_token_with_cookie(None, &query_with_token, Some("mgs_session=cookie_tok")),
-            Some("cookie_tok".to_owned())
-        );
-        assert_eq!(
-            resolve_token_with_cookie(None, &query_with_token, None),
-            Some("query_tok".to_owned())
-        );
-        assert_eq!(
-            resolve_token_with_cookie(None, &query_empty, None),
-            None
-        );
-    }
+        #[test]
+        fn resolve_token_with_cookie_priority() {
+            let query_empty = TokenQuery::default();
+    
+            assert_eq!(
+                resolve_token_with_cookie(
+                    Some("Bearer header_tok"),
+                    &query_empty,
+                    Some("mgs_session=cookie_tok"),
+                ),
+                Some("header_tok".to_owned())
+            );
+    
+            assert_eq!(
+                resolve_token_with_cookie(None, &query_empty, Some("mgs_session=cookie_tok")),
+                Some("cookie_tok".to_owned())
+            );
+    
+            assert_eq!(resolve_token_with_cookie(None, &query_empty, None), None);
+        }
 
     #[test]
     fn default_session_ttl_is_24_hours() {

@@ -3,9 +3,9 @@ mod tui;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use commands::monitor::{broadcast_message, feature_flags, health_check};
+use commands::monitor::{feature_flags, health_check};
 use commands::performance::worker_stats;
-use commands::players::{kick_player, list_recent_players};
+use commands::players::list_recent_players;
 
 #[derive(Debug, Parser)]
 #[command(name = "mgs-admin", version, about = "Massive Game Server admin CLI")]
@@ -31,12 +31,6 @@ enum Command {
     },
     Metrics,
     FeatureFlags,
-    Kick {
-        peer_id: String,
-    },
-    Broadcast {
-        message: String,
-    },
 }
 
 #[tokio::main]
@@ -48,11 +42,18 @@ async fn main() -> Result<()> {
         Command::Players { limit } => list_recent_players(&cli.base_url, cli.admin_token.as_deref(), limit).await?,
         Command::Metrics => worker_stats(&cli.base_url, cli.admin_token.as_deref()).await?,
         Command::FeatureFlags => feature_flags(&cli.base_url, cli.admin_token.as_deref()).await?,
-        Command::Kick { peer_id } => kick_player(&cli.base_url, cli.admin_token.as_deref(), &peer_id).await?,
-        Command::Broadcast { message } => {
-            broadcast_message(&cli.base_url, cli.admin_token.as_deref(), &message).await?
-        }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_cli_app() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
 }

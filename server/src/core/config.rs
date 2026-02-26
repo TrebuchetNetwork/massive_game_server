@@ -13,12 +13,35 @@ pub struct ThreadPoolConfig {
 
 impl Default for ThreadPoolConfig {
     fn default() -> Self {
-        ThreadPoolConfig {
-            physics_threads: 8,
-            networking_threads: 10,
-            game_logic_threads: 12,
-            ai_threads: 8,
-            io_threads: 8,
+        let cores = std::thread::available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(4); // fallback
+
+        if cores <= 4 {
+            ThreadPoolConfig {
+                physics_threads: 1,
+                networking_threads: 1,
+                game_logic_threads: 1,
+                ai_threads: 1,
+                io_threads: 1,
+            }
+        } else if cores <= 8 {
+            ThreadPoolConfig {
+                physics_threads: 2,
+                networking_threads: 2,
+                game_logic_threads: 2,
+                ai_threads: 1,
+                io_threads: 1,
+            }
+        } else {
+            // For large servers (e.g. 32+ cores), cap at reasonable defaults
+            ThreadPoolConfig {
+                physics_threads: (cores / 4).clamp(4, 8),
+                networking_threads: (cores / 3).clamp(4, 10),
+                game_logic_threads: (cores / 3).clamp(4, 12),
+                ai_threads: (cores / 4).clamp(2, 8),
+                io_threads: (cores / 4).clamp(2, 8),
+            }
         }
     }
 }

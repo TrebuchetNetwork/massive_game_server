@@ -39,3 +39,30 @@ pub fn validate_server_config(config: &ServerConfig) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_config() {
+        let config = ServerConfig::default();
+        assert!(validate_server_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_invalid_tick_rate() {
+        let mut config = ServerConfig::default();
+        config.tick_rate = 0;
+        assert!(validate_server_config(&config).is_err());
+        config.tick_rate = 241;
+        assert!(validate_server_config(&config).is_err());
+    }
+
+    #[test]
+    fn test_invalid_thread_pools() {
+        let mut config = ServerConfig::default();
+        config.thread_pools.physics_threads = 0;
+        assert!(validate_server_config(&config).is_err());
+    }
+}

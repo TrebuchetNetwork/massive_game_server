@@ -437,3 +437,20 @@ fn unix_now() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_backup_name_for_path() {
+        let path = Path::new("/var/data/users.json");
+        assert_eq!(backup_name_for_path(path), "data__users.json");
+    }
+
+    #[test]
+    fn test_parse_bool_env_default() {
+        assert_eq!(parse_bool_env("NON_EXISTENT_VAR_123", true), true);
+        assert_eq!(parse_bool_env("NON_EXISTENT_VAR_123", false), false);
+    }
+}

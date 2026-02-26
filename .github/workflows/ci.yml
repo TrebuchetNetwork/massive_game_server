@@ -154,7 +154,7 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Enforce coverage floor
-        run: cargo llvm-cov --workspace --locked --summary-only --fail-under-lines 10
+        run: cargo llvm-cov --workspace --locked --summary-only --fail-under-lines 60
 
       - name: Generate LCOV report
         run: cargo llvm-cov --workspace --locked --lcov --output-path lcov.info

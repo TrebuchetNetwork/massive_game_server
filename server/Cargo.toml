@@ -112,7 +112,7 @@ hecs = "0.10"
 
 # Compression
 zstd = "0.13"
-redis = "0.25"
+redis = "0.27"
 
 # Make tikv-jemallocator an optional dependency
 [target.'cfg(not(target_env = "msvc"))'.dependencies]

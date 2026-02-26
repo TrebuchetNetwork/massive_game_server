@@ -1,0 +1,13 @@
+# Development configuration
+includes:
+  - base.yaml
+
+server:
+  max_players: 10
+  spectator_slot_cap: 5
+
+auth:
+  sms_dev_mode: true
+
+logging:
+  level: debug

@@ -1,0 +1,18 @@
+# Base configuration
+server:
+  tick_rate: 60
+  num_player_shards: 4
+  num_world_partitions: 16
+  world_partition_grid_dim: 4
+  max_players: 100
+  spectator_slot_cap: 20
+  team_size_limit: 50
+  respawn_time_seconds: 5.0
+
+auth:
+  session_ttl_hours: 24
+  otp_ttl_seconds: 300
+
+network:
+  compression_enabled: true
+  max_connections_per_ip: 50

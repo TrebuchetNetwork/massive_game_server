@@ -140,3 +140,39 @@ fn apply_env_overrides(config: &mut ServerConfig) {
         config.thread_pools.io_threads = value;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_apply_partial() {
+        let mut config = ServerConfig::default();
+        let partial = PartialServerConfig {
+            tick_rate: Some(120),
+            num_player_shards: Some(8),
+            world_partition_grid_dim: Some(5),
+            cluster_shard_count: Some(2),
+            local_shard_id: Some(1),
+            max_players_per_match: Some(64),
+            thread_pools: Some(PartialThreadPoolConfig {
+                physics_threads: Some(4),
+                networking_threads: Some(4),
+                game_logic_threads: Some(4),
+                ai_threads: Some(4),
+                io_threads: Some(4),
+            }),
+        };
+
+        apply_partial(&mut config, partial);
+
+        assert_eq!(config.tick_rate, 120);
+        assert_eq!(config.num_player_shards, 8);
+        assert_eq!(config.world_partition_grid_dim, 5);
+        assert_eq!(config.num_world_partitions, 25);
+        assert_eq!(config.cluster_shard_count, 2);
+        assert_eq!(config.local_shard_id, 1);
+        assert_eq!(config.max_players_per_match, 64);
+        assert_eq!(config.thread_pools.physics_threads, 4);
+    }
+}

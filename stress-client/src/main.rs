@@ -177,3 +177,14 @@ impl Cli {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_cli_app() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+}

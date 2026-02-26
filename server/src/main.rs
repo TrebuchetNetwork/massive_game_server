@@ -61,8 +61,6 @@ fn init_logging() -> anyhow::Result<()> {
 
 #[derive(Clone, Default, Deserialize)]
 struct WsAuthQuery {
-    auth_token: Option<String>,
-    token: Option<String>,
     team_id: Option<u8>,
     team: Option<String>,
     spectator: Option<String>,
@@ -611,7 +609,8 @@ fn static_cache_control_for_path(path: &Path) -> &'static str {
 fn parse_forwarded_for_ip(raw: &str) -> Option<IpAddr> {
     raw.split(',')
         .map(str::trim)
-        .find(|candidate| !candidate.is_empty())
+        .filter(|candidate| !candidate.is_empty())
+        .last()
         .and_then(|candidate| candidate.parse::<IpAddr>().ok())
 }
 
@@ -1062,11 +1061,18 @@ async fn main() -> anyhow::Result<()> {
                 // Accept server instance Arc
                 let peer_id = Uuid::new_v4().to_string();
                 let requested_team_id = ws_auth_query.requested_team_id();
-                // Token resolution priority: query params > cookie.
-                // (Authorization header is not available on WebSocket upgrade.)
-                let auth_token = ws_auth_query
-                    .auth_token
-                    .or(ws_auth_query.token)
+                // Token resolution priority: Authorization header > Cookie.
+                // Query parameters are strictly ignored to prevent leaking tokens in URLs.
+                let auth_token = request_headers
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|auth_hdr| {
+                        if auth_hdr.starts_with("Bearer ") {
+                            Some(auth_hdr[7..].trim().to_string())
+                        } else {
+                            None
+                        }
+                    })
                     .or_else(|| {
                         // Fall back to mgs_session cookie when
                         // MGS_AUTH_USE_COOKIES is enabled.
@@ -1551,24 +1557,35 @@ async fn main() -> anyhow::Result<()> {
                     "ts_ms": server_for_quic.get_server_timestamp_ms(),
                 }),
                 "live_replay_recent" => {
-                    let limit = request.replay_limit.unwrap_or(128).clamp(1, 4096);
-                    serde_json::json!({
-                        "ok": true,
-                        "op": "live_replay_recent",
-                        "frames": server_for_quic.recent_live_replay_frames(limit),
-                        "limit": limit,
-                    })
+                    if bound_peer_id.is_none() {
+                        serde_json::json!({ "ok": false, "op": "live_replay_recent", "error": "unauthorized" })
+                    } else {
+                        let limit = request.replay_limit.unwrap_or(128).clamp(1, 4096);
+                        serde_json::json!({
+                            "ok": true,
+                            "op": "live_replay_recent",
+                            "frames": server_for_quic.recent_live_replay_frames(limit),
+                            "limit": limit,
+                        })
+                    }
                 }
                 "live_replay_disputes_recent" => {
-                    let limit = request.replay_limit.unwrap_or(128).clamp(1, 2048);
-                    serde_json::json!({
-                        "ok": true,
-                        "op": "live_replay_disputes_recent",
-                        "audits": server_for_quic.recent_live_replay_dispute_audits(limit),
-                        "limit": limit,
-                    })
+                    if bound_peer_id.is_none() {
+                        serde_json::json!({ "ok": false, "op": "live_replay_disputes_recent", "error": "unauthorized" })
+                    } else {
+                        let limit = request.replay_limit.unwrap_or(128).clamp(1, 2048);
+                        serde_json::json!({
+                            "ok": true,
+                            "op": "live_replay_disputes_recent",
+                            "audits": server_for_quic.recent_live_replay_dispute_audits(limit),
+                            "limit": limit,
+                        })
+                    }
                 }
                 "live_replay_dispute" => {
+                    if bound_peer_id.is_none() {
+                        return serde_json::to_vec(&serde_json::json!({ "ok": false, "op": "live_replay_dispute", "error": "unauthorized" })).ok();
+                    }
                     let report =
                         server_for_quic.build_live_replay_dispute_report(LiveReplayDisputeRequest {
                             from_frame: request.from_frame,
@@ -1623,13 +1640,17 @@ async fn main() -> anyhow::Result<()> {
                     // Generate a server-assigned peer_id for this authenticated session.
                     // Use client-supplied peer_id as a hint only if it matches the user, otherwise
                     // generate a fresh one.
-                    let peer_id = request
-                        .peer_id
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+                    let mut peer_id = None;
+                    if let Some(client_peer) = request.peer_id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+                        if let Some(bound_user) = auth_service_for_quic.resolve_user_id_from_peer(client_peer) {
+                            if bound_user == user_id {
+                                peer_id = Some(client_peer.to_string());
+                            } else {
+                                warn!("QUIC join rejected client peer_id '{}' because it is bound to a different user", client_peer);
+                            }
+                        }
+                    }
+                    let peer_id = peer_id.unwrap_or_else(|| Uuid::new_v4().to_string());
 
                     // Bind the peer to the authenticated user.
                     auth_service_for_quic.bind_peer_to_user(&peer_id, &user_id);
@@ -1768,4 +1789,32 @@ async fn main() -> anyhow::Result<()> {
     monitoring_metrics::record_shutdown_duration(shutdown_started_at.elapsed().as_secs_f64());
     info!("Massive Game Server shut down.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn test_parse_forwarded_for_ip_single() {
+        assert_eq!(
+            parse_forwarded_for_ip("192.168.1.1"),
+            Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))
+        );
+    }
+
+    #[test]
+    fn test_parse_forwarded_for_ip_multiple() {
+        assert_eq!(
+            parse_forwarded_for_ip("10.0.0.1, 192.168.1.1"),
+            Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))
+        );
+    }
+
+    #[test]
+    fn test_parse_forwarded_for_ip_invalid() {
+        assert_eq!(parse_forwarded_for_ip("invalid-ip"), None);
+        assert_eq!(parse_forwarded_for_ip(""), None);
+    }
 }
