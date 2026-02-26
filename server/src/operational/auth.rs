@@ -16,7 +16,7 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use warp::http::StatusCode;
 use warp::{Filter, Reply};
@@ -146,8 +146,6 @@ pub struct RequestCodeResult {
     pub phone_number: String,
     pub expires_at: u64,
     pub retry_after_seconds: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dev_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -404,8 +402,7 @@ impl AuthService {
             .ok()
             .map(|raw| raw.trim().to_owned())
             .filter(|raw| !raw.is_empty());
-        let sms_dev_mode_default = sms_command.is_none();
-        let sms_dev_mode = parse_bool_env("MGS_SMS_DEV_MODE", sms_dev_mode_default);
+        let sms_dev_mode = parse_bool_env("MGS_SMS_DEV_MODE", false);
         let redis_cache = init_redis_cache_from_env();
 
         let persistent_store = load_persistent_store(&store_path, redis_cache.as_ref());
@@ -415,6 +412,9 @@ impl AuthService {
             persistent_store.users.len(),
             sms_dev_mode
         );
+        if sms_dev_mode {
+            warn!("SMS dev mode is ENABLED — OTP codes will be logged server-side. Do NOT use in production!");
+        }
 
         Self {
             inner: Arc::new(AuthInner {
@@ -471,18 +471,11 @@ impl AuthService {
             return Err(AuthError::DeliveryFailed(reason));
         }
 
-        let dev_code = if self.inner.sms_dev_mode {
-            Some(code)
-        } else {
-            None
-        };
-
         metrics::record_auth_attempt("request_code", "success");
         Ok(RequestCodeResult {
             phone_number,
             expires_at,
             retry_after_seconds: self.inner.resend_interval_seconds,
-            dev_code,
         })
     }
 
@@ -822,7 +815,7 @@ impl AuthService {
         }
 
         if self.inner.sms_dev_mode {
-            info!("[AUTH_SMS_DEV] phone={} code={}", phone_number, code);
+            debug!("[AUTH_SMS_DEV] phone={} code={}", phone_number, code);
             return Ok(());
         }
 
@@ -995,13 +988,17 @@ fn error_response(error: AuthError) -> warp::reply::WithStatus<warp::reply::Json
 }
 
 fn resolve_token(authorization_header: Option<&str>, query: &TokenQuery) -> Option<String> {
+    if let Some(token) = parse_bearer_token(authorization_header) {
+        return Some(token);
+    }
     if let Some(raw) = query.auth_token.as_ref().or(query.token.as_ref()) {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
+            warn!("Session token provided via query parameter — this is deprecated and will be removed. Use the Authorization header instead.");
             return Some(trimmed.to_owned());
         }
     }
-    parse_bearer_token(authorization_header)
+    None
 }
 
 fn parse_bearer_token(authorization_header: Option<&str>) -> Option<String> {
@@ -1208,11 +1205,31 @@ impl AuthRedisCache {
     }
 }
 
+/// Redact the password portion of a URL for safe logging.
+/// Turns `redis://user:secret@host` into `redis://user:***@host`.
+fn redact_url_password(url: &str) -> String {
+    // Match ://user:password@ or just ://:password@ or ://password@
+    // We look for :// then everything up to @ and redact the password part.
+    if let Some(scheme_end) = url.find("://") {
+        let after_scheme = &url[scheme_end + 3..];
+        if let Some(at_pos) = after_scheme.find('@') {
+            let userinfo = &after_scheme[..at_pos];
+            let rest = &after_scheme[at_pos..]; // includes the '@'
+            if let Some(colon_pos) = userinfo.find(':') {
+                let user = &userinfo[..colon_pos];
+                return format!("{}://{}:***{}", &url[..scheme_end], user, rest);
+            }
+        }
+    }
+    url.to_owned()
+}
+
 fn init_redis_cache_from_env() -> Option<AuthRedisCache> {
     let redis_url = std::env::var("MGS_REDIS_URL")
         .ok()
         .map(|raw| raw.trim().to_owned())
         .filter(|raw| !raw.is_empty())?;
+    let safe_url = redact_url_password(&redis_url);
     let store_key = std::env::var("MGS_REDIS_AUTH_STORE_KEY")
         .ok()
         .map(|raw| raw.trim().to_owned())
@@ -1224,7 +1241,7 @@ fn init_redis_cache_from_env() -> Option<AuthRedisCache> {
         Err(error) => {
             warn!(
                 "Redis auth cache disabled: invalid MGS_REDIS_URL '{}': {}",
-                redis_url, error
+                safe_url, error
             );
             return None;
         }
@@ -1235,7 +1252,7 @@ fn init_redis_cache_from_env() -> Option<AuthRedisCache> {
         Err(error) => {
             warn!(
                 "Redis auth cache disabled: unable to connect to '{}': {}",
-                redis_url, error
+                safe_url, error
             );
             return None;
         }
@@ -1243,7 +1260,7 @@ fn init_redis_cache_from_env() -> Option<AuthRedisCache> {
 
     info!(
         "Redis auth cache enabled. url='{}', key='{}'",
-        redis_url, store_key
+        safe_url, store_key
     );
     Some(AuthRedisCache {
         connection: ParkingLotMutex::new(connection),
