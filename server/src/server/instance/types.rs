@@ -150,6 +150,11 @@ pub struct BotController {
     pub stuck_check_position: Vec2,
     /// Personality profile that influences weapon preferences, engagement ranges, and retreat behavior.
     pub personality: crate::systems::ai::optimized_bot_ai::BotPersonality,
+    /// Frame at which the current A* path was last computed.
+    pub path_compute_tick: u64,
+    /// The target position used when the current path was computed, so we can
+    /// detect when the target moves significantly and recompute.
+    pub last_path_target: Option<Vec2>,
 }
 
 #[derive(Clone, Debug)]
