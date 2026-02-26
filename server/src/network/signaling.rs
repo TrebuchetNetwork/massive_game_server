@@ -1737,27 +1737,526 @@ mod tests {
 
     #[test]
     fn datachannel_message_limit_is_reasonable() {
-        // The limit should be at least large enough for normal game messages
-        // (a few KB) but prevent multi-megabyte OOM attacks.
         assert!(MAX_DATACHANNEL_MESSAGE_BYTES >= 64 * 1024, "limit too small for game messages");
         assert!(MAX_DATACHANNEL_MESSAGE_BYTES <= 8 * 1024 * 1024, "limit too large to be protective");
     }
 
     #[test]
     fn signaling_text_limit_is_below_datachannel_limit() {
-        // Signaling text messages have their own limit which should be smaller
-        // since they are JSON signaling payloads, not binary game data.
         assert!(MAX_SIGNALING_TEXT_BYTES <= MAX_DATACHANNEL_MESSAGE_BYTES);
     }
 
     #[test]
     fn drop_guard_defuse_prevents_close() {
-        // Verify that defuse() clears the stored connection (no-op on drop).
         let mut guard = PeerConnectionDropGuard {
-            peer_connection: None, // No real connection in unit test
+            peer_connection: None,
             peer_id: "test_peer".to_owned(),
         };
         guard.defuse();
         assert!(guard.peer_connection.is_none());
+    }
+
+    // ── sanitize_text_field tests ────────────────────────────────────
+
+    #[test]
+    fn sanitize_text_field_strips_control_chars() {
+        let input = "hello\x00\x01\x02world";
+        let result = sanitize_text_field(input, 100, false);
+        assert_eq!(result, Some("helloworld".to_owned()));
+    }
+
+    #[test]
+    fn sanitize_text_field_strips_bidi_control_chars() {
+        // LRM (\u{200E}), RLM (\u{200F}), LRO (\u{202D})
+        let input = "hello\u{200E}\u{200F}\u{202D}world";
+        let result = sanitize_text_field(input, 100, false);
+        assert_eq!(result, Some("helloworld".to_owned()));
+    }
+
+    #[test]
+    fn sanitize_text_field_strips_html_special_chars() {
+        let input = "hello<script>alert('xss')</script>";
+        let result = sanitize_text_field(input, 200, false);
+        // <, >, ', / are stripped
+        assert!(result.is_some());
+        let cleaned = result.unwrap();
+        assert!(!cleaned.contains('<'));
+        assert!(!cleaned.contains('>'));
+        assert!(!cleaned.contains('\''));
+        assert!(!cleaned.contains('/'));
+    }
+
+    #[test]
+    fn sanitize_text_field_truncates_at_max_chars() {
+        let input = "abcdefghijklmnop";
+        let result = sanitize_text_field(input, 5, false);
+        assert_eq!(result, Some("abcde".to_owned()));
+    }
+
+    #[test]
+    fn sanitize_text_field_returns_none_for_empty_input() {
+        let result = sanitize_text_field("", 100, false);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn sanitize_text_field_returns_none_for_zero_max_chars() {
+        let result = sanitize_text_field("hello", 0, false);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn sanitize_text_field_collapses_whitespace() {
+        let input = "hello    world";
+        let result = sanitize_text_field(input, 100, false);
+        assert_eq!(result, Some("hello world".to_owned()));
+    }
+
+    #[test]
+    fn sanitize_text_field_trims_leading_trailing_spaces() {
+        let input = "   hello   ";
+        let result = sanitize_text_field(input, 100, false);
+        assert_eq!(result, Some("hello".to_owned()));
+    }
+
+    #[test]
+    fn sanitize_text_field_returns_none_for_all_whitespace() {
+        let result = sanitize_text_field("     ", 100, false);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn sanitize_text_field_username_mode_allows_alphanumeric_dash_underscore_dot() {
+        let input = "Player_123-test.name";
+        let result = sanitize_text_field(input, 100, true);
+        assert_eq!(result, Some("Player_123-test.name".to_owned()));
+    }
+
+    #[test]
+    fn sanitize_text_field_username_mode_strips_special_chars() {
+        let input = "Player!@#$%^&*()name";
+        let result = sanitize_text_field(input, 100, true);
+        assert_eq!(result, Some("Playername".to_owned()));
+    }
+
+    // ── sanitize_chat_field / sanitize_username_field wrappers ────────
+
+    #[test]
+    fn sanitize_chat_field_delegates_non_username_mode() {
+        // Chat mode should allow special characters that username mode strips
+        let input = "hello! how are you?";
+        let result = sanitize_chat_field(input, 100);
+        assert!(result.is_some());
+        let cleaned = result.unwrap();
+        assert!(cleaned.contains('!'));
+        assert!(cleaned.contains('?'));
+    }
+
+    #[test]
+    fn sanitize_username_field_uses_username_mode() {
+        let input = "Player!Name";
+        let result = sanitize_username_field(input, 100);
+        assert_eq!(result, Some("PlayerName".to_owned()));
+    }
+
+    // ── parse_csv tests ─────────────────────────────────────────────
+
+    #[test]
+    fn parse_csv_splits_comma_separated_values() {
+        let result = parse_csv("a,b,c");
+        assert_eq!(result, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn parse_csv_trims_whitespace() {
+        let result = parse_csv(" a , b , c ");
+        assert_eq!(result, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn parse_csv_filters_empty_entries() {
+        let result = parse_csv("a,,b,,c");
+        assert_eq!(result, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn parse_csv_handles_empty_string() {
+        let result = parse_csv("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_csv_handles_single_value() {
+        let result = parse_csv("stun:example.com:3478");
+        assert_eq!(result, vec!["stun:example.com:3478"]);
+    }
+
+    // ── is_bidi_or_directional_control tests ─────────────────────────
+
+    #[test]
+    fn bidi_control_chars_detected() {
+        assert!(is_bidi_or_directional_control('\u{200E}')); // LRM
+        assert!(is_bidi_or_directional_control('\u{200F}')); // RLM
+        assert!(is_bidi_or_directional_control('\u{202A}')); // LRE
+        assert!(is_bidi_or_directional_control('\u{202B}')); // RLE
+        assert!(is_bidi_or_directional_control('\u{2066}')); // LRI
+        assert!(is_bidi_or_directional_control('\u{2069}')); // PDI
+    }
+
+    #[test]
+    fn normal_chars_not_flagged_as_bidi() {
+        assert!(!is_bidi_or_directional_control('a'));
+        assert!(!is_bidi_or_directional_control(' '));
+        assert!(!is_bidi_or_directional_control('0'));
+        assert!(!is_bidi_or_directional_control('\n'));
+    }
+
+    // ── parse_ice_servers_env tests ──────────────────────────────────
+
+    #[test]
+    fn parse_ice_servers_env_single_stun() {
+        let result = parse_ice_servers_env("stun:stun.example.com:3478");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].urls, vec!["stun:stun.example.com:3478"]);
+        assert!(result[0].username.is_empty());
+        assert!(result[0].credential.is_empty());
+    }
+
+    #[test]
+    fn parse_ice_servers_env_with_credentials() {
+        let result = parse_ice_servers_env("turn:turn.example.com:3478|myuser|mypass");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].urls, vec!["turn:turn.example.com:3478"]);
+        assert_eq!(result[0].username, "myuser");
+        assert_eq!(result[0].credential, "mypass");
+    }
+
+    #[test]
+    fn parse_ice_servers_env_multiple_servers() {
+        let result = parse_ice_servers_env(
+            "stun:stun1.example.com:3478;turn:turn1.example.com:3478|user1|pass1",
+        );
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].urls, vec!["stun:stun1.example.com:3478"]);
+        assert_eq!(result[1].urls, vec!["turn:turn1.example.com:3478"]);
+        assert_eq!(result[1].username, "user1");
+    }
+
+    #[test]
+    fn parse_ice_servers_env_empty_string() {
+        let result = parse_ice_servers_env("");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_ice_servers_env_multiple_urls_per_server() {
+        let result =
+            parse_ice_servers_env("stun:stun1.example.com:3478,stun:stun2.example.com:3478");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].urls.len(), 2);
+    }
+
+    // ── validate_signaling_payload tests ─────────────────────────────
+
+    #[test]
+    fn validate_payload_rejects_empty() {
+        let payload = SignalingMessageJson {
+            sdp: None,
+            ice: None,
+        };
+        assert_eq!(
+            validate_signaling_payload(&payload),
+            Err("empty signaling payload")
+        );
+    }
+
+    #[test]
+    fn validate_payload_rejects_oversized_sdp() {
+        let large_sdp = "x".repeat(MAX_SIGNALING_SDP_BYTES + 1);
+        let mut sdp = RTCSessionDescription::default();
+        sdp.sdp = large_sdp;
+        let payload = SignalingMessageJson {
+            sdp: Some(sdp),
+            ice: None,
+        };
+        assert_eq!(
+            validate_signaling_payload(&payload),
+            Err("SDP payload too large")
+        );
+    }
+
+    #[test]
+    fn validate_payload_accepts_valid_sdp() {
+        let mut sdp = RTCSessionDescription::default();
+        sdp.sdp = "v=0\r\n".to_owned();
+        let payload = SignalingMessageJson {
+            sdp: Some(sdp),
+            ice: None,
+        };
+        assert!(validate_signaling_payload(&payload).is_ok());
+    }
+
+    #[test]
+    fn validate_payload_rejects_oversized_ice_candidate() {
+        let large_candidate = "x".repeat(MAX_SIGNALING_ICE_CANDIDATE_BYTES + 1);
+        let ice = RTCIceCandidateInitSerde {
+            candidate: large_candidate,
+            sdp_mid: None,
+            sdp_m_line_index: None,
+            username_fragment: None,
+        };
+        let payload = SignalingMessageJson {
+            sdp: None,
+            ice: Some(ice),
+        };
+        assert_eq!(
+            validate_signaling_payload(&payload),
+            Err("ICE candidate payload too large")
+        );
+    }
+
+    #[test]
+    fn validate_payload_rejects_oversized_sdp_mid() {
+        let large_mid = "x".repeat(MAX_SIGNALING_ICE_SDP_MID_BYTES + 1);
+        let ice = RTCIceCandidateInitSerde {
+            candidate: "candidate:1".to_owned(),
+            sdp_mid: Some(large_mid),
+            sdp_m_line_index: None,
+            username_fragment: None,
+        };
+        let payload = SignalingMessageJson {
+            sdp: None,
+            ice: Some(ice),
+        };
+        assert_eq!(
+            validate_signaling_payload(&payload),
+            Err("ICE sdpMid payload too large")
+        );
+    }
+
+    #[test]
+    fn validate_payload_rejects_oversized_username_fragment() {
+        let large_frag = "x".repeat(MAX_SIGNALING_ICE_USERNAME_FRAGMENT_BYTES + 1);
+        let ice = RTCIceCandidateInitSerde {
+            candidate: "candidate:1".to_owned(),
+            sdp_mid: None,
+            sdp_m_line_index: None,
+            username_fragment: Some(large_frag),
+        };
+        let payload = SignalingMessageJson {
+            sdp: None,
+            ice: Some(ice),
+        };
+        assert_eq!(
+            validate_signaling_payload(&payload),
+            Err("ICE usernameFragment payload too large")
+        );
+    }
+
+    #[test]
+    fn validate_payload_accepts_valid_ice() {
+        let ice = RTCIceCandidateInitSerde {
+            candidate: "candidate:1 1 udp 2130706431 192.168.1.1 1234 typ host".to_owned(),
+            sdp_mid: Some("0".to_owned()),
+            sdp_m_line_index: Some(0),
+            username_fragment: Some("abc".to_owned()),
+        };
+        let payload = SignalingMessageJson {
+            sdp: None,
+            ice: Some(ice),
+        };
+        assert!(validate_signaling_payload(&payload).is_ok());
+    }
+
+    // ── JoinRateLimiter tests ────────────────────────────────────────
+
+    #[test]
+    fn join_rate_limiter_starts_full() {
+        let limiter = JoinRateLimiter::new(10, 10);
+        assert_eq!(limiter.available_tokens, 10.0);
+        assert_eq!(limiter.capacity, 10.0);
+        assert_eq!(limiter.refill_per_sec, 10.0);
+    }
+
+    #[test]
+    fn join_rate_limiter_clamps_minimum_values() {
+        let limiter = JoinRateLimiter::new(0, 0);
+        assert_eq!(limiter.refill_per_sec, 1.0);
+        assert_eq!(limiter.capacity, 1.0);
+    }
+
+    #[test]
+    fn join_rate_limiter_consumes_tokens() {
+        let mut limiter = JoinRateLimiter::new(10, 5);
+        for _ in 0..5 {
+            assert!(limiter.try_acquire());
+        }
+        // Should be exhausted now
+        assert!(!limiter.try_acquire());
+    }
+
+    #[test]
+    fn join_rate_limiter_does_not_exceed_capacity() {
+        let mut limiter = JoinRateLimiter::new(100, 3);
+        // Immediately all 3 tokens should be available
+        assert!(limiter.try_acquire());
+        assert!(limiter.try_acquire());
+        assert!(limiter.try_acquire());
+        assert!(!limiter.try_acquire());
+    }
+
+    // ── InputRateLimiter tests ───────────────────────────────────────
+
+    #[test]
+    fn input_rate_limiter_starts_full() {
+        let limiter = InputRateLimiter::new(240, 360);
+        assert_eq!(limiter.available_tokens, 360.0);
+        assert_eq!(limiter.capacity, 360.0);
+        assert_eq!(limiter.refill_per_sec, 240.0);
+    }
+
+    #[test]
+    fn input_rate_limiter_clamps_minimum_values() {
+        let limiter = InputRateLimiter::new(0, 0);
+        assert_eq!(limiter.refill_per_sec, 1.0);
+        assert_eq!(limiter.capacity, 1.0);
+    }
+
+    #[test]
+    fn input_rate_limiter_consumes_tokens() {
+        let mut limiter = InputRateLimiter::new(240, 5);
+        for _ in 0..5 {
+            assert!(limiter.try_acquire());
+        }
+        assert!(!limiter.try_acquire());
+    }
+
+    #[test]
+    fn input_rate_limiter_should_log_throttle_initially_true() {
+        // The limiter initializes last_drop_log_at to a time in the past
+        // (offset by INPUT_RATE_LIMIT_THROTTLE_LOG_INTERVAL_SECS), so the
+        // first call to should_log_throttle() should return true.
+        let mut limiter = InputRateLimiter::new(10, 10);
+        assert!(limiter.should_log_throttle());
+    }
+
+    #[test]
+    fn input_rate_limiter_should_log_throttle_rate_limits() {
+        let mut limiter = InputRateLimiter::new(10, 10);
+        // First call returns true
+        assert!(limiter.should_log_throttle());
+        // Immediately subsequent call should return false
+        assert!(!limiter.should_log_throttle());
+    }
+
+    // ── ClientState default tests ────────────────────────────────────
+
+    #[test]
+    fn client_state_default_values() {
+        let state = ClientState::default();
+        assert!(!state.known_walls_sent);
+        assert!(state.pending_initial_state_bytes.is_none());
+        assert!(state.pending_initial_state_chunks.is_empty());
+        assert!(state.last_known_player_states.is_empty());
+        assert!(state.last_known_projectile_ids.is_empty());
+        assert_eq!(state.last_kill_feed_count_sent, 0);
+        assert_eq!(state.last_chat_message_seq_sent, 0);
+        assert_eq!(state.last_broadcast_frame, 0);
+        assert!(state.match_info_pending);
+        assert!(!state.is_mobile);
+        assert_eq!(state.mobile_delta_skip_modulus, 1);
+    }
+
+    // ── webrtc_state_label tests ────────────────────────────────────
+
+    #[test]
+    fn webrtc_state_label_maps_known_states() {
+        assert_eq!(webrtc_state_label(RTCPeerConnectionState::New), "new");
+        assert_eq!(
+            webrtc_state_label(RTCPeerConnectionState::Connecting),
+            "connecting"
+        );
+        assert_eq!(
+            webrtc_state_label(RTCPeerConnectionState::Connected),
+            "connected"
+        );
+        assert_eq!(
+            webrtc_state_label(RTCPeerConnectionState::Disconnected),
+            "disconnected"
+        );
+        assert_eq!(
+            webrtc_state_label(RTCPeerConnectionState::Failed),
+            "failed"
+        );
+        assert_eq!(
+            webrtc_state_label(RTCPeerConnectionState::Closed),
+            "closed"
+        );
+    }
+
+    // ── env_bool tests ──────────────────────────────────────────────
+
+    #[test]
+    fn env_bool_returns_false_for_unset_variable() {
+        // Using a variable name that is very unlikely to be set
+        assert!(!env_bool("MGS_TEST_UNLIKELY_VAR_XYZ_123_NEVER_SET"));
+    }
+
+    // ── env_u32 tests ───────────────────────────────────────────────
+
+    #[test]
+    fn env_u32_returns_default_for_unset_variable() {
+        let result = env_u32("MGS_TEST_UNLIKELY_ENV_U32_NEVER_SET", 42);
+        assert_eq!(result, 42);
+    }
+
+    // ── SignalingMessageJson serde tests ─────────────────────────────
+
+    #[test]
+    fn signaling_message_json_deserializes_ice_candidate() {
+        let json_str = r#"{"ice":{"candidate":"candidate:1 1 udp 2130706431 192.168.1.1 1234 typ host","sdpMid":"0","sdpMLineIndex":0}}"#;
+        let parsed: SignalingMessageJson = serde_json::from_str(json_str).unwrap();
+        assert!(parsed.sdp.is_none());
+        let ice = parsed.ice.unwrap();
+        assert!(ice.candidate.contains("candidate:1"));
+        assert_eq!(ice.sdp_mid, Some("0".to_owned()));
+        assert_eq!(ice.sdp_m_line_index, Some(0));
+    }
+
+    #[test]
+    fn signaling_message_json_serializes_ice_with_skip_serializing_if() {
+        let msg = SignalingMessageJson {
+            sdp: None,
+            ice: Some(RTCIceCandidateInitSerde {
+                candidate: "test".to_owned(),
+                sdp_mid: None,
+                sdp_m_line_index: None,
+                username_fragment: None,
+            }),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        // The struct uses #[serde(skip_serializing_if = "Option::is_none")] on sdp/ice
+        // so the `ice` field should be present and contain the candidate
+        assert!(json.contains("ice"));
+        assert!(json.contains("candidate"));
+        assert!(json.contains("test"));
+    }
+
+    #[test]
+    fn signaling_message_json_round_trip() {
+        let msg = SignalingMessageJson {
+            sdp: None,
+            ice: Some(RTCIceCandidateInitSerde {
+                candidate: "candidate:1 1 udp 2130706431 192.168.1.1 1234 typ host".to_owned(),
+                sdp_mid: Some("audio".to_owned()),
+                sdp_m_line_index: Some(0),
+                username_fragment: Some("frag123".to_owned()),
+            }),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: SignalingMessageJson = serde_json::from_str(&json).unwrap();
+        let ice = parsed.ice.unwrap();
+        assert_eq!(ice.sdp_mid, Some("audio".to_owned()));
+        assert_eq!(ice.username_fragment, Some("frag123".to_owned()));
     }
 }
