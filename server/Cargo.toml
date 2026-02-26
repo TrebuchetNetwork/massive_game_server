@@ -68,6 +68,7 @@ num_cpus = "1.16"
 
 # Hashing
 seahash = "4.1.0"
+sha1 = "0.10"
 sha2 = "0.10"
 hmac = "0.12"
 

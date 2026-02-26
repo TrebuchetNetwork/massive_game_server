@@ -12,6 +12,9 @@ const CONNECTION_TIMEOUT_MS = 15000;
 /** Maximum ICE restart attempts before falling back to full reconnect. */
 const MAX_ICE_RESTART_ATTEMPTS = 2;
 
+/** Maximum time to wait for server-provided ICE config before proceeding with defaults (ms). */
+const ICE_CONFIG_WAIT_MS = 2000;
+
 export function createConnectionManager(getCtx) {
 
     /** Timer id for the connection setup timeout. */
@@ -20,11 +23,76 @@ export function createConnectionManager(getCtx) {
     /** Counter for ICE restart attempts on the current peer connection. */
     let iceRestartAttempts = 0;
 
+    /** Timer id for waiting on server-provided ICE config. */
+    let iceConfigTimeoutId = null;
+
+    /** Whether the peer connection has been initialized for the current attempt. */
+    let peerConnectionInitialized = false;
+
     function clearConnectionTimeout() {
         if (connectionTimeoutId !== null) {
             clearTimeout(connectionTimeoutId);
             connectionTimeoutId = null;
         }
+        if (iceConfigTimeoutId !== null) {
+            clearTimeout(iceConfigTimeoutId);
+            iceConfigTimeoutId = null;
+        }
+    }
+
+    /**
+     * Merge server-provided ICE servers into the current peerConnectionConfig.
+     * Server-provided TURN servers with credentials are added alongside the
+     * client-configured servers, with deduplication by URL.
+     */
+    function mergeServerIceServers(serverIceServers) {
+        const ctx = getCtx();
+        const config = ctx.peerConnectionConfig;
+        if (!config || !config.iceServers) return;
+
+        const existingKeys = new Set();
+        config.iceServers.forEach(s => {
+            const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
+            urls.forEach(u => existingKeys.add(String(u)));
+        });
+
+        for (const server of serverIceServers) {
+            const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+            const newUrls = urls.filter(u => !existingKeys.has(String(u)));
+            if (newUrls.length === 0) {
+                // URLs already present — but update credentials if the server
+                // provided them (e.g. HMAC time-limited credentials).
+                if (server.username || server.credential) {
+                    const existing = config.iceServers.find(s => {
+                        const eu = Array.isArray(s.urls) ? s.urls : [s.urls];
+                        return urls.some(u => eu.includes(u));
+                    });
+                    if (existing) {
+                        if (server.username) existing.username = server.username;
+                        if (server.credential) existing.credential = server.credential;
+                    }
+                }
+                continue;
+            }
+            const entry = { urls: newUrls.length === 1 ? newUrls[0] : newUrls };
+            if (server.username) entry.username = server.username;
+            if (server.credential) entry.credential = server.credential;
+            config.iceServers.push(entry);
+        }
+    }
+
+    /**
+     * Begin WebRTC peer negotiation. Called either when the server ICE config
+     * is received, or after a timeout if no config arrives.
+     */
+    function beginPeerNegotiation() {
+        if (peerConnectionInitialized) return;
+        peerConnectionInitialized = true;
+        const ctx = getCtx();
+        const { log, applyConnectionStatus } = ctx;
+        applyConnectionStatus('negotiating', 'Establishing peer connection...');
+        initializePeerConnection();
+        ctx.createOffer();
     }
 
     function withJoinSelectionInUrl(rawUrl) {
@@ -144,13 +212,23 @@ export function createConnectionManager(getCtx) {
             ctx.setConnectAttemptInFlight(false);
             markJoinTimingStage('signalingOpenAtMs');
             log('Connected to signaling server.', 'success');
-            applyConnectionStatus('negotiating', 'Establishing peer connection...');
+            applyConnectionStatus('negotiating', 'Waiting for server ICE config...');
             connectButton.disabled = true;
             connectButton.textContent = 'Connected';
             connectButton.classList.replace('bg-indigo-600', 'bg-gray-500');
             connectButton.classList.replace('hover:bg-indigo-700', 'cursor-not-allowed');
-            initializePeerConnection();
-            ctx.createOffer();
+
+            // Wait briefly for the server to send ICE server configuration
+            // (including TURN credentials). If none arrives, proceed with
+            // the client-side defaults.
+            peerConnectionInitialized = false;
+            iceConfigTimeoutId = setTimeout(() => {
+                iceConfigTimeoutId = null;
+                if (!peerConnectionInitialized) {
+                    log('No server ICE config received; using client defaults.', 'info');
+                    beginPeerNegotiation();
+                }
+            }, ICE_CONFIG_WAIT_MS);
         };
 
         signalingSocket.onmessage = async (event) => {
@@ -161,6 +239,29 @@ export function createConnectionManager(getCtx) {
                 msg = JSON.parse(event.data);
             } catch (error) {
                 log(`Ignoring malformed signaling message: ${error?.message || error}`, 'warn');
+                return;
+            }
+            if (msg.event === 'ice_servers') {
+                // Server-provided ICE configuration (may include TURN credentials).
+                const serverIceServers = msg.ice_servers;
+                if (Array.isArray(serverIceServers) && serverIceServers.length > 0) {
+                    const turnCount = serverIceServers.filter(
+                        s => Array.isArray(s.urls)
+                            ? s.urls.some(u => String(u).startsWith('turn:'))
+                            : String(s.urls || '').startsWith('turn:')
+                    ).length;
+                    log(`Received ${serverIceServers.length} ICE server(s) from server (${turnCount} TURN).`, 'info');
+                    // Merge server-provided ICE servers into the peer connection config.
+                    mergeServerIceServers(serverIceServers);
+                }
+                // Now create the peer connection with the updated config.
+                if (!peerConnectionInitialized) {
+                    if (iceConfigTimeoutId !== null) {
+                        clearTimeout(iceConfigTimeoutId);
+                        iceConfigTimeoutId = null;
+                    }
+                    beginPeerNegotiation();
+                }
                 return;
             }
             if (msg.event === 'sdp_offer_queue') {
@@ -318,6 +419,9 @@ export function createConnectionManager(getCtx) {
                     log(`ICE restart succeeded after ${iceRestartAttempts} attempt(s).`, 'success');
                 }
                 iceRestartAttempts = 0;
+
+                // Log the active ICE candidate pair type to detect TURN relay usage.
+                logSelectedCandidatePairType(peerConnection, log);
             }
         };
         peerConnection.ondatachannel = (event) => {
@@ -449,9 +553,63 @@ export function createConnectionManager(getCtx) {
         };
     }
 
+    /**
+     * Log the selected ICE candidate pair type after connection is established.
+     * Detects TURN relay fallback and logs a warning so operators know.
+     */
+    function logSelectedCandidatePairType(peerConnection, logFn) {
+        try {
+            if (typeof peerConnection.getStats !== 'function') return;
+            peerConnection.getStats().then(stats => {
+                let selectedPairId = null;
+                // Find the active transport's selected candidate pair.
+                stats.forEach(report => {
+                    if (report.type === 'transport' && report.selectedCandidatePairId) {
+                        selectedPairId = report.selectedCandidatePairId;
+                    }
+                });
+                if (!selectedPairId) {
+                    // Fallback: look for a succeeded pair directly.
+                    stats.forEach(report => {
+                        if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
+                            selectedPairId = report.id;
+                        }
+                    });
+                }
+                if (!selectedPairId) return;
+
+                const pair = stats.get(selectedPairId);
+                if (!pair) return;
+
+                const localCandidate = stats.get(pair.localCandidateId);
+                const remoteCandidate = stats.get(pair.remoteCandidateId);
+                const localType = localCandidate?.candidateType || 'unknown';
+                const remoteType = remoteCandidate?.candidateType || 'unknown';
+
+                if (localType === 'relay' || remoteType === 'relay') {
+                    logFn(
+                        `ICE connection using TURN relay (local=${localType}, remote=${remoteType}). ` +
+                        'Direct/STUN connectivity was not possible.',
+                        'warn'
+                    );
+                } else {
+                    logFn(
+                        `ICE candidate pair: local=${localType}, remote=${remoteType}`,
+                        'info'
+                    );
+                }
+            }).catch(() => {
+                // getStats() can fail in some browsers; ignore silently.
+            });
+        } catch (_) {
+            // Ignore errors in candidate pair detection.
+        }
+    }
+
     function resetConnectionUI(options = {}) {
         clearConnectionTimeout();
         iceRestartAttempts = 0;
+        peerConnectionInitialized = false;
         const ctx = getCtx();
         ctx.resetConnectionUIImpl(options);
     }
