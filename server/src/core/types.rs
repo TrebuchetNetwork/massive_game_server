@@ -377,9 +377,10 @@ impl PlayerState {
         }
         if let Some(last_shot) = self.last_shot_time {
             let cooldown = Self::get_weapon_fire_rate_seconds(self.weapon);
-            if current_time.duration_since(last_shot).as_secs_f32()
-                < cooldown.max(crate::core::constants::MIN_SHOT_INTERVAL_SECONDS)
-            {
+            let effective_cooldown = cooldown
+                .max(crate::core::constants::MIN_SHOT_INTERVAL_SECONDS)
+                - crate::core::constants::FIRE_RATE_JITTER_TOLERANCE_SECS;
+            if current_time.duration_since(last_shot).as_secs_f32() < effective_cooldown {
                 return false;
             }
         }
@@ -1438,5 +1439,65 @@ mod tests {
         assert!(p.respawn_timer.is_none());
         assert_eq!(p.current_streak, 0);
         assert_eq!(p.shield_current, 0);
+    }
+
+    // ── fire rate jitter tolerance tests ──────────────────────────
+
+    #[test]
+    fn can_shoot_jitter_tolerance_allows_slightly_early() {
+        // Pistol fire rate = 0.45s, jitter tolerance = 0.05s.
+        // Shooting at 0.41s (> 0.40s effective cooldown) should be allowed.
+        let mut p = make_player("p1");
+        p.weapon = ServerWeaponType::Pistol;
+        p.ammo = 5;
+        let shot_time = Instant::now();
+        p.last_shot_time = Some(shot_time);
+        let slightly_early = shot_time + Duration::from_millis(410);
+        assert!(p.can_shoot(slightly_early));
+    }
+
+    #[test]
+    fn can_shoot_jitter_tolerance_still_blocks_too_fast() {
+        // Rifle fire rate = 0.1s, jitter tolerance = 0.05s.
+        // Effective cooldown = max(0.1, 0.05) - 0.05 = 0.05s.
+        // Shooting at 0.02s should still be blocked.
+        let mut p = make_player("p1");
+        p.weapon = ServerWeaponType::Rifle;
+        p.ammo = 30;
+        let shot_time = Instant::now();
+        p.last_shot_time = Some(shot_time);
+        let too_fast = shot_time + Duration::from_millis(20);
+        assert!(!p.can_shoot(too_fast));
+    }
+
+    #[test]
+    fn can_shoot_jitter_tolerance_sniper_boundary() {
+        // Sniper fire rate = 1.2s, jitter tolerance = 0.05s.
+        // Effective cooldown = 1.2 - 0.05 = 1.15s.
+        // At 1.14s should be blocked, at 1.16s should be allowed.
+        let mut p = make_player("p1");
+        p.weapon = ServerWeaponType::Sniper;
+        p.ammo = 5;
+        let shot_time = Instant::now();
+        p.last_shot_time = Some(shot_time);
+        let just_before = shot_time + Duration::from_millis(1140);
+        assert!(!p.can_shoot(just_before));
+        let just_after = shot_time + Duration::from_millis(1160);
+        assert!(p.can_shoot(just_after));
+    }
+
+    #[test]
+    fn can_shoot_melee_respects_jitter_tolerance() {
+        // Melee fire rate = 0.5s, jitter tolerance = 0.05s.
+        // Effective cooldown = 0.5 - 0.05 = 0.45s.
+        let mut p = make_player("p1");
+        p.weapon = ServerWeaponType::Melee;
+        p.ammo = 0;
+        let shot_time = Instant::now();
+        p.last_shot_time = Some(shot_time);
+        let within_tolerance = shot_time + Duration::from_millis(460);
+        assert!(p.can_shoot(within_tolerance));
+        let too_soon = shot_time + Duration::from_millis(400);
+        assert!(!p.can_shoot(too_soon));
     }
 }

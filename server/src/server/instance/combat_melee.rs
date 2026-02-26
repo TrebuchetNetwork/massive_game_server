@@ -49,9 +49,10 @@ impl MassiveGameServer {
                 ..
             } = event
             {
-                let melee_range_sq = 30.0 * 30.0;
-                let melee_arc_angle_rad = std::f32::consts::FRAC_PI_3;
-                let melee_damage = 30;
+                let melee_range_sq = crate::core::constants::MELEE_MAX_RANGE
+                    * crate::core::constants::MELEE_MAX_RANGE;
+                let melee_arc_angle_rad = crate::core::constants::MELEE_CONE_HALF_ANGLE_RAD * 2.0;
+                let melee_damage = crate::core::constants::MELEE_DAMAGE;
 
                 // Get attacker info
                 let (
@@ -363,10 +364,10 @@ impl MassiveGameServer {
 mod tests {
     use super::*;
 
-    const MELEE_MAX_RANGE: f32 = 30.0;
-    // The arc used in process_melee_hits is FRAC_PI_3 / 2 = pi/6 as half-angle
-    // (60 degree total cone). We test with that value from the actual code.
-    const ARC_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_3 / 2.0; // ~0.5236 rad = 30 degrees
+    const MELEE_MAX_RANGE: f32 = crate::core::constants::MELEE_MAX_RANGE;
+    // The arc used in process_melee_hits divides by 2 to get the half-angle.
+    // MELEE_CONE_HALF_ANGLE_RAD is the half-angle (pi/4 = 45 degrees, 90° total cone).
+    const ARC_HALF_ANGLE: f32 = crate::core::constants::MELEE_CONE_HALF_ANGLE_RAD;
 
     // ── Range tests ─────────────────────────────────────────────────
 

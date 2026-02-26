@@ -72,9 +72,12 @@ impl MassiveGameServer {
             };
         }
 
+        let clamped_lag_ms = self.lag_compensation_ms.min(
+            crate::core::constants::MAX_LAG_COMPENSATION_MS,
+        );
         let lag_compensation_target_ms = self
             .get_server_timestamp_ms()
-            .saturating_sub(self.lag_compensation_ms);
+            .saturating_sub(clamped_lag_ms);
 
         // Process projectiles in parallel chunks
         let chunk_size = 50.max(total_projectiles / rayon::current_num_threads());
