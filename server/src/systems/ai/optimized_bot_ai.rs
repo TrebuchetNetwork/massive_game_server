@@ -33,18 +33,71 @@ fn with_bot_rng<R>(f: impl FnOnce(&mut DeterministicRng) -> R) -> R {
 
 // Optimized constants
 const BOT_SIMPLE_MOVEMENT_ONLY: bool = false; // Enable full AI with combat
-const BOT_MOVEMENT_CHANGE_INTERVAL: Duration = Duration::from_millis(500); // Reactive decisions every 0.5s
 const BOT_TARGET_ACQUISITION_RANGE: f32 = 600.0; // Increased combat range
 const BOT_FLAG_DETECTION_RANGE: f32 = 2000.0; // See flags from far away
 const BOT_SHOOT_ACCURACY: f32 = 0.80; // 80% accuracy
-const BOT_REACTION_TIME: Duration = Duration::from_millis(100); // Very fast reactions
 const BOT_FLAG_CHASE_PRIORITY: f32 = 3.0; // High priority for flag objectives
 const BOT_MOVEMENT_TOLERANCE: f32 = 50.0; // Distance to consider "at target"
 const BOT_STUCK_THRESHOLD: f32 = 10.0; // Min distance to move to not be considered stuck
 const BOT_STUCK_TIME_THRESHOLD: f32 = 2.0; // Seconds before considering bot stuck
 const BOT_STUCK_CHECK_INTERVAL: f32 = 0.5; // Check every half second
 const BOT_STUCK_TARGET_TOLERANCE: f32 = BOT_MOVEMENT_TOLERANCE + 20.0;
-const BOT_WEAPON_SWITCH_COOLDOWN: Duration = Duration::from_secs(1);
+
+// ── Tick-based timing constants ──────────────────────────────────────
+// At 60 Hz, 30 ticks = 0.5s decision interval, 6 ticks = 100ms reaction time,
+// 60 ticks = 1s weapon switch cooldown.
+const BOT_DECISION_INTERVAL_TICKS: u64 = 30; // 0.5s at 60 Hz
+const BOT_REACTION_TIME_TICKS: u64 = 6; // ~100ms at 60 Hz
+const BOT_WEAPON_SWITCH_COOLDOWN_TICKS: u64 = 60; // 1s at 60 Hz
+
+// ── AI Level-of-Detail (LOD) constants ───────────────────────────────
+// Bots far from all human players receive reduced AI processing to save CPU.
+/// Near tier: within AoI of any human (full AI every tick).
+const BOT_LOD_NEAR_DISTANCE: f32 = AOI_RADIUS; // 520 units
+/// Medium tier: between Near and Far (AI every 4th tick, simplified decisions).
+const BOT_LOD_MEDIUM_DISTANCE: f32 = 1500.0;
+/// Far tier: beyond Medium from all humans (AI every 8th tick, basic wander only).
+/// Stride for Medium LOD tier: run AI every N-th tick.
+const BOT_LOD_MEDIUM_STRIDE: u64 = 4;
+/// Stride for Far LOD tier: run AI every N-th tick.
+const BOT_LOD_FAR_STRIDE: u64 = 8;
+
+/// Level-of-Detail tier for bot AI processing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BotAiLodTier {
+    /// Within AoI range of a human player: full AI every tick.
+    Near,
+    /// 520-1500 units from nearest human: simplified AI every 4th tick.
+    Medium,
+    /// >1500 units from all humans: basic wander every 8th tick.
+    Far,
+}
+
+impl BotAiLodTier {
+    /// Classify a bot into a LOD tier based on distance (squared) to the
+    /// nearest human player.
+    pub fn classify(min_dist_sq_to_human: f32) -> Self {
+        let near_sq = BOT_LOD_NEAR_DISTANCE * BOT_LOD_NEAR_DISTANCE;
+        let medium_sq = BOT_LOD_MEDIUM_DISTANCE * BOT_LOD_MEDIUM_DISTANCE;
+        if min_dist_sq_to_human <= near_sq {
+            BotAiLodTier::Near
+        } else if min_dist_sq_to_human <= medium_sq {
+            BotAiLodTier::Medium
+        } else {
+            BotAiLodTier::Far
+        }
+    }
+
+    /// Whether this tick should be processed for the given LOD tier.
+    #[inline]
+    pub fn should_process(self, frame_count: u64) -> bool {
+        match self {
+            BotAiLodTier::Near => true,
+            BotAiLodTier::Medium => frame_count % BOT_LOD_MEDIUM_STRIDE == 0,
+            BotAiLodTier::Far => frame_count % BOT_LOD_FAR_STRIDE == 0,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 enum BotObjective {
@@ -222,18 +275,13 @@ impl TeamObjectiveSummary {
 }
 
 impl OptimizedBotAI {
-    /// Process ALL bots every frame for consistent movement
+    /// Process bots with distance-based LOD: Near bots get full AI every tick,
+    /// Medium bots get simplified AI every 4th tick, Far bots get basic wander
+    /// every 8th tick.  Timing uses tick counts for determinism.
     pub fn update_bots_batch(server_instance: &MassiveGameServer, delta_time: f32) {
         let frame_count = server_instance
             .frame_counter
             .load(std::sync::atomic::Ordering::Relaxed);
-        // TODO(determinism): current_time uses wall clock (Instant::now()) for
-        // bot decision scheduling (last_decision_time, last_weapon_switch_time,
-        // stuck detection).  Replacing with a logical tick counter would make
-        // the AI fully deterministic but requires refactoring BotController
-        // timing fields.  For now we keep Instant-based timing and only fix
-        // the RNG source.
-        let current_time = Instant::now();
         let now_ms = server_instance.get_server_timestamp_ms();
         let predictive_models = runtime_predictive_models();
 
@@ -250,6 +298,7 @@ impl OptimizedBotAI {
         // Get list of bot IDs (reuse allocation)
         thread_local! {
             static BOT_IDS: RefCell<Vec<PlayerID>> = const { RefCell::new(Vec::new()) };
+            static HUMAN_POSITIONS: RefCell<Vec<(f32, f32)>> = const { RefCell::new(Vec::new()) };
         }
         let mut bot_ids = BOT_IDS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
         bot_ids.clear();
@@ -265,7 +314,25 @@ impl OptimizedBotAI {
             return;
         }
 
-        trace!("Frame {}: Processing {} bots", frame_count, bot_ids.len());
+        // Collect human player positions for LOD classification.
+        // A human player is any live player whose ID is NOT in bot_players.
+        let mut human_positions =
+            HUMAN_POSITIONS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+        human_positions.clear();
+        server_instance
+            .player_manager
+            .for_each_player(|id, player| {
+                if player.alive && !server_instance.bot_players.contains_key(id) {
+                    human_positions.push((player.x, player.y));
+                }
+            });
+
+        trace!(
+            "Frame {}: Processing {} bots, {} human positions for LOD",
+            frame_count,
+            bot_ids.len(),
+            human_positions.len()
+        );
 
         // Get current match info
         let match_info_guard = server_instance.match_info.read();
@@ -351,7 +418,7 @@ impl OptimizedBotAI {
                 }
             });
 
-        // Process ALL bots every frame
+        // Process bots with LOD-based tick skipping
         for bot_id in bot_ids.iter() {
             // Build an owned snapshot first so any read guard is dropped before mutable access.
             let bot_snapshot = {
@@ -379,78 +446,129 @@ impl OptimizedBotAI {
                 }
             };
 
+            // ── LOD classification ───────────────────────────────────
+            // Compute squared distance to nearest human player.
+            let min_dist_sq_to_human = if human_positions.is_empty() {
+                // No humans online: treat all bots as Near so they still play.
+                0.0
+            } else {
+                let mut best = f32::MAX;
+                for &(hx, hy) in &human_positions {
+                    let dx = bot_snapshot.x - hx;
+                    let dy = bot_snapshot.y - hy;
+                    let d = dx * dx + dy * dy;
+                    if d < best {
+                        best = d;
+                    }
+                }
+                best
+            };
+            let lod_tier = BotAiLodTier::classify(min_dist_sq_to_human);
+
+            // Skip this bot entirely if the LOD tier says so.
+            if !lod_tier.should_process(frame_count) {
+                continue;
+            }
+
             // Update bot controller
             if let Some(mut bot_controller_entry) = server_instance.bot_players.get_mut(bot_id) {
                 let bot_controller = bot_controller_entry.value_mut();
 
-                // Only make new decisions at intervals, but always generate movement
-                if current_time.duration_since(bot_controller.last_decision_time)
-                    > BOT_MOVEMENT_CHANGE_INTERVAL
-                {
-                    bot_controller.last_decision_time = current_time;
+                // Tick-based decision interval check
+                let ticks_since_decision =
+                    frame_count.saturating_sub(bot_controller.last_decision_tick);
+                if ticks_since_decision >= BOT_DECISION_INTERVAL_TICKS {
+                    bot_controller.last_decision_tick = frame_count;
+                    // Keep the Instant for any legacy/external code that might reference it.
+                    bot_controller.last_decision_time = Instant::now();
 
-                    if BOT_SIMPLE_MOVEMENT_ONLY {
-                        Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
-                    } else if game_mode == fb::GameModeType::CaptureTheFlag
-                        && match_state == fb::MatchStateType::Active
-                    {
-                        let enemies = if bot_snapshot.team_id == 1 {
-                            &enemies_team1
-                        } else {
-                            &enemies_team2
-                        };
-                        Self::make_ctf_decision(
-                            bot_controller,
-                            &bot_snapshot,
-                            flag_states,
-                            &live_players_by_id,
-                            team_objectives,
-                            enemies,
-                            if bot_snapshot.team_id == 1 {
-                                commander_attack_bias_team1
+                    match lod_tier {
+                        BotAiLodTier::Far => {
+                            // Far tier: basic wander only
+                            Self::make_far_wander_decision(bot_controller, &bot_snapshot);
+                        }
+                        BotAiLodTier::Medium => {
+                            // Medium tier: simplified decisions (no CTF objective, no commander)
+                            Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
+                        }
+                        BotAiLodTier::Near => {
+                            // Near tier: full AI
+                            if BOT_SIMPLE_MOVEMENT_ONLY {
+                                Self::make_simple_movement_decision(
+                                    bot_controller,
+                                    &bot_snapshot,
+                                );
+                            } else if game_mode == fb::GameModeType::CaptureTheFlag
+                                && match_state == fb::MatchStateType::Active
+                            {
+                                let enemies = if bot_snapshot.team_id == 1 {
+                                    &enemies_team1
+                                } else {
+                                    &enemies_team2
+                                };
+                                Self::make_ctf_decision(
+                                    bot_controller,
+                                    &bot_snapshot,
+                                    flag_states,
+                                    &live_players_by_id,
+                                    team_objectives,
+                                    enemies,
+                                    if bot_snapshot.team_id == 1 {
+                                        commander_attack_bias_team1
+                                    } else {
+                                        commander_attack_bias_team2
+                                    },
+                                );
                             } else {
-                                commander_attack_bias_team2
-                            },
-                        );
-                    } else {
-                        Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
+                                Self::make_simple_movement_decision(
+                                    bot_controller,
+                                    &bot_snapshot,
+                                );
+                            }
+
+                            let commander_waypoint = if bot_snapshot.team_id == 1 {
+                                commander_waypoint_team1
+                            } else {
+                                commander_waypoint_team2
+                            };
+                            Self::apply_commander_waypoint(
+                                bot_controller,
+                                &bot_snapshot,
+                                commander_waypoint,
+                            );
+                        }
                     }
 
-                    let commander_waypoint = if bot_snapshot.team_id == 1 {
-                        commander_waypoint_team1
-                    } else {
-                        commander_waypoint_team2
-                    };
-                    Self::apply_commander_waypoint(
-                        bot_controller,
-                        &bot_snapshot,
-                        commander_waypoint,
-                    );
-
                     debug!(
-                        "Bot {} made new decision: {:?} targeting {:?}",
+                        "Bot {} made new decision: {:?} targeting {:?} (LOD={:?})",
                         bot_snapshot.username,
                         bot_controller.behavior_state,
-                        bot_controller.target_position
+                        bot_controller.target_position,
+                        lod_tier
                     );
                 }
 
                 // Check if bot is stuck before generating input
                 Self::check_stuck_status(bot_controller, &bot_snapshot, delta_time);
 
-                // Always generate input based on current objective
+                // Generate input - Far bots get simplified movement only
                 let enemies = if bot_snapshot.team_id == 1 {
                     &enemies_team1
                 } else {
                     &enemies_team2
                 };
-                let input = Self::generate_combat_input(
-                    &bot_snapshot,
-                    bot_controller,
-                    server_instance,
-                    game_mode,
-                    enemies,
-                );
+                let input = if lod_tier == BotAiLodTier::Far {
+                    Self::generate_simple_movement_input(&bot_snapshot, bot_controller)
+                } else {
+                    Self::generate_combat_input(
+                        &bot_snapshot,
+                        bot_controller,
+                        server_instance,
+                        game_mode,
+                        enemies,
+                        frame_count,
+                    )
+                };
 
                 // Queue the input
                 if let Some(mut player_state_entry) =
@@ -491,7 +609,65 @@ impl OptimizedBotAI {
         }
 
         drop(match_info_guard);
+        HUMAN_POSITIONS.with(|cell| *cell.borrow_mut() = human_positions);
         BOT_IDS.with(|cell| *cell.borrow_mut() = bot_ids);
+    }
+
+    /// Far-tier wander: pick a random nearby target and patrol. No combat, no
+    /// objective logic. Minimal CPU cost.
+    fn make_far_wander_decision(
+        bot_controller: &mut BotController,
+        bot_state: &BotSnapshotOwned,
+    ) {
+        let (target_x, target_y) = with_bot_rng(|rng| {
+            (
+                (bot_state.x + rng.gen_range_f32(-200.0, 200.0))
+                    .clamp(WORLD_MIN_X + 50.0, WORLD_MAX_X - 50.0),
+                (bot_state.y + rng.gen_range_f32(-200.0, 200.0))
+                    .clamp(WORLD_MIN_Y + 50.0, WORLD_MAX_Y - 50.0),
+            )
+        });
+        bot_controller.target_position = Some(Vec2::new(target_x, target_y));
+        bot_controller.behavior_state = BotBehaviorState::Patrolling;
+    }
+
+    /// Generate a simple movement-only input (no combat, no abilities).
+    /// Used for Far LOD tier bots.
+    fn generate_simple_movement_input(
+        bot_state: &BotSnapshotOwned,
+        bot_controller: &BotController,
+    ) -> PlayerInputData {
+        let mut input = PlayerInputData {
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or(Duration::ZERO)
+                .as_millis() as u64,
+            sequence: bot_state.last_processed_input_sequence.wrapping_add(1),
+            move_forward: false,
+            move_backward: false,
+            move_left: false,
+            move_right: false,
+            shooting: false,
+            reload: false,
+            rotation: bot_state.rotation,
+            melee_attack: false,
+            change_weapon_slot: 0,
+            use_ability_slot: 0,
+            ping_x: 0.0,
+            ping_y: 0.0,
+        };
+
+        if let Some(target_pos) = bot_controller.target_position {
+            let dx = target_pos.x - bot_state.x;
+            let dy = target_pos.y - bot_state.y;
+            let dist_sq = dx * dx + dy * dy;
+            input.rotation = dy.atan2(dx);
+            if dist_sq > BOT_MOVEMENT_TOLERANCE * BOT_MOVEMENT_TOLERANCE {
+                input.move_forward = true;
+            }
+        }
+
+        input
     }
 
     /// Make CTF-specific decisions
@@ -934,18 +1110,19 @@ impl OptimizedBotAI {
         selected.map(|(_, candidate)| candidate)
     }
 
-    /// Generate enhanced combat input with shooting and movement
+    /// Generate enhanced combat input with shooting and movement.
+    /// Uses tick-based timing for weapon switch cooldowns and reaction time.
     fn generate_combat_input(
         bot_state: &BotSnapshotOwned,
         bot_controller: &mut BotController,
         server_instance: &MassiveGameServer,
         game_mode: fb::GameModeType,
         enemies: &[EnemySnapshot],
+        frame_count: u64,
     ) -> PlayerInputData {
-        let current_time = Instant::now(); // TODO(determinism): wall-clock timing for weapon cooldowns
-        let can_switch_weapon =
-            current_time.duration_since(bot_controller.last_weapon_switch_time)
-                >= BOT_WEAPON_SWITCH_COOLDOWN;
+        let can_switch_weapon = frame_count
+            .saturating_sub(bot_controller.last_weapon_switch_tick)
+            >= BOT_WEAPON_SWITCH_COOLDOWN_TICKS;
 
         let mut input = PlayerInputData {
             timestamp: SystemTime::now()
@@ -1118,8 +1295,10 @@ impl OptimizedBotAI {
             };
 
             if nearest_enemy_dist < shoot_range.powi(2) {
-                // Apply reaction time
-                if bot_controller.last_decision_time.elapsed() > BOT_REACTION_TIME {
+                // Apply reaction time (tick-based)
+                let ticks_since_decision =
+                    frame_count.saturating_sub(bot_controller.last_decision_tick);
+                if ticks_since_decision >= BOT_REACTION_TIME_TICKS {
                     input.shooting = with_bot_rng(|rng| rng.gen_bool(0.7)); // 70% chance to shoot when in range
 
                     // Aggressive bots prefer melee at very close range
@@ -1209,7 +1388,7 @@ impl OptimizedBotAI {
         }
 
         if input.change_weapon_slot != 0 {
-            bot_controller.last_weapon_switch_time = current_time;
+            bot_controller.last_weapon_switch_tick = frame_count;
         }
 
         input
@@ -1294,9 +1473,11 @@ impl OptimizedBotAI {
                     bot_controller.stuck_check_position = current_pos;
                     bot_controller.last_position = current_pos;
 
-                    // Force a new decision soon
-                    bot_controller.last_decision_time =
-                        Instant::now() - BOT_MOVEMENT_CHANGE_INTERVAL + Duration::from_millis(500);
+                    // Force a new decision soon (set tick so only ~0.5s worth
+                    // of interval remains before next decision).
+                    bot_controller.last_decision_tick = bot_controller
+                        .last_decision_tick
+                        .saturating_sub(BOT_DECISION_INTERVAL_TICKS / 2);
 
                     debug!(
                         "Bot {} unstuck - new target: ({:.0}, {:.0})",
@@ -1441,5 +1622,103 @@ mod tests {
     fn stuck_time_threshold_is_multiple_of_check_interval() {
         // 2.0 / 0.5 = 4 checks before stuck is triggered
         assert!((BOT_STUCK_TIME_THRESHOLD / BOT_STUCK_CHECK_INTERVAL - 4.0).abs() < f32::EPSILON);
+    }
+
+    // ── AI LOD tier classification tests ─────────────────────────
+
+    #[test]
+    fn lod_near_within_aoi() {
+        // 100 units away: well within AoI (520u)
+        let dist_sq = 100.0f32 * 100.0;
+        assert_eq!(BotAiLodTier::classify(dist_sq), BotAiLodTier::Near);
+    }
+
+    #[test]
+    fn lod_near_at_aoi_boundary() {
+        // Exactly at AoI boundary (520u)
+        let dist_sq = BOT_LOD_NEAR_DISTANCE * BOT_LOD_NEAR_DISTANCE;
+        assert_eq!(BotAiLodTier::classify(dist_sq), BotAiLodTier::Near);
+    }
+
+    #[test]
+    fn lod_medium_just_beyond_aoi() {
+        // Just beyond AoI (521u) -> Medium tier
+        let dist_sq = 521.0f32 * 521.0;
+        assert_eq!(BotAiLodTier::classify(dist_sq), BotAiLodTier::Medium);
+    }
+
+    #[test]
+    fn lod_medium_at_medium_boundary() {
+        // Exactly at medium boundary (1500u) -> still Medium
+        let dist_sq = BOT_LOD_MEDIUM_DISTANCE * BOT_LOD_MEDIUM_DISTANCE;
+        assert_eq!(BotAiLodTier::classify(dist_sq), BotAiLodTier::Medium);
+    }
+
+    #[test]
+    fn lod_far_beyond_medium() {
+        // 1501 units -> Far tier
+        let dist_sq = 1501.0f32 * 1501.0;
+        assert_eq!(BotAiLodTier::classify(dist_sq), BotAiLodTier::Far);
+    }
+
+    #[test]
+    fn lod_far_very_distant() {
+        let dist_sq = 5000.0f32 * 5000.0;
+        assert_eq!(BotAiLodTier::classify(dist_sq), BotAiLodTier::Far);
+    }
+
+    #[test]
+    fn lod_near_zero_distance() {
+        // Bot co-located with human
+        assert_eq!(BotAiLodTier::classify(0.0), BotAiLodTier::Near);
+    }
+
+    // ── LOD should_process tick skipping tests ──────────────────
+
+    #[test]
+    fn lod_near_processes_every_tick() {
+        for frame in 0..16 {
+            assert!(
+                BotAiLodTier::Near.should_process(frame),
+                "Near tier should process frame {}",
+                frame
+            );
+        }
+    }
+
+    #[test]
+    fn lod_medium_processes_every_4th_tick() {
+        let processed: Vec<u64> = (0..16)
+            .filter(|f| BotAiLodTier::Medium.should_process(*f))
+            .collect();
+        assert_eq!(processed, vec![0, 4, 8, 12]);
+    }
+
+    #[test]
+    fn lod_far_processes_every_8th_tick() {
+        let processed: Vec<u64> = (0..24)
+            .filter(|f| BotAiLodTier::Far.should_process(*f))
+            .collect();
+        assert_eq!(processed, vec![0, 8, 16]);
+    }
+
+    // ── Tick-based timing constants sanity checks ────────────────
+
+    #[test]
+    fn decision_interval_ticks_matches_half_second() {
+        // 30 ticks at 60Hz = 0.5s
+        assert_eq!(BOT_DECISION_INTERVAL_TICKS, 30);
+    }
+
+    #[test]
+    fn reaction_time_ticks_matches_100ms() {
+        // 6 ticks at 60Hz = 100ms
+        assert_eq!(BOT_REACTION_TIME_TICKS, 6);
+    }
+
+    #[test]
+    fn weapon_switch_cooldown_ticks_matches_1s() {
+        // 60 ticks at 60Hz = 1.0s
+        assert_eq!(BOT_WEAPON_SWITCH_COOLDOWN_TICKS, 60);
     }
 }
