@@ -349,7 +349,7 @@ pub fn start_quic_runtime(
             let Some(incoming) = endpoint_for_accept.accept().await else {
                 break;
             };
-            let remote_addr = connecting.remote_address();
+            let remote_addr = incoming.remote_address();
             let remote_ip = remote_addr.ip();
 
             // Per-IP connection rate limiting.
@@ -359,8 +359,8 @@ pub fn start_quic_runtime(
                     remote_ip
                 );
                 metrics::record_quic_connection_rejected("rate_limited");
-                // Drop the Connecting future to refuse the connection.
-                drop(connecting);
+                // Drop the Incoming to refuse the connection.
+                drop(incoming);
                 continue;
             }
 
