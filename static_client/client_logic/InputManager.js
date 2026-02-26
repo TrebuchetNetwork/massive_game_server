@@ -116,12 +116,23 @@ export function createInputManager({
     let inputSequence = 0;
     let pendingInputs = [];
     let lastShotFeedbackTime = 0;
+    let lastPredictedWeaponSoundAt = 0;
 
     // Tactical pings
     const tacticalPings = [];
     let lastPingChatAt = 0;
     const TACTICAL_PING_MS = 6200;
     const TACTICAL_PING_CHAT_THROTTLE_MS = 900;
+
+    function getPredictedWeaponSoundIntervalMs(weaponType) {
+        switch (weaponType) {
+            case GP.WeaponType.Pistol: return 170;
+            case GP.WeaponType.Shotgun: return 420;
+            case GP.WeaponType.Rifle: return 95;
+            case GP.WeaponType.Sniper: return 680;
+            default: return 180;
+        }
+    }
 
     // ── Virtual crosshair ─────────────────────────────────────────────
 
@@ -566,6 +577,34 @@ export function createInputManager({
             ping_x: Number(inputState.ping_x) || 0,
             ping_y: Number(inputState.ping_y) || 0,
         };
+
+        const audioManager = getAudioManager();
+        const canEmitPredictedWeaponSound =
+            !!audioManager &&
+            currentFrameInput.shooting &&
+            localPlayerState.weapon !== GP.WeaponType.Melee &&
+            localPlayerState.alive &&
+            (Number(localPlayerState.ammo) || 0) > 0 &&
+            ((localPlayerState.reload_progress ?? -1) < 0);
+        if (canEmitPredictedWeaponSound) {
+            const intervalMs = getPredictedWeaponSoundIntervalMs(localPlayerState.weapon);
+            if ((now - lastPredictedWeaponSoundAt) >= intervalMs) {
+                audioManager.playWeaponSound(
+                    localPlayerState.weapon,
+                    {
+                        x: Number(localPlayerState.x) || 0,
+                        y: Number(localPlayerState.y) || 0,
+                    },
+                    true,
+                    {
+                        predicted: true,
+                        bypassLimiter: true,
+                        volumeScale: 0.9,
+                    }
+                );
+                lastPredictedWeaponSoundAt = now;
+            }
+        }
 
         if (currentFrameInput.shooting && now - lastShotFeedbackTime >= 110) {
             cameraCombatImpulseRef.value = Math.min(

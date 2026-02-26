@@ -14,15 +14,18 @@ export function createProtocolHandler({
     isWallDebugEnabled,
     logWallDebug,
 }) {
+    const InitialStateType = GP.InitialStateMessage || GP.InitialState;
+    const DeltaStateType = GP.DeltaStateMessage || GP.DeltaState;
+
     // ── Feature-detection constants ──────────────────────────────────
     const DELTA_SUPPORTS_REMOVED_PLAYER_IDS =
-        typeof GP.DeltaState.prototype.removedPlayerIdsLength === 'function';
+        typeof DeltaStateType?.prototype?.removedPlayerIdsLength === 'function';
     const DELTA_SUPPORTS_CHANGED_PLAYER_FIELDS =
-        typeof GP.DeltaState.prototype.changedPlayerFieldsLength === 'function';
+        typeof DeltaStateType?.prototype?.changedPlayerFieldsLength === 'function';
     const DELTA_SUPPORTS_UPDATED_WALLS =
-        typeof GP.DeltaState.prototype.updatedWallsLength === 'function';
+        typeof DeltaStateType?.prototype?.updatedWallsLength === 'function';
     const DELTA_SUPPORTS_FULL_WALLS =
-        typeof GP.DeltaState.prototype.wallsLength === 'function';
+        typeof DeltaStateType?.prototype?.wallsLength === 'function';
 
     // ── Delta field bitmask constants ────────────────────────────────
     const PLAYER_DELTA_FIELD_POSITION_ROTATION = 1;
@@ -39,8 +42,8 @@ export function createProtocolHandler({
     const flatbufferParseScratch = {
         gameMessage:          new GP.GameMessage(),
         welcomeMessage:       new GP.WelcomeMessage(),
-        initialStateMessage:  new GP.InitialState(),
-        deltaStateMessage:    new GP.DeltaState(),
+        initialStateMessage:  new InitialStateType(),
+        deltaStateMessage:    new DeltaStateType(),
         chatMessage:          new GP.ChatMessage(),
         matchInfo:            new GP.MatchInfo(),
         playerState:          new GP.PlayerState(),
@@ -169,7 +172,9 @@ export function createProtocolHandler({
             target.weapon = player.weapon();
             target.ammo = player.ammo();
             target.reload_progress = player.reloadProgress();
-            target.weapon_swap_progress = player.weaponSwapProgress();
+            target.weapon_swap_progress = typeof player.weaponSwapProgress === 'function'
+                ? player.weaponSwapProgress()
+                : (Number(target.weapon_swap_progress) || 0);
         }
         if (hasScoreDelta) {
             target.score = player.score();
@@ -180,7 +185,9 @@ export function createProtocolHandler({
         if (hasPowerupDelta) {
             target.speed_boost_remaining = player.speedBoostRemaining();
             target.damage_boost_remaining = player.damageBoostRemaining();
-            target.invulnerable_remaining = player.invulnerableRemaining();
+            target.invulnerable_remaining = typeof player.invulnerableRemaining === 'function'
+                ? player.invulnerableRemaining()
+                : (Number(target.invulnerable_remaining) || 0);
         }
         if (hasShieldDelta) {
             target.shield_current = player.shieldCurrent();
@@ -263,6 +270,7 @@ export function createProtocolHandler({
         target.id = projectile.id();
         target.x = projectile.x();
         target.y = projectile.y();
+        target.owner_id = typeof projectile.ownerId === 'function' ? (projectile.ownerId() || '') : '';
         target.weapon_type = projectile.weaponType();
         target.velocity_x = projectile.velocityX();
         target.velocity_y = projectile.velocityY();
@@ -433,13 +441,27 @@ export function createProtocolHandler({
                                 damage_boost_remaining: player.damageBoostRemaining(),
                                 shield_current: player.shieldCurrent(), shield_max: player.shieldMax(),
                                 is_carrying_flag_team_id: player.isCarryingFlagTeamId(),
-                                ability_1_cooldown_remaining: player.ability1CooldownRemaining(),
-                                ability_2_cooldown_remaining: player.ability2CooldownRemaining(),
-                                invulnerable_remaining: player.invulnerableRemaining(),
-                                secondary_weapon: player.secondaryWeapon(),
-                                weapon_swap_progress: player.weaponSwapProgress(),
-                                current_streak: player.currentStreak(),
-                                primary_weapon: player.primaryWeapon(),
+                                ability_1_cooldown_remaining: typeof player.ability1CooldownRemaining === 'function'
+                                    ? player.ability1CooldownRemaining()
+                                    : 0,
+                                ability_2_cooldown_remaining: typeof player.ability2CooldownRemaining === 'function'
+                                    ? player.ability2CooldownRemaining()
+                                    : 0,
+                                invulnerable_remaining: typeof player.invulnerableRemaining === 'function'
+                                    ? player.invulnerableRemaining()
+                                    : 0,
+                                secondary_weapon: typeof player.secondaryWeapon === 'function'
+                                    ? player.secondaryWeapon()
+                                    : player.weapon(),
+                                weapon_swap_progress: typeof player.weaponSwapProgress === 'function'
+                                    ? player.weaponSwapProgress()
+                                    : 0,
+                                current_streak: typeof player.currentStreak === 'function'
+                                    ? player.currentStreak()
+                                    : 0,
+                                primary_weapon: typeof player.primaryWeapon === 'function'
+                                    ? player.primaryWeapon()
+                                    : player.weapon(),
                             };
                         }
                         if (writeIdx > 0) { rows.length = writeIdx; initialStateData.players = rows; }
@@ -455,6 +477,7 @@ export function createProtocolHandler({
                             if (!projectile) continue;
                             rows[writeIdx++] = {
                                 id: projectile.id(), x: projectile.x(), y: projectile.y(),
+                                owner_id: typeof projectile.ownerId === 'function' ? (projectile.ownerId() || '') : '',
                                 weapon_type: projectile.weaponType(),
                                 velocity_x: projectile.velocityX(), velocity_y: projectile.velocityY()
                             };
@@ -498,8 +521,10 @@ export function createProtocolHandler({
                         if (writeIdx > 0) { rows.length = writeIdx; initialStateData.flag_states = rows; }
                     }
 
-                    const zoneLength = initial.zonesLength();
-                    if (zoneLength > 0) {
+                    const zoneLength = typeof initial.zonesLength === 'function'
+                        ? initial.zonesLength()
+                        : 0;
+                    if (zoneLength > 0 && typeof initial.zones === 'function') {
                         const rows = new Array(zoneLength);
                         let writeIdx = 0;
                         for (let i = 0; i < zoneLength; i += 1) {
@@ -571,8 +596,12 @@ export function createProtocolHandler({
                                 damage_boost_remaining: player.damageBoostRemaining(),
                                 shield_current: player.shieldCurrent(), shield_max: player.shieldMax(),
                                 is_carrying_flag_team_id: player.isCarryingFlagTeamId(),
-                                invulnerable_remaining: player.invulnerableRemaining(),
-                                weapon_swap_progress: player.weaponSwapProgress(),
+                                invulnerable_remaining: typeof player.invulnerableRemaining === 'function'
+                                    ? player.invulnerableRemaining()
+                                    : 0,
+                                weapon_swap_progress: typeof player.weaponSwapProgress === 'function'
+                                    ? player.weaponSwapProgress()
+                                    : 0,
                             };
                         }
                         if (writeIdx > 0) { rows.length = writeIdx; deltaStateData.players = rows; }
@@ -588,6 +617,7 @@ export function createProtocolHandler({
                             if (!projectile) continue;
                             rows[writeIdx++] = {
                                 id: projectile.id(), x: projectile.x(), y: projectile.y(),
+                                owner_id: typeof projectile.ownerId === 'function' ? (projectile.ownerId() || '') : '',
                                 weapon_type: projectile.weaponType(),
                                 velocity_x: projectile.velocityX(), velocity_y: projectile.velocityY()
                             };

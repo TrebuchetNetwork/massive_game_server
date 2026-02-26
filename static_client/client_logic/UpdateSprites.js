@@ -463,6 +463,8 @@ export function createUpdateSprites(getCtx) {
         let projectileInstanceOffset = 0;
         const projectileLodSummary = createLodSummaryCounter();
         const projectileDotCullStride = getProjectileDotCullStride();
+        const LOCAL_PROJECTILE_OVERFLOW_CAP = 24;
+        let localProjectileOverflowCount = 0;
         const workerProjectileCullGraceMs = Math.max(
             PROJECTILE_WORKER_CULL_GRACE_MS,
             getWorkerCullDispatchIntervalMs() * 3
@@ -491,7 +493,15 @@ export function createUpdateSprites(getCtx) {
             const pdxToLocal = px - localAnchorX;
             const pdyToLocal = py - localAnchorY;
             const projectileDistanceSq = (pdxToLocal * pdxToLocal) + (pdyToLocal * pdyToLocal);
-            const isPriorityProjectile = projectileDistanceSq <= PROJECTILE_PRIORITY_DISTANCE_SQ;
+            const projectileOwnerId = projectile.owner_id ?? null;
+            const isLocalOwnedProjectile = !!(
+                myPlayerId &&
+                projectileOwnerId &&
+                String(projectileOwnerId) === String(myPlayerId)
+            );
+            const isPriorityProjectile =
+                isLocalOwnedProjectile ||
+                projectileDistanceSq <= PROJECTILE_PRIORITY_DISTANCE_SQ;
             const projectileLodTier = resolveRenderLodTier(
                 projectileDistanceSq,
                 PROJECTILE_LOD_MEDIUM_DISTANCE_SQ,
@@ -499,6 +509,12 @@ export function createUpdateSprites(getCtx) {
                 PROJECTILE_LOD_DOT_DISTANCE_SQ,
                 { isPriority: isPriorityProjectile, lodScale }
             );
+            const markProjectileVisible = () => {
+                if (isLocalOwnedProjectile && visibleProjectiles >= projectileRenderCap) {
+                    localProjectileOverflowCount += 1;
+                }
+                visibleProjectiles += 1;
+            };
             const inView =
                 px >= projectileCullLeft &&
                 px <= projectileCullRight &&
@@ -527,10 +543,17 @@ export function createUpdateSprites(getCtx) {
                     }
                 }
             } else if (visibleProjectiles >= projectileRenderCap) {
+                if (
+                    isLocalOwnedProjectile &&
+                    localProjectileOverflowCount < LOCAL_PROJECTILE_OVERFLOW_CAP
+                ) {
+                    // Keep locally-fired projectiles visible even when global cap is reached.
+                } else {
                 if (sprite && !useWebGPUProjectiles) {
                     sprite.visible = false;
                 }
                 return;
+                }
             }
             if (
                 projectileLodTier === 'dot' &&
@@ -546,7 +569,7 @@ export function createUpdateSprites(getCtx) {
                         sprite.alpha = 0.58;
                     }
                     countLodTier(projectileLodSummary, projectileLodTier);
-                    visibleProjectiles += 1;
+                    markProjectileVisible();
                 }
                 return;
             }
@@ -561,7 +584,7 @@ export function createUpdateSprites(getCtx) {
                     px,
                     py
                 );
-                visibleProjectiles += 1;
+                markProjectileVisible();
                 return;
             }
 
@@ -579,7 +602,7 @@ export function createUpdateSprites(getCtx) {
                         if (sprite.position.y !== py) sprite.position.y = py;
                         if (!sprite.visible) sprite.visible = true;
                         countLodTier(projectileLodSummary, projectileLodTier);
-                        visibleProjectiles += 1;
+                        markProjectileVisible();
                         return;
                     }
                 }
@@ -596,7 +619,7 @@ export function createUpdateSprites(getCtx) {
                 )
             ) {
                 countLodTier(projectileLodSummary, projectileLodTier);
-                visibleProjectiles += 1;
+                markProjectileVisible();
             }
         };
 
@@ -607,6 +630,18 @@ export function createUpdateSprites(getCtx) {
                 if (!projectile) return;
                 processProjectileCandidate(projectileId, projectile);
             });
+            if (myPlayerId) {
+                // Ensure newly-fired local projectiles are still considered even if worker culling
+                // has not selected them yet in the current result batch.
+                for (const [projectileId, projectile] of projectiles) {
+                    if (!projectile) continue;
+                    if (workerProjectileSet.has(projectileId)) continue;
+                    if (projectileWorkerCullGraceUntil.has(projectileId)) continue;
+                    const ownerId = projectile.owner_id ?? '';
+                    if (!ownerId || String(ownerId) !== String(myPlayerId)) continue;
+                    processProjectileCandidate(projectileId, projectile);
+                }
+            }
             projectileWorkerCullGraceUntil.forEach((graceUntilMs, projectileId) => {
                 if (workerProjectileSet.has(projectileId)) return;
                 if (graceUntilMs <= frameNowMs) {

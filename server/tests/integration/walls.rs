@@ -159,6 +159,10 @@ async fn duplicate_wall_destruction_is_ignored() {
 
     let wall_id = create_destructible_wall(&test_ctx, 100.0, 100.0, 50.0, 50.0, 100);
 
+    // Rebuild the wall spatial index so the new wall is visible to projectile collision queries.
+    let all_walls = server.collect_all_walls_current_state();
+    server.wall_spatial_index.rebuild(&all_walls, 0);
+
     fire_projectile_at_wall(&test_ctx, wall_id, 100, attacker_id_str);
     fire_projectile_at_wall(&test_ctx, wall_id, 100, attacker_id_str);
 

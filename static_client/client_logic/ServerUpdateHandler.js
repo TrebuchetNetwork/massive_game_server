@@ -8,6 +8,160 @@
  */
 
 export function createServerUpdateHandler(getCtx) {
+    const LOCAL_PLAYER_BASE_SPEED = 150;
+    const LOCAL_PLAYER_SPEED_BOOST_SPEED = 225;
+    const LOCAL_SPECTATOR_SPEED_MULTIPLIER = 1.35;
+    const LOCAL_DASH_SPEED_MULTIPLIER = 2.0;
+    const LOCAL_DODGE_SPEED_MULTIPLIER = 1.6;
+    const LOCAL_RECON_DEADZONE_SQ = 1.0;
+    const LOCAL_RECON_SOFT_SNAP_DISTANCE_SQ = 300 * 300;
+    const LOCAL_RECON_HARD_SNAP_DISTANCE_SQ = 520 * 520;
+    const LOCAL_RECON_ROTATION_DEADZONE = 0.01;
+    const LOCAL_REPLAY_STEP_MIN_SEC = 1 / 240;
+    const LOCAL_REPLAY_STEP_MAX_SEC = 0.125;
+    const LOCAL_REPLAY_FALLBACK_STEP_SEC = 1 / 30;
+
+    function clampReplayStepSec(valueSec) {
+        if (!Number.isFinite(valueSec)) return LOCAL_REPLAY_FALLBACK_STEP_SEC;
+        return Math.max(LOCAL_REPLAY_STEP_MIN_SEC, Math.min(LOCAL_REPLAY_STEP_MAX_SEC, valueSec));
+    }
+
+    function prunePendingInputsBySequence(pendingInputs, lastProcessedInputSequence) {
+        if (!Array.isArray(pendingInputs) || pendingInputs.length === 0) {
+            return [];
+        }
+        if (!Number.isFinite(lastProcessedInputSequence)) {
+            return pendingInputs;
+        }
+        return pendingInputs.filter((input) => (Number(input?.sequence) || 0) > lastProcessedInputSequence);
+    }
+
+    function applyInputMotionStepToPosition(replayState, input) {
+        if (!replayState || !input) return;
+        const dtSec = clampReplayStepSec(input.dtSec);
+        const rotation = Number.isFinite(input.rotation) ? input.rotation : replayState.rotation;
+        if (Number.isFinite(rotation)) {
+            replayState.rotation = rotation;
+        }
+
+        let forwardIntent = 0;
+        let strafeIntent = 0;
+        if (input.move_forward) forwardIntent += 1;
+        if (input.move_backward) forwardIntent -= 1;
+        if (input.move_left) strafeIntent -= 1;
+        if (input.move_right) strafeIntent += 1;
+
+        let effectiveSpeed = replayState.speed_boost_remaining > 0
+            ? LOCAL_PLAYER_SPEED_BOOST_SPEED
+            : LOCAL_PLAYER_BASE_SPEED;
+        if (replayState.is_spectator) {
+            effectiveSpeed = LOCAL_PLAYER_BASE_SPEED * LOCAL_SPECTATOR_SPEED_MULTIPLIER;
+        } else {
+            if ((replayState.dash_remaining || 0) > 0) {
+                effectiveSpeed *= LOCAL_DASH_SPEED_MULTIPLIER;
+            }
+            if ((replayState.dodge_roll_remaining || 0) > 0) {
+                effectiveSpeed *= LOCAL_DODGE_SPEED_MULTIPLIER;
+            }
+            if (
+                forwardIntent === 0 &&
+                strafeIntent === 0 &&
+                (((replayState.dash_remaining || 0) > 0) || ((replayState.dodge_roll_remaining || 0) > 0))
+            ) {
+                forwardIntent = 1;
+            }
+        }
+
+        if (forwardIntent === 0 && strafeIntent === 0) {
+            return;
+        }
+
+        const magnitude = Math.hypot(forwardIntent, strafeIntent);
+        if (magnitude <= 0) return;
+        const normForward = forwardIntent / magnitude;
+        const normStrafe = strafeIntent / magnitude;
+        const cosRot = Math.cos(replayState.rotation || 0);
+        const sinRot = Math.sin(replayState.rotation || 0);
+        const forwardX = cosRot * normForward;
+        const forwardY = sinRot * normForward;
+        const strafeX = -sinRot * normStrafe;
+        const strafeY = cosRot * normStrafe;
+        replayState.x += (forwardX + strafeX) * effectiveSpeed * dtSec;
+        replayState.y += (forwardY + strafeY) * effectiveSpeed * dtSec;
+    }
+
+    function replayPendingInputsFromServerState(serverState, pendingInputs) {
+        const replayState = {
+            x: Number.isFinite(serverState?.x) ? serverState.x : 0,
+            y: Number.isFinite(serverState?.y) ? serverState.y : 0,
+            rotation: Number.isFinite(serverState?.rotation) ? serverState.rotation : 0,
+            speed_boost_remaining: Number(serverState?.speed_boost_remaining) || 0,
+            dash_remaining: Number(serverState?.dash_remaining) || 0,
+            dodge_roll_remaining: Number(serverState?.dodge_roll_remaining) || 0,
+            is_spectator: !!serverState?.is_spectator,
+        };
+        if (!Array.isArray(pendingInputs) || pendingInputs.length === 0) {
+            return replayState;
+        }
+
+        const replayCount = pendingInputs.length;
+        for (let i = 0; i < replayCount; i += 1) {
+            const input = pendingInputs[i];
+            if (!input) continue;
+            const currentTs = Number(input.timestamp);
+            const nextTs = i + 1 < replayCount ? Number(pendingInputs[i + 1]?.timestamp) : Number.NaN;
+            const dtSec = Number.isFinite(currentTs) && Number.isFinite(nextTs)
+                ? (nextTs - currentTs) / 1000
+                : LOCAL_REPLAY_FALLBACK_STEP_SEC;
+            applyInputMotionStepToPosition(replayState, {
+                ...input,
+                dtSec: clampReplayStepSec(dtSec),
+            });
+        }
+
+        return replayState;
+    }
+
+    function reconcileLocalPlayerStateWithPendingInputs(localPlayerState, previousPredictedX, previousPredictedY, previousPredictedRotation, pendingInputs, normalizeAngle) {
+        const replayState = replayPendingInputsFromServerState(localPlayerState, pendingInputs);
+        const targetX = Number.isFinite(replayState.x) ? replayState.x : previousPredictedX;
+        const targetY = Number.isFinite(replayState.y) ? replayState.y : previousPredictedY;
+        const targetRotation = Number.isFinite(replayState.rotation) ? replayState.rotation : previousPredictedRotation;
+
+        const errorX = targetX - previousPredictedX;
+        const errorY = targetY - previousPredictedY;
+        const errorSq = errorX * errorX + errorY * errorY;
+        const pendingDepth = Array.isArray(pendingInputs) ? pendingInputs.length : 0;
+        const hardSnapThresholdSq = pendingDepth > 0
+            ? LOCAL_RECON_HARD_SNAP_DISTANCE_SQ
+            : LOCAL_RECON_SOFT_SNAP_DISTANCE_SQ;
+
+        if (!localPlayerState.alive || errorSq >= hardSnapThresholdSq) {
+            localPlayerState.x = targetX;
+            localPlayerState.y = targetY;
+        } else if (errorSq <= LOCAL_RECON_DEADZONE_SQ) {
+            localPlayerState.x = previousPredictedX;
+            localPlayerState.y = previousPredictedY;
+        } else {
+            const errorDist = Math.sqrt(errorSq);
+            let gain = pendingDepth > 0 ? 0.12 : 0.24;
+            if (errorDist >= 18) gain += 0.1;
+            if (errorDist >= 40) gain += 0.12;
+            gain = Math.max(0.08, Math.min(0.56, gain));
+            localPlayerState.x = previousPredictedX + (errorX * gain);
+            localPlayerState.y = previousPredictedY + (errorY * gain);
+        }
+
+        const rotationError = normalizeAngle(targetRotation - previousPredictedRotation);
+        if (!localPlayerState.alive || Math.abs(rotationError) > 2.6 || errorSq >= hardSnapThresholdSq) {
+            localPlayerState.rotation = targetRotation;
+        } else if (Math.abs(rotationError) <= LOCAL_RECON_ROTATION_DEADZONE) {
+            localPlayerState.rotation = previousPredictedRotation;
+        } else {
+            const rotationGain = pendingDepth > 0 ? 0.18 : 0.3;
+            localPlayerState.rotation = normalizeAngle(previousPredictedRotation + (rotationError * rotationGain));
+        }
+    }
 
     function processServerUpdate(messageData, isInitial = false) {
         const ctx = getCtx();
@@ -38,6 +192,13 @@ export function createServerUpdateHandler(getCtx) {
         let currentMapName = ctx.currentMapName;
         let lastProcessedInput = ctx.lastProcessedInput;
         let pendingInputs = ctx.pendingInputs;
+        const lastProcessedInputSequence = Number(messageData?.last_processed_input_sequence);
+        if (Number.isFinite(lastProcessedInputSequence)) {
+            lastProcessedInput = lastProcessedInputSequence;
+            ctx.setLastProcessedInput(lastProcessedInput);
+            pendingInputs = prunePendingInputsBySequence(pendingInputs, lastProcessedInput);
+            ctx.setPendingInputs(pendingInputs);
+        }
 
         const serverTime = Number(messageData.timestamp);
         let wallsChanged = false;
@@ -216,27 +377,17 @@ export function createServerUpdateHandler(getCtx) {
                     const serverRotation = Number.isFinite(localPlayerState.rotation)
                         ? localPlayerState.rotation
                         : previousPredictedRotation;
-                    const errorX = serverX - previousPredictedX;
-                    const errorY = serverY - previousPredictedY;
-                    const errorSq = errorX * errorX + errorY * errorY;
-                    if (!localPlayerState.alive || errorSq > (260 * 260)) {
-                        localPlayerState.x = serverX;
-                        localPlayerState.y = serverY;
-                        localPlayerState.rotation = serverRotation;
-                    } else {
-                        localPlayerState.x = previousPredictedX + (errorX * 0.24);
-                        localPlayerState.y = previousPredictedY + (errorY * 0.24);
-                        const rotError = normalizeAngle(serverRotation - previousPredictedRotation);
-                        localPlayerState.rotation = normalizeAngle(previousPredictedRotation + (rotError * 0.28));
-                    }
-                    if (messageData.last_processed_input_sequence !== undefined && messageData.last_processed_input_sequence !== null) {
-                        lastProcessedInput = Number(messageData.last_processed_input_sequence);
-                        ctx.setLastProcessedInput(lastProcessedInput);
-                        if (!isNaN(lastProcessedInput)) {
-                            pendingInputs = pendingInputs.filter(inp => inp.sequence > lastProcessedInput);
-                            ctx.setPendingInputs(pendingInputs);
-                        }
-                    }
+                    localPlayerState.x = serverX;
+                    localPlayerState.y = serverY;
+                    localPlayerState.rotation = serverRotation;
+                    reconcileLocalPlayerStateWithPendingInputs(
+                        localPlayerState,
+                        previousPredictedX,
+                        previousPredictedY,
+                        previousPredictedRotation,
+                        pendingInputs,
+                        normalizeAngle
+                    );
                     localPlayerState.render_x = localPlayerState.x;
                     localPlayerState.render_y = localPlayerState.y;
                     localPlayerState.render_rotation = localPlayerState.rotation;
@@ -358,6 +509,13 @@ export function createServerUpdateHandler(getCtx) {
         let localPlayerState = ctx.localPlayerState;
         let lastProcessedInput = ctx.lastProcessedInput;
         let pendingInputs = ctx.pendingInputs;
+        const deltaAckSequence = Number(delta.lastProcessedInputSequence());
+        if (Number.isFinite(deltaAckSequence)) {
+            lastProcessedInput = deltaAckSequence;
+            ctx.setLastProcessedInput(lastProcessedInput);
+            pendingInputs = prunePendingInputsBySequence(pendingInputs, lastProcessedInput);
+            ctx.setPendingInputs(pendingInputs);
+        }
 
         const serverTime = Number(delta.timestamp());
         let wallsChanged = false;
@@ -524,19 +682,17 @@ export function createServerUpdateHandler(getCtx) {
                 const serverX = localPlayerState.x;
                 const serverY = localPlayerState.y;
                 const serverRotation = localPlayerState.rotation;
-                const errorX = serverX - previousPredictedX;
-                const errorY = serverY - previousPredictedY;
-                const errorSq = errorX * errorX + errorY * errorY;
-                if (!localPlayerState.alive || errorSq > (260 * 260)) {
-                    localPlayerState.x = serverX;
-                    localPlayerState.y = serverY;
-                    localPlayerState.rotation = serverRotation;
-                } else {
-                    localPlayerState.x = previousPredictedX + (errorX * 0.24);
-                    localPlayerState.y = previousPredictedY + (errorY * 0.24);
-                    const rotError = normalizeAngle(serverRotation - previousPredictedRotation);
-                    localPlayerState.rotation = normalizeAngle(previousPredictedRotation + (rotError * 0.28));
-                }
+                localPlayerState.x = serverX;
+                localPlayerState.y = serverY;
+                localPlayerState.rotation = serverRotation;
+                reconcileLocalPlayerStateWithPendingInputs(
+                    localPlayerState,
+                    previousPredictedX,
+                    previousPredictedY,
+                    previousPredictedRotation,
+                    pendingInputs,
+                    normalizeAngle
+                );
                 localPlayerState.render_x = localPlayerState.x;
                 localPlayerState.render_y = localPlayerState.y;
                 localPlayerState.render_rotation = localPlayerState.rotation;
@@ -551,16 +707,6 @@ export function createServerUpdateHandler(getCtx) {
                     !existingPlayer
                 );
                 players.set(playerId, remoteState);
-            }
-        }
-
-        const lastProcessedInputSequence = delta.lastProcessedInputSequence();
-        if (lastProcessedInputSequence !== undefined && lastProcessedInputSequence !== null) {
-            lastProcessedInput = Number(lastProcessedInputSequence);
-            ctx.setLastProcessedInput(lastProcessedInput);
-            if (!isNaN(lastProcessedInput)) {
-                pendingInputs = pendingInputs.filter(inp => inp.sequence > lastProcessedInput);
-                ctx.setPendingInputs(pendingInputs);
             }
         }
 

@@ -771,6 +771,13 @@ switch (event.event_type) {
             this.audioManager.playSound('bulletImpact', pos, 0.5);
         }
         break;
+    case GP.GameEventType.WallImpact:
+        if (!this.shouldEmitEffect('impact')) break;
+        this.createEnhancedBulletImpact(pos, event.weapon_type);
+        if (this.audioManager) {
+            this.audioManager.playSound('bulletImpact', pos, 0.5);
+        }
+        break;
     case GP.GameEventType.Explosion:
         if (!this.shouldEmitEffect('explosion')) break;
         this.createEnhancedExplosion(pos, event.value);
@@ -2456,6 +2463,9 @@ class AudioManager {
         this.soundEnabled = true;
         this.globalVolume = 0.5;
         this.audioContext = null;
+        this.masterOutputNode = null;
+        this.masterGainNode = null;
+        this.compressorNode = null;
         try {
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         } catch (e) {
@@ -2532,7 +2542,10 @@ this.mobileSoundLimits = Object.freeze({
     announcerTripleKill: { minIntervalMs: 700, windowMs: 1000, maxPerWindow: 1, maxConcurrent: 1 },
     announcerRampage: { minIntervalMs: 850, windowMs: 1000, maxPerWindow: 1, maxConcurrent: 1 }
 });
+this.localWeaponEchoSuppressMs = 110;
+this.recentPredictedWeaponSoundAt = new Map();
 this.maxVoices = this.mobileSoundBudget ? 8 : 20;
+this.initializeOutputChain();
 this.initializeVoicePool();
     }
 
@@ -2544,7 +2557,37 @@ this.globalVolume = Math.max(0, Math.min(1, volume));
 this.soundEnabled = !muted;
     }
 
-    playWeaponSound(weaponType, position, isLocalPlayer) {
+    initializeOutputChain() {
+if (!this.audioContext) return;
+try {
+    const masterGain = this.audioContext.createGain();
+    masterGain.gain.value = 0.84;
+    let outputNode = masterGain;
+    if (typeof this.audioContext.createDynamicsCompressor === 'function') {
+        const compressor = this.audioContext.createDynamicsCompressor();
+        compressor.threshold.value = -22;
+        compressor.knee.value = 14;
+        compressor.ratio.value = 9;
+        compressor.attack.value = 0.003;
+        compressor.release.value = 0.22;
+        masterGain.connect(compressor);
+        compressor.connect(this.audioContext.destination);
+        outputNode = masterGain;
+        this.compressorNode = compressor;
+    } else {
+        masterGain.connect(this.audioContext.destination);
+    }
+    this.masterGainNode = masterGain;
+    this.masterOutputNode = outputNode;
+} catch (error) {
+    console.warn('Audio output chain init failed, using direct destination:', error);
+    this.masterOutputNode = this.audioContext.destination;
+    this.masterGainNode = null;
+    this.compressorNode = null;
+}
+    }
+
+    playWeaponSound(weaponType, position, isLocalPlayer, options = null) {
 let soundName;
 switch (weaponType) {
     case GP.WeaponType.Pistol: soundName = 'pistolFire'; break;
@@ -2554,7 +2597,42 @@ switch (weaponType) {
     case GP.WeaponType.Melee: soundName = 'meleeSwing'; break;
     default: return;
 }
-this.playSound(soundName, position, isLocalPlayer ? 1.0 : 0.7);
+const nowMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
+const predicted = !!(options && options.predicted);
+if (isLocalPlayer && predicted) {
+    this.recentPredictedWeaponSoundAt.set(soundName, nowMs);
+} else if (isLocalPlayer) {
+    const lastPredictedAt = this.recentPredictedWeaponSoundAt.get(soundName) || -1e9;
+    if ((nowMs - lastPredictedAt) < this.localWeaponEchoSuppressMs) {
+        return;
+    }
+}
+const baseVolumeScale = options && Number.isFinite(options.volumeScale)
+    ? options.volumeScale
+    : (isLocalPlayer ? 1.0 : 0.7);
+let adjustedVolumeScale = baseVolumeScale;
+if (!isLocalPlayer) {
+    const activePlayers = Number(players?.size) || 0;
+    if (activePlayers > 10) {
+        const densePenalty = Math.min(0.45, (activePlayers - 10) * 0.012);
+        adjustedVolumeScale *= (1 - densePenalty);
+    }
+    if (smoothedFrameMs > 22) {
+        adjustedVolumeScale *= 0.82;
+    }
+    if (ultraPerformanceMode) {
+        adjustedVolumeScale *= 0.74;
+    }
+    if (adjustedVolumeScale < 0.09) {
+        return;
+    }
+}
+this.playSound(soundName, position, adjustedVolumeScale, {
+    prioritizeLocal: !!isLocalPlayer,
+    bypassLimiter: !!(options && options.bypassLimiter),
+});
     }
 
     getSoundLimiterConfig(soundName) {
@@ -2610,14 +2688,15 @@ for (let i = 0; i < this.maxVoices; i += 1) {
     try {
         const gainNode = this.audioContext.createGain();
         gainNode.gain.value = 0.0001;
+        const outputNode = this.masterOutputNode || this.audioContext.destination;
         let pannerNode = null;
         if (typeof this.audioContext.createStereoPanner === 'function') {
             pannerNode = this.audioContext.createStereoPanner();
             pannerNode.pan.value = 0;
             gainNode.connect(pannerNode);
-            pannerNode.connect(this.audioContext.destination);
+            pannerNode.connect(outputNode);
         } else {
-            gainNode.connect(this.audioContext.destination);
+            gainNode.connect(outputNode);
         }
         this.voicePool.push({
             gainNode,
@@ -2645,7 +2724,7 @@ for (let i = 0; i < this.voicePool.length; i += 1) {
 }
     }
 
-    acquireVoiceSlot(soundName, durationSec, nowMs) {
+    acquireVoiceSlot(soundName, durationSec, nowMs, allowSteal = false) {
 if (!this.voicePool.length) return null;
 const voiceCount = this.voicePool.length;
 for (let offset = 0; offset < voiceCount; offset += 1) {
@@ -2661,7 +2740,24 @@ for (let offset = 0; offset < voiceCount; offset += 1) {
     state.activeCount += 1;
     return voice;
 }
-return null;
+if (!allowSteal) return null;
+
+let bestVoice = null;
+for (let i = 0; i < voiceCount; i += 1) {
+    const voice = this.voicePool[i];
+    if (!voice) continue;
+    if (!bestVoice || voice.busyUntilMs < bestVoice.busyUntilMs) {
+        bestVoice = voice;
+    }
+}
+if (!bestVoice) return null;
+
+this.markVoiceReleased(bestVoice);
+bestVoice.soundName = soundName;
+bestVoice.busyUntilMs = nowMs + Math.ceil(durationSec * 1000) + 48;
+const state = this.getSoundActivityState(soundName, nowMs);
+state.activeCount += 1;
+return bestVoice;
     }
 
     markVoiceReleased(voice, sourceNode = null) {
@@ -2715,7 +2811,7 @@ if (this.noiseBufferCache.size > 24) {
 return buffer;
     }
 
-    playSound(soundName, position = null, volumeMultiplier = 1.0) {
+    playSound(soundName, position = null, volumeMultiplier = 1.0, options = null) {
 if (!this.soundEnabled || !this.audioContext || !this.sounds[soundName]) return;
 if (this.audioContext.state === 'suspended') {
     if (!this.resumeInFlight) {
@@ -2758,16 +2854,26 @@ if (position && localPlayerState && app && gameScene) {
 const nowMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
     ? performance.now()
     : Date.now();
+const prioritizeLocal = !!(options && options.prioritizeLocal);
+const bypassLimiter = !!(options && options.bypassLimiter);
 this.sweepExpiredVoices(nowMs);
-if (!this.shouldPlaySoundNow(soundName, nowMs)) {
+if (!bypassLimiter && !this.shouldPlaySoundNow(soundName, nowMs)) {
     return;
 }
-this._playTone(soundName, soundProfile, finalVolume, panValue, durationSec, nowMs);
+this._playTone(
+    soundName,
+    soundProfile,
+    finalVolume,
+    panValue,
+    durationSec,
+    nowMs,
+    prioritizeLocal
+);
     }
 
-    _playTone(soundName, profile, volume, panValue, durationSec, nowMs) {
+    _playTone(soundName, profile, volume, panValue, durationSec, nowMs, prioritizeLocal = false) {
 if (!this.audioContext) return;
-const voice = this.acquireVoiceSlot(soundName, durationSec, nowMs);
+const voice = this.acquireVoiceSlot(soundName, durationSec, nowMs, prioritizeLocal);
 if (!voice) {
     return;
 }
@@ -2776,7 +2882,9 @@ const now = this.audioContext.currentTime;
 const gainNode = voice.gainNode;
 try {
     gainNode.gain.cancelScheduledValues(now);
-    gainNode.gain.setValueAtTime(Math.max(0.001, volume), now);
+    const attackSec = Math.max(0.002, Math.min(0.01, durationSec * 0.22));
+    gainNode.gain.setValueAtTime(0.0001, now);
+    gainNode.gain.exponentialRampToValueAtTime(Math.max(0.001, volume), now + attackSec);
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + durationSec);
 } catch (_) {
     this.markVoiceReleased(voice);
@@ -2827,6 +2935,9 @@ if (profile.type === 'noise') {
 
 sourceNode.connect(gainNode);
 voice.sourceNode = sourceNode;
+sourceNode.onended = () => {
+    this.markVoiceReleased(voice, sourceNode);
+};
 
 try {
     sourceNode.start(now);

@@ -400,9 +400,10 @@
             createWorldRenderer,
             createInterpolationManager,
             createDiagnosticsManager,
+            createPerformanceBudget,
             createRenderAssetManager,
             createUpdateSprites,
-        } from './client_logic/index.js';
+        } from './client_logic/index.js?v=20260225a';
         const GP = GameProtocol;
         const {
             uiModeParams,
@@ -508,6 +509,8 @@
             createFlagSprite,
             createStarfield,
             updateStarfield,
+            createFogOfWar,
+            updateFogOfWar,
             createHealthVignette,
             updateHealthVignette,
             getMaxAmmoForWeaponClient,
@@ -654,6 +657,10 @@
         let lastAdaptiveEffectsEvalTime = 0;
         let ultraBackgroundLayer = null;
         let ultraBackgroundFilter = null;
+        let perfEnabled = PERF_PROFILE_FORCED;
+        let perfLastReport = 0;
+        let perfSessionStartTime = performance.now();
+        const perfStats = {};
         let frameNowMs = Date.now();
         let frameCounter = 0;
         let smoothedFrameMs = 16.67;
@@ -848,7 +855,6 @@
             initWebGPUProjectileLayer, disableWebGPUProjectileLayer,
             initWebGPUPlayerLayer, disableWebGPUPlayerLayer,
         } = perfBudget;
-        refreshRuntimePerfIntervals();
 
         const uiCache = {
             myPlayerId: null,
@@ -904,8 +910,6 @@
             startJoinTimingAttempt, markJoinTimingStage, markJoinTimingAborted,
         } = diagnosticsManager;
 
-        window.__e2e.lastJoinTiming = null;
-
         let hasAttemptedConnection = false;
         let connectionStateOverride = null;
         let connectionErrorDetail = 'Connection lost. Click Connect to retry.';
@@ -936,6 +940,7 @@
                 hasLocalPlayer: false
             };
         }
+        window.__e2e.lastJoinTiming = null;
         window.__e2e.perfProfileForced = PERF_PROFILE_FORCED;
         window.__e2e.perfProfilingEnabled = perfEnabled;
         window.__e2e.ultraPerformanceMode = ultraPerformanceMode;
@@ -1093,7 +1098,7 @@
         // Aim assist: find nearest enemy and slightly adjust aim toward them
 
         // Landscape orientation lock for mobile
-        if (isMobileDevice && screen.orientation && screen.orientation.lock) {
+        if (isTouchDevice && screen.orientation && screen.orientation.lock) {
             screen.orientation.lock('landscape').catch(() => {});
         }
 
@@ -1316,7 +1321,7 @@
             getAutoReconnectMaxDelayMs: () => autoReconnectMaxDelayMs,
             log,
             applyConnectionStatus,
-            startConnectionAttempt,
+            startConnectionAttempt: (...args) => startConnectionAttempt(...args),
         });
 
         function updateAuthUi(profile = null) { return authHelpers.updateAuthUi(profile); }
@@ -1498,8 +1503,6 @@
         let sniperRangeText;
         let mouseWorldPos = { x: 0, y: 0 };
         let showAiming = true;
-
-        updateMobileControlsVisibility();
 
         // Game State
         let myPlayerId = null;
@@ -1785,6 +1788,7 @@
         let fireButtonTapCount = 0;
         let fireButtonTapWindowUntil = 0;
         let respawnVisualSuppressionActive = false;
+        updateMobileControlsVisibility();
 
         // ── Combat feedback module ─────────────────────────────────────
         const combatFeedback = createCombatFeedback(() => ({
@@ -1816,6 +1820,7 @@
             playAnnouncerCue,
             triggerHitMarker,
             addDamageDirectionIndicator,
+            clearDamageDirectionIndicators,
             getStreakAnnouncement,
             showStreakMedal,
             setObjectiveUrgency,
@@ -2440,6 +2445,7 @@
             updateFlags, updateCamera,
             hasPendingWallRedraw,
         } = worldRenderer;
+        refreshRuntimePerfIntervals();
 
         // ── Instantiate InterpolationManager ────────────────────────────
         const interpolationManager = createInterpolationManager(() => ({
@@ -2596,9 +2602,15 @@
                     }
                     document.removeEventListener('click', resumeAudio);
                     document.removeEventListener('keydown', resumeAudio);
+                    document.removeEventListener('pointerdown', resumeAudio);
+                    document.removeEventListener('mousedown', resumeAudio);
+                    document.removeEventListener('touchstart', resumeAudio);
                 };
                 document.addEventListener('click', resumeAudio);
                 document.addEventListener('keydown', resumeAudio);
+                document.addEventListener('pointerdown', resumeAudio);
+                document.addEventListener('mousedown', resumeAudio);
+                document.addEventListener('touchstart', resumeAudio, { passive: true });
         
 
                 gameScene.addChild(worldContainer);
@@ -2695,6 +2707,25 @@
                 }
                 updateCamera();
             }
+
+        function animateVisiblePickupsForFrame() {
+            if (!pickupSprites || pickupSprites.size === 0) return;
+            const nowMs = typeof frameNowMs === 'number' ? frameNowMs : Date.now();
+            for (const sprite of pickupSprites.values()) {
+                if (!sprite || !sprite.visible) continue;
+                if (!Number.isFinite(sprite._pulseSeed)) {
+                    sprite._pulseSeed = Math.random() * Math.PI * 2;
+                }
+                const phase = nowMs * 0.003 + sprite._pulseSeed;
+                const baseY = Number.isFinite(sprite._lastWorldY) ? sprite._lastWorldY : sprite.y;
+                sprite.y = baseY + Math.sin(phase * 1.35) * 2.5;
+                sprite.rotation = Math.sin(phase) * 0.08;
+            }
+        }
+
+        function animateFlags(_delta) {
+            // Flag visuals are updated through authoritative state snapshots in updateFlags().
+        }
 
 
         // Main game loop
@@ -2967,10 +2998,26 @@
                 lastStarfieldUpdateTime = currentTime;
                 if (perfEnabled) {
                     const t = perfStart();
-                    updateStarfield(starfield, gameScene.position.x, gameScene.position.y, delta);
+                    updateStarfield(
+                        starfield,
+                        gameScene.position.x,
+                        gameScene.position.y,
+                        delta,
+                        frameNowMs,
+                        false,
+                        app
+                    );
                     perfEnd('starfield', t);
                 } else {
-                    updateStarfield(starfield, gameScene.position.x, gameScene.position.y, delta);
+                    updateStarfield(
+                        starfield,
+                        gameScene.position.x,
+                        gameScene.position.y,
+                        delta,
+                        frameNowMs,
+                        false,
+                        app
+                    );
                 }
             }
 
@@ -3346,6 +3393,85 @@
             }
         });
 
+        function handleParsedMessage(parsed) {
+            if (!parsed || typeof parsed !== 'object') return;
+            markJoinTimingStage('firstPacketAtMs');
+
+            const nowMs = Date.now();
+            if (pingStartTime > 10) {
+                ping = Math.max(0, nowMs - pingStartTime);
+            }
+            pingStartTime = nowMs;
+
+            switch (parsed.type) {
+                case 'welcome': {
+                    if (parsed.playerId) {
+                        myPlayerId = parsed.playerId;
+                    }
+                    const tickRate = Number(parsed.serverTickRate);
+                    const tickText = Number.isFinite(tickRate) && tickRate > 0
+                        ? ` Server Tick: ${tickRate}Hz`
+                        : '';
+                    log(`Welcome! Your ID: ${myPlayerId || 'unknown'}.${tickText}`, 'success');
+                    applyConnectionStatus('waiting', 'Waiting for initial state...');
+                    break;
+                }
+                case 'initial': {
+                    if (!parsed.data) return;
+                    if (!myPlayerId && parsed.data.player_id) {
+                        myPlayerId = parsed.data.player_id;
+                    }
+                    markJoinTimingStage('firstStateAtMs');
+                    processServerUpdate(parsed.data, true);
+                    if (window.__e2e) {
+                        window.__e2e.lastStateUpdate = performance.now();
+                    }
+                    log(`Initial game state received. Map: ${parsed.data.map_name || 'unknown'}`, 'info');
+                    break;
+                }
+                case 'delta': {
+                    if (!parsed.data) return;
+                    markJoinTimingStage('firstStateAtMs');
+                    processServerUpdate(parsed.data, false);
+                    if (window.__e2e) {
+                        window.__e2e.lastStateUpdate = performance.now();
+                    }
+                    break;
+                }
+                case 'chat': {
+                    if (!parsed.data) return;
+                    const systemEvent = tryExtractSystemEvent(parsed.data);
+                    if (systemEvent && handleSystemEvent(systemEvent)) {
+                        return;
+                    }
+                    chatMessages.push({
+                        seq: parsed.data.seq,
+                        player_id: parsed.data.player_id,
+                        username: parsed.data.username,
+                        message: parsed.data.message,
+                        timestamp: parsed.data.timestamp
+                    });
+                    if (chatMessages.length > 50) {
+                        chatMessages.splice(0, chatMessages.length - 50);
+                    }
+                    updateChatDisplay();
+                    break;
+                }
+                case 'match_update': {
+                    if (!parsed.data) return;
+                    matchInfo = parsed.data;
+                    if (window.__e2e) {
+                        window.__e2e.matchInfoReady = true;
+                    }
+                    refreshMatchInfoUi(true);
+                    break;
+                }
+                default:
+                    log(`Unhandled parsed message type: ${parsed.type}`, 'warn');
+                    break;
+            }
+        }
+
         // ── Instantiate ConnectionManager ──────────────────────────────
         const connectionManager = createConnectionManager(() => ({
             log, GP, GameProtocol, PIXI, uiModeParams,
@@ -3356,7 +3482,7 @@
             withAuthTokenInUrl, setConnectionError, clearConnectionOverride,
             clearReconnectTimer, scheduleAutoReconnect, applyConnectionStatus,
             connectButton, peerConnectionConfig, peerConnection, signalingSocket, dataChannel,
-            processServerUpdate, tryProcessDeltaMessageFast, parseFlatBufferMessage,
+            processServerUpdate, tryProcessDeltaMessageFast, parseFlatBufferMessage, unpackCoalescedPackets,
             controlsDiv, setupInputHandlers, ensureHudWidgets,
             loadSettings, initRenderAssetCache,
             setActiveSignalingUrl: (v) => { activeSignalingUrl = v; },

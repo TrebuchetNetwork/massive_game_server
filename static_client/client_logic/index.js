@@ -14,7 +14,7 @@ export { clamp, lerp, normalizeAngle, smoothFollowGain } from './math_utils.js';
 export { createAuthHelpers } from './auth_utils.js';
 export { createReconnectHelpers } from './reconnect_utils.js';
 export { createAcceleratedLayerRuntime } from './accelerated_layers.js';
-export { createEffectsAudioRuntime } from './effects_audio_runtime.js';
+export { createEffectsAudioRuntime } from './effects_audio_runtime.js?v=20260225c';
 export {
     getRendererBackendSummary,
     readWebGpuAutorunConfigFromUrl,
@@ -29,18 +29,18 @@ export {
     normalizeConnectionErrorDetail,
 } from './connection_status.js';
 export { createGameRenderer } from './GameRenderer.js';
-export { createProtocolHandler } from './ProtocolHandler.js';
+export { createProtocolHandler } from './ProtocolHandler.js?v=20260225a';
 export { createInputManager } from './InputManager.js';
 export { createGameState } from './GameState.js';
 export { createCombatFeedback } from './CombatFeedback.js';
 export { createAimingSystem } from './AimingSystem.js';
 export { createUIManager } from './UIManager.js';
 export { createSpriteManager } from './SpriteManager.js';
-export { createServerUpdateHandler } from './ServerUpdateHandler.js';
-export { createConnectionManager } from './ConnectionManager.js';
+export { createServerUpdateHandler } from './ServerUpdateHandler.js?v=20260225b';
+export { createConnectionManager } from './ConnectionManager.js?v=20260225a';
 export { createWorldRenderer } from './WorldRenderer.js';
 export { createInterpolationManager } from './InterpolationManager.js';
 export { createDiagnosticsManager } from './DiagnosticsManager.js';
-export { createRenderAssetManager } from './RenderAssetManager.js';
-export { createUpdateSprites } from './UpdateSprites.js';
+export { createRenderAssetManager } from './RenderAssetManager.js?v=20260225a';
+export { createUpdateSprites } from './UpdateSprites.js?v=20260225b';
 export { createPerformanceBudget } from './PerformanceBudget.js';

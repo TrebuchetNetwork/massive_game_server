@@ -10,6 +10,14 @@ impl MassiveGameServer {
             return;
         }
 
+        let spatial_updates: Vec<(EntityId, f32, f32)> = queued_projectiles
+            .iter()
+            .map(|proj| (proj.id, proj.x, proj.y))
+            .collect();
+        if !spatial_updates.is_empty() {
+            self.spatial_index.batch_update_projectiles(&spatial_updates);
+        }
+
         let mut projectiles_guard = self.projectiles.write();
         projectiles_guard.extend(queued_projectiles);
     }
@@ -38,15 +46,6 @@ impl MassiveGameServer {
         delta_time: f32,
     ) -> ProjectileResults {
         use rayon::prelude::*;
-        #[derive(Default)]
-        struct PartitionWallAabbCache {
-            ids: Vec<EntityId>,
-            min_xs: Vec<f32>,
-            max_xs: Vec<f32>,
-            min_ys: Vec<f32>,
-            max_ys: Vec<f32>,
-            destructible: Vec<bool>,
-        }
 
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
         trace!("[Frame {}] Starting optimized projectile processing", frame);
@@ -73,28 +72,6 @@ impl MassiveGameServer {
             };
         }
 
-        // Build per-partition wall AABB caches once per tick and share across rayon workers.
-        let partition_wall_caches: Arc<Vec<PartitionWallAabbCache>> = {
-            let partitions = self.world_partition_manager.get_partitions_for_processing();
-            let mut caches = Vec::with_capacity(partitions.len());
-            for partition in partitions {
-                let mut cache = PartitionWallAabbCache::default();
-                for wall_entry in partition.all_walls_in_partition.iter() {
-                    let wall = wall_entry.value();
-                    if wall.is_destructible && wall.current_health <= 0 {
-                        continue;
-                    }
-                    cache.ids.push(wall.id);
-                    cache.min_xs.push(wall.x);
-                    cache.max_xs.push(wall.x + wall.width);
-                    cache.min_ys.push(wall.y);
-                    cache.max_ys.push(wall.y + wall.height);
-                    cache.destructible.push(wall.is_destructible);
-                }
-                caches.push(cache);
-            }
-            Arc::new(caches)
-        };
         let lag_compensation_target_ms = self
             .get_server_timestamp_ms()
             .saturating_sub(self.lag_compensation_ms);
@@ -102,7 +79,6 @@ impl MassiveGameServer {
         // Process projectiles in parallel chunks
         let chunk_size = 50.max(total_projectiles / rayon::current_num_threads());
 
-        let partition_wall_caches_ref = Arc::clone(&partition_wall_caches);
         let chunk_results: Vec<ProjectileChunkResults> = all_projectiles
             .par_chunks_mut(chunk_size)
             .enumerate()
@@ -112,7 +88,6 @@ impl MassiveGameServer {
                 let mut target_ids: Vec<PlayerID> = Vec::with_capacity(32);
                 let mut target_xs: Vec<f32> = Vec::with_capacity(32);
                 let mut target_ys: Vec<f32> = Vec::with_capacity(32);
-                let mut candidate_partition_indices: Vec<usize> = Vec::with_capacity(16);
 
                 for (local_idx, proj) in chunk.iter_mut().enumerate() {
                     let global_idx = chunk_start_idx + local_idx;
@@ -143,50 +118,37 @@ impl MassiveGameServer {
                         continue;
                     }
 
-                    // Continuous wall collision detection across all partitions touched by
-                    // the projectile segment this tick.
-                    candidate_partition_indices.clear();
-                    self.world_partition_manager
-                        .collect_partition_indices_for_bounds(
-                            old_x.min(proj.x),
-                            old_x.max(proj.x),
-                            old_y.min(proj.y),
-                            old_y.max(proj.y),
-                            &mut candidate_partition_indices,
-                        );
-
+                    // Continuous wall collision detection against active walls from the
+                    // authoritative wall spatial index. This avoids misses for walls that
+                    // span multiple partitions but are stored by center partition only.
                     let mut earliest_wall_hit_t: Option<f32> = None;
                     let mut earliest_wall_id: EntityId = 0;
                     let mut earliest_wall_destructible = false;
-
-                    for partition_idx in &candidate_partition_indices {
-                        let Some(wall_cache) = partition_wall_caches_ref.get(*partition_idx) else {
+                    let candidate_walls = self
+                        .wall_spatial_index
+                        .query_line_segment(old_x, old_y, proj.x, proj.y);
+                    for wall in candidate_walls {
+                        let Some(hit_t) = segment_first_hit_fraction_with_aabb(
+                            old_x,
+                            old_y,
+                            proj.x,
+                            proj.y,
+                            wall.x,
+                            wall.x + wall.width,
+                            wall.y,
+                            wall.y + wall.height,
+                        ) else {
                             continue;
                         };
 
-                        for wall_idx in 0..wall_cache.ids.len() {
-                            let Some(hit_t) = segment_first_hit_fraction_with_aabb(
-                                old_x,
-                                old_y,
-                                proj.x,
-                                proj.y,
-                                wall_cache.min_xs[wall_idx],
-                                wall_cache.max_xs[wall_idx],
-                                wall_cache.min_ys[wall_idx],
-                                wall_cache.max_ys[wall_idx],
-                            ) else {
-                                continue;
-                            };
-
-                            let is_earlier_hit = match earliest_wall_hit_t {
-                                Some(existing_t) => hit_t < existing_t,
-                                None => true,
-                            };
-                            if is_earlier_hit {
-                                earliest_wall_hit_t = Some(hit_t);
-                                earliest_wall_id = wall_cache.ids[wall_idx];
-                                earliest_wall_destructible = wall_cache.destructible[wall_idx];
-                            }
+                        let is_earlier_hit = match earliest_wall_hit_t {
+                            Some(existing_t) => hit_t < existing_t,
+                            None => true,
+                        };
+                        if is_earlier_hit {
+                            earliest_wall_hit_t = Some(hit_t);
+                            earliest_wall_id = wall.id;
+                            earliest_wall_destructible = wall.is_destructible;
                         }
                     }
 
@@ -196,15 +158,20 @@ impl MassiveGameServer {
                         proj.x = hit_x;
                         proj.y = hit_y;
 
+                        local_results.wall_impacts.push(GameEvent::WallImpact {
+                            position: Vec2::new(hit_x, hit_y),
+                            wall_id: earliest_wall_id,
+                            damage: if earliest_wall_destructible {
+                                proj.damage
+                            } else {
+                                0
+                            },
+                        });
+
                         if earliest_wall_destructible {
                             local_results
                                 .wall_hits
                                 .push((earliest_wall_id, proj.damage));
-                            local_results.wall_impacts.push(GameEvent::WallImpact {
-                                position: Vec2::new(hit_x, hit_y),
-                                wall_id: earliest_wall_id,
-                                damage: proj.damage,
-                            });
                         }
 
                         local_results.to_remove.push(global_idx);

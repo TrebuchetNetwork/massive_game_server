@@ -615,7 +615,7 @@ impl MassiveGameServer {
         let initial_target_bot_count = std::env::var("MGS_TARGET_BOT_COUNT")
             .ok()
             .and_then(|raw| raw.parse::<u64>().ok())
-            .unwrap_or(20);
+            .unwrap_or(if cfg!(debug_assertions) { 8 } else { 20 });
         let human_priority_enabled = std::env::var("MGS_HUMAN_PRIORITY_ENABLED")
             .ok()
             .map(|raw| {

@@ -26,7 +26,6 @@ use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
-const SIGNIFICANT_MOVEMENT_THRESHOLD_SQ: f32 = 5.0 * 5.0; // Player must move more than 5 units for AoI recalc
 const SHUTDOWN_CHAT_HISTORY_LIMIT: usize = 50;
 const SHUTDOWN_CHAT_PLAYER_ID: &str = "__server__";
 const SHUTDOWN_CHAT_USERNAME: &str = "Server";
@@ -213,22 +212,6 @@ impl MassiveGameServer {
                 let is_connected_client = update_aoi_this_frame
                     && (self.data_channels_map.contains_key(player_id.as_str())
                         || client_states.contains_key(player_id.as_str()));
-                let mut needs_full_aoi_update = false;
-
-                if is_connected_client {
-                    needs_full_aoi_update = true;
-                    if let Some(last_pos_entry) = self.player_last_sync_positions.get(player_id) {
-                        let last_pos = last_pos_entry.value();
-                        let dist_moved_sq = (player_state.x - last_pos.0).powi(2)
-                            + (player_state.y - last_pos.1).powi(2);
-
-                        if dist_moved_sq < SIGNIFICANT_MOVEMENT_THRESHOLD_SQ
-                            && player_state.changed_fields == 0
-                        {
-                            needs_full_aoi_update = false;
-                        }
-                    }
-                }
 
                 self.spatial_index.update_player_position(
                     player_id.clone(),
@@ -245,22 +228,17 @@ impl MassiveGameServer {
                     player_state.y,
                     partition_idx,
                     is_connected_client,
-                    needs_full_aoi_update,
                 ));
             });
         drop(client_states);
 
-        for (player_id, x, y, partition_idx, is_connected_client, needs_full_aoi_update) in
-            players_to_update
-        {
+        for (player_id, x, y, partition_idx, is_connected_client) in players_to_update {
             if let Some(partition) = self.world_partition_manager.get_partition(partition_idx) {
                 let is_newly_entered_partition = !partition.local_players.contains(&player_id);
                 partition.update_player_status(&player_id, x, y, is_newly_entered_partition);
             }
 
-            let should_refresh_aoi = is_connected_client && needs_full_aoi_update;
-
-            if should_refresh_aoi {
+            if is_connected_client {
                 self.update_player_aoi(&player_id, x, y);
                 self.player_last_sync_positions
                     .insert(player_id.clone(), (x, y));

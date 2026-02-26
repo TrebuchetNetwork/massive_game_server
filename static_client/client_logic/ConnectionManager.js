@@ -209,6 +209,19 @@ export function createConnectionManager(getCtx) {
                 }
             }
         };
+        try {
+            // Create the outbound game data channel before creating an SDP offer.
+            // Without this, the generated offer can omit data-channel transport sections.
+            const outboundDataChannel = peerConnection.createDataChannel('gameDataChannel', {
+                ordered: false,
+                maxRetransmits: 0,
+            });
+            ctx.setDataChannel(outboundDataChannel);
+            log(`Data channel "${outboundDataChannel.label}" created by client.`, 'info');
+            setupDataChannelEvents(outboundDataChannel);
+        } catch (error) {
+            log(`Failed to create local data channel: ${error?.message || error}`, 'error');
+        }
         peerConnection.oniceconnectionstatechange = () => {
             const currentCtx = getCtx();
             log(`ICE state: ${peerConnection.iceConnectionState}`, 'info');
@@ -230,7 +243,7 @@ export function createConnectionManager(getCtx) {
         const ctx = getCtx();
         const {
             log, GP, GameProtocol, PIXI, processServerUpdate,
-            tryProcessDeltaMessageFast, parseFlatBufferMessage,
+            tryProcessDeltaMessageFast, parseFlatBufferMessage, unpackCoalescedPackets,
             markJoinTimingStage, markJoinTimingComplete,
             setConnectionError, applyConnectionStatus,
             controlsDiv, setupInputHandlers, ensureHudWidgets,
@@ -263,28 +276,34 @@ export function createConnectionManager(getCtx) {
             currentCtx.trackNetworkProfilerMessage(byteLength);
 
             if (data instanceof ArrayBuffer) {
-                const fastApplied = tryProcessDeltaMessageFast(data, window.__e2e || null);
-                if (fastApplied) {
-                    currentCtx.trackFastDeltaPacket();
-                    return;
+                const byteView = new Uint8Array(data);
+                const packets = (typeof unpackCoalescedPackets === 'function'
+                    ? unpackCoalescedPackets(byteView)
+                    : null) || [byteView];
+                for (let i = 0; i < packets.length; i += 1) {
+                    const packet = packets[i];
+                    const fastApplied = tryProcessDeltaMessageFast(packet, window.__e2e || null);
+                    if (fastApplied) {
+                        currentCtx.trackFastDeltaPacket();
+                        continue;
+                    }
+                    currentCtx.trackFullParsePacket();
+                    const parsed = parseFlatBufferMessage(packet);
+                    if (!parsed) continue;
+                    currentCtx.handleParsedMessage(parsed);
                 }
-                currentCtx.trackFullParsePacket();
-            }
-
-            let parsed;
-            if (data instanceof ArrayBuffer) {
-                parsed = parseFlatBufferMessage(data);
+                return;
             } else {
+                let parsed;
                 try {
                     parsed = JSON.parse(data);
                 } catch (e) {
                     log('Failed to parse server message: ' + e.message, 'error');
                     return;
                 }
+                if (!parsed) return;
+                currentCtx.handleParsedMessage(parsed);
             }
-            if (!parsed) return;
-
-            currentCtx.handleParsedMessage(parsed);
         };
 
         dcInstance.onerror = (e) => {

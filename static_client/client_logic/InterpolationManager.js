@@ -15,30 +15,58 @@ export function createInterpolationManager(getCtx) {
         const { localPlayerState, inputState } = ctx;
         if (!localPlayerState || !localPlayerState.alive) return;
 
-        let moveXIntent = 0;
-        let moveYIntent = 0;
-        if (inputState.move_forward) moveYIntent -= 1;
-        if (inputState.move_backward) moveYIntent += 1;
-        if (inputState.move_left) moveXIntent -= 1;
-        if (inputState.move_right) moveXIntent += 1;
+        let forwardIntent = 0;
+        let strafeIntent = 0;
+        if (inputState.move_forward) forwardIntent += 1;
+        if (inputState.move_backward) forwardIntent -= 1;
+        if (inputState.move_left) strafeIntent -= 1;
+        if (inputState.move_right) strafeIntent += 1;
 
-        const effectiveSpeed = localPlayerState.speed_boost_remaining > 0 ? 225 : 150;
+        const inputRotation = Number.isFinite(inputState.rotation)
+            ? inputState.rotation
+            : (Number.isFinite(localPlayerState.rotation) ? localPlayerState.rotation : 0);
+        localPlayerState.rotation = inputRotation;
+
+        const isSpectator = !!localPlayerState.is_spectator;
+        let effectiveSpeed = localPlayerState.speed_boost_remaining > 0 ? 225 : 150;
+        if (isSpectator) {
+            effectiveSpeed = 150 * 1.35;
+        } else {
+            if ((localPlayerState.dash_remaining || 0) > 0) {
+                effectiveSpeed *= 2.0;
+            }
+            if ((localPlayerState.dodge_roll_remaining || 0) > 0) {
+                effectiveSpeed *= 1.6;
+            }
+            if (forwardIntent === 0 && strafeIntent === 0 &&
+                (((localPlayerState.dash_remaining || 0) > 0) || ((localPlayerState.dodge_roll_remaining || 0) > 0))) {
+                forwardIntent = 1;
+            }
+        }
+
         let predictedVelocityX = 0;
         let predictedVelocityY = 0;
 
-        if (moveXIntent !== 0 || moveYIntent !== 0) {
-            const magnitude = Math.sqrt(moveXIntent * moveXIntent + moveYIntent * moveYIntent);
-            const normX = moveXIntent / magnitude;
-            const normY = moveYIntent / magnitude;
-            predictedVelocityX = normX * effectiveSpeed;
-            predictedVelocityY = normY * effectiveSpeed;
+        if (forwardIntent !== 0 || strafeIntent !== 0) {
+            const magnitude = Math.sqrt(forwardIntent * forwardIntent + strafeIntent * strafeIntent);
+            forwardIntent /= magnitude;
+            strafeIntent /= magnitude;
+
+            const cosRot = Math.cos(inputRotation);
+            const sinRot = Math.sin(inputRotation);
+            const forwardX = cosRot * forwardIntent;
+            const forwardY = sinRot * forwardIntent;
+            const strafeX = -sinRot * strafeIntent;
+            const strafeY = cosRot * strafeIntent;
+
+            predictedVelocityX = (forwardX + strafeX) * effectiveSpeed;
+            predictedVelocityY = (forwardY + strafeY) * effectiveSpeed;
             localPlayerState.x += predictedVelocityX * deltaTime;
             localPlayerState.y += predictedVelocityY * deltaTime;
         }
 
         localPlayerState.velocity_x = predictedVelocityX;
         localPlayerState.velocity_y = predictedVelocityY;
-        localPlayerState.rotation = inputState.rotation;
         localPlayerState.render_x = localPlayerState.x;
         localPlayerState.render_y = localPlayerState.y;
         localPlayerState.render_rotation = localPlayerState.rotation;

@@ -193,12 +193,40 @@ export function createRenderAssetManager(getCtx) {
 
             renderAssetCache.playerAtlasTexture = atlasRT;
 
-            // Create sub-region Texture references from the single atlas BaseTexture
+            // Create sub-region Texture references from the single atlas BaseTexture.
+            // Frame coordinates must stay in BaseTexture frame-space (logical width/height).
             const bt = atlasRT.baseTexture;
-            const res = bt.resolution;
+            const atlasW = Math.max(1, Math.floor(Number(bt && bt.width) || Number(atlasRT.width) || 1));
+            const atlasH = Math.max(1, Math.floor(Number(bt && bt.height) || Number(atlasRT.height) || 1));
+            const normalizeFrame = (x, y, w, h) => {
+                const frameX = Math.max(0, Math.min(atlasW - 1, Math.floor(x)));
+                const frameY = Math.max(0, Math.min(atlasH - 1, Math.floor(y)));
+                const frameW = Math.max(1, Math.min(atlasW - frameX, Math.ceil(w)));
+                const frameH = Math.max(1, Math.min(atlasH - frameY, Math.ceil(h)));
+                if (frameW <= 0 || frameH <= 0) return null;
+                return { x: frameX, y: frameY, w: frameW, h: frameH };
+            };
+            const toTexture = (frameDef) => {
+                if (!frameDef) return null;
+                try {
+                    return new PIXI.Texture(bt, new PIXI.Rectangle(frameDef.x, frameDef.y, frameDef.w, frameDef.h));
+                } catch (_) {
+                    return null;
+                }
+            };
             for (const [name, r] of Object.entries(regions)) {
-                const frame = new PIXI.Rectangle(r.x * res, r.y * res, r.w * res, r.h * res);
-                renderAssetCache.playerAtlasRegions[name] = new PIXI.Texture(bt, frame);
+                const subFrame = normalizeFrame(r.x, r.y, r.w, r.h);
+                let subTexture = toTexture(subFrame);
+                if (!subTexture) {
+                    subTexture = PIXI.Texture.EMPTY;
+                    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+                        console.warn(
+                            `[RenderAssetManager] Failed to create atlas region "${name}"`,
+                            { region: r, atlasW, atlasH }
+                        );
+                    }
+                }
+                renderAssetCache.playerAtlasRegions[name] = subTexture;
             }
         }
 

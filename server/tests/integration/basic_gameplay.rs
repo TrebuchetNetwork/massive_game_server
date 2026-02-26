@@ -2,13 +2,15 @@
 
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
-use massive_game_server_core::core::constants::PLAYER_RADIUS;
+use massive_game_server_core::core::constants::{
+    AOI_RADIUS, AOI_UPDATE_INTERVAL_SECS, PARTITION_SIZE_X, PLAYER_RADIUS, WORLD_MIN_X,
+};
 use massive_game_server_core::core::types::PlayerAoIs;
 use massive_game_server_core::core::types::{
     EntityId, EventPriority, PlayerID, PlayerInputData, Projectile, ServerWeaponType, Vec2, Wall,
 }; // Added PlayerState, PlayerInputData
 use massive_game_server_core::network::signaling::{
-    ChatMessagesQueue, ClientStatesMap, DataChannelsMap,
+    ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap,
 };
 use massive_game_server_core::server::instance::MassiveGameServer;
 use massive_game_server_core::systems::physics::collision; // Import PLAYER_RADIUS
@@ -18,7 +20,7 @@ use parking_lot::RwLock as ParkingLotRwLock;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::SystemTime; // For PlayerInputData timestamp
+use std::time::{Duration, Instant, SystemTime}; // For PlayerInputData timestamp
 use tokio::sync::RwLock as TokioRwLock;
 use tracing::info;
 
@@ -653,6 +655,291 @@ async fn test_player_spawning_and_movement() {
     info!(
         "[Spawn Test] Completed {} spawn and movement attempts.",
         num_spawn_attempts
+    );
+}
+
+#[tokio::test]
+async fn test_forward_movement_uses_current_input_rotation() {
+    let server = setup_test_server();
+    let player_id_arc = server
+        .player_manager
+        .add_player("rotation_sync_player".to_string(), "RotationSync".to_string(), 0.0, 0.0)
+        .expect("Failed to add player for rotation sync test");
+
+    {
+        let mut player_state = server
+            .player_manager
+            .get_player_state_mut(&player_id_arc)
+            .expect("player should exist");
+        player_state.rotation = 0.0;
+        player_state.velocity_x = 0.0;
+        player_state.velocity_y = 0.0;
+
+        let input = PlayerInputData {
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+            sequence: player_state.last_processed_input_sequence + 1,
+            move_forward: true,
+            move_backward: false,
+            move_left: false,
+            move_right: false,
+            shooting: false,
+            reload: false,
+            rotation: std::f32::consts::FRAC_PI_2,
+            melee_attack: false,
+            change_weapon_slot: 0,
+            use_ability_slot: 0,
+            ping_x: 0.0,
+            ping_y: 0.0,
+        };
+        player_state.queue_input(input);
+    }
+
+    server.process_network_input().await;
+
+    let player_state = server
+        .player_manager
+        .get_player_state(&player_id_arc)
+        .expect("player should still exist");
+    assert!(
+        player_state.rotation > 1.56 && player_state.rotation < 1.58,
+        "rotation should be updated to input rotation, got {}",
+        player_state.rotation
+    );
+    assert!(
+        player_state.velocity_x.abs() < 0.01,
+        "velocity_x should be near zero when facing +Y, got {}",
+        player_state.velocity_x
+    );
+    assert!(
+        player_state.velocity_y > 149.0,
+        "velocity_y should be positive and near base speed, got {}",
+        player_state.velocity_y
+    );
+}
+
+#[tokio::test]
+async fn test_projectile_hits_wall_spanning_partition_boundary() {
+    let server = setup_test_server();
+    let shooter_id = server
+        .player_manager
+        .add_player(
+            "partition_wall_shooter".to_string(),
+            "PartitionWallShooter".to_string(),
+            0.0,
+            0.0,
+        )
+        .expect("Failed to add shooter for wall collision test");
+
+    // Place a wall that spans the first vertical partition seam. The wall center
+    // lands in one partition while its left edge extends into the neighbor.
+    let seam_x = WORLD_MIN_X + PARTITION_SIZE_X;
+    let wall_x = seam_x - 20.0;
+    let wall_y = -20.0;
+    let wall_width = 80.0;
+    let wall_height = 40.0;
+    let wall_id = create_destructible_wall(&server, wall_x, wall_y, wall_width, wall_height, 200);
+
+    let wall_center_partition = server.world_partition_manager.get_partition_index_for_point(
+        wall_x + wall_width * 0.5,
+        wall_y + wall_height * 0.5,
+    );
+    let projectile_start_x = wall_x - 6.0;
+    let projectile_partition = server
+        .world_partition_manager
+        .get_partition_index_for_point(projectile_start_x, 0.0);
+    assert_ne!(
+        wall_center_partition, projectile_partition,
+        "test setup must cross a partition seam to reproduce edge-case collisions"
+    );
+
+    // Rebuild wall spatial index to include the injected test wall.
+    let mut active_walls = Vec::new();
+    for partition in server.world_partition_manager.get_partitions_for_processing() {
+        for wall_entry in partition.all_walls_in_partition.iter() {
+            let wall = wall_entry.value();
+            if !wall.is_destructible || wall.current_health > 0 {
+                active_walls.push(wall.clone());
+            }
+        }
+    }
+    server.wall_spatial_index.rebuild(&active_walls, 0);
+
+    let projectile = Projectile::new(
+        shooter_id.clone(),
+        ServerWeaponType::Pistol,
+        projectile_start_x,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+    );
+    let projectile_id = projectile.id;
+    {
+        let mut projectiles = server.projectiles.write();
+        projectiles.push(projectile);
+    }
+
+    server.run_physics_update(1.0 / 60.0).await;
+
+    let projectiles = server.projectiles.read();
+    assert!(
+        !projectiles.iter().any(|p| p.id == projectile_id),
+        "projectile should be removed after colliding with wall across partition seam"
+    );
+    drop(projectiles);
+
+    let mut post_health = None;
+    for partition in server.world_partition_manager.get_partitions_for_processing() {
+        if let Some(wall_entry) = partition.all_walls_in_partition.get(&wall_id) {
+            post_health = Some(wall_entry.value().current_health);
+            break;
+        }
+    }
+    let remaining_health = post_health.expect("wall should still exist after projectile collision");
+    assert!(
+        remaining_health < 200,
+        "destructible wall should take projectile damage; remaining_health={}",
+        remaining_health
+    );
+}
+
+#[tokio::test]
+async fn test_newly_spawned_projectiles_are_indexed_for_aoi_before_next_physics_tick() {
+    let server = setup_test_server();
+    let shooter_id = server
+        .player_manager
+        .add_player("projectile_index_player".to_string(), "ProjectileIndex".to_string(), 0.0, 0.0)
+        .expect("Failed to add shooter for projectile index test");
+
+    {
+        let mut player_state = server
+            .player_manager
+            .get_player_state_mut(&shooter_id)
+            .expect("shooter should exist");
+        let input = PlayerInputData {
+            timestamp: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+            sequence: player_state.last_processed_input_sequence + 1,
+            move_forward: false,
+            move_backward: false,
+            move_left: false,
+            move_right: false,
+            shooting: true,
+            reload: false,
+            rotation: 0.0,
+            melee_attack: false,
+            change_weapon_slot: 0,
+            use_ability_slot: 0,
+            ping_x: 0.0,
+            ping_y: 0.0,
+        };
+        player_state.queue_input(input);
+    }
+
+    server.process_network_input().await;
+    server.run_game_logic_update(0.016).await;
+
+    let projectiles = server.projectiles.read();
+    assert!(
+        !projectiles.is_empty(),
+        "expected at least one spawned projectile after processing shooting input"
+    );
+    let projectile_id = projectiles[0].id;
+    drop(projectiles);
+
+    let nearby = server
+        .spatial_index
+        .query_nearby_projectiles(0.0, 0.0, AOI_RADIUS);
+    assert!(
+        nearby.contains(&projectile_id),
+        "newly spawned projectile should be present in projectile spatial index before next physics update"
+    );
+}
+
+#[tokio::test]
+async fn test_stationary_connected_player_refreshes_aoi_for_new_projectiles() {
+    let server = setup_test_server();
+    let player_id = server
+        .player_manager
+        .add_player(
+            "stationary_aoi_player".to_string(),
+            "StationaryAoI".to_string(),
+            0.0,
+            0.0,
+        )
+        .expect("Failed to add stationary AoI player");
+
+    {
+        let mut client_states = server.client_states_map.write();
+        client_states.insert(player_id.as_str().to_string(), ClientState::default());
+    }
+
+    {
+        let mut aoi_entry = server
+            .player_aois
+            .entry(player_id.as_str().to_string())
+            .or_default();
+        aoi_entry.value_mut().last_update =
+            Instant::now() - Duration::from_secs_f32(AOI_UPDATE_INTERVAL_SECS + 0.02);
+    }
+
+    server
+        .frame_counter
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    server.synchronize_state(true).await;
+
+    let projectile_x = PLAYER_RADIUS + 8.0;
+    let projectile = Projectile::new(
+        player_id.clone(),
+        ServerWeaponType::Pistol,
+        projectile_x,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+    );
+    let projectile_id = projectile.id;
+    {
+        let mut projectiles = server.projectiles.write();
+        projectiles.push(projectile);
+    }
+    server
+        .spatial_index
+        .batch_update_projectiles(&[(projectile_id, projectile_x, 0.0)]);
+
+    {
+        let mut player_state = server
+            .player_manager
+            .get_player_state_mut(&player_id)
+            .expect("Stationary AoI player should exist");
+        player_state.clear_changed_fields();
+    }
+    {
+        let mut aoi_entry = server
+            .player_aois
+            .entry(player_id.as_str().to_string())
+            .or_default();
+        aoi_entry.value_mut().last_update =
+            Instant::now() - Duration::from_secs_f32(AOI_UPDATE_INTERVAL_SECS + 0.02);
+    }
+
+    server
+        .frame_counter
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    server.synchronize_state(true).await;
+
+    let player_aoi = server
+        .player_aois
+        .get(player_id.as_str())
+        .expect("Player AoI entry should exist");
+    assert!(
+        player_aoi.value().visible_projectiles.contains(&projectile_id),
+        "connected stationary player AoI should include nearby projectile without requiring movement"
     );
 }
 

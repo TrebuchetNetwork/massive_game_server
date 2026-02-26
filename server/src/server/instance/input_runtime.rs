@@ -670,7 +670,12 @@ impl MassiveGameServer {
             }
         }
 
-        // Calculate movement relative to player rotation
+        if (input.rotation - player_state.rotation).abs() > 0.001 {
+            player_state.rotation = input.rotation;
+            player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+        }
+
+        // Calculate movement relative to the latest input rotation.
         let mut forward_intent = 0.0_f32;
         let mut strafe_intent = 0.0_f32;
 
@@ -739,11 +744,6 @@ impl MassiveGameServer {
             player_state.velocity_y = 0.0;
         }
         player_state.mark_field_changed(FIELD_POSITION_ROTATION);
-
-        if (input.rotation - player_state.rotation).abs() > 0.001 {
-            player_state.rotation = input.rotation;
-            player_state.mark_field_changed(FIELD_POSITION_ROTATION);
-        }
 
         if (input.ping_x != 0.0 || input.ping_y != 0.0)
             && player_state.team_id != 0

@@ -381,39 +381,40 @@ impl MassiveGameServer {
         let mut new_projectiles_vec = Vec::new();
         let mut removed_projectile_ids_vec = Vec::new();
 
+        // Always send currently visible projectiles. Data channel delivery is
+        // intentionally unreliable/unordered, so one-time projectile snapshots
+        // can be dropped and never recovered.
         for proj_id in &player_aoi.visible_projectiles {
-            if !client_state.last_known_projectile_ids.contains(proj_id) {
-                if let Some(proj) = Self::lookup_projectile_from_shared(shared_data, proj_id) {
-                    let id_str = fb_safe_entity_id(&mut builder, proj.id);
-                    let owner_str = builder.create_string(proj.owner_id.as_str());
+            if let Some(proj) = Self::lookup_projectile_from_shared(shared_data, proj_id) {
+                let id_str = fb_safe_entity_id(&mut builder, proj.id);
+                let owner_str = builder.create_string(proj.owner_id.as_str());
 
-                    // Apply mobile quantization to projectile positions/velocities
-                    let (px, py, vx, vy) = if quantize {
-                        use crate::core::constants::{quantize_position, quantize_velocity};
-                        (
-                            quantize_position(proj.x),
-                            quantize_position(proj.y),
-                            quantize_velocity(proj.velocity_x),
-                            quantize_velocity(proj.velocity_y),
-                        )
-                    } else {
-                        (proj.x, proj.y, proj.velocity_x, proj.velocity_y)
-                    };
+                // Apply mobile quantization to projectile positions/velocities.
+                let (px, py, vx, vy) = if quantize {
+                    use crate::core::constants::{quantize_position, quantize_velocity};
+                    (
+                        quantize_position(proj.x),
+                        quantize_position(proj.y),
+                        quantize_velocity(proj.velocity_x),
+                        quantize_velocity(proj.velocity_y),
+                    )
+                } else {
+                    (proj.x, proj.y, proj.velocity_x, proj.velocity_y)
+                };
 
-                    let proj_fb = fb::ProjectileState::create(
-                        &mut builder,
-                        &fb::ProjectileStateArgs {
-                            id: Some(id_str),
-                            x: px,
-                            y: py,
-                            owner_id: Some(owner_str),
-                            weapon_type: map_server_weapon_to_fb(proj.weapon_type),
-                            velocity_x: vx,
-                            velocity_y: vy,
-                        },
-                    );
-                    new_projectiles_vec.push(proj_fb);
-                }
+                let proj_fb = fb::ProjectileState::create(
+                    &mut builder,
+                    &fb::ProjectileStateArgs {
+                        id: Some(id_str),
+                        x: px,
+                        y: py,
+                        owner_id: Some(owner_str),
+                        weapon_type: map_server_weapon_to_fb(proj.weapon_type),
+                        velocity_x: vx,
+                        velocity_y: vy,
+                    },
+                );
+                new_projectiles_vec.push(proj_fb);
             }
         }
 
