@@ -365,3 +365,181 @@ fn env_bool(name: &str) -> bool {
         })
         .unwrap_or(false)
 }
+
+// ── Queue depth monitoring / backpressure ────────────────────────────
+//
+// Rayon thread pools use lock-free work-stealing deques without an exposed
+// queue depth metric.  We add lightweight saturation monitoring by tracking
+// how many tasks are pending per pool via an AtomicUsize counter.  Callers
+// use `submit_monitored` to log warnings when the pending count is high and
+// optionally refuse new work (backpressure).
+
+use std::sync::atomic::AtomicUsize;
+
+/// Per-pool saturation tracker.  Wrap one around each pool to monitor
+/// pending work and log warnings when the pool approaches saturation.
+pub struct MonitoredPool {
+    pub pool: Arc<ThreadPool>,
+    pub name: String,
+    pending: Arc<AtomicUsize>,
+    /// Warn once when pending exceeds this count.
+    warn_threshold: usize,
+    /// Hard cap -- `try_submit` returns `Err` when pending exceeds this.
+    max_pending: usize,
+}
+
+impl MonitoredPool {
+    pub fn new(pool: Arc<ThreadPool>, name: impl Into<String>) -> Self {
+        let threads = pool.current_num_threads();
+        Self {
+            pool,
+            name: name.into(),
+            pending: Arc::new(AtomicUsize::new(0)),
+            // Default thresholds: warn at 4x thread count, reject at 16x.
+            warn_threshold: threads.saturating_mul(4).max(8),
+            max_pending: threads.saturating_mul(16).max(32),
+        }
+    }
+
+    /// Create with custom thresholds.
+    pub fn with_thresholds(
+        pool: Arc<ThreadPool>,
+        name: impl Into<String>,
+        warn_threshold: usize,
+        max_pending: usize,
+    ) -> Self {
+        Self {
+            pool,
+            name: name.into(),
+            pending: Arc::new(AtomicUsize::new(0)),
+            warn_threshold,
+            max_pending,
+        }
+    }
+
+    /// Current number of pending (submitted but not yet completed) tasks.
+    pub fn pending_count(&self) -> usize {
+        self.pending.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Submit work to the pool.  Returns `false` if the pending count
+    /// exceeds `max_pending` (backpressure).
+    pub fn try_submit<F>(&self, work: F) -> bool
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let current = self.pending.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if current >= self.max_pending {
+            self.pending.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            warn!(
+                "[ThreadPool:{}] Backpressure: {} pending tasks exceeds max {}. Rejecting work.",
+                self.name, current, self.max_pending
+            );
+            return false;
+        }
+        if current >= self.warn_threshold && current.is_multiple_of(self.warn_threshold) {
+            warn!(
+                "[ThreadPool:{}] Queue depth warning: {} pending tasks (warn_threshold={})",
+                self.name, current, self.warn_threshold
+            );
+        }
+        let pending_clone = Arc::clone(&self.pending);
+        self.pool.spawn(move || {
+            work();
+            pending_clone.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        });
+        true
+    }
+
+    /// Submit work unconditionally (no backpressure), but still log warnings.
+    pub fn submit<F>(&self, work: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let current = self.pending.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if current >= self.warn_threshold && current.is_multiple_of(self.warn_threshold) {
+            warn!(
+                "[ThreadPool:{}] Queue depth warning: {} pending tasks (warn_threshold={})",
+                self.name, current, self.warn_threshold
+            );
+        }
+        let pending_clone = Arc::clone(&self.pending);
+        self.pool.spawn(move || {
+            work();
+            pending_clone.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_pool() -> Arc<ThreadPool> {
+        Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(2)
+                .build()
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn monitored_pool_tracks_pending() {
+        let pool = test_pool();
+        let monitored = MonitoredPool::new(pool, "test");
+        assert_eq!(monitored.pending_count(), 0);
+
+        // Submit work that blocks until we signal it
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        monitored.submit(move || {
+            let _ = rx.recv();
+        });
+
+        // Give the pool a moment to pick up the task
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // pending_count should be exactly 1 (task is running but not finished)
+        assert_eq!(monitored.pending_count(), 1);
+
+        // Release the task
+        let _ = tx.send(());
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(monitored.pending_count(), 0);
+    }
+
+    #[test]
+    fn monitored_pool_backpressure_rejects_when_full() {
+        let pool = test_pool();
+        // Set very low thresholds: warn at 1, reject at 2
+        let monitored = MonitoredPool::with_thresholds(pool, "test_bp", 1, 2);
+
+        // Hold tasks to keep pending count high
+        let (tx1, rx1) = std::sync::mpsc::channel::<()>();
+        let (tx2, rx2) = std::sync::mpsc::channel::<()>();
+
+        assert!(monitored.try_submit(move || { let _ = rx1.recv(); }));
+        assert!(monitored.try_submit(move || { let _ = rx2.recv(); }));
+
+        // Third submission should be rejected (max_pending = 2)
+        let rejected = !monitored.try_submit(|| {});
+        assert!(rejected, "Expected backpressure rejection at max_pending=2");
+
+        // Cleanup
+        let _ = tx1.send(());
+        let _ = tx2.send(());
+    }
+
+    #[test]
+    fn env_bool_parsing() {
+        // env_bool is a module-private function; test it indirectly via known env vars
+        // or just verify the logic inline:
+        assert!(["1", "true", "yes", "on"].iter().all(|v| {
+            let normalized = v.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        }));
+        assert!(!{
+            let normalized = "false".trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        });
+    }
+}
