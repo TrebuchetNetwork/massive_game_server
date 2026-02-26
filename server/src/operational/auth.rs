@@ -22,7 +22,9 @@ use warp::http::StatusCode;
 use warp::{Filter, Reply};
 
 const DEFAULT_OTP_TTL_SECONDS: u64 = 300;
-const DEFAULT_SESSION_TTL_SECONDS: u64 = 60 * 60 * 24 * 30;
+// Reduced from 30 days to 24 hours to limit token exposure window.
+// Override with MGS_AUTH_SESSION_TTL_SECONDS if longer sessions are needed.
+const DEFAULT_SESSION_TTL_SECONDS: u64 = 60 * 60 * 24;
 const DEFAULT_RESEND_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_MAX_VERIFY_ATTEMPTS: u32 = 5;
 const DEFAULT_LEADERBOARD_LIMIT: usize = 50;
@@ -68,6 +70,12 @@ struct AuthInner {
     max_verify_attempts: u32,
     sms_command: Option<String>,
     sms_dev_mode: bool,
+    /// When true, the verify-code endpoint sets the session token as an
+    /// HttpOnly, Secure, SameSite=Strict cookie instead of (in addition to)
+    /// returning it in the JSON body.  The WebSocket upgrade path and
+    /// authenticated endpoints will then also accept the cookie as a token
+    /// source.  Enable via MGS_AUTH_USE_COOKIES=true.
+    use_auth_cookies: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -537,17 +545,22 @@ impl AuthService {
             .map(|raw| raw.trim().to_owned())
             .filter(|raw| !raw.is_empty());
         let sms_dev_mode = parse_bool_env("MGS_SMS_DEV_MODE", false);
+        let use_auth_cookies = parse_bool_env("MGS_AUTH_USE_COOKIES", false);
         let redis_cache = init_redis_cache_from_env();
 
         let persistent_store = load_persistent_store(&store_path, redis_cache.as_ref());
         info!(
-            "Auth service initialized. store_path='{}', users={}, sms_dev_mode={}",
+            "Auth service initialized. store_path='{}', users={}, sms_dev_mode={}, use_auth_cookies={}",
             store_path.display(),
             persistent_store.users.len(),
-            sms_dev_mode
+            sms_dev_mode,
+            use_auth_cookies
         );
         if sms_dev_mode {
             warn!("SMS dev mode is ENABLED — OTP codes will be logged server-side. Do NOT use in production!");
+        }
+        if use_auth_cookies {
+            info!("Cookie-based auth enabled: verify-code will set HttpOnly session cookie.");
         }
 
         Self {
@@ -564,6 +577,7 @@ impl AuthService {
                 max_verify_attempts,
                 sms_command,
                 sms_dev_mode,
+                use_auth_cookies,
             }),
         }
     }
@@ -787,6 +801,17 @@ impl AuthService {
         Some(session_entry.user_id.clone())
     }
 
+    /// Returns true if the server is configured to set session tokens via
+    /// HttpOnly cookies (MGS_AUTH_USE_COOKIES=true).
+    pub fn use_auth_cookies(&self) -> bool {
+        self.inner.use_auth_cookies
+    }
+
+    /// Returns the configured session TTL in seconds (for cookie Max-Age).
+    pub fn session_ttl_seconds(&self) -> u64 {
+        self.inner.session_ttl_seconds
+    }
+
     pub fn profile_from_token(&self, token_raw: &str) -> Option<(AuthProfileView, u64)> {
         let started_at = Instant::now();
         let token = token_raw.trim();
@@ -987,6 +1012,7 @@ pub fn build_auth_routes(
     let me = warp::path!("auth" / "me")
         .and(warp::get())
         .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::optional::<String>("cookie"))
         .and(
             warp::query::<TokenQuery>()
                 .or(warp::any().map(TokenQuery::default))
@@ -999,6 +1025,7 @@ pub fn build_auth_routes(
     let logout = warp::path!("auth" / "logout")
         .and(warp::post())
         .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::optional::<String>("cookie"))
         .and(
             warp::query::<TokenQuery>()
                 .or(warp::any().map(TokenQuery::default))
@@ -1056,16 +1083,31 @@ async fn handle_request_code(
 async fn handle_verify_code(
     body: VerifyCodeBody,
     auth_service: AuthService,
-) -> Result<impl Reply, Infallible> {
-    let reply = match auth_service.verify_phone_code(&body.phone_number, &body.code) {
-        Ok(result) => ok_response(result),
-        Err(error) => error_response(error),
-    };
-    Ok(reply)
+) -> Result<warp::reply::Response, Infallible> {
+    match auth_service.verify_phone_code(&body.phone_number, &body.code) {
+        Ok(result) => {
+            if auth_service.use_auth_cookies() {
+                // Set the session token as an HttpOnly, Secure, SameSite=Strict
+                // cookie so that JS never needs to touch it.
+                let max_age = auth_service.session_ttl_seconds();
+                let cookie_value = format!(
+                    "mgs_session={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={}",
+                    result.token, max_age
+                );
+                let json_reply = ok_response(result);
+                Ok(warp::reply::with_header(json_reply, "Set-Cookie", cookie_value)
+                    .into_response())
+            } else {
+                Ok(ok_response(result).into_response())
+            }
+        }
+        Err(error) => Ok(error_response(error).into_response()),
+    }
 }
 
 async fn handle_auth_me(
     authorization_header: Option<String>,
+    cookie_header: Option<String>,
     query: TokenQuery,
     remote_addr: Option<SocketAddr>,
     auth_service: AuthService,
@@ -1075,7 +1117,11 @@ async fn handle_auth_me(
             retry_after_seconds: 1,
         }));
     }
-    let token = resolve_token(authorization_header.as_deref(), &query);
+    let token = resolve_token_with_cookie(
+        authorization_header.as_deref(),
+        &query,
+        cookie_header.as_deref(),
+    );
     let reply = match token {
         Some(token_value) => match auth_service.profile_from_token(&token_value) {
             Some((profile, token_expires_at)) => ok_response(AuthMeResult {
@@ -1091,6 +1137,7 @@ async fn handle_auth_me(
 
 async fn handle_auth_logout(
     authorization_header: Option<String>,
+    cookie_header: Option<String>,
     query: TokenQuery,
     remote_addr: Option<SocketAddr>,
     auth_service: AuthService,
@@ -1100,7 +1147,11 @@ async fn handle_auth_logout(
             retry_after_seconds: 1,
         }));
     }
-    let token = resolve_token(authorization_header.as_deref(), &query);
+    let token = resolve_token_with_cookie(
+        authorization_header.as_deref(),
+        &query,
+        cookie_header.as_deref(),
+    );
     let revoked = token
         .as_deref()
         .map(|value| auth_service.revoke_session_token(value))
@@ -1141,8 +1192,16 @@ fn error_response(error: AuthError) -> warp::reply::WithStatus<warp::reply::Json
     warp::reply::with_status(warp::reply::json(&body), status)
 }
 
-fn resolve_token(authorization_header: Option<&str>, query: &TokenQuery) -> Option<String> {
+fn resolve_token_with_cookie(
+    authorization_header: Option<&str>,
+    query: &TokenQuery,
+    cookie_header: Option<&str>,
+) -> Option<String> {
+    // Priority: Authorization header > Cookie > query parameter (deprecated).
     if let Some(token) = parse_bearer_token(authorization_header) {
+        return Some(token);
+    }
+    if let Some(token) = parse_session_cookie(cookie_header) {
         return Some(token);
     }
     if let Some(raw) = query.auth_token.as_ref().or(query.token.as_ref()) {
@@ -1150,6 +1209,24 @@ fn resolve_token(authorization_header: Option<&str>, query: &TokenQuery) -> Opti
         if !trimmed.is_empty() {
             warn!("Session token provided via query parameter — this is deprecated and will be removed. Use the Authorization header instead.");
             return Some(trimmed.to_owned());
+        }
+    }
+    None
+}
+
+/// Extracts the `mgs_session` cookie value from a Cookie header string.
+fn parse_session_cookie(cookie_header: Option<&str>) -> Option<String> {
+    let header = cookie_header?.trim();
+    if header.is_empty() {
+        return None;
+    }
+    for pair in header.split(';') {
+        let pair = pair.trim();
+        if let Some(value) = pair.strip_prefix("mgs_session=") {
+            let token = value.trim();
+            if !token.is_empty() {
+                return Some(token.to_owned());
+            }
         }
     }
     None
@@ -1637,6 +1714,57 @@ mod tests {
             retry_after <= OTP_IP_SHORT_WINDOW_SECS,
             "retry_after should not exceed the short window duration"
         );
+    }
+
+    #[test]
+    fn parse_session_cookie_extracts_mgs_session() {
+        assert_eq!(
+            parse_session_cookie(Some("mgs_session=abc123")),
+            Some("abc123".to_owned())
+        );
+        assert_eq!(
+            parse_session_cookie(Some("other=x; mgs_session=tok_456; path=/")),
+            Some("tok_456".to_owned())
+        );
+        assert_eq!(parse_session_cookie(Some("other=x; unrelated=y")), None);
+        assert_eq!(parse_session_cookie(Some("")), None);
+        assert_eq!(parse_session_cookie(None), None);
+        assert_eq!(parse_session_cookie(Some("mgs_session=")), None);
+    }
+
+    #[test]
+    fn resolve_token_with_cookie_priority() {
+        let query_empty = TokenQuery::default();
+        let query_with_token = TokenQuery {
+            token: Some("query_tok".to_owned()),
+            auth_token: None,
+        };
+
+        assert_eq!(
+            resolve_token_with_cookie(
+                Some("Bearer header_tok"),
+                &query_empty,
+                Some("mgs_session=cookie_tok"),
+            ),
+            Some("header_tok".to_owned())
+        );
+        assert_eq!(
+            resolve_token_with_cookie(None, &query_with_token, Some("mgs_session=cookie_tok")),
+            Some("cookie_tok".to_owned())
+        );
+        assert_eq!(
+            resolve_token_with_cookie(None, &query_with_token, None),
+            Some("query_tok".to_owned())
+        );
+        assert_eq!(
+            resolve_token_with_cookie(None, &query_empty, None),
+            None
+        );
+    }
+
+    #[test]
+    fn default_session_ttl_is_24_hours() {
+        assert_eq!(DEFAULT_SESSION_TTL_SECONDS, 60 * 60 * 24);
     }
 
     #[test]

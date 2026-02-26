@@ -1,3 +1,17 @@
+// SECURITY NOTE: For production deployments, the ideal token storage is an
+// HttpOnly, Secure, SameSite=Strict cookie set by the server. This removes
+// tokens from JS-accessible storage entirely and eliminates XSS token theft.
+// To enable this, set MGS_AUTH_USE_COOKIES=true on the server. The server will
+// then set the session token as a cookie on the verify-code response, and the
+// WebSocket upgrade path will read the cookie automatically.
+//
+// The current client-side approach uses sessionStorage (not localStorage) to
+// limit the exposure window: tokens are cleared when the tab/browser closes,
+// reducing the risk from persistent XSS or shared-device scenarios.
+
+// Key used to store the token expiry timestamp alongside the token itself.
+const TOKEN_EXPIRY_SUFFIX = "_expires_at";
+
 export function createAuthHelpers(options) {
     const {
         authElements,
@@ -63,19 +77,55 @@ export function createAuthHelpers(options) {
         if (authCodeInput) authCodeInput.disabled = disabled;
     }
 
-    function setAuthToken(token) {
+    function setAuthToken(token, expiresAt) {
         const normalized = String(token || "").trim();
         setAuthSessionToken(normalized);
         if (normalized) {
-            localStorage.setItem(authSessionTokenKey, normalized);
+            sessionStorage.setItem(authSessionTokenKey, normalized);
+            // Store expiry so we can reject stale tokens on load.
+            if (expiresAt) {
+                sessionStorage.setItem(
+                    authSessionTokenKey + TOKEN_EXPIRY_SUFFIX,
+                    String(expiresAt),
+                );
+            }
         } else {
-            localStorage.removeItem(authSessionTokenKey);
+            sessionStorage.removeItem(authSessionTokenKey);
+            sessionStorage.removeItem(authSessionTokenKey + TOKEN_EXPIRY_SUFFIX);
         }
+        // Clean up any legacy localStorage token from before this migration.
+        try {
+            localStorage.removeItem(authSessionTokenKey);
+            localStorage.removeItem(authSessionTokenKey + TOKEN_EXPIRY_SUFFIX);
+        } catch (_) { /* storage may be unavailable */ }
     }
 
     function loadAuthToken() {
-        const stored = localStorage.getItem(authSessionTokenKey);
+        // Migrate: if a token exists in localStorage but not sessionStorage,
+        // move it over and remove the old copy.
+        let stored = sessionStorage.getItem(authSessionTokenKey);
+        if (!stored) {
+            const legacy = localStorage.getItem(authSessionTokenKey);
+            if (legacy) {
+                stored = legacy;
+                sessionStorage.setItem(authSessionTokenKey, legacy);
+                try { localStorage.removeItem(authSessionTokenKey); } catch (_) {}
+            }
+        }
         const normalized = String(stored || "").trim();
+        // Enforce client-side TTL: reject tokens past their expiry.
+        if (normalized) {
+            const expiryRaw = sessionStorage.getItem(authSessionTokenKey + TOKEN_EXPIRY_SUFFIX);
+            if (expiryRaw) {
+                const expiresAt = Number(expiryRaw);
+                const nowSeconds = Math.floor(Date.now() / 1000);
+                if (expiresAt > 0 && nowSeconds >= expiresAt) {
+                    // Token has expired client-side; clear it.
+                    setAuthToken("");
+                    return "";
+                }
+            }
+        }
         setAuthSessionToken(normalized);
         return normalized;
     }
@@ -163,12 +213,13 @@ export function createAuthHelpers(options) {
                 return false;
             }
             const token = String(payload?.data?.token || "").trim();
+            const tokenExpiresAt = payload?.data?.token_expires_at || null;
             const profile = payload?.data?.profile || null;
             if (!token || !profile) {
                 setAuthStatus("Verification response missing token/profile.", "error");
                 return false;
             }
-            setAuthToken(token);
+            setAuthToken(token, tokenExpiresAt);
             updateAuthUi(profile);
             setAuthStatus("Phone verified. Your score will persist to this account.", "success");
             return true;
