@@ -179,8 +179,7 @@ impl FeatureFlagService {
             record.updated_at = now;
         }
 
-        self.persist_store()
-            .map_err(|err| FlagError::Internal(format!("failed to persist flags: {}", err)))?;
+        self.spawn_persist_store();
 
         let flags = self.inner.flags.read();
         flags
@@ -225,9 +224,23 @@ impl FeatureFlagService {
         })
     }
 
-    fn persist_store(&self) -> Result<(), String> {
+    /// Offloads flag store persistence to a blocking thread so that
+    /// tokio worker threads are not stalled by file I/O.
+    /// Falls back to synchronous persistence when no tokio runtime is
+    /// available (e.g. in unit tests).
+    fn spawn_persist_store(&self) {
         let snapshot = self.inner.flags.read().clone();
-        persist_store(&self.inner.store_path, &snapshot)
+        let path = self.inner.store_path.clone();
+        let do_persist = move || {
+            if let Err(err) = persist_store(&path, &snapshot) {
+                warn!("Background flag persist failed: {}", err);
+            }
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            tokio::task::spawn_blocking(do_persist);
+        } else {
+            do_persist();
+        }
     }
 }
 
