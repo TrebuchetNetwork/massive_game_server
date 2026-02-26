@@ -121,4 +121,49 @@ mod tests {
         manager.remove("p1");
         assert_eq!(manager.len(), 0);
     }
+
+    #[test]
+    fn stale_peer_ids_returns_idle_connections() {
+        let manager = ConnectionManager::default();
+
+        // Insert a connection and manually backdate its last_seen_at
+        let mut info = ConnectionInfo::new("stale_peer", TransportKind::WebRtc);
+        info.last_seen_at = Instant::now() - Duration::from_secs(200);
+        manager.upsert(info);
+
+        // Insert a fresh connection
+        manager.upsert(ConnectionInfo::new("fresh_peer", TransportKind::Quic));
+
+        let stale = manager.stale_peer_ids(Duration::from_secs(120));
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0], "stale_peer");
+    }
+
+    #[test]
+    fn stale_peer_ids_empty_when_all_fresh() {
+        let manager = ConnectionManager::default();
+        manager.upsert(ConnectionInfo::new("p1", TransportKind::WebRtc));
+        manager.upsert(ConnectionInfo::new("p2", TransportKind::Quic));
+
+        let stale = manager.stale_peer_ids(Duration::from_secs(120));
+        assert!(stale.is_empty());
+    }
+
+    #[test]
+    fn touch_resets_last_seen() {
+        let manager = ConnectionManager::default();
+        let mut info = ConnectionInfo::new("peer1", TransportKind::WebRtc);
+        info.last_seen_at = Instant::now() - Duration::from_secs(200);
+        manager.upsert(info);
+
+        // Should be stale before touch
+        assert_eq!(
+            manager.stale_peer_ids(Duration::from_secs(120)).len(),
+            1
+        );
+
+        // After touch, should no longer be stale
+        manager.touch("peer1");
+        assert!(manager.stale_peer_ids(Duration::from_secs(120)).is_empty());
+    }
 }

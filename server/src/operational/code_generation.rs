@@ -763,8 +763,14 @@ fn with_service(
 pub fn build_code_generation_routes(
     service: CodeGenerationService,
 ) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
+    // Source code validation bodies can be up to 128 KB (max source size + JSON overhead).
+    // Generation requests are small JSON bodies so 64 KB suffices.
+    let json_body_limit = 1024 * 64;
+    let source_body_limit = 256 * 1024; // 256 KB for source code payloads
+
     let validate = warp::path!("api" / "arena" / "code" / "validate")
         .and(warp::post())
+        .and(warp::body::content_length_limit(source_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
@@ -775,6 +781,7 @@ pub fn build_code_generation_routes(
 
     let generate = warp::path!("api" / "arena" / "code" / "generate")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .and_then(
@@ -789,6 +796,7 @@ pub fn build_code_generation_routes(
 
     let generate_and_compile = warp::path!("api" / "arena" / "code" / "generate_and_compile")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service))
         .and_then(

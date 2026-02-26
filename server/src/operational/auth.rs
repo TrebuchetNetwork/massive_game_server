@@ -963,8 +963,12 @@ impl AuthService {
 pub fn build_auth_routes(
     auth_service: AuthService,
 ) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
+    // 64 KB body limit for all JSON endpoints to prevent resource exhaustion
+    let json_body_limit = 1024 * 64;
+
     let request_code = warp::path!("auth" / "phone" / "request-code")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json::<RequestCodeBody>())
         .and(warp::addr::remote())
         .and(with_auth_service(auth_service.clone()))
@@ -972,6 +976,7 @@ pub fn build_auth_routes(
 
     let verify_code = warp::path!("auth" / "phone" / "verify-code")
         .and(warp::post())
+        .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json::<VerifyCodeBody>())
         .and(with_auth_service(auth_service.clone()))
         .and_then(handle_verify_code);

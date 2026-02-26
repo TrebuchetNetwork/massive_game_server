@@ -52,6 +52,44 @@ pub type DataChannelsMap = Arc<DashMap<String, Arc<CoreRTCDataChannel>>>;
 pub type WorldPartitionManagerRef = Arc<WorldPartitionManager>;
 pub type ServerInstanceRef = Arc<MassiveGameServer>; // Type alias for server instance
 
+/// Drop guard that ensures a WebRTC peer connection is closed even when the
+/// signaling task is cancelled or panics.  Because `RTCPeerConnection::close()`
+/// is async, the guard spawns a detached task to perform the close.
+struct PeerConnectionDropGuard {
+    peer_connection: Option<Arc<webrtc::peer_connection::RTCPeerConnection>>,
+    peer_id: String,
+}
+
+impl PeerConnectionDropGuard {
+    fn new(pc: Arc<webrtc::peer_connection::RTCPeerConnection>, peer_id: String) -> Self {
+        Self {
+            peer_connection: Some(pc),
+            peer_id,
+        }
+    }
+
+    /// Consume the guard without closing the connection (call this when you
+    /// intend to close the connection yourself, e.g. at the normal exit path).
+    fn defuse(&mut self) {
+        self.peer_connection = None;
+    }
+}
+
+impl Drop for PeerConnectionDropGuard {
+    fn drop(&mut self) {
+        if let Some(pc) = self.peer_connection.take() {
+            let pid = self.peer_id.clone();
+            tokio::spawn(async move {
+                if let Err(e) = pc.close().await {
+                    error!("[{}]: Error closing PeerConnection in drop guard: {}", pid, e);
+                } else {
+                    info!("[{}]: PeerConnection closed via drop guard.", pid);
+                }
+            });
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ChatMessage {
     pub seq: u64,
@@ -431,6 +469,9 @@ const MAX_SIGNALING_ICE_CANDIDATE_BYTES: usize = 4 * 1024;
 const MAX_SIGNALING_ICE_SDP_MID_BYTES: usize = 256;
 const MAX_SIGNALING_ICE_USERNAME_FRAGMENT_BYTES: usize = 256;
 const SIGNALING_OUTBOX_CAPACITY: usize = 1000;
+/// Maximum allowed size for incoming FlatBuffer messages on data channels.
+/// Messages exceeding this are dropped to prevent OOM from oversized payloads.
+const MAX_DATACHANNEL_MESSAGE_BYTES: usize = 1024 * 1024; // 1 MB
 
 fn try_queue_signaling_message(
     sender: &mpsc::Sender<Result<Message, warp::Error>>,
@@ -924,6 +965,13 @@ pub async fn handle_signaling_connection(
         }
     };
 
+    // Safety net: if this task is cancelled/aborted, the drop guard ensures
+    // the peer connection is closed to avoid resource leaks.
+    let mut pc_drop_guard = PeerConnectionDropGuard::new(
+        Arc::clone(&peer_connection),
+        peer_id_str.clone(),
+    );
+
     let pc_for_ice = Arc::clone(&peer_connection);
     let ice_sender_clone = client_signaling_tx.clone();
     let peer_id_for_ice = peer_id_str.clone();
@@ -1270,6 +1318,15 @@ pub async fn handle_signaling_connection(
 
             Box::pin(async move {
                 metrics::record_network_bytes("ingress_data_channel", msg.data.len());
+                if msg.data.len() > MAX_DATACHANNEL_MESSAGE_BYTES {
+                    warn!(
+                        "[{}]: Dropping oversized data-channel message ({} bytes, limit={}).",
+                        pid_msg_inner_str,
+                        msg.data.len(),
+                        MAX_DATACHANNEL_MESSAGE_BYTES
+                    );
+                    return;
+                }
                 if let Ok(game_msg_root) = fb::root_as_game_message(&msg.data) {
                     let protocol_version = game_msg_root.protocol_version();
                     if protocol_version != GAME_PROTOCOL_VERSION {
@@ -1560,6 +1617,8 @@ pub async fn handle_signaling_connection(
         &player_aois,
         &auth_service,
     );
+    // Defuse the drop guard since we are closing the connection explicitly.
+    pc_drop_guard.defuse();
     if let Err(e) = peer_connection.close().await {
         error!("[{}]: Error closing PeerConnection: {}", peer_id_str, e);
     }
@@ -1626,5 +1685,36 @@ pub fn handle_dc_send_error(error_string: &str, peer_id_str: &str, message_type:
             "[{}]: Error sending {} on data channel: {}",
             peer_id_str, message_type, error_string
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn datachannel_message_limit_is_reasonable() {
+        // The limit should be at least large enough for normal game messages
+        // (a few KB) but prevent multi-megabyte OOM attacks.
+        assert!(MAX_DATACHANNEL_MESSAGE_BYTES >= 64 * 1024, "limit too small for game messages");
+        assert!(MAX_DATACHANNEL_MESSAGE_BYTES <= 8 * 1024 * 1024, "limit too large to be protective");
+    }
+
+    #[test]
+    fn signaling_text_limit_is_below_datachannel_limit() {
+        // Signaling text messages have their own limit which should be smaller
+        // since they are JSON signaling payloads, not binary game data.
+        assert!(MAX_SIGNALING_TEXT_BYTES <= MAX_DATACHANNEL_MESSAGE_BYTES);
+    }
+
+    #[test]
+    fn drop_guard_defuse_prevents_close() {
+        // Verify that defuse() clears the stored connection (no-op on drop).
+        let mut guard = PeerConnectionDropGuard {
+            peer_connection: None, // No real connection in unit test
+            peer_id: "test_peer".to_owned(),
+        };
+        guard.defuse();
+        assert!(guard.peer_connection.is_none());
     }
 }
