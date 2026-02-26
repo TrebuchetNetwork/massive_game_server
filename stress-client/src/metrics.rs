@@ -21,6 +21,8 @@ pub struct BotMetrics {
     pub connected: bool,
     /// If disconnected, the reason.
     pub disconnect_reason: Option<String>,
+    /// Whether the bot completed its run duration gracefully.
+    pub completed: bool,
     /// Timestamps of received delta messages for jitter analysis.
     pub delta_timestamps: Vec<Instant>,
 }
@@ -36,6 +38,7 @@ impl BotMetrics {
             inputs_sent: 0,
             connected: false,
             disconnect_reason: None,
+            completed: false,
             delta_timestamps: Vec::with_capacity(512),
         }
     }
@@ -140,9 +143,20 @@ impl ScenarioMetrics {
         }
     }
 
+    pub async fn mark_completed(&self, bot_id: usize) {
+        let mut bots = self.bots.write().await;
+        if let Some(m) = bots.get_mut(bot_id) {
+            m.completed = true;
+        }
+    }
+
     pub async fn mark_disconnected(&self, bot_id: usize, reason: &str) {
         let mut bots = self.bots.write().await;
         if let Some(m) = bots.get_mut(bot_id) {
+            // Don't count graceful shutdown as a disconnect
+            if m.completed {
+                return;
+            }
             if m.connected {
                 self.connected_count.fetch_sub(1, Ordering::Relaxed);
             }
@@ -206,8 +220,11 @@ impl ScenarioMetrics {
             println!("  Avg p95 delta interval:  {:.1}ms", avg_p95);
         }
 
-        // Disconnects
-        let disconnected: Vec<&BotMetrics> = bots.iter().filter(|b| !b.connected).collect();
+        // Completed vs disconnected
+        let completed_count = bots.iter().filter(|b| b.completed).count();
+        println!("  Completed gracefully:  {}/{}", completed_count, self.target_bots);
+
+        let disconnected: Vec<&BotMetrics> = bots.iter().filter(|b| !b.connected && !b.completed).collect();
         if !disconnected.is_empty() {
             println!("  Disconnected bots: {}", disconnected.len());
             for d in disconnected.iter().take(10) {
@@ -226,30 +243,32 @@ impl ScenarioMetrics {
 
         // Pass criteria:
         // - At least 90% of target bots received a welcome message
-        // - At least 80% are still connected at end
-        // - At least 1 delta received per connected bot on average
+        // - At least 80% completed gracefully (or still connected)
+        // - At least 1 delta received per welcomed bot on average
         let welcome_ratio = welcomed as f64 / self.target_bots as f64;
-        let connected_ratio = connected as f64 / self.target_bots as f64;
-        let avg_deltas = if connected > 0 {
-            total_deltas as f64 / connected as f64
+        // Bots that completed gracefully OR are still connected at eval time
+        let success_count = bots.iter().filter(|b| b.completed || b.connected).count();
+        let success_ratio = success_count as f64 / self.target_bots as f64;
+        let avg_deltas = if welcomed > 0 {
+            total_deltas as f64 / welcomed as f64
         } else {
             0.0
         };
 
-        let pass = welcome_ratio >= 0.90 && connected_ratio >= 0.80 && avg_deltas >= 1.0;
+        let pass = welcome_ratio >= 0.90 && success_ratio >= 0.80 && avg_deltas >= 1.0;
 
         if pass {
             println!(
-                "  PASS  (welcome={:.0}%, connected={:.0}%, avg_deltas={:.1})",
+                "  PASS  (welcome={:.0}%, success={:.0}%, avg_deltas={:.1})",
                 welcome_ratio * 100.0,
-                connected_ratio * 100.0,
+                success_ratio * 100.0,
                 avg_deltas
             );
         } else {
             println!(
-                "  FAIL  (welcome={:.0}%, connected={:.0}%, avg_deltas={:.1})",
+                "  FAIL  (welcome={:.0}%, success={:.0}%, avg_deltas={:.1})",
                 welcome_ratio * 100.0,
-                connected_ratio * 100.0,
+                success_ratio * 100.0,
                 avg_deltas
             );
         }

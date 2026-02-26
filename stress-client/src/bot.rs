@@ -137,35 +137,39 @@ pub async fn run_bot(
             let metrics = metrics.clone();
             let welcome_received = welcome_received.clone();
             Box::pin(async move {
-                if let Ok(game_msg) = fb::root_as_game_message(&msg.data) {
-                    match game_msg.msg_type() {
-                        fb::MessageType::Welcome => {
-                            if !welcome_received.swap(true, Ordering::SeqCst) {
-                                let latency = connect_start.elapsed();
-                                info!(
-                                    "bot#{}: Welcome received (latency={:.0}ms)",
-                                    bot_id,
-                                    latency.as_secs_f64() * 1000.0
-                                );
-                                metrics.mark_connected(bot_id, latency).await;
+                // Server sends packets in MGSB batch envelope or raw FlatBuffers.
+                let payloads = unpack_mgsb_batch(&msg.data);
+                for payload in &payloads {
+                    if let Ok(game_msg) = fb::root_as_game_message(payload) {
+                        match game_msg.msg_type() {
+                            fb::MessageType::Welcome => {
+                                if !welcome_received.swap(true, Ordering::SeqCst) {
+                                    let latency = connect_start.elapsed();
+                                    info!(
+                                        "bot#{}: Welcome received (latency={:.0}ms)",
+                                        bot_id,
+                                        latency.as_secs_f64() * 1000.0
+                                    );
+                                    metrics.mark_connected(bot_id, latency).await;
+                                }
                             }
-                        }
-                        fb::MessageType::InitialState => {
-                            debug!("bot#{}: InitialState received", bot_id);
-                            metrics.record_delta(bot_id).await;
-                        }
-                        fb::MessageType::DeltaState => {
-                            metrics.record_delta(bot_id).await;
-                        }
-                        fb::MessageType::MatchUpdate => {
-                            debug!("bot#{}: MatchUpdate received", bot_id);
-                        }
-                        _ => {
-                            debug!(
-                                "bot#{}: unhandled msg_type {:?}",
-                                bot_id,
-                                game_msg.msg_type()
-                            );
+                            fb::MessageType::InitialState => {
+                                debug!("bot#{}: InitialState received", bot_id);
+                                metrics.record_delta(bot_id).await;
+                            }
+                            fb::MessageType::DeltaState => {
+                                metrics.record_delta(bot_id).await;
+                            }
+                            fb::MessageType::MatchUpdate => {
+                                debug!("bot#{}: MatchUpdate received", bot_id);
+                            }
+                            _ => {
+                                debug!(
+                                    "bot#{}: unhandled msg_type {:?}",
+                                    bot_id,
+                                    game_msg.msg_type()
+                                );
+                            }
                         }
                     }
                 }
@@ -245,42 +249,44 @@ pub async fn run_bot(
     info!("bot#{}: SDP offer sent", bot_id);
 
     // --- 4. Process signaling messages (SDP answer + ICE candidates) ---
-    // Run signaling + ICE trickle concurrently until data channel opens or timeout.
+    // The server uses the WebSocket lifetime to manage the peer connection.
+    // If the WS drops, the server tears down the PeerConnection + DataChannel.
+    // So the signaling task must keep the WS alive for the entire bot session.
+    let shutdown_signaling = Arc::new(AtomicBool::new(false));
     let deadline = Instant::now() + Duration::from_secs(30);
 
     let signaling_task = {
         let peer_connection = peer_connection.clone();
         let dc_open = dc_open.clone();
-        let dc_open_notify = dc_open_notify.clone();
+        let shutdown_signaling = shutdown_signaling.clone();
 
         tokio::spawn(async move {
+            let signaling_deadline = tokio::time::Instant::from_std(deadline);
+
+            // Phase 1: Active signaling until DC opens or timeout
             loop {
                 if dc_open.load(Ordering::SeqCst) {
                     break;
                 }
 
                 tokio::select! {
-                    // Forward ICE candidates from our peer to the server
                     Some(ice_json) = ice_rx.recv() => {
                         if let Err(e) = ws_tx.send(WsMessage::Text(ice_json)).await {
                             warn!("bot#{}: WS send ICE error: {}", bot_id, e);
-                            break;
+                            return;
                         }
                     }
-                    // Receive signaling messages from server
                     msg = ws_rx.next() => {
                         match msg {
                             Some(Ok(WsMessage::Text(text))) => {
-                                // Check for error messages
                                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
                                     if value.get("error").is_some() {
                                         let detail = value.get("detail")
                                             .and_then(|d| d.as_str())
                                             .unwrap_or("unknown");
                                         error!("bot#{}: Server error: {}", bot_id, detail);
-                                        anyhow::bail!("Server rejected: {}", detail);
+                                        return;
                                     }
-                                    // Skip non-signaling messages like sdp_offer_queue
                                     if value.get("event").is_some() {
                                         debug!("bot#{}: signaling event: {}", bot_id, text);
                                         continue;
@@ -311,31 +317,49 @@ pub async fn run_bot(
                             }
                             Some(Ok(WsMessage::Close(_))) => {
                                 info!("bot#{}: WS closed by server during signaling", bot_id);
-                                break;
+                                return;
                             }
                             Some(Err(e)) => {
                                 warn!("bot#{}: WS receive error: {}", bot_id, e);
-                                break;
+                                return;
                             }
                             None => {
                                 info!("bot#{}: WS stream ended", bot_id);
-                                break;
+                                return;
                             }
                             _ => {}
                         }
                     }
-                    // Timeout
-                    _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+                    _ = tokio::time::sleep_until(signaling_deadline) => {
                         warn!("bot#{}: signaling timeout", bot_id);
-                        break;
-                    }
-                    // Data channel opened
-                    _ = dc_open_notify.notified() => {
-                        break;
+                        return;
                     }
                 }
             }
-            Ok::<(), anyhow::Error>(())
+
+            // Phase 2: Keep WS alive during gameplay. Drain incoming WS messages
+            // (the server may send keep-alives or events) until shutdown.
+            debug!("bot#{}: DC open, keeping WS alive", bot_id);
+            loop {
+                if shutdown_signaling.load(Ordering::Relaxed) {
+                    break;
+                }
+                tokio::select! {
+                    Some(ice_json) = ice_rx.recv() => {
+                        let _ = ws_tx.send(WsMessage::Text(ice_json)).await;
+                    }
+                    msg = ws_rx.next() => {
+                        match msg {
+                            Some(Ok(WsMessage::Close(_))) | Some(Err(_)) | None => break,
+                            _ => {}
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+                }
+            }
+
+            // Gracefully close the WebSocket
+            let _ = ws_tx.send(WsMessage::Close(None)).await;
         })
     };
 
@@ -348,6 +372,7 @@ pub async fn run_bot(
                     .mark_disconnected(bot_id, "DataChannel open timeout")
                     .await;
                 warn!("bot#{}: DataChannel open timeout after 30s", bot_id);
+                shutdown_signaling.store(true, Ordering::SeqCst);
                 let _ = peer_connection.close().await;
                 return Ok(());
             }
@@ -358,6 +383,7 @@ pub async fn run_bot(
         metrics
             .mark_disconnected(bot_id, "DataChannel never opened")
             .await;
+        shutdown_signaling.store(true, Ordering::SeqCst);
         let _ = peer_connection.close().await;
         return Ok(());
     }
@@ -393,11 +419,46 @@ pub async fn run_bot(
         }
     }
 
-    info!("bot#{}: shutting down", bot_id);
+    info!("bot#{}: shutting down (graceful)", bot_id);
+    metrics.mark_completed(bot_id).await;
+    shutdown_signaling.store(true, Ordering::SeqCst);
     let _ = peer_connection.close().await;
-    // The signaling task will end when the WS connection drops.
     signaling_task.abort();
     Ok(())
+}
+
+/// Unpack an MGSB packet batch envelope into individual FlatBuffer payloads.
+/// If the data doesn't have the MGSB magic, treat it as a single raw FlatBuffer.
+fn unpack_mgsb_batch(data: &[u8]) -> Vec<&[u8]> {
+    const MAGIC: &[u8; 4] = b"MGSB";
+    const HEADER_LEN: usize = 7; // magic(4) + version(1) + count(2)
+
+    if data.len() >= HEADER_LEN && &data[..4] == MAGIC {
+        let count = u16::from_le_bytes([data[5], data[6]]) as usize;
+        let mut offset = HEADER_LEN;
+        let mut payloads = Vec::with_capacity(count);
+        for _ in 0..count {
+            if offset + 4 > data.len() {
+                break;
+            }
+            let len = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+            if offset + len > data.len() {
+                break;
+            }
+            payloads.push(&data[offset..offset + len]);
+            offset += len;
+        }
+        payloads
+    } else {
+        // Raw FlatBuffer (no batch envelope)
+        vec![data]
+    }
 }
 
 /// Build a FlatBuffers PlayerInput message with random movement/shooting.
