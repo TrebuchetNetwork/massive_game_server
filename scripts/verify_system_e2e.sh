@@ -58,6 +58,7 @@ FULL_TESTS=(
   tests/combat_projectiles.spec.js
   tests/wall_impact.spec.js
   tests/player_wall_collision.spec.js
+  tests/ui_performance.spec.js
 )
 
 if [ "$FULL_SUITE" = "1" ]; then

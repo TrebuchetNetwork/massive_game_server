@@ -147,7 +147,23 @@ path = "tests/integration/full_match.rs"
 
 
 [[test]]
-name = "boundary_stress" # You can choose a name, e.g., "walls_integration" or keep "walls"
+name = "game_modes"
+path = "tests/integration/game_modes.rs"
+
+[[test]]
+name = "input_and_combat"
+path = "tests/integration/input_and_combat.rs"
+
+[[test]]
+name = "wall_lifecycle"
+path = "tests/integration/wall_lifecycle.rs"
+
+[[test]]
+name = "game_tick"
+path = "tests/integration/game_tick.rs"
+
+[[test]]
+name = "boundary_stress"
 path = "tests/performance/boundary_stress.rs"
 
 [[bench]]
