@@ -1,10 +1,18 @@
 // massive_game_server/server/src/concurrent/spatial_index.rs
+//
+// Spatial indexing with grid cells and optional quadtree overlay.
+//
+// Quadtree rebuild is lock-free for readers: new trees are built in a local
+// allocation and then swapped in via ArcSwap, so query paths never block
+// waiting for a rebuild to finish.
 
 use crate::core::simd;
 use crate::core::types::{EntityId, PlayerID};
+use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::debug;
@@ -214,6 +222,14 @@ impl<T: Clone> PointQuadtree<T> {
     }
 }
 
+/// Pair of quadtree indices swapped in atomically via ArcSwap so readers are
+/// never blocked during a rebuild.
+#[derive(Debug, Clone, Default)]
+struct QuadtreeIndices {
+    player_tree: Option<PointQuadtree<PlayerID>>,
+    projectile_tree: Option<PointQuadtree<EntityId>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SpatialQueryMode {
     Grid,
@@ -238,12 +254,15 @@ pub struct ImprovedSpatialIndex {
     projectile_cells: Arc<DashMap<EntityId, usize>>,
 
     // Hierarchical index snapshots (rebuilt at a bounded cadence).
+    // Uses ArcSwap so readers never block during a rebuild.
     query_mode: SpatialQueryMode,
     quadtree_min_entities: usize,
     quadtree_rebuild_interval: Duration,
     quadtree_last_rebuild: RwLock<Instant>,
-    quadtree_player_index: RwLock<Option<PointQuadtree<PlayerID>>>,
-    quadtree_projectile_index: RwLock<Option<PointQuadtree<EntityId>>>,
+    /// Flag to prevent concurrent rebuilds.  Only one thread should build at a
+    /// time; others skip if a rebuild is already in progress.
+    quadtree_rebuilding: AtomicBool,
+    quadtree_indices: ArcSwap<QuadtreeIndices>,
     world_bounds: Aabb,
 }
 
@@ -304,8 +323,8 @@ impl ImprovedSpatialIndex {
             quadtree_last_rebuild: RwLock::new(
                 Instant::now() - Duration::from_millis(quadtree_rebuild_interval_ms),
             ),
-            quadtree_player_index: RwLock::new(None),
-            quadtree_projectile_index: RwLock::new(None),
+            quadtree_rebuilding: AtomicBool::new(false),
+            quadtree_indices: ArcSwap::from_pointee(QuadtreeIndices::default()),
             world_bounds: Aabb {
                 min_x: world_min_x,
                 max_x: world_min_x + world_width,
@@ -324,6 +343,9 @@ impl ImprovedSpatialIndex {
         }
     }
 
+    /// Rebuild quadtree indices if enough time has elapsed since the last
+    /// rebuild.  The new trees are built in local allocations and then swapped
+    /// in atomically via ArcSwap, so concurrent readers are never blocked.
     fn maybe_rebuild_quadtrees(&self) {
         if self.query_mode == SpatialQueryMode::Grid {
             return;
@@ -336,14 +358,30 @@ impl ImprovedSpatialIndex {
                 return;
             }
         }
+
+        // Try to claim the rebuild slot.  If another thread is already
+        // rebuilding, we skip and use the stale tree (still valid, just not
+        // up-to-date).
+        if self
+            .quadtree_rebuilding
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+
+        // Double-check the timestamp under the flag (another thread may have
+        // finished a rebuild between the first check and our CAS).
         {
             let mut last_rebuild = self.quadtree_last_rebuild.write();
             if now.duration_since(*last_rebuild) < self.quadtree_rebuild_interval {
+                self.quadtree_rebuilding.store(false, Ordering::Release);
                 return;
             }
             *last_rebuild = now;
         }
 
+        // Build new trees in local memory (no locks held by readers).
         let mut player_points = Vec::with_capacity(self.player_positions.len());
         for entry in self.player_positions.iter() {
             let (x, y) = *entry.value();
@@ -384,8 +422,14 @@ impl ImprovedSpatialIndex {
             ))
         };
 
-        *self.quadtree_player_index.write() = player_tree;
-        *self.quadtree_projectile_index.write() = projectile_tree;
+        // Atomic swap -- readers loading the ArcSwap see either the old or the
+        // new tree, never a partially-built tree, and are never blocked.
+        self.quadtree_indices.store(Arc::new(QuadtreeIndices {
+            player_tree,
+            projectile_tree,
+        }));
+
+        self.quadtree_rebuilding.store(false, Ordering::Release);
     }
 
     #[inline]
@@ -565,8 +609,8 @@ impl ImprovedSpatialIndex {
         let candidate_ids: Vec<PlayerID> = if self.should_use_quadtree(self.player_positions.len())
         {
             self.maybe_rebuild_quadtrees();
-            let tree_guard = self.quadtree_player_index.read();
-            if let Some(tree) = tree_guard.as_ref() {
+            let indices = self.quadtree_indices.load();
+            if let Some(tree) = indices.player_tree.as_ref() {
                 tree.query_circle(x, y, radius)
             } else {
                 self.collect_grid_player_candidates(x, y, radius)
@@ -620,8 +664,8 @@ impl ImprovedSpatialIndex {
         let candidate_ids: Vec<PlayerID> = if self.should_use_quadtree(self.player_positions.len())
         {
             self.maybe_rebuild_quadtrees();
-            let tree_guard = self.quadtree_player_index.read();
-            if let Some(tree) = tree_guard.as_ref() {
+            let indices = self.quadtree_indices.load();
+            if let Some(tree) = indices.player_tree.as_ref() {
                 tree.query_circle(x, y, radius)
             } else {
                 self.collect_grid_player_candidates(x, y, radius)
@@ -708,8 +752,8 @@ impl ImprovedSpatialIndex {
         let candidate_ids: Vec<EntityId> =
             if self.should_use_quadtree(self.projectile_positions.len()) {
                 self.maybe_rebuild_quadtrees();
-                let tree_guard = self.quadtree_projectile_index.read();
-                if let Some(tree) = tree_guard.as_ref() {
+                let indices = self.quadtree_indices.load();
+                if let Some(tree) = indices.projectile_tree.as_ref() {
                     tree.query_circle(x, y, radius)
                 } else {
                     self.collect_grid_projectile_candidates(x, y, radius)

@@ -1,7 +1,7 @@
 // massive_game_server/server/src/server/instance.rs
 use crate::concurrent::atomic_snapshot::{
     AtomicPickupSnapshot, AtomicPlayerAoISnapshot, AtomicPlayerSnapshot, AtomicProjectileSnapshot,
-    PickupSoASnapshot, PlayerAoISnapshot, PlayerSoASnapshot, ProjectileSoASnapshot,
+    PickupSoASnapshot, PlayerSoASnapshot, ProjectileSoASnapshot,
 };
 use crate::concurrent::event_queue::PriorityEventQueue;
 use crate::concurrent::spatial_index::ImprovedSpatialIndex;
