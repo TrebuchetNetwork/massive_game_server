@@ -36,6 +36,7 @@ pub const PICKUP_DEFAULT_RESPAWN_TIME_SECS: f32 = 10.0;
 pub const MAX_PLAYER_SPEED_MULTIPLIER: f32 = 1.15;
 pub const MAX_POSITION_DELTA_SLACK: f32 = 3.0;
 pub const MIN_SHOT_INTERVAL_SECONDS: f32 = 0.05; // Minimum interval between shots
+pub const FIRE_RATE_JITTER_TOLERANCE_SECS: f32 = 0.050; // 50ms tolerance for network jitter on fire rate checks
 pub const POSITION_VALIDATION_VIOLATION_THRESHOLD: u32 = 3;
 
 // ── Weapon tuning constants ──────────────────────────────────────────
@@ -148,12 +149,19 @@ pub const MOBILE_COMPRESSION_LEVEL: u32 = 5;
 // to integer representations, then converted back to f32 so the
 // FlatBuffers schema (which uses f32) remains unchanged.
 
+/// Minimum world coordinate representable by quantization.
+/// Signed offset so that negative world coordinates are preserved.
+pub const QUANTIZE_POSITION_MIN: f32 = -4096.0;
+
 /// Maximum world coordinate representable by u16 quantization.
-/// Supports maps up to 4096x4096 units.
+/// Supports maps spanning [-4096, +4096] units.
 pub const QUANTIZE_POSITION_MAX: f32 = 4096.0;
 
-/// Scale factor: maps [0, QUANTIZE_POSITION_MAX] -> [0, u16::MAX].
-pub const QUANTIZE_POSITION_SCALE: f32 = u16::MAX as f32 / QUANTIZE_POSITION_MAX;
+/// Total range covered by the quantization window.
+pub const QUANTIZE_POSITION_RANGE: f32 = QUANTIZE_POSITION_MAX - QUANTIZE_POSITION_MIN; // 8192.0
+
+/// Scale factor: maps [QUANTIZE_POSITION_MIN, QUANTIZE_POSITION_MAX] -> [0, u16::MAX].
+pub const QUANTIZE_POSITION_SCALE: f32 = u16::MAX as f32 / QUANTIZE_POSITION_RANGE;
 
 /// Maximum velocity magnitude representable by i8 quantization.
 /// Player speeds are typically 150-300 units/s; 127 * VELOCITY_SCALE covers that.
@@ -163,19 +171,21 @@ pub const QUANTIZE_VELOCITY_MAX: f32 = 500.0;
 pub const QUANTIZE_VELOCITY_SCALE: f32 = 127.0 / QUANTIZE_VELOCITY_MAX;
 
 /// Quantize a world-space position component (x or y) to u16-grid precision.
-/// The value is clamped to [0, QUANTIZE_POSITION_MAX], quantized, then
-/// dequantized back to f32 on the same grid.
+/// The value is clamped to [QUANTIZE_POSITION_MIN, QUANTIZE_POSITION_MAX],
+/// offset-shifted into [0, RANGE], quantized to u16, then dequantized back
+/// to f32 on the same grid.  This correctly handles negative coordinates.
 #[inline]
 pub fn quantize_position(v: f32) -> f32 {
-    let clamped = v.clamp(0.0, QUANTIZE_POSITION_MAX);
-    let q = (clamped * QUANTIZE_POSITION_SCALE).round() as u16;
-    q as f32 / QUANTIZE_POSITION_SCALE
+    let clamped = v.clamp(QUANTIZE_POSITION_MIN, QUANTIZE_POSITION_MAX);
+    let shifted = clamped - QUANTIZE_POSITION_MIN; // now in [0, RANGE]
+    let q = (shifted * QUANTIZE_POSITION_SCALE).round() as u16;
+    q as f32 / QUANTIZE_POSITION_SCALE + QUANTIZE_POSITION_MIN
 }
 
 /// Dequantize a u16 fixed-point value back to world-space f32.
 #[inline]
 pub fn dequantize_position(q: u16) -> f32 {
-    q as f32 / QUANTIZE_POSITION_SCALE
+    q as f32 / QUANTIZE_POSITION_SCALE + QUANTIZE_POSITION_MIN
 }
 
 /// Quantize a velocity component to i8-grid precision (-127..127 scaled).
@@ -213,6 +223,7 @@ pub const DEFAULT_INPUT_RATE_LIMIT_PER_SEC: u32 = 240;
 pub const DEFAULT_INPUT_RATE_LIMIT_BURST: u32 = 360;
 pub const INPUT_RATE_LIMIT_THROTTLE_LOG_INTERVAL_SECS: u64 = 5;
 pub const DEFAULT_LAG_COMPENSATION_MS: u64 = 60;
+pub const MAX_LAG_COMPENSATION_MS: u64 = 200; // Maximum rewind window for lag compensation (prevents exploit)
 pub const MAX_POSITION_HISTORY_SAMPLES: usize = 32;
 pub const AIMBOT_SUSPICION_ROTATION_RAD_PER_SEC: f32 = 18.0;
 pub const AIMBOT_SUSPICION_DECAY_PER_SEC: f32 = 0.6;
@@ -266,3 +277,116 @@ pub const AOI_MAX_VISIBLE_PLAYERS: usize = 96;
 pub const AOI_MAX_VISIBLE_PROJECTILES: usize = 420;
 pub const AOI_MAX_VISIBLE_PICKUPS: usize = 64;
 pub const AOI_MAX_VISIBLE_WALLS: usize = 120;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── quantize_position tests ──────────────────────────────────
+
+    #[test]
+    fn quantize_position_zero() {
+        let q = quantize_position(0.0);
+        assert!(q.abs() < 0.2, "quantize_position(0.0) = {q}, expected ~0.0");
+    }
+
+    #[test]
+    fn quantize_position_positive() {
+        let q = quantize_position(500.0);
+        assert!((q - 500.0).abs() < 0.2, "quantize_position(500.0) = {q}");
+    }
+
+    #[test]
+    fn quantize_position_negative() {
+        let q = quantize_position(-500.0);
+        assert!((q - -500.0).abs() < 0.2, "quantize_position(-500.0) = {q}");
+    }
+
+    #[test]
+    fn quantize_position_negative_world_min() {
+        // World min is -800; must survive quantization.
+        let q = quantize_position(-800.0);
+        assert!((q - -800.0).abs() < 0.3, "quantize_position(-800.0) = {q}");
+    }
+
+    #[test]
+    fn quantize_position_positive_world_max() {
+        // World max is 800; must survive quantization.
+        let q = quantize_position(800.0);
+        assert!((q - 800.0).abs() < 0.3, "quantize_position(800.0) = {q}");
+    }
+
+    #[test]
+    fn quantize_position_clamps_below_min() {
+        let q = quantize_position(-5000.0);
+        assert!((q - QUANTIZE_POSITION_MIN).abs() < 0.3,
+            "quantize_position(-5000.0) = {q}, expected ~{}", QUANTIZE_POSITION_MIN);
+    }
+
+    #[test]
+    fn quantize_position_clamps_above_max() {
+        let q = quantize_position(5000.0);
+        assert!((q - QUANTIZE_POSITION_MAX).abs() < 0.3,
+            "quantize_position(5000.0) = {q}, expected ~{}", QUANTIZE_POSITION_MAX);
+    }
+
+    #[test]
+    fn quantize_position_preserves_sign() {
+        // Positive values stay positive
+        assert!(quantize_position(100.0) > 0.0);
+        // Negative values stay negative
+        assert!(quantize_position(-100.0) < 0.0);
+    }
+
+    #[test]
+    fn quantize_position_roundtrip_accuracy() {
+        // Check that typical game positions survive quantization with < 0.25 unit error.
+        for &v in &[-750.0, -400.0, -100.0, 0.0, 100.0, 400.0, 750.0] {
+            let q = quantize_position(v);
+            assert!((q - v).abs() < 0.25,
+                "quantize_position({v}) = {q}, error = {}", (q - v).abs());
+        }
+    }
+
+    #[test]
+    fn dequantize_position_zero_is_min() {
+        // u16 value 0 should map back to QUANTIZE_POSITION_MIN
+        let v = dequantize_position(0);
+        assert!((v - QUANTIZE_POSITION_MIN).abs() < 0.2,
+            "dequantize_position(0) = {v}, expected ~{}", QUANTIZE_POSITION_MIN);
+    }
+
+    #[test]
+    fn dequantize_position_max_is_max() {
+        // u16::MAX should map back to QUANTIZE_POSITION_MAX
+        let v = dequantize_position(u16::MAX);
+        assert!((v - QUANTIZE_POSITION_MAX).abs() < 0.2,
+            "dequantize_position(u16::MAX) = {v}, expected ~{}", QUANTIZE_POSITION_MAX);
+    }
+
+    #[test]
+    fn dequantize_position_midpoint() {
+        // Midpoint of u16 range should map to 0.0 (center of [-4096, 4096])
+        let mid = u16::MAX / 2;
+        let v = dequantize_position(mid);
+        assert!(v.abs() < 0.2, "dequantize_position({mid}) = {v}, expected ~0.0");
+    }
+
+    // ── quantize_velocity tests ──────────────────────────────────
+
+    #[test]
+    fn quantize_velocity_negative_preserved() {
+        let q = quantize_velocity(-200.0);
+        assert!(q < 0.0, "quantize_velocity(-200.0) = {q}, expected negative");
+        assert!((q - -200.0).abs() < 10.0);
+    }
+
+    // ── quantize_rotation tests ──────────────────────────────────
+
+    #[test]
+    fn quantize_rotation_negative_wraps() {
+        let q = quantize_rotation(-std::f32::consts::FRAC_PI_2);
+        // Should wrap to ~3*PI/2
+        assert!(q > 0.0, "quantize_rotation(-PI/2) should wrap to positive");
+    }
+}
