@@ -1177,3 +1177,661 @@ mod packet_batch_tests {
         assert_eq!(hit_t, None);
     }
 }
+
+#[cfg(test)]
+mod instance_tests {
+    use super::*;
+    use crate::core::types::Vec2;
+
+    // ── shortest_angle_diff_radians tests ───────────────────────────
+
+    #[test]
+    fn shortest_angle_diff_zero() {
+        let diff = shortest_angle_diff_radians(0.0, 0.0);
+        assert!((diff).abs() < 1e-6);
+    }
+
+    #[test]
+    fn shortest_angle_diff_small_positive() {
+        let diff = shortest_angle_diff_radians(1.0, 0.5);
+        assert!((diff - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn shortest_angle_diff_small_negative() {
+        let diff = shortest_angle_diff_radians(0.5, 1.0);
+        assert!((diff - (-0.5)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn shortest_angle_diff_wraps_around_positive() {
+        // Going from near 2*PI to near 0 should give a small positive diff
+        let a = 0.1;
+        let b = 2.0 * std::f32::consts::PI - 0.1;
+        let diff = shortest_angle_diff_radians(a, b);
+        assert!((diff - 0.2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn shortest_angle_diff_wraps_around_negative() {
+        // Going from near 0 to near 2*PI should give a small negative diff
+        let a = 2.0 * std::f32::consts::PI - 0.1;
+        let b = 0.1;
+        let diff = shortest_angle_diff_radians(a, b);
+        assert!((diff - (-0.2)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn shortest_angle_diff_pi_boundary() {
+        let diff = shortest_angle_diff_radians(std::f32::consts::PI, 0.0);
+        // PI is the boundary; result should be PI or -PI (both acceptable)
+        assert!((diff.abs() - std::f32::consts::PI).abs() < 1e-5);
+    }
+
+    // ── segment_first_hit_fraction_with_aabb tests ──────────────────
+
+    #[test]
+    fn aabb_hit_vertical_segment() {
+        // Vertical segment going through a box
+        let hit = segment_first_hit_fraction_with_aabb(5.0, -5.0, 5.0, 5.0, 4.0, 6.0, -1.0, 1.0);
+        // Entry at y = -1.0 which is at t = (-1.0 - (-5.0)) / (5.0 - (-5.0)) = 4/10 = 0.4
+        assert!(hit.is_some());
+        assert!((hit.unwrap() - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn aabb_miss_parallel_segment() {
+        // Horizontal segment that passes above the box
+        let hit = segment_first_hit_fraction_with_aabb(0.0, 5.0, 10.0, 5.0, 4.0, 6.0, -1.0, 1.0);
+        assert!(hit.is_none());
+    }
+
+    #[test]
+    fn aabb_segment_starting_inside() {
+        // Segment starts inside the box
+        let hit = segment_first_hit_fraction_with_aabb(5.0, 0.0, 10.0, 0.0, 4.0, 6.0, -1.0, 1.0);
+        assert!(hit.is_some());
+        assert!((hit.unwrap() - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn aabb_diagonal_hit() {
+        // Diagonal segment hitting a box
+        let hit =
+            segment_first_hit_fraction_with_aabb(0.0, 0.0, 10.0, 10.0, 4.0, 6.0, 4.0, 6.0);
+        assert!(hit.is_some());
+        let t = hit.unwrap();
+        assert!(t > 0.3 && t < 0.5);
+    }
+
+    #[test]
+    fn aabb_segment_too_short() {
+        // Segment ends before reaching the box
+        let hit = segment_first_hit_fraction_with_aabb(0.0, 0.0, 2.0, 0.0, 4.0, 6.0, -1.0, 1.0);
+        assert!(hit.is_none());
+    }
+
+    #[test]
+    fn aabb_segment_behind_start() {
+        // Box is behind the segment direction
+        let hit =
+            segment_first_hit_fraction_with_aabb(10.0, 0.0, 20.0, 0.0, 4.0, 6.0, -1.0, 1.0);
+        assert!(hit.is_none());
+    }
+
+    // ── env_bool_value tests ────────────────────────────────────────
+
+    #[test]
+    fn env_bool_value_returns_false_for_unset() {
+        assert!(!env_bool_value("MGS_TEST_VERY_UNLIKELY_VAR_NEVER_SET_12345"));
+    }
+
+    // ── collect_pending_chat_packets tests ───────────────────────────
+
+    #[test]
+    fn collect_pending_chat_empty_input() {
+        let packets: Vec<SerializedChatPacket> = vec![];
+        let result = collect_pending_chat_packets(0, &packets);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn collect_pending_chat_all_below_seq() {
+        let packets: Vec<SerializedChatPacket> = (1..=5)
+            .map(|seq| SerializedChatPacket {
+                seq,
+                bytes: Bytes::from_static(b"x"),
+            })
+            .collect();
+        // last_seq_sent = 10, so all packets have seq <= 10
+        let result = collect_pending_chat_packets(10, &packets);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn collect_pending_chat_filters_correctly() {
+        let packets: Vec<SerializedChatPacket> = (1..=20)
+            .map(|seq| SerializedChatPacket {
+                seq,
+                bytes: Bytes::from_static(b"x"),
+            })
+            .collect();
+        // last_seq_sent = 15, so packets 16..=20 should be returned (5 packets, within MAX_CHAT_PER_BATCH=10)
+        let result = collect_pending_chat_packets(15, &packets);
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0].seq, 16);
+        assert_eq!(result[4].seq, 20);
+    }
+
+    // ── MatchType tests ─────────────────────────────────────────────
+
+    #[test]
+    fn match_type_from_query_str_full_match() {
+        assert_eq!(
+            MatchType::from_query_str("full"),
+            MatchType::FullMatch
+        );
+        assert_eq!(
+            MatchType::from_query_str("full_match"),
+            MatchType::FullMatch
+        );
+        assert_eq!(
+            MatchType::from_query_str("fullmatch"),
+            MatchType::FullMatch
+        );
+        assert_eq!(
+            MatchType::from_query_str("desktop"),
+            MatchType::FullMatch
+        );
+    }
+
+    #[test]
+    fn match_type_from_query_str_quick_match() {
+        assert_eq!(
+            MatchType::from_query_str("quick"),
+            MatchType::QuickMatch
+        );
+        assert_eq!(
+            MatchType::from_query_str("quick_match"),
+            MatchType::QuickMatch
+        );
+        assert_eq!(
+            MatchType::from_query_str("quickmatch"),
+            MatchType::QuickMatch
+        );
+    }
+
+    #[test]
+    fn match_type_from_query_str_mobile_blitz() {
+        assert_eq!(
+            MatchType::from_query_str("mobile_blitz"),
+            MatchType::MobileBlitz
+        );
+        assert_eq!(
+            MatchType::from_query_str("mobileblitz"),
+            MatchType::MobileBlitz
+        );
+        assert_eq!(
+            MatchType::from_query_str("blitz"),
+            MatchType::MobileBlitz
+        );
+    }
+
+    #[test]
+    fn match_type_from_query_str_mobile_standard() {
+        assert_eq!(
+            MatchType::from_query_str("mobile_standard"),
+            MatchType::MobileStandard
+        );
+        assert_eq!(
+            MatchType::from_query_str("mobilestandard"),
+            MatchType::MobileStandard
+        );
+        assert_eq!(
+            MatchType::from_query_str("mobile"),
+            MatchType::MobileStandard
+        );
+    }
+
+    #[test]
+    fn match_type_from_query_str_case_insensitive() {
+        assert_eq!(
+            MatchType::from_query_str("QUICK"),
+            MatchType::QuickMatch
+        );
+        assert_eq!(
+            MatchType::from_query_str("Quick_Match"),
+            MatchType::QuickMatch
+        );
+        assert_eq!(
+            MatchType::from_query_str("MOBILE_BLITZ"),
+            MatchType::MobileBlitz
+        );
+    }
+
+    #[test]
+    fn match_type_from_query_str_unknown_defaults_to_full() {
+        assert_eq!(
+            MatchType::from_query_str("invalid"),
+            MatchType::FullMatch
+        );
+        assert_eq!(
+            MatchType::from_query_str(""),
+            MatchType::FullMatch
+        );
+    }
+
+    #[test]
+    fn match_type_from_query_str_trims_whitespace() {
+        assert_eq!(
+            MatchType::from_query_str("  quick  "),
+            MatchType::QuickMatch
+        );
+    }
+
+    #[test]
+    fn match_type_max_players() {
+        assert_eq!(MatchType::FullMatch.max_players(), 400);
+        assert_eq!(MatchType::QuickMatch.max_players(), QUICK_MATCH_MAX_PLAYERS);
+        assert_eq!(
+            MatchType::MobileBlitz.max_players(),
+            MOBILE_BLITZ_MAX_PLAYERS
+        );
+        assert_eq!(
+            MatchType::MobileStandard.max_players(),
+            MOBILE_STANDARD_MAX_PLAYERS
+        );
+    }
+
+    #[test]
+    fn match_type_duration_secs() {
+        assert_eq!(MatchType::FullMatch.duration_secs(), FULL_MATCH_DURATION_SECS);
+        assert_eq!(
+            MatchType::QuickMatch.duration_secs(),
+            QUICK_MATCH_DURATION_SECS
+        );
+        assert_eq!(
+            MatchType::MobileBlitz.duration_secs(),
+            MOBILE_BLITZ_DURATION_SECS
+        );
+        assert_eq!(
+            MatchType::MobileStandard.duration_secs(),
+            MOBILE_STANDARD_DURATION_SECS
+        );
+    }
+
+    #[test]
+    fn match_type_bot_fill_delay_only_quick_match() {
+        assert!(MatchType::QuickMatch.bot_fill_delay_secs().is_some());
+        assert!(MatchType::FullMatch.bot_fill_delay_secs().is_none());
+        assert!(MatchType::MobileBlitz.bot_fill_delay_secs().is_none());
+        assert!(MatchType::MobileStandard.bot_fill_delay_secs().is_none());
+    }
+
+    #[test]
+    fn match_type_min_humans_for_bot_fill_only_quick_match() {
+        assert!(MatchType::QuickMatch.min_humans_for_bot_fill().is_some());
+        assert_eq!(
+            MatchType::QuickMatch.min_humans_for_bot_fill(),
+            Some(QUICK_MATCH_MIN_HUMANS)
+        );
+        assert!(MatchType::FullMatch.min_humans_for_bot_fill().is_none());
+    }
+
+    #[test]
+    fn match_type_label() {
+        assert_eq!(MatchType::FullMatch.label(), "FullMatch");
+        assert_eq!(MatchType::QuickMatch.label(), "QuickMatch");
+        assert_eq!(MatchType::MobileBlitz.label(), "MobileBlitz");
+        assert_eq!(MatchType::MobileStandard.label(), "MobileStandard");
+    }
+
+    #[test]
+    fn match_type_display_matches_label() {
+        assert_eq!(format!("{}", MatchType::FullMatch), "FullMatch");
+        assert_eq!(format!("{}", MatchType::QuickMatch), "QuickMatch");
+    }
+
+    #[test]
+    fn match_type_default_is_full_match() {
+        assert_eq!(MatchType::default(), MatchType::FullMatch);
+    }
+
+    // ── ServerMatchInfo tests ───────────────────────────────────────
+
+    #[test]
+    fn server_match_info_default_values() {
+        let info = ServerMatchInfo::default();
+        assert_eq!(info.time_remaining, FULL_MATCH_DURATION_SECS);
+        assert_eq!(info.match_state, fb::MatchStateType::Waiting);
+        assert_eq!(info.game_mode, fb::GameModeType::CaptureTheFlag);
+        assert!(info.team_scores.is_empty());
+        assert!(info.flag_states.is_empty());
+    }
+
+    // ── ServerFlagState tests ───────────────────────────────────────
+
+    #[test]
+    fn flag_base_position_team1() {
+        let pos = MassiveGameServer::get_flag_base_position(1);
+        assert_eq!(pos.x, WORLD_MIN_X + 100.0);
+        assert_eq!(pos.y, 0.0);
+    }
+
+    #[test]
+    fn flag_base_position_team2() {
+        let pos = MassiveGameServer::get_flag_base_position(2);
+        assert_eq!(pos.x, WORLD_MAX_X - 100.0);
+        assert_eq!(pos.y, 0.0);
+    }
+
+    #[test]
+    fn flag_base_position_invalid_team() {
+        let pos = MassiveGameServer::get_flag_base_position(0);
+        assert_eq!(pos.x, 0.0);
+        assert_eq!(pos.y, 0.0);
+    }
+
+    #[test]
+    fn flag_base_position_team1_and_team2_are_distinct() {
+        let pos1 = MassiveGameServer::get_flag_base_position(1);
+        let pos2 = MassiveGameServer::get_flag_base_position(2);
+        assert_ne!(pos1.x, pos2.x);
+    }
+
+    // ── ServerKillFeedEntry tests ──────────────────────────────────
+
+    #[test]
+    fn server_kill_feed_entry_constructible() {
+        let entry = ServerKillFeedEntry {
+            killer_name: "killer".to_string(),
+            victim_name: "victim".to_string(),
+            weapon: ServerWeaponType::Pistol,
+            timestamp: 1000,
+        };
+        assert_eq!(entry.killer_name, "killer");
+        assert_eq!(entry.victim_name, "victim");
+        assert_eq!(entry.weapon, ServerWeaponType::Pistol);
+        assert_eq!(entry.timestamp, 1000);
+    }
+
+    #[test]
+    fn server_weapon_type_default_is_pistol() {
+        assert_eq!(ServerWeaponType::default(), ServerWeaponType::Pistol);
+    }
+
+    // ── util functions (round_metric, percentile_sorted, sha256, hmac) ──
+
+    #[test]
+    fn round_metric_rounds_to_two_decimal_places() {
+        assert_eq!(round_metric(1.2345), 1.23);
+        assert_eq!(round_metric(1.235), 1.24);
+        assert_eq!(round_metric(0.0), 0.0);
+        assert_eq!(round_metric(100.0), 100.0);
+    }
+
+    #[test]
+    fn summarize_join_stage_latencies_empty() {
+        let stats = summarize_join_stage_latencies(&[]);
+        assert_eq!(stats.count, 0);
+        assert_eq!(stats.avg_ms, 0.0);
+        assert_eq!(stats.p95_ms, 0.0);
+        assert_eq!(stats.max_ms, 0.0);
+    }
+
+    #[test]
+    fn summarize_join_stage_latencies_single_value() {
+        let stats = summarize_join_stage_latencies(&[42.0]);
+        assert_eq!(stats.count, 1);
+        assert_eq!(stats.avg_ms, 42.0);
+        assert_eq!(stats.p95_ms, 42.0);
+        assert_eq!(stats.max_ms, 42.0);
+    }
+
+    #[test]
+    fn summarize_join_stage_latencies_multiple_values() {
+        let values: Vec<f64> = (1..=100).map(|i| i as f64).collect();
+        let stats = summarize_join_stage_latencies(&values);
+        assert_eq!(stats.count, 100);
+        assert!((stats.avg_ms - 50.5).abs() < 0.01);
+        assert!(stats.p95_ms > 90.0);
+        assert_eq!(stats.max_ms, 100.0);
+    }
+
+    #[test]
+    fn sha256_hex_produces_correct_length() {
+        let hash = sha256_hex(b"hello");
+        assert_eq!(hash.len(), 64); // SHA-256 produces 32 bytes = 64 hex chars
+    }
+
+    #[test]
+    fn sha256_hex_is_deterministic() {
+        let hash1 = sha256_hex(b"test payload");
+        let hash2 = sha256_hex(b"test payload");
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn sha256_hex_differs_for_different_input() {
+        let hash1 = sha256_hex(b"input1");
+        let hash2 = sha256_hex(b"input2");
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn hmac_sha256_hex_produces_correct_length() {
+        let result = hmac_sha256_hex(b"secret", b"payload");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 64);
+    }
+
+    #[test]
+    fn hmac_sha256_hex_is_deterministic() {
+        let r1 = hmac_sha256_hex(b"key", b"data");
+        let r2 = hmac_sha256_hex(b"key", b"data");
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn hmac_sha256_hex_differs_for_different_keys() {
+        let r1 = hmac_sha256_hex(b"key1", b"data");
+        let r2 = hmac_sha256_hex(b"key2", b"data");
+        assert_ne!(r1, r2);
+    }
+
+    // ── InitialSnapshotCaps tests ───────────────────────────────────
+
+    #[test]
+    fn initial_snapshot_caps_default() {
+        let caps = InitialSnapshotCaps::DEFAULT;
+        assert_eq!(caps.max_players, INITIAL_SNAPSHOT_MAX_PLAYERS);
+        assert_eq!(caps.max_walls, INITIAL_SNAPSHOT_MAX_WALLS);
+        assert_eq!(caps.max_projectiles, INITIAL_SNAPSHOT_MAX_PROJECTILES);
+        assert_eq!(caps.max_pickups, INITIAL_SNAPSHOT_MAX_PICKUPS);
+    }
+
+    #[test]
+    fn initial_snapshot_caps_tail_smaller_than_default() {
+        let default = InitialSnapshotCaps::DEFAULT;
+        let tail = InitialSnapshotCaps::TAIL;
+        assert!(tail.max_players < default.max_players);
+        assert!(tail.max_walls < default.max_walls);
+        assert!(tail.max_projectiles < default.max_projectiles);
+        assert!(tail.max_pickups < default.max_pickups);
+    }
+
+    #[test]
+    fn initial_snapshot_caps_aggressive_smaller_than_tail() {
+        let tail = InitialSnapshotCaps::TAIL;
+        let aggressive = InitialSnapshotCaps::TAIL_AGGRESSIVE;
+        assert!(aggressive.max_players < tail.max_players);
+        assert!(aggressive.max_walls < tail.max_walls);
+        assert!(aggressive.max_projectiles < tail.max_projectiles);
+        assert!(aggressive.max_pickups < tail.max_pickups);
+    }
+
+    #[test]
+    fn initial_snapshot_caps_extreme_smallest() {
+        let extreme = InitialSnapshotCaps::EXTREME_TAIL;
+        let aggressive = InitialSnapshotCaps::TAIL_AGGRESSIVE;
+        assert!(extreme.max_players <= aggressive.max_players);
+        assert!(extreme.max_walls <= aggressive.max_walls);
+        assert!(extreme.max_projectiles <= aggressive.max_projectiles);
+        assert!(extreme.max_pickups <= aggressive.max_pickups);
+    }
+
+    // ── PlayerMatchStats K/D ratio tests ────────────────────────────
+
+    #[test]
+    fn player_match_stats_kd_ratio_no_deaths() {
+        let stats = PlayerMatchStats {
+            player_id: "p1".to_string(),
+            player_name: "TestPlayer".to_string(),
+            team_id: 1,
+            kills: 10,
+            deaths: 0,
+            score: 100,
+            damage_dealt: 500,
+            damage_taken: 0,
+            flag_captures: 0,
+            flag_returns: 0,
+            weapon_kills: vec![3, 2, 5, 0, 0],
+            kd_ratio: 10.0, // kills as f32
+        };
+        assert_eq!(stats.kd_ratio, 10.0);
+    }
+
+    #[test]
+    fn player_match_stats_kd_ratio_with_deaths() {
+        let kills = 6;
+        let deaths = 3;
+        let kd_ratio = kills as f32 / deaths as f32;
+        assert_eq!(kd_ratio, 2.0);
+    }
+
+    // ── BotBehaviorState tests ──────────────────────────────────────
+
+    #[test]
+    fn bot_behavior_state_variants_exist() {
+        // Just verify the enum variants exist and are distinguishable
+        let states = vec![
+            BotBehaviorState::Idle,
+            BotBehaviorState::MovingToPosition,
+            BotBehaviorState::Engaging,
+            BotBehaviorState::SeekingPickup,
+            BotBehaviorState::Defending,
+            BotBehaviorState::MovingToObjective,
+            BotBehaviorState::Flanking,
+            BotBehaviorState::Patrolling,
+        ];
+        assert_eq!(states.len(), 8);
+    }
+
+    // ── serialization::map_server_weapon_to_fb tests ────────────────
+
+    #[test]
+    fn map_server_weapon_to_fb_all_variants() {
+        assert_eq!(
+            map_server_weapon_to_fb(ServerWeaponType::Pistol),
+            fb::WeaponType::Pistol
+        );
+        assert_eq!(
+            map_server_weapon_to_fb(ServerWeaponType::Shotgun),
+            fb::WeaponType::Shotgun
+        );
+        assert_eq!(
+            map_server_weapon_to_fb(ServerWeaponType::Rifle),
+            fb::WeaponType::Rifle
+        );
+        assert_eq!(
+            map_server_weapon_to_fb(ServerWeaponType::Sniper),
+            fb::WeaponType::Sniper
+        );
+        assert_eq!(
+            map_server_weapon_to_fb(ServerWeaponType::Melee),
+            fb::WeaponType::Melee
+        );
+    }
+
+    // ── serialization::map_core_pickup_to_fb tests ──────────────────
+
+    #[test]
+    fn map_core_pickup_health() {
+        let (pickup_type, weapon) = map_core_pickup_to_fb(&CorePickupType::Health);
+        assert_eq!(pickup_type, fb::PickupType::Health);
+        assert!(weapon.is_none());
+    }
+
+    #[test]
+    fn map_core_pickup_ammo() {
+        let (pickup_type, weapon) = map_core_pickup_to_fb(&CorePickupType::Ammo);
+        assert_eq!(pickup_type, fb::PickupType::Ammo);
+        assert!(weapon.is_none());
+    }
+
+    #[test]
+    fn map_core_pickup_weapon_crate() {
+        let (pickup_type, weapon) =
+            map_core_pickup_to_fb(&CorePickupType::WeaponCrate(ServerWeaponType::Sniper));
+        assert_eq!(pickup_type, fb::PickupType::WeaponCrate);
+        assert_eq!(weapon, Some(fb::WeaponType::Sniper));
+    }
+
+    #[test]
+    fn map_core_pickup_speed_boost() {
+        let (pickup_type, weapon) = map_core_pickup_to_fb(&CorePickupType::SpeedBoost);
+        assert_eq!(pickup_type, fb::PickupType::SpeedBoost);
+        assert!(weapon.is_none());
+    }
+
+    #[test]
+    fn map_core_pickup_damage_boost() {
+        let (pickup_type, weapon) = map_core_pickup_to_fb(&CorePickupType::DamageBoost);
+        assert_eq!(pickup_type, fb::PickupType::DamageBoost);
+        assert!(weapon.is_none());
+    }
+
+    #[test]
+    fn map_core_pickup_shield() {
+        let (pickup_type, weapon) = map_core_pickup_to_fb(&CorePickupType::Shield);
+        assert_eq!(pickup_type, fb::PickupType::Shield);
+        assert!(weapon.is_none());
+    }
+
+    // ── constants correctness tests ─────────────────────────────────
+
+    #[test]
+    fn join_stage_waves_are_contiguous() {
+        let waves = &JOIN_STAGE_WAVES;
+        assert_eq!(waves[0].2, 1); // first wave starts at 1
+        for i in 1..waves.len() {
+            if let Some(prev_end) = waves[i - 1].3 {
+                assert_eq!(
+                    waves[i].2,
+                    prev_end + 1,
+                    "Wave {} should start at {} but starts at {}",
+                    i,
+                    prev_end + 1,
+                    waves[i].2
+                );
+            }
+        }
+        // Last wave should have None as end (open-ended)
+        assert!(waves.last().unwrap().3.is_none());
+    }
+
+    #[test]
+    fn max_chat_per_batch_positive() {
+        assert!(MAX_CHAT_PER_BATCH > 0);
+    }
+
+    #[test]
+    fn max_kill_feed_history_positive() {
+        assert!(MAX_KILL_FEED_HISTORY > 0);
+    }
+
+    #[test]
+    fn max_melee_events_per_tick_positive() {
+        assert!(MAX_MELEE_EVENTS_PER_TICK > 0);
+    }
+}
