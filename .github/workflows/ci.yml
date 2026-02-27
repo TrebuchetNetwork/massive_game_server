@@ -37,9 +37,7 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: Install FlatBuffers compiler
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y flatbuffers-compiler
+        run: scripts/install_flatc.sh
 
       - name: Repository hygiene guard
         run: scripts/check_repo_hygiene.sh
@@ -146,9 +144,7 @@ jobs:
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: Install FlatBuffers compiler
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y flatbuffers-compiler
+        run: scripts/install_flatc.sh
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@305bebabd4457bed9b82541755f034994382465b
@@ -192,17 +188,8 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
-      - name: Install FlatBuffers compiler (Ubuntu)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y flatbuffers-compiler
-
-      - name: Install FlatBuffers compiler (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew update
-          brew install flatbuffers
+      - name: Install FlatBuffers compiler
+        run: scripts/install_flatc.sh
 
       - name: Repository hygiene guard
         run: scripts/check_repo_hygiene.sh
