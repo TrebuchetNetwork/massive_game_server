@@ -30,6 +30,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache cargo artifacts
@@ -138,6 +139,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
+          toolchain: stable
           components: llvm-tools-preview
 
       - name: Cache cargo artifacts
@@ -234,6 +236,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@305bebabd4457bed9b82541755f034994382465b
