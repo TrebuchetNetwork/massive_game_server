@@ -28,7 +28,7 @@ use sha1::Sha1;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     net::IpAddr,
-    sync::{Arc, Mutex as StdMutex, OnceLock},
+    sync::{atomic::AtomicBool, Arc, Mutex as StdMutex, OnceLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::{mpsc, Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock, Semaphore};
@@ -168,6 +168,17 @@ const WEBRTC_STATE_LABELS: [&str; 7] = [
 
 pub fn next_chat_message_seq() -> u64 {
     NEXT_CHAT_MESSAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn begin_cleanup_once(cleanup_once: &AtomicBool) -> bool {
+    cleanup_once
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_ok()
 }
 
 fn shared_webrtc_api() -> Result<Arc<API>, String> {
@@ -1280,6 +1291,7 @@ pub async fn handle_signaling_connection(
     // the peer connection is closed to avoid resource leaks.
     let mut pc_drop_guard =
         PeerConnectionDropGuard::new(Arc::clone(&peer_connection), peer_id_str.clone());
+    let cleanup_once = Arc::new(AtomicBool::new(false));
 
     let pc_for_ice = Arc::clone(&peer_connection);
     let ice_sender_clone = client_signaling_tx.clone();
@@ -1337,6 +1349,7 @@ pub async fn handle_signaling_connection(
     let cs_map_clone_sc = client_states_map.clone();
     let pa_map_clone_sc = player_aois.clone();
     let auth_service_clone_sc = auth_service.clone();
+    let cleanup_once_sc = Arc::clone(&cleanup_once);
 
     pc_for_state_change.on_peer_connection_state_change(Box::new(
         move |s: RTCPeerConnectionState| {
@@ -1356,15 +1369,22 @@ pub async fn handle_signaling_connection(
                     "[{}]: Peer disconnected/closed. Initiating cleanup.",
                     current_peer_id
                 );
-                cleanup_connection(
-                    &current_peer_id,
-                    &sp_clone_sc,
-                    &pm_clone_sc,
-                    &dc_map_clone_sc,
-                    &cs_map_clone_sc,
-                    &pa_map_clone_sc,
-                    &auth_service_clone_sc,
-                );
+                if begin_cleanup_once(cleanup_once_sc.as_ref()) {
+                    cleanup_connection(
+                        &current_peer_id,
+                        &sp_clone_sc,
+                        &pm_clone_sc,
+                        &dc_map_clone_sc,
+                        &cs_map_clone_sc,
+                        &pa_map_clone_sc,
+                        &auth_service_clone_sc,
+                    );
+                } else {
+                    debug!(
+                        "[{}]: Cleanup already performed by another disconnect path.",
+                        current_peer_id
+                    );
+                }
             }
             Box::pin(async {})
         },
@@ -1928,15 +1948,22 @@ pub async fn handle_signaling_connection(
         "[{}]: WebSocket connection handler for signaling ending.",
         peer_id_str
     );
-    cleanup_connection(
-        &peer_id_str,
-        &signaling_peers,
-        &player_manager,
-        &data_channels_map,
-        &client_states_map,
-        &player_aois,
-        &auth_service,
-    );
+    if begin_cleanup_once(cleanup_once.as_ref()) {
+        cleanup_connection(
+            &peer_id_str,
+            &signaling_peers,
+            &player_manager,
+            &data_channels_map,
+            &client_states_map,
+            &player_aois,
+            &auth_service,
+        );
+    } else {
+        debug!(
+            "[{}]: Cleanup already performed by peer-state callback.",
+            peer_id_str
+        );
+    }
     // Defuse the drop guard since we are closing the connection explicitly.
     pc_drop_guard.defuse();
     // Clean up interpolation history to prevent memory leak after disconnect.

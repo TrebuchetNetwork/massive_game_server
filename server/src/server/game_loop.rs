@@ -40,22 +40,6 @@ fn cached_aoi_update_divisor() -> u64 {
     })
 }
 
-fn game_tick_offload_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("MGS_GAME_TICK_OFFLOAD")
-            .ok()
-            .map(|raw| {
-                let normalized = raw.trim().to_ascii_lowercase();
-                normalized == "1"
-                    || normalized == "true"
-                    || normalized == "yes"
-                    || normalized == "on"
-            })
-            .unwrap_or(true)
-    })
-}
-
 impl MassiveGameServer {
     async fn notify_players_of_shutdown(self: Arc<Self>) {
         if self.data_channels_map.is_empty() {
@@ -174,26 +158,9 @@ impl MassiveGameServer {
                     info!("Game loop running - Frame: {}", current_frame);
                 }
 
-                // Process game tick with fixed delta_time. By default we offload
-                // the heavy tick body onto tokio's blocking pool so network tasks
-                // keep making progress on async workers under long frames.
-                let tick_result = if game_tick_offload_enabled() {
-                    let runtime_handle = tokio::runtime::Handle::current();
-                    let server_for_tick = Arc::clone(&self);
-                    match tokio::task::spawn_blocking(move || {
-                        runtime_handle.block_on(server_for_tick.process_game_tick(delta_time_fixed))
-                    })
-                    .await
-                    {
-                        Ok(result) => result,
-                        Err(join_err) => {
-                            error!("Game tick offload task join failed: {}", join_err);
-                            continue;
-                        }
-                    }
-                } else {
-                    Arc::clone(&self).process_game_tick(delta_time_fixed).await
-                };
+                // Process game tick with fixed delta_time.
+                // Stage-level CPU work is offloaded inside process_game_tick.
+                let tick_result = Arc::clone(&self).process_game_tick(delta_time_fixed).await;
 
                 if let Err(e) = tick_result {
                     error!("Game tick failed: {:?}", e);

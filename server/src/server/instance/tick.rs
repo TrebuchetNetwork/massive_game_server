@@ -1,4 +1,21 @@
 use super::*;
+use std::sync::OnceLock;
+
+fn stage2_pool_offload_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("MGS_STAGE2_POOL_OFFLOAD")
+            .ok()
+            .map(|raw| {
+                let normalized = raw.trim().to_ascii_lowercase();
+                normalized == "1"
+                    || normalized == "true"
+                    || normalized == "yes"
+                    || normalized == "on"
+            })
+            .unwrap_or(true)
+    })
+}
 
 impl MassiveGameServer {
     pub async fn process_game_tick(self: Arc<Self>, dt: f32) -> Result<(), ServerError> {
@@ -82,24 +99,81 @@ impl MassiveGameServer {
         // Stage 2: Physics & Game Logic (Sequential, mutation-heavy)
         let stage2_start = Instant::now();
         self.maybe_refresh_navigation_mesh();
+        let (physics_elapsed, game_logic_elapsed) = if stage2_pool_offload_enabled() {
+            // Keep Stage 2 off async workers by running it in dedicated compute pools.
+            let physics_server = Arc::clone(&self);
+            let physics_pool = Arc::clone(&self.thread_pools.physics_pool);
+            let runtime_handle = tokio::runtime::Handle::current();
+            let physics_elapsed = match tokio::task::spawn_blocking(move || {
+                let phase_start = Instant::now();
+                physics_pool
+                    .install(|| runtime_handle.block_on(physics_server.run_physics_update(dt)));
+                phase_start.elapsed()
+            })
+            .await
+            {
+                Ok(elapsed) => elapsed,
+                Err(join_err) => {
+                    self.match_degraded.store(true, AtomicOrdering::Release);
+                    return Err(ServerError::ThreadingError(format!(
+                        "Stage 2 physics offload join failed: {}",
+                        join_err
+                    )));
+                }
+            };
+            trace!(
+                "[Frame {}] Physics update took: {:?} (pool_offload=true)",
+                frame,
+                physics_elapsed
+            );
 
-        let physics_start = Instant::now();
-        self.run_physics_update(dt).await;
-        let physics_elapsed = physics_start.elapsed();
-        trace!(
-            "[Frame {}] Physics update took: {:?}",
-            frame,
-            physics_elapsed
-        );
+            let game_logic_server = Arc::clone(&self);
+            let game_logic_pool = Arc::clone(&self.thread_pools.game_logic_pool);
+            let runtime_handle = tokio::runtime::Handle::current();
+            let game_logic_elapsed = match tokio::task::spawn_blocking(move || {
+                let phase_start = Instant::now();
+                game_logic_pool.install(|| {
+                    runtime_handle.block_on(game_logic_server.run_game_logic_update(dt))
+                });
+                phase_start.elapsed()
+            })
+            .await
+            {
+                Ok(elapsed) => elapsed,
+                Err(join_err) => {
+                    self.match_degraded.store(true, AtomicOrdering::Release);
+                    return Err(ServerError::ThreadingError(format!(
+                        "Stage 2 game-logic offload join failed: {}",
+                        join_err
+                    )));
+                }
+            };
+            trace!(
+                "[Frame {}] Game logic update took: {:?} (pool_offload=true)",
+                frame,
+                game_logic_elapsed
+            );
+            (physics_elapsed, game_logic_elapsed)
+        } else {
+            let physics_start = Instant::now();
+            self.run_physics_update(dt).await;
+            let physics_elapsed = physics_start.elapsed();
+            trace!(
+                "[Frame {}] Physics update took: {:?}",
+                frame,
+                physics_elapsed
+            );
 
-        let game_logic_start = Instant::now();
-        self.run_game_logic_update(dt).await;
-        let game_logic_elapsed = game_logic_start.elapsed();
-        trace!(
-            "[Frame {}] Game logic update took: {:?}",
-            frame,
-            game_logic_elapsed
-        );
+            let game_logic_start = Instant::now();
+            self.run_game_logic_update(dt).await;
+            let game_logic_elapsed = game_logic_start.elapsed();
+            trace!(
+                "[Frame {}] Game logic update took: {:?}",
+                frame,
+                game_logic_elapsed
+            );
+            (physics_elapsed, game_logic_elapsed)
+        };
 
         let stage2_elapsed = stage2_start.elapsed();
         if stage2_elapsed > Duration::from_millis(SLOW_TICK_LOG_MS) && frame.is_multiple_of(60) {
