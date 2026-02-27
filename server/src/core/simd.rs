@@ -554,16 +554,12 @@ unsafe fn first_index_aabb_containing_point_avx2(
         idx += 8;
     }
 
-    for tail_idx in idx..min_xs.len() {
-        if point_x >= min_xs[tail_idx]
+    (idx..min_xs.len()).find(|&tail_idx| {
+        point_x >= min_xs[tail_idx]
             && point_x <= max_xs[tail_idx]
             && point_y >= min_ys[tail_idx]
             && point_y <= max_ys[tail_idx]
-        {
-            return Some(tail_idx);
-        }
-    }
-    None
+    })
 }
 
 #[cfg(target_arch = "aarch64")]

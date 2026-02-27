@@ -19,10 +19,10 @@ pub fn collect_heap_snapshot() -> HeapSnapshot {
         let _size_pages = parts.next().and_then(|value| value.parse::<u64>().ok());
         let resident_pages = parts.next().and_then(|value| value.parse::<u64>().ok());
         let page_size = 4096u64;
-        return HeapSnapshot {
+        HeapSnapshot {
             resident_bytes: resident_pages.map(|pages| pages.saturating_mul(page_size)),
             allocated_bytes: None,
-        };
+        }
     }
 
     #[cfg(not(target_os = "linux"))]
