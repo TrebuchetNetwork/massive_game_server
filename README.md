@@ -105,6 +105,11 @@ Full deployment guide:
 - `docs/deploy_website.md`
 - `docs/game_trebuchet_network_deploy.md` (production runbook for `game.trebuchet.network`)
 
+Baremetal helpers:
+- `scripts/provision_tls_cert.sh` (Let's Encrypt into `docker/ssl/`)
+- `scripts/install_compose_service.sh` (systemd autostart for Docker Compose stack)
+- `scripts/verify_public_deploy.sh` (public DNS/TLS/endpoint verification)
+
 ## Scale Validation
 
 Run the full backend + frontend scale suite:

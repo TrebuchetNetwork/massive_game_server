@@ -3,6 +3,12 @@ Place your TLS certificate and key files in this directory for nginx termination
 - `fullchain.pem`
 - `privkey.pem`
 
+Automated Let's Encrypt (recommended):
+
+```bash
+CERTBOT_EMAIL=ops@trebuchet.network ./scripts/provision_tls_cert.sh game.trebuchet.network
+```
+
 For local testing only, you can generate a self-signed cert:
 
 ```bash

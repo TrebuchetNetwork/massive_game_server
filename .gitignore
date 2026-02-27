@@ -14,3 +14,6 @@ panic.log
 runtime_server.log
 .claude/worktrees/
 docker/.env
+docker/certbot/
+docker/ssl/fullchain.pem
+docker/ssl/privkey.pem

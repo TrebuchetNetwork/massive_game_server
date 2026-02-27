@@ -30,6 +30,16 @@ Place certs in `docker/ssl/`:
 - `docker/ssl/fullchain.pem`
 - `docker/ssl/privkey.pem`
 
+You can automate Let's Encrypt issuance with:
+
+```bash
+CERTBOT_EMAIL=ops@trebuchet.network ./scripts/provision_tls_cert.sh game.trebuchet.network
+```
+
+Notes:
+- stop anything bound to port `80` before running the script
+- certbot state is stored in `docker/certbot/`
+
 ## 3. Environment bootstrap
 
 From repo root:
@@ -64,7 +74,23 @@ Check status:
 DEPLOY_MODE=docker ./scripts/deploy.sh status
 ```
 
-## 6. Verify endpoints
+## 6. Enable auto-start on reboot (baremetal Linux)
+
+```bash
+./scripts/install_compose_service.sh
+```
+
+This installs and enables `massive-game-server.service`.
+
+## 7. Verify endpoints
+
+Run full public checks:
+
+```bash
+./scripts/verify_public_deploy.sh game.trebuchet.network
+```
+
+Manual checks:
 
 - Health: `https://game.trebuchet.network/healthz`
 - Readiness: `https://game.trebuchet.network/readyz`
@@ -77,7 +103,7 @@ Prometheus is bound locally only by default:
 
 - `http://127.0.0.1:9091`
 
-## 7. Rollback
+## 8. Rollback
 
 ```bash
 DEPLOY_MODE=docker ./scripts/deploy.sh down
