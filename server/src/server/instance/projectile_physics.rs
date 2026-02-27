@@ -15,7 +15,8 @@ impl MassiveGameServer {
             .map(|proj| (proj.id, proj.x, proj.y))
             .collect();
         if !spatial_updates.is_empty() {
-            self.spatial_index.batch_update_projectiles(&spatial_updates);
+            self.spatial_index
+                .batch_update_projectiles(&spatial_updates);
         }
 
         let mut projectiles_guard = self.projectiles.write();
@@ -72,9 +73,9 @@ impl MassiveGameServer {
             };
         }
 
-        let clamped_lag_ms = self.lag_compensation_ms.min(
-            crate::core::constants::MAX_LAG_COMPENSATION_MS,
-        );
+        let clamped_lag_ms = self
+            .lag_compensation_ms
+            .min(crate::core::constants::MAX_LAG_COMPENSATION_MS);
         let lag_compensation_target_ms = self
             .get_server_timestamp_ms()
             .saturating_sub(clamped_lag_ms);
@@ -361,15 +362,13 @@ impl MassiveGameServer {
                 self.player_manager.get_player_state_mut(&target_id)
             {
                 // Initialize health tracker entry from authoritative state if not yet seen.
-                let tracker = health_tracker
-                    .entry(target_id.clone())
-                    .or_insert_with(|| {
-                        (
-                            target_state_entry.health,
-                            target_state_entry.shield_current,
-                            !target_state_entry.alive,
-                        )
-                    });
+                let tracker = health_tracker.entry(target_id.clone()).or_insert_with(|| {
+                    (
+                        target_state_entry.health,
+                        target_state_entry.shield_current,
+                        !target_state_entry.alive,
+                    )
+                });
 
                 // Skip if player is already dead (from authoritative state or earlier
                 // hit in this tick) or is a spectator.
@@ -377,9 +376,8 @@ impl MassiveGameServer {
                     continue;
                 }
 
-                let distance = ((hit_x - attacker_pos.x).powi(2)
-                    + (hit_y - attacker_pos.y).powi(2))
-                .sqrt();
+                let distance =
+                    ((hit_x - attacker_pos.x).powi(2) + (hit_y - attacker_pos.y).powi(2)).sqrt();
                 let damage = crate::systems::combat::weapons::apply_distance_falloff(
                     weapon,
                     base_damage,
@@ -416,7 +414,8 @@ impl MassiveGameServer {
                     let dx = target_state_entry.x - attacker_pos.x;
                     let dy = target_state_entry.y - attacker_pos.y;
                     let dist = (dx * dx + dy * dy).sqrt().max(1.0);
-                    let kb_force = damage as f32 * crate::core::constants::KNOCKBACK_FORCE_PER_DAMAGE;
+                    let kb_force =
+                        damage as f32 * crate::core::constants::KNOCKBACK_FORCE_PER_DAMAGE;
                     target_state_entry.velocity_x += (dx / dist) * kb_force;
                     target_state_entry.velocity_y += (dy / dist) * kb_force;
 
@@ -425,8 +424,7 @@ impl MassiveGameServer {
                         + target_state_entry.velocity_y.powi(2))
                     .sqrt();
                     if speed > crate::core::constants::KNOCKBACK_MAX_VELOCITY {
-                        let scale =
-                            crate::core::constants::KNOCKBACK_MAX_VELOCITY / speed;
+                        let scale = crate::core::constants::KNOCKBACK_MAX_VELOCITY / speed;
                         target_state_entry.velocity_x *= scale;
                         target_state_entry.velocity_y *= scale;
                     }
@@ -457,8 +455,7 @@ impl MassiveGameServer {
                 // when multiple projectiles hit the same target in one tick.
                 if died_from_this_hit && died {
                     // Store flag carry state before clearing it
-                    let victim_was_carrying_flag_id =
-                        target_state_entry.is_carrying_flag_team_id;
+                    let victim_was_carrying_flag_id = target_state_entry.is_carrying_flag_team_id;
                     let victim_username = target_state_entry.username.clone();
 
                     // Clear flag carry state on the victim
@@ -496,22 +493,30 @@ impl MassiveGameServer {
                                 );
                             } else {
                                 // Normal kill: positive score
-                                attacker_state_entry.score += crate::core::constants::POINTS_PER_KILL;
+                                attacker_state_entry.score +=
+                                    crate::core::constants::POINTS_PER_KILL;
 
                                 // --- Killstreak system ---
                                 attacker_state_entry.current_streak += 1;
                                 let streak = attacker_state_entry.current_streak;
 
-                                if streak == crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD {
+                                if streak
+                                    == crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD
+                                {
                                     attacker_state_entry.streak_damage_boost_remaining =
                                         crate::core::constants::KILLSTREAK_DAMAGE_BOOST_DURATION_SECS;
                                 }
-                                if streak == crate::core::constants::KILLSTREAK_SPEED_BOOST_THRESHOLD {
+                                if streak
+                                    == crate::core::constants::KILLSTREAK_SPEED_BOOST_THRESHOLD
+                                {
                                     attacker_state_entry.streak_speed_boost_remaining =
                                         crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS;
                                 }
-                                if streak >= crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD {
-                                    let a_pos = Vec2::new(attacker_state_entry.x, attacker_state_entry.y);
+                                if streak
+                                    >= crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD
+                                {
+                                    let a_pos =
+                                        Vec2::new(attacker_state_entry.x, attacker_state_entry.y);
                                     drop(attacker_state_entry);
                                     self.global_game_events.push(
                                         GameEvent::Killstreak {
@@ -528,16 +533,21 @@ impl MassiveGameServer {
                             }
 
                             // We may have already dropped attacker_state_entry above
-                            if let Some(mut a) = self.player_manager.get_player_state_mut(&attacker_id) {
+                            if let Some(mut a) =
+                                self.player_manager.get_player_state_mut(&attacker_id)
+                            {
                                 a.mark_field_changed(FIELD_SCORE_STATS);
                             }
                         }
 
                         // --- Assist tracking ---
                         {
-                            let assist_ids = target_state_entry.get_assist_ids(&attacker_id, Instant::now());
+                            let assist_ids =
+                                target_state_entry.get_assist_ids(&attacker_id, Instant::now());
                             for assister_id in assist_ids {
-                                if let Some(mut assister) = self.player_manager.get_player_state_mut(&assister_id) {
+                                if let Some(mut assister) =
+                                    self.player_manager.get_player_state_mut(&assister_id)
+                                {
                                     assister.score += crate::core::constants::POINTS_ASSIST;
                                     assister.mark_field_changed(FIELD_SCORE_STATS);
                                 }

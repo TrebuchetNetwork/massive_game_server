@@ -114,10 +114,10 @@ pub const DAMAGE_BOOST_MULTIPLIER: f32 = 1.5;
 pub const WEAPON_SWAP_DURATION_SECS: f32 = 0.3;
 
 // ── Ability tuning ──────────────────────────────────────────────────
-pub const ABILITY_DASH_COOLDOWN_SECS: f32 = 6.0;  // was 8 – more outplay moments
+pub const ABILITY_DASH_COOLDOWN_SECS: f32 = 6.0; // was 8 – more outplay moments
 pub const ABILITY_DASH_DURATION_SECS: f32 = 0.2;
 pub const ABILITY_DASH_SPEED_MULTIPLIER: f32 = 2.0;
-pub const ABILITY_DODGE_COOLDOWN_SECS: f32 = 9.0;  // was 12 – more outplay moments
+pub const ABILITY_DODGE_COOLDOWN_SECS: f32 = 9.0; // was 12 – more outplay moments
 pub const ABILITY_DODGE_DURATION_SECS: f32 = 0.3;
 pub const ABILITY_DODGE_SPEED_MULTIPLIER: f32 = 1.6;
 pub const TEAM_PING_COOLDOWN_SECS: f32 = 3.0;
@@ -360,15 +360,21 @@ mod tests {
     #[test]
     fn quantize_position_clamps_below_min() {
         let q = quantize_position(-5000.0);
-        assert!((q - QUANTIZE_POSITION_MIN).abs() < 0.3,
-            "quantize_position(-5000.0) = {q}, expected ~{}", QUANTIZE_POSITION_MIN);
+        assert!(
+            (q - QUANTIZE_POSITION_MIN).abs() < 0.3,
+            "quantize_position(-5000.0) = {q}, expected ~{}",
+            QUANTIZE_POSITION_MIN
+        );
     }
 
     #[test]
     fn quantize_position_clamps_above_max() {
         let q = quantize_position(5000.0);
-        assert!((q - QUANTIZE_POSITION_MAX).abs() < 0.3,
-            "quantize_position(5000.0) = {q}, expected ~{}", QUANTIZE_POSITION_MAX);
+        assert!(
+            (q - QUANTIZE_POSITION_MAX).abs() < 0.3,
+            "quantize_position(5000.0) = {q}, expected ~{}",
+            QUANTIZE_POSITION_MAX
+        );
     }
 
     #[test]
@@ -384,8 +390,11 @@ mod tests {
         // Check that typical game positions survive quantization with < 0.25 unit error.
         for &v in &[-750.0, -400.0, -100.0, 0.0, 100.0, 400.0, 750.0] {
             let q = quantize_position(v);
-            assert!((q - v).abs() < 0.25,
-                "quantize_position({v}) = {q}, error = {}", (q - v).abs());
+            assert!(
+                (q - v).abs() < 0.25,
+                "quantize_position({v}) = {q}, error = {}",
+                (q - v).abs()
+            );
         }
     }
 
@@ -393,16 +402,22 @@ mod tests {
     fn dequantize_position_zero_is_min() {
         // u16 value 0 should map back to QUANTIZE_POSITION_MIN
         let v = dequantize_position(0);
-        assert!((v - QUANTIZE_POSITION_MIN).abs() < 0.2,
-            "dequantize_position(0) = {v}, expected ~{}", QUANTIZE_POSITION_MIN);
+        assert!(
+            (v - QUANTIZE_POSITION_MIN).abs() < 0.2,
+            "dequantize_position(0) = {v}, expected ~{}",
+            QUANTIZE_POSITION_MIN
+        );
     }
 
     #[test]
     fn dequantize_position_max_is_max() {
         // u16::MAX should map back to QUANTIZE_POSITION_MAX
         let v = dequantize_position(u16::MAX);
-        assert!((v - QUANTIZE_POSITION_MAX).abs() < 0.2,
-            "dequantize_position(u16::MAX) = {v}, expected ~{}", QUANTIZE_POSITION_MAX);
+        assert!(
+            (v - QUANTIZE_POSITION_MAX).abs() < 0.2,
+            "dequantize_position(u16::MAX) = {v}, expected ~{}",
+            QUANTIZE_POSITION_MAX
+        );
     }
 
     #[test]
@@ -410,7 +425,10 @@ mod tests {
         // Midpoint of u16 range should map to 0.0 (center of [-4096, 4096])
         let mid = u16::MAX / 2;
         let v = dequantize_position(mid);
-        assert!(v.abs() < 0.2, "dequantize_position({mid}) = {v}, expected ~0.0");
+        assert!(
+            v.abs() < 0.2,
+            "dequantize_position({mid}) = {v}, expected ~0.0"
+        );
     }
 
     // ── quantize_velocity tests ──────────────────────────────────
@@ -418,7 +436,10 @@ mod tests {
     #[test]
     fn quantize_velocity_negative_preserved() {
         let q = quantize_velocity(-200.0);
-        assert!(q < 0.0, "quantize_velocity(-200.0) = {q}, expected negative");
+        assert!(
+            q < 0.0,
+            "quantize_velocity(-200.0) = {q}, expected negative"
+        );
         assert!((q - -200.0).abs() < 10.0);
     }
 

@@ -76,9 +76,7 @@ impl MassiveGameServer {
                     server.mark_join_build_done(peer_id_str);
                     if let Some(first_chunk) = initial_chunks.front() {
                         let mut client_states = server.client_states_map.write();
-                        let state_entry = client_states
-                            .entry(peer_id_str.to_string())
-                            .or_default();
+                        let state_entry = client_states.entry(peer_id_str.to_string()).or_default();
                         state_entry.pending_initial_state_chunks = initial_chunks.clone();
                         state_entry.pending_initial_state_bytes = Some(first_chunk.clone());
                         state_entry.known_walls_sent = false;
@@ -345,9 +343,7 @@ impl MassiveGameServer {
                 if let Ok(initial_chunks) = initial_result.as_ref() {
                     if let Some(first_chunk) = initial_chunks.front() {
                         let mut client_states = server.client_states_map.write();
-                        let state_entry = client_states
-                            .entry(peer_id_str.to_string())
-                            .or_default();
+                        let state_entry = client_states.entry(peer_id_str.to_string()).or_default();
                         state_entry.pending_initial_state_chunks = initial_chunks.clone();
                         state_entry.pending_initial_state_bytes = Some(first_chunk.clone());
                         state_entry.known_walls_sent = false;

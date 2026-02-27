@@ -40,8 +40,8 @@ use crate::systems::respawn::{RespawnManager, WallRespawnManager};
 use crate::world::map_generator::MapGenerator;
 use crate::world::map_loader;
 use crate::world::navigation::NavMesh;
-use arc_swap::ArcSwapOption;
 use crate::world::partition::WorldPartitionManager; // Removed unused ImprovedWorldPartition
+use arc_swap::ArcSwapOption;
 use std::borrow::Cow;
 
 use bytes::Bytes;
@@ -53,7 +53,6 @@ use once_cell::sync::OnceCell;
 use parking_lot::RwLock as ParkingLotRwLock;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -74,6 +73,7 @@ mod broadcast_dispatch;
 mod broadcast_loop;
 mod broadcast_prep;
 mod broadcast_state;
+mod collision_utils;
 mod combat_melee;
 mod constants;
 mod game_modes;
@@ -82,17 +82,16 @@ mod join_stage;
 mod match_info;
 mod match_summary;
 mod navigation_mesh;
-mod collision_utils;
 mod physics;
 mod player_physics;
 mod projectile_physics;
 mod replay;
-mod wall_lifecycle;
 mod serialization;
 mod snapshot_publish;
 mod tick;
 mod types;
 mod util;
+mod wall_lifecycle;
 
 use self::constants::*;
 use self::serialization::*;
@@ -232,14 +231,6 @@ fn join_authoritative_aoi_snapshot_enabled() -> bool {
     *ENABLED.get_or_init(|| {
         !env_bool_value("MGS_JOIN_DISABLE_AUTHORITATIVE_AOI_SNAPSHOT")
             || env_bool_value("MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT")
-    })
-}
-
-fn broadcast_work_stealing_enabled() -> bool {
-    static ENABLED: OnceCell<bool> = OnceCell::new();
-    *ENABLED.get_or_init(|| {
-        env_bool_value("MGS_BROADCAST_WORK_STEALING")
-            || env_bool_value("MGS_BROADCAST_RAYON_FANOUT")
     })
 }
 
@@ -464,7 +455,10 @@ impl MassiveGameServer {
                         "arena" => MapGenerator::generate_arena_map(map_seed),
                         "fortress" => MapGenerator::generate_fortress_map(map_seed),
                         "random" => MapGenerator::select_random_map(map_seed, map_target_players),
-                        _ => MapGenerator::generate_dynamic_map_with_seed(map_target_players, map_seed),
+                        _ => MapGenerator::generate_dynamic_map_with_seed(
+                            map_target_players,
+                            map_seed,
+                        ),
                     };
                     let zones = MapGenerator::generate_environment_zones_with_seed(map_seed);
                     (walls, zones, name)
@@ -909,10 +903,7 @@ impl MassiveGameServer {
     }
 
     pub(super) fn enqueue_direct_packet_for_peer(&self, peer_id: &str, packet: Bytes) {
-        let mut queue = self
-            .direct_packets
-            .entry(peer_id.to_owned())
-            .or_default();
+        let mut queue = self.direct_packets.entry(peer_id.to_owned()).or_default();
         while queue.len() >= self.direct_packet_queue_cap {
             let _ = queue.pop_front();
         }
@@ -1080,10 +1071,7 @@ impl MassiveGameServer {
         let player_id = self.player_manager.id_pool.get_or_create(peer_id);
         if let Some(mut player_state) = self.player_manager.get_player_state_mut(&player_id) {
             if !player_state.queue_input(input) {
-                debug!(
-                    "[{}]: Rejected QUIC input (seq replay or gap)",
-                    peer_id
-                );
+                debug!("[{}]: Rejected QUIC input (seq replay or gap)", peer_id);
                 return false;
             }
             return true;
@@ -1190,15 +1178,13 @@ mod packet_batch_tests {
 
     #[test]
     fn segment_first_hit_fraction_detects_entry_time() {
-        let hit_t =
-            segment_first_hit_fraction_with_aabb(0.0, 0.0, 10.0, 0.0, 4.0, 6.0, -1.0, 1.0);
+        let hit_t = segment_first_hit_fraction_with_aabb(0.0, 0.0, 10.0, 0.0, 4.0, 6.0, -1.0, 1.0);
         assert_eq!(hit_t, Some(0.4));
     }
 
     #[test]
     fn segment_first_hit_fraction_returns_none_for_miss() {
-        let hit_t =
-            segment_first_hit_fraction_with_aabb(0.0, 0.0, 3.0, 0.0, 4.0, 6.0, -1.0, 1.0);
+        let hit_t = segment_first_hit_fraction_with_aabb(0.0, 0.0, 3.0, 0.0, 4.0, 6.0, -1.0, 1.0);
         assert_eq!(hit_t, None);
     }
 }
@@ -1280,8 +1266,7 @@ mod instance_tests {
     #[test]
     fn aabb_diagonal_hit() {
         // Diagonal segment hitting a box
-        let hit =
-            segment_first_hit_fraction_with_aabb(0.0, 0.0, 10.0, 10.0, 4.0, 6.0, 4.0, 6.0);
+        let hit = segment_first_hit_fraction_with_aabb(0.0, 0.0, 10.0, 10.0, 4.0, 6.0, 4.0, 6.0);
         assert!(hit.is_some());
         let t = hit.unwrap();
         assert!(t > 0.3 && t < 0.5);
@@ -1297,8 +1282,7 @@ mod instance_tests {
     #[test]
     fn aabb_segment_behind_start() {
         // Box is behind the segment direction
-        let hit =
-            segment_first_hit_fraction_with_aabb(10.0, 0.0, 20.0, 0.0, 4.0, 6.0, -1.0, 1.0);
+        let hit = segment_first_hit_fraction_with_aabb(10.0, 0.0, 20.0, 0.0, 4.0, 6.0, -1.0, 1.0);
         assert!(hit.is_none());
     }
 
@@ -1306,7 +1290,9 @@ mod instance_tests {
 
     #[test]
     fn env_bool_value_returns_false_for_unset() {
-        assert!(!env_bool_value("MGS_TEST_VERY_UNLIKELY_VAR_NEVER_SET_12345"));
+        assert!(!env_bool_value(
+            "MGS_TEST_VERY_UNLIKELY_VAR_NEVER_SET_12345"
+        ));
     }
 
     // ── collect_pending_chat_packets tests ───────────────────────────
@@ -1350,30 +1336,18 @@ mod instance_tests {
 
     #[test]
     fn match_type_from_query_str_full_match() {
-        assert_eq!(
-            MatchType::from_query_str("full"),
-            MatchType::FullMatch
-        );
+        assert_eq!(MatchType::from_query_str("full"), MatchType::FullMatch);
         assert_eq!(
             MatchType::from_query_str("full_match"),
             MatchType::FullMatch
         );
-        assert_eq!(
-            MatchType::from_query_str("fullmatch"),
-            MatchType::FullMatch
-        );
-        assert_eq!(
-            MatchType::from_query_str("desktop"),
-            MatchType::FullMatch
-        );
+        assert_eq!(MatchType::from_query_str("fullmatch"), MatchType::FullMatch);
+        assert_eq!(MatchType::from_query_str("desktop"), MatchType::FullMatch);
     }
 
     #[test]
     fn match_type_from_query_str_quick_match() {
-        assert_eq!(
-            MatchType::from_query_str("quick"),
-            MatchType::QuickMatch
-        );
+        assert_eq!(MatchType::from_query_str("quick"), MatchType::QuickMatch);
         assert_eq!(
             MatchType::from_query_str("quick_match"),
             MatchType::QuickMatch
@@ -1394,10 +1368,7 @@ mod instance_tests {
             MatchType::from_query_str("mobileblitz"),
             MatchType::MobileBlitz
         );
-        assert_eq!(
-            MatchType::from_query_str("blitz"),
-            MatchType::MobileBlitz
-        );
+        assert_eq!(MatchType::from_query_str("blitz"), MatchType::MobileBlitz);
     }
 
     #[test]
@@ -1418,10 +1389,7 @@ mod instance_tests {
 
     #[test]
     fn match_type_from_query_str_case_insensitive() {
-        assert_eq!(
-            MatchType::from_query_str("QUICK"),
-            MatchType::QuickMatch
-        );
+        assert_eq!(MatchType::from_query_str("QUICK"), MatchType::QuickMatch);
         assert_eq!(
             MatchType::from_query_str("Quick_Match"),
             MatchType::QuickMatch
@@ -1434,14 +1402,8 @@ mod instance_tests {
 
     #[test]
     fn match_type_from_query_str_unknown_defaults_to_full() {
-        assert_eq!(
-            MatchType::from_query_str("invalid"),
-            MatchType::FullMatch
-        );
-        assert_eq!(
-            MatchType::from_query_str(""),
-            MatchType::FullMatch
-        );
+        assert_eq!(MatchType::from_query_str("invalid"), MatchType::FullMatch);
+        assert_eq!(MatchType::from_query_str(""), MatchType::FullMatch);
     }
 
     #[test]
@@ -1468,7 +1430,10 @@ mod instance_tests {
 
     #[test]
     fn match_type_duration_secs() {
-        assert_eq!(MatchType::FullMatch.duration_secs(), FULL_MATCH_DURATION_SECS);
+        assert_eq!(
+            MatchType::FullMatch.duration_secs(),
+            FULL_MATCH_DURATION_SECS
+        );
         assert_eq!(
             MatchType::QuickMatch.duration_secs(),
             QUICK_MATCH_DURATION_SECS

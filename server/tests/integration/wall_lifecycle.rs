@@ -3,8 +3,12 @@
 
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
-use massive_game_server_core::core::types::{EntityId, PlayerAoIs, Projectile, ServerWeaponType, Wall};
-use massive_game_server_core::network::signaling::{BoundedChatQueue, ChatMessagesQueue, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE};
+use massive_game_server_core::core::types::{
+    EntityId, PlayerAoIs, Projectile, ServerWeaponType, Wall,
+};
+use massive_game_server_core::network::signaling::{
+    BoundedChatQueue, ChatMessagesQueue, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE,
+};
 use massive_game_server_core::server::instance::MassiveGameServer;
 
 use dashmap::DashMap;
@@ -19,7 +23,8 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
         Arc::new(ThreadPoolSystem::new(config.clone()).expect("Failed to create thread pools"));
     let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
+    let chat_messages_queue: ChatMessagesQueue =
+        Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
     Arc::new(MassiveGameServer::new(
@@ -107,15 +112,7 @@ async fn wall_destroyed_by_sufficient_damage() {
 
     let owner_id = server.player_manager.id_pool.get_or_create("attacker");
     // Sniper does 50 base damage * 2.0 = 100. Wall has 50 HP.
-    let proj = Projectile::new(
-        owner_id,
-        ServerWeaponType::Sniper,
-        95.0,
-        0.0,
-        1.0,
-        0.0,
-        2.0,
-    );
+    let proj = Projectile::new(owner_id, ServerWeaponType::Sniper, 95.0, 0.0, 1.0, 0.0, 2.0);
     server.projectiles_to_add.push(proj);
 
     server.run_game_logic_update(0.016).await;
@@ -154,22 +151,17 @@ async fn indestructible_wall_takes_no_damage() {
     create_wall(&server, wall_id, 100.0, -25.0, 50.0, 50.0, 1000, false);
     rebuild_wall_index(&server);
 
-    server
-        .player_manager
-        .add_player("indestr_attacker".to_owned(), "indestr_attacker".to_owned(), 0.0, 0.0);
+    server.player_manager.add_player(
+        "indestr_attacker".to_owned(),
+        "indestr_attacker".to_owned(),
+        0.0,
+        0.0,
+    );
     let owner_id = server
         .player_manager
         .id_pool
         .get_or_create("indestr_attacker");
-    let proj = Projectile::new(
-        owner_id,
-        ServerWeaponType::Sniper,
-        95.0,
-        0.0,
-        1.0,
-        0.0,
-        2.0,
-    );
+    let proj = Projectile::new(owner_id, ServerWeaponType::Sniper, 95.0, 0.0, 1.0, 0.0, 2.0);
     server.projectiles_to_add.push(proj);
 
     server.run_game_logic_update(0.016).await;
@@ -238,9 +230,12 @@ async fn multiple_walls_take_independent_damage() {
     create_wall(&server, 502, 200.0, -25.0, 30.0, 50.0, 100, true);
     rebuild_wall_index(&server);
 
-    server
-        .player_manager
-        .add_player("multi_attacker".to_owned(), "multi_attacker".to_owned(), 0.0, 0.0);
+    server.player_manager.add_player(
+        "multi_attacker".to_owned(),
+        "multi_attacker".to_owned(),
+        0.0,
+        0.0,
+    );
     let owner_id = server
         .player_manager
         .id_pool
@@ -281,10 +276,7 @@ async fn multiple_walls_take_independent_damage() {
         .get_partition_index_for_point(215.0, 0.0);
     if let Some(partition) = server.world_partition_manager.get_partition(p_idx_502) {
         if let Some(entry) = partition.all_walls_in_partition.get(&502) {
-            assert_eq!(
-                entry.current_health, 100,
-                "Wall 502 should be untouched"
-            );
+            assert_eq!(entry.current_health, 100, "Wall 502 should be untouched");
         }
     }
 }
@@ -298,24 +290,16 @@ async fn destroyed_wall_tracked_in_respawn_manager() {
     create_wall(&server, wall_id, 100.0, -25.0, 50.0, 50.0, 1, true);
     rebuild_wall_index(&server);
 
-    server
-        .player_manager
-        .add_player("respawn_test".to_owned(), "respawn_test".to_owned(), 0.0, 0.0);
-    let owner_id = server
-        .player_manager
-        .id_pool
-        .get_or_create("respawn_test");
+    server.player_manager.add_player(
+        "respawn_test".to_owned(),
+        "respawn_test".to_owned(),
+        0.0,
+        0.0,
+    );
+    let owner_id = server.player_manager.id_pool.get_or_create("respawn_test");
 
     // 1 HP wall hit by sniper (50 dmg) -> destroyed.
-    let proj = Projectile::new(
-        owner_id,
-        ServerWeaponType::Sniper,
-        95.0,
-        0.0,
-        1.0,
-        0.0,
-        1.0,
-    );
+    let proj = Projectile::new(owner_id, ServerWeaponType::Sniper, 95.0, 0.0, 1.0, 0.0, 1.0);
     server.projectiles_to_add.push(proj);
 
     server.run_game_logic_update(0.016).await;

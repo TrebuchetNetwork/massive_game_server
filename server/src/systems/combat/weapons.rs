@@ -226,7 +226,8 @@ mod tests {
 
     #[test]
     fn apply_falloff_shotgun_at_max_range() {
-        let dmg = apply_distance_falloff(ServerWeaponType::Shotgun, SHOTGUN_DAMAGE, SHOTGUN_MAX_RANGE);
+        let dmg =
+            apply_distance_falloff(ServerWeaponType::Shotgun, SHOTGUN_DAMAGE, SHOTGUN_MAX_RANGE);
         let expected = (SHOTGUN_DAMAGE as f32 * SHOTGUN_MIN_MULTIPLIER).round() as i32;
         assert_eq!(dmg, expected);
     }

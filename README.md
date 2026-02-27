@@ -90,12 +90,20 @@ or:
 DEPLOY_MODE=docker ./scripts/deploy.sh up
 ```
 
+Validate compose + nginx config before bringing services up:
+
+```bash
+DEPLOY_MODE=docker ./scripts/deploy.sh validate
+```
+
 Then open:
 - `http://<host>:8080/` (landing website)
 - `http://<host>:8080/client.html` (game client)
+- `http://<host>:8080/ui-template.html` (UI prototype)
 
 Full deployment guide:
 - `docs/deploy_website.md`
+- `docs/game_trebuchet_network_deploy.md` (production runbook for `game.trebuchet.network`)
 
 ## Scale Validation
 

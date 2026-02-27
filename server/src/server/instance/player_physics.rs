@@ -216,8 +216,7 @@ impl MassiveGameServer {
                     MAX_ACCELERATION_PER_TICK,
                     player_state.acceleration_violation_count
                 );
-                player_state.violation_count =
-                    player_state.violation_count.saturating_add(1);
+                player_state.violation_count = player_state.violation_count.saturating_add(1);
                 // Snap velocity back to previous valid velocity
                 player_state.velocity_x = player_state.prev_velocity.0;
                 player_state.velocity_y = player_state.prev_velocity.1;
@@ -359,13 +358,15 @@ impl MassiveGameServer {
 
         for (left_id, left_x, left_y) in &alive_positions {
             // Use spatial index for fast nearby player lookup instead of O(N^2)
-            let nearby = self.spatial_index.query_nearby_players(*left_x, *left_y, min_distance * 2.0);
-            
+            let nearby =
+                self.spatial_index
+                    .query_nearby_players(*left_x, *left_y, min_distance * 2.0);
+
             for right_id in nearby {
                 if left_id >= &right_id {
                     continue;
                 }
-                
+
                 if let Some(&(right_x, right_y)) = new_positions.get(&right_id) {
                     let dx = right_x - left_x;
                     let dy = right_y - left_y;
@@ -435,7 +436,11 @@ impl MassiveGameServer {
         }
     }
 
-    pub(super) async fn apply_player_updates(&self, updates: PlayerPhysicsResults, active_walls: &[Wall]) {
+    pub(super) async fn apply_player_updates(
+        &self,
+        updates: PlayerPhysicsResults,
+        active_walls: &[Wall],
+    ) {
         // Precompute enemy snapshots once for this respawn batch.
         let enemies_for_team_1 = self.get_enemy_positions_for_team(1);
         let enemies_for_team_2 = self.get_enemy_positions_for_team(2);

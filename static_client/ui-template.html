@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Space Shooter - Game UI</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- UI Styles -->
+  <link rel="stylesheet" href="ui-variables.css">
+  <link rel="stylesheet" href="ui-main.css">
+  <link rel="stylesheet" href="ui-menu.css">
+  <link rel="stylesheet" href="ui-hud.css">
+  <link rel="stylesheet" href="ui-ingame.css">
+  
+  <style>
+    /* Game Canvas Container */
+    #game-container {
+      position: fixed;
+      inset: 0;
+      z-index: var(--z-game);
+    }
+    
+    #game-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    
+    /* Hide UI when not active */
+    .menu-container:not(.active),
+    .hud-container:not(.active),
+    .buy-menu:not(.active),
+    .scoreboard:not(.active),
+    .pause-menu:not(.active),
+    .team-select:not(.active),
+    .round-end:not(.active),
+    .loading-screen:not(.active) {
+      display: none !important;
+    }
+
+    .avatar-initial {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: Orbitron, sans-serif;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: #0a0a0f;
+      background: linear-gradient(135deg, #00d4ff, #9d4edd);
+    }
+  </style>
+</head>
+<body>
+  <!-- ============================================
+       GAME CANVAS (Pixi.js)
+       ============================================ -->
+  <div id="game-container">
+    <canvas id="game-canvas"></canvas>
+  </div>
+  
+  <!-- ============================================
+       MAIN MENU
+       ============================================ -->
+  <div id="main-menu" class="menu-container active">
+    <!-- Background -->
+    <div class="menu-background">
+      <div class="stars-bg"></div>
+      <div class="nebula-overlay"></div>
+      <div class="grid-overlay"></div>
+    </div>
+    
+    <!-- Header -->
+    <header class="menu-header">
+      <div class="logo">
+        <span class="logo-icon">◈</span>
+        <span class="logo-text">NEBULA STRIKE</span>
+      </div>
+      
+      <div class="player-preview">
+        <div class="player-avatar">
+          <div id="menu-avatar" class="avatar-initial" aria-label="Player avatar">CN</div>
+          <div class="rank-badge">A</div>
+        </div>
+        <div class="player-info">
+          <span class="player-name" id="menu-player-name">Commander</span>
+          <span class="player-level">Level <span id="menu-level">42</span></span>
+        </div>
+        <div class="player-currency">
+          <span class="currency-item credits">
+            <span class="currency-icon">◈</span>
+            <span id="menu-credits">12,450</span>
+          </span>
+          <span class="currency-item premium">
+            <span class="currency-icon">◉</span>
+            <span id="menu-premium">250</span>
+          </span>
+        </div>
+      </div>
+    </header>
+    
+    <!-- Navigation -->
+    <nav class="main-nav">
+      <button class="nav-item active" data-section="play">
+        <span class="nav-icon">▶</span>
+        <span class="nav-label">PLAY</span>
+        <div class="nav-glow"></div>
+      </button>
+      <button class="nav-item" data-section="career">
+        <span class="nav-icon">★</span>
+        <span class="nav-label">CAREER</span>
+        <div class="nav-glow"></div>
+      </button>
+      <button class="nav-item" data-section="shop">
+        <span class="nav-icon">◈</span>
+        <span class="nav-label">SHOP</span>
+        <div class="nav-glow"></div>
+      </button>
+      <button class="nav-item" data-section="social">
+        <span class="nav-icon">◉</span>
+        <span class="nav-label">SOCIAL</span>
+        <div class="nav-glow"></div>
+      </button>
+      <button class="nav-item" data-section="settings">
+        <span class="nav-icon">⚙</span>
+        <span class="nav-label">SETTINGS</span>
+        <div class="nav-glow"></div>
+      </button>
+    </nav>
+    
+    <!-- Content -->
+    <main class="menu-content">
+      <!-- Play Section -->
+      <section id="play-section" class="menu-section active">
+        <div class="game-modes">
+          <div class="mode-card featured" id="btn-quick-match">
+            <div class="mode-bg"></div>
+            <div class="mode-content">
+              <h2>QUICK MATCH</h2>
+              <p>Jump into action immediately</p>
+              <div class="mode-stats">
+                <span>⏱ ~5 min</span>
+                <span>👥 5v5</span>
+              </div>
+            </div>
+            <button class="btn-play">PLAY NOW</button>
+          </div>
+          
+          <div class="mode-grid">
+            <div class="mode-card" id="btn-ranked">
+              <div class="mode-icon">🏆</div>
+              <h3>RANKED</h3>
+              <p>Competitive matches</p>
+            </div>
+            <div class="mode-card" id="btn-custom">
+              <div class="mode-icon">⚔</div>
+              <h3>CUSTOM</h3>
+              <p>Create your game</p>
+            </div>
+            <div class="mode-card" id="btn-training">
+              <div class="mode-icon">🎯</div>
+              <h3>TRAINING</h3>
+              <p>Practice your skills</p>
+            </div>
+          </div>
+        </div>
+      </section>
+      
+      <!-- Career Section -->
+      <section id="career-section" class="menu-section">
+        <div class="career-overview">
+          <div class="rank-display">
+            <div class="rank-icon">
+              <svg viewBox="0 0 100 100">
+                <polygon points="50,5 95,27.5 95,72.5 50,95 5,72.5 5,27.5" 
+                         fill="none" stroke="var(--color-primary)" stroke-width="2"/>
+                <text x="50" y="60" text-anchor="middle" fill="var(--color-primary)" 
+                      font-size="30" font-family="Orbitron">A</text>
+              </svg>
+            </div>
+            <div class="rank-info">
+              <h2>ASTRAL COMMANDER</h2>
+              <div class="rank-progress">
+                <div class="progress-bar-large">
+                  <div class="progress-fill" style="width: 73%"></div>
+                </div>
+                <span>7,340 / 10,000 XP</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-value">247</span>
+              <span class="stat-label">Matches</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-value">62%</span>
+              <span class="stat-label">Win Rate</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-value">1,847</span>
+              <span class="stat-label">Kills</span>
+            </div>
+            <div class="stat-card highlight">
+              <span class="stat-value">3.2</span>
+              <span class="stat-label">K/D Ratio</span>
+            </div>
+          </div>
+        </div>
+      </section>
+      
+      <!-- Shop Section -->
+      <section id="shop-section" class="menu-section">
+        <div class="shop-categories">
+          <!-- Shop content here -->
+          <p style="text-align: center; color: var(--text-secondary); padding: var(--space-12);">
+            Shop content loading...
+          </p>
+        </div>
+      </section>
+      
+      <!-- Social Section -->
+      <section id="social-section" class="menu-section">
+        <div class="social-content">
+          <!-- Social content here -->
+          <p style="text-align: center; color: var(--text-secondary); padding: var(--space-12);">
+            Social features coming soon...
+          </p>
+        </div>
+      </section>
+      
+      <!-- Settings Section -->
+      <section id="settings-section" class="menu-section">
+        <div class="settings-content">
+          <!-- Settings content here -->
+          <p style="text-align: center; color: var(--text-secondary); padding: var(--space-12);">
+            Settings panel coming soon...
+          </p>
+        </div>
+      </section>
+    </main>
+    
+    <!-- Footer -->
+    <footer class="menu-footer">
+      <div class="news-ticker">
+        <span class="ticker-label">NEWS:</span>
+        <div class="ticker-content">
+          <span>New Season Starting Soon! | Double XP Weekend | New Ship: Void Stalker Available</span>
+        </div>
+      </div>
+      <div class="social-links">
+        <a class="social-link" title="Discord">◉</a>
+        <a class="social-link" title="Twitter">🐦</a>
+        <a class="social-link" title="YouTube">▶</a>
+      </div>
+      <div class="version">v2.4.1</div>
+    </footer>
+  </div>
+  
+  <!-- ============================================
+       HUD (Heads-Up Display)
+       ============================================ -->
+  <div id="hud" class="hud-container">
+    <!-- Top Section -->
+    <div class="hud-top">
+      <!-- Health & Shield -->
+      <div class="hud-health-section">
+        <div class="ship-status">
+          <div class="ship-icon">
+            <svg viewBox="0 0 40 40">
+              <path d="M20 5 L30 35 L20 30 L10 35 Z" fill="currentColor"/>
+            </svg>
+          </div>
+          <div class="status-bars">
+            <div class="bar-container shield-bar">
+              <div class="bar-label">
+                <span>SHIELD</span>
+                <span class="bar-value">850/1000</span>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill" style="width: 85%"></div>
+                <div class="bar-segments"></div>
+              </div>
+            </div>
+            <div class="bar-container health-bar">
+              <div class="bar-label">
+                <span>HULL</span>
+                <span class="bar-value">420/500</span>
+              </div>
+              <div class="bar-track">
+                <div class="bar-fill" style="width: 84%"></div>
+                <div class="bar-segments"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Score & Timer -->
+      <div class="hud-score-section">
+        <div class="match-timer">
+          <div class="timer-display">
+            <span class="timer-value">03:42</span>
+            <span class="timer-phase">ROUND 1/12</span>
+          </div>
+        </div>
+        <div class="team-score">
+          <div class="score-team blue">
+            <span class="team-name">BLUE</span>
+            <span class="score-value">8</span>
+          </div>
+          <div class="score-divider">:</div>
+          <div class="score-team red">
+            <span class="score-value">6</span>
+            <span class="team-name">RED</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Center Crosshair -->
+    <div class="hud-center">
+      <div class="crosshair" id="crosshair">
+        <div class="crosshair-dot"></div>
+        <div class="crosshair-lines">
+          <span class="line top"></span>
+          <span class="line right"></span>
+          <span class="line bottom"></span>
+          <span class="line left"></span>
+        </div>
+      </div>
+      
+      <div class="hit-marker" id="hit-marker">
+        <span class="hit-line tl"></span>
+        <span class="hit-line tr"></span>
+        <span class="hit-line bl"></span>
+        <span class="hit-line br"></span>
+      </div>
+      
+      <div class="damage-numbers" id="damage-numbers"></div>
+    </div>
+    
+    <!-- Bottom Section -->
+    <div class="hud-bottom">
+      <!-- Weapon & Ammo -->
+      <div class="hud-weapon-section">
+        <div class="weapon-display">
+          <div class="weapon-icon">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+              <rect x="8" y="20" width="32" height="8" fill="var(--color-primary)"/>
+              <rect x="36" y="18" width="8" height="12" fill="var(--color-tertiary)"/>
+            </svg>
+          </div>
+          <div class="weapon-info">
+            <span class="weapon-name">PLASMA CANNON</span>
+            <div class="ammo-display">
+              <span class="ammo-current">∞</span>
+              <span class="ammo-divider">/</span>
+              <span class="ammo-max">150</span>
+            </div>
+          </div>
+        </div>
+        <div class="credits-display">
+          <span class="credits-icon">◈</span>
+          <span class="credits-value">4,250</span>
+        </div>
+      </div>
+      
+      <!-- Minimap -->
+      <div class="hud-minimap-section">
+        <div class="minimap-container">
+          <canvas id="minimap" width="180" height="180"></canvas>
+          <div class="minimap-overlay">
+            <div class="compass">
+              <span class="compass-n">N</span>
+              <span class="compass-e">E</span>
+              <span class="compass-s">S</span>
+              <span class="compass-w">W</span>
+            </div>
+          </div>
+          <div class="player-arrow"></div>
+        </div>
+      </div>
+      
+      <!-- Abilities -->
+      <div class="hud-abilities-section">
+        <div class="abilities-row">
+          <div class="ability-slot active" data-key="Q">
+            <div class="ability-icon">
+              <span style="font-size: 24px;">⚡</span>
+            </div>
+            <div class="ability-cooldown" style="--cooldown: 0%"></div>
+            <span class="ability-key">Q</span>
+          </div>
+          <div class="ability-slot" data-key="W">
+            <div class="ability-icon">
+              <span style="font-size: 24px;">🛡</span>
+            </div>
+            <div class="ability-cooldown" style="--cooldown: 45%"></div>
+            <span class="ability-cooldown-text">3</span>
+            <span class="ability-key">W</span>
+          </div>
+          <div class="ability-slot active" data-key="E">
+            <div class="ability-icon">
+              <span style="font-size: 24px;">🚀</span>
+            </div>
+            <div class="ability-cooldown" style="--cooldown: 0%"></div>
+            <span class="ability-key">E</span>
+          </div>
+          <div class="ability-slot ultimate" data-key="R">
+            <div class="ability-icon">
+              <span style="font-size: 24px;">☠</span>
+            </div>
+            <div class="ability-cooldown" style="--cooldown: 78%"></div>
+            <span class="ability-cooldown-text">85</span>
+            <span class="ability-key">R</span>
+            <div class="ultimate-charge">
+              <div class="charge-fill" style="width: 22%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Kill Feed -->
+    <div class="kill-feed" id="kill-feed">
+      <div class="kill-entry">
+        <span class="killer">Player1</span>
+        <span class="weapon-icon">⚔</span>
+        <span class="victim">Enemy2</span>
+      </div>
+    </div>
+    
+    <!-- Notifications -->
+    <div class="hud-notifications" id="notifications"></div>
+    
+    <!-- Chat -->
+    <div class="hud-chat">
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-input-container" id="chat-input-container">
+        <input type="text" class="chat-input" placeholder="Type message..." maxlength="100">
+      </div>
+    </div>
+  </div>
+  
+  <!-- ============================================
+       BUY MENU
+       ============================================ -->
+  <div id="buy-menu" class="buy-menu">
+    <div class="buy-menu-header">
+      <h2>ARSENAL</h2>
+      <div class="buy-credits">
+        <span>CREDITS:</span>
+        <span class="credits-amount">4,250</span>
+      </div>
+    </div>
+    
+    <div class="buy-menu-content">
+      <div class="buy-categories">
+        <button class="category-btn active" data-category="primary">
+          <span class="cat-icon">🔫</span>
+          <span>PRIMARY</span>
+        </button>
+        <button class="category-btn" data-category="secondary">
+          <span class="cat-icon">🔫</span>
+          <span>SECONDARY</span>
+        </button>
+        <button class="category-btn" data-category="abilities">
+          <span class="cat-icon">⚡</span>
+          <span>ABILITIES</span>
+        </button>
+        <button class="category-btn" data-category="upgrades">
+          <span class="cat-icon">⬆</span>
+          <span>UPGRADES</span>
+        </button>
+      </div>
+      
+      <div class="buy-items">
+        <div class="buy-item" data-item="plasma-rifle" data-category="primary">
+          <div class="item-image">
+            <svg width="60" height="60" viewBox="0 0 60 60">
+              <rect x="10" y="25" width="40" height="10" fill="var(--color-primary)"/>
+              <rect x="45" y="22" width="10" height="16" fill="var(--color-tertiary)"/>
+            </svg>
+          </div>
+          <div class="item-info">
+            <span class="item-name">PLASMA RIFLE</span>
+            <div class="item-stats">
+              <div class="stat">
+                <span class="stat-bar"><span style="width: 70%"></span></span>
+                <span>DAMAGE</span>
+              </div>
+              <div class="stat">
+                <span class="stat-bar"><span style="width: 60%"></span></span>
+                <span>FIRE RATE</span>
+              </div>
+              <div class="stat">
+                <span class="stat-bar"><span style="width: 80%"></span></span>
+                <span>RANGE</span>
+              </div>
+            </div>
+          </div>
+          <div class="item-price">
+            <span class="price">2,500</span>
+          </div>
+          <div class="item-key">1</div>
+        </div>
+        
+        <div class="buy-item owned" data-item="laser-cannon" data-category="primary">
+          <div class="item-image">
+            <svg width="60" height="60" viewBox="0 0 60 60">
+              <rect x="10" y="27" width="40" height="6" fill="var(--color-danger)"/>
+              <circle cx="50" cy="30" r="5" fill="var(--color-warning)"/>
+            </svg>
+          </div>
+          <div class="item-info">
+            <span class="item-name">LASER CANNON</span>
+            <div class="item-stats">
+              <div class="stat">
+                <span class="stat-bar"><span style="width: 90%"></span></span>
+                <span>DAMAGE</span>
+              </div>
+              <div class="stat">
+                <span class="stat-bar"><span style="width: 40%"></span></span>
+                <span>FIRE RATE</span>
+              </div>
+              <div class="stat">
+                <span class="stat-bar"><span style="width: 95%"></span></span>
+                <span>RANGE</span>
+              </div>
+            </div>
+          </div>
+          <div class="item-price">
+            <span class="price">OWNED</span>
+          </div>
+          <div class="item-key">2</div>
+        </div>
+        
+        <div class="buy-item" data-item="ion-blaster" data-category="primary">
+          <div class="item-image">
+            <svg width="60" height="60" viewBox="0 0 60 60">
+              <rect x="10" y="25" width="35" height="10" fill="var(--color-success)"/>
+              <rect x="42" y="22" width="8" height="16" fill="var(--color-primary)"/>
+            </svg>
+          </div>
+          <div class="item-info">
+            <span class="item-name">ION BLASTER</span>
+            <div class="item-stats">
+              <div class="stat">
+                <span class="stat-bar"><span style="width: 55%"></span></span>
+                <span>DAMAGE</span>
+              </div>
+              <div class="stat">
+                <span class="stat-bar"><span style="width: 90%"></span></span>
+                <span>FIRE RATE</span>
+              </div>
+              <div class="stat">
+                <span class="stat-bar"><span style="width: 60%"></span></span>
+                <span>RANGE</span>
+              </div>
+            </div>
+          </div>
+          <div class="item-price">
+            <span class="price">1,800</span>
+          </div>
+          <div class="item-key">3</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="buy-menu-footer">
+      <div class="buy-hints">
+        <span>[CLICK] Purchase</span>
+        <span>[1-9] Quick Buy</span>
+        <span>[B] Close</span>
+      </div>
+    </div>
+  </div>
+  
+  <!-- ============================================
+       SCOREBOARD
+       ============================================ -->
+  <div id="scoreboard" class="scoreboard">
+    <div class="scoreboard-header">
+      <div class="match-info">
+        <span class="map-name">NEBULA STATION</span>
+        <span class="match-mode">Team Deathmatch</span>
+      </div>
+      <div class="match-score">
+        <span class="team-blue">8</span>
+        <span class="score-divider">:</span>
+        <span class="team-red">6</span>
+      </div>
+      <div class="match-timer">03:42</div>
+    </div>
+    
+    <div class="scoreboard-teams">
+      <div class="team-table blue-team">
+        <div class="table-header">
+          <span class="col-rank">#</span>
+          <span class="col-player">PLAYER</span>
+          <span class="col-score">SCORE</span>
+          <span class="col-kills">K</span>
+          <span class="col-deaths">D</span>
+          <span class="col-assists">A</span>
+          <span class="col-ping">PING</span>
+        </div>
+        <div class="table-body">
+          <div class="player-row local-player">
+            <span class="col-rank">1</span>
+            <span class="col-player">
+              <span class="player-name">You</span>
+            </span>
+            <span class="col-score">2,450</span>
+            <span class="col-kills">12</span>
+            <span class="col-deaths">4</span>
+            <span class="col-assists">6</span>
+            <span class="col-ping good">24</span>
+          </div>
+          <div class="player-row">
+            <span class="col-rank">2</span>
+            <span class="col-player">
+              <span class="player-name">StarHunter</span>
+            </span>
+            <span class="col-score">1,890</span>
+            <span class="col-kills">9</span>
+            <span class="col-deaths">5</span>
+            <span class="col-assists">4</span>
+            <span class="col-ping good">32</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="team-table red-team">
+        <div class="table-header">
+          <span class="col-rank">#</span>
+          <span class="col-player">PLAYER</span>
+          <span class="col-score">SCORE</span>
+          <span class="col-kills">K</span>
+          <span class="col-deaths">D</span>
+          <span class="col-assists">A</span>
+          <span class="col-ping">PING</span>
+        </div>
+        <div class="table-body">
+          <div class="player-row">
+            <span class="col-rank">1</span>
+            <span class="col-player">
+              <span class="player-name">VoidWalker</span>
+            </span>
+            <span class="col-score">1,650</span>
+            <span class="col-kills">8</span>
+            <span class="col-deaths">7</span>
+            <span class="col-assists">3</span>
+            <span class="col-ping medium">68</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- ============================================
+       PAUSE MENU
+       ============================================ -->
+  <div id="pause-menu" class="pause-menu">
+    <div class="pause-overlay"></div>
+    <div class="pause-content">
+      <h2>GAME PAUSED</h2>
+      <nav class="pause-nav">
+        <button class="pause-btn" data-action="resume">
+          <span>RESUME</span>
+        </button>
+        <button class="pause-btn" data-action="settings">
+          <span>SETTINGS</span>
+        </button>
+        <button class="pause-btn" data-action="surrender">
+          <span>SURRENDER</span>
+        </button>
+        <button class="pause-btn danger" data-action="quit">
+          <span>QUIT TO MENU</span>
+        </button>
+      </nav>
+    </div>
+  </div>
+  
+  <!-- ============================================
+       TEAM SELECT
+       ============================================ -->
+  <div id="team-select" class="team-select">
+    <div class="team-select-content">
+      <h2>SELECT TEAM</h2>
+      <div class="team-options">
+        <div class="team-option blue" data-team="blue">
+          <h3>BLUE TEAM</h3>
+          <span class="player-count">3/5 players</span>
+        </div>
+        <div class="team-option red" data-team="red">
+          <h3>RED TEAM</h3>
+          <span class="player-count">2/5 players</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- ============================================
+       ROUND END
+       ============================================ -->
+  <div id="round-end" class="round-end">
+    <div class="round-result victory">VICTORY</div>
+    <div class="round-stats">
+      <div class="round-stat">
+        <div class="value">12</div>
+        <div class="label">Kills</div>
+      </div>
+      <div class="round-stat">
+        <div class="value">4</div>
+        <div class="label">Deaths</div>
+      </div>
+      <div class="round-stat">
+        <div class="value">2,450</div>
+        <div class="label">Score</div>
+      </div>
+    </div>
+    <div class="next-round-timer">Next round in <span>5</span>s</div>
+  </div>
+  
+  <!-- ============================================
+       LOADING SCREEN
+       ============================================ -->
+  <div id="loading-screen" class="loading-screen">
+    <div class="loading-overlay"></div>
+    <div class="loading-content">
+      <div class="spinner spinner-lg"></div>
+      <div class="loading-text">CONNECTING...</div>
+    </div>
+  </div>
+  
+  <!-- ============================================
+       TOAST CONTAINER
+       ============================================ -->
+  <div class="toast-container" id="toast-container"></div>
+  
+  <!-- ============================================
+       SCRIPTS
+       ============================================ -->
+  <script src="ui-manager.js"></script>
+  <script src="hud-controller.js"></script>
+  <script src="touch-controls.js"></script>
+  
+  <script>
+    // Initialize UI when DOM is ready
+    document.addEventListener('DOMContentLoaded', () => {
+      console.log('[Game] UI initialized');
+      
+      // Quick match button
+      document.getElementById('btn-quick-match')?.addEventListener('click', () => {
+        document.dispatchEvent(new CustomEvent('game-start'));
+      });
+      
+      // Example: Simulate game events for testing
+      setTimeout(() => {
+        // Simulate health change
+        document.dispatchEvent(new CustomEvent('player-health-change', {
+          detail: { current: 350, max: 500 }
+        }));
+      }, 2000);
+    });
+  </script>
+</body>
+</html>

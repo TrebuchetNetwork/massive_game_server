@@ -181,7 +181,11 @@ impl BotPersonality {
 
     /// Preferred weapon slot to switch to (1 = primary, 2 = secondary).
     /// Returns None if the bot should keep its current weapon.
-    pub fn preferred_weapon_slot(&self, current_weapon: ServerWeaponType, enemy_distance: f32) -> Option<u8> {
+    pub fn preferred_weapon_slot(
+        &self,
+        current_weapon: ServerWeaponType,
+        enemy_distance: f32,
+    ) -> Option<u8> {
         match self {
             BotPersonality::Aggressive => {
                 // Prefer Shotgun at close range, Melee at very close
@@ -189,10 +193,9 @@ impl BotPersonality {
                     if current_weapon != ServerWeaponType::Melee {
                         return Some(2); // Switch to melee slot
                     }
-                } else if enemy_distance < 200.0
-                    && current_weapon != ServerWeaponType::Shotgun {
-                        return Some(1); // Switch to shotgun slot
-                    }
+                } else if enemy_distance < 200.0 && current_weapon != ServerWeaponType::Shotgun {
+                    return Some(1); // Switch to shotgun slot
+                }
                 None
             }
             BotPersonality::Defensive => {
@@ -201,10 +204,9 @@ impl BotPersonality {
                     if current_weapon != ServerWeaponType::Sniper {
                         return Some(2); // Switch to sniper slot
                     }
-                } else if enemy_distance > 150.0
-                    && current_weapon != ServerWeaponType::Rifle {
-                        return Some(1); // Switch to rifle slot
-                    }
+                } else if enemy_distance > 150.0 && current_weapon != ServerWeaponType::Rifle {
+                    return Some(1); // Switch to rifle slot
+                }
                 None
             }
             BotPersonality::Balanced => {
@@ -536,10 +538,7 @@ impl OptimizedBotAI {
                         BotAiLodTier::Near => {
                             // Near tier: full AI
                             if BOT_SIMPLE_MOVEMENT_ONLY {
-                                Self::make_simple_movement_decision(
-                                    bot_controller,
-                                    &bot_snapshot,
-                                );
+                                Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
                             } else if game_mode == fb::GameModeType::CaptureTheFlag
                                 && match_state == fb::MatchStateType::Active
                             {
@@ -562,10 +561,7 @@ impl OptimizedBotAI {
                                     },
                                 );
                             } else {
-                                Self::make_simple_movement_decision(
-                                    bot_controller,
-                                    &bot_snapshot,
-                                );
+                                Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
                             }
 
                             let commander_waypoint = if bot_snapshot.team_id == 1 {
@@ -663,10 +659,7 @@ impl OptimizedBotAI {
 
     /// Far-tier wander: pick a random nearby target and patrol. No combat, no
     /// objective logic. Minimal CPU cost.
-    fn make_far_wander_decision(
-        bot_controller: &mut BotController,
-        bot_state: &BotSnapshotOwned,
-    ) {
+    fn make_far_wander_decision(bot_controller: &mut BotController, bot_state: &BotSnapshotOwned) {
         let (target_x, target_y) = with_bot_rng(|rng| {
             (
                 (bot_state.x + rng.gen_range_f32(-200.0, 200.0))
@@ -818,7 +811,10 @@ impl OptimizedBotAI {
             BotObjective::PatrolMidfield => {
                 // Patrol center area
                 let (patrol_x, patrol_y) = with_bot_rng(|rng| {
-                    (rng.gen_range_f32(-400.0, 400.0), rng.gen_range_f32(-400.0, 400.0))
+                    (
+                        rng.gen_range_f32(-400.0, 400.0),
+                        rng.gen_range_f32(-400.0, 400.0),
+                    )
                 });
                 bot_controller.target_position = Some(Vec2::new(patrol_x, patrol_y));
                 bot_controller.behavior_state = BotBehaviorState::Patrolling;
@@ -966,7 +962,7 @@ impl OptimizedBotAI {
         let (engage_pct, flank_pct) = match personality {
             BotPersonality::Aggressive => (60, 85), // 60% engage, 25% flank, 15% patrol
             BotPersonality::Defensive => (15, 35),  // 15% engage, 20% flank, 65% patrol/hold
-            BotPersonality::Balanced => (40, 70),    // 40% engage, 30% flank, 30% patrol
+            BotPersonality::Balanced => (40, 70),   // 40% engage, 30% flank, 30% patrol
         };
 
         let behavior_choice = with_bot_rng(|rng| rng.gen_range_i32(0, 100));
@@ -979,7 +975,10 @@ impl OptimizedBotAI {
                 BotPersonality::Balanced => 200.0,
             };
             let (target_x, target_y) = with_bot_rng(|rng| {
-                (rng.gen_range_f32(-range, range), rng.gen_range_f32(-range, range))
+                (
+                    rng.gen_range_f32(-range, range),
+                    rng.gen_range_f32(-range, range),
+                )
             });
             bot_controller.target_position = Some(Vec2::new(target_x, target_y));
             bot_controller.behavior_state = BotBehaviorState::Engaging;
@@ -987,7 +986,11 @@ impl OptimizedBotAI {
             // Flanking: Move to sides
             let (side, target_x_abs, target_y) = with_bot_rng(|rng| {
                 let side = if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
-                (side, rng.gen_range_f32(300.0, 600.0), rng.gen_range_f32(-400.0, 400.0))
+                (
+                    side,
+                    rng.gen_range_f32(300.0, 600.0),
+                    rng.gen_range_f32(-400.0, 400.0),
+                )
             });
             let target_x = side * target_x_abs;
             bot_controller.target_position = Some(Vec2::new(target_x, target_y));
@@ -1168,8 +1171,7 @@ impl OptimizedBotAI {
         enemies: &[EnemySnapshot],
         frame_count: u64,
     ) -> PlayerInputData {
-        let can_switch_weapon = frame_count
-            .saturating_sub(bot_controller.last_weapon_switch_tick)
+        let can_switch_weapon = frame_count.saturating_sub(bot_controller.last_weapon_switch_tick)
             >= BOT_WEAPON_SWITCH_COOLDOWN_TICKS;
 
         let mut input = PlayerInputData {
@@ -1338,7 +1340,8 @@ impl OptimizedBotAI {
             }
 
             // Aim at enemy with some inaccuracy
-            let aim_offset = with_bot_rng(|rng| rng.gen_range_f32(-0.2, 0.2)) * (1.0 - BOT_SHOOT_ACCURACY);
+            let aim_offset =
+                with_bot_rng(|rng| rng.gen_range_f32(-0.2, 0.2)) * (1.0 - BOT_SHOOT_ACCURACY);
             input.rotation = nearest_enemy_angle + aim_offset;
             if let Some(target) = selected_target.as_ref() {
                 // Tighten movement vector around predicted enemy motion when engaging.
@@ -1373,7 +1376,9 @@ impl OptimizedBotAI {
                         BotPersonality::Defensive => 0.1,
                         BotPersonality::Balanced => 0.3,
                     };
-                    if nearest_enemy_dist < 60.0 * 60.0 && with_bot_rng(|rng| rng.gen_bool(melee_chance)) {
+                    if nearest_enemy_dist < 60.0 * 60.0
+                        && with_bot_rng(|rng| rng.gen_bool(melee_chance))
+                    {
                         input.melee_attack = true;
                         input.shooting = false;
                     }
@@ -1438,7 +1443,9 @@ impl OptimizedBotAI {
                                 input.move_right = !input.move_left;
                             }
                             // Sometimes retreat
-                            if nearest_enemy_dist < 100.0 * 100.0 && with_bot_rng(|rng| rng.gen_bool(0.3)) {
+                            if nearest_enemy_dist < 100.0 * 100.0
+                                && with_bot_rng(|rng| rng.gen_bool(0.3))
+                            {
                                 input.move_backward = true;
                                 input.move_forward = false;
                             }
@@ -1820,13 +1827,15 @@ mod tests {
 
     #[test]
     fn defensive_prefers_rifle_at_medium_range() {
-        let slot = BotPersonality::Defensive.preferred_weapon_slot(ServerWeaponType::Shotgun, 250.0);
+        let slot =
+            BotPersonality::Defensive.preferred_weapon_slot(ServerWeaponType::Shotgun, 250.0);
         assert_eq!(slot, Some(1)); // switch to rifle
     }
 
     #[test]
     fn defensive_keeps_weapon_at_close_range() {
-        let slot = BotPersonality::Defensive.preferred_weapon_slot(ServerWeaponType::Shotgun, 100.0);
+        let slot =
+            BotPersonality::Defensive.preferred_weapon_slot(ServerWeaponType::Shotgun, 100.0);
         assert_eq!(slot, None);
     }
 
@@ -2003,10 +2012,7 @@ mod tests {
 
     /// Helper: create a minimal BotController at a given position with an
     /// optional pre-loaded path.
-    fn make_test_bot_controller(
-        pos: Vec2,
-        path: Vec<Vec2>,
-    ) -> BotController {
+    fn make_test_bot_controller(pos: Vec2, path: Vec<Vec2>) -> BotController {
         let mut bc = BotController {
             player_id: std::sync::Arc::new("test-bot".to_string()),
             target_position: None,
@@ -2038,8 +2044,10 @@ mod tests {
         let mut bc = make_test_bot_controller(bot_pos, vec![wp1, wp2]);
 
         let next = OptimizedBotAI::next_waypoint(&mut bc, bot_pos);
-        assert!((next.x - wp1.x).abs() < 1.0 && (next.y - wp1.y).abs() < 1.0,
-            "Should return first waypoint when bot is far from it");
+        assert!(
+            (next.x - wp1.x).abs() < 1.0 && (next.y - wp1.y).abs() < 1.0,
+            "Should return first waypoint when bot is far from it"
+        );
         assert_eq!(bc.current_path.len(), 2, "Path should not be consumed yet");
     }
 
@@ -2053,8 +2061,12 @@ mod tests {
 
         let next = OptimizedBotAI::next_waypoint(&mut bc, bot_pos);
         // wp1 should be popped (within BOT_WAYPOINT_ARRIVAL_DIST=30)
-        assert!((next.x - wp2.x).abs() < 1.0,
-            "Should advance past wp1 to wp2, got ({:.1}, {:.1})", next.x, next.y);
+        assert!(
+            (next.x - wp2.x).abs() < 1.0,
+            "Should advance past wp1 to wp2, got ({:.1}, {:.1})",
+            next.x,
+            next.y
+        );
         assert_eq!(bc.current_path.len(), 2, "wp1 should have been popped");
     }
 
@@ -2095,16 +2107,17 @@ mod tests {
         // but wp4 is the one we want to reach.
         // Actually wp1 (dist=8), wp2 (dist=3), wp3 (dist=2) are all within 30u.
         // But we don't pop the last one. So wp1, wp2, wp3 get popped leaving wp4.
-        assert_eq!(bc.current_path.len(), 1, "Should have popped 3 waypoints, 1 remaining");
+        assert_eq!(
+            bc.current_path.len(),
+            1,
+            "Should have popped 3 waypoints, 1 remaining"
+        );
         assert!((next.x - wp4.x).abs() < 1.0);
     }
 
     #[test]
     fn invalidate_path_clears_state() {
-        let mut bc = make_test_bot_controller(
-            Vec2::new(0.0, 0.0),
-            vec![Vec2::new(100.0, 100.0)],
-        );
+        let mut bc = make_test_bot_controller(Vec2::new(0.0, 0.0), vec![Vec2::new(100.0, 100.0)]);
         bc.path_compute_tick = 42;
         bc.last_path_target = Some(Vec2::new(100.0, 100.0));
 
@@ -2130,7 +2143,10 @@ mod tests {
     fn path_target_moved_threshold_is_significant() {
         // The threshold should correspond to a meaningful distance (>50u)
         let threshold_dist = BOT_PATH_TARGET_MOVED_THRESHOLD_SQ.sqrt();
-        assert!(threshold_dist >= 100.0,
-            "Path recompute distance threshold should be >= 100 units, got {}", threshold_dist);
+        assert!(
+            threshold_dist >= 100.0,
+            "Path recompute distance threshold should be >= 100 units, got {}",
+            threshold_dist
+        );
     }
 }

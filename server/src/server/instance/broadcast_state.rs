@@ -279,9 +279,7 @@ impl MassiveGameServer {
         let mut players_fb_vec = Vec::new();
         let mut player_fields_mask_vec: Vec<u16> = Vec::new();
         let mut removed_player_ids_vec = Vec::new();
-        let encode_changed_mask = |mask: u16| -> u16 {
-            mask
-        };
+        let encode_changed_mask = |mask: u16| -> u16 { mask };
 
         if let Some(self_state) = Self::lookup_player_state_from_shared(shared_data, &player_id) {
             let is_new = !client_state.last_known_players.contains(&player_id);
@@ -520,8 +518,8 @@ impl MassiveGameServer {
             let time_changed = client_state
                 .last_known_match_time_remaining
                 .is_none_or(|t| (t - match_snapshot.time_remaining).abs() > 0.5);
-            let state_changed = client_state
-                .last_known_match_state != Some(match_snapshot.match_state);
+            let state_changed =
+                client_state.last_known_match_state != Some(match_snapshot.match_state);
             if client_state.match_info_pending
                 || state_changed
                 || time_changed
@@ -1045,23 +1043,30 @@ impl MassiveGameServer {
         let flag_states_fb = builder.create_vector(&fb_flag_states_vec);
 
         // Serialize zones
-        let fb_zones_vec: Vec<_> = self.zones.iter().map(|z| {
-            let zone_id_fb = fb_safe_str(&mut builder, &z.id.to_string());
-            let zone_type_fb = match z.zone_type {
-                crate::core::types::ZoneType::SlowZone => fb::ZoneType::SlowZone,
-                crate::core::types::ZoneType::DamageZone => fb::ZoneType::DamageZone,
-                crate::core::types::ZoneType::BoostPad => fb::ZoneType::BoostPad,
-            };
-            fb::Zone::create(&mut builder, &fb::ZoneArgs {
-                id: Some(zone_id_fb),
-                x: z.x,
-                y: z.y,
-                width: z.width,
-                height: z.height,
-                zone_type: zone_type_fb,
-                direction: z.direction,
+        let fb_zones_vec: Vec<_> = self
+            .zones
+            .iter()
+            .map(|z| {
+                let zone_id_fb = fb_safe_str(&mut builder, &z.id.to_string());
+                let zone_type_fb = match z.zone_type {
+                    crate::core::types::ZoneType::SlowZone => fb::ZoneType::SlowZone,
+                    crate::core::types::ZoneType::DamageZone => fb::ZoneType::DamageZone,
+                    crate::core::types::ZoneType::BoostPad => fb::ZoneType::BoostPad,
+                };
+                fb::Zone::create(
+                    &mut builder,
+                    &fb::ZoneArgs {
+                        id: Some(zone_id_fb),
+                        x: z.x,
+                        y: z.y,
+                        width: z.width,
+                        height: z.height,
+                        zone_type: zone_type_fb,
+                        direction: z.direction,
+                    },
+                )
             })
-        }).collect();
+            .collect();
         let zones_fb = builder.create_vector(&fb_zones_vec);
 
         let map_name_fb = fb_safe_str(&mut builder, &self.map_name);

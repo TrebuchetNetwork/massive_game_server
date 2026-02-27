@@ -71,9 +71,7 @@ impl MassiveGameServer {
         if !quic_peer_ids.is_empty() {
             let mut client_states_guard = self.client_states_map.write();
             for peer_id in &quic_peer_ids {
-                client_states_guard
-                    .entry(peer_id.clone())
-                    .or_default();
+                client_states_guard.entry(peer_id.clone()).or_default();
             }
         }
 
@@ -362,7 +360,9 @@ impl MassiveGameServer {
                 .get(&peer_id)
                 .map(|cs| cs.mobile_delta_skip_modulus)
                 .unwrap_or(1);
-            if client_mobile_skip > 1 && !(current_frame as usize).is_multiple_of(client_mobile_skip) {
+            if client_mobile_skip > 1
+                && !(current_frame as usize).is_multiple_of(client_mobile_skip)
+            {
                 continue;
             }
             if scheduled_delta_count >= max_delta_per_frame {
@@ -461,93 +461,55 @@ impl MassiveGameServer {
             broadcast_concurrency = broadcast_concurrency.min(SINGLE_MACHINE_CONCURRENCY_CAP);
         }
 
-        if broadcast_work_stealing_enabled() {
-            let runtime_handle = tokio::runtime::Handle::current();
+        let mut fanout_tasks = JoinSet::new();
+        for (peer_id_str, data_channel_arc, needs_initial) in scheduled_client_entries {
             let server_ref = Arc::clone(&self);
             let shared_data_ref = Arc::clone(&shared_broadcast_data);
-            let frame_for_log = current_frame;
 
-            self.thread_pools.network_pool.install(move || {
-                scheduled_client_entries.into_par_iter().for_each(
-                    |(peer_id_str, data_channel_arc, needs_initial)| {
-                        let server_ref = Arc::clone(&server_ref);
-                        let shared_data_ref = Arc::clone(&shared_data_ref);
-                        let runtime_handle = runtime_handle.clone();
+            fanout_tasks.spawn(async move {
+                let client_info = ClientInfo {
+                    data_channel: data_channel_arc,
+                    needs_initial_state: needs_initial,
+                };
 
-                        let client_info = ClientInfo {
-                            data_channel: data_channel_arc,
-                            needs_initial_state: needs_initial,
-                        };
-
-                        let result = runtime_handle.block_on(async {
-                            Self::process_client_broadcast(
-                                &peer_id_str,
-                                &client_info,
-                                shared_data_ref.as_ref(),
-                                &server_ref,
-                            )
-                            .await
-                        });
-                        if let Err(err) = result {
-                            error!(
-                                "[Frame {}] Work-stealing broadcast failed for {}: {}",
-                                frame_for_log, peer_id_str, err
-                            );
-                        }
-                    },
+                trace!(
+                    "[Frame {}] Processing client: {}, Needs Initial: {}",
+                    current_frame,
+                    peer_id_str,
+                    client_info.needs_initial_state
                 );
-            });
-        } else {
-            let mut fanout_tasks = JoinSet::new();
-            for (peer_id_str, data_channel_arc, needs_initial) in scheduled_client_entries {
-                let server_ref = Arc::clone(&self);
-                let shared_data_ref = Arc::clone(&shared_broadcast_data);
 
-                fanout_tasks.spawn(async move {
-                    let client_info = ClientInfo {
-                        data_channel: data_channel_arc,
-                        needs_initial_state: needs_initial,
-                    };
-
-                    trace!(
-                        "[Frame {}] Processing client: {}, Needs Initial: {}",
-                        current_frame,
-                        peer_id_str,
-                        client_info.needs_initial_state
+                if let Err(e) = Self::process_client_broadcast(
+                    &peer_id_str,
+                    &client_info,
+                    shared_data_ref.as_ref(),
+                    &server_ref,
+                )
+                .await
+                {
+                    error!(
+                        "[Frame {}] Error processing broadcast for client {}: {:?}",
+                        current_frame, peer_id_str, e
                     );
-
-                    if let Err(e) = Self::process_client_broadcast(
-                        &peer_id_str,
-                        &client_info,
-                        shared_data_ref.as_ref(),
-                        &server_ref,
-                    )
-                    .await
-                    {
-                        error!(
-                            "[Frame {}] Error processing broadcast for client {}: {:?}",
-                            current_frame, peer_id_str, e
-                        );
-                    }
-                });
-
-                if fanout_tasks.len() >= broadcast_concurrency {
-                    if let Some(Err(join_err)) = fanout_tasks.join_next().await {
-                        error!(
-                            "[Frame {}] Broadcast fanout task join error: {}",
-                            current_frame, join_err
-                        );
-                    }
                 }
-            }
+            });
 
-            while let Some(join_result) = fanout_tasks.join_next().await {
-                if let Err(join_err) = join_result {
+            if fanout_tasks.len() >= broadcast_concurrency {
+                if let Some(Err(join_err)) = fanout_tasks.join_next().await {
                     error!(
                         "[Frame {}] Broadcast fanout task join error: {}",
                         current_frame, join_err
                     );
                 }
+            }
+        }
+
+        while let Some(join_result) = fanout_tasks.join_next().await {
+            if let Err(join_err) = join_result {
+                error!(
+                    "[Frame {}] Broadcast fanout task join error: {}",
+                    current_frame, join_err
+                );
             }
         }
 

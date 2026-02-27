@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: massive-game-server
+  labels:
+    app: massive-game-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: massive-game-server
+  template:
+    metadata:
+      labels:
+        app: massive-game-server
+    spec:
+      containers:
+        - name: server
+          image: massive-game-server:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: MGS_HOST
+              value: "0.0.0.0"
+            - name: MGS_PORT
+              value: "8080"
+            - name: MGS_DISABLE_STUN
+              value: "1"
+            - name: MGS_TARGET_BOT_COUNT
+              value: "0"
+            - name: MGS_BEHIND_TLS_PROXY
+              value: "1"
+            - name: RUST_LOG
+              value: "massive_game_server_core=info,warp=warn,webrtc=warn"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"

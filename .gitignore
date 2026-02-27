@@ -13,3 +13,4 @@ test-results/
 panic.log
 runtime_server.log
 .claude/worktrees/
+docker/.env

@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker/docker-compose.yml"
+DOCKER_ENV_FILE="$ROOT_DIR/docker/.env"
+DOCKER_ENV_EXAMPLE="$ROOT_DIR/docker/.env.example"
 
 ACTION="${1:-up}"
 MODE="${DEPLOY_MODE:-docker}"
@@ -16,6 +18,7 @@ print_usage() {
   cat <<'EOF'
 Usage:
   DEPLOY_MODE=docker ./scripts/deploy.sh up
+  DEPLOY_MODE=docker ./scripts/deploy.sh validate
   DEPLOY_MODE=docker ./scripts/deploy.sh down
   DEPLOY_MODE=docker ./scripts/deploy.sh logs
   DEPLOY_MODE=docker ./scripts/deploy.sh status
@@ -39,6 +42,20 @@ ensure_docker() {
   fi
 }
 
+ensure_docker_env() {
+  if [[ -f "$DOCKER_ENV_FILE" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$DOCKER_ENV_EXAMPLE" ]]; then
+    echo "Missing docker/.env.example. Cannot auto-bootstrap docker/.env." >&2
+    exit 1
+  fi
+
+  cp "$DOCKER_ENV_EXAMPLE" "$DOCKER_ENV_FILE"
+  echo "[deploy] created docker/.env from docker/.env.example"
+  echo "[deploy] update docker/.env before production rollout."
+}
+
 health_check() {
   local host="${MGS_HOST:-0.0.0.0}"
   local port="${MGS_PORT:-8080}"
@@ -60,8 +77,19 @@ health_check() {
 
 docker_up() {
   ensure_docker
+  ensure_docker_env
   docker compose -f "$COMPOSE_FILE" up -d --build
   health_check
+}
+
+docker_validate() {
+  ensure_docker
+  ensure_docker_env
+  docker compose -f "$COMPOSE_FILE" config >/dev/null
+  docker run --rm \
+    -v "$ROOT_DIR/docker/nginx.conf:/etc/nginx/nginx.conf:ro" \
+    nginx:1.27-alpine nginx -t >/dev/null
+  echo "[deploy] docker-compose and nginx configuration validated."
 }
 
 docker_down() {
@@ -104,6 +132,14 @@ case "$ACTION" in
       docker_up
     else
       native_up
+    fi
+    ;;
+  validate)
+    if [[ "$MODE" == "docker" ]]; then
+      docker_validate
+    else
+      echo "validate action is only supported in DEPLOY_MODE=docker." >&2
+      exit 1
     fi
     ;;
   down)

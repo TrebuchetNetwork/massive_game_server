@@ -20,7 +20,8 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
 
     let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
+    let chat_messages_queue: ChatMessagesQueue =
+        Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
     Arc::new(MassiveGameServer::new(

@@ -167,10 +167,7 @@ pub fn init_tracing_subscriber(default_filter: &str) -> anyhow::Result<()> {
             .with(json_layer)
             .with(otel_layer);
         tracing::subscriber::set_global_default(subscriber).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to set tracing subscriber with OpenTelemetry: {}",
-                e
-            )
+            anyhow::anyhow!("failed to set tracing subscriber with OpenTelemetry: {}", e)
         })?;
 
         tracing::info!(

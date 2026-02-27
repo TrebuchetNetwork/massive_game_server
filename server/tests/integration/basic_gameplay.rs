@@ -10,7 +10,8 @@ use massive_game_server_core::core::types::{
     EntityId, EventPriority, PlayerID, PlayerInputData, Projectile, ServerWeaponType, Vec2, Wall,
 }; // Added PlayerState, PlayerInputData
 use massive_game_server_core::network::signaling::{
-    BoundedChatQueue, ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE,
+    BoundedChatQueue, ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap,
+    MAX_CHAT_QUEUE_SIZE,
 };
 use massive_game_server_core::server::instance::MassiveGameServer;
 use massive_game_server_core::systems::physics::collision; // Import PLAYER_RADIUS
@@ -32,7 +33,8 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
 
     let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
+    let chat_messages_queue: ChatMessagesQueue =
+        Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
     let server = Arc::new(MassiveGameServer::new(
@@ -663,7 +665,12 @@ async fn test_forward_movement_uses_current_input_rotation() {
     let server = setup_test_server();
     let player_id_arc = server
         .player_manager
-        .add_player("rotation_sync_player".to_string(), "RotationSync".to_string(), 0.0, 0.0)
+        .add_player(
+            "rotation_sync_player".to_string(),
+            "RotationSync".to_string(),
+            0.0,
+            0.0,
+        )
         .expect("Failed to add player for rotation sync test");
 
     {
@@ -742,10 +749,9 @@ async fn test_projectile_hits_wall_spanning_partition_boundary() {
     let wall_height = 40.0;
     let wall_id = create_destructible_wall(&server, wall_x, wall_y, wall_width, wall_height, 200);
 
-    let wall_center_partition = server.world_partition_manager.get_partition_index_for_point(
-        wall_x + wall_width * 0.5,
-        wall_y + wall_height * 0.5,
-    );
+    let wall_center_partition = server
+        .world_partition_manager
+        .get_partition_index_for_point(wall_x + wall_width * 0.5, wall_y + wall_height * 0.5);
     let projectile_start_x = wall_x - 6.0;
     let projectile_partition = server
         .world_partition_manager
@@ -757,7 +763,10 @@ async fn test_projectile_hits_wall_spanning_partition_boundary() {
 
     // Rebuild wall spatial index to include the injected test wall.
     let mut active_walls = Vec::new();
-    for partition in server.world_partition_manager.get_partitions_for_processing() {
+    for partition in server
+        .world_partition_manager
+        .get_partitions_for_processing()
+    {
         for wall_entry in partition.all_walls_in_partition.iter() {
             let wall = wall_entry.value();
             if !wall.is_destructible || wall.current_health > 0 {
@@ -792,7 +801,10 @@ async fn test_projectile_hits_wall_spanning_partition_boundary() {
     drop(projectiles);
 
     let mut post_health = None;
-    for partition in server.world_partition_manager.get_partitions_for_processing() {
+    for partition in server
+        .world_partition_manager
+        .get_partitions_for_processing()
+    {
         if let Some(wall_entry) = partition.all_walls_in_partition.get(&wall_id) {
             post_health = Some(wall_entry.value().current_health);
             break;
@@ -811,7 +823,12 @@ async fn test_newly_spawned_projectiles_are_indexed_for_aoi_before_next_physics_
     let server = setup_test_server();
     let shooter_id = server
         .player_manager
-        .add_player("projectile_index_player".to_string(), "ProjectileIndex".to_string(), 0.0, 0.0)
+        .add_player(
+            "projectile_index_player".to_string(),
+            "ProjectileIndex".to_string(),
+            0.0,
+            0.0,
+        )
         .expect("Failed to add shooter for projectile index test");
 
     {

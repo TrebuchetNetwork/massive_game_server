@@ -16,8 +16,8 @@ pub(crate) fn is_within_melee_arc(
     let dx = target_x - attacker_x;
     let dy = target_y - attacker_y;
     let angle_to_target = dy.atan2(dx);
-    let mut angle_diff = (angle_to_target - attacker_rotation)
-        .rem_euclid(2.0 * std::f32::consts::PI);
+    let mut angle_diff =
+        (angle_to_target - attacker_rotation).rem_euclid(2.0 * std::f32::consts::PI);
     if angle_diff > std::f32::consts::PI {
         angle_diff = 2.0 * std::f32::consts::PI - angle_diff;
     }
@@ -384,12 +384,24 @@ mod tests {
     #[test]
     fn out_of_range_at_boundary() {
         // At exactly max_range, dist_sq == range_sq, the check is strict <
-        assert!(!is_within_melee_range(0.0, 0.0, MELEE_MAX_RANGE, 0.0, MELEE_MAX_RANGE));
+        assert!(!is_within_melee_range(
+            0.0,
+            0.0,
+            MELEE_MAX_RANGE,
+            0.0,
+            MELEE_MAX_RANGE
+        ));
     }
 
     #[test]
     fn out_of_range_far_away() {
-        assert!(!is_within_melee_range(0.0, 0.0, 100.0, 0.0, MELEE_MAX_RANGE));
+        assert!(!is_within_melee_range(
+            0.0,
+            0.0,
+            100.0,
+            0.0,
+            MELEE_MAX_RANGE
+        ));
     }
 
     #[test]
@@ -403,7 +415,14 @@ mod tests {
     #[test]
     fn within_arc_directly_ahead() {
         // Attacker facing right (rotation=0), target directly to the right
-        assert!(is_within_melee_arc(0.0, 0.0, 0.0, 10.0, 0.0, ARC_HALF_ANGLE));
+        assert!(is_within_melee_arc(
+            0.0,
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            ARC_HALF_ANGLE
+        ));
     }
 
     #[test]
@@ -427,14 +446,28 @@ mod tests {
     #[test]
     fn outside_arc_behind_attacker() {
         // Target directly behind the attacker
-        assert!(!is_within_melee_arc(0.0, 0.0, 0.0, -10.0, 0.0, ARC_HALF_ANGLE));
+        assert!(!is_within_melee_arc(
+            0.0,
+            0.0,
+            0.0,
+            -10.0,
+            0.0,
+            ARC_HALF_ANGLE
+        ));
     }
 
     #[test]
     fn within_arc_with_rotated_attacker() {
         // Attacker facing up (rotation=PI/2), target directly above
         let rot = std::f32::consts::FRAC_PI_2;
-        assert!(is_within_melee_arc(0.0, 0.0, rot, 0.0, 10.0, ARC_HALF_ANGLE));
+        assert!(is_within_melee_arc(
+            0.0,
+            0.0,
+            rot,
+            0.0,
+            10.0,
+            ARC_HALF_ANGLE
+        ));
     }
 
     #[test]

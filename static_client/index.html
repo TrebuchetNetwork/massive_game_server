@@ -1,404 +1,1075 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Massive Game Server</title>
-  <meta name="description" content="Deploy-ready home page for Massive Game Server. Launch desktop/mobile clients, validate health, and access arena APIs." />
-  <style>
-    :root {
-      --bg: #f4f8fb;
-      --text: #112537;
-      --muted: #4f6476;
-      --panel: #ffffff;
-      --line: #d7e3ec;
-      --brand: #0277bd;
-      --brand-strong: #015f96;
-      --accent: #ef6c00;
-      --good: #1f8a3a;
-      --shadow: 0 18px 44px rgba(10, 44, 70, 0.12);
-      --radius: 18px;
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    html, body {
-      margin: 0;
-      padding: 0;
-      background:
-        radial-gradient(circle at 10% 10%, rgba(2, 119, 189, 0.14), transparent 36%),
-        radial-gradient(circle at 90% 15%, rgba(239, 108, 0, 0.14), transparent 38%),
-        var(--bg);
-      color: var(--text);
-      font-family: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
-      line-height: 1.4;
-    }
-
-    .shell {
-      width: min(1120px, calc(100% - 2rem));
-      margin: 0 auto;
-      padding: 1.4rem 0 2.2rem;
-    }
-
-    .hero {
-      display: grid;
-      grid-template-columns: 1.15fr 0.85fr;
-      gap: 1rem;
-      align-items: stretch;
-    }
-
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: 1.15rem 1.2rem;
-    }
-
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.45rem;
-      border-radius: 999px;
-      border: 1px solid #b3d5e7;
-      padding: 0.35rem 0.7rem;
-      color: #034c75;
-      background: #e9f5fb;
-      font-size: 0.84rem;
-      font-weight: 700;
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
-    }
-
-    h1 {
-      margin: 0.7rem 0 0.4rem;
-      font-size: clamp(1.55rem, 4vw, 2.45rem);
-      line-height: 1.05;
-      letter-spacing: -0.02em;
-    }
-
-    .subtitle {
-      margin: 0;
-      color: var(--muted);
-      font-size: clamp(0.96rem, 2.3vw, 1.08rem);
-      max-width: 38ch;
-    }
-
-    .cta-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.55rem;
-      margin-top: 1rem;
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 12px;
-      border: 1px solid transparent;
-      padding: 0.62rem 0.82rem;
-      font-weight: 700;
-      text-decoration: none;
-      font-size: 0.9rem;
-      transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
-    }
-
-    .btn:hover {
-      transform: translateY(-1px);
-    }
-
-    .btn--primary {
-      background: linear-gradient(120deg, var(--brand), #0586d4);
-      color: #fff;
-      box-shadow: 0 10px 26px rgba(2, 119, 189, 0.34);
-    }
-
-    .btn--secondary {
-      border-color: #b5c9d8;
-      color: #16405d;
-      background: #fff;
-    }
-
-    .btn--accent {
-      background: linear-gradient(120deg, var(--accent), #ff8a26);
-      color: #fff;
-      box-shadow: 0 10px 26px rgba(239, 108, 0, 0.34);
-    }
-
-    .grid {
-      margin-top: 0.95rem;
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 0.75rem;
-    }
-
-    .stat {
-      background: #f7fbfe;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 0.56rem 0.62rem;
-    }
-
-    .stat__label {
-      color: #517189;
-      text-transform: uppercase;
-      font-size: 0.72rem;
-      letter-spacing: 0.05em;
-      font-weight: 700;
-    }
-
-    .stat__value {
-      margin-top: 0.28rem;
-      font-size: 1.02rem;
-      font-weight: 800;
-      color: #0f3148;
-    }
-
-    .health-box {
-      display: grid;
-      gap: 0.75rem;
-      align-content: start;
-    }
-
-    .health-line {
-      border-radius: 12px;
-      border: 1px solid var(--line);
-      background: #f9fcff;
-      padding: 0.65rem 0.75rem;
-    }
-
-    .health-line__title {
-      font-size: 0.77rem;
-      color: #55758a;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .health-line__value {
-      margin-top: 0.34rem;
-      font-family: ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      font-size: 0.86rem;
-      color: #15374f;
-      word-break: break-word;
-    }
-
-    .health-pill {
-      margin-top: 0.45rem;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
-      padding: 0.3rem 0.56rem;
-      border-radius: 999px;
-      font-weight: 800;
-      font-size: 0.76rem;
-      letter-spacing: 0.03em;
-      border: 1px solid transparent;
-    }
-
-    .health-pill--checking {
-      color: #8a5a00;
-      background: #fff6e4;
-      border-color: #f8d08d;
-    }
-
-    .health-pill--ok {
-      color: #0d5d24;
-      background: #e7faee;
-      border-color: #98deb2;
-    }
-
-    .health-pill--fail {
-      color: #8f1f23;
-      background: #ffecee;
-      border-color: #f7b6bb;
-    }
-
-    .section {
-      margin-top: 0.95rem;
-      display: grid;
-      gap: 0.75rem;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .link-list {
-      list-style: none;
-      margin: 0.6rem 0 0;
-      padding: 0;
-      display: grid;
-      gap: 0.5rem;
-    }
-
-    .link-list a {
-      color: var(--brand-strong);
-      text-decoration: none;
-      font-weight: 700;
-    }
-
-    .link-list a:hover {
-      text-decoration: underline;
-    }
-
-    .code {
-      margin-top: 0.65rem;
-      padding: 0.72rem 0.8rem;
-      border-radius: 12px;
-      border: 1px solid #d5e7f3;
-      background: #f5fbff;
-      color: #114467;
-      font-family: ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      font-size: 0.8rem;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
-    .footer {
-      margin-top: 0.95rem;
-      color: #5f7384;
-      font-size: 0.83rem;
-      text-align: center;
-    }
-
-    @media (max-width: 980px) {
-      .hero {
-        grid-template-columns: 1fr;
-      }
-
-      .grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .section {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VOID STRIKE | game.trebuchet.network</title>
+    <meta name="description" content="VOID STRIKE is Trebuchet Network's competitive space shooter. Join live matches now at game.trebuchet.network.">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="website/css/styles.css">
+    
+    <!-- Tailwind Config -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'void-dark': '#0A0A0F',
+                        'void-panel': 'rgba(15, 15, 25, 0.85)',
+                        'void-card': 'rgba(25, 25, 40, 0.7)',
+                        'void-cyan': '#00D4FF',
+                        'void-magenta': '#FF006E',
+                        'void-purple': '#9D4EDD',
+                        'void-health': '#00F5D4',
+                        'void-shield': '#00BBF9',
+                        'void-energy': '#FEF440',
+                        'void-gold': '#FFD700',
+                        'void-success': '#06FFA5',
+                        'void-warning': '#FFB703',
+                        'void-danger': '#FF006E',
+                    },
+                    fontFamily: {
+                        'orbitron': ['Orbitron', 'sans-serif'],
+                        'inter': ['Inter', 'sans-serif'],
+                    },
+                    animation: {
+                        'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+                        'float': 'float 6s ease-in-out infinite',
+                        'stars': 'stars-move 100s linear infinite',
+                        'ticker': 'ticker 20s linear infinite',
+                    }
+                }
+            }
+        }
+    </script>
 </head>
-<body>
-  <main class="shell">
-    <section class="hero">
-      <article class="card">
-        <div class="badge">Massive Game Server</div>
-        <h1>Deployable Arena Website</h1>
-        <p class="subtitle">
-          Launch desktop/mobile clients, check server health, run arena APIs, and ship this stack with Docker.
-        </p>
-        <div class="cta-row">
-          <a id="playNowLink" class="btn btn--primary" href="/client.html">Play (Desktop)</a>
-          <a class="btn btn--secondary" href="/client_stable.html">Stable Mode</a>
-          <a class="btn btn--secondary" href="/client_ultra.html">Ultra Mode</a>
-          <a class="btn btn--accent" href="/client_mobile.html">Mobile</a>
-          <a class="btn btn--secondary" href="/editor.html">Map Editor</a>
+<body class="bg-void-dark text-white font-inter overflow-x-hidden">
+    <!-- Animated Starfield Background -->
+    <div class="fixed inset-0 z-0 pointer-events-none">
+        <div class="stars-bg absolute inset-0"></div>
+        <div class="nebula-overlay absolute inset-0"></div>
+    </div>
+
+    <!-- Navigation -->
+    <nav id="navbar" class="fixed top-0 left-0 right-0 z-50 transition-all duration-300">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-20">
+                <!-- Logo -->
+                <a href="/index.html" class="flex items-center gap-3 group">
+                    <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-void-cyan to-void-purple flex items-center justify-center">
+                        <i class="fas fa-crosshairs text-void-dark text-xl"></i>
+                    </div>
+                    <span class="font-orbitron font-bold text-xl tracking-wider text-white group-hover:text-void-cyan transition-colors">
+                        VOID STRIKE
+                    </span>
+                </a>
+
+                <!-- Desktop Navigation -->
+                <div class="hidden md:flex items-center gap-8">
+                    <a href="#game" class="nav-link text-gray-300 hover:text-void-cyan transition-colors font-medium">Game</a>
+                    <a href="#career" class="nav-link text-gray-300 hover:text-void-cyan transition-colors font-medium">Career</a>
+                    <a href="#rewards" class="nav-link text-gray-300 hover:text-void-cyan transition-colors font-medium">Rewards</a>
+                    <a href="#trailer" class="nav-link text-gray-300 hover:text-void-cyan transition-colors font-medium">Trailer</a>
+                    <a href="#play" class="nav-link text-gray-300 hover:text-void-cyan transition-colors font-medium">Play</a>
+                </div>
+
+                <!-- Play Now Button -->
+                <div class="hidden md:block">
+                    <a href="/client.html" class="btn-primary px-6 py-3 rounded-lg font-orbitron font-bold text-sm tracking-wider">
+                        <i class="fas fa-play mr-2"></i>PLAY NOW
+                    </a>
+                </div>
+
+                <!-- Mobile Menu Button -->
+                <button id="mobile-menu-btn" class="md:hidden text-white p-2">
+                    <i class="fas fa-bars text-2xl"></i>
+                </button>
+            </div>
         </div>
 
-        <div class="grid">
-          <div class="stat">
-            <div class="stat__label">Client Entry</div>
-            <div class="stat__value">/client.html</div>
-          </div>
-          <div class="stat">
-            <div class="stat__label">WebSocket</div>
-            <div id="wsStat" class="stat__value">ws://host/ws</div>
-          </div>
-          <div class="stat">
-            <div class="stat__label">Health</div>
-            <div class="stat__value">/healthz</div>
-          </div>
-          <div class="stat">
-            <div class="stat__label">Arena API</div>
-            <div class="stat__value">/api/arena/*</div>
-          </div>
+        <!-- Mobile Menu -->
+        <div id="mobile-menu" class="hidden md:hidden bg-void-panel backdrop-blur-lg border-t border-white/10">
+            <div class="px-4 py-4 space-y-3">
+                <a href="#game" class="block py-2 text-gray-300 hover:text-void-cyan">Game</a>
+                <a href="#career" class="block py-2 text-gray-300 hover:text-void-cyan">Career</a>
+                <a href="#rewards" class="block py-2 text-gray-300 hover:text-void-cyan">Rewards</a>
+                <a href="#trailer" class="block py-2 text-gray-300 hover:text-void-cyan">Trailer</a>
+                <a href="#play" class="block py-2 text-gray-300 hover:text-void-cyan">Play</a>
+                <a href="/client.html" class="btn-primary block text-center py-3 rounded-lg font-orbitron font-bold mt-4">
+                    <i class="fas fa-play mr-2"></i>PLAY NOW
+                </a>
+            </div>
         </div>
-      </article>
+    </nav>
 
-      <aside class="card health-box">
-        <div class="health-line">
-          <div class="health-line__title">Public Base URL</div>
-          <div id="baseUrlValue" class="health-line__value">http://localhost:8080</div>
+    <!-- Hero Section -->
+    <section id="hero" class="relative min-h-screen flex items-center justify-center pt-20 overflow-hidden">
+        <div class="absolute inset-0 z-0">
+            <div class="hero-glow absolute top-1/4 left-1/4 w-96 h-96 bg-void-cyan/20 rounded-full blur-[120px]"></div>
+            <div class="hero-glow absolute bottom-1/4 right-1/4 w-96 h-96 bg-void-purple/20 rounded-full blur-[120px]"></div>
         </div>
-        <div class="health-line">
-          <div class="health-line__title">Server Health</div>
-          <div id="healthValue" class="health-line__value">GET /healthz</div>
-          <div id="healthPill" class="health-pill health-pill--checking">Checking...</div>
+
+        <div class="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <div class="hero-content opacity-0 translate-y-10">
+                <!-- Badge -->
+                <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-void-cyan/10 border border-void-cyan/30 mb-8">
+                    <span class="w-2 h-2 rounded-full bg-void-success animate-pulse"></span>
+                    <span class="text-void-cyan text-sm font-medium">Now in Open Beta</span>
+                </div>
+
+                <!-- Title -->
+                <h1 class="font-orbitron font-black text-5xl sm:text-6xl md:text-7xl lg:text-8xl mb-6 tracking-tight">
+                    <span class="bg-gradient-to-r from-void-cyan via-white to-void-purple bg-clip-text text-transparent">
+                        VOID STRIKE
+                    </span>
+                </h1>
+
+                <!-- Tagline -->
+                <p class="text-xl sm:text-2xl md:text-3xl text-gray-300 mb-4 font-light">
+                    The Ultimate Competitive Space Shooter
+                </p>
+                <p class="text-gray-400 max-w-2xl mx-auto mb-10 text-lg">
+                    Experience CS2-style tension in zero gravity. Permadeath rounds, economy management, 
+                    and clutch moments redefined for 2D space combat.
+                </p>
+
+                <!-- CTA Buttons -->
+                <div class="flex flex-col sm:flex-row gap-4 justify-center mb-16">
+                    <a href="/client.html" class="btn-primary px-8 py-4 rounded-xl font-orbitron font-bold text-lg tracking-wider">
+                        <i class="fas fa-rocket mr-3"></i>PLAY FREE NOW
+                    </a>
+                    <a href="#trailer" class="btn-secondary px-8 py-4 rounded-xl font-orbitron font-bold text-lg tracking-wider">
+                        <i class="fas fa-play-circle mr-3"></i>WATCH TRAILER
+                    </a>
+                </div>
+
+                <!-- Stats -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-4xl mx-auto">
+                    <div class="stat-card p-4 rounded-xl bg-void-card border border-white/10">
+                        <div class="text-3xl font-orbitron font-bold text-void-cyan">200v200</div>
+                        <div class="text-sm text-gray-400">Max Players</div>
+                    </div>
+                    <div class="stat-card p-4 rounded-xl bg-void-card border border-white/10">
+                        <div class="text-3xl font-orbitron font-bold text-void-magenta">24</div>
+                        <div class="text-sm text-gray-400">Rounds/Match</div>
+                    </div>
+                    <div class="stat-card p-4 rounded-xl bg-void-card border border-white/10">
+                        <div class="text-3xl font-orbitron font-bold text-void-purple">6</div>
+                        <div class="text-sm text-gray-400">Ship Classes</div>
+                    </div>
+                    <div class="stat-card p-4 rounded-xl bg-void-card border border-white/10">
+                        <div class="text-3xl font-orbitron font-bold text-void-gold">12</div>
+                        <div class="text-sm text-gray-400">Rank Tiers</div>
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="health-line">
-          <div class="health-line__title">Fast Deploy</div>
-          <div class="code">docker compose -f docker/docker-compose.yml up -d --build</div>
+
+        <!-- Scroll Indicator -->
+        <div class="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce">
+            <i class="fas fa-chevron-down text-void-cyan text-2xl"></i>
         </div>
-      </aside>
     </section>
 
-    <section class="section">
-      <article class="card">
-        <h2 style="margin: 0;">Quick Links</h2>
-        <ul class="link-list">
-          <li><a href="/client.html">Desktop Client</a></li>
-          <li><a href="/client_mobile.html">Mobile Client Redirect</a></li>
-          <li><a href="/arena.html">Arena UI</a></li>
-          <li><a href="/editor.html">Map Editor</a></li>
-          <li><a href="/api/arena/overview">Arena Overview API</a></li>
-          <li><a href="/api/auth/health">Auth Health API</a></li>
-          <li><a href="/healthz">Server Health</a></li>
-        </ul>
-      </article>
+    <!-- Game Trailer Section -->
+    <section id="trailer" class="relative py-24">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="section-header text-center mb-12">
+                <h2 class="font-orbitron font-bold text-4xl md:text-5xl mb-4">
+                    <span class="text-void-cyan">GAMEPLAY</span> TRAILER
+                </h2>
+                <p class="text-gray-400 text-lg">See the action unfold in the depths of space</p>
+            </div>
 
-      <article class="card">
-        <h2 style="margin: 0;">Deploy Checklist</h2>
-        <div class="code">1. docker compose -f docker/docker-compose.yml up -d --build
-2. Open /index.html and /client.html
-3. Verify /healthz returns {"ok":true}
-4. Point your domain to this host
-5. Put TLS reverse proxy in front for wss://</div>
-        <p style="margin: 0.65rem 0 0; color: var(--muted); font-size: 0.9rem;">
-          For full production instructions, use <code>/docs/deploy_website.md</code>.
-        </p>
-      </article>
+            <div class="relative aspect-video rounded-2xl overflow-hidden border-2 border-void-cyan/30 shadow-2xl shadow-void-cyan/20">
+                <!-- Video Placeholder with Play Button -->
+                <div class="absolute inset-0 bg-gradient-to-br from-void-panel to-void-dark flex items-center justify-center group cursor-pointer">
+                    <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMSIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjEpIi8+PC9zdmc+')] opacity-30"></div>
+                    
+                    <!-- Animated Rings -->
+                    <div class="absolute w-32 h-32 rounded-full border-2 border-void-cyan/30 animate-ping"></div>
+                    <div class="absolute w-24 h-24 rounded-full border border-void-cyan/50 animate-pulse"></div>
+                    
+                    <!-- Play Button -->
+                    <div class="relative w-20 h-20 rounded-full bg-gradient-to-br from-void-cyan to-void-purple flex items-center justify-center group-hover:scale-110 transition-transform duration-300 shadow-lg shadow-void-cyan/50">
+                        <i class="fas fa-play text-void-dark text-2xl ml-1"></i>
+                    </div>
+                    
+                    <!-- Coming Soon Text -->
+                    <div class="absolute bottom-8 left-1/2 -translate-x-1/2 text-center">
+                        <p class="text-void-cyan font-orbitron tracking-wider">TRAILER COMING SOON</p>
+                    </div>
+                </div>
+            </div>
+        </div>
     </section>
 
-    <p class="footer">
-      Massive Game Server • Web entry is now deploy-friendly at <strong>/index.html</strong>
-    </p>
-  </main>
+    <!-- Features Section -->
+    <section id="features" class="relative py-24">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="section-header text-center mb-16">
+                <h2 class="font-orbitron font-bold text-4xl md:text-5xl mb-4">
+                    WHY <span class="text-void-cyan">VOID STRIKE</span>?
+                </h2>
+                <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+                    We've captured what makes competitive shooters addictive and translated it into thrilling space combat
+                </p>
+            </div>
 
-  <script>
-    (function initLanding() {
-      const base = window.location.origin;
-      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = `${wsProtocol}//${window.location.host}/ws`;
+            <div class="grid md:grid-cols-3 gap-8">
+                <!-- Feature 1: CS2 Tension -->
+                <div class="feature-card group p-8 rounded-2xl bg-void-card border border-white/10 hover:border-void-cyan/50 transition-all duration-300 hover:-translate-y-2">
+                    <div class="w-16 h-16 rounded-xl bg-gradient-to-br from-void-cyan/20 to-void-cyan/5 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                        <i class="fas fa-heartbeat text-void-cyan text-2xl"></i>
+                    </div>
+                    <h3 class="font-orbitron font-bold text-xl mb-3 text-white">CS2-Style Tension</h3>
+                    <p class="text-gray-400 leading-relaxed">
+                        Permadeath rounds create high-stakes moments. One mistake ends your round. 
+                        Experience the same clutch adrenaline that makes CS2 legendary.
+                    </p>
+                    <ul class="mt-4 space-y-2 text-sm text-gray-500">
+                        <li><i class="fas fa-check text-void-success mr-2"></i>One life per round</li>
+                        <li><i class="fas fa-check text-void-success mr-2"></i>Clutch multipliers (1v5 = 3x bonus)</li>
+                        <li><i class="fas fa-check text-void-success mr-2"></i>Cinematic slowdown moments</li>
+                    </ul>
+                </div>
 
-      const baseNode = document.getElementById("baseUrlValue");
-      const wsNode = document.getElementById("wsStat");
-      const playNowLink = document.getElementById("playNowLink");
-      const healthValue = document.getElementById("healthValue");
-      const healthPill = document.getElementById("healthPill");
+                <!-- Feature 2: Career Mode -->
+                <div class="feature-card group p-8 rounded-2xl bg-void-card border border-white/10 hover:border-void-purple/50 transition-all duration-300 hover:-translate-y-2">
+                    <div class="w-16 h-16 rounded-xl bg-gradient-to-br from-void-purple/20 to-void-purple/5 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                        <i class="fas fa-trophy text-void-purple text-2xl"></i>
+                    </div>
+                    <h3 class="font-orbitron font-bold text-xl mb-3 text-white">Deep Career Progression</h3>
+                    <p class="text-gray-400 leading-relaxed">
+                        12 rank tiers from Trainee to Cosmic Legend. Climb the competitive ladder 
+                        with skill-based matchmaking and seasonal rewards.
+                    </p>
+                    <ul class="mt-4 space-y-2 text-sm text-gray-500">
+                        <li><i class="fas fa-check text-void-success mr-2"></i>MMR-based ranking system</li>
+                        <li><i class="fas fa-check text-void-success mr-2"></i>Seasonal leaderboards</li>
+                        <li><i class="fas fa-check text-void-success mr-2"></i>Exclusive rank rewards</li>
+                    </ul>
+                </div>
 
-      if (baseNode) baseNode.textContent = base;
-      if (wsNode) wsNode.textContent = ws;
-      if (playNowLink) playNowLink.href = `/client.html?ws=${encodeURIComponent(ws)}`;
+                <!-- Feature 3: Blockchain Rewards -->
+                <div class="feature-card group p-8 rounded-2xl bg-void-card border border-white/10 hover:border-void-gold/50 transition-all duration-300 hover:-translate-y-2">
+                    <div class="w-16 h-16 rounded-xl bg-gradient-to-br from-void-gold/20 to-void-gold/5 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                        <i class="fas fa-coins text-void-gold text-2xl"></i>
+                    </div>
+                    <h3 class="font-orbitron font-bold text-xl mb-3 text-white">Blockchain Rewards</h3>
+                    <p class="text-gray-400 leading-relaxed">
+                        Earn real value for your skill. NFT ships, tradable skins, and token rewards 
+                        powered by Solana appchain technology.
+                    </p>
+                    <ul class="mt-4 space-y-2 text-sm text-gray-500">
+                        <li><i class="fas fa-check text-void-success mr-2"></i>NFT ship ownership</li>
+                        <li><i class="fas fa-check text-void-success mr-2"></i>Tradable cosmetics</li>
+                        <li><i class="fas fa-check text-void-success mr-2"></i>Play-to-earn rewards</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
 
-      fetch("/healthz", { method: "GET", cache: "no-store" })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.text();
-        })
-        .then((payload) => {
-          if (healthValue) healthValue.textContent = payload.slice(0, 180);
-          if (healthPill) {
-            healthPill.className = "health-pill health-pill--ok";
-            healthPill.textContent = "Healthy";
-          }
-        })
-        .catch((err) => {
-          if (healthValue) healthValue.textContent = String(err);
-          if (healthPill) {
-            healthPill.className = "health-pill health-pill--fail";
-            healthPill.textContent = "Unhealthy";
-          }
-        });
-    })();
-  </script>
+    <!-- Game Modes Section -->
+    <section id="game" class="relative py-24">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="section-header text-center mb-16">
+                <h2 class="font-orbitron font-bold text-4xl md:text-5xl mb-4">
+                    GAME <span class="text-void-magenta">MODES</span>
+                </h2>
+                <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+                    Multiple ways to experience the void. From tactical 5v5 to massive 200v200 warfare.
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-2 gap-8">
+                <!-- Core Assault -->
+                <div class="mode-card group relative overflow-hidden rounded-2xl bg-void-card border border-white/10 hover:border-void-cyan/50 transition-all duration-300">
+                    <div class="absolute inset-0 bg-gradient-to-br from-void-cyan/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <div class="relative p-8">
+                        <div class="flex items-start justify-between mb-6">
+                            <div class="w-14 h-14 rounded-xl bg-void-cyan/20 flex items-center justify-center">
+                                <i class="fas fa-bullseye text-void-cyan text-2xl"></i>
+                            </div>
+                            <span class="px-3 py-1 rounded-full bg-void-cyan/20 text-void-cyan text-xs font-orbitron">PRIMARY</span>
+                        </div>
+                        <h3 class="font-orbitron font-bold text-2xl mb-3">CORE ASSAULT</h3>
+                        <p class="text-gray-400 mb-6">
+                            The classic bomb-mode experience translated to space. Attackers hack the Core, 
+                            defenders protect it. Best of 24 rounds with full economy system.
+                        </p>
+                        <div class="flex flex-wrap gap-3">
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-users mr-2"></i>5v5
+                            </span>
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-clock mr-2"></i>~40 min
+                            </span>
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-skull mr-2"></i>Permadeath
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sector Control -->
+                <div class="mode-card group relative overflow-hidden rounded-2xl bg-void-card border border-white/10 hover:border-void-purple/50 transition-all duration-300">
+                    <div class="absolute inset-0 bg-gradient-to-br from-void-purple/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <div class="relative p-8">
+                        <div class="flex items-start justify-between mb-6">
+                            <div class="w-14 h-14 rounded-xl bg-void-purple/20 flex items-center justify-center">
+                                <i class="fas fa-chess-board text-void-purple text-2xl"></i>
+                            </div>
+                            <span class="px-3 py-1 rounded-full bg-void-purple/20 text-void-purple text-xs font-orbitron">STRATEGIC</span>
+                        </div>
+                        <h3 class="font-orbitron font-bold text-2xl mb-3">SECTOR CONTROL</h3>
+                        <p class="text-gray-400 mb-6">
+                            Fight for control of 3 strategic sectors. First to 300 points wins. 
+                            Features respawns every 15 seconds for continuous action.
+                        </p>
+                        <div class="flex flex-wrap gap-3">
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-users mr-2"></i>5v5
+                            </span>
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-clock mr-2"></i>~20 min
+                            </span>
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-sync mr-2"></i>Respawns
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Elimination -->
+                <div class="mode-card group relative overflow-hidden rounded-2xl bg-void-card border border-white/10 hover:border-void-magenta/50 transition-all duration-300">
+                    <div class="absolute inset-0 bg-gradient-to-br from-void-magenta/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <div class="relative p-8">
+                        <div class="flex items-start justify-between mb-6">
+                            <div class="w-14 h-14 rounded-xl bg-void-magenta/20 flex items-center justify-center">
+                                <i class="fas fa-skull-crossbones text-void-magenta text-2xl"></i>
+                            </div>
+                            <span class="px-3 py-1 rounded-full bg-void-magenta/20 text-void-magenta text-xs font-orbitron">PURE COMBAT</span>
+                        </div>
+                        <h3 class="font-orbitron font-bold text-2xl mb-3">ELIMINATION</h3>
+                        <p class="text-gray-400 mb-6">
+                            Last team standing wins. No objectives, pure combat skill. 
+                            Sector shrinks over time forcing intense final confrontations.
+                        </p>
+                        <div class="flex flex-wrap gap-3">
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-users mr-2"></i>5v5
+                            </span>
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-clock mr-2"></i>~15 min
+                            </span>
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-compress-arrows-alt mr-2"></i>Shrinking
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Void Warfare -->
+                <div class="mode-card group relative overflow-hidden rounded-2xl bg-void-card border border-white/10 hover:border-void-gold/50 transition-all duration-300">
+                    <div class="absolute inset-0 bg-gradient-to-br from-void-gold/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <div class="relative p-8">
+                        <div class="flex items-start justify-between mb-6">
+                            <div class="w-14 h-14 rounded-xl bg-void-gold/20 flex items-center justify-center">
+                                <i class="fas fa-meteor text-void-gold text-2xl"></i>
+                            </div>
+                            <span class="px-3 py-1 rounded-full bg-void-gold/20 text-void-gold text-xs font-orbitron">EPIC SCALE</span>
+                        </div>
+                        <h3 class="font-orbitron font-bold text-2xl mb-3">VOID WARFARE</h3>
+                        <p class="text-gray-400 mb-6">
+                            Massive 200v200 territory warfare. 5 capture points across a 5000x5000 unit map. 
+                            Ticket system with respawns at controlled points.
+                        </p>
+                        <div class="flex flex-wrap gap-3">
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-users mr-2"></i>200v200
+                            </span>
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-clock mr-2"></i>~60 min
+                            </span>
+                            <span class="px-3 py-1 rounded-full bg-white/5 text-gray-400 text-sm">
+                                <i class="fas fa-flag mr-2"></i>5 Points
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Ship Classes Section -->
+    <section id="ships" class="relative py-24">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="section-header text-center mb-16">
+                <h2 class="font-orbitron font-bold text-4xl md:text-5xl mb-4">
+                    SHIP <span class="text-void-cyan">CLASSES</span>
+                </h2>
+                <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+                    Choose your vessel. Each class offers unique playstyles and tactical advantages.
+                </p>
+            </div>
+
+            <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Scout -->
+                <div class="ship-card group p-6 rounded-xl bg-void-card border border-white/10 hover:border-void-cyan/50 transition-all duration-300">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-void-cyan/20 flex items-center justify-center">
+                            <i class="fas fa-fighter-jet text-void-cyan text-xl"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-orbitron font-bold text-lg">SCOUT</h3>
+                            <span class="text-void-cyan text-sm">Eco Round Ship</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-4">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Speed</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-cyan w-[95%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Health</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-danger w-[25%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Damage</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-warning w-[30%]"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-gray-400 text-sm">Fast, agile, perfect for eco rounds and information gathering.</p>
+                </div>
+
+                <!-- Interceptor -->
+                <div class="ship-card group p-6 rounded-xl bg-void-card border border-white/10 hover:border-void-cyan/50 transition-all duration-300">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-void-cyan/20 flex items-center justify-center">
+                            <i class="fas fa-plane text-void-cyan text-xl"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-orbitron font-bold text-lg">INTERCEPTOR</h3>
+                            <span class="text-void-cyan text-sm">All-Rounder</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-4">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Speed</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-cyan w-[80%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Health</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-danger w-[50%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Damage</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-warning w-[50%]"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-gray-400 text-sm">Balanced fighter, versatile in any situation. Great entry ship.</p>
+                </div>
+
+                <!-- Gunship -->
+                <div class="ship-card group p-6 rounded-xl bg-void-card border border-white/10 hover:border-void-magenta/50 transition-all duration-300">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-void-magenta/20 flex items-center justify-center">
+                            <i class="fas fa-crosshairs text-void-magenta text-xl"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-orbitron font-bold text-lg">GUNSHIP</h3>
+                            <span class="text-void-magenta text-sm">Damage Dealer</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-4">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Speed</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-cyan w-[60%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Health</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-danger w-[55%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Damage</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-warning w-[90%]"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-gray-400 text-sm">Heavy damage output. Position carefully and melt enemies.</p>
+                </div>
+
+                <!-- Destroyer -->
+                <div class="ship-card group p-6 rounded-xl bg-void-card border border-white/10 hover:border-void-success/50 transition-all duration-300">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-void-success/20 flex items-center justify-center">
+                            <i class="fas fa-shield-alt text-void-success text-xl"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-orbitron font-bold text-lg">DESTROYER</h3>
+                            <span class="text-void-success text-sm">Tank</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-4">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Speed</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-cyan w-[45%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Health</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-danger w-[100%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Damage</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-warning w-[60%]"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-gray-400 text-sm">Frontline tank. Absorb damage and create space for your team.</p>
+                </div>
+
+                <!-- Stealth -->
+                <div class="ship-card group p-6 rounded-xl bg-void-card border border-white/10 hover:border-void-purple/50 transition-all duration-300">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-void-purple/20 flex items-center justify-center">
+                            <i class="fas fa-ghost text-void-purple text-xl"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-orbitron font-bold text-lg">STEALTH</h3>
+                            <span class="text-void-purple text-sm">Assassin</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-4">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Speed</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-cyan w-[90%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Health</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-danger w-[35%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Damage</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-warning w-[75%]"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-gray-400 text-sm">Cloak ability, invisible on radar. Perfect for flanking and core hacks.</p>
+                </div>
+
+                <!-- Carrier -->
+                <div class="ship-card group p-6 rounded-xl bg-void-card border border-white/10 hover:border-void-gold/50 transition-all duration-300">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-12 h-12 rounded-lg bg-void-gold/20 flex items-center justify-center">
+                            <i class="fas fa-plus-circle text-void-gold text-xl"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-orbitron font-bold text-lg">CARRIER</h3>
+                            <span class="text-void-gold text-sm">Support</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 mb-4">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Speed</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-cyan w-[55%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Health</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-danger w-[45%]"></div>
+                            </div>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-500">Support</span>
+                            <div class="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-void-success w-[100%]"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-gray-400 text-sm">Deploy drones, repair beams, and shield bubbles. Team force multiplier.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Career/Rank System Section -->
+    <section id="career" class="relative py-24">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="section-header text-center mb-16">
+                <h2 class="font-orbitron font-bold text-4xl md:text-5xl mb-4">
+                    CLIMB THE <span class="text-void-purple">RANKS</span>
+                </h2>
+                <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+                    Progress from Trainee to Cosmic Legend. Your skill determines your destiny.
+                </p>
+            </div>
+
+            <!-- Rank Tiers Visual -->
+            <div class="relative mb-16">
+                <div class="grid grid-cols-3 md:grid-cols-6 gap-4">
+                    <!-- Trainee -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-white/10 opacity-60">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-gray-600 flex items-center justify-center">
+                            <i class="fas fa-seedling text-gray-400"></i>
+                        </div>
+                        <span class="text-xs text-gray-500 font-orbitron">TRAINEE</span>
+                    </div>
+                    <!-- Rookie -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-white/10 opacity-70">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-amber-800 flex items-center justify-center">
+                            <i class="fas fa-graduation-cap text-amber-600"></i>
+                        </div>
+                        <span class="text-xs text-amber-700 font-orbitron">ROOKIE</span>
+                    </div>
+                    <!-- Cadet -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-white/10 opacity-80">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-amber-700 flex items-center justify-center">
+                            <i class="fas fa-user-astronaut text-amber-500"></i>
+                        </div>
+                        <span class="text-xs text-amber-600 font-orbitron">CADET</span>
+                    </div>
+                    <!-- Pilot -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-white/10 opacity-90">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-gray-400 flex items-center justify-center">
+                            <i class="fas fa-rocket text-gray-300"></i>
+                        </div>
+                        <span class="text-xs text-gray-400 font-orbitron">PILOT</span>
+                    </div>
+                    <!-- Striker -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-white/10">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-gray-300 flex items-center justify-center">
+                            <i class="fas fa-meteor text-gray-600"></i>
+                        </div>
+                        <span class="text-xs text-gray-300 font-orbitron">STRIKER</span>
+                    </div>
+                    <!-- Hunter -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-void-gold/30">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-void-gold/20 flex items-center justify-center">
+                            <i class="fas fa-crosshairs text-void-gold"></i>
+                        </div>
+                        <span class="text-xs text-void-gold font-orbitron">HUNTER</span>
+                    </div>
+                </div>
+
+                <!-- Progress Arrow -->
+                <div class="hidden md:flex justify-center my-4">
+                    <i class="fas fa-chevron-down text-void-cyan text-2xl animate-bounce"></i>
+                </div>
+
+                <div class="grid grid-cols-3 md:grid-cols-6 gap-4">
+                    <!-- Captain -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-void-gold/50">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-void-gold/30 flex items-center justify-center">
+                            <i class="fas fa-star text-void-gold"></i>
+                        </div>
+                        <span class="text-xs text-void-gold font-orbitron">CAPTAIN</span>
+                    </div>
+                    <!-- Commander -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-gray-400/50">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-gray-400/30 flex items-center justify-center">
+                            <i class="fas fa-crown text-gray-300"></i>
+                        </div>
+                        <span class="text-xs text-gray-300 font-orbitron">COMMANDER</span>
+                    </div>
+                    <!-- Champion -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-gray-200/50">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-gray-200/30 flex items-center justify-center">
+                            <i class="fas fa-trophy text-gray-200"></i>
+                        </div>
+                        <span class="text-xs text-gray-200 font-orbitron">CHAMPION</span>
+                    </div>
+                    <!-- Master -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-void-cyan/50">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-void-cyan/30 flex items-center justify-center">
+                            <i class="fas fa-gem text-void-cyan"></i>
+                        </div>
+                        <span class="text-xs text-void-cyan font-orbitron">MASTER</span>
+                    </div>
+                    <!-- Elite -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-cyan-200/50">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-cyan-200/30 flex items-center justify-center">
+                            <i class="fas fa-medal text-cyan-200"></i>
+                        </div>
+                        <span class="text-xs text-cyan-200 font-orbitron">ELITE</span>
+                    </div>
+                    <!-- Legend -->
+                    <div class="rank-tier text-center p-4 rounded-xl bg-void-card border border-void-gold animate-pulse-glow">
+                        <div class="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-br from-void-gold to-amber-500 flex items-center justify-center">
+                            <i class="fas fa-crown text-void-dark"></i>
+                        </div>
+                        <span class="text-xs text-void-gold font-orbitron font-bold">LEGEND</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stats Preview -->
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="career-stat p-6 rounded-xl bg-void-card border border-white/10 text-center">
+                    <div class="text-4xl font-orbitron font-bold text-void-cyan mb-2">247</div>
+                    <div class="text-gray-400">Matches Played</div>
+                </div>
+                <div class="career-stat p-6 rounded-xl bg-void-card border border-white/10 text-center">
+                    <div class="text-4xl font-orbitron font-bold text-void-success mb-2">62%</div>
+                    <div class="text-gray-400">Win Rate</div>
+                </div>
+                <div class="career-stat p-6 rounded-xl bg-void-card border border-white/10 text-center">
+                    <div class="text-4xl font-orbitron font-bold text-void-magenta mb-2">3.2</div>
+                    <div class="text-gray-400">K/D Ratio</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Blockchain Rewards Section -->
+    <section id="rewards" class="relative py-24">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="section-header text-center mb-16">
+                <h2 class="font-orbitron font-bold text-4xl md:text-5xl mb-4">
+                    <span class="text-void-gold">BLOCKCHAIN</span> REWARDS
+                </h2>
+                <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+                    Play to earn. Own your progress. Trade your achievements on the Solana blockchain.
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <!-- NFT Ships -->
+                <div class="reward-card group p-6 rounded-xl bg-void-card border border-white/10 hover:border-void-gold/50 transition-all duration-300 text-center">
+                    <div class="w-16 h-16 mx-auto mb-4 rounded-xl bg-gradient-to-br from-void-gold/20 to-void-gold/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <i class="fas fa-rocket text-void-gold text-2xl"></i>
+                    </div>
+                    <h3 class="font-orbitron font-bold text-lg mb-2">NFT Ships</h3>
+                    <p class="text-gray-400 text-sm">Own your ships as tradable NFTs. Rare variants with unique abilities.</p>
+                </div>
+
+                <!-- Tradable Skins -->
+                <div class="reward-card group p-6 rounded-xl bg-void-card border border-white/10 hover:border-void-purple/50 transition-all duration-300 text-center">
+                    <div class="w-16 h-16 mx-auto mb-4 rounded-xl bg-gradient-to-br from-void-purple/20 to-void-purple/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <i class="fas fa-paint-brush text-void-purple text-2xl"></i>
+                    </div>
+                    <h3 class="font-orbitron font-bold text-lg mb-2">Tradable Skins</h3>
+                    <p class="text-gray-400 text-sm">Collect and trade cosmetic items. From Common to Mythic rarity.</p>
+                </div>
+
+                <!-- Token Rewards -->
+                <div class="reward-card group p-6 rounded-xl bg-void-card border border-white/10 hover:border-void-cyan/50 transition-all duration-300 text-center">
+                    <div class="w-16 h-16 mx-auto mb-4 rounded-xl bg-gradient-to-br from-void-cyan/20 to-void-cyan/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <i class="fas fa-coins text-void-cyan text-2xl"></i>
+                    </div>
+                    <h3 class="font-orbitron font-bold text-lg mb-2">Token Rewards</h3>
+                    <p class="text-gray-400 text-sm">Earn $VOID tokens for ranked wins, tournaments, and achievements.</p>
+                </div>
+
+                <!-- Season Pass -->
+                <div class="reward-card group p-6 rounded-xl bg-void-card border border-white/10 hover:border-void-magenta/50 transition-all duration-300 text-center">
+                    <div class="w-16 h-16 mx-auto mb-4 rounded-xl bg-gradient-to-br from-void-magenta/20 to-void-magenta/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <i class="fas fa-ticket-alt text-void-magenta text-2xl"></i>
+                    </div>
+                    <h3 class="font-orbitron font-bold text-lg mb-2">Season Pass</h3>
+                    <p class="text-gray-400 text-sm">Premium track with exclusive NFTs, skins, and token bonuses.</p>
+                </div>
+            </div>
+
+            <!-- How It Works -->
+            <div class="mt-16 p-8 rounded-2xl bg-gradient-to-r from-void-cyan/10 via-void-purple/10 to-void-gold/10 border border-white/10">
+                <h3 class="font-orbitron font-bold text-2xl text-center mb-8">HOW IT WORKS</h3>
+                <div class="grid md:grid-cols-4 gap-6">
+                    <div class="text-center">
+                        <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-void-cyan/20 flex items-center justify-center text-void-cyan font-orbitron font-bold">1</div>
+                        <h4 class="font-bold mb-1">Connect Wallet</h4>
+                        <p class="text-gray-400 text-sm">Link your Solana wallet to start earning</p>
+                    </div>
+                    <div class="text-center">
+                        <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-void-purple/20 flex items-center justify-center text-void-purple font-orbitron font-bold">2</div>
+                        <h4 class="font-bold mb-1">Play Matches</h4>
+                        <p class="text-gray-400 text-sm">Compete in ranked and earn rewards</p>
+                    </div>
+                    <div class="text-center">
+                        <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-void-gold/20 flex items-center justify-center text-void-gold font-orbitron font-bold">3</div>
+                        <h4 class="font-bold mb-1">Earn NFTs</h4>
+                        <p class="text-gray-400 text-sm">Receive drops based on performance</p>
+                    </div>
+                    <div class="text-center">
+                        <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-void-success/20 flex items-center justify-center text-void-success font-orbitron font-bold">4</div>
+                        <h4 class="font-bold mb-1">Trade & Sell</h4>
+                        <p class="text-gray-400 text-sm">List items on the marketplace</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Screenshots Gallery -->
+    <section id="gallery" class="relative py-24">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="section-header text-center mb-16">
+                <h2 class="font-orbitron font-bold text-4xl md:text-5xl mb-4">
+                    SCREEN<span class="text-void-cyan">SHOTS</span>
+                </h2>
+                <p class="text-gray-400 text-lg">Glimpses from the battlefield</p>
+            </div>
+
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="gallery-item group relative aspect-video rounded-xl overflow-hidden border border-white/10 hover:border-void-cyan/50 transition-all cursor-pointer">
+                    <div class="absolute inset-0 bg-gradient-to-br from-void-cyan/30 to-void-purple/30"></div>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <div class="text-center">
+                            <i class="fas fa-image text-4xl text-white/30 mb-2"></i>
+                            <p class="text-white/50 text-sm">Core Assault Gameplay</p>
+                        </div>
+                    </div>
+                    <div class="absolute inset-0 bg-void-dark/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <i class="fas fa-search-plus text-void-cyan text-3xl"></i>
+                    </div>
+                </div>
+
+                <div class="gallery-item group relative aspect-video rounded-xl overflow-hidden border border-white/10 hover:border-void-cyan/50 transition-all cursor-pointer">
+                    <div class="absolute inset-0 bg-gradient-to-br from-void-magenta/30 to-void-cyan/30"></div>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <div class="text-center">
+                            <i class="fas fa-image text-4xl text-white/30 mb-2"></i>
+                            <p class="text-white/50 text-sm">Ship Customization</p>
+                        </div>
+                    </div>
+                    <div class="absolute inset-0 bg-void-dark/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <i class="fas fa-search-plus text-void-cyan text-3xl"></i>
+                    </div>
+                </div>
+
+                <div class="gallery-item group relative aspect-video rounded-xl overflow-hidden border border-white/10 hover:border-void-cyan/50 transition-all cursor-pointer">
+                    <div class="absolute inset-0 bg-gradient-to-br from-void-purple/30 to-void-gold/30"></div>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <div class="text-center">
+                            <i class="fas fa-image text-4xl text-white/30 mb-2"></i>
+                            <p class="text-white/50 text-sm">Ranked Match Results</p>
+                        </div>
+                    </div>
+                    <div class="absolute inset-0 bg-void-dark/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <i class="fas fa-search-plus text-void-cyan text-3xl"></i>
+                    </div>
+                </div>
+
+                <div class="gallery-item group relative aspect-video rounded-xl overflow-hidden border border-white/10 hover:border-void-cyan/50 transition-all cursor-pointer">
+                    <div class="absolute inset-0 bg-gradient-to-br from-void-gold/30 to-void-cyan/30"></div>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <div class="text-center">
+                            <i class="fas fa-image text-4xl text-white/30 mb-2"></i>
+                            <p class="text-white/50 text-sm">Void Warfare Scale</p>
+                        </div>
+                    </div>
+                    <div class="absolute inset-0 bg-void-dark/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <i class="fas fa-search-plus text-void-cyan text-3xl"></i>
+                    </div>
+                </div>
+
+                <div class="gallery-item group relative aspect-video rounded-xl overflow-hidden border border-white/10 hover:border-void-cyan/50 transition-all cursor-pointer">
+                    <div class="absolute inset-0 bg-gradient-to-br from-void-success/30 to-void-cyan/30"></div>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <div class="text-center">
+                            <i class="fas fa-image text-4xl text-white/30 mb-2"></i>
+                            <p class="text-white/50 text-sm">Clutch Moment</p>
+                        </div>
+                    </div>
+                    <div class="absolute inset-0 bg-void-dark/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <i class="fas fa-search-plus text-void-cyan text-3xl"></i>
+                    </div>
+                </div>
+
+                <div class="gallery-item group relative aspect-video rounded-xl overflow-hidden border border-white/10 hover:border-void-cyan/50 transition-all cursor-pointer">
+                    <div class="absolute inset-0 bg-gradient-to-br from-void-cyan/30 to-void-magenta/30"></div>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <div class="text-center">
+                            <i class="fas fa-image text-4xl text-white/30 mb-2"></i>
+                            <p class="text-white/50 text-sm">NFT Marketplace</p>
+                        </div>
+                    </div>
+                    <div class="absolute inset-0 bg-void-dark/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <i class="fas fa-search-plus text-void-cyan text-3xl"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Play Now CTA Section -->
+    <section id="play" class="relative py-24">
+        <div class="absolute inset-0">
+            <div class="absolute inset-0 bg-gradient-to-b from-transparent via-void-cyan/5 to-transparent"></div>
+            <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-void-cyan/10 rounded-full blur-[150px]"></div>
+        </div>
+
+        <div class="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 class="font-orbitron font-black text-4xl md:text-5xl lg:text-6xl mb-6">
+                READY TO ENTER THE <span class="text-void-cyan">VOID</span>?
+            </h2>
+            <p class="text-xl text-gray-300 mb-10 max-w-2xl mx-auto">
+                Join thousands of pilots in the most intense competitive space shooter. 
+                Free to play, skill-based matchmaking, endless replayability.
+            </p>
+
+            <div class="flex flex-col sm:flex-row gap-4 justify-center mb-12">
+                <a href="/client.html" class="btn-primary px-10 py-5 rounded-xl font-orbitron font-bold text-lg tracking-wider">
+                    <i class="fas fa-download mr-3"></i>DOWNLOAD NOW
+                </a>
+                <a href="/client.html" class="btn-secondary px-10 py-5 rounded-xl font-orbitron font-bold text-lg tracking-wider">
+                    <i class="fas fa-gamepad mr-3"></i>PLAY IN BROWSER
+                </a>
+                <a href="/ui-template.html" class="btn-secondary px-10 py-5 rounded-xl font-orbitron font-bold text-lg tracking-wider">
+                    <i class="fas fa-layer-group mr-3"></i>UI PROTOTYPE
+                </a>
+            </div>
+
+            <!-- Platform Icons -->
+            <div class="flex justify-center gap-8 text-gray-400">
+                <div class="flex items-center gap-2">
+                    <i class="fab fa-windows text-2xl"></i>
+                    <span class="text-sm">Windows</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <i class="fab fa-apple text-2xl"></i>
+                    <span class="text-sm">macOS</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <i class="fab fa-linux text-2xl"></i>
+                    <span class="text-sm">Linux</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <i class="fas fa-globe text-2xl"></i>
+                    <span class="text-sm">Web</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="relative py-16 border-t border-white/10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid md:grid-cols-4 gap-12 mb-12">
+                <!-- Brand -->
+                <div>
+                    <a href="/index.html" class="flex items-center gap-3 mb-4">
+                        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-void-cyan to-void-purple flex items-center justify-center">
+                            <i class="fas fa-crosshairs text-void-dark text-xl"></i>
+                        </div>
+                        <span class="font-orbitron font-bold text-xl tracking-wider">VOID STRIKE</span>
+                    </a>
+                    <p class="text-gray-400 text-sm mb-4">
+                        The ultimate competitive space shooter. Experience CS2-style tension in zero gravity.
+                    </p>
+                    <div class="flex gap-4">
+                        <a href="#" class="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center hover:bg-void-cyan/20 hover:text-void-cyan transition-colors">
+                            <i class="fab fa-discord"></i>
+                        </a>
+                        <a href="#" class="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center hover:bg-void-cyan/20 hover:text-void-cyan transition-colors">
+                            <i class="fab fa-twitter"></i>
+                        </a>
+                        <a href="#" class="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center hover:bg-void-cyan/20 hover:text-void-cyan transition-colors">
+                            <i class="fab fa-youtube"></i>
+                        </a>
+                        <a href="#" class="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center hover:bg-void-cyan/20 hover:text-void-cyan transition-colors">
+                            <i class="fab fa-twitch"></i>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Game -->
+                <div>
+                    <h4 class="font-orbitron font-bold mb-4">GAME</h4>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="/client.html" class="hover:text-void-cyan transition-colors">Download</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Game Modes</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Ship Classes</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Maps</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Patch Notes</a></li>
+                    </ul>
+                </div>
+
+                <!-- Community -->
+                <div>
+                    <h4 class="font-orbitron font-bold mb-4">COMMUNITY</h4>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="#rewards" class="hover:text-void-cyan transition-colors">Rewards</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Forums</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Discord</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Tournaments</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Esports</a></li>
+                    </ul>
+                </div>
+
+                <!-- Support -->
+                <div>
+                    <h4 class="font-orbitron font-bold mb-4">SUPPORT</h4>
+                    <ul class="space-y-2 text-gray-400">
+                        <li><a href="/index_legacy.html" class="hover:text-void-cyan transition-colors">Server Dashboard</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Contact Us</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Bug Reports</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">System Requirements</a></li>
+                        <li><a href="#" class="hover:text-void-cyan transition-colors">Status</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Bottom Bar -->
+            <div class="pt-8 border-t border-white/10 flex flex-col md:flex-row justify-between items-center gap-4">
+                <div class="text-gray-500 text-sm">
+                    &copy; 2026 VOID STRIKE. All rights reserved.
+                </div>
+                <div class="flex gap-6 text-sm text-gray-500">
+                    <a href="#" class="hover:text-void-cyan transition-colors">Privacy Policy</a>
+                    <a href="#" class="hover:text-void-cyan transition-colors">Terms of Service</a>
+                    <a href="#" class="hover:text-void-cyan transition-colors">Cookie Policy</a>
+                </div>
+                <div class="text-gray-600 text-sm font-orbitron">
+                    v0.9.2 BETA
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="website/js/main.js"></script>
 </body>
 </html>

@@ -513,11 +513,7 @@ impl NavMesh {
 
             while let Some(current) = frontier.pop() {
                 if current.poly_idx == end_poly {
-                    return Some(reconstruct_poly_path_flat(
-                        start_poly,
-                        end_poly,
-                        &scratch,
-                    ));
+                    return Some(reconstruct_poly_path_flat(start_poly, end_poly, &scratch));
                 }
 
                 if current.cost > scratch.get_cost(current.poly_idx) {
@@ -546,11 +542,7 @@ impl NavMesh {
     }
 }
 
-fn reconstruct_poly_path_flat(
-    start: usize,
-    end: usize,
-    scratch: &PolyNavScratch,
-) -> Vec<usize> {
+fn reconstruct_poly_path_flat(start: usize, end: usize, scratch: &PolyNavScratch) -> Vec<usize> {
     let mut current = end as u32;
     let start_u32 = start as u32;
     let mut path = vec![end];

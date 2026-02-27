@@ -4,7 +4,6 @@ pub mod players;
 
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde::Serialize;
 use serde_json::Value;
 
 fn build_headers(admin_token: Option<&str>) -> Result<HeaderMap> {
@@ -35,29 +34,8 @@ pub async fn get_json(base_url: &str, path: &str, admin_token: Option<&str>) -> 
         .context("request failed")?
         .error_for_status()
         .context("request failed with non-success status")?;
-    response.json::<Value>().await.context("invalid json response")
-}
-
-pub async fn post_json<T: Serialize>(
-    base_url: &str,
-    path: &str,
-    admin_token: Option<&str>,
-    payload: &T,
-) -> Result<Value> {
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}/{}",
-        base_url.trim_end_matches('/'),
-        path.trim_start_matches('/')
-    );
-    let response = client
-        .post(url)
-        .headers(build_headers(admin_token)?)
-        .json(payload)
-        .send()
+    response
+        .json::<Value>()
         .await
-        .context("request failed")?
-        .error_for_status()
-        .context("request failed with non-success status")?;
-    response.json::<Value>().await.context("invalid json response")
+        .context("invalid json response")
 }

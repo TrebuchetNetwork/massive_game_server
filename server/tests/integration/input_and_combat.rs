@@ -9,7 +9,9 @@ use massive_game_server_core::core::constants::{
 use massive_game_server_core::core::types::{
     EntityId, PlayerAoIs, PlayerID, PlayerInputData, Projectile, ServerWeaponType, Wall,
 };
-use massive_game_server_core::network::signaling::{BoundedChatQueue, ChatMessagesQueue, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE};
+use massive_game_server_core::network::signaling::{
+    BoundedChatQueue, ChatMessagesQueue, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE,
+};
 use massive_game_server_core::server::instance::MassiveGameServer;
 
 use dashmap::DashMap;
@@ -24,7 +26,8 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
         Arc::new(ThreadPoolSystem::new(config.clone()).expect("Failed to create thread pools"));
     let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
+    let chat_messages_queue: ChatMessagesQueue =
+        Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
     Arc::new(MassiveGameServer::new(
@@ -278,19 +281,8 @@ async fn projectile_removed_on_wall_hit() {
     let all_walls = server.collect_all_walls_current_state();
     server.wall_spatial_index.rebuild(&all_walls, 0);
 
-    let owner_id = server
-        .player_manager
-        .id_pool
-        .get_or_create("wall_shooter");
-    let proj = Projectile::new(
-        owner_id,
-        ServerWeaponType::Sniper,
-        95.0,
-        0.0,
-        1.0,
-        0.0,
-        1.0,
-    );
+    let owner_id = server.player_manager.id_pool.get_or_create("wall_shooter");
+    let proj = Projectile::new(owner_id, ServerWeaponType::Sniper, 95.0, 0.0, 1.0, 0.0, 1.0);
     server.projectiles_to_add.push(proj);
 
     server.run_game_logic_update(0.016).await;
@@ -331,15 +323,7 @@ async fn projectile_damages_destructible_wall() {
     server.wall_spatial_index.rebuild(&all_walls, 0);
 
     let owner_id = server.player_manager.id_pool.get_or_create("destroyer");
-    let proj = Projectile::new(
-        owner_id,
-        ServerWeaponType::Sniper,
-        95.0,
-        0.0,
-        1.0,
-        0.0,
-        1.0,
-    );
+    let proj = Projectile::new(owner_id, ServerWeaponType::Sniper, 95.0, 0.0, 1.0, 0.0, 1.0);
     server.projectiles_to_add.push(proj);
 
     server.run_game_logic_update(0.016).await;
@@ -364,10 +348,7 @@ async fn projectile_removed_when_out_of_bounds() {
     let server = setup_test_server();
     add_player(&server, "oob_shooter", 1, 0.0, 0.0);
 
-    let owner_id = server
-        .player_manager
-        .id_pool
-        .get_or_create("oob_shooter");
+    let owner_id = server.player_manager.id_pool.get_or_create("oob_shooter");
     let proj = Projectile::new(
         owner_id,
         ServerWeaponType::Pistol,
@@ -448,14 +429,8 @@ async fn knockback_velocity_is_clamped() {
     server.run_physics_update(0.016).await;
 
     let ps = server.player_manager.get_player_state(&pid).unwrap();
-    assert!(
-        ps.x <= WORLD_MAX_X,
-        "Player should not exceed world bounds"
-    );
-    assert!(
-        ps.x >= WORLD_MIN_X,
-        "Player should not go below world min"
-    );
+    assert!(ps.x <= WORLD_MAX_X, "Player should not exceed world bounds");
+    assert!(ps.x >= WORLD_MIN_X, "Player should not go below world min");
 }
 
 // ── Pickup collection ─────────────────────────────────────────────

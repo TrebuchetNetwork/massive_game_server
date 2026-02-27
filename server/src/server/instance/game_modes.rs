@@ -1,5 +1,29 @@
 use super::*;
 
+#[derive(Debug, Clone, Copy)]
+struct DynamicModeThresholds {
+    tdm_transition_elapsed: f32,
+    tdm_countdown_elapsed: f32,
+    ctf_transition_remaining: f32,
+    ctf_countdown_20_remaining: f32,
+    ctf_countdown_10_remaining: f32,
+    ctf_countdown_5_remaining: f32,
+}
+
+fn dynamic_mode_thresholds(match_duration_secs: f32) -> DynamicModeThresholds {
+    let scaled_threshold = |seconds_for_full_match: f32| {
+        (match_duration_secs * (seconds_for_full_match / FULL_MATCH_DURATION_SECS)).max(0.0)
+    };
+    DynamicModeThresholds {
+        tdm_transition_elapsed: scaled_threshold(120.0),
+        tdm_countdown_elapsed: scaled_threshold(105.0),
+        ctf_transition_remaining: scaled_threshold(70.0),
+        ctf_countdown_20_remaining: scaled_threshold(90.0),
+        ctf_countdown_10_remaining: scaled_threshold(80.0),
+        ctf_countdown_5_remaining: scaled_threshold(75.0),
+    }
+}
+
 impl MassiveGameServer {
     fn game_mode_label(mode: fb::GameModeType) -> &'static str {
         match mode {
@@ -76,11 +100,18 @@ impl MassiveGameServer {
                 let previous_time_remaining = match_info_guard.time_remaining;
                 match_info_guard.time_remaining -= delta_time;
                 if dynamic_mode_transitions {
-                    let elapsed = (self.match_duration_secs - match_info_guard.time_remaining).max(0.0);
-                    let previous_elapsed = (self.match_duration_secs - previous_time_remaining).max(0.0);
+                    // Scale legacy FullMatch thresholds (120s elapsed, 70s remaining)
+                    // relative to current match duration so short formats still
+                    // transition through all dynamic phases.
+                    let thresholds = dynamic_mode_thresholds(self.match_duration_secs);
+
+                    let elapsed =
+                        (self.match_duration_secs - match_info_guard.time_remaining).max(0.0);
+                    let previous_elapsed =
+                        (self.match_duration_secs - previous_time_remaining).max(0.0);
                     if match_info_guard.game_mode == fb::GameModeType::FreeForAll
-                        && previous_elapsed < 105.0
-                        && elapsed >= 105.0
+                        && previous_elapsed < thresholds.tdm_countdown_elapsed
+                        && elapsed >= thresholds.tdm_countdown_elapsed
                     {
                         self.broadcast_dynamic_mode_event(
                             "countdown",
@@ -90,8 +121,8 @@ impl MassiveGameServer {
                             match_info_guard.time_remaining,
                         );
                     }
-                    if elapsed >= 120.0
-                        && match_info_guard.time_remaining > 70.0
+                    if elapsed >= thresholds.tdm_transition_elapsed
+                        && match_info_guard.time_remaining > thresholds.ctf_transition_remaining
                         && match_info_guard.game_mode == fb::GameModeType::FreeForAll
                     {
                         let previous_mode = match_info_guard.game_mode;
@@ -108,10 +139,12 @@ impl MassiveGameServer {
                             None,
                             match_info_guard.time_remaining,
                         );
-                    } else if previous_time_remaining > 70.0
+                    } else if previous_time_remaining > thresholds.ctf_transition_remaining
                         && match_info_guard.game_mode != fb::GameModeType::CaptureTheFlag
                     {
-                        if previous_time_remaining > 90.0 && match_info_guard.time_remaining <= 90.0
+                        if previous_time_remaining > thresholds.ctf_countdown_20_remaining
+                            && match_info_guard.time_remaining
+                                <= thresholds.ctf_countdown_20_remaining
                         {
                             self.broadcast_dynamic_mode_event(
                                 "countdown",
@@ -121,7 +154,9 @@ impl MassiveGameServer {
                                 match_info_guard.time_remaining,
                             );
                         }
-                        if previous_time_remaining > 80.0 && match_info_guard.time_remaining <= 80.0
+                        if previous_time_remaining > thresholds.ctf_countdown_10_remaining
+                            && match_info_guard.time_remaining
+                                <= thresholds.ctf_countdown_10_remaining
                         {
                             self.broadcast_dynamic_mode_event(
                                 "countdown",
@@ -131,7 +166,9 @@ impl MassiveGameServer {
                                 match_info_guard.time_remaining,
                             );
                         }
-                        if previous_time_remaining > 75.0 && match_info_guard.time_remaining <= 75.0
+                        if previous_time_remaining > thresholds.ctf_countdown_5_remaining
+                            && match_info_guard.time_remaining
+                                <= thresholds.ctf_countdown_5_remaining
                         {
                             self.broadcast_dynamic_mode_event(
                                 "countdown",
@@ -142,7 +179,7 @@ impl MassiveGameServer {
                             );
                         }
                     }
-                    if match_info_guard.time_remaining <= 70.0
+                    if match_info_guard.time_remaining <= thresholds.ctf_transition_remaining
                         && match_info_guard.game_mode != fb::GameModeType::CaptureTheFlag
                     {
                         let previous_mode = match_info_guard.game_mode;
@@ -468,5 +505,32 @@ impl MassiveGameServer {
             pstate.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
         });
         self.kill_feed.write().clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_mode_thresholds_match_legacy_full_match_values() {
+        let thresholds = dynamic_mode_thresholds(FULL_MATCH_DURATION_SECS);
+        assert!((thresholds.tdm_transition_elapsed - 120.0).abs() < 0.001);
+        assert!((thresholds.tdm_countdown_elapsed - 105.0).abs() < 0.001);
+        assert!((thresholds.ctf_transition_remaining - 70.0).abs() < 0.001);
+        assert!((thresholds.ctf_countdown_20_remaining - 90.0).abs() < 0.001);
+        assert!((thresholds.ctf_countdown_10_remaining - 80.0).abs() < 0.001);
+        assert!((thresholds.ctf_countdown_5_remaining - 75.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn dynamic_mode_thresholds_scale_for_mobile_blitz() {
+        let thresholds = dynamic_mode_thresholds(MOBILE_BLITZ_DURATION_SECS);
+        assert!((thresholds.tdm_transition_elapsed - 72.0).abs() < 0.001);
+        assert!((thresholds.tdm_countdown_elapsed - 63.0).abs() < 0.001);
+        assert!((thresholds.ctf_transition_remaining - 42.0).abs() < 0.001);
+        assert!((thresholds.ctf_countdown_20_remaining - 54.0).abs() < 0.001);
+        assert!((thresholds.ctf_countdown_10_remaining - 48.0).abs() < 0.001);
+        assert!((thresholds.ctf_countdown_5_remaining - 45.0).abs() < 0.001);
     }
 }

@@ -58,13 +58,7 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
     server
 }
 
-fn add_player(
-    server: &MassiveGameServer,
-    peer_id: &str,
-    team_id: u8,
-    x: f32,
-    y: f32,
-) -> PlayerID {
+fn add_player(server: &MassiveGameServer, peer_id: &str, team_id: u8, x: f32, y: f32) -> PlayerID {
     server
         .player_manager
         .add_player(peer_id.to_owned(), peer_id.to_owned(), x, y);
@@ -157,10 +151,7 @@ async fn stress_validation_concurrent_players() {
         match result {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
-                panic!(
-                    "process_game_tick failed at tick {}: {:?}",
-                    tick_idx, e
-                );
+                panic!("process_game_tick failed at tick {}: {:?}", tick_idx, e);
             }
             Err(_) => {
                 panic!(
@@ -290,9 +281,7 @@ async fn stress_validation_player_churn() {
 #[tokio::test(flavor = "multi_thread")]
 async fn stress_validation_players_and_bots() {
     if !stress_enabled() {
-        eprintln!(
-            "Skipping stress_validation_players_and_bots (set RUN_STRESS_TEST=1 to enable)."
-        );
+        eprintln!("Skipping stress_validation_players_and_bots (set RUN_STRESS_TEST=1 to enable).");
         return;
     }
 

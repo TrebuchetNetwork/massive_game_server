@@ -1,5 +1,6 @@
 // massive_game_server/server/src/operational/diagnostics/deadlock.rs
 
+use std::backtrace::Backtrace;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -61,9 +62,10 @@ pub fn spawn_frame_progress_watchdog(
             if current == last_frame {
                 stagnant_ms = stagnant_ms.saturating_add(check_interval.as_millis() as u64);
                 if stagnant_ms >= stale_after.as_millis() as u64 {
+                    let bt = Backtrace::capture();
                     warn!(
-                        "Frame progress watchdog: frame counter stagnant at {} for {}ms",
-                        current, stagnant_ms
+                        "Frame progress watchdog: frame counter stagnant at {} for {}ms. Backtrace:\n{:?}",
+                        current, stagnant_ms, bt
                     );
                     stagnant_ms = 0;
                 }

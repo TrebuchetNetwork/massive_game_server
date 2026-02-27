@@ -428,9 +428,12 @@ impl MonitoredPool {
     where
         F: FnOnce() + Send + 'static,
     {
-        let current = self.pending.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let current = self
+            .pending
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if current >= self.max_pending {
-            self.pending.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            self.pending
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             warn!(
                 "[ThreadPool:{}] Backpressure: {} pending tasks exceeds max {}. Rejecting work.",
                 self.name, current, self.max_pending
@@ -456,7 +459,9 @@ impl MonitoredPool {
     where
         F: FnOnce() + Send + 'static,
     {
-        let current = self.pending.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let current = self
+            .pending
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if current >= self.warn_threshold && current.is_multiple_of(self.warn_threshold) {
             warn!(
                 "[ThreadPool:{}] Queue depth warning: {} pending tasks (warn_threshold={})",
@@ -476,12 +481,7 @@ mod tests {
     use super::*;
 
     fn test_pool() -> Arc<ThreadPool> {
-        Arc::new(
-            ThreadPoolBuilder::new()
-                .num_threads(2)
-                .build()
-                .unwrap(),
-        )
+        Arc::new(ThreadPoolBuilder::new().num_threads(2).build().unwrap())
     }
 
     #[test]
@@ -517,8 +517,12 @@ mod tests {
         let (tx1, rx1) = std::sync::mpsc::channel::<()>();
         let (tx2, rx2) = std::sync::mpsc::channel::<()>();
 
-        assert!(monitored.try_submit(move || { let _ = rx1.recv(); }));
-        assert!(monitored.try_submit(move || { let _ = rx2.recv(); }));
+        assert!(monitored.try_submit(move || {
+            let _ = rx1.recv();
+        }));
+        assert!(monitored.try_submit(move || {
+            let _ = rx2.recv();
+        }));
 
         // Third submission should be rejected (max_pending = 2)
         let rejected = !monitored.try_submit(|| {});

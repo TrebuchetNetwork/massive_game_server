@@ -6,7 +6,7 @@ use rand::Rng;
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::fs;
 use std::net::{IpAddr, SocketAddr};
@@ -37,6 +37,8 @@ const PROGRESSION_CREDITS_PER_KILL: u64 = 8;
 const DEFAULT_ACCOUNT_DELETION_GRACE_PERIOD_HOURS: u64 = 72;
 /// Interval for the periodic task that processes queued account deletions.
 const DELETION_PROCESSING_INTERVAL_SECS: u64 = 3600;
+const ACTIVE_PHONE_HASH_PREFIX: &str = "hash:";
+const DELETED_PHONE_HASH_PREFIX: &str = "deleted:";
 
 /// Per-IP OTP rate limiting: max 5 OTP requests per 10 minutes (short window).
 const OTP_IP_SHORT_WINDOW_SECS: u64 = 600;
@@ -53,6 +55,7 @@ static TOKEN_VALIDATION_RATE_LIMITERS: OnceLock<
 static TOKEN_VALIDATION_RATE_LIMIT_CONFIG: OnceLock<TokenValidationRateLimitConfig> =
     OnceLock::new();
 static OTP_IP_RATE_LIMITERS: OnceLock<DashMap<IpAddr, OtpIpRateState>> = OnceLock::new();
+static GDPR_HASH_SALT: OnceLock<Vec<u8>> = OnceLock::new();
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -96,6 +99,8 @@ struct PendingDeletion {
 struct PersistentAuthStore {
     users: HashMap<String, UserRecord>,
     phone_to_user_id: HashMap<String, String>,
+    #[serde(default)]
+    pending_deletions: HashMap<String, PendingDeletion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -571,7 +576,9 @@ fn cleanup_otp_ip_rate_limiters(now: u64) {
     let limiters = shared_otp_ip_rate_limiters();
     let long_cutoff = now.saturating_sub(OTP_IP_LONG_WINDOW_SECS);
     limiters.retain(|_ip, state| {
-        state.short_window_timestamps.retain(|&ts| ts > now.saturating_sub(OTP_IP_SHORT_WINDOW_SECS));
+        state
+            .short_window_timestamps
+            .retain(|&ts| ts > now.saturating_sub(OTP_IP_SHORT_WINDOW_SECS));
         state.long_window_timestamps.retain(|&ts| ts > long_cutoff);
         !state.is_empty()
     });
@@ -608,10 +615,15 @@ impl AuthService {
         let redis_cache = init_redis_cache_from_env();
 
         let persistent_store = load_persistent_store(&store_path, redis_cache.as_ref());
+        let deletion_queue = DashMap::new();
+        for (user_id, pending) in &persistent_store.pending_deletions {
+            deletion_queue.insert(user_id.clone(), pending.clone());
+        }
         info!(
-            "Auth service initialized. store_path='{}', users={}, sms_dev_mode={}, use_auth_cookies={}",
+            "Auth service initialized. store_path='{}', users={}, pending_deletions={}, sms_dev_mode={}, use_auth_cookies={}",
             store_path.display(),
             persistent_store.users.len(),
+            deletion_queue.len(),
             sms_dev_mode,
             use_auth_cookies
         );
@@ -630,7 +642,7 @@ impl AuthService {
                 otp_challenges: DashMap::new(),
                 sessions: DashMap::new(),
                 peer_bindings: DashMap::new(),
-                deletion_queue: DashMap::new(),
+                deletion_queue,
                 otp_ttl_seconds,
                 session_ttl_seconds,
                 resend_interval_seconds,
@@ -769,37 +781,47 @@ impl AuthService {
         self.inner.otp_challenges.remove(&phone_number);
 
         let mut persistent_guard = self.inner.persistent_store.write();
-        let user_id =
-            if let Some(existing_user_id) = persistent_guard.phone_to_user_id.get(&phone_number) {
-                existing_user_id.clone()
-            } else {
-                let new_user_id = Uuid::new_v4().to_string();
-                let last4 = phone_last4(&phone_number);
-                let display_name = format!("Player{}", last4);
-                let new_user = UserRecord {
-                    user_id: new_user_id.clone(),
-                    phone_number: phone_number.clone(),
-                    phone_last4: last4,
-                    display_name,
-                    created_at: now,
-                    updated_at: now,
-                    last_seen_at: now,
-                    matches_played: 0,
-                    cumulative_score: 0,
-                    best_score: 0,
-                    total_kills: 0,
-                    total_deaths: 0,
-                    last_game_username: None,
-                    experience_points: 0,
-                    credits: 0,
-                    deleted: false,
-                };
-                persistent_guard
-                    .phone_to_user_id
-                    .insert(phone_number.clone(), new_user_id.clone());
-                persistent_guard.users.insert(new_user_id.clone(), new_user);
-                new_user_id
+        let phone_lookup_key = active_phone_lookup_key(&phone_number);
+        let user_id = if let Some(existing_user_id) =
+            persistent_guard.phone_to_user_id.get(&phone_lookup_key)
+        {
+            existing_user_id.clone()
+        } else if let Some(existing_user_id) =
+            persistent_guard.phone_to_user_id.remove(&phone_number)
+        {
+            // Migrate legacy raw-phone mapping to hashed lookup key.
+            persistent_guard
+                .phone_to_user_id
+                .insert(phone_lookup_key.clone(), existing_user_id.clone());
+            existing_user_id
+        } else {
+            let new_user_id = Uuid::new_v4().to_string();
+            let last4 = phone_last4(&phone_number);
+            let display_name = format!("Player{}", last4);
+            let new_user = UserRecord {
+                user_id: new_user_id.clone(),
+                phone_number: phone_lookup_key.clone(),
+                phone_last4: last4,
+                display_name,
+                created_at: now,
+                updated_at: now,
+                last_seen_at: now,
+                matches_played: 0,
+                cumulative_score: 0,
+                best_score: 0,
+                total_kills: 0,
+                total_deaths: 0,
+                last_game_username: None,
+                experience_points: 0,
+                credits: 0,
+                deleted: false,
             };
+            persistent_guard
+                .phone_to_user_id
+                .insert(phone_lookup_key, new_user_id.clone());
+            persistent_guard.users.insert(new_user_id.clone(), new_user);
+            new_user_id
+        };
 
         let profile = if let Some(user) = persistent_guard.users.get_mut(&user_id) {
             user.updated_at = now;
@@ -1043,7 +1065,20 @@ impl AuthService {
 
         self.inner
             .deletion_queue
-            .insert(user_id.to_owned(), pending);
+            .insert(user_id.to_owned(), pending.clone());
+
+        let store_snapshot = {
+            let mut store = self.inner.persistent_store.write();
+            store
+                .pending_deletions
+                .insert(user_id.to_owned(), pending.clone());
+            store.clone()
+        };
+        spawn_persist_auth_store(
+            self.inner.store_path.clone(),
+            store_snapshot,
+            self.inner.clone(),
+        );
 
         info!(
             "Account deletion queued for user_id={}, scheduled_at={}",
@@ -1066,6 +1101,16 @@ impl AuthService {
     fn cancel_account_deletion(&self, user_id: &str) -> Result<CancelDeletionResult, AuthError> {
         match self.inner.deletion_queue.remove(user_id) {
             Some((_key, pending)) => {
+                let store_snapshot = {
+                    let mut store = self.inner.persistent_store.write();
+                    store.pending_deletions.remove(user_id);
+                    store.clone()
+                };
+                spawn_persist_auth_store(
+                    self.inner.store_path.clone(),
+                    store_snapshot,
+                    self.inner.clone(),
+                );
                 info!(
                     "Account deletion cancelled for user_id={} (was scheduled for {})",
                     user_id, pending.scheduled_deletion_time
@@ -1073,7 +1118,8 @@ impl AuthService {
                 Ok(CancelDeletionResult {
                     user_id: user_id.to_owned(),
                     cancelled: true,
-                    message: "Account deletion has been cancelled. Your account is safe.".to_owned(),
+                    message: "Account deletion has been cancelled. Your account is safe."
+                        .to_owned(),
                 })
             }
             None => Err(AuthError::DeletionNotPending),
@@ -1083,29 +1129,36 @@ impl AuthService {
     /// Anonymize user data: replace PII with hashed/generic values.
     /// This is the core GDPR "right to erasure" implementation.
     fn anonymize_user_data(&self, user_id: &str) {
+        self.inner.deletion_queue.remove(user_id);
         let mut store = self.inner.persistent_store.write();
 
         // Extract the original phone number for removal, then mutate the user.
-        let original_phone = store
-            .users
-            .get(user_id)
-            .map(|u| u.phone_number.clone());
+        let original_phone = store.users.get(user_id).map(|u| u.phone_number.clone());
+        let active_phone_hash = original_phone
+            .as_deref()
+            .map(phone_hash_from_stored_or_legacy_value);
 
         // Remove the original phone->user_id mapping
         if let Some(ref phone) = original_phone {
             store.phone_to_user_id.remove(phone);
         }
+        if let Some(ref phone_hash) = active_phone_hash {
+            store
+                .phone_to_user_id
+                .remove(&format!("{}{}", ACTIVE_PHONE_HASH_PREFIX, phone_hash));
+        }
+        store.pending_deletions.remove(user_id);
 
         if let Some(user) = store.users.get_mut(user_id) {
             // Hash the phone number so we can detect re-registration
             // but can never reverse it.
-            let phone_hash = hash_phone_for_anonymization(
-                original_phone.as_deref().unwrap_or(""),
-            );
+            let phone_hash = active_phone_hash.clone().unwrap_or_else(|| {
+                hash_phone_for_anonymization(original_phone.as_deref().unwrap_or(""))
+            });
             let hash_last4 = &phone_hash[phone_hash.len().saturating_sub(4)..];
 
             // Store the hash in phone_number field for re-registration detection
-            user.phone_number = format!("deleted:{}", phone_hash);
+            user.phone_number = format!("{}{}", DELETED_PHONE_HASH_PREFIX, phone_hash);
             user.phone_last4 = "0000".to_owned();
             user.display_name = format!("Deleted User #{}", hash_last4);
             user.last_game_username = None;
@@ -1114,9 +1167,10 @@ impl AuthService {
 
             // Add the hashed phone to phone_to_user_id so we can detect
             // re-registration attempts from the same phone.
-            store
-                .phone_to_user_id
-                .insert(format!("deleted:{}", phone_hash), user_id.to_owned());
+            store.phone_to_user_id.insert(
+                format!("{}{}", DELETED_PHONE_HASH_PREFIX, phone_hash),
+                user_id.to_owned(),
+            );
 
             info!("User data anonymized for user_id={}", user_id);
         }
@@ -1150,10 +1204,7 @@ impl AuthService {
             self.inner.sessions.remove(&token);
         }
         if count > 0 {
-            debug!(
-                "Revoked {} session token(s) for user_id={}",
-                count, user_id
-            );
+            debug!("Revoked {} session token(s) for user_id={}", count, user_id);
         }
     }
 
@@ -1214,7 +1265,9 @@ impl AuthService {
                 }
             });
         } else {
-            debug!("No tokio runtime available; deletion processor not started (test environment).");
+            debug!(
+                "No tokio runtime available; deletion processor not started (test environment)."
+            );
         }
     }
 
@@ -1226,11 +1279,22 @@ impl AuthService {
         );
 
         if let Some(command_executable) = &self.inner.sms_command {
-            match Command::new(command_executable).arg(phone_number).arg(&message).status() {
+            match Command::new(command_executable)
+                .arg(phone_number)
+                .arg(&message)
+                .status()
+            {
                 Ok(status) if status.success() => {
-                    info!("SMS command delivered code to {}", mask_phone_number(phone_number));
+                    info!(
+                        "SMS command delivered code to {}",
+                        mask_phone_number(phone_number)
+                    );
                     if self.inner.sms_dev_mode {
-                        info!("[AUTH_SMS_DEV] phone={} code={}", phone_number, code);
+                        info!(
+                            "[AUTH_SMS_DEV] phone={} code={}",
+                            mask_phone_number(phone_number),
+                            code
+                        );
                     }
                     return Ok(());
                 }
@@ -1247,7 +1311,11 @@ impl AuthService {
         }
 
         if self.inner.sms_dev_mode {
-            debug!("[AUTH_SMS_DEV] phone={} code={}", phone_number, code);
+            debug!(
+                "[AUTH_SMS_DEV] phone={} code={}",
+                mask_phone_number(phone_number),
+                code
+            );
             return Ok(());
         }
 
@@ -1312,6 +1380,7 @@ pub fn build_auth_routes(
                 .or(warp::any().map(LeaderboardQuery::default))
                 .unify(),
         )
+        .and(warp::addr::remote())
         .and(with_auth_service(auth_service.clone()))
         .and_then(handle_auth_leaderboard);
 
@@ -1393,8 +1462,10 @@ async fn handle_verify_code(
                     result.token, max_age
                 );
                 let json_reply = ok_response(result);
-                Ok(warp::reply::with_header(json_reply, "Set-Cookie", cookie_value)
-                    .into_response())
+                Ok(
+                    warp::reply::with_header(json_reply, "Set-Cookie", cookie_value)
+                        .into_response(),
+                )
             } else {
                 Ok(ok_response(result).into_response())
             }
@@ -1468,8 +1539,14 @@ async fn handle_auth_logout(
 
 async fn handle_auth_leaderboard(
     query: LeaderboardQuery,
+    remote_addr: Option<SocketAddr>,
     auth_service: AuthService,
 ) -> Result<impl Reply, Infallible> {
+    if !try_acquire_token_validation_token(remote_addr) {
+        return Ok(error_response(AuthError::TokenValidationRateLimited {
+            retry_after_seconds: 1,
+        }));
+    }
     let limit = query.limit.unwrap_or(DEFAULT_LEADERBOARD_LIMIT);
     let players = auth_service.leaderboard(limit);
     Ok(ok_response(LeaderboardResult { players }))
@@ -1635,7 +1712,7 @@ fn to_profile_view(user: &UserRecord) -> AuthProfileView {
     AuthProfileView {
         user_id: user.user_id.clone(),
         display_name: user.display_name.clone(),
-        phone_masked: mask_phone_number(&user.phone_number),
+        phone_masked: masked_phone_for_user(user),
         created_at: user.created_at,
         last_seen_at: user.last_seen_at,
         matches_played: user.matches_played,
@@ -1712,7 +1789,7 @@ fn level_from_experience(experience_points: u64) -> u32 {
 fn load_persistent_store(path: &Path, redis_cache: Option<&AuthRedisCache>) -> PersistentAuthStore {
     if let Some(cache) = redis_cache {
         if let Some(store) = cache.load_store() {
-            return store;
+            return migrate_persistent_store(store);
         }
     }
 
@@ -1721,7 +1798,7 @@ fn load_persistent_store(path: &Path, redis_cache: Option<&AuthRedisCache>) -> P
         Err(_) => return PersistentAuthStore::default(),
     };
     match serde_json::from_str::<PersistentAuthStore>(&raw) {
-        Ok(store) => store,
+        Ok(store) => migrate_persistent_store(store),
         Err(error) => {
             error!(
                 "Failed to parse auth store '{}': {}. Starting with empty store.",
@@ -1733,15 +1810,54 @@ fn load_persistent_store(path: &Path, redis_cache: Option<&AuthRedisCache>) -> P
     }
 }
 
+fn migrate_persistent_store(mut store: PersistentAuthStore) -> PersistentAuthStore {
+    let mut rebuilt_phone_to_user = HashMap::with_capacity(store.users.len());
+
+    for (user_id, user) in &mut store.users {
+        let original_phone = user.phone_number.clone();
+        if user.deleted {
+            let deleted_hash = if let Some(existing_hash) =
+                original_phone.strip_prefix(DELETED_PHONE_HASH_PREFIX)
+            {
+                existing_hash.to_owned()
+            } else {
+                phone_hash_from_stored_or_legacy_value(&original_phone)
+            };
+            user.phone_number = format!("{}{}", DELETED_PHONE_HASH_PREFIX, deleted_hash);
+            if user.phone_last4.is_empty() {
+                user.phone_last4 = "0000".to_owned();
+            }
+            rebuilt_phone_to_user.insert(user.phone_number.clone(), user_id.clone());
+        } else {
+            if user.phone_last4.is_empty()
+                && !original_phone.starts_with(ACTIVE_PHONE_HASH_PREFIX)
+                && !original_phone.starts_with(DELETED_PHONE_HASH_PREFIX)
+            {
+                user.phone_last4 = phone_last4(&original_phone);
+            }
+            let active_hash = phone_hash_from_stored_or_legacy_value(&original_phone);
+            user.phone_number = format!("{}{}", ACTIVE_PHONE_HASH_PREFIX, active_hash);
+            rebuilt_phone_to_user.insert(user.phone_number.clone(), user_id.clone());
+        }
+    }
+
+    let active_user_ids: HashSet<String> = store
+        .users
+        .iter()
+        .filter_map(|(user_id, user)| (!user.deleted).then_some(user_id.clone()))
+        .collect();
+    store
+        .pending_deletions
+        .retain(|user_id, _| active_user_ids.contains(user_id));
+    store.phone_to_user_id = rebuilt_phone_to_user;
+    store
+}
+
 /// Offloads auth store persistence (file I/O + Redis) to a blocking thread
 /// so that tokio worker threads are not stalled.
 /// Falls back to synchronous persistence when no tokio runtime is
 /// available (e.g. in unit tests).
-fn spawn_persist_auth_store(
-    path: PathBuf,
-    store: PersistentAuthStore,
-    inner: Arc<AuthInner>,
-) {
+fn spawn_persist_auth_store(path: PathBuf, store: PersistentAuthStore, inner: Arc<AuthInner>) {
     let do_persist = move || {
         persist_persistent_store(&path, &store, inner.redis_cache.as_ref());
     };
@@ -1778,8 +1894,23 @@ fn persist_persistent_store(
             return;
         }
     };
-    if let Err(error) = fs::write(path, serialized) {
-        error!("Failed to write auth store '{}': {}", path.display(), error);
+    let tmp_path = path.with_extension(format!("tmp-{}-{}", std::process::id(), unix_now()));
+    if let Err(error) = fs::write(&tmp_path, serialized) {
+        error!(
+            "Failed to write auth store temp file '{}': {}",
+            tmp_path.display(),
+            error
+        );
+        return;
+    }
+    if let Err(error) = fs::rename(&tmp_path, path) {
+        error!(
+            "Failed to atomically replace auth store '{}' from '{}': {}",
+            path.display(),
+            tmp_path.display(),
+            error
+        );
+        let _ = fs::remove_file(&tmp_path);
     }
 }
 
@@ -1954,14 +2085,72 @@ fn mask_phone_number(phone_number: &str) -> String {
     format!("+{}{}", stars, last2)
 }
 
+fn masked_phone_for_user(user: &UserRecord) -> String {
+    if user.phone_number.starts_with(ACTIVE_PHONE_HASH_PREFIX)
+        || user.phone_number.starts_with(DELETED_PHONE_HASH_PREFIX)
+    {
+        return masked_phone_from_last4(&user.phone_last4);
+    }
+    mask_phone_number(&user.phone_number)
+}
+
+fn masked_phone_from_last4(last4: &str) -> String {
+    let sanitized: String = last4.chars().filter(|ch| ch.is_ascii_digit()).collect();
+    if sanitized.is_empty() {
+        return "+***".to_owned();
+    }
+    if sanitized.len() <= 2 {
+        return format!("+***{}", sanitized);
+    }
+    let suffix = &sanitized[sanitized.len() - 2..];
+    format!("+***{}", suffix)
+}
+
+fn active_phone_lookup_key(phone_number: &str) -> String {
+    format!(
+        "{}{}",
+        ACTIVE_PHONE_HASH_PREFIX,
+        hash_phone_for_anonymization(phone_number)
+    )
+}
+
+fn phone_hash_from_stored_or_legacy_value(value: &str) -> String {
+    if let Some(existing_hash) = value.strip_prefix(ACTIVE_PHONE_HASH_PREFIX) {
+        return existing_hash.to_owned();
+    }
+    if let Some(existing_hash) = value.strip_prefix(DELETED_PHONE_HASH_PREFIX) {
+        return existing_hash.to_owned();
+    }
+    hash_phone_for_anonymization(value)
+}
+
+fn gdpr_hash_salt_bytes() -> &'static [u8] {
+    GDPR_HASH_SALT
+        .get_or_init(|| {
+            let configured = std::env::var("MGS_GDPR_HASH_SALT")
+                .ok()
+                .map(|raw| raw.trim().to_owned())
+                .filter(|raw| !raw.is_empty());
+            if let Some(raw) = configured {
+                raw.into_bytes()
+            } else {
+                warn!(
+                    "MGS_GDPR_HASH_SALT is not set; using built-in compatibility salt. \
+                     Configure a deployment-specific salt for production."
+                );
+                b"mgs-gdpr-anonymization-salt".to_vec()
+            }
+        })
+        .as_slice()
+}
+
 /// Produce a one-way SHA-256 hash of a phone number for anonymization.
 /// The result is a hex-encoded hash that cannot be reversed to the original
 /// phone number but can be used to detect re-registration from the same phone.
 fn hash_phone_for_anonymization(phone_number: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(phone_number.as_bytes());
-    // Use a fixed salt so the hash is deterministic for the same phone
-    hasher.update(b"mgs-gdpr-anonymization-salt");
+    hasher.update(gdpr_hash_salt_bytes());
     let result = hasher.finalize();
     format!("{:x}", result)
 }
@@ -2097,7 +2286,10 @@ mod tests {
 
         // Next request should be blocked.
         let result = state.try_record(base_time + u64::from(OTP_IP_SHORT_WINDOW_MAX));
-        assert!(result.is_err(), "Should be rate-limited after exceeding short window");
+        assert!(
+            result.is_err(),
+            "Should be rate-limited after exceeding short window"
+        );
         let retry_after = result.unwrap_err();
         assert!(retry_after > 0, "retry_after should be positive");
         assert!(
@@ -2122,26 +2314,26 @@ mod tests {
         assert_eq!(parse_session_cookie(Some("mgs_session=")), None);
     }
 
-        #[test]
-        fn resolve_token_with_cookie_priority() {
-            let query_empty = TokenQuery::default();
-    
-            assert_eq!(
-                resolve_token_with_cookie(
-                    Some("Bearer header_tok"),
-                    &query_empty,
-                    Some("mgs_session=cookie_tok"),
-                ),
-                Some("header_tok".to_owned())
-            );
-    
-            assert_eq!(
-                resolve_token_with_cookie(None, &query_empty, Some("mgs_session=cookie_tok")),
-                Some("cookie_tok".to_owned())
-            );
-    
-            assert_eq!(resolve_token_with_cookie(None, &query_empty, None), None);
-        }
+    #[test]
+    fn resolve_token_with_cookie_priority() {
+        let query_empty = TokenQuery::default();
+
+        assert_eq!(
+            resolve_token_with_cookie(
+                Some("Bearer header_tok"),
+                &query_empty,
+                Some("mgs_session=cookie_tok"),
+            ),
+            Some("header_tok".to_owned())
+        );
+
+        assert_eq!(
+            resolve_token_with_cookie(None, &query_empty, Some("mgs_session=cookie_tok")),
+            Some("cookie_tok".to_owned())
+        );
+
+        assert_eq!(resolve_token_with_cookie(None, &query_empty, None), None);
+    }
 
     #[test]
     fn default_session_ttl_is_24_hours() {
@@ -2178,7 +2370,8 @@ mod tests {
         for i in 0..OTP_IP_LONG_WINDOW_MAX {
             // Space requests every (short_window + 1) seconds so short window resets
             // but long window accumulates.
-            let ts = base_time + u64::from(i) * (OTP_IP_SHORT_WINDOW_SECS / OTP_IP_SHORT_WINDOW_MAX as u64 + 1);
+            let ts = base_time
+                + u64::from(i) * (OTP_IP_SHORT_WINDOW_SECS / OTP_IP_SHORT_WINDOW_MAX as u64 + 1);
             assert!(
                 state.try_record(ts).is_ok(),
                 "Request {} within long window should be allowed",
@@ -2195,7 +2388,10 @@ mod tests {
 
         // Should be blocked by long window.
         let result = state.try_record(next_ts);
-        assert!(result.is_err(), "Should be rate-limited after exceeding long window");
+        assert!(
+            result.is_err(),
+            "Should be rate-limited after exceeding long window"
+        );
     }
 
     #[test]
@@ -2216,9 +2412,16 @@ mod tests {
         let mut fresh_state = OtpIpRateState::new();
         assert!(fresh_state.try_record(base_time).is_ok());
         // Evict by retaining only entries after far_future.
-        fresh_state.short_window_timestamps.retain(|&ts| ts > far_future.saturating_sub(OTP_IP_SHORT_WINDOW_SECS));
-        fresh_state.long_window_timestamps.retain(|&ts| ts > far_future.saturating_sub(OTP_IP_LONG_WINDOW_SECS));
-        assert!(fresh_state.is_empty(), "State should be empty after all entries expire");
+        fresh_state
+            .short_window_timestamps
+            .retain(|&ts| ts > far_future.saturating_sub(OTP_IP_SHORT_WINDOW_SECS));
+        fresh_state
+            .long_window_timestamps
+            .retain(|&ts| ts > far_future.saturating_sub(OTP_IP_LONG_WINDOW_SECS));
+        assert!(
+            fresh_state.is_empty(),
+            "State should be empty after all entries expire"
+        );
     }
 
     #[test]
@@ -2231,9 +2434,13 @@ mod tests {
 
     /// Create a test AuthService with an in-memory store (no Redis, no file).
     fn make_test_auth_service() -> AuthService {
+        let store_path = PathBuf::from(format!(
+            "/tmp/mgs_test_auth_store_{}.json",
+            Uuid::new_v4().simple()
+        ));
         AuthService {
             inner: Arc::new(AuthInner {
-                store_path: PathBuf::from("/tmp/mgs_test_auth_store_nonexistent.json"),
+                store_path,
                 persistent_store: RwLock::new(PersistentAuthStore::default()),
                 redis_cache: None,
                 otp_challenges: DashMap::new(),
@@ -2295,6 +2502,112 @@ mod tests {
             },
         );
         token
+    }
+
+    #[test]
+    fn migrate_persistent_store_hashes_active_phone_and_prunes_invalid_pending_deletions() {
+        let mut store = PersistentAuthStore::default();
+        let now = unix_now();
+        store.users.insert(
+            "active_user".to_owned(),
+            UserRecord {
+                user_id: "active_user".to_owned(),
+                phone_number: "+15551234567".to_owned(),
+                phone_last4: String::new(),
+                display_name: "Active".to_owned(),
+                created_at: now,
+                updated_at: now,
+                last_seen_at: now,
+                matches_played: 1,
+                cumulative_score: 10,
+                best_score: 10,
+                total_kills: 1,
+                total_deaths: 1,
+                last_game_username: None,
+                experience_points: 0,
+                credits: 0,
+                deleted: false,
+            },
+        );
+        store.users.insert(
+            "deleted_user".to_owned(),
+            UserRecord {
+                user_id: "deleted_user".to_owned(),
+                phone_number: "deleted:deadbeef".to_owned(),
+                phone_last4: "0000".to_owned(),
+                display_name: "Deleted".to_owned(),
+                created_at: now,
+                updated_at: now,
+                last_seen_at: now,
+                matches_played: 1,
+                cumulative_score: 10,
+                best_score: 10,
+                total_kills: 1,
+                total_deaths: 1,
+                last_game_username: None,
+                experience_points: 0,
+                credits: 0,
+                deleted: true,
+            },
+        );
+        store.pending_deletions.insert(
+            "active_user".to_owned(),
+            PendingDeletion {
+                user_id: "active_user".to_owned(),
+                requested_at: now,
+                scheduled_deletion_time: now + 60,
+            },
+        );
+        store.pending_deletions.insert(
+            "deleted_user".to_owned(),
+            PendingDeletion {
+                user_id: "deleted_user".to_owned(),
+                requested_at: now,
+                scheduled_deletion_time: now + 60,
+            },
+        );
+        store.pending_deletions.insert(
+            "missing_user".to_owned(),
+            PendingDeletion {
+                user_id: "missing_user".to_owned(),
+                requested_at: now,
+                scheduled_deletion_time: now + 60,
+            },
+        );
+
+        let migrated = migrate_persistent_store(store);
+        let active = migrated.users.get("active_user").expect("active user");
+        assert!(active.phone_number.starts_with("hash:"));
+        assert_eq!(active.phone_last4, "4567");
+        assert!(migrated
+            .phone_to_user_id
+            .contains_key(active.phone_number.as_str()));
+        assert!(migrated.pending_deletions.contains_key("active_user"));
+        assert!(!migrated.pending_deletions.contains_key("deleted_user"));
+        assert!(!migrated.pending_deletions.contains_key("missing_user"));
+    }
+
+    #[test]
+    fn masked_phone_for_hashed_user_uses_last4_suffix() {
+        let user = UserRecord {
+            user_id: "u".to_owned(),
+            phone_number: "hash:1234".to_owned(),
+            phone_last4: "9876".to_owned(),
+            display_name: "d".to_owned(),
+            created_at: 0,
+            updated_at: 0,
+            last_seen_at: 0,
+            matches_played: 0,
+            cumulative_score: 0,
+            best_score: 0,
+            total_kills: 0,
+            total_deaths: 0,
+            last_game_username: None,
+            experience_points: 0,
+            credits: 0,
+            deleted: false,
+        };
+        assert_eq!(masked_phone_for_user(&user), "+***76");
     }
 
     #[test]
@@ -2402,6 +2715,12 @@ mod tests {
 
         // Should be in the queue
         assert!(auth.inner.deletion_queue.contains_key("user1"));
+        assert!(auth
+            .inner
+            .persistent_store
+            .read()
+            .pending_deletions
+            .contains_key("user1"));
     }
 
     #[test]
@@ -2441,6 +2760,12 @@ mod tests {
         let result = auth.cancel_account_deletion("user1").unwrap();
         assert!(result.cancelled);
         assert!(!auth.inner.deletion_queue.contains_key("user1"));
+        assert!(!auth
+            .inner
+            .persistent_store
+            .read()
+            .pending_deletions
+            .contains_key("user1"));
 
         // User should still be intact
         let store = auth.inner.persistent_store.read();
@@ -2506,6 +2831,12 @@ mod tests {
 
         // Queue should be empty
         assert!(!auth.inner.deletion_queue.contains_key("user1"));
+        assert!(!auth
+            .inner
+            .persistent_store
+            .read()
+            .pending_deletions
+            .contains_key("user1"));
     }
 
     #[test]
@@ -2568,6 +2899,9 @@ mod tests {
             scheduled_deletion_time: now + 72 * 3600,
         };
         assert_eq!(pending.user_id, "u1");
-        assert_eq!(pending.scheduled_deletion_time - pending.requested_at, 72 * 3600);
+        assert_eq!(
+            pending.scheduled_deletion_time - pending.requested_at,
+            72 * 3600
+        );
     }
 }

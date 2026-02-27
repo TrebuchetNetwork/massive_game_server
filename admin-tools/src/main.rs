@@ -39,7 +39,9 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Health => health_check(&cli.base_url).await?,
-        Command::Players { limit } => list_recent_players(&cli.base_url, cli.admin_token.as_deref(), limit).await?,
+        Command::Players { limit } => {
+            list_recent_players(&cli.base_url, cli.admin_token.as_deref(), limit).await?
+        }
         Command::Metrics => worker_stats(&cli.base_url, cli.admin_token.as_deref()).await?,
         Command::FeatureFlags => feature_flags(&cli.base_url, cli.admin_token.as_deref()).await?,
     }

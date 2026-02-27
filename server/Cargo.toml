@@ -175,6 +175,10 @@ path = "tests/performance/stress_validation.rs"
 name = "property_tests"
 path = "tests/property_tests.rs"
 
+[[test]]
+name = "http_routes"
+path = "tests/integration/http_routes.rs"
+
 [[bench]]
 name = "physics"
 harness = false

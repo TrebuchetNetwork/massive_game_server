@@ -1,6 +1,6 @@
 use crate::core::types::Wall;
 use parking_lot::RwLock;
-use rstar::{RTree, RTreeObject, AABB, SelectionFunction};
+use rstar::{RTree, RTreeObject, SelectionFunction, AABB};
 use std::sync::Arc;
 
 struct SelectById {
@@ -78,7 +78,12 @@ impl WallSpatialIndex {
         );
     }
 
-    pub fn update_walls(&self, removed_ids: &[crate::core::types::EntityId], added_walls: &[Wall], frame: u64) {
+    pub fn update_walls(
+        &self,
+        removed_ids: &[crate::core::types::EntityId],
+        added_walls: &[Wall],
+        frame: u64,
+    ) {
         if removed_ids.is_empty() && added_walls.is_empty() {
             return;
         }

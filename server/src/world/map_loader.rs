@@ -104,7 +104,11 @@ pub fn load_map_from_json(path: &str) -> Result<LoadedMap> {
         });
     }
 
-    Ok(LoadedMap { walls, pickups, zones })
+    Ok(LoadedMap {
+        walls,
+        pickups,
+        zones,
+    })
 }
 
 fn map_entity_limits() -> (usize, usize) {

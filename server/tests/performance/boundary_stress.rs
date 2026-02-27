@@ -175,7 +175,8 @@ fn setup_test_server() -> MassiveGameServer {
         Arc::new(ThreadPoolSystem::new(config.clone()).expect("Failed to create thread pools"));
     let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
+    let chat_messages_queue: ChatMessagesQueue =
+        Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
     MassiveGameServer::new(

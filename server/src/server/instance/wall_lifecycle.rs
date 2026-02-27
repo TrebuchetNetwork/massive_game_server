@@ -221,7 +221,10 @@ impl MassiveGameServer {
             .unwrap_or(wall_id)
     }
 
-    pub(super) fn clear_progressive_fragments_for_parent(&self, parent_wall_id: EntityId) -> Vec<EntityId> {
+    pub(super) fn clear_progressive_fragments_for_parent(
+        &self,
+        parent_wall_id: EntityId,
+    ) -> Vec<EntityId> {
         if !self.progressive_destructible_enabled {
             return Vec::new();
         }

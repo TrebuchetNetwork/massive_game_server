@@ -52,8 +52,10 @@ mod tests {
 
     #[test]
     fn test_invalid_tick_rate() {
-        let mut config = ServerConfig::default();
-        config.tick_rate = 0;
+        let mut config = ServerConfig {
+            tick_rate: 0,
+            ..ServerConfig::default()
+        };
         assert!(validate_server_config(&config).is_err());
         config.tick_rate = 241;
         assert!(validate_server_config(&config).is_err());
@@ -61,8 +63,13 @@ mod tests {
 
     #[test]
     fn test_invalid_thread_pools() {
-        let mut config = ServerConfig::default();
-        config.thread_pools.physics_threads = 0;
+        let config = ServerConfig {
+            thread_pools: crate::core::config::ThreadPoolConfig {
+                physics_threads: 0,
+                ..crate::core::config::ThreadPoolConfig::default()
+            },
+            ..ServerConfig::default()
+        };
         assert!(validate_server_config(&config).is_err());
     }
 }

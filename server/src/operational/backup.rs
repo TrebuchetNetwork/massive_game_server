@@ -441,6 +441,7 @@ fn unix_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs as stdfs;
 
     #[test]
     fn test_backup_name_for_path() {
@@ -450,7 +451,51 @@ mod tests {
 
     #[test]
     fn test_parse_bool_env_default() {
-        assert_eq!(parse_bool_env("NON_EXISTENT_VAR_123", true), true);
-        assert_eq!(parse_bool_env("NON_EXISTENT_VAR_123", false), false);
+        assert!(parse_bool_env("NON_EXISTENT_VAR_123", true));
+        assert!(!parse_bool_env("NON_EXISTENT_VAR_123", false));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn backup_roundtrip_restores_source_contents() {
+        let test_root = std::env::temp_dir().join(format!(
+            "mgs-backup-roundtrip-{}-{}",
+            std::process::id(),
+            unix_now()
+        ));
+        let source_path = test_root.join("data/auth_store.json");
+        let backup_dir = test_root.join("backups");
+        stdfs::create_dir_all(source_path.parent().expect("source parent"))
+            .expect("create test source directory");
+        stdfs::write(&source_path, r#"{"v":"original"}"#).expect("write original source");
+
+        let manager = BackupManager {
+            inner: Arc::new(BackupConfig {
+                enabled: true,
+                interval_seconds: 1,
+                output_dir: backup_dir.clone(),
+                retention_count: 4,
+                sources: vec![source_path.clone()],
+            }),
+        };
+
+        manager
+            .run_once("roundtrip-test")
+            .await
+            .expect("backup run");
+        stdfs::write(&source_path, r#"{"v":"mutated"}"#).expect("mutate source");
+
+        let restored = manager
+            .restore_latest_backup()
+            .await
+            .expect("restore latest backup");
+        let restored_content = stdfs::read_to_string(&source_path).expect("read restored file");
+
+        assert!(restored
+            .restored_files
+            .iter()
+            .any(|file| file.source == source_path.to_string_lossy()));
+        assert_eq!(restored_content, r#"{"v":"original"}"#);
+
+        let _ = stdfs::remove_dir_all(&test_root);
     }
 }

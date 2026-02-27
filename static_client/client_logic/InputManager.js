@@ -720,6 +720,9 @@ export function createInputManager({
             if (e.key === 'Tab') {
                 e.preventDefault();
                 if (!getOverviewMode()) enterOverviewMode();
+                if (typeof window.toggleScoreboard === 'function') {
+                    window.toggleScoreboard(true);
+                }
             }
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -735,6 +738,9 @@ export function createInputManager({
             if (e.key === 'Tab') {
                 e.preventDefault();
                 if (getOverviewMode()) exitOverviewMode();
+                if (typeof window.toggleScoreboard === 'function') {
+                    window.toggleScoreboard(false);
+                }
             }
         };
 

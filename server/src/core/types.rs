@@ -23,8 +23,7 @@ pub fn generate_entity_id() -> EntityId {
 }
 
 // --- Server-Side Enums ---
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ServerWeaponType {
     #[default]
     Pistol,
@@ -33,7 +32,6 @@ pub enum ServerWeaponType {
     Sniper,
     Melee,
 }
-
 
 // --- PlayerInputData ---
 #[derive(Debug, Clone, PartialEq)]
@@ -272,7 +270,8 @@ impl PlayerState {
         }
         // Reject suspiciously large sequence jumps.
         if self.last_queued_input_sequence > 0
-            && seq > self.last_queued_input_sequence + crate::core::constants::MAX_INPUT_SEQUENCE_GAP
+            && seq
+                > self.last_queued_input_sequence + crate::core::constants::MAX_INPUT_SEQUENCE_GAP
         {
             return false;
         }
@@ -335,7 +334,11 @@ impl PlayerState {
             ServerWeaponType::Sniper => SNIPER_DAMAGE,
             ServerWeaponType::Melee => MELEE_DAMAGE,
         };
-        let multiplier = if damage_boost_active { DAMAGE_BOOST_MULTIPLIER } else { 1.0 };
+        let multiplier = if damage_boost_active {
+            DAMAGE_BOOST_MULTIPLIER
+        } else {
+            1.0
+        };
         (base_damage as f32 * multiplier) as i32
     }
 
@@ -356,21 +359,30 @@ impl PlayerState {
     pub fn record_incoming_damage(&mut self, attacker_id: &PlayerID, damage: i32, now: Instant) {
         use crate::core::constants::ASSIST_WINDOW_SECS;
         // Prune stale entries
-        self.recent_damage_sources.retain(|(_, _, t)| now.duration_since(*t).as_secs_f32() < ASSIST_WINDOW_SECS);
+        self.recent_damage_sources
+            .retain(|(_, _, t)| now.duration_since(*t).as_secs_f32() < ASSIST_WINDOW_SECS);
         // Update existing or push new
-        if let Some(entry) = self.recent_damage_sources.iter_mut().find(|(id, _, _)| id == attacker_id) {
+        if let Some(entry) = self
+            .recent_damage_sources
+            .iter_mut()
+            .find(|(id, _, _)| id == attacker_id)
+        {
             entry.1 += damage;
             entry.2 = now;
         } else {
-            self.recent_damage_sources.push((attacker_id.clone(), damage, now));
+            self.recent_damage_sources
+                .push((attacker_id.clone(), damage, now));
         }
     }
 
     /// Get assist candidates (everyone who damaged this player in the window, excluding the killer)
     pub fn get_assist_ids(&self, killer_id: &PlayerID, now: Instant) -> Vec<PlayerID> {
         use crate::core::constants::ASSIST_WINDOW_SECS;
-        self.recent_damage_sources.iter()
-            .filter(|(id, _, t)| id != killer_id && now.duration_since(*t).as_secs_f32() < ASSIST_WINDOW_SECS)
+        self.recent_damage_sources
+            .iter()
+            .filter(|(id, _, t)| {
+                id != killer_id && now.duration_since(*t).as_secs_f32() < ASSIST_WINDOW_SECS
+            })
             .map(|(id, _, _)| id.clone())
             .collect()
     }
@@ -572,11 +584,13 @@ impl PlayerState {
             changed_powerups = true;
         }
         if self.streak_damage_boost_remaining > 0.0 {
-            self.streak_damage_boost_remaining = (self.streak_damage_boost_remaining - delta_time).max(0.0);
+            self.streak_damage_boost_remaining =
+                (self.streak_damage_boost_remaining - delta_time).max(0.0);
             changed_powerups = true;
         }
         if self.streak_speed_boost_remaining > 0.0 {
-            self.streak_speed_boost_remaining = (self.streak_speed_boost_remaining - delta_time).max(0.0);
+            self.streak_speed_boost_remaining =
+                (self.streak_speed_boost_remaining - delta_time).max(0.0);
             changed_powerups = true;
         }
         if self.weapon_swap_progress > 0.0 {
@@ -1406,7 +1420,10 @@ mod tests {
         let mut p = make_player("p1");
         p.streak_damage_boost_remaining = 10.0;
         let mult = p.effective_damage_multiplier();
-        assert!((mult - crate::core::constants::KILLSTREAK_DAMAGE_BOOST_MULTIPLIER).abs() < f32::EPSILON);
+        assert!(
+            (mult - crate::core::constants::KILLSTREAK_DAMAGE_BOOST_MULTIPLIER).abs()
+                < f32::EPSILON
+        );
     }
 
     #[test]
@@ -1514,10 +1531,7 @@ mod tests {
     // kill events when multiple projectiles hit the same player in one tick.
 
     /// Simulates the local health tracker pattern: tracks (health, shield, already_dead).
-    fn simulate_health_tracker_hit(
-        tracker: &mut (i32, i32, bool),
-        damage: i32,
-    ) -> bool {
+    fn simulate_health_tracker_hit(tracker: &mut (i32, i32, bool), damage: i32) -> bool {
         if tracker.2 {
             return false; // already dead from earlier hit this tick
         }

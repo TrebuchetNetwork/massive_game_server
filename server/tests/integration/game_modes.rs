@@ -6,7 +6,9 @@ use massive_game_server_core::core::config::ServerConfig;
 use massive_game_server_core::core::constants::{POINTS_FLAG_CAPTURE, POINTS_FLAG_RETURN};
 use massive_game_server_core::core::types::{PlayerAoIs, PlayerID, Vec2};
 use massive_game_server_core::flatbuffers_generated::game_protocol as fb;
-use massive_game_server_core::network::signaling::{BoundedChatQueue, ChatMessagesQueue, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE};
+use massive_game_server_core::network::signaling::{
+    BoundedChatQueue, ChatMessagesQueue, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE,
+};
 use massive_game_server_core::server::instance::MassiveGameServer;
 
 use dashmap::DashMap;
@@ -21,7 +23,8 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
         Arc::new(ThreadPoolSystem::new(config.clone()).expect("Failed to create thread pools"));
     let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_queue: ChatMessagesQueue = Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
+    let chat_messages_queue: ChatMessagesQueue =
+        Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
     let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
     Arc::new(MassiveGameServer::new(

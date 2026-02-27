@@ -157,10 +157,7 @@ mod tests {
         manager.upsert(info);
 
         // Should be stale before touch
-        assert_eq!(
-            manager.stale_peer_ids(Duration::from_secs(120)).len(),
-            1
-        );
+        assert_eq!(manager.stale_peer_ids(Duration::from_secs(120)).len(), 1);
 
         // After touch, should no longer be stale
         manager.touch("peer1");

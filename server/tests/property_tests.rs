@@ -7,19 +7,18 @@
 use proptest::prelude::*;
 
 use massive_game_server_core::core::constants::{
-    quantize_position, quantize_velocity, quantize_rotation,
-    QUANTIZE_POSITION_MIN, QUANTIZE_POSITION_MAX, QUANTIZE_VELOCITY_MAX,
-    AOI_RADIUS, AOI_EXIT_RADIUS, AOI_UPDATE_DIVISOR_DEFAULT,
-    PISTOL_DAMAGE, SHOTGUN_DAMAGE, RIFLE_DAMAGE, SNIPER_DAMAGE, MELEE_DAMAGE,
-    PISTOL_FIRE_RATE_SECS, SHOTGUN_FIRE_RATE_SECS, RIFLE_FIRE_RATE_SECS,
-    SNIPER_FIRE_RATE_SECS, MELEE_FIRE_RATE_SECS,
-    MIN_SHOT_INTERVAL_SECONDS, FIRE_RATE_JITTER_TOLERANCE_SECS,
+    quantize_position, quantize_rotation, quantize_velocity, AOI_EXIT_RADIUS, AOI_RADIUS,
+    AOI_UPDATE_DIVISOR_DEFAULT, FIRE_RATE_JITTER_TOLERANCE_SECS, MELEE_DAMAGE,
+    MELEE_FIRE_RATE_SECS, MIN_SHOT_INTERVAL_SECONDS, PISTOL_DAMAGE, PISTOL_FIRE_RATE_SECS,
+    QUANTIZE_POSITION_MAX, QUANTIZE_POSITION_MIN, QUANTIZE_VELOCITY_MAX, RIFLE_DAMAGE,
+    RIFLE_FIRE_RATE_SECS, SHOTGUN_DAMAGE, SHOTGUN_FIRE_RATE_SECS, SNIPER_DAMAGE,
+    SNIPER_FIRE_RATE_SECS,
 };
 use massive_game_server_core::core::types::{PlayerState, ServerWeaponType};
-use massive_game_server_core::systems::combat::weapons::{
-    apply_distance_falloff, distance_damage_multiplier, profile, falloff_profile,
-};
 use massive_game_server_core::memory::arena::Arena;
+use massive_game_server_core::systems::combat::weapons::{
+    apply_distance_falloff, distance_damage_multiplier, falloff_profile, profile,
+};
 
 // ════════════════════════════════════════════════════════════════════
 // 1. Position quantization roundtrip

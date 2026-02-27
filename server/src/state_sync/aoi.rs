@@ -1,6 +1,6 @@
 // massive_game_server/server/src/state_sync/aoi.rs
 
-use crate::core::constants::{AOI_RADIUS, AOI_EXIT_RADIUS};
+use crate::core::constants::{AOI_EXIT_RADIUS, AOI_RADIUS};
 use crate::core::math::squared_distance_2d;
 use crate::core::types::EntityId;
 use std::collections::HashSet;

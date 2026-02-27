@@ -20,13 +20,12 @@ impl MassiveGameServer {
                     server_clone.process_network_input().await;
                 })
                 .await;
-                if result.is_err()
-                    && frame.is_multiple_of(60) {
-                        warn!(
-                            "[Frame {}] Task '{}' timed out after {}ms",
-                            frame, task_name, NET_IO_TIMEOUT_MS
-                        );
-                    }
+                if result.is_err() && frame.is_multiple_of(60) {
+                    warn!(
+                        "[Frame {}] Task '{}' timed out after {}ms",
+                        frame, task_name, NET_IO_TIMEOUT_MS
+                    );
+                }
                 trace!("[Frame {}] Finished task: {}", frame, task_name);
             }
         });
@@ -46,13 +45,12 @@ impl MassiveGameServer {
                         server_clone.run_ai_update().await;
                     })
                     .await;
-                    if result.is_err()
-                        && frame.is_multiple_of(60) {
-                            warn!(
-                                "[Frame {}] Task '{}' timed out after {}ms",
-                                frame, task_name, AI_TIMEOUT_MS
-                            );
-                        }
+                    if result.is_err() && frame.is_multiple_of(60) {
+                        warn!(
+                            "[Frame {}] Task '{}' timed out after {}ms",
+                            frame, task_name, AI_TIMEOUT_MS
+                        );
+                    }
                     trace!("[Frame {}] Finished task: {}", frame, task_name);
                 }
             });
@@ -206,13 +204,12 @@ impl MassiveGameServer {
             broadcast_timed_out_flag
         );
 
-        if broadcast_timed_out_flag
-            && frame.is_multiple_of(60) {
-                error!(
-                    "[Frame {}] Broadcast stage timed out after {}ms (actual: {:?})",
-                    frame, FAN_OUT_TIMEOUT_MS, broadcast_elapsed_duration
-                );
-            }
+        if broadcast_timed_out_flag && frame.is_multiple_of(60) {
+            error!(
+                "[Frame {}] Broadcast stage timed out after {}ms (actual: {:?})",
+                frame, FAN_OUT_TIMEOUT_MS, broadcast_elapsed_duration
+            );
+        }
         let _stage3_elapsed = stage3_start.elapsed();
         self.capture_live_replay_frame(frame);
 
@@ -224,9 +221,10 @@ impl MassiveGameServer {
         let total_tick_processing_elapsed = tick_started.elapsed();
 
         if total_tick_processing_elapsed > Duration::from_millis(TARGET_TICK_MS + 4)
-            && frame.is_multiple_of(10) {
-                warn!(
-                    "Frame {} timing breakdown:\n\
+            && frame.is_multiple_of(10)
+        {
+            warn!(
+                "Frame {} timing breakdown:\n\
                      Total: {:.2}ms\n\
                      - Input/AI (Stage 1): {:.2}ms\n\
                      - Physics (Stage 2a): {:.2}ms\n\
@@ -234,27 +232,28 @@ impl MassiveGameServer {
                      - State Sync (Stage 3a): {:.2}ms\n\
                      - Broadcast (Stage 3b): {:.2}ms (timed_out: {})\n\
                      (Target Tick: {}ms)",
-                    frame,
-                    total_tick_processing_elapsed.as_secs_f32() * 1000.0,
-                    stage1_elapsed.as_secs_f32() * 1000.0,
-                    physics_elapsed.as_secs_f32() * 1000.0,
-                    game_logic_elapsed.as_secs_f32() * 1000.0,
-                    sync_elapsed.as_secs_f32() * 1000.0,
-                    broadcast_elapsed_duration.as_secs_f32() * 1000.0,
-                    broadcast_timed_out_flag,
-                    TARGET_TICK_MS
-                );
-            }
+                frame,
+                total_tick_processing_elapsed.as_secs_f32() * 1000.0,
+                stage1_elapsed.as_secs_f32() * 1000.0,
+                physics_elapsed.as_secs_f32() * 1000.0,
+                game_logic_elapsed.as_secs_f32() * 1000.0,
+                sync_elapsed.as_secs_f32() * 1000.0,
+                broadcast_elapsed_duration.as_secs_f32() * 1000.0,
+                broadcast_timed_out_flag,
+                TARGET_TICK_MS
+            );
+        }
 
         if total_tick_processing_elapsed > Duration::from_millis(TARGET_TICK_MS)
-            && frame.is_multiple_of(60) {
-                warn!(
-                    ?frame,
-                    ms = total_tick_processing_elapsed.as_micros() as f64 / 1000.0,
-                    target = TARGET_TICK_MS,
-                    "Tick processing WORK exceeded hard budget (game_loop will log wall-clock overrun)"
-                );
-            }
+            && frame.is_multiple_of(60)
+        {
+            warn!(
+                ?frame,
+                ms = total_tick_processing_elapsed.as_micros() as f64 / 1000.0,
+                target = TARGET_TICK_MS,
+                "Tick processing WORK exceeded hard budget (game_loop will log wall-clock overrun)"
+            );
+        }
 
         Ok(())
     }

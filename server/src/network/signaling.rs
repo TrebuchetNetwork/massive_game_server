@@ -32,7 +32,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::{mpsc, Mutex as AsyncMutex, OwnedSemaphorePermit, RwLock, Semaphore};
-use tracing::{debug, error, info, warn};
+use tokio::time::MissedTickBehavior;
+use tracing::{debug, error, info, trace, warn};
 use warp::ws::{Message, WebSocket};
 use webrtc::{
     api::{media_engine::MediaEngine, APIBuilder, API},
@@ -84,7 +85,10 @@ impl Drop for PeerConnectionDropGuard {
             let pid = self.peer_id.clone();
             tokio::spawn(async move {
                 if let Err(e) = pc.close().await {
-                    error!("[{}]: Error closing PeerConnection in drop guard: {}", pid, e);
+                    error!(
+                        "[{}]: Error closing PeerConnection in drop guard: {}",
+                        pid, e
+                    );
                 } else {
                     info!("[{}]: PeerConnection closed via drop guard.", pid);
                 }
@@ -493,8 +497,17 @@ pub fn generate_turn_hmac_credentials(shared_secret: &str, suffix: &str) -> (Str
         + TURN_CREDENTIAL_TTL_SECS;
     let username = format!("{expiry}:{suffix}");
 
-    let mut mac =
-        HmacSha1::new_from_slice(shared_secret.as_bytes()).expect("HMAC accepts any key length");
+    let mut mac = match HmacSha1::new_from_slice(shared_secret.as_bytes()) {
+        Ok(mac) => mac,
+        Err(err) => {
+            warn!(
+                "Failed to initialize TURN HMAC generator (secret length={}): {}",
+                shared_secret.len(),
+                err
+            );
+            return (username, String::new());
+        }
+    };
     mac.update(username.as_bytes());
     let result = mac.finalize();
     let credential = base64::engine::general_purpose::STANDARD.encode(result.into_bytes());
@@ -661,6 +674,9 @@ const MAX_SIGNALING_ICE_CANDIDATE_BYTES: usize = 4 * 1024;
 const MAX_SIGNALING_ICE_SDP_MID_BYTES: usize = 256;
 const MAX_SIGNALING_ICE_USERNAME_FRAGMENT_BYTES: usize = 256;
 const SIGNALING_OUTBOX_CAPACITY: usize = 1000;
+const DEFAULT_WS_KEEPALIVE_INTERVAL_SECS: u32 = 30;
+const MIN_WS_KEEPALIVE_INTERVAL_SECS: u32 = 5;
+const MAX_WS_KEEPALIVE_INTERVAL_SECS: u32 = 300;
 /// Maximum allowed size for incoming FlatBuffer messages on data channels.
 /// Messages exceeding this are dropped to prevent OOM from oversized payloads.
 const MAX_DATACHANNEL_MESSAGE_BYTES: usize = 1024 * 1024; // 1 MB
@@ -809,6 +825,45 @@ fn env_u32(name: &str, default_value: u32) -> u32 {
         .ok()
         .and_then(|value| value.trim().parse::<u32>().ok())
         .unwrap_or(default_value)
+}
+
+fn normalize_ws_keepalive_interval_secs(interval_secs: u32) -> Option<u32> {
+    if interval_secs == 0 {
+        None
+    } else {
+        Some(interval_secs.clamp(
+            MIN_WS_KEEPALIVE_INTERVAL_SECS,
+            MAX_WS_KEEPALIVE_INTERVAL_SECS,
+        ))
+    }
+}
+
+fn ws_keepalive_interval() -> Option<Duration> {
+    static WS_KEEPALIVE_INTERVAL: OnceLock<Option<Duration>> = OnceLock::new();
+    *WS_KEEPALIVE_INTERVAL.get_or_init(|| {
+        let raw = env_u32(
+            "MGS_WS_KEEPALIVE_INTERVAL_SECS",
+            DEFAULT_WS_KEEPALIVE_INTERVAL_SECS,
+        );
+        let normalized = normalize_ws_keepalive_interval_secs(raw);
+        match normalized {
+            Some(secs) if secs != raw => {
+                warn!(
+                    "WebSocket keepalive interval clamped from {}s to {}s.",
+                    raw, secs
+                );
+                Some(Duration::from_secs(secs as u64))
+            }
+            Some(secs) => {
+                info!("WebSocket keepalive pings enabled every {}s.", secs);
+                Some(Duration::from_secs(secs as u64))
+            }
+            None => {
+                info!("WebSocket keepalive pings disabled (MGS_WS_KEEPALIVE_INTERVAL_SECS=0).");
+                None
+            }
+        }
+    })
 }
 
 fn join_rate_limiter() -> Option<&'static StdMutex<JoinRateLimiter>> {
@@ -1110,6 +1165,36 @@ pub async fn handle_signaling_connection(
         info!("[{}]: Signaling forwarder task ended.", peer_id_fwd);
     });
 
+    if let Some(keepalive_interval) = ws_keepalive_interval() {
+        let keepalive_sender = client_signaling_tx.clone();
+        let keepalive_peer_id = peer_id_str.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(keepalive_interval);
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            // The first tick is immediate for tokio intervals; discard it.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                match keepalive_sender.try_send(Ok(Message::ping(Vec::new()))) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        debug!(
+                            "[{}]: Signaling keepalive skipped because outbox is full.",
+                            keepalive_peer_id
+                        );
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        debug!(
+                            "[{}]: Stopping signaling keepalive loop (outbox closed).",
+                            keepalive_peer_id
+                        );
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     let api = match shared_webrtc_api() {
         Ok(api) => api,
         Err(e) => {
@@ -1193,10 +1278,8 @@ pub async fn handle_signaling_connection(
 
     // Safety net: if this task is cancelled/aborted, the drop guard ensures
     // the peer connection is closed to avoid resource leaks.
-    let mut pc_drop_guard = PeerConnectionDropGuard::new(
-        Arc::clone(&peer_connection),
-        peer_id_str.clone(),
-    );
+    let mut pc_drop_guard =
+        PeerConnectionDropGuard::new(Arc::clone(&peer_connection), peer_id_str.clone());
 
     let pc_for_ice = Arc::clone(&peer_connection);
     let ice_sender_clone = client_signaling_tx.clone();
@@ -1666,7 +1749,9 @@ pub async fn handle_signaling_connection(
                                             player_id: player_id_arc_for_chat,
                                             username: sanitized_username,
                                             message: sanitized_message,
-                                            timestamp: chat_fb.timestamp().max(now_millis()),
+                                            // Use server authoritative wall-clock timestamp to
+                                            // prevent client-side future timestamp spoofing.
+                                            timestamp: now_millis(),
                                         };
                                         info!(
                                             "[CHAT] {} ({}): {}",
@@ -1818,6 +1903,18 @@ pub async fn handle_signaling_connection(
                 } else if msg.is_close() {
                     info!("[{}]: WebSocket closed by client.", current_peer_id_ws);
                     break;
+                } else if msg.is_ping() {
+                    let payload = msg.as_bytes().to_vec();
+                    if !try_queue_signaling_message(
+                        &ws_signal_sender_clone,
+                        Ok(Message::pong(payload)),
+                        &current_peer_id_ws,
+                        "ws_pong",
+                    ) {
+                        break;
+                    }
+                } else if msg.is_pong() {
+                    trace!("[{}]: WebSocket pong received.", current_peer_id_ws);
                 }
             }
             Err(e) => {
@@ -1919,8 +2016,18 @@ mod tests {
 
     #[test]
     fn datachannel_message_limit_is_reasonable() {
-        const { assert!(MAX_DATACHANNEL_MESSAGE_BYTES >= 64 * 1024, "limit too small for game messages") };
-        const { assert!(MAX_DATACHANNEL_MESSAGE_BYTES <= 8 * 1024 * 1024, "limit too large to be protective") };
+        const {
+            assert!(
+                MAX_DATACHANNEL_MESSAGE_BYTES >= 64 * 1024,
+                "limit too small for game messages"
+            )
+        };
+        const {
+            assert!(
+                MAX_DATACHANNEL_MESSAGE_BYTES <= 8 * 1024 * 1024,
+                "limit too large to be protective"
+            )
+        };
     }
 
     #[test]
@@ -2366,14 +2473,8 @@ mod tests {
             webrtc_state_label(RTCPeerConnectionState::Disconnected),
             "disconnected"
         );
-        assert_eq!(
-            webrtc_state_label(RTCPeerConnectionState::Failed),
-            "failed"
-        );
-        assert_eq!(
-            webrtc_state_label(RTCPeerConnectionState::Closed),
-            "closed"
-        );
+        assert_eq!(webrtc_state_label(RTCPeerConnectionState::Failed), "failed");
+        assert_eq!(webrtc_state_label(RTCPeerConnectionState::Closed), "closed");
     }
 
     // ── env_bool tests ──────────────────────────────────────────────
@@ -2390,6 +2491,28 @@ mod tests {
     fn env_u32_returns_default_for_unset_variable() {
         let result = env_u32("MGS_TEST_UNLIKELY_ENV_U32_NEVER_SET", 42);
         assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn ws_keepalive_interval_zero_disables_keepalive() {
+        assert_eq!(normalize_ws_keepalive_interval_secs(0), None);
+    }
+
+    #[test]
+    fn ws_keepalive_interval_clamps_to_bounds() {
+        assert_eq!(
+            normalize_ws_keepalive_interval_secs(1),
+            Some(MIN_WS_KEEPALIVE_INTERVAL_SECS)
+        );
+        assert_eq!(
+            normalize_ws_keepalive_interval_secs(600),
+            Some(MAX_WS_KEEPALIVE_INTERVAL_SECS)
+        );
+    }
+
+    #[test]
+    fn ws_keepalive_interval_keeps_in_range_values() {
+        assert_eq!(normalize_ws_keepalive_interval_secs(30), Some(30));
     }
 
     // ── SignalingMessageJson serde tests ─────────────────────────────
@@ -2495,7 +2618,10 @@ mod tests {
         // Even if timestamps happen to match, different secrets produce different credentials.
         // There is a negligible chance of collision, but practically impossible for HMAC-SHA1.
         if u1.split(':').next() == _u2.split(':').next() {
-            assert_ne!(c1, c2, "different secrets must produce different credentials");
+            assert_ne!(
+                c1, c2,
+                "different secrets must produce different credentials"
+            );
         }
     }
 
@@ -2503,7 +2629,10 @@ mod tests {
     fn generate_turn_hmac_credentials_different_suffixes_differ() {
         let (u1, c1) = generate_turn_hmac_credentials("secret", "player_a");
         let (u2, c2) = generate_turn_hmac_credentials("secret", "player_b");
-        assert_ne!(u1, u2, "different suffixes must produce different usernames");
+        assert_ne!(
+            u1, u2,
+            "different suffixes must produce different usernames"
+        );
         // Credentials will differ because the username (HMAC input) differs.
         assert_ne!(
             c1, c2,
@@ -2521,8 +2650,7 @@ mod tests {
             .decode(&credential)
             .unwrap();
 
-        let mut mac =
-            HmacSha1::new_from_slice(secret.as_bytes()).unwrap();
+        let mut mac = HmacSha1::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(username.as_bytes());
         // verify() consumes the mac and checks against the expected bytes
         mac.verify_slice(&decoded)

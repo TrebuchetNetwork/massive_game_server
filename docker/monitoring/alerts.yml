@@ -1,0 +1,26 @@
+groups:
+  - name: game-server-alerts
+    rules:
+      - alert: GameServerDown
+        expr: up{job="game-server"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Game server metrics endpoint is down"
+
+      - alert: LowFrameRate
+        expr: rate(game_frames_total[30s]) < 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Game frame rate dropped below 50 FPS"
+
+      - alert: HighMemoryRss
+        expr: game_memory_rss_bytes > 3000000000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Game server RSS is above 3GB"

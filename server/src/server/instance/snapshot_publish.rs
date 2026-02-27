@@ -27,8 +27,7 @@ impl MassiveGameServer {
         drop(projectiles_guard);
 
         let pickups_guard = self.pickups.read();
-        self.pickup_soa_snapshot
-            .publish_from_slice(&pickups_guard);
+        self.pickup_soa_snapshot.publish_from_slice(&pickups_guard);
     }
     pub(super) fn publish_player_aoi_snapshot_if_enabled(&self) {
         if !join_authoritative_aoi_snapshot_enabled() {

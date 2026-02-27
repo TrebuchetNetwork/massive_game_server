@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: massive-game-server
+  labels:
+    app: massive-game-server
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: massive-game-server

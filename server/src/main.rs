@@ -4,10 +4,11 @@ use ipnet::IpNet;
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
 use massive_game_server_core::core::types::{PlayerAoI, PlayerInputData};
-use massive_game_server_core::network::quic::{
-    connected_quic_peer_count, start_quic_runtime_from_env_with_handler, QuicRequestHandler,
-};
 use massive_game_server_core::network::connection_manager::shared_connection_manager;
+use massive_game_server_core::network::quic::{
+    connected_quic_peer_count, register_quic_disconnect_hook,
+    start_quic_runtime_from_env_with_handler, QuicRequestHandler,
+};
 use massive_game_server_core::network::signaling::{
     cleanup_connection,
     handle_signaling_connection,
@@ -45,7 +46,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -254,6 +255,19 @@ struct OriginRejection;
 
 impl warp::reject::Reject for OriginRejection {}
 
+/// Rejection returned when WebSocket upgrades arrive over an insecure transport in production mode.
+#[derive(Debug)]
+struct TransportSecurityRejection;
+
+impl warp::reject::Reject for TransportSecurityRejection {}
+
+/// Rejection returned when the server has reached its WebSocket signaling
+/// connection capacity.
+#[derive(Debug)]
+struct ConnectionLimitRejection;
+
+impl warp::reject::Reject for ConnectionLimitRejection {}
+
 fn parse_bearer_token(authorization_header: Option<&str>) -> Option<String> {
     let raw = authorization_header?.trim();
     if raw.is_empty() {
@@ -331,9 +345,7 @@ fn is_allowed_ws_origin(
 
     // Same-origin check: compare against the Host header of the request.
     if let Some(host_value) = host {
-        if !host_value.is_empty()
-            && origin_host.eq_ignore_ascii_case(host_value)
-        {
+        if !host_value.is_empty() && origin_host.eq_ignore_ascii_case(host_value) {
             return true;
         }
     }
@@ -392,23 +404,63 @@ fn admin_ip_allowed(ip_allowlist: &[IpNet], source_ip: IpAddr) -> bool {
     ip_allowlist.iter().any(|cidr| cidr.contains(&source_ip))
 }
 
+#[derive(Clone)]
+struct TrustedProxyConfig {
+    cidrs: Vec<IpNet>,
+    explicit: bool,
+}
+
+fn trusted_proxy_config() -> &'static TrustedProxyConfig {
+    static CONFIG: OnceLock<TrustedProxyConfig> = OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let configured = parse_list_env("MGS_TRUSTED_PROXY_CIDRS");
+        if configured.is_empty() {
+            let defaults = [
+                "127.0.0.1/32",
+                "::1/128",
+                "10.0.0.0/8",
+                "172.16.0.0/12",
+                "192.168.0.0/16",
+            ];
+            let cidrs = defaults
+                .iter()
+                .filter_map(|entry| entry.parse::<IpNet>().ok())
+                .collect();
+            return TrustedProxyConfig {
+                cidrs,
+                explicit: false,
+            };
+        }
+
+        let mut cidrs = Vec::new();
+        for entry in configured {
+            if let Ok(cidr) = entry.parse::<IpNet>() {
+                cidrs.push(cidr);
+                continue;
+            }
+            if let Ok(ip) = entry.parse::<IpAddr>() {
+                cidrs.push(IpNet::from(ip));
+                continue;
+            }
+            warn!(
+                "Skipping invalid trusted proxy entry '{}'. Expected IP or CIDR.",
+                entry
+            );
+        }
+        cidrs.sort_by_key(|a| a.to_string());
+        cidrs.dedup_by(|a, b| a == b);
+        TrustedProxyConfig {
+            cidrs,
+            explicit: true,
+        }
+    })
+}
+
 fn is_trusted_proxy(ip: IpAddr) -> bool {
-    use std::net::Ipv6Addr;
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.octets()[0] == 10
-                || (v4.octets()[0] == 172 && (v4.octets()[1] & 0xf0) == 16)
-                || (v4.octets()[0] == 192 && v4.octets()[1] == 168)
-        }
-        IpAddr::V6(v6) => {
-            v6 == Ipv6Addr::LOCALHOST
-                || match v6.to_ipv4_mapped() {
-                    Some(v4) => is_trusted_proxy(IpAddr::V4(v4)),
-                    None => false,
-                }
-        }
-    }
+    trusted_proxy_config()
+        .cidrs
+        .iter()
+        .any(|cidr| cidr.contains(&ip))
 }
 
 fn env_flag(var_name: &str) -> bool {
@@ -516,6 +568,31 @@ async fn handle_route_rejection(rejection: warp::Rejection) -> Result<impl Reply
         return Ok(warp::reply::with_status(body, StatusCode::FORBIDDEN));
     }
 
+    if rejection.find::<TransportSecurityRejection>().is_some() {
+        let body = warp::reply::json(&serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "insecure_transport",
+                "message": "WebSocket upgrade rejected: HTTPS/WSS transport required."
+            }
+        }));
+        return Ok(warp::reply::with_status(body, StatusCode::FORBIDDEN));
+    }
+
+    if rejection.find::<ConnectionLimitRejection>().is_some() {
+        let body = warp::reply::json(&serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "connection_limit_reached",
+                "message": "Server connection limit reached. Please retry shortly."
+            }
+        }));
+        return Ok(warp::reply::with_status(
+            body,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ));
+    }
+
     if let Some(admin_rejection) = rejection.find::<AdminAuthRejection>() {
         let body = warp::reply::json(&serde_json::json!({
             "ok": false,
@@ -609,8 +686,7 @@ fn static_cache_control_for_path(path: &Path) -> &'static str {
 fn parse_forwarded_for_ip(raw: &str) -> Option<IpAddr> {
     raw.split(',')
         .map(str::trim)
-        .filter(|candidate| !candidate.is_empty())
-        .last()
+        .rfind(|candidate| !candidate.is_empty())
         .and_then(|candidate| candidate.parse::<IpAddr>().ok())
 }
 
@@ -722,8 +798,9 @@ async fn main() -> anyhow::Result<()> {
 
     let data_channels_state: DataChannelsMap = Arc::new(DashMap::new());
     let client_states_state: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_state: ChatMessagesQueue =
-        Arc::new(tokio::sync::RwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
+    let chat_messages_state: ChatMessagesQueue = Arc::new(tokio::sync::RwLock::new(
+        BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE),
+    ));
     let player_aois_state: Arc<DashMap<String, PlayerAoI>> = Arc::new(DashMap::new());
 
     let game_server_instance: ServerInstanceRef = Arc::new(MassiveGameServer::new(
@@ -742,10 +819,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if env_flag("MGS_DIAGNOSTICS_ENABLED") {
+        let watchdog_check_ms = parse_u64_env("MGS_FRAME_WATCHDOG_CHECK_MS", 200).max(50);
+        let watchdog_stale_ms = parse_u64_env("MGS_FRAME_WATCHDOG_STALE_MS", 200).max(100);
         deadlock::spawn_frame_progress_watchdog(
             game_server_instance.frame_counter.clone(),
-            std::time::Duration::from_secs(1),
-            std::time::Duration::from_secs(10),
+            std::time::Duration::from_millis(watchdog_check_ms),
+            std::time::Duration::from_millis(watchdog_stale_ms),
         );
         heap_profiler::spawn_heap_snapshot_logger(std::time::Duration::from_secs(30));
         info!("Background diagnostics enabled.");
@@ -968,11 +1047,28 @@ async fn main() -> anyhow::Result<()> {
     let behind_tls_proxy = env_flag("MGS_BEHIND_TLS_PROXY");
     let ws_dev_mode = env_flag("MGS_DEV_MODE");
     let ws_allowed_origins: Arc<Vec<String>> = Arc::new(parse_list_env("MGS_ALLOWED_ORIGINS"));
+    let enforce_secure_ws_transport =
+        behind_tls_proxy && !ws_dev_mode && !env_flag("MGS_ALLOW_INSECURE_WS_PROXY_PROTO");
+    let proxy_config = trusted_proxy_config().clone();
     if behind_tls_proxy {
         info!("MGS_BEHIND_TLS_PROXY enabled: HSTS headers will be added to HTTP responses.");
     }
+    if enforce_secure_ws_transport {
+        info!("WebSocket transport enforcement enabled: X-Forwarded-Proto must be 'https'.");
+    }
     if ws_dev_mode {
         info!("MGS_DEV_MODE enabled: localhost/127.0.0.1 WebSocket origins are permitted.");
+    }
+    if proxy_config.explicit {
+        info!(
+            "Trusted proxy CIDR allowlist configured explicitly ({} entries).",
+            proxy_config.cidrs.len()
+        );
+    } else {
+        warn!(
+            "Using broad default trusted proxy ranges (loopback + RFC1918). Set \
+             MGS_TRUSTED_PROXY_CIDRS for production-tight proxy trust."
+        );
     }
     if !ws_allowed_origins.is_empty() {
         info!(
@@ -987,13 +1083,23 @@ async fn main() -> anyhow::Result<()> {
         .and_then(move |headers: HeaderMap| {
             let allowed = ws_allowed_origins_for_filter.clone();
             let dev = ws_dev_mode;
+            let enforce_secure_transport = enforce_secure_ws_transport;
             async move {
-                let origin = headers
-                    .get("origin")
-                    .and_then(|v| v.to_str().ok());
-                let host = headers
-                    .get("host")
-                    .and_then(|v| v.to_str().ok());
+                if enforce_secure_transport {
+                    let forwarded_proto = headers
+                        .get("x-forwarded-proto")
+                        .and_then(|v| v.to_str().ok())
+                        .map(|v| v.trim().to_ascii_lowercase());
+                    if forwarded_proto.as_deref() != Some("https") {
+                        warn!(
+                            "WebSocket upgrade rejected due to insecure forwarded proto: {:?}",
+                            forwarded_proto
+                        );
+                        return Err(warp::reject::custom(TransportSecurityRejection));
+                    }
+                }
+                let origin = headers.get("origin").and_then(|v| v.to_str().ok());
+                let host = headers.get("host").and_then(|v| v.to_str().ok());
                 if is_allowed_ws_origin(origin, host, &allowed, dev) {
                     Ok(())
                 } else {
@@ -1003,6 +1109,28 @@ async fn main() -> anyhow::Result<()> {
                     );
                     Err(warp::reject::custom(OriginRejection))
                 }
+            }
+        })
+        .untuple_one();
+    let max_ws_connections = parse_u64_env(
+        "MGS_MAX_CONCURRENT_CONNECTIONS",
+        game_server_instance.effective_max_players() as u64,
+    )
+    .max(1) as usize;
+    info!("WebSocket signaling connection cap: {}", max_ws_connections);
+    let ws_connection_cap_peers = signaling_peers_state.clone();
+    let ws_connection_cap_filter = warp::any()
+        .and(warp::any().map(move || ws_connection_cap_peers.clone()))
+        .and_then(move |peers: SignalingPeers| async move {
+            if peers.len() >= max_ws_connections {
+                warn!(
+                    "WebSocket upgrade rejected: connection cap reached (active={}, cap={})",
+                    peers.len(),
+                    max_ws_connections
+                );
+                Err(warp::reject::custom(ConnectionLimitRejection))
+            } else {
+                Ok(())
             }
         })
         .untuple_one();
@@ -1023,6 +1151,7 @@ async fn main() -> anyhow::Result<()> {
 
     let signaling_route_ws = warp::path("ws")
         .and(origin_check_filter)
+        .and(ws_connection_cap_filter)
         .and(warp::ws())
         .and(
             warp::query::<WsAuthQuery>()
@@ -1066,13 +1195,8 @@ async fn main() -> anyhow::Result<()> {
                 let auth_token = request_headers
                     .get("authorization")
                     .and_then(|v| v.to_str().ok())
-                    .and_then(|auth_hdr| {
-                        if auth_hdr.starts_with("Bearer ") {
-                            Some(auth_hdr[7..].trim().to_string())
-                        } else {
-                            None
-                        }
-                    })
+                    .and_then(|auth_hdr| auth_hdr.strip_prefix("Bearer ").map(str::trim))
+                    .map(str::to_owned)
                     .or_else(|| {
                         // Fall back to mgs_session cookie when
                         // MGS_AUTH_USE_COOKIES is enabled.
@@ -1139,7 +1263,10 @@ async fn main() -> anyhow::Result<()> {
 
                 let is_mobile = ws_auth_query.is_mobile.unwrap_or(false);
                 let requested_match_type = ws_auth_query.match_type.as_deref().unwrap_or("full");
-                let match_type = massive_game_server_core::server::instance::MatchType::from_query_str(requested_match_type);
+                let match_type =
+                    massive_game_server_core::server::instance::MatchType::from_query_str(
+                        requested_match_type,
+                    );
                 info!(
                     "WS connection: peer={}, match_type={}, is_mobile={}",
                     peer_id, match_type, is_mobile
@@ -1536,14 +1663,19 @@ async fn main() -> anyhow::Result<()> {
     let default_quic_bind_addr = SocketAddr::new(server_address.ip(), bind_port.saturating_add(1));
     let server_for_quic = game_server_instance.clone();
     let auth_service_for_quic = auth_service.clone();
+    let server_for_quic_disconnect = game_server_instance.clone();
+    let auth_service_for_quic_disconnect = auth_service.clone();
+    register_quic_disconnect_hook(Arc::new(move |peer_id: &str| {
+        server_for_quic_disconnect.remove_quic_player(peer_id);
+        auth_service_for_quic_disconnect.clear_peer_binding(peer_id);
+    }));
     // The handler now receives (payload, bound_peer_id) where bound_peer_id is the
     // server-assigned peer_id for this connection, derived from auth_token validation.
     // If bound_peer_id is None, the connection is not yet authenticated and only "join"
     // (with valid auth_token) and read-only ops like "healthz" are allowed.
-    let quic_request_handler: QuicRequestHandler =
-        Arc::new(move |payload: &[u8], bound_peer_id: Option<&str>| {
-            let request =
-                serde_json::from_slice::<QuicControlRequest>(payload).unwrap_or_default();
+    let quic_request_handler: QuicRequestHandler = Arc::new(
+        move |payload: &[u8], bound_peer_id: Option<&str>| {
+            let request = serde_json::from_slice::<QuicControlRequest>(payload).unwrap_or_default();
             let op = request.op.unwrap_or_else(|| "echo".to_string());
 
             let response = match op.as_str() {
@@ -1586,13 +1718,14 @@ async fn main() -> anyhow::Result<()> {
                     if bound_peer_id.is_none() {
                         return serde_json::to_vec(&serde_json::json!({ "ok": false, "op": "live_replay_dispute", "error": "unauthorized" })).ok();
                     }
-                    let report =
-                        server_for_quic.build_live_replay_dispute_report(LiveReplayDisputeRequest {
+                    let report = server_for_quic.build_live_replay_dispute_report(
+                        LiveReplayDisputeRequest {
                             from_frame: request.from_frame,
                             to_frame: request.to_frame,
                             limit: request.replay_limit,
                             player_id: request.player_id,
-                        });
+                        },
+                    );
                     return serde_json::to_vec(&report).ok();
                 }
                 "join" => {
@@ -1641,8 +1774,15 @@ async fn main() -> anyhow::Result<()> {
                     // Use client-supplied peer_id as a hint only if it matches the user, otherwise
                     // generate a fresh one.
                     let mut peer_id = None;
-                    if let Some(client_peer) = request.peer_id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-                        if let Some(bound_user) = auth_service_for_quic.resolve_user_id_from_peer(client_peer) {
+                    if let Some(client_peer) = request
+                        .peer_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                    {
+                        if let Some(bound_user) =
+                            auth_service_for_quic.resolve_user_id_from_peer(client_peer)
+                        {
                             if bound_user == user_id {
                                 peer_id = Some(client_peer.to_string());
                             } else {
@@ -1719,6 +1859,7 @@ async fn main() -> anyhow::Result<()> {
                     // FIX: use server-bound peer_id, not client-supplied.
                     if let Some(peer_id) = bound_peer_id {
                         server_for_quic.remove_quic_player(peer_id);
+                        auth_service_for_quic.clear_peer_binding(peer_id);
                         serde_json::json!({
                             "ok": true,
                             "op": "leave",
@@ -1741,7 +1882,8 @@ async fn main() -> anyhow::Result<()> {
             };
 
             serde_json::to_vec(&response).ok()
-        });
+        },
+    );
     let quic_runtime = start_quic_runtime_from_env_with_handler(
         default_quic_bind_addr,
         Some(quic_request_handler),
@@ -1795,6 +1937,135 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
+    use std::path::Path;
+
+    fn with_env_var<T>(key: &str, value: Option<&str>, f: impl FnOnce() -> T) -> T {
+        static ENV_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let _guard = ENV_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .expect("env test lock poisoned");
+
+        let previous = std::env::var(key).ok();
+        match value {
+            Some(raw) => std::env::set_var(key, raw),
+            None => std::env::remove_var(key),
+        }
+        let output = f();
+        match previous {
+            Some(raw) => std::env::set_var(key, raw),
+            None => std::env::remove_var(key),
+        }
+        output
+    }
+
+    #[test]
+    fn test_parse_bearer_token_accepts_standard_forms() {
+        assert_eq!(
+            parse_bearer_token(Some("Bearer abc123")),
+            Some("abc123".to_owned())
+        );
+        assert_eq!(
+            parse_bearer_token(Some("bearer  xyz ")),
+            Some("xyz".to_owned())
+        );
+    }
+
+    #[test]
+    fn test_parse_bearer_token_rejects_invalid_values() {
+        assert_eq!(parse_bearer_token(None), None);
+        assert_eq!(parse_bearer_token(Some("")), None);
+        assert_eq!(parse_bearer_token(Some("Token abc")), None);
+        assert_eq!(parse_bearer_token(Some("Bearer    ")), None);
+    }
+
+    #[test]
+    fn test_constant_time_eq_behaves_as_expected() {
+        assert!(constant_time_eq("same-value", "same-value"));
+        assert!(!constant_time_eq("same-value", "different"));
+        assert!(!constant_time_eq("short", "shorter"));
+    }
+
+    #[test]
+    fn test_is_admin_protected_path() {
+        assert!(is_admin_protected_path("/api/ops"));
+        assert!(is_admin_protected_path("/api/ops/match-type"));
+        assert!(is_admin_protected_path("/api/arena/matches"));
+        assert!(!is_admin_protected_path("/healthz"));
+        assert!(!is_admin_protected_path("/api/public"));
+    }
+
+    #[test]
+    fn test_parse_list_env_splits_and_trims_values() {
+        let key = "MGS_TEST_PARSE_LIST_ENV";
+        with_env_var(key, Some("alpha, beta ,, gamma "), || {
+            let parsed = parse_list_env(key);
+            assert_eq!(parsed, vec!["alpha", "beta", "gamma"]);
+        });
+    }
+
+    #[test]
+    fn test_is_allowed_ws_origin_accepts_same_origin_and_allowlist() {
+        let allow = vec!["https://play.example.com".to_owned()];
+        assert!(is_allowed_ws_origin(
+            Some("https://api.example.com"),
+            Some("api.example.com"),
+            &allow,
+            false
+        ));
+        assert!(is_allowed_ws_origin(
+            Some("https://play.example.com"),
+            Some("api.example.com"),
+            &allow,
+            false
+        ));
+    }
+
+    #[test]
+    fn test_is_allowed_ws_origin_dev_mode_localhost_rules() {
+        assert!(is_allowed_ws_origin(
+            Some("http://localhost:5173"),
+            Some("api.example.com"),
+            &[],
+            true
+        ));
+        assert!(!is_allowed_ws_origin(
+            Some("http://localhost:5173"),
+            Some("api.example.com"),
+            &[],
+            false
+        ));
+    }
+
+    #[test]
+    fn test_static_cache_control_for_path() {
+        assert_eq!(
+            static_cache_control_for_path(Path::new("index.html")),
+            "no-cache, no-store, must-revalidate"
+        );
+        assert_eq!(
+            static_cache_control_for_path(Path::new("bundle.js")),
+            "public, max-age=31536000, immutable"
+        );
+        assert_eq!(
+            static_cache_control_for_path(Path::new("runtime.unknown")),
+            "public, max-age=3600"
+        );
+    }
+
+    #[test]
+    fn test_parse_u64_env_defaults_and_filters_zero() {
+        let key = "MGS_TEST_PARSE_U64_ENV";
+        with_env_var(key, Some("256"), || {
+            assert_eq!(parse_u64_env(key, 10), 256);
+        });
+        with_env_var(key, Some("0"), || {
+            assert_eq!(parse_u64_env(key, 10), 10);
+        });
+        with_env_var(key, Some("invalid"), || {
+            assert_eq!(parse_u64_env(key, 10), 10);
+        });
+    }
 
     #[test]
     fn test_parse_forwarded_for_ip_single() {

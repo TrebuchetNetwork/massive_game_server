@@ -156,10 +156,7 @@ mod tests {
         }
         // Push 10 normal-priority events.
         for i in 0..10 {
-            queue.push(
-                make_player_event(&format!("n{}", i)),
-                EventPriority::Normal,
-            );
+            queue.push(make_player_event(&format!("n{}", i)), EventPriority::Normal);
         }
         // Push 5 low-priority events.
         for i in 0..5 {
@@ -200,10 +197,7 @@ mod tests {
             queue.push(make_player_event(&format!("h{}", i)), EventPriority::High);
         }
         for i in 0..3 {
-            queue.push(
-                make_player_event(&format!("n{}", i)),
-                EventPriority::Normal,
-            );
+            queue.push(make_player_event(&format!("n{}", i)), EventPriority::Normal);
         }
         for i in 0..2 {
             queue.push(make_player_event(&format!("l{}", i)), EventPriority::Low);

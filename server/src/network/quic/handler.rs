@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tracing::{debug, error, info, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -27,6 +27,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 /// session token during the "join" handshake. It is `None` until a successful auth handshake.
 pub type QuicRequestHandler =
     Arc<dyn Fn(&[u8], Option<&str>) -> Option<Vec<u8>> + Send + Sync + 'static>;
+type QuicDisconnectHook = Arc<dyn Fn(&str) + Send + Sync + 'static>;
 
 /// Hard upper bound on a single QUIC stream payload (64 KB).
 /// Game messages should never exceed this; the configurable max_stream_payload_bytes is clamped
@@ -41,6 +42,8 @@ const OUTBOUND_CHANNEL_CAPACITY: usize = 4096;
 const DEFAULT_CONN_RATE_PER_SEC: u32 = 8;
 /// Default per-IP burst capacity for connection rate limiting.
 const DEFAULT_CONN_RATE_BURST: u32 = 16;
+/// Global cap on simultaneous QUIC connections handled by this process.
+const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 1024;
 
 #[derive(Debug, Clone)]
 pub struct QuicEndpointConfig {
@@ -63,6 +66,7 @@ struct QuicPeerSender {
 
 static QUIC_PEER_SENDERS: OnceLock<DashMap<String, QuicPeerSender>> = OnceLock::new();
 static QUIC_CONNECTION_TOKEN: AtomicU64 = AtomicU64::new(1);
+static QUIC_DISCONNECT_HOOK: OnceLock<QuicDisconnectHook> = OnceLock::new();
 
 impl QuicRuntime {
     pub fn local_addr(&self) -> SocketAddr {
@@ -114,6 +118,12 @@ pub fn connected_quic_peer_ids() -> Vec<String> {
         .collect()
 }
 
+pub fn register_quic_disconnect_hook(hook: QuicDisconnectHook) {
+    if QUIC_DISCONNECT_HOOK.set(hook).is_err() {
+        warn!("QUIC disconnect hook already registered; keeping existing hook.");
+    }
+}
+
 pub fn send_quic_packet_batch(peer_id: &str, packets: &[Bytes]) -> usize {
     if packets.is_empty() {
         return 0;
@@ -127,6 +137,7 @@ pub fn send_quic_packet_batch(peer_id: &str, packets: &[Bytes]) -> usize {
     };
 
     let mut sent = 0usize;
+    let mut saw_closed = false;
     for packet in packets {
         // try_send applies backpressure: if channel is full, stop sending.
         match sender.outbound_tx.try_send(packet.clone()) {
@@ -140,12 +151,13 @@ pub fn send_quic_packet_batch(peer_id: &str, packets: &[Bytes]) -> usize {
                 break;
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
+                saw_closed = true;
                 break;
             }
         }
     }
 
-    if sent == 0 {
+    if sent == 0 && saw_closed {
         let _ = shared_quic_peer_senders().remove(peer_id);
     }
     sent
@@ -281,6 +293,20 @@ fn load_conn_rate_limit_config() -> (u32, u32) {
     (per_sec, burst)
 }
 
+fn parse_max_concurrent_connections(raw: Option<&str>) -> usize {
+    raw.and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_CONNECTIONS)
+        .clamp(1, 20_000)
+}
+
+fn load_max_concurrent_connections() -> usize {
+    parse_max_concurrent_connections(
+        std::env::var("MGS_QUIC_MAX_CONCURRENT_CONNECTIONS")
+            .ok()
+            .as_deref(),
+    )
+}
+
 // ---------------------------------------------------------------------------
 
 pub fn start_quic_runtime(
@@ -314,9 +340,8 @@ pub fn start_quic_runtime(
             );
             let certified_key = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()])
                 .context("failed to generate self-signed QUIC certificate")?;
-            let cert_der = quinn::rustls::pki_types::CertificateDer::from(
-                certified_key.cert.der().to_vec(),
-            );
+            let cert_der =
+                quinn::rustls::pki_types::CertificateDer::from(certified_key.cert.der().to_vec());
             let key_der = quinn::rustls::pki_types::PrivateKeyDer::try_from(
                 certified_key.key_pair.serialize_der(),
             )
@@ -343,9 +368,11 @@ pub fn start_quic_runtime(
     // Connection rate limiter (per-IP).
     let (rate_per_sec, rate_burst) = load_conn_rate_limit_config();
     let conn_rate_limiters = Arc::new(ConnectionRateLimiters::new(rate_per_sec, rate_burst));
+    let max_concurrent_connections = load_max_concurrent_connections();
+    let connection_slots = Arc::new(Semaphore::new(max_concurrent_connections));
     info!(
-        "QUIC per-IP connection rate limit: {} conn/sec, burst {}",
-        rate_per_sec, rate_burst
+        "QUIC per-IP connection rate limit: {} conn/sec, burst {}, max_connections={}",
+        rate_per_sec, rate_burst, max_concurrent_connections
     );
 
     let rate_limiters_for_cleanup = Arc::clone(&conn_rate_limiters);
@@ -376,11 +403,28 @@ pub fn start_quic_runtime(
                 drop(incoming);
                 continue;
             }
+            let connection_slot = match connection_slots.clone().try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    warn!(
+                        "QUIC global connection cap reached (max={}), rejecting {}",
+                        max_concurrent_connections, remote_addr
+                    );
+                    metrics::record_quic_connection_rejected("global_connection_cap");
+                    drop(incoming);
+                    continue;
+                }
+            };
 
             let request_handler = request_handler.clone();
             tokio::spawn(async move {
-                if let Err(err) =
-                    handle_incoming(incoming, request_handler, max_stream_payload_bytes).await
+                if let Err(err) = handle_incoming(
+                    incoming,
+                    request_handler,
+                    max_stream_payload_bytes,
+                    connection_slot,
+                )
+                .await
                 {
                     warn!("QUIC connection handler failed: {}", err);
                 }
@@ -425,10 +469,7 @@ fn load_quic_identity_from_env() -> Result<
             let certs = load_pem_certs(&cert_path)
                 .with_context(|| format!("failed loading QUIC cert from {}", cert_path))?;
             if certs.is_empty() {
-                return Err(anyhow!(
-                    "no certificates found in PEM file '{}'",
-                    cert_path
-                ));
+                return Err(anyhow!("no certificates found in PEM file '{}'", cert_path));
             }
             let key = load_pem_private_key(&key_path)
                 .with_context(|| format!("failed loading QUIC key from {}", key_path))?;
@@ -445,18 +486,16 @@ fn load_quic_identity_from_env() -> Result<
 
 /// Reads PEM-encoded certificates from a file.  Falls back to treating the
 /// whole file as a single DER certificate if no PEM sections are found.
-fn load_pem_certs(
-    path: &str,
-) -> Result<Vec<quinn::rustls::pki_types::CertificateDer<'static>>> {
-    let file = fs::File::open(path)
-        .with_context(|| format!("cannot open certificate file '{}'", path))?;
+fn load_pem_certs(path: &str) -> Result<Vec<quinn::rustls::pki_types::CertificateDer<'static>>> {
+    let file =
+        fs::File::open(path).with_context(|| format!("cannot open certificate file '{}'", path))?;
     let mut reader = BufReader::new(file);
     let certs: Vec<_> = rustls_pemfile::certs(&mut reader)
         .filter_map(|r| r.ok())
         .collect();
     if certs.is_empty() {
-        let der = fs::read(path)
-            .with_context(|| format!("failed reading DER cert from '{}'", path))?;
+        let der =
+            fs::read(path).with_context(|| format!("failed reading DER cert from '{}'", path))?;
         info!(
             "No PEM sections found in '{}'; treating as raw DER certificate.",
             path
@@ -468,11 +507,8 @@ fn load_pem_certs(
 
 /// Reads a PEM-encoded private key from a file.  Supports PKCS#8, RSA,
 /// and EC key formats.  Falls back to raw DER if no PEM sections are found.
-fn load_pem_private_key(
-    path: &str,
-) -> Result<quinn::rustls::pki_types::PrivateKeyDer<'static>> {
-    let file = fs::File::open(path)
-        .with_context(|| format!("cannot open key file '{}'", path))?;
+fn load_pem_private_key(path: &str) -> Result<quinn::rustls::pki_types::PrivateKeyDer<'static>> {
+    let file = fs::File::open(path).with_context(|| format!("cannot open key file '{}'", path))?;
     let mut reader = BufReader::new(file);
 
     // Try PKCS#8 first (most common for modern certs).
@@ -494,8 +530,7 @@ fn load_pem_private_key(
     }
 
     // Fallback: raw DER.
-    let der = fs::read(path)
-        .with_context(|| format!("failed reading DER key from '{}'", path))?;
+    let der = fs::read(path).with_context(|| format!("failed reading DER key from '{}'", path))?;
     if der.is_empty() {
         return Err(anyhow!(
             "no private key found in '{}' (tried PEM PKCS#8, RSA, and raw DER)",
@@ -548,6 +583,7 @@ async fn handle_incoming(
     incoming: Incoming,
     request_handler: Option<QuicRequestHandler>,
     max_stream_payload_bytes: usize,
+    _connection_slot: OwnedSemaphorePermit,
 ) -> Result<()> {
     let connection = incoming
         .await
@@ -693,10 +729,7 @@ async fn handle_bidi_stream(
     // Determine the effective peer_id for this stream:
     // 1. If the connection already has a bound peer_id, use that (ignore client-supplied).
     // 2. Otherwise, this is pre-auth — the request handler will validate auth_token and set it.
-    let current_bound = bound_peer_id
-        .lock()
-        .ok()
-        .and_then(|guard| guard.clone());
+    let current_bound = bound_peer_id.lock().ok().and_then(|guard| guard.clone());
 
     let stream_span = tracing::info_span!(
         "quic_bidi_stream",
@@ -813,6 +846,13 @@ async fn run_connection_writer(
             );
             break;
         }
+        if let Err(err) = send_stream.flush().await {
+            debug!(
+                "QUIC writer token={} failed flushing payload to {}: {}",
+                connection_token, remote_addr, err
+            );
+            break;
+        }
         if let Err(err) = send_stream.finish() {
             debug!(
                 "QUIC writer token={} failed finishing payload to {}: {}",
@@ -840,6 +880,9 @@ fn cleanup_registered_quic_peers(
         if should_remove {
             let _ = shared_quic_peer_senders().remove(&peer_id);
             let _ = shared_connection_manager().remove(&peer_id);
+            if let Some(hook) = QUIC_DISCONNECT_HOOK.get() {
+                hook(&peer_id);
+            }
         }
     }
 }
@@ -848,12 +891,27 @@ fn cleanup_registered_quic_peers(
 mod tests {
     use super::*;
 
+    fn with_quic_sender_map_cleared<T>(f: impl FnOnce() -> T) -> T {
+        static TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let _guard = TEST_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .expect("quic sender test lock poisoned");
+        shared_quic_peer_senders().clear();
+        let output = f();
+        shared_quic_peer_senders().clear();
+        output
+    }
+
     #[test]
     fn test_ip_rate_limiter_allows_burst_then_rejects() {
         let mut limiter = IpRateLimiter::new(1, 3);
         assert!(limiter.try_acquire(), "first request should succeed");
         assert!(limiter.try_acquire(), "second request should succeed");
-        assert!(limiter.try_acquire(), "third request should succeed (burst=3)");
+        assert!(
+            limiter.try_acquire(),
+            "third request should succeed (burst=3)"
+        );
         assert!(
             !limiter.try_acquire(),
             "fourth request should be rejected (burst exhausted)"
@@ -890,8 +948,18 @@ mod tests {
 
     #[test]
     fn test_bounded_channel_capacity_constant() {
-        const { assert!(OUTBOUND_CHANNEL_CAPACITY > 0, "outbound channel capacity must be positive") };
-        const { assert!(OUTBOUND_CHANNEL_CAPACITY <= 8192, "outbound channel capacity should be reasonable") };
+        const {
+            assert!(
+                OUTBOUND_CHANNEL_CAPACITY > 0,
+                "outbound channel capacity must be positive"
+            )
+        };
+        const {
+            assert!(
+                OUTBOUND_CHANNEL_CAPACITY <= 8192,
+                "outbound channel capacity should be reasonable"
+            )
+        };
     }
 
     #[test]
@@ -944,5 +1012,99 @@ mod tests {
         let small_value: usize = 100;
         let clamped = small_value.clamp(4 * 1024, QUIC_MAX_STREAM_PAYLOAD_HARD_CAP);
         assert_eq!(clamped, 4 * 1024);
+    }
+
+    #[test]
+    fn test_parse_max_concurrent_connections_defaults_and_clamps() {
+        assert_eq!(
+            parse_max_concurrent_connections(None),
+            DEFAULT_MAX_CONCURRENT_CONNECTIONS
+        );
+        assert_eq!(parse_max_concurrent_connections(Some("0")), 1);
+        assert_eq!(parse_max_concurrent_connections(Some("50000")), 20_000);
+        assert_eq!(parse_max_concurrent_connections(Some("512")), 512);
+        assert_eq!(
+            parse_max_concurrent_connections(Some("invalid")),
+            DEFAULT_MAX_CONCURRENT_CONNECTIONS
+        );
+    }
+
+    #[test]
+    fn test_send_quic_packet_batch_returns_zero_for_missing_peer() {
+        with_quic_sender_map_cleared(|| {
+            let sent = send_quic_packet_batch("missing-peer", &[Bytes::from_static(b"payload")]);
+            assert_eq!(sent, 0);
+        });
+    }
+
+    #[test]
+    fn test_send_quic_packet_batch_sends_all_packets_when_capacity_allows() {
+        with_quic_sender_map_cleared(|| {
+            let peer_id = "peer-send";
+            let (tx, mut rx) = mpsc::channel::<Bytes>(4);
+            shared_quic_peer_senders().insert(
+                peer_id.to_owned(),
+                QuicPeerSender {
+                    connection_token: 42,
+                    outbound_tx: tx,
+                },
+            );
+
+            let packets = [Bytes::from_static(b"a"), Bytes::from_static(b"b")];
+            let sent = send_quic_packet_batch(peer_id, &packets);
+            assert_eq!(sent, 2);
+
+            let first = rx.try_recv().expect("first packet enqueued");
+            let second = rx.try_recv().expect("second packet enqueued");
+            assert_eq!(first, Bytes::from_static(b"a"));
+            assert_eq!(second, Bytes::from_static(b"b"));
+        });
+    }
+
+    #[test]
+    fn test_send_quic_packet_batch_stops_on_full_channel_without_removal() {
+        with_quic_sender_map_cleared(|| {
+            let peer_id = "peer-full";
+            let (tx, _rx) = mpsc::channel::<Bytes>(1);
+            tx.try_send(Bytes::from_static(b"queued"))
+                .expect("prefill outbound channel");
+            shared_quic_peer_senders().insert(
+                peer_id.to_owned(),
+                QuicPeerSender {
+                    connection_token: 7,
+                    outbound_tx: tx,
+                },
+            );
+
+            let sent = send_quic_packet_batch(peer_id, &[Bytes::from_static(b"new")]);
+            assert_eq!(sent, 0, "full channel should not accept new packet");
+            assert!(
+                shared_quic_peer_senders().contains_key(peer_id),
+                "peer should remain registered on backpressure"
+            );
+        });
+    }
+
+    #[test]
+    fn test_send_quic_packet_batch_removes_peer_on_closed_channel() {
+        with_quic_sender_map_cleared(|| {
+            let peer_id = "peer-closed";
+            let (tx, rx) = mpsc::channel::<Bytes>(1);
+            drop(rx);
+            shared_quic_peer_senders().insert(
+                peer_id.to_owned(),
+                QuicPeerSender {
+                    connection_token: 99,
+                    outbound_tx: tx,
+                },
+            );
+
+            let sent = send_quic_packet_batch(peer_id, &[Bytes::from_static(b"new")]);
+            assert_eq!(sent, 0);
+            assert!(
+                !shared_quic_peer_senders().contains_key(peer_id),
+                "peer should be removed only when channel is closed"
+            );
+        });
     }
 }

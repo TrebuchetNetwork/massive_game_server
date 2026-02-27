@@ -43,15 +43,29 @@ impl MassiveGameServer {
                 destroyed_walls_count,
                 updated_walls_count
             );
-        } else if !respawned_walls.is_empty() || destroyed_walls_count > 0 || updated_walls_count > 0 {
+        } else if !respawned_walls.is_empty()
+            || destroyed_walls_count > 0
+            || updated_walls_count > 0
+        {
             let index_update_start = Instant::now();
-            let destroyed_ids: Vec<_> = self.destroyed_wall_ids_this_tick.read().iter().copied().collect();
-            let updated_walls: Vec<_> = self.updated_walls_this_tick.read().values().cloned().collect();
-            
+            let destroyed_ids: Vec<_> = self
+                .destroyed_wall_ids_this_tick
+                .read()
+                .iter()
+                .copied()
+                .collect();
+            let updated_walls: Vec<_> = self
+                .updated_walls_this_tick
+                .read()
+                .values()
+                .cloned()
+                .collect();
+
             let mut removed_ids = destroyed_ids;
             removed_ids.extend(updated_walls.iter().map(|w| w.id));
-            
-            self.wall_spatial_index.update_walls(&removed_ids, &updated_walls, frame);
+
+            self.wall_spatial_index
+                .update_walls(&removed_ids, &updated_walls, frame);
             debug!(
                 "[Frame {}] Wall spatial index updated in {:?} (respawned: {}, destroyed: {}, updated: {})",
                 frame,

@@ -224,9 +224,7 @@ impl MassiveGameServer {
         }
 
         replay_files.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
-        let delete_count = replay_files
-            .len()
-            .saturating_sub(retention);
+        let delete_count = replay_files.len().saturating_sub(retention);
         for (path, _) in replay_files.into_iter().take(delete_count) {
             if let Err(err) = fs::remove_file(&path) {
                 warn!(

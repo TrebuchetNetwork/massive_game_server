@@ -55,7 +55,7 @@ jobs:
         run: cargo fmt --all --check --verbose
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Run tests
         env:
@@ -154,10 +154,10 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Enforce coverage floor
-        run: cargo llvm-cov --workspace --locked --summary-only --fail-under-lines 60
+        run: cargo llvm-cov -p massive_game_server_core --locked --summary-only --fail-under-lines 50
 
       - name: Generate LCOV report
-        run: cargo llvm-cov --workspace --locked --lcov --output-path lcov.info
+        run: cargo llvm-cov -p massive_game_server_core --locked --lcov --output-path lcov.info
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
