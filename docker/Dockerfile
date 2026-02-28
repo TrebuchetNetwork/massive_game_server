@@ -12,6 +12,8 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY server ./server
 COPY protocol ./protocol
+COPY stress-client ./stress-client
+COPY admin-tools ./admin-tools
 COPY flatbuffers ./flatbuffers
 COPY static_client ./static_client
 
