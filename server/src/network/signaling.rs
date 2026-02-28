@@ -25,6 +25,7 @@ use futures_util::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
+use sha2::Sha256;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     net::IpAddr,
@@ -463,8 +464,10 @@ fn parse_ice_servers_env(raw: &str) -> Vec<RTCIceServer> {
         .collect()
 }
 
-/// HMAC-SHA1 type alias for TURN credential generation (RFC 5389).
+/// HMAC-SHA1 type alias for legacy TURN credential generation.
 type HmacSha1 = Hmac<Sha1>;
+/// HMAC-SHA256 type alias for TURN credential generation.
+type HmacSha256 = Hmac<Sha256>;
 
 /// Default TURN credential TTL: 24 hours (in seconds).
 const TURN_CREDENTIAL_TTL_SECS: u64 = 86400;
@@ -474,9 +477,11 @@ const TURN_CREDENTIAL_TTL_SECS: u64 = 86400;
 enum TurnCredentialType {
     /// Static password — credential is sent as-is.
     Password,
-    /// HMAC time-limited credentials — credential is HMAC-SHA1(secret, username)
+    /// HMAC time-limited credentials — credential is HMAC-SHA256(secret, username)
     /// where username = "expiry_timestamp:random_suffix".
-    Hmac,
+    HmacSha256,
+    /// Legacy HMAC-SHA1 mode for transitional TURN deployments.
+    HmacSha1Legacy,
 }
 
 impl TurnCredentialType {
@@ -486,21 +491,30 @@ impl TurnCredentialType {
             .map(|v| v.trim().to_ascii_lowercase())
             .as_deref()
         {
-            Some("hmac") | Some("hmac-sha1") => Self::Hmac,
+            Some("hmac-sha1") | Some("sha1") => Self::HmacSha1Legacy,
+            Some("hmac") | Some("hmac-sha256") | Some("sha256") => Self::HmacSha256,
             _ => Self::Password,
         }
     }
 }
 
-/// Generate time-limited TURN credentials using HMAC-SHA1.
-///
-/// The username is `expiry_timestamp:suffix` and the credential is
-/// `Base64(HMAC-SHA1(shared_secret, username))`.
-///
-/// This follows the ephemeral credential mechanism described in
-/// [RFC draft: A REST API For Access To TURN Services](https://datatracker.ietf.org/doc/html/draft-uberti-behave-turn-rest-00)
-/// and used by coturn, Twilio, Xirsys, and other TURN providers.
-pub fn generate_turn_hmac_credentials(shared_secret: &str, suffix: &str) -> (String, String) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TurnHmacAlgorithm {
+    Sha1,
+    Sha256,
+}
+
+/// Generate time-limited TURN credentials using HMAC.
+fn generate_turn_hmac_credentials_with_algorithm(
+    shared_secret: &str,
+    suffix: &str,
+    algorithm: TurnHmacAlgorithm,
+) -> (String, String) {
+    let algorithm_label = match algorithm {
+        TurnHmacAlgorithm::Sha1 => "SHA-1",
+        TurnHmacAlgorithm::Sha256 => "SHA-256",
+    };
+
     let expiry = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::from_secs(0))
@@ -508,22 +522,54 @@ pub fn generate_turn_hmac_credentials(shared_secret: &str, suffix: &str) -> (Str
         + TURN_CREDENTIAL_TTL_SECS;
     let username = format!("{expiry}:{suffix}");
 
-    let mut mac = match HmacSha1::new_from_slice(shared_secret.as_bytes()) {
-        Ok(mac) => mac,
-        Err(err) => {
-            warn!(
-                "Failed to initialize TURN HMAC generator (secret length={}): {}",
-                shared_secret.len(),
-                err
-            );
-            return (username, String::new());
+    let credential = match algorithm {
+        TurnHmacAlgorithm::Sha1 => {
+            let mut mac = match HmacSha1::new_from_slice(shared_secret.as_bytes()) {
+                Ok(mac) => mac,
+                Err(err) => {
+                    warn!(
+                        "Failed to initialize TURN HMAC ({}) generator (secret length={}): {}",
+                        algorithm_label,
+                        shared_secret.len(),
+                        err
+                    );
+                    return (username, String::new());
+                }
+            };
+            mac.update(username.as_bytes());
+            base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
+        }
+        TurnHmacAlgorithm::Sha256 => {
+            let mut mac = match HmacSha256::new_from_slice(shared_secret.as_bytes()) {
+                Ok(mac) => mac,
+                Err(err) => {
+                    warn!(
+                        "Failed to initialize TURN HMAC ({}) generator (secret length={}): {}",
+                        algorithm_label,
+                        shared_secret.len(),
+                        err
+                    );
+                    return (username, String::new());
+                }
+            };
+            mac.update(username.as_bytes());
+            base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
         }
     };
-    mac.update(username.as_bytes());
-    let result = mac.finalize();
-    let credential = base64::engine::general_purpose::STANDARD.encode(result.into_bytes());
 
     (username, credential)
+}
+
+/// Generate time-limited TURN credentials using HMAC-SHA256.
+///
+/// The username is `expiry_timestamp:suffix` and the credential is
+/// `Base64(HMAC-SHA256(shared_secret, username))`.
+///
+/// This follows the ephemeral credential mechanism described in
+/// [RFC draft: A REST API For Access To TURN Services](https://datatracker.ietf.org/doc/html/draft-uberti-behave-turn-rest-00)
+/// and used by coturn, Twilio, Xirsys, and other TURN providers.
+pub fn generate_turn_hmac_credentials(shared_secret: &str, suffix: &str) -> (String, String) {
+    generate_turn_hmac_credentials_with_algorithm(shared_secret, suffix, TurnHmacAlgorithm::Sha256)
 }
 
 /// A serializable ICE server entry sent to the client during signaling.
@@ -575,13 +621,28 @@ fn build_ice_servers() -> Vec<RTCIceServer> {
                     }
                 }
             }
-            TurnCredentialType::Hmac => {
+            TurnCredentialType::HmacSha256 => {
                 if let Ok(secret) = std::env::var("MGS_TURN_CREDENTIAL") {
                     if !secret.trim().is_empty() {
                         let suffix = std::env::var("MGS_TURN_USERNAME")
                             .unwrap_or_else(|_| "server".to_owned());
                         let (username, credential) =
                             generate_turn_hmac_credentials(secret.trim(), suffix.trim());
+                        turn_server.username = username;
+                        turn_server.credential = credential;
+                    }
+                }
+            }
+            TurnCredentialType::HmacSha1Legacy => {
+                if let Ok(secret) = std::env::var("MGS_TURN_CREDENTIAL") {
+                    if !secret.trim().is_empty() {
+                        let suffix = std::env::var("MGS_TURN_USERNAME")
+                            .unwrap_or_else(|_| "server".to_owned());
+                        let (username, credential) = generate_turn_hmac_credentials_with_algorithm(
+                            secret.trim(),
+                            suffix.trim(),
+                            TurnHmacAlgorithm::Sha1,
+                        );
                         turn_server.username = username;
                         turn_server.credential = credential;
                     }
@@ -645,11 +706,24 @@ fn build_client_ice_config(session_id: &str) -> Vec<ClientIceServer> {
                     }
                 }
             }
-            TurnCredentialType::Hmac => {
+            TurnCredentialType::HmacSha256 => {
                 if let Ok(secret) = std::env::var("MGS_TURN_CREDENTIAL") {
                     if !secret.trim().is_empty() {
                         let (username, credential) =
                             generate_turn_hmac_credentials(secret.trim(), session_id);
+                        turn_entry.username = Some(username);
+                        turn_entry.credential = Some(credential);
+                    }
+                }
+            }
+            TurnCredentialType::HmacSha1Legacy => {
+                if let Ok(secret) = std::env::var("MGS_TURN_CREDENTIAL") {
+                    if !secret.trim().is_empty() {
+                        let (username, credential) = generate_turn_hmac_credentials_with_algorithm(
+                            secret.trim(),
+                            session_id,
+                            TurnHmacAlgorithm::Sha1,
+                        );
                         turn_entry.username = Some(username);
                         turn_entry.credential = Some(credential);
                     }
@@ -679,7 +753,8 @@ const DEFAULT_IP_RATE_LIMIT_PER_SEC: u32 = 20;
 const DEFAULT_IP_RATE_LIMIT_BURST: u32 = 40;
 const DEFAULT_ICE_CANDIDATE_RATE_LIMIT_PER_SEC: u32 = 80;
 const DEFAULT_ICE_CANDIDATE_RATE_LIMIT_BURST: u32 = 160;
-const DEFAULT_SDP_ADMISSION_CONCURRENCY: usize = 4;
+const DEFAULT_SDP_ADMISSION_CONCURRENCY: usize = 64;
+const MAX_SDP_ADMISSION_CONCURRENCY: usize = 512;
 const JOIN_RATE_LIMIT_THROTTLED_MESSAGE: &str = "Server busy handling joins, retry shortly.";
 const MAX_SIGNALING_TEXT_BYTES: usize = 128 * 1024;
 const MAX_SIGNALING_SDP_BYTES: usize = 120 * 1024;
@@ -998,6 +1073,7 @@ fn sdp_admission_semaphore() -> Option<&'static Arc<Semaphore>> {
                 info!("SDP admission gate disabled (MGS_SIGNALING_SDP_CONCURRENCY=0).");
                 None
             } else {
+                let limit = limit.clamp(1, MAX_SDP_ADMISSION_CONCURRENCY);
                 info!(
                     "SDP admission gate enabled with max {} concurrent offers.",
                     limit
@@ -1061,6 +1137,48 @@ fn try_acquire_join_rate_limit_token() -> bool {
 const IP_RATE_LIMITER_MAX_ENTRIES: usize = 10_000;
 /// Entries idle for longer than this are eligible for eviction during cleanup.
 const IP_RATE_LIMITER_IDLE_SECS: u64 = 300;
+/// Minimum map size before periodic cleanup sweep is considered.
+const IP_RATE_LIMITER_CLEANUP_MIN_ENTRIES: usize = 512;
+/// Minimum interval between periodic cleanup sweeps.
+const IP_RATE_LIMITER_CLEANUP_INTERVAL_SECS: u64 = 30;
+
+fn cleanup_idle_ip_rate_limiters(limiters: &DashMap<IpAddr, JoinRateLimiter>) {
+    let now = Instant::now();
+    let idle_threshold = Duration::from_secs(IP_RATE_LIMITER_IDLE_SECS);
+    limiters.retain(|_ip, limiter| {
+        now.saturating_duration_since(limiter.last_refill_at) < idle_threshold
+    });
+}
+
+fn maybe_cleanup_ip_rate_limiters(limiters: &DashMap<IpAddr, JoinRateLimiter>) {
+    if limiters.len() < IP_RATE_LIMITER_CLEANUP_MIN_ENTRIES {
+        return;
+    }
+
+    static LAST_IP_LIMITER_CLEANUP_UNIX_SECS: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::from_secs(0))
+        .as_secs();
+    let previous = LAST_IP_LIMITER_CLEANUP_UNIX_SECS.load(std::sync::atomic::Ordering::Relaxed);
+    if now_secs.saturating_sub(previous) < IP_RATE_LIMITER_CLEANUP_INTERVAL_SECS {
+        return;
+    }
+
+    if LAST_IP_LIMITER_CLEANUP_UNIX_SECS
+        .compare_exchange(
+            previous,
+            now_secs,
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+        )
+        .is_ok()
+    {
+        cleanup_idle_ip_rate_limiters(limiters);
+    }
+}
 
 fn try_acquire_ip_rate_limit_token(client_ip: &IpAddr) -> bool {
     let Some(cfg) = ip_rate_limit_config() else {
@@ -1070,13 +1188,11 @@ fn try_acquire_ip_rate_limit_token(client_ip: &IpAddr) -> bool {
     static IP_RATE_LIMITERS: OnceLock<DashMap<IpAddr, JoinRateLimiter>> = OnceLock::new();
     let limiters = IP_RATE_LIMITERS.get_or_init(DashMap::new);
 
-    // Periodic cleanup: evict entries that have been idle for over 5 minutes.
+    // Enforce hard-cap cleanup and periodic sweeps before the map reaches the cap.
     if limiters.len() > IP_RATE_LIMITER_MAX_ENTRIES {
-        let now = Instant::now();
-        let idle_threshold = Duration::from_secs(IP_RATE_LIMITER_IDLE_SECS);
-        limiters.retain(|_ip, limiter| {
-            now.saturating_duration_since(limiter.last_refill_at) < idle_threshold
-        });
+        cleanup_idle_ip_rate_limiters(limiters);
+    } else {
+        maybe_cleanup_ip_rate_limiters(limiters);
     }
 
     let mut limiter = limiters
@@ -2674,8 +2790,8 @@ mod tests {
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(&credential)
             .expect("credential must be valid base64");
-        // HMAC-SHA1 output is 20 bytes
-        assert_eq!(decoded.len(), 20, "HMAC-SHA1 output must be 20 bytes");
+        // HMAC-SHA256 output is 32 bytes
+        assert_eq!(decoded.len(), 32, "HMAC-SHA256 output must be 32 bytes");
     }
 
     #[test]
@@ -2699,7 +2815,7 @@ mod tests {
         let (u1, c1) = generate_turn_hmac_credentials("secret_a", "player");
         let (_u2, c2) = generate_turn_hmac_credentials("secret_b", "player");
         // Even if timestamps happen to match, different secrets produce different credentials.
-        // There is a negligible chance of collision, but practically impossible for HMAC-SHA1.
+        // There is a negligible chance of collision, but practically impossible for HMAC-SHA256.
         if u1.split(':').next() == _u2.split(':').next() {
             assert_ne!(
                 c1, c2,
@@ -2725,7 +2841,7 @@ mod tests {
 
     #[test]
     fn generate_turn_hmac_credential_verifiable() {
-        // Verify that the credential is a correct HMAC-SHA1 of the username.
+        // Verify that the credential is a correct HMAC-SHA256 of the username.
         let secret = "test_shared_secret";
         let (username, credential) = generate_turn_hmac_credentials(secret, "verify_me");
 
@@ -2733,7 +2849,7 @@ mod tests {
             .decode(&credential)
             .unwrap();
 
-        let mut mac = HmacSha1::new_from_slice(secret.as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(username.as_bytes());
         // verify() consumes the mac and checks against the expected bytes
         mac.verify_slice(&decoded)
@@ -2745,6 +2861,23 @@ mod tests {
         // When MGS_TURN_CREDENTIAL_TYPE is not set, it defaults to Password.
         std::env::remove_var("MGS_TURN_CREDENTIAL_TYPE");
         assert_eq!(TurnCredentialType::from_env(), TurnCredentialType::Password);
+    }
+
+    #[test]
+    fn turn_credential_type_from_env_supports_sha256_and_legacy_sha1() {
+        std::env::set_var("MGS_TURN_CREDENTIAL_TYPE", "hmac");
+        assert_eq!(
+            TurnCredentialType::from_env(),
+            TurnCredentialType::HmacSha256
+        );
+
+        std::env::set_var("MGS_TURN_CREDENTIAL_TYPE", "hmac-sha1");
+        assert_eq!(
+            TurnCredentialType::from_env(),
+            TurnCredentialType::HmacSha1Legacy
+        );
+
+        std::env::remove_var("MGS_TURN_CREDENTIAL_TYPE");
     }
 
     #[test]
