@@ -284,14 +284,23 @@ fn parse_bearer_token(authorization_header: Option<&str>) -> Option<String> {
 }
 
 fn constant_time_eq(left: &str, right: &str) -> bool {
-    if left.len() != right.len() {
-        return false;
+    let left_bytes = left.as_bytes();
+    let right_bytes = right.as_bytes();
+    let max_len = left_bytes.len().max(right_bytes.len());
+
+    // Include length mismatch in the accumulator instead of early-returning,
+    // so comparison work remains proportional to max_len in all cases.
+    let mut diff = (left_bytes.len() ^ right_bytes.len()) as u8;
+    for idx in 0..max_len {
+        let left_byte = *left_bytes.get(idx).unwrap_or(&0);
+        let right_byte = *right_bytes.get(idx).unwrap_or(&0);
+        diff |= left_byte ^ right_byte;
     }
-    left.as_bytes()
-        .iter()
-        .zip(right.as_bytes())
-        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-        == 0
+    diff == 0
+}
+
+fn effective_ws_auth_requirement(require_auth_env: bool, ws_dev_mode: bool) -> bool {
+    require_auth_env && !ws_dev_mode
 }
 
 fn is_admin_protected_path(path: &str) -> bool {
@@ -1046,6 +1055,8 @@ async fn main() -> anyhow::Result<()> {
     // and assumes all traffic arrives over a secure channel.
     let behind_tls_proxy = env_flag("MGS_BEHIND_TLS_PROXY");
     let ws_dev_mode = env_flag("MGS_DEV_MODE");
+    let ws_require_auth_env = env_flag("MGS_REQUIRE_AUTH");
+    let ws_require_auth = effective_ws_auth_requirement(ws_require_auth_env, ws_dev_mode);
     let ws_allowed_origins: Arc<Vec<String>> = Arc::new(parse_list_env("MGS_ALLOWED_ORIGINS"));
     let enforce_secure_ws_transport =
         behind_tls_proxy && !ws_dev_mode && !env_flag("MGS_ALLOW_INSECURE_WS_PROXY_PROTO");
@@ -1058,6 +1069,16 @@ async fn main() -> anyhow::Result<()> {
     }
     if ws_dev_mode {
         info!("MGS_DEV_MODE enabled: localhost/127.0.0.1 WebSocket origins are permitted.");
+        if ws_require_auth_env {
+            warn!(
+                "MGS_REQUIRE_AUTH is set but MGS_DEV_MODE is enabled; WebSocket auth enforcement is disabled in dev mode."
+            );
+        }
+    }
+    if ws_require_auth {
+        info!("WebSocket auth enforcement enabled: valid auth token required for /ws.");
+    } else if !ws_dev_mode {
+        warn!("WebSocket auth enforcement is disabled. Set MGS_REQUIRE_AUTH=1 for production.");
     }
     if proxy_config.explicit {
         info!(
@@ -1148,6 +1169,7 @@ async fn main() -> anyhow::Result<()> {
     let server_instance_for_ws = game_server_instance.clone(); // Clone Arc for WebSocket handler
     let auth_service_for_ws = auth_service.clone();
     let scaling_coordinator_for_ws = scaling_coordinator.clone();
+    let ws_require_auth_for_route = ws_require_auth;
 
     let signaling_route_ws = warp::path("ws")
         .and(origin_check_filter)
@@ -1172,21 +1194,21 @@ async fn main() -> anyhow::Result<()> {
         .and(warp::any().map(move || auth_service_for_ws.clone()))
         .and(warp::any().map(move || scaling_coordinator_for_ws.clone()))
         .map(
-            |ws: warp::ws::Ws,
-             ws_auth_query: WsAuthQuery,
-             request_headers: HeaderMap,
-             remote_addr: Option<SocketAddr>,
-             s_peers: SignalingPeers,
-             p_manager: PlayerManagerRef,
-             w_p_manager: WorldPartitionManagerRef,
-             d_channels: DataChannelsMap,
-             c_states: ClientStatesMap,
-             chats: ChatMessagesQueue,
-             conf: Arc<ServerConfig>,
-             p_aois: Arc<DashMap<String, PlayerAoI>>,
-             server_inst: ServerInstanceRef,
-             auth_service: AuthService,
-             scaling_coordinator: Arc<HorizontalScalingCoordinator>| {
+            move |ws: warp::ws::Ws,
+                  ws_auth_query: WsAuthQuery,
+                  request_headers: HeaderMap,
+                  remote_addr: Option<SocketAddr>,
+                  s_peers: SignalingPeers,
+                  p_manager: PlayerManagerRef,
+                  w_p_manager: WorldPartitionManagerRef,
+                  d_channels: DataChannelsMap,
+                  c_states: ClientStatesMap,
+                  chats: ChatMessagesQueue,
+                  conf: Arc<ServerConfig>,
+                  p_aois: Arc<DashMap<String, PlayerAoI>>,
+                  server_inst: ServerInstanceRef,
+                  auth_service: AuthService,
+                  scaling_coordinator: Arc<HorizontalScalingCoordinator>| {
                 // Accept server instance Arc
                 let peer_id = Uuid::new_v4().to_string();
                 let requested_team_id = ws_auth_query.requested_team_id();
@@ -1214,6 +1236,21 @@ async fn main() -> anyhow::Result<()> {
                     })
                     .unwrap_or_default();
                 let auth_user_id = auth_service.resolve_user_id_from_token(&auth_token);
+                if ws_require_auth_for_route && auth_user_id.is_none() {
+                    warn!(
+                        "Rejecting unauthenticated WebSocket signaling upgrade for peer={}",
+                        peer_id
+                    );
+                    return warp::reply::with_status(
+                        warp::reply::json(&serde_json::json!({
+                            "error": "auth_required",
+                            "detail": "Authentication required for signaling.",
+                        })),
+                        StatusCode::UNAUTHORIZED,
+                    )
+                    .into_response();
+                }
+
                 if let Some(bound_user_id) = auth_user_id.as_deref() {
                     if let Some(profile) = auth_service.profile_by_user_id(bound_user_id) {
                         let routing_key = format!("user:{}", bound_user_id);
@@ -1296,6 +1333,7 @@ async fn main() -> anyhow::Result<()> {
                     )
                     .instrument(ws_upgrade_span)
                 })
+                .into_response()
             },
         )
         .boxed();
@@ -1984,6 +2022,13 @@ mod tests {
         assert!(constant_time_eq("same-value", "same-value"));
         assert!(!constant_time_eq("same-value", "different"));
         assert!(!constant_time_eq("short", "shorter"));
+    }
+
+    #[test]
+    fn test_effective_ws_auth_requirement_respects_dev_override() {
+        assert!(effective_ws_auth_requirement(true, false));
+        assert!(!effective_ws_auth_requirement(true, true));
+        assert!(!effective_ws_auth_requirement(false, false));
     }
 
     #[test]

@@ -14,6 +14,13 @@ spec:
       labels:
         app: massive-game-server
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: server
           image: massive-game-server:latest
@@ -21,6 +28,11 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: MGS_HOST
               value: "0.0.0.0"
@@ -31,6 +43,8 @@ spec:
             - name: MGS_TARGET_BOT_COUNT
               value: "0"
             - name: MGS_BEHIND_TLS_PROXY
+              value: "1"
+            - name: MGS_REQUIRE_AUTH
               value: "1"
             - name: RUST_LOG
               value: "massive_game_server_core=info,warp=warn,webrtc=warn"

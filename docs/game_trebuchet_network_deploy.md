@@ -50,8 +50,10 @@ cp docker/.env.example docker/.env
 
 Then edit `docker/.env`:
 
-- set `GRAFANA_ADMIN_PASSWORD`
+- set `GRAFANA_ADMIN_USER`
+- set `GRAFANA_ADMIN_PASSWORD` (strong secret)
 - confirm `MGS_ALLOWED_ORIGINS=https://game.trebuchet.network`
+- keep `MGS_REQUIRE_AUTH=1` for production signaling auth enforcement
 - set optional secrets like `OPENROUTER_API_KEY`
 
 ## 4. Validate config

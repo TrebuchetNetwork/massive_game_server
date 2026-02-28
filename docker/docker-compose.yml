@@ -13,6 +13,7 @@ services:
       MGS_TARGET_BOT_COUNT: "${MGS_TARGET_BOT_COUNT:-0}"
       MGS_MAX_PLAYERS: "${MGS_MAX_PLAYERS:-200}"
       MGS_BEHIND_TLS_PROXY: "1"
+      MGS_REQUIRE_AUTH: "${MGS_REQUIRE_AUTH:-1}"
       MGS_ALLOWED_ORIGINS: "${MGS_ALLOWED_ORIGINS:-https://game.trebuchet.network}"
       MGS_METRICS_ENABLED: "true"
       MGS_METRICS_BIND_ADDR: "0.0.0.0:9090"
@@ -105,8 +106,8 @@ services:
     container_name: massive-game-server-grafana
     restart: unless-stopped
     environment:
-      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:?GRAFANA_ADMIN_USER is required}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: "${GRAFANA_ROOT_URL:-https://game.trebuchet.network/grafana}"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
