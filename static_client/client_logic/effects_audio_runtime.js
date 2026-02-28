@@ -799,6 +799,8 @@ switch (event.event_type) {
     case GP.GameEventType.PlayerDamageEffect:
         // Determine damage type based on event context
         let damageType = 'enemy'; // default
+        const targetIdString = event.target_id != null ? String(event.target_id) : '';
+        const localIdString = myPlayerId != null ? String(myPlayerId) : '';
         if (event.instigator_id && event.target_id) {
             const instigator = players.get(event.instigator_id);
             const target = players.get(event.target_id);
@@ -819,6 +821,24 @@ switch (event.event_type) {
             }
         }
         this.createEnhancedDamageNumbers(pos, event.value, damageType, { targetId: event.target_id });
+        if (
+            gameSettings?.screenShake &&
+            gameScene &&
+            localIdString &&
+            targetIdString === localIdString
+        ) {
+            // Local damage should feel punchy but remain bounded for readability.
+            const incomingDamage = Number(event.value);
+            const effectiveDamage =
+                Number.isFinite(incomingDamage) && incomingDamage > 0
+                    ? incomingDamage
+                    : 35;
+            if (effectiveDamage > 10) {
+                const shakeIntensity = Math.min(140, 18 + effectiveDamage * 2.2);
+                const shakeFrames = Math.min(9, 2 + Math.round(effectiveDamage / 14));
+                applyScreenShake(gameScene, shakeIntensity, shakeFrames);
+            }
+        }
         if (this.audioManager) {
             this.audioManager.playSound('playerHit', pos);
         }

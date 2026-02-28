@@ -4,7 +4,7 @@
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
 use massive_game_server_core::core::constants::{
-    PLAYER_BASE_SPEED, POINTS_PER_KILL, WORLD_MAX_X, WORLD_MIN_X,
+    MELEE_LUNGE_DISTANCE, PLAYER_BASE_SPEED, POINTS_PER_KILL, WORLD_MAX_X, WORLD_MIN_X,
 };
 use massive_game_server_core::core::types::{
     EntityId, PlayerAoIs, PlayerID, PlayerInputData, Projectile, ServerWeaponType, Wall,
@@ -200,6 +200,36 @@ async fn zero_sequence_input_is_ignored() {
 
     let ps = server.player_manager.get_player_state(&pid).unwrap();
     assert!(ps.velocity_x.abs() < f32::EPSILON);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn melee_attack_applies_forward_lunge() {
+    let server = setup_test_server();
+    let pid = add_player(&server, "melee_lunge", 1, 0.0, 0.0);
+
+    let mut input = make_input(1);
+    input.melee_attack = true;
+    input.rotation = 0.0;
+
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&pid) {
+        ps.x = 0.0;
+        ps.y = 0.0;
+        ps.input_queue.push_back(input);
+    }
+
+    server.process_network_input().await;
+
+    let ps = server.player_manager.get_player_state(&pid).unwrap();
+    assert!(
+        ps.x > 0.0,
+        "Melee lunge should move player forward, got x={}",
+        ps.x
+    );
+    assert!(
+        ps.x <= MELEE_LUNGE_DISTANCE + 0.5,
+        "Melee lunge should be bounded by configured distance, got x={}",
+        ps.x
+    );
 }
 
 // ── Weapon firing and projectile creation ─────────────────────────

@@ -655,11 +655,30 @@ export function createSpriteManager(getCtx) {
         } else if (mediumLod) {
             targetScale = 0.86;
         }
+        const vx = Number(projectile.velocity_x) || 0;
+        const vy = Number(projectile.velocity_y) || 0;
+        const projectileSpeed = Math.hypot(vx, vy);
+        let scaleX = targetScale;
+        let scaleY = targetScale;
+        // Full-detail projectiles get a stretched silhouette for a cheap trail-like read.
         if (
-            Math.abs((sprite.scale.x || 1) - targetScale) > TRANSFORM_EPSILON ||
-            Math.abs((sprite.scale.y || 1) - targetScale) > TRANSFORM_EPSILON
+            !dotLod &&
+            !lowLod &&
+            !mediumLod &&
+            !ultraPerformanceMode &&
+            !STABLE_MODE_FORCED &&
+            !denseVisualMode &&
+            projectileSpeed > 0
         ) {
-            sprite.scale.set(targetScale, targetScale);
+            const stretch = Math.min(2.4, 1 + projectileSpeed / 480);
+            scaleX *= stretch;
+            scaleY *= 0.78;
+        }
+        if (
+            Math.abs((sprite.scale.x || 1) - scaleX) > TRANSFORM_EPSILON ||
+            Math.abs((sprite.scale.y || 1) - scaleY) > TRANSFORM_EPSILON
+        ) {
+            sprite.scale.set(scaleX, scaleY);
         }
 
         if (ultraPerformanceMode || STABLE_MODE_FORCED || denseVisualMode) {

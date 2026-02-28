@@ -385,11 +385,11 @@ export function createGameRenderer({
         return vignette;
     }
 
-    function updateHealthVignette(vignette, healthPercent) {
+    function updateHealthVignette(vignette, healthPercent, frameNowMs = Date.now()) {
         if (healthPercent < 0.3) {
             vignette.visible = true;
             vignette.alpha = (0.3 - healthPercent) / 0.3 * 0.5;
-            vignette.alpha += Math.sin(Date.now() * 0.01) * 0.1;
+            vignette.alpha += Math.sin(frameNowMs * 0.01) * 0.1;
         } else {
             vignette.visible = false;
         }

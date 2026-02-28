@@ -256,14 +256,30 @@ export function createCombatFeedback(getCtx) {
         }));
         const totalDamage = rows.reduce((sum, row) => sum + row.damage, 0);
         ctx.combatUiState.deathRecapRows = rows.map((row) => `${row.name} - ${row.damage} (${row.weaponLabelInner})`);
+        ctx.deathRecapListDiv.replaceChildren();
         if (rows.length === 0) {
-            ctx.deathRecapListDiv.innerHTML = '<li class="death-recap__item death-recap__item--empty">No recent damage data</li>';
+            const empty = document.createElement('li');
+            empty.className = 'death-recap__item death-recap__item--empty';
+            empty.textContent = 'No recent damage data';
+            ctx.deathRecapListDiv.appendChild(empty);
         } else {
-            ctx.deathRecapListDiv.innerHTML = rows.map((row, idx) => {
+            const fragment = document.createDocumentFragment();
+            rows.forEach((row, idx) => {
                 const pct = totalDamage > 0 ? Math.round((row.damage / totalDamage) * 100) : 0;
                 const rowClass = idx === 0 ? 'death-recap__item death-recap__item--primary' : 'death-recap__item';
-                return `<li class="${rowClass}"><span class="death-recap__source">${ctx.escapeHtml(row.name)}</span><span class="death-recap__meta">${row.damage} (${pct}%) · ${ctx.escapeHtml(row.weaponLabelInner)}</span></li>`;
-            }).join('');
+                const li = document.createElement('li');
+                li.className = rowClass;
+                const source = document.createElement('span');
+                source.className = 'death-recap__source';
+                source.textContent = row.name;
+                const meta = document.createElement('span');
+                meta.className = 'death-recap__meta';
+                meta.textContent = `${row.damage} (${pct}%) · ${row.weaponLabelInner}`;
+                li.appendChild(source);
+                li.appendChild(meta);
+                fragment.appendChild(li);
+            });
+            ctx.deathRecapListDiv.appendChild(fragment);
         }
         ctx.combatUiState.deathRecapText = ctx.deathRecapMainDiv.textContent;
         ctx.combatUiState.deathRecapDistanceText = ctx.deathRecapDistanceDiv.textContent;

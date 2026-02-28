@@ -65,9 +65,9 @@ pub fn speed_hack_tolerance() -> f32 {
 
 // ── Weapon tuning constants ──────────────────────────────────────────
 // All weapon balance values centralized here for easy iteration.
-pub const PISTOL_DAMAGE: i32 = 8;
-pub const PISTOL_FIRE_RATE_SECS: f32 = 0.45; // was 0.6 – faster finisher
-pub const PISTOL_MAX_AMMO: i32 = 7;
+pub const PISTOL_DAMAGE: i32 = 10;
+pub const PISTOL_FIRE_RATE_SECS: f32 = 0.30; // snappier sidearm cadence
+pub const PISTOL_MAX_AMMO: i32 = 10;
 pub const PISTOL_RELOAD_SECS: f32 = 1.5;
 pub const PISTOL_FALLOFF_START: f32 = 150.0;
 pub const PISTOL_MAX_RANGE: f32 = 300.0;
@@ -106,7 +106,8 @@ pub const MELEE_RELOAD_SECS: f32 = 0.0;
 pub const MELEE_FALLOFF_START: f32 = 0.0;
 pub const MELEE_MAX_RANGE: f32 = 30.0;
 pub const MELEE_MIN_MULTIPLIER: f32 = 1.0;
-pub const MELEE_CONE_HALF_ANGLE_RAD: f32 = std::f32::consts::FRAC_PI_4; // π/4 (90° cone)
+pub const MELEE_CONE_HALF_ANGLE_RAD: f32 = std::f32::consts::FRAC_PI_6; // π/6 (60° cone)
+pub const MELEE_LUNGE_DISTANCE: f32 = 10.0; // extends effective reach to ~40u without widening the cone
 
 pub const SPEED_BOOST_MULTIPLIER: f32 = 1.15; // Speed boost powerup multiplier (separate from anti-cheat tolerance)
 pub const DAMAGE_BOOST_MULTIPLIER: f32 = 1.5;
@@ -124,7 +125,7 @@ pub const TEAM_PING_COOLDOWN_SECS: f32 = 3.0;
 
 // ── Zone tuning ─────────────────────────────────────────────────────
 pub const ZONE_SLOW_MULTIPLIER: f32 = 0.6;
-pub const ZONE_DAMAGE_PER_SEC: f32 = 10.0; // was 5 – actually threatening
+pub const ZONE_DAMAGE_PER_SEC: f32 = 25.0; // zone becomes a real threat (4s kill on 100hp)
 pub const ZONE_BOOST_DURATION_SECS: f32 = 0.5;
 pub const ZONE_BOOST_SPEED_MULTIPLIER: f32 = 2.0;
 pub const ZONE_BOOST_RETRIGGER_COOLDOWN_SECS: f32 = 0.8;
@@ -146,8 +147,8 @@ pub const ASSIST_WINDOW_SECS: f32 = 5.0;
 pub const LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS: f32 = 0.5;
 
 // ── Projectile knockback ────────────────────────────────────────────
-pub const KNOCKBACK_FORCE_PER_DAMAGE: f32 = 0.8; // push force proportional to damage
-pub const KNOCKBACK_MAX_VELOCITY: f32 = 450.0; // 3x base speed – prevents wallclip on stacked hits
+pub const KNOCKBACK_FORCE_PER_DAMAGE: f32 = 0.4; // reduced shove intensity for better close-range control
+pub const KNOCKBACK_MAX_VELOCITY: f32 = 350.0; // lower cap prevents exaggerated launch trajectories
 
 // ── Commander constants ────────────────────────────────────────────
 pub const COMMANDER_MAX_WAYPOINTS_PER_TEAM: usize = 3;

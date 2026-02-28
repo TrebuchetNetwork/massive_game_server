@@ -679,7 +679,7 @@ export function createUIManager(getCtx) {
 
         if (ctx.healthVignette && ctx.localPlayerState) {
             const healthPercent = ctx.localPlayerState.health / ctx.localPlayerState.max_health;
-            ctx.updateHealthVignette(ctx.healthVignette, healthPercent);
+            ctx.updateHealthVignette(ctx.healthVignette, healthPercent, ctx.frameNowMs);
         }
     }
 

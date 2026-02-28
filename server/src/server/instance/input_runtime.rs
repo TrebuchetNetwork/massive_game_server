@@ -851,6 +851,24 @@ impl MassiveGameServer {
             // Using can_shoot for cooldown & alive check
             player_state.last_shot_time = Some(current_server_time); // Apply melee cooldown
 
+            // Apply a short forward lunge so melee isn't forced into point-blank only.
+            let lunge_distance = crate::core::constants::MELEE_LUNGE_DISTANCE;
+            if lunge_distance > 0.0 {
+                let start_x = player_state.x;
+                let start_y = player_state.y;
+                let target_x = (start_x + player_state.rotation.cos() * lunge_distance)
+                    .clamp(WORLD_MIN_X + PLAYER_RADIUS, WORLD_MAX_X - PLAYER_RADIUS);
+                let target_y = (start_y + player_state.rotation.sin() * lunge_distance)
+                    .clamp(WORLD_MIN_Y + PLAYER_RADIUS, WORLD_MAX_Y - PLAYER_RADIUS);
+                if self.has_clear_line_of_sight(start_x, start_y, target_x, target_y)
+                    && !self.position_overlaps_any_wall(target_x, target_y)
+                {
+                    player_state.x = target_x;
+                    player_state.y = target_y;
+                    player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+                }
+            }
+
             // Position for the melee event (e.g., slightly in front of the player)
             let melee_event_pos_x =
                 player_state.x + player_state.rotation.cos() * (PLAYER_RADIUS + 1.0);

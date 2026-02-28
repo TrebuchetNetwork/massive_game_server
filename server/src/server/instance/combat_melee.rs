@@ -366,7 +366,7 @@ mod tests {
 
     const MELEE_MAX_RANGE: f32 = crate::core::constants::MELEE_MAX_RANGE;
     // The arc used in process_melee_hits divides by 2 to get the half-angle.
-    // MELEE_CONE_HALF_ANGLE_RAD is the half-angle (pi/4 = 45 degrees, 90° total cone).
+    // MELEE_CONE_HALF_ANGLE_RAD is the half-angle (pi/6 = 30 degrees, 60° total cone).
     const ARC_HALF_ANGLE: f32 = crate::core::constants::MELEE_CONE_HALF_ANGLE_RAD;
 
     // ── Range tests ─────────────────────────────────────────────────
@@ -471,8 +471,8 @@ mod tests {
     }
 
     #[test]
-    fn cone_check_uses_frac_pi_4_from_constants() {
-        // Verify with the MELEE_CONE_HALF_ANGLE_RAD from constants (pi/4)
+    fn cone_check_uses_melee_half_angle_from_constants() {
+        // Verify with the MELEE_CONE_HALF_ANGLE_RAD from constants
         let half = crate::core::constants::MELEE_CONE_HALF_ANGLE_RAD;
         // Target at exactly half angle should be within
         let tx = 10.0 * (half - 0.01_f32).cos();
