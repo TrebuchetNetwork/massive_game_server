@@ -14,7 +14,6 @@ COPY server ./server
 COPY protocol ./protocol
 COPY stress-client ./stress-client
 COPY admin-tools ./admin-tools
-COPY flatbuffers ./flatbuffers
 COPY static_client ./static_client
 
 RUN cargo build --release --features jemalloc -p massive_game_server_core --bin massive_game_server_core
