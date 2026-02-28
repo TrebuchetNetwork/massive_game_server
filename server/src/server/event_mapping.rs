@@ -73,32 +73,30 @@ pub(crate) fn event_value(event: &GameEvent) -> Option<f32> {
 }
 
 pub(crate) fn should_serialize_game_event(event: &GameEvent) -> bool {
-    !matches!(
-        event,
-        GameEvent::PlayerJoined { .. } | GameEvent::PlayerLeft { .. } | GameEvent::Footstep { .. }
-    )
+    map_game_event_type_to_fb(event).is_some()
 }
 
-pub(crate) fn map_game_event_type_to_fb(event: &GameEvent) -> fb::GameEventType {
+pub(crate) fn map_game_event_type_to_fb(event: &GameEvent) -> Option<fb::GameEventType> {
     match event {
-        GameEvent::PlayerDamaged { .. } => fb::GameEventType::PlayerDamageEffect,
-        GameEvent::PlayerKilled { .. } => fb::GameEventType::PlayerDamageEffect,
-        GameEvent::ProjectileHitWall { .. } => fb::GameEventType::WallImpact,
-        GameEvent::PowerupCollected { .. } => fb::GameEventType::PowerupActivated,
-        GameEvent::WeaponFired { .. } => fb::GameEventType::WeaponFire,
-        GameEvent::WallDestroyed { .. } => fb::GameEventType::WallDestroyed,
-        GameEvent::WallImpact { .. } => fb::GameEventType::WallImpact,
-        GameEvent::FlagGrabbed { .. } => fb::GameEventType::FlagGrabbed,
-        GameEvent::FlagDropped { .. } => fb::GameEventType::FlagDropped,
-        GameEvent::FlagReturned { .. } => fb::GameEventType::FlagReturned,
-        GameEvent::FlagCaptured { .. } => fb::GameEventType::FlagCaptured,
-        GameEvent::TeamPing { .. } => fb::GameEventType::TeamPing,
-        GameEvent::PlayerJoined { .. } | GameEvent::PlayerLeft { .. } => {
-            fb::GameEventType::BulletImpact
-        }
-        GameEvent::MeleeHit { .. } => fb::GameEventType::PlayerDamageEffect,
-        GameEvent::Footstep { .. } => fb::GameEventType::BulletImpact,
-        GameEvent::Killstreak { .. } => fb::GameEventType::Killstreak,
-        GameEvent::AssistKill { .. } => fb::GameEventType::AssistKill,
+        GameEvent::PlayerDamaged { .. } => Some(fb::GameEventType::PlayerDamageEffect),
+        GameEvent::PlayerKilled { .. } => Some(fb::GameEventType::PlayerDamageEffect),
+        GameEvent::ProjectileHitWall { .. } => Some(fb::GameEventType::WallImpact),
+        GameEvent::PowerupCollected { .. } => Some(fb::GameEventType::PowerupActivated),
+        GameEvent::WeaponFired { .. } => Some(fb::GameEventType::WeaponFire),
+        GameEvent::WallDestroyed { .. } => Some(fb::GameEventType::WallDestroyed),
+        GameEvent::WallImpact { .. } => Some(fb::GameEventType::WallImpact),
+        GameEvent::FlagGrabbed { .. } => Some(fb::GameEventType::FlagGrabbed),
+        GameEvent::FlagDropped { .. } => Some(fb::GameEventType::FlagDropped),
+        GameEvent::FlagReturned { .. } => Some(fb::GameEventType::FlagReturned),
+        GameEvent::FlagCaptured { .. } => Some(fb::GameEventType::FlagCaptured),
+        GameEvent::TeamPing { .. } => Some(fb::GameEventType::TeamPing),
+        GameEvent::MeleeHit { .. } => Some(fb::GameEventType::PlayerDamageEffect),
+        GameEvent::Killstreak { .. } => Some(fb::GameEventType::Killstreak),
+        GameEvent::AssistKill { .. } => Some(fb::GameEventType::AssistKill),
+        // These events currently do not have explicit FlatBuffer variants in game.fbs.
+        // Skip serialization rather than misclassifying them as BulletImpact.
+        GameEvent::PlayerJoined { .. }
+        | GameEvent::PlayerLeft { .. }
+        | GameEvent::Footstep { .. } => None,
     }
 }

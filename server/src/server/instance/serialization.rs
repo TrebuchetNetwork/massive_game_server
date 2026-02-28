@@ -254,7 +254,8 @@ pub(super) fn build_chat_game_message_bytes(chat_entry: &ChatMessage) -> Bytes {
 pub(super) fn build_game_event_fb<'a>(
     builder: &mut flatbuffers::FlatBufferBuilder<'a>,
     event: &GameEvent,
-) -> flatbuffers::WIPOffset<fb::GameEvent<'a>> {
+) -> Option<flatbuffers::WIPOffset<fb::GameEvent<'a>>> {
+    let event_type = map_game_event_type_to_fb(event)?;
     let event_pos = event_position(event);
     let pos_fb = fb::Vec2::create(
         builder,
@@ -268,15 +269,15 @@ pub(super) fn build_game_event_fb<'a>(
     let weapon_type_fb =
         event_weapon_type(event).map_or(fb::WeaponType::Pistol, map_server_weapon_to_fb);
 
-    fb::GameEvent::create(
+    Some(fb::GameEvent::create(
         builder,
         &fb::GameEventArgs {
-            event_type: map_game_event_type_to_fb(event),
+            event_type,
             position: Some(pos_fb),
             instigator_id: instigator_id_fb,
             target_id: target_id_fb,
             weapon_type: weapon_type_fb,
             value: event_value(event).unwrap_or(0.0),
         },
-    )
+    ))
 }

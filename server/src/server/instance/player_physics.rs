@@ -349,65 +349,64 @@ impl MassiveGameServer {
         let min_distance = PLAYER_RADIUS * 2.0;
         let min_distance_sq = min_distance * min_distance;
         let max_push_per_player = (PLAYER_BASE_SPEED * delta_time * 0.5).clamp(0.5, 6.0);
-        let mut accumulated_push: HashMap<PlayerID, (f32, f32)> =
+        let mut id_to_index: HashMap<PlayerID, usize> =
             HashMap::with_capacity(alive_positions.len());
-
-        let mut new_positions = HashMap::with_capacity(alive_positions.len());
-        for (id, x, y) in &alive_positions {
-            new_positions.insert(id.clone(), (*x, *y));
+        for (idx, (id, _, _)) in alive_positions.iter().enumerate() {
+            id_to_index.insert(id.clone(), idx);
         }
+        let mut accumulated_push: Vec<(f32, f32)> = vec![(0.0, 0.0); alive_positions.len()];
 
-        for (left_id, left_x, left_y) in &alive_positions {
+        for (left_idx, (_, left_x, left_y)) in alive_positions.iter().enumerate() {
             // Use spatial index for fast nearby player lookup instead of O(N^2)
             let nearby =
                 self.spatial_index
                     .query_nearby_players(*left_x, *left_y, min_distance * 2.0);
 
             for right_id in nearby {
-                if left_id >= &right_id {
+                let Some(&right_idx) = id_to_index.get(&right_id) else {
+                    continue;
+                };
+                if left_idx >= right_idx {
                     continue;
                 }
 
-                if let Some(&(right_x, right_y)) = new_positions.get(&right_id) {
-                    let dx = right_x - left_x;
-                    let dy = right_y - left_y;
-                    let dist_sq = dx * dx + dy * dy;
+                let (_, right_x, right_y) = &alive_positions[right_idx];
+                let dx = *right_x - *left_x;
+                let dy = *right_y - *left_y;
+                let dist_sq = dx * dx + dy * dy;
 
-                    if dist_sq >= min_distance_sq {
-                        continue;
-                    }
-
-                    let dist = dist_sq.sqrt().max(0.001);
-                    let overlap = (min_distance - dist).max(0.0);
-                    if overlap <= 0.0 {
-                        continue;
-                    }
-
-                    let push = (overlap * 0.5).min(max_push_per_player);
-                    let normal_x = dx / dist;
-                    let normal_y = dy / dist;
-                    let left_push = (-normal_x * push, -normal_y * push);
-                    let right_push = (normal_x * push, normal_y * push);
-
-                    let left_entry = accumulated_push
-                        .entry(left_id.clone())
-                        .or_insert((0.0, 0.0));
-                    left_entry.0 += left_push.0;
-                    left_entry.1 += left_push.1;
-                    let right_entry = accumulated_push
-                        .entry(right_id.clone())
-                        .or_insert((0.0, 0.0));
-                    right_entry.0 += right_push.0;
-                    right_entry.1 += right_push.1;
+                if dist_sq >= min_distance_sq {
+                    continue;
                 }
+
+                let dist = dist_sq.sqrt().max(0.001);
+                let overlap = (min_distance - dist).max(0.0);
+                if overlap <= 0.0 {
+                    continue;
+                }
+
+                let push = (overlap * 0.5).min(max_push_per_player);
+                let normal_x = dx / dist;
+                let normal_y = dy / dist;
+
+                accumulated_push[left_idx].0 -= normal_x * push;
+                accumulated_push[left_idx].1 -= normal_y * push;
+                accumulated_push[right_idx].0 += normal_x * push;
+                accumulated_push[right_idx].1 += normal_y * push;
             }
         }
 
-        if accumulated_push.is_empty() {
+        if accumulated_push
+            .iter()
+            .all(|(push_x, push_y)| push_x.abs() <= f32::EPSILON && push_y.abs() <= f32::EPSILON)
+        {
             return;
         }
 
-        for (player_id, (push_x, push_y)) in accumulated_push {
+        for ((player_id, _, _), (push_x, push_y)) in alive_positions
+            .into_iter()
+            .zip(accumulated_push.into_iter())
+        {
             if push_x.abs() <= f32::EPSILON && push_y.abs() <= f32::EPSILON {
                 continue;
             }

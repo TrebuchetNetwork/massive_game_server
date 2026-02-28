@@ -81,7 +81,11 @@ impl MassiveGameServer {
             .saturating_sub(clamped_lag_ms);
 
         // Process projectiles in parallel chunks
-        let chunk_size = 50.max(total_projectiles / rayon::current_num_threads());
+        // Keep chunks large enough to amortize overhead while still spreading
+        // medium loads across worker threads.
+        let worker_count = rayon::current_num_threads().max(1);
+        let target_chunk = (total_projectiles + worker_count - 1) / worker_count;
+        let chunk_size = target_chunk.clamp(8, 256);
 
         let chunk_results: Vec<ProjectileChunkResults> = all_projectiles
             .par_chunks_mut(chunk_size)

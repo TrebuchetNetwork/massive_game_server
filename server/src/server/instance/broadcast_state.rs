@@ -481,7 +481,7 @@ impl MassiveGameServer {
                     }
                 })
                 .take(shared_data.max_delta_events_per_client)
-                .map(|event| build_game_event_fb(&mut builder, event))
+                .filter_map(|event| build_game_event_fb(&mut builder, event))
                 .collect();
             if events_vec.is_empty() {
                 None
