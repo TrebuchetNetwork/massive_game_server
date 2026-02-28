@@ -439,7 +439,7 @@ export function createUIManager(getCtx) {
         }
         ctx.uiCache.killFeedSignature = signature;
 
-        ctx.killFeedDiv.innerHTML = '';
+        ctx.killFeedDiv.replaceChildren();
         if (visibleEntries.length === 0) {
             ctx.killFeedDiv.classList.add('hidden');
             return;
@@ -495,7 +495,7 @@ export function createUIManager(getCtx) {
         }
         ctx.uiCache.chatSignature = signature;
 
-        ctx.chatDisplayDiv.innerHTML = '';
+        ctx.chatDisplayDiv.replaceChildren();
         if (visibleMessages.length === 0) {
             ctx.chatDisplayDiv.classList.add('hidden');
             return;
@@ -559,14 +559,22 @@ export function createUIManager(getCtx) {
         ctx.uiCache.matchInfoSignature = matchSignature;
 
         ctx.matchInfoDiv.classList.remove('hidden');
-        let content = '';
+        const fragment = document.createDocumentFragment();
         const gameModeName = {
             [ctx.GP.GameModeType.FreeForAll]: "FFA",
             [ctx.GP.GameModeType.TeamDeathmatch]: "TDM",
             [ctx.GP.GameModeType.CaptureTheFlag]: "CTF"
         }[ctx.matchInfo.game_mode] || "Unknown Mode";
 
-        content += `<div class="font-semibold">${gameModeName}</div>`;
+        const appendTextRow = (className, text) => {
+            const row = document.createElement('div');
+            row.className = className;
+            row.textContent = text;
+            fragment.appendChild(row);
+            return row;
+        };
+
+        appendTextRow('font-semibold', gameModeName);
 
         const describeCommander = (teamId) => {
             const commanderId = ctx.getCommanderIdForTeam(teamId);
@@ -588,15 +596,33 @@ export function createUIManager(getCtx) {
         if (localTeamId === 1 || localTeamId === 2) {
             const roleText = ctx.isLocalTeamCommander() ? 'Commander' : 'Member';
             const waypointText = describeWaypoint(localTeamId);
-            content += `<div class="commander-line">Role: <span class="commander-line__role">${escapeHtml(roleText)}</span> \u00b7 Waypoint: <span class="commander-line__waypoint">${escapeHtml(waypointText)}</span></div>`;
+            const commanderLine = document.createElement('div');
+            commanderLine.className = 'commander-line';
+            commanderLine.appendChild(document.createTextNode('Role: '));
+            const roleSpan = document.createElement('span');
+            roleSpan.className = 'commander-line__role';
+            roleSpan.textContent = roleText;
+            commanderLine.appendChild(roleSpan);
+            commanderLine.appendChild(document.createTextNode(' \u00b7 Waypoint: '));
+            const waypointSpan = document.createElement('span');
+            waypointSpan.className = 'commander-line__waypoint';
+            waypointSpan.textContent = waypointText;
+            commanderLine.appendChild(waypointSpan);
+            fragment.appendChild(commanderLine);
             if (localTeamId === 1 || localTeamId === 2) {
                 const ownCommander = describeCommander(localTeamId);
-                content += `<div class="commander-line commander-line--minor">Team ${localTeamId} commander: ${escapeHtml(ownCommander)}</div>`;
+                appendTextRow(
+                    'commander-line commander-line--minor',
+                    `Team ${localTeamId} commander: ${ownCommander}`
+                );
             }
         } else {
             const commander1 = describeCommander(1);
             const commander2 = describeCommander(2);
-            content += `<div class="commander-line commander-line--minor">Cmd R:${escapeHtml(commander1)} \u00b7 Cmd B:${escapeHtml(commander2)}</div>`;
+            appendTextRow(
+                'commander-line commander-line--minor',
+                `Cmd R:${commander1} \u00b7 Cmd B:${commander2}`
+            );
         }
 
         if (ctx.matchInfo.match_state !== ctx.GP.MatchStateType.Ended && ctx.postMatchSummaryVisible) {
@@ -607,9 +633,12 @@ export function createUIManager(getCtx) {
             case ctx.GP.MatchStateType.Waiting: {
                 const waitingPlayerCount = Math.max(ctx.players.size, ctx.localPlayerState ? 1 : 0);
                 if (waitingPlayerCount >= ctx.MIN_PLAYERS_TO_START) {
-                    content += `<div class="text-yellow-300">Match is initializing...</div>`;
+                    appendTextRow('text-yellow-300', 'Match is initializing...');
                 } else {
-                    content += `<div class="text-yellow-400">Waiting for players... (${toInt(waitingPlayerCount)}/${toInt(ctx.MIN_PLAYERS_TO_START)})</div>`;
+                    appendTextRow(
+                        'text-yellow-400',
+                        `Waiting for players... (${toInt(waitingPlayerCount)}/${toInt(ctx.MIN_PLAYERS_TO_START)})`
+                    );
                 }
                 break;
             }
@@ -617,9 +646,10 @@ export function createUIManager(getCtx) {
                 const timeRemaining = Math.max(0, Number(ctx.matchInfo.time_remaining || 0));
                 const minutes = Math.floor(timeRemaining / 60);
                 const seconds = Math.floor(timeRemaining % 60);
-                content += `<div class="text-white">Time: ${minutes}:${seconds.toString().padStart(2, '0')}</div>`;
+                appendTextRow('text-white', `Time: ${minutes}:${seconds.toString().padStart(2, '0')}`);
                 if (ctx.matchInfo.game_mode === ctx.GP.GameModeType.TeamDeathmatch || ctx.matchInfo.game_mode === ctx.GP.GameModeType.CaptureTheFlag) {
-                    content += '<div class="team-scores">';
+                    const teamScores = document.createElement('div');
+                    teamScores.className = 'team-scores';
                     let redScore = 0;
                     let blueScore = 0;
                     if (ctx.matchInfo.team_scores) {
@@ -628,29 +658,41 @@ export function createUIManager(getCtx) {
                             if (ts.team_id === 2) blueScore = toInt(ts.score, 0);
                         });
                     }
-                    content += `<span class="team-score team-red">Red: ${redScore}</span>`;
-                    content += `<span class="team-score team-blue">Blue: ${blueScore}</span>`;
-                    content += '</div>';
+                    const redSpan = document.createElement('span');
+                    redSpan.className = 'team-score team-red';
+                    redSpan.textContent = `Red: ${redScore}`;
+                    teamScores.appendChild(redSpan);
+                    const blueSpan = document.createElement('span');
+                    blueSpan.className = 'team-score team-blue';
+                    blueSpan.textContent = `Blue: ${blueScore}`;
+                    teamScores.appendChild(blueSpan);
+                    fragment.appendChild(teamScores);
                 }
                 break;
             }
             case ctx.GP.MatchStateType.Ended: {
-                let winnerText = "Match Ended! ";
+                const statusRow = document.createElement('div');
+                statusRow.className = 'text-green-400';
+                statusRow.appendChild(document.createTextNode('Match Ended! '));
                 const winnerNameRaw = String(ctx.matchInfo.winner_name || '').trim();
                 const winnerTeamId = toInt(ctx.matchInfo.winner_id, 0);
                 if (winnerNameRaw && winnerNameRaw !== "null") {
-                    winnerText += `Winner: ${escapeHtml(winnerNameRaw)}`;
+                    statusRow.appendChild(document.createTextNode(`Winner: ${winnerNameRaw}`));
                 } else if (winnerTeamId === 1 || winnerTeamId === 2) {
                     const teamColorClass = winnerTeamId === 1 ? "team-red" : "team-blue";
-                    winnerText += `Winner: <span class="${teamColorClass}">Team ${winnerTeamId}</span>`;
+                    statusRow.appendChild(document.createTextNode('Winner: '));
+                    const winnerTeamSpan = document.createElement('span');
+                    winnerTeamSpan.className = teamColorClass;
+                    winnerTeamSpan.textContent = `Team ${winnerTeamId}`;
+                    statusRow.appendChild(winnerTeamSpan);
                 } else {
-                    winnerText += "It's a Draw!";
+                    statusRow.appendChild(document.createTextNode("It's a Draw!"));
                 }
-                content += `<div class="text-green-400">${winnerText}</div>`;
+                fragment.appendChild(statusRow);
                 break;
             }
         }
-        ctx.matchInfoDiv.innerHTML = content;
+        ctx.matchInfoDiv.replaceChildren(fragment);
     }
 
     function updateNetworkProfilerUi(currentTimeMs) {
@@ -741,16 +783,30 @@ export function createUIManager(getCtx) {
             ctx.setTextIfChanged(ctx.playerKillsSpan, ctx.localPlayerState.kills, 'kills');
             ctx.setTextIfChanged(ctx.playerDeathsSpan, ctx.localPlayerState.deaths, 'deaths');
 
-            let powerupsHtml = '';
-            if (ctx.localPlayerState.speed_boost_remaining > 0) {
-                powerupsHtml += `<div class="powerup-indicator"><span class="icon">\uD83C\uDFC3</span> Speed: ${Math.ceil(ctx.localPlayerState.speed_boost_remaining)}s</div>`;
-            }
-            if (ctx.localPlayerState.damage_boost_remaining > 0) {
-                powerupsHtml += `<div class="powerup-indicator"><span class="icon">\uD83D\uDCAA</span> Damage: ${Math.ceil(ctx.localPlayerState.damage_boost_remaining)}s</div>`;
-            }
-            if (ctx.uiCache.powerupsHtml !== powerupsHtml) {
-                ctx.uiCache.powerupsHtml = powerupsHtml;
-                ctx.powerupStatusDiv.innerHTML = powerupsHtml;
+            const speedBoostSeconds = Math.max(0, Math.ceil(Number(ctx.localPlayerState.speed_boost_remaining) || 0));
+            const damageBoostSeconds = Math.max(0, Math.ceil(Number(ctx.localPlayerState.damage_boost_remaining) || 0));
+            const powerupSignature = `${speedBoostSeconds}:${damageBoostSeconds}`;
+            if (ctx.uiCache.powerupsSignature !== powerupSignature) {
+                ctx.uiCache.powerupsSignature = powerupSignature;
+                ctx.powerupStatusDiv.replaceChildren();
+
+                const appendPowerupIndicator = (iconText, label) => {
+                    const indicator = document.createElement('div');
+                    indicator.className = 'powerup-indicator';
+                    const icon = document.createElement('span');
+                    icon.className = 'icon';
+                    icon.textContent = iconText;
+                    indicator.appendChild(icon);
+                    indicator.appendChild(document.createTextNode(` ${label}`));
+                    ctx.powerupStatusDiv.appendChild(indicator);
+                };
+
+                if (speedBoostSeconds > 0) {
+                    appendPowerupIndicator('\uD83C\uDFC3', `Speed: ${speedBoostSeconds}s`);
+                }
+                if (damageBoostSeconds > 0) {
+                    appendPowerupIndicator('\uD83D\uDCAA', `Damage: ${damageBoostSeconds}s`);
+                }
             }
         }
         ctx.setTextIfChanged(ctx.playerCountSpan, ctx.players.size, 'playerCount');
@@ -795,7 +851,7 @@ export function createUIManager(getCtx) {
             ffaScoreboardSection.classList.remove('hidden');
             teamScoreboardSection.classList.add('hidden');
             scoreboardContentDiv.classList.remove('two-columns');
-            ffaPlayersTableBody.innerHTML = '';
+            ffaPlayersTableBody.replaceChildren();
             sortedPlayers.forEach((p, index) => {
                 const row = ffaPlayersTableBody.insertRow();
                 row.insertCell().textContent = index + 1;
@@ -808,8 +864,8 @@ export function createUIManager(getCtx) {
             ffaScoreboardSection.classList.add('hidden');
             teamScoreboardSection.classList.remove('hidden');
             scoreboardContentDiv.classList.add('two-columns');
-            redTeamPlayersTableBody.innerHTML = '';
-            blueTeamPlayersTableBody.innerHTML = '';
+            redTeamPlayersTableBody.replaceChildren();
+            blueTeamPlayersTableBody.replaceChildren();
 
             let redScore = 0, blueScore = 0;
             if (ctx.matchInfo.team_scores) {

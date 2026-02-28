@@ -9,28 +9,14 @@
 use crate::core::simd;
 use crate::core::types::{EntityId, PlayerID};
 use arc_swap::ArcSwap;
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use parking_lot::RwLock;
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::debug;
-
-#[derive(Debug, Clone)]
-struct SpatialCell {
-    player_ids: HashSet<PlayerID>,
-    projectile_ids: HashSet<EntityId>,
-}
-
-impl SpatialCell {
-    fn new() -> Self {
-        SpatialCell {
-            player_ids: HashSet::new(),
-            projectile_ids: HashSet::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 struct Aabb {
@@ -237,8 +223,13 @@ enum SpatialQueryMode {
     Hybrid,
 }
 
+thread_local! {
+    static CELL_QUERY_INDICES_SCRATCH: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+
 pub struct ImprovedSpatialIndex {
-    cells: Vec<RwLock<SpatialCell>>,
+    player_cell_members: Vec<DashSet<PlayerID>>,
+    projectile_cell_members: Vec<DashSet<EntityId>>,
     grid_width: usize,
     grid_height: usize,
     cell_size: f32,
@@ -278,9 +269,11 @@ impl ImprovedSpatialIndex {
         let grid_height = ((world_height / cell_size).ceil() as usize).max(1);
         let total_cells = grid_width * grid_height;
 
-        let mut cells = Vec::with_capacity(total_cells);
+        let mut player_cell_members = Vec::with_capacity(total_cells);
+        let mut projectile_cell_members = Vec::with_capacity(total_cells);
         for _ in 0..total_cells {
-            cells.push(RwLock::new(SpatialCell::new()));
+            player_cell_members.push(DashSet::new());
+            projectile_cell_members.push(DashSet::new());
         }
 
         let query_mode = parse_query_mode_from_env();
@@ -307,7 +300,8 @@ impl ImprovedSpatialIndex {
         );
 
         ImprovedSpatialIndex {
-            cells,
+            player_cell_members,
+            projectile_cell_members,
             grid_width,
             grid_height,
             cell_size,
@@ -444,7 +438,13 @@ impl ImprovedSpatialIndex {
     }
 
     #[inline]
-    fn get_cells_in_radius(&self, center_x: f32, center_y: f32, radius: f32) -> Vec<usize> {
+    fn fill_cells_in_radius(
+        &self,
+        center_x: f32,
+        center_y: f32,
+        radius: f32,
+        out: &mut Vec<usize>,
+    ) {
         let min_x = center_x - radius;
         let max_x = center_x + radius;
         let min_y = center_y - radius;
@@ -463,108 +463,58 @@ impl ImprovedSpatialIndex {
             .ceil()
             .min(self.grid_height as f32) as usize;
 
-        let mut cell_indices = Vec::new();
+        out.clear();
         for y in min_grid_y..max_grid_y {
             for x in min_grid_x..max_grid_x {
                 if x < self.grid_width && y < self.grid_height {
-                    cell_indices.push(y * self.grid_width + x);
+                    out.push(y * self.grid_width + x);
                 }
             }
         }
-
-        cell_indices
     }
 
     fn collect_grid_player_candidates(&self, x: f32, y: f32, radius: f32) -> Vec<PlayerID> {
-        let cell_indices = self.get_cells_in_radius(x, y, radius);
-        let mut candidate_ids = Vec::new();
-        let mut checked_players = HashSet::new();
+        CELL_QUERY_INDICES_SCRATCH.with(|scratch| {
+            let mut cell_indices = scratch.borrow_mut();
+            self.fill_cells_in_radius(x, y, radius, &mut cell_indices);
 
-        for cell_idx in cell_indices {
-            if let Some(cell) = self.cells.get(cell_idx) {
-                let cell_guard = cell.read();
-                for player_id in &cell_guard.player_ids {
-                    if checked_players.insert(player_id.clone()) {
-                        candidate_ids.push(player_id.clone());
+            let mut candidate_ids = Vec::new();
+            let mut checked_players = HashSet::new();
+
+            for cell_idx in cell_indices.iter().copied() {
+                if let Some(cell) = self.player_cell_members.get(cell_idx) {
+                    for player_id in cell.iter() {
+                        if checked_players.insert(player_id.key().clone()) {
+                            candidate_ids.push(player_id.key().clone());
+                        }
                     }
                 }
             }
-        }
 
-        candidate_ids
+            candidate_ids
+        })
     }
 
     fn collect_grid_projectile_candidates(&self, x: f32, y: f32, radius: f32) -> Vec<EntityId> {
-        let cell_indices = self.get_cells_in_radius(x, y, radius);
-        let mut candidate_ids = Vec::new();
-        let mut checked_projectiles = HashSet::new();
+        CELL_QUERY_INDICES_SCRATCH.with(|scratch| {
+            let mut cell_indices = scratch.borrow_mut();
+            self.fill_cells_in_radius(x, y, radius, &mut cell_indices);
 
-        for cell_idx in cell_indices {
-            if let Some(cell) = self.cells.get(cell_idx) {
-                let cell_guard = cell.read();
-                for proj_id in &cell_guard.projectile_ids {
-                    if checked_projectiles.insert(*proj_id) {
-                        candidate_ids.push(*proj_id);
+            let mut candidate_ids = Vec::new();
+            let mut checked_projectiles = HashSet::new();
+
+            for cell_idx in cell_indices.iter().copied() {
+                if let Some(cell) = self.projectile_cell_members.get(cell_idx) {
+                    for projectile_id in cell.iter() {
+                        if checked_projectiles.insert(*projectile_id.key()) {
+                            candidate_ids.push(*projectile_id.key());
+                        }
                     }
                 }
             }
-        }
 
-        candidate_ids
-    }
-
-    /// Lock-ordering helper for player migration between two cells.
-    /// Always acquires cell write locks in ascending cell index order.
-    fn move_player_between_cells(&self, player_id: &PlayerID, old_idx: usize, new_idx: usize) {
-        if old_idx == new_idx {
-            return;
-        }
-        let (first_idx, second_idx, old_is_first) = if old_idx < new_idx {
-            (old_idx, new_idx, true)
-        } else {
-            (new_idx, old_idx, false)
-        };
-        if second_idx >= self.cells.len() {
-            return;
-        }
-        let first_cell = &self.cells[first_idx];
-        let second_cell = &self.cells[second_idx];
-        let mut first_guard = first_cell.write();
-        let mut second_guard = second_cell.write();
-        if old_is_first {
-            first_guard.player_ids.remove(player_id);
-            second_guard.player_ids.insert(player_id.clone());
-        } else {
-            second_guard.player_ids.remove(player_id);
-            first_guard.player_ids.insert(player_id.clone());
-        }
-    }
-
-    /// Lock-ordering helper for projectile migration between two cells.
-    /// Always acquires cell write locks in ascending cell index order.
-    fn move_projectile_between_cells(&self, proj_id: EntityId, old_idx: usize, new_idx: usize) {
-        if old_idx == new_idx {
-            return;
-        }
-        let (first_idx, second_idx, old_is_first) = if old_idx < new_idx {
-            (old_idx, new_idx, true)
-        } else {
-            (new_idx, old_idx, false)
-        };
-        if second_idx >= self.cells.len() {
-            return;
-        }
-        let first_cell = &self.cells[first_idx];
-        let second_cell = &self.cells[second_idx];
-        let mut first_guard = first_cell.write();
-        let mut second_guard = second_cell.write();
-        if old_is_first {
-            first_guard.projectile_ids.remove(&proj_id);
-            second_guard.projectile_ids.insert(proj_id);
-        } else {
-            second_guard.projectile_ids.remove(&proj_id);
-            first_guard.projectile_ids.insert(proj_id);
-        }
+            candidate_ids
+        })
     }
 
     // Player methods
@@ -579,13 +529,18 @@ impl ImprovedSpatialIndex {
 
         if let Some(old_idx) = old_cell_idx {
             if old_idx != new_cell_idx {
-                self.move_player_between_cells(&player_id, old_idx, new_cell_idx);
+                if let Some(old_cell) = self.player_cell_members.get(old_idx) {
+                    old_cell.remove(&player_id);
+                }
+                if let Some(new_cell) = self.player_cell_members.get(new_cell_idx) {
+                    new_cell.insert(player_id.clone());
+                }
                 self.player_cells.insert(player_id.clone(), new_cell_idx);
             }
         } else {
             // First time tracking this player
-            if let Some(new_cell) = self.cells.get(new_cell_idx) {
-                new_cell.write().player_ids.insert(player_id.clone());
+            if let Some(new_cell) = self.player_cell_members.get(new_cell_idx) {
+                new_cell.insert(player_id.clone());
             }
             self.player_cells.insert(player_id.clone(), new_cell_idx);
         }
@@ -596,8 +551,8 @@ impl ImprovedSpatialIndex {
 
     pub fn remove_player(&self, player_id: &PlayerID) {
         if let Some((_, cell_idx)) = self.player_cells.remove(player_id) {
-            if let Some(cell) = self.cells.get(cell_idx) {
-                cell.write().player_ids.remove(player_id);
+            if let Some(cell) = self.player_cell_members.get(cell_idx) {
+                cell.remove(player_id);
             }
         }
         self.player_positions.remove(player_id);
@@ -722,13 +677,18 @@ impl ImprovedSpatialIndex {
 
         if let Some(old_idx) = old_cell_idx {
             if old_idx != new_cell_idx {
-                self.move_projectile_between_cells(proj_id, old_idx, new_cell_idx);
+                if let Some(old_cell) = self.projectile_cell_members.get(old_idx) {
+                    old_cell.remove(&proj_id);
+                }
+                if let Some(new_cell) = self.projectile_cell_members.get(new_cell_idx) {
+                    new_cell.insert(proj_id);
+                }
                 self.projectile_cells.insert(proj_id, new_cell_idx);
             }
         } else {
             // First time tracking this projectile
-            if let Some(new_cell) = self.cells.get(new_cell_idx) {
-                new_cell.write().projectile_ids.insert(proj_id);
+            if let Some(new_cell) = self.projectile_cell_members.get(new_cell_idx) {
+                new_cell.insert(proj_id);
             }
             self.projectile_cells.insert(proj_id, new_cell_idx);
         }
@@ -739,8 +699,8 @@ impl ImprovedSpatialIndex {
 
     pub fn remove_projectile(&self, proj_id: &EntityId) {
         if let Some((_, cell_idx)) = self.projectile_cells.remove(proj_id) {
-            if let Some(cell) = self.cells.get(cell_idx) {
-                cell.write().projectile_ids.remove(proj_id);
+            if let Some(cell) = self.projectile_cell_members.get(cell_idx) {
+                cell.remove(proj_id);
             }
         }
         self.projectile_positions.remove(proj_id);
@@ -807,9 +767,18 @@ impl ImprovedSpatialIndex {
         let mut occupied_cells = 0;
         let mut max_entities_per_cell = 0;
 
-        for cell in &self.cells {
-            let cell_guard = cell.read();
-            let entity_count = cell_guard.player_ids.len() + cell_guard.projectile_ids.len();
+        for cell_idx in 0..self.player_cell_members.len() {
+            let player_count = self
+                .player_cell_members
+                .get(cell_idx)
+                .map(|cell| cell.len())
+                .unwrap_or(0);
+            let projectile_count = self
+                .projectile_cell_members
+                .get(cell_idx)
+                .map(|cell| cell.len())
+                .unwrap_or(0);
+            let entity_count = player_count + projectile_count;
             if entity_count > 0 {
                 occupied_cells += 1;
                 max_entities_per_cell = max_entities_per_cell.max(entity_count);
@@ -820,7 +789,7 @@ impl ImprovedSpatialIndex {
             total_players,
             total_projectiles,
             occupied_cells,
-            total_cells: self.cells.len(),
+            total_cells: self.player_cell_members.len(),
             max_entities_per_cell,
             query_mode: match self.query_mode {
                 SpatialQueryMode::Grid => "grid",

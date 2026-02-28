@@ -6,7 +6,7 @@ use massive_game_server_core::core::config::ServerConfig;
 use massive_game_server_core::core::types::{PlayerAoI, PlayerInputData};
 use massive_game_server_core::network::connection_manager::shared_connection_manager;
 use massive_game_server_core::network::quic::{
-    connected_quic_peer_count, register_quic_disconnect_hook,
+    connected_quic_peer_count, quic_outbound_mode_name, register_quic_disconnect_hook,
     start_quic_runtime_from_env_with_handler, QuicRequestHandler,
 };
 use massive_game_server_core::network::signaling::{
@@ -1934,6 +1934,7 @@ async fn main() -> anyhow::Result<()> {
                         "op": "join",
                         "player": joined,
                         "peer_id": peer_id,
+                        "quic_outbound_mode": quic_outbound_mode_name(),
                         "_bound_peer_id": peer_id,
                     })
                 }

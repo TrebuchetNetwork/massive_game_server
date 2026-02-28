@@ -37,6 +37,8 @@ const QUIC_MAX_STREAM_PAYLOAD_HARD_CAP: usize = 64 * 1024;
 /// Bounded outbound channel capacity per connection.
 /// If the client cannot keep up, sends will apply backpressure rather than growing without bound.
 const OUTBOUND_CHANNEL_CAPACITY: usize = 4096;
+/// 4-byte big-endian length prefix for framed outbound QUIC streams.
+const QUIC_FRAMED_LENGTH_PREFIX_BYTES: usize = 4;
 
 /// Default per-IP connection rate: connections per second.
 const DEFAULT_CONN_RATE_PER_SEC: u32 = 8;
@@ -44,6 +46,14 @@ const DEFAULT_CONN_RATE_PER_SEC: u32 = 8;
 const DEFAULT_CONN_RATE_BURST: u32 = 16;
 /// Global cap on simultaneous QUIC connections handled by this process.
 const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum QuicOutboundMode {
+    /// Legacy mode: open one unidirectional stream per packet.
+    LegacyPerPacketStream,
+    /// Preferred mode: keep one unidirectional stream open and write length-prefixed frames.
+    FramedStream,
+}
 
 #[derive(Debug, Clone)]
 pub struct QuicEndpointConfig {
@@ -307,6 +317,34 @@ fn load_max_concurrent_connections() -> usize {
     )
 }
 
+fn parse_quic_outbound_mode(raw: Option<&str>) -> QuicOutboundMode {
+    match raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("legacy") | Some("stream_per_packet") | Some("per_packet") => {
+            QuicOutboundMode::LegacyPerPacketStream
+        }
+        Some("framed") | Some("framed_stream") | Some("stream_framed") | None => {
+            QuicOutboundMode::FramedStream
+        }
+        Some(_) => QuicOutboundMode::FramedStream,
+    }
+}
+
+fn load_quic_outbound_mode() -> QuicOutboundMode {
+    parse_quic_outbound_mode(std::env::var("MGS_QUIC_OUTBOUND_MODE").ok().as_deref())
+}
+
+pub fn quic_outbound_mode_name() -> &'static str {
+    match load_quic_outbound_mode() {
+        QuicOutboundMode::LegacyPerPacketStream => "legacy",
+        QuicOutboundMode::FramedStream => "framed",
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 pub fn start_quic_runtime(
@@ -369,10 +407,11 @@ pub fn start_quic_runtime(
     let (rate_per_sec, rate_burst) = load_conn_rate_limit_config();
     let conn_rate_limiters = Arc::new(ConnectionRateLimiters::new(rate_per_sec, rate_burst));
     let max_concurrent_connections = load_max_concurrent_connections();
+    let quic_outbound_mode = load_quic_outbound_mode();
     let connection_slots = Arc::new(Semaphore::new(max_concurrent_connections));
     info!(
-        "QUIC per-IP connection rate limit: {} conn/sec, burst {}, max_connections={}",
-        rate_per_sec, rate_burst, max_concurrent_connections
+        "QUIC per-IP connection rate limit: {} conn/sec, burst {}, max_connections={}, outbound_mode={:?}",
+        rate_per_sec, rate_burst, max_concurrent_connections, quic_outbound_mode
     );
 
     let rate_limiters_for_cleanup = Arc::clone(&conn_rate_limiters);
@@ -422,6 +461,7 @@ pub fn start_quic_runtime(
                     incoming,
                     request_handler,
                     max_stream_payload_bytes,
+                    quic_outbound_mode,
                     connection_slot,
                 )
                 .await
@@ -583,6 +623,7 @@ async fn handle_incoming(
     incoming: Incoming,
     request_handler: Option<QuicRequestHandler>,
     max_stream_payload_bytes: usize,
+    quic_outbound_mode: QuicOutboundMode,
     _connection_slot: OwnedSemaphorePermit,
 ) -> Result<()> {
     let connection = incoming
@@ -611,6 +652,7 @@ async fn handle_incoming(
         outbound_rx,
         connection_token,
         remote_addr,
+        quic_outbound_mode,
     ));
 
     loop {
@@ -822,6 +864,35 @@ async fn run_connection_writer(
     mut outbound_rx: mpsc::Receiver<Bytes>,
     connection_token: u64,
     remote_addr: SocketAddr,
+    outbound_mode: QuicOutboundMode,
+) {
+    match outbound_mode {
+        QuicOutboundMode::LegacyPerPacketStream => {
+            run_connection_writer_legacy(
+                connection,
+                &mut outbound_rx,
+                connection_token,
+                remote_addr,
+            )
+            .await;
+        }
+        QuicOutboundMode::FramedStream => {
+            run_connection_writer_framed(
+                connection,
+                &mut outbound_rx,
+                connection_token,
+                remote_addr,
+            )
+            .await;
+        }
+    }
+}
+
+async fn run_connection_writer_legacy(
+    connection: quinn::Connection,
+    outbound_rx: &mut mpsc::Receiver<Bytes>,
+    connection_token: u64,
+    remote_addr: SocketAddr,
 ) {
     while let Some(payload) = outbound_rx.recv().await {
         if payload.is_empty() {
@@ -860,6 +931,74 @@ async fn run_connection_writer(
             );
             break;
         }
+    }
+}
+
+async fn run_connection_writer_framed(
+    connection: quinn::Connection,
+    outbound_rx: &mut mpsc::Receiver<Bytes>,
+    connection_token: u64,
+    remote_addr: SocketAddr,
+) {
+    let mut send_stream = match connection.open_uni().await {
+        Ok(stream) => stream,
+        Err(err) => {
+            debug!(
+                "QUIC framed writer token={} could not open outbound stream for {}: {}",
+                connection_token, remote_addr, err
+            );
+            return;
+        }
+    };
+
+    while let Some(payload) = outbound_rx.recv().await {
+        if payload.is_empty() {
+            continue;
+        }
+
+        let payload_len = match u32::try_from(payload.len()) {
+            Ok(len) => len,
+            Err(_) => {
+                warn!(
+                    "QUIC framed writer token={} dropping oversized payload ({} bytes) for {}",
+                    connection_token,
+                    payload.len(),
+                    remote_addr
+                );
+                continue;
+            }
+        };
+        let frame_prefix = payload_len.to_be_bytes();
+        debug_assert_eq!(frame_prefix.len(), QUIC_FRAMED_LENGTH_PREFIX_BYTES);
+
+        if let Err(err) = send_stream.write_all(&frame_prefix).await {
+            debug!(
+                "QUIC framed writer token={} failed writing frame prefix to {}: {}",
+                connection_token, remote_addr, err
+            );
+            break;
+        }
+        if let Err(err) = send_stream.write_all(payload.as_ref()).await {
+            debug!(
+                "QUIC framed writer token={} failed writing framed payload to {}: {}",
+                connection_token, remote_addr, err
+            );
+            break;
+        }
+        if let Err(err) = send_stream.flush().await {
+            debug!(
+                "QUIC framed writer token={} failed flushing framed payload to {}: {}",
+                connection_token, remote_addr, err
+            );
+            break;
+        }
+    }
+
+    if let Err(err) = send_stream.finish() {
+        debug!(
+            "QUIC framed writer token={} failed finishing outbound stream to {}: {}",
+            connection_token, remote_addr, err
+        );
     }
 }
 
@@ -1026,6 +1165,30 @@ mod tests {
         assert_eq!(
             parse_max_concurrent_connections(Some("invalid")),
             DEFAULT_MAX_CONCURRENT_CONNECTIONS
+        );
+    }
+
+    #[test]
+    fn test_parse_quic_outbound_mode_defaults_to_framed_stream() {
+        assert_eq!(
+            parse_quic_outbound_mode(None),
+            QuicOutboundMode::FramedStream
+        );
+        assert_eq!(
+            parse_quic_outbound_mode(Some("unknown-mode")),
+            QuicOutboundMode::FramedStream
+        );
+    }
+
+    #[test]
+    fn test_parse_quic_outbound_mode_supports_legacy_aliases() {
+        assert_eq!(
+            parse_quic_outbound_mode(Some("legacy")),
+            QuicOutboundMode::LegacyPerPacketStream
+        );
+        assert_eq!(
+            parse_quic_outbound_mode(Some("stream_per_packet")),
+            QuicOutboundMode::LegacyPerPacketStream
         );
     }
 
