@@ -14,7 +14,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock as ParkingLotRwLock;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, trace};
 
@@ -63,7 +63,7 @@ const BOT_PATH_TARGET_MOVED_THRESHOLD_SQ: f32 = 150.0 * 150.0;
 // ── Cached GridNav for A* pathfinding ────────────────────────────────
 #[derive(Clone)]
 struct BotNavGridCache {
-    grid: Option<GridNav>,
+    grid: Option<Arc<GridNav>>,
     wall_index_frame: u64,
 }
 
@@ -1577,13 +1577,13 @@ impl OptimizedBotAI {
     /// Get or lazily build the shared navigation grid.  The grid is cached and
     /// only rebuilt when the wall spatial index version changes (i.e. walls are
     /// destroyed / created).
-    fn get_or_build_nav_grid(server_instance: &MassiveGameServer) -> Option<GridNav> {
+    fn get_or_build_nav_grid(server_instance: &MassiveGameServer) -> Option<Arc<GridNav>> {
         let wall_index_frame = server_instance.wall_spatial_index.last_update_frame();
         {
             let cache = bot_nav_grid_cache().read();
             if cache.wall_index_frame == wall_index_frame {
                 if let Some(grid) = cache.grid.as_ref() {
-                    return Some(grid.clone());
+                    return Some(Arc::clone(grid));
                 }
             }
         }
@@ -1598,7 +1598,7 @@ impl OptimizedBotAI {
     }
 
     /// Build a fresh navigation grid from the current wall layout.
-    fn build_nav_grid(server_instance: &MassiveGameServer) -> Option<GridNav> {
+    fn build_nav_grid(server_instance: &MassiveGameServer) -> Option<Arc<GridNav>> {
         if BOT_NAV_GRID_CELL_SIZE <= 0.0 {
             return None;
         }
@@ -1631,7 +1631,7 @@ impl OptimizedBotAI {
                 Self::mark_wall_cells_blocked(&mut nav_grid, wall);
             }
         }
-        Some(nav_grid)
+        Some(Arc::new(nav_grid))
     }
 
     /// Mark grid cells covered by a wall (inflated by PLAYER_RADIUS) as blocked.

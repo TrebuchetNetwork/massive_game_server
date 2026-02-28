@@ -304,7 +304,7 @@ impl MassiveGameServer {
             _ => return Vec::new(),
         };
 
-        segment_layout
+        let mut fragment_walls: Vec<Wall> = segment_layout
             .into_iter()
             .map(|(offset, len)| {
                 if is_horizontal {
@@ -315,8 +315,8 @@ impl MassiveGameServer {
                         width: len,
                         height: parent_wall.height,
                         is_destructible: true,
-                        current_health: parent_wall.current_health,
-                        max_health: parent_wall.max_health,
+                        current_health: 0,
+                        max_health: 0,
                     }
                 } else {
                     Wall {
@@ -326,12 +326,150 @@ impl MassiveGameServer {
                         width: parent_wall.width,
                         height: len,
                         is_destructible: true,
-                        current_health: parent_wall.current_health,
-                        max_health: parent_wall.max_health,
+                        current_health: 0,
+                        max_health: 0,
                     }
                 }
             })
-            .collect()
+            .collect();
+        Self::distribute_fragment_health(parent_wall, &mut fragment_walls);
+        fragment_walls
+    }
+
+    fn allocate_health_by_weights(total: i32, weights: &[f32]) -> Vec<i32> {
+        if weights.is_empty() {
+            return Vec::new();
+        }
+        if total <= 0 {
+            return vec![0; weights.len()];
+        }
+
+        let sanitized_weights: Vec<f64> = weights.iter().map(|w| w.max(0.0) as f64).collect();
+        let weight_sum: f64 = sanitized_weights.iter().sum();
+
+        if weight_sum <= f64::EPSILON {
+            let mut allocations = vec![total / weights.len() as i32; weights.len()];
+            let mut remainder = total - allocations.iter().sum::<i32>();
+            for value in allocations.iter_mut() {
+                if remainder <= 0 {
+                    break;
+                }
+                *value += 1;
+                remainder -= 1;
+            }
+            return allocations;
+        }
+
+        let total_f = total as f64;
+        let mut allocations = vec![0; weights.len()];
+        let mut allocated = 0i32;
+        let mut remainders = Vec::with_capacity(weights.len());
+
+        for (idx, weight) in sanitized_weights.iter().enumerate() {
+            let exact = total_f * (*weight / weight_sum);
+            let floor = exact.floor() as i32;
+            allocations[idx] = floor;
+            allocated += floor;
+            remainders.push((idx, exact - floor as f64));
+        }
+
+        let mut remaining = total - allocated;
+        remainders.sort_by(|left, right| {
+            right
+                .1
+                .total_cmp(&left.1)
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        for (idx, _) in remainders {
+            if remaining <= 0 {
+                break;
+            }
+            allocations[idx] += 1;
+            remaining -= 1;
+        }
+
+        allocations
+    }
+
+    fn allocate_with_caps(total: i32, caps: &[i32]) -> Vec<i32> {
+        if caps.is_empty() {
+            return Vec::new();
+        }
+        let sanitized_caps: Vec<i32> = caps.iter().map(|cap| (*cap).max(0)).collect();
+        let cap_sum: i32 = sanitized_caps.iter().sum();
+        if total <= 0 || cap_sum <= 0 {
+            return vec![0; caps.len()];
+        }
+
+        let capped_total = total.min(cap_sum);
+        let cap_sum_f = cap_sum as f64;
+        let mut allocations = vec![0; caps.len()];
+        let mut allocated = 0i32;
+        let mut remainders = Vec::with_capacity(caps.len());
+
+        for (idx, cap) in sanitized_caps.iter().enumerate() {
+            if *cap <= 0 {
+                remainders.push((idx, 0.0));
+                continue;
+            }
+            let exact = capped_total as f64 * (*cap as f64 / cap_sum_f);
+            let floor = (exact.floor() as i32).min(*cap);
+            allocations[idx] = floor;
+            allocated += floor;
+            remainders.push((idx, exact - floor as f64));
+        }
+
+        remainders.sort_by(|left, right| {
+            right
+                .1
+                .total_cmp(&left.1)
+                .then_with(|| left.0.cmp(&right.0))
+        });
+
+        let mut remaining = capped_total - allocated;
+        while remaining > 0 {
+            let mut progressed = false;
+            for (idx, _) in remainders.iter().copied() {
+                if remaining == 0 {
+                    break;
+                }
+                if allocations[idx] < sanitized_caps[idx] {
+                    allocations[idx] += 1;
+                    remaining -= 1;
+                    progressed = true;
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+
+        allocations
+    }
+
+    fn distribute_fragment_health(parent_wall: &Wall, child_walls: &mut [Wall]) {
+        if child_walls.is_empty() {
+            return;
+        }
+
+        let parent_area = (parent_wall.width.max(0.0) * parent_wall.height.max(0.0)).max(1.0);
+        let weights: Vec<f32> = child_walls
+            .iter()
+            .map(|wall| {
+                let wall_area = (wall.width.max(0.0) * wall.height.max(0.0)).max(0.0);
+                wall_area / parent_area
+            })
+            .collect();
+
+        let max_health_allocations =
+            Self::allocate_health_by_weights(parent_wall.max_health.max(0), &weights);
+        let current_health_allocations =
+            Self::allocate_with_caps(parent_wall.current_health.max(0), &max_health_allocations);
+
+        for (idx, child_wall) in child_walls.iter_mut().enumerate() {
+            child_wall.max_health = *max_health_allocations.get(idx).unwrap_or(&0);
+            child_wall.current_health = *current_health_allocations.get(idx).unwrap_or(&0);
+        }
     }
 
     pub(super) fn apply_progressive_wall_fragmentation(
@@ -357,10 +495,7 @@ impl MassiveGameServer {
                 if fragment_state.stage == target_stage {
                     fragment_state.parent_wall.current_health = parent_wall.current_health;
                     fragment_state.parent_wall.max_health = parent_wall.max_health;
-                    for child_wall in &mut fragment_state.child_walls {
-                        child_wall.current_health = parent_wall.current_health;
-                        child_wall.max_health = parent_wall.max_health;
-                    }
+                    Self::distribute_fragment_health(parent_wall, &mut fragment_state.child_walls);
                     Some(fragment_state.child_walls.clone())
                 } else {
                     None
@@ -595,5 +730,68 @@ impl MassiveGameServer {
         }
 
         destroyed_count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parent_wall_with_health(current_health: i32, max_health: i32) -> Wall {
+        Wall {
+            id: 1,
+            x: 100.0,
+            y: 100.0,
+            width: 160.0,
+            height: 40.0,
+            is_destructible: true,
+            current_health,
+            max_health,
+        }
+    }
+
+    #[test]
+    fn progressive_fragment_health_preserves_parent_totals() {
+        let parent = parent_wall_with_health(65, 100);
+        let children = MassiveGameServer::build_progressive_fragment_walls(&parent, 1);
+        assert!(
+            !children.is_empty(),
+            "stage 1 should produce child fragments"
+        );
+
+        let child_current_total: i32 = children.iter().map(|child| child.current_health).sum();
+        let child_max_total: i32 = children.iter().map(|child| child.max_health).sum();
+
+        assert_eq!(
+            child_current_total, parent.current_health,
+            "child current health should preserve parent current health"
+        );
+        assert_eq!(
+            child_max_total, parent.max_health,
+            "child max health should preserve parent max health"
+        );
+        assert!(
+            children
+                .iter()
+                .all(|child| child.current_health >= 0 && child.current_health <= child.max_health),
+            "each child should remain within [0, max_health]"
+        );
+    }
+
+    #[test]
+    fn allocate_with_caps_never_exceeds_capacity() {
+        let caps = [10, 20, 30];
+        let allocations = MassiveGameServer::allocate_with_caps(42, &caps);
+        assert_eq!(allocations.iter().sum::<i32>(), 42);
+        assert!(
+            allocations
+                .iter()
+                .zip(caps.iter())
+                .all(|(allocation, cap)| allocation <= cap),
+            "allocations should not exceed caps"
+        );
+
+        let saturated = MassiveGameServer::allocate_with_caps(999, &caps);
+        assert_eq!(saturated, vec![10, 20, 30]);
     }
 }
