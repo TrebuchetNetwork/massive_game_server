@@ -2212,6 +2212,14 @@ pub fn handle_dc_send_error(error_string: &str, peer_id_str: &str, message_type:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env test lock poisoned")
+    }
 
     #[test]
     fn datachannel_message_limit_is_reasonable() {
@@ -2858,6 +2866,7 @@ mod tests {
 
     #[test]
     fn turn_credential_type_from_env_defaults_to_password() {
+        let _guard = env_test_lock();
         // When MGS_TURN_CREDENTIAL_TYPE is not set, it defaults to Password.
         std::env::remove_var("MGS_TURN_CREDENTIAL_TYPE");
         assert_eq!(TurnCredentialType::from_env(), TurnCredentialType::Password);
@@ -2865,6 +2874,7 @@ mod tests {
 
     #[test]
     fn turn_credential_type_from_env_supports_sha256_and_legacy_sha1() {
+        let _guard = env_test_lock();
         std::env::set_var("MGS_TURN_CREDENTIAL_TYPE", "hmac");
         assert_eq!(
             TurnCredentialType::from_env(),

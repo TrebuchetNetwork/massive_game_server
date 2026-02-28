@@ -84,7 +84,7 @@ impl MassiveGameServer {
         // Keep chunks large enough to amortize overhead while still spreading
         // medium loads across worker threads.
         let worker_count = rayon::current_num_threads().max(1);
-        let target_chunk = (total_projectiles + worker_count - 1) / worker_count;
+        let target_chunk = total_projectiles.div_ceil(worker_count);
         let chunk_size = target_chunk.clamp(8, 256);
 
         let chunk_results: Vec<ProjectileChunkResults> = all_projectiles
