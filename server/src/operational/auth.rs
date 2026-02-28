@@ -630,7 +630,9 @@ impl AuthService {
             use_auth_cookies
         );
         if sms_dev_mode {
-            warn!("SMS dev mode is ENABLED — OTP codes will be logged server-side. Do NOT use in production!");
+            warn!(
+                "SMS dev mode is ENABLED — OTP delivery is stubbed and verification codes are redacted in logs."
+            );
         }
         if use_auth_cookies {
             info!("Cookie-based auth enabled: verify-code will set HttpOnly session cookie.");
@@ -1286,9 +1288,8 @@ impl AuthService {
                     );
                     if self.inner.sms_dev_mode {
                         info!(
-                            "[AUTH_SMS_DEV] phone={} code={}",
-                            mask_phone_number(phone_number),
-                            code
+                            "[AUTH_SMS_DEV] phone={} code=<redacted>",
+                            mask_phone_number(phone_number)
                         );
                     }
                     return Ok(());
@@ -1307,9 +1308,8 @@ impl AuthService {
 
         if self.inner.sms_dev_mode {
             debug!(
-                "[AUTH_SMS_DEV] phone={} code={}",
-                mask_phone_number(phone_number),
-                code
+                "[AUTH_SMS_DEV] phone={} code=<redacted>",
+                mask_phone_number(phone_number)
             );
             return Ok(());
         }

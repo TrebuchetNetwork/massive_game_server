@@ -11,12 +11,18 @@
 export function createUIManager(getCtx) {
 
     function escapeHtml(unsafe) {
-        return unsafe
+        const raw = String(unsafe ?? '');
+        return raw
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#039;");
+    }
+
+    function toInt(value, fallback = 0) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
     }
 
     function safeCssColor(value, fallback = '#94A3B8') {
@@ -582,15 +588,15 @@ export function createUIManager(getCtx) {
         if (localTeamId === 1 || localTeamId === 2) {
             const roleText = ctx.isLocalTeamCommander() ? 'Commander' : 'Member';
             const waypointText = describeWaypoint(localTeamId);
-            content += `<div class="commander-line">Role: <span class="commander-line__role">${roleText}</span> \u00b7 Waypoint: <span class="commander-line__waypoint">${waypointText}</span></div>`;
+            content += `<div class="commander-line">Role: <span class="commander-line__role">${escapeHtml(roleText)}</span> \u00b7 Waypoint: <span class="commander-line__waypoint">${escapeHtml(waypointText)}</span></div>`;
             if (localTeamId === 1 || localTeamId === 2) {
                 const ownCommander = describeCommander(localTeamId);
-                content += `<div class="commander-line commander-line--minor">Team ${localTeamId} commander: ${ownCommander}</div>`;
+                content += `<div class="commander-line commander-line--minor">Team ${localTeamId} commander: ${escapeHtml(ownCommander)}</div>`;
             }
         } else {
             const commander1 = describeCommander(1);
             const commander2 = describeCommander(2);
-            content += `<div class="commander-line commander-line--minor">Cmd R:${commander1} \u00b7 Cmd B:${commander2}</div>`;
+            content += `<div class="commander-line commander-line--minor">Cmd R:${escapeHtml(commander1)} \u00b7 Cmd B:${escapeHtml(commander2)}</div>`;
         }
 
         if (ctx.matchInfo.match_state !== ctx.GP.MatchStateType.Ended && ctx.postMatchSummaryVisible) {
@@ -603,13 +609,14 @@ export function createUIManager(getCtx) {
                 if (waitingPlayerCount >= ctx.MIN_PLAYERS_TO_START) {
                     content += `<div class="text-yellow-300">Match is initializing...</div>`;
                 } else {
-                    content += `<div class="text-yellow-400">Waiting for players... (${waitingPlayerCount}/${ctx.MIN_PLAYERS_TO_START})</div>`;
+                    content += `<div class="text-yellow-400">Waiting for players... (${toInt(waitingPlayerCount)}/${toInt(ctx.MIN_PLAYERS_TO_START)})</div>`;
                 }
                 break;
             }
             case ctx.GP.MatchStateType.Active: {
-                const minutes = Math.floor(ctx.matchInfo.time_remaining / 60);
-                const seconds = Math.floor(ctx.matchInfo.time_remaining % 60);
+                const timeRemaining = Math.max(0, Number(ctx.matchInfo.time_remaining || 0));
+                const minutes = Math.floor(timeRemaining / 60);
+                const seconds = Math.floor(timeRemaining % 60);
                 content += `<div class="text-white">Time: ${minutes}:${seconds.toString().padStart(2, '0')}</div>`;
                 if (ctx.matchInfo.game_mode === ctx.GP.GameModeType.TeamDeathmatch || ctx.matchInfo.game_mode === ctx.GP.GameModeType.CaptureTheFlag) {
                     content += '<div class="team-scores">';
@@ -617,8 +624,8 @@ export function createUIManager(getCtx) {
                     let blueScore = 0;
                     if (ctx.matchInfo.team_scores) {
                         ctx.matchInfo.team_scores.forEach(ts => {
-                            if (ts.team_id === 1) redScore = ts.score;
-                            if (ts.team_id === 2) blueScore = ts.score;
+                            if (ts.team_id === 1) redScore = toInt(ts.score, 0);
+                            if (ts.team_id === 2) blueScore = toInt(ts.score, 0);
                         });
                     }
                     content += `<span class="team-score team-red">Red: ${redScore}</span>`;
@@ -629,11 +636,13 @@ export function createUIManager(getCtx) {
             }
             case ctx.GP.MatchStateType.Ended: {
                 let winnerText = "Match Ended! ";
-                if (ctx.matchInfo.winner_name && ctx.matchInfo.winner_name.length > 0 && ctx.matchInfo.winner_name !== "null") {
-                    winnerText += `Winner: ${ctx.matchInfo.winner_name}`;
-                } else if (ctx.matchInfo.winner_id && ctx.matchInfo.winner_id !== "0" && ctx.matchInfo.winner_id !== "null") {
-                     const teamColorClass = ctx.matchInfo.winner_id === "1" ? "team-red" : (ctx.matchInfo.winner_id === "2" ? "team-blue" : "team-ffa");
-                     winnerText += `Winner: <span class="${teamColorClass}">Team ${ctx.matchInfo.winner_id}</span>`;
+                const winnerNameRaw = String(ctx.matchInfo.winner_name || '').trim();
+                const winnerTeamId = toInt(ctx.matchInfo.winner_id, 0);
+                if (winnerNameRaw && winnerNameRaw !== "null") {
+                    winnerText += `Winner: ${escapeHtml(winnerNameRaw)}`;
+                } else if (winnerTeamId === 1 || winnerTeamId === 2) {
+                    const teamColorClass = winnerTeamId === 1 ? "team-red" : "team-blue";
+                    winnerText += `Winner: <span class="${teamColorClass}">Team ${winnerTeamId}</span>`;
                 } else {
                     winnerText += "It's a Draw!";
                 }
