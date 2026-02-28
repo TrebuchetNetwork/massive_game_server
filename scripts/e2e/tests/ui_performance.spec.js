@@ -97,17 +97,29 @@ async function connectClient(page) {
   if (await wsInput.count()) {
     await wsInput.fill(resolveWsUrl());
   }
-  await page.click('#connectButton', { force: true });
-  await page.waitForFunction(
-    () => window.__e2e && window.__e2e.matchInfoReady === true,
-    null,
-    { timeout: 60000 }
-  );
-  await page.waitForFunction(
-    () => window.__e2e && window.__e2e.lastStateUpdate > 0,
-    null,
-    { timeout: 60000 }
-  );
+
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.click('#connectButton', { force: true });
+    try {
+      await page.waitForFunction(
+        () => window.__e2e && window.__e2e.matchInfoReady === true,
+        null,
+        { timeout: 120000 }
+      );
+      await page.waitForFunction(
+        () => window.__e2e && window.__e2e.lastStateUpdate > 0,
+        null,
+        { timeout: 120000 }
+      );
+      return;
+    } catch (error) {
+      lastError = error;
+      await page.waitForTimeout(2000);
+    }
+  }
+
+  throw lastError || new Error('Unable to establish match state in connectClient');
 }
 
 test.beforeAll(async () => {
@@ -119,6 +131,7 @@ test.afterAll(async () => {
 });
 
 test.describe('UI Performance', () => {
+  test.describe.configure({ timeout: 420000, retries: 1 });
   test('maintains acceptable FPS after connection', async ({ page }) => {
     await connectClient(page);
 

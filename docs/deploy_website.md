@@ -42,6 +42,7 @@ DEPLOY_MODE=docker ./scripts/deploy.sh up
 DEPLOY_MODE=docker ./scripts/deploy.sh status
 DEPLOY_MODE=docker ./scripts/deploy.sh logs
 DEPLOY_MODE=docker ./scripts/deploy.sh down
+DEPLOY_MODE=docker ./scripts/deploy.sh rollback
 ```
 
 ## Option 2: Native Binary
@@ -74,7 +75,7 @@ DEPLOY_MODE=native MGS_PORT=8080 ./scripts/deploy.sh up
 1. Put TLS reverse proxy in front (Nginx/Caddy/Cloudflare) so clients use `https://` + `wss://`.
 2. Keep `MGS_HOST=0.0.0.0` in container/native deployment.
 3. Persist `/app/data` if you use auth/arena stores.
-4. If you want real arena code generation providers, set `OPENROUTER_API_KEY`.
+4. Configure Docker secret files in `docker/secrets/` (see `docker/secrets/README.md`) and point `.env` to `*_SECRET_FILE` paths.
 
 ## Minimal Nginx Reverse Proxy
 

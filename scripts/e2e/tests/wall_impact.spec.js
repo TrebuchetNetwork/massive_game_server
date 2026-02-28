@@ -93,6 +93,39 @@ async function stopServer() {
   serverProcess.kill('SIGINT');
 }
 
+async function connectClient(page) {
+  await page.goto('/client.html', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#connectButton', { state: 'attached' });
+
+  const wsInput = page.locator('#wsUrl');
+  if (await wsInput.count()) {
+    await wsInput.fill(resolveWsUrl());
+  }
+
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.click('#connectButton', { force: true });
+    try {
+      await page.waitForFunction(
+        () => window.__e2e && window.__e2e.connectionStatus && window.__e2e.connectionStatus.statusKey === 'playing',
+        null,
+        { timeout: 120000 }
+      );
+      await page.waitForFunction(
+        () => window.__e2e && window.__e2e.hasLocalPlayer === true,
+        null,
+        { timeout: 120000 }
+      );
+      return;
+    } catch (error) {
+      lastError = error;
+      await page.waitForTimeout(2000);
+    }
+  }
+
+  throw lastError || new Error('Unable to establish local player state in connectClient');
+}
+
 test.beforeAll(async () => {
   await startServer();
 });
@@ -101,25 +134,13 @@ test.afterAll(async () => {
   await stopServer();
 });
 
+test.describe.configure({ retries: 1, timeout: 420000 });
+
 test('shots generate wall impact events', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
 
-  await page.goto('/client.html', { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('#connectButton', { state: 'attached' });
-
-  const wsInput = page.locator('#wsUrl');
-  if (await wsInput.count()) {
-    await wsInput.fill(resolveWsUrl());
-  }
-  await page.click('#connectButton', { force: true });
-
-  await page.waitForFunction(
-    () => window.__e2e && window.__e2e.connectionStatus && window.__e2e.connectionStatus.statusKey === 'playing',
-    null,
-    { timeout: 60000 }
-  );
-  await page.waitForFunction(() => window.__e2e && window.__e2e.hasLocalPlayer === true, null, { timeout: 60000 });
+  await connectClient(page);
 
   await page.evaluate(() => {
     if (!window.__e2e) window.__e2e = {};

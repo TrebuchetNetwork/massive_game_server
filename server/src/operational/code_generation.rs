@@ -14,6 +14,29 @@ const DEFAULT_ARENA_WASM_DIR: &str = "data/arena_bots";
 const DEFAULT_ARENA_SOURCE_DIR: &str = "data/arena_sources";
 const DEFAULT_OPENROUTER_MAX_TOKENS: u32 = 700;
 
+fn read_env_secret(env_key: &str) -> Option<String> {
+    if let Ok(raw) = std::env::var(env_key) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+
+    let file_key = format!("{env_key}_FILE");
+    let secret_file = std::env::var(file_key)
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|raw| !raw.is_empty())?;
+
+    let file_contents = fs::read_to_string(secret_file).ok()?;
+    let trimmed = file_contents.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
 #[derive(Clone)]
 pub struct CodeGenerationService {
     inner: Arc<CodeGenerationInner>,
@@ -137,10 +160,7 @@ struct OpenRouterResponseMessage {
 
 impl CodeGenerationService {
     pub fn new_from_env() -> Self {
-        let openrouter_api_key = std::env::var("OPENROUTER_API_KEY")
-            .ok()
-            .map(|raw| raw.trim().to_owned())
-            .filter(|raw| !raw.is_empty());
+        let openrouter_api_key = read_env_secret("OPENROUTER_API_KEY");
         let openrouter_base_url = std::env::var("OPENROUTER_BASE_URL")
             .ok()
             .map(|raw| raw.trim().trim_end_matches('/').to_owned())
@@ -815,6 +835,7 @@ pub fn build_code_generation_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn validator_rejects_unsafe_source() {
@@ -851,5 +872,46 @@ mod tests {
     fn sanitize_model_id_rejects_path_traversal() {
         assert!(sanitize_model_id("../bot").is_none());
         assert!(sanitize_model_id("bot_alpha-1").is_some());
+    }
+
+    #[test]
+    fn read_env_secret_prefers_direct_env_value() {
+        let key = "MGS_TEST_OPENROUTER_API_KEY";
+        let file_key = "MGS_TEST_OPENROUTER_API_KEY_FILE";
+
+        // SAFETY: Tests run in-process and intentionally mutate process env.
+        unsafe { std::env::remove_var(file_key) };
+        // SAFETY: Tests run in-process and intentionally mutate process env.
+        unsafe { std::env::set_var(key, "inline-secret") };
+
+        let value = read_env_secret(key);
+        assert_eq!(value.as_deref(), Some("inline-secret"));
+
+        // SAFETY: Tests run in-process and intentionally mutate process env.
+        unsafe { std::env::remove_var(key) };
+    }
+
+    #[test]
+    fn read_env_secret_uses_file_fallback() {
+        let key = "MGS_TEST_OPENROUTER_FILE_ONLY";
+        let file_key = "MGS_TEST_OPENROUTER_FILE_ONLY_FILE";
+        // SAFETY: Tests run in-process and intentionally mutate process env.
+        unsafe { std::env::remove_var(key) };
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("mgs_openrouter_secret_{stamp}.txt"));
+        std::fs::write(&path, "file-secret\n").expect("secret file should be written");
+
+        // SAFETY: Tests run in-process and intentionally mutate process env.
+        unsafe { std::env::set_var(file_key, &path) };
+        let value = read_env_secret(key);
+        assert_eq!(value.as_deref(), Some("file-secret"));
+
+        // SAFETY: Tests run in-process and intentionally mutate process env.
+        unsafe { std::env::remove_var(file_key) };
+        let _ = std::fs::remove_file(path);
     }
 }

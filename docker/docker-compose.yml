@@ -19,7 +19,7 @@ services:
       MGS_METRICS_BIND_ADDR: "127.0.0.1:9090"
       RUST_LOG: "${RUST_LOG:-massive_game_server_core=info,warp=warn,webrtc=warn}"
       RUST_LOG_JSON: "${RUST_LOG_JSON:-true}"
-      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      OPENROUTER_API_KEY_FILE: "/run/secrets/openrouter_api_key"
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:9090:9090"
@@ -27,6 +27,8 @@ services:
       - mgs_data:/app/data
       - mgs_artifacts:/app/artifacts
       - ./logs:/app/logs
+    secrets:
+      - openrouter_api_key
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
       interval: 20s
@@ -106,8 +108,8 @@ services:
     container_name: massive-game-server-grafana
     restart: unless-stopped
     environment:
-      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:?GRAFANA_ADMIN_USER is required}"
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}"
+      GF_SECURITY_ADMIN_USER__FILE: "/run/secrets/grafana_admin_user"
+      GF_SECURITY_ADMIN_PASSWORD__FILE: "/run/secrets/grafana_admin_password"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: "${GRAFANA_ROOT_URL:-https://game.trebuchet.network/grafana}"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
@@ -118,6 +120,9 @@ services:
       - ./monitoring/grafana/dashboard-json:/var/lib/grafana/dashboards:ro
     ports:
       - "127.0.0.1:3000:3000"
+    secrets:
+      - grafana_admin_user
+      - grafana_admin_password
     networks:
       - game-network
 
@@ -144,6 +149,14 @@ volumes:
   nginx_cache:
   prometheus_data:
   grafana_data:
+
+secrets:
+  openrouter_api_key:
+    file: ${OPENROUTER_API_KEY_SECRET_FILE:-./secrets/openrouter_api_key}
+  grafana_admin_user:
+    file: ${GRAFANA_ADMIN_USER_SECRET_FILE:-./secrets/grafana_admin_user}
+  grafana_admin_password:
+    file: ${GRAFANA_ADMIN_PASSWORD_SECRET_FILE:-./secrets/grafana_admin_password}
 
 networks:
   game-network:

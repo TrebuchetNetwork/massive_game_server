@@ -76,6 +76,14 @@ jobs:
           RUSTFLAGS: -D warnings
         run: cargo build -p massive_game_server_core --release --bin massive_game_server_core --locked
 
+      - name: Build release binary (jemalloc feature)
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo build -p massive_game_server_core --release --features jemalloc --bin massive_game_server_core --locked
+
+      - name: Docker build validation
+        run: docker build -f docker/Dockerfile -t massive-game-server:ci-build .
+
       - name: Website route smoke test
         run: |
           set -euo pipefail
@@ -152,7 +160,7 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Enforce coverage floor
-        run: cargo llvm-cov -p massive_game_server_core --locked --summary-only --fail-under-lines 50
+        run: cargo llvm-cov -p massive_game_server_core --locked --summary-only --fail-under-lines 52
 
       - name: Generate LCOV report
         run: cargo llvm-cov -p massive_game_server_core --locked --lcov --output-path lcov.info
@@ -233,3 +241,77 @@ jobs:
 
       - name: Cargo audit
         run: cargo audit --deny warnings
+
+  container-security-scan:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Build Docker image for scan
+        run: docker build -f docker/Dockerfile -t massive-game-server:ci-scan .
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: massive-game-server:ci-scan
+          format: table
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+  daily-smoke:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Install FlatBuffers compiler
+        run: scripts/install_flatc.sh
+
+      - name: Build debug binary
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo build -p massive_game_server_core --bin massive_game_server_core --locked
+
+      - name: Website route smoke test
+        run: |
+          set -euo pipefail
+          MGS_HOST=0.0.0.0 \
+          MGS_PORT=18080 \
+          MGS_DISABLE_STUN=1 \
+          MGS_TARGET_BOT_COUNT=0 \
+          RUST_LOG=massive_game_server_core=warn,warp=warn,webrtc=warn \
+            ./target/debug/massive_game_server_core > /tmp/mgs_daily_smoke.log 2>&1 &
+          pid=$!
+          trap 'kill $pid >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS -D /tmp/daily_root_headers -o /tmp/daily_root_body http://127.0.0.1:18080/ >/dev/null
+          grep -qi '^location: /index.html' /tmp/daily_root_headers
+          curl -fsS http://127.0.0.1:18080/healthz | grep -q '"ok":true'
+          curl -fsS http://127.0.0.1:18080/index.html >/dev/null
+          curl -fsS http://127.0.0.1:18080/client.html >/dev/null

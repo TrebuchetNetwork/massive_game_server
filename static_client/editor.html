@@ -170,6 +170,10 @@
       damage_zone: { fill: "rgba(255, 80, 80, 0.25)",   stroke: "rgba(255, 80, 80, 0.8)" },
       boost_pad:   { fill: "rgba(80, 255, 180, 0.25)",  stroke: "rgba(80, 255, 180, 0.8)" },
     };
+    const MAX_IMPORT_WALLS = 2000;
+    const MAX_IMPORT_PICKUPS = 2000;
+    const MAX_IMPORT_ZONES = 500;
+    const MAX_ENTITY_DIMENSION = 2000;
 
     const toolButtons = {
       wall: document.getElementById("toolWall"),
@@ -366,6 +370,87 @@
       };
     }
 
+    function asFiniteNumber(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function sanitizeWall(raw, fallbackId) {
+      const x = asFiniteNumber(raw?.x);
+      const y = asFiniteNumber(raw?.y);
+      const width = asFiniteNumber(raw?.width);
+      const height = asFiniteNumber(raw?.height);
+      const id = asFiniteNumber(raw?.id) ?? fallbackId;
+      if (x === null || y === null || width === null || height === null) return null;
+      if (width <= 0 || height <= 0 || width > MAX_ENTITY_DIMENSION || height > MAX_ENTITY_DIMENSION) return null;
+      const clampedX = clamp(x, WORLD.minX, WORLD.maxX);
+      const clampedY = clamp(y, WORLD.minY, WORLD.maxY);
+      const clampedWidth = clamp(width, 1, WORLD.maxX - clampedX);
+      const clampedHeight = clamp(height, 1, WORLD.maxY - clampedY);
+      if (clampedWidth < 1 || clampedHeight < 1) return null;
+      const isDestructible = !!raw?.is_destructible;
+      const maxHealth = clamp(asFiniteNumber(raw?.max_health) ?? (isDestructible ? 150 : 1000), 1, 5000);
+      const currentHealth = clamp(asFiniteNumber(raw?.current_health) ?? maxHealth, 0, maxHealth);
+      return {
+        id: Math.trunc(id),
+        x: clampedX,
+        y: clampedY,
+        width: clampedWidth,
+        height: clampedHeight,
+        is_destructible: isDestructible,
+        max_health: maxHealth,
+        current_health: currentHealth,
+      };
+    }
+
+    function sanitizePickup(raw, fallbackId) {
+      const x = asFiniteNumber(raw?.x);
+      const y = asFiniteNumber(raw?.y);
+      const id = asFiniteNumber(raw?.id) ?? fallbackId;
+      if (x === null || y === null) return null;
+      const allowedPickupTypes = new Set(["health", "shield", "speed_boost", "damage_boost", "ammo", "weapon_crate"]);
+      const pickupType = String(raw?.pickup_type || "health");
+      if (!allowedPickupTypes.has(pickupType)) return null;
+      return {
+        id: Math.trunc(id),
+        x: clamp(x, WORLD.minX, WORLD.maxX),
+        y: clamp(y, WORLD.minY, WORLD.maxY),
+        pickup_type: pickupType,
+      };
+    }
+
+    function sanitizeZone(raw, fallbackId) {
+      const x = asFiniteNumber(raw?.x);
+      const y = asFiniteNumber(raw?.y);
+      const width = asFiniteNumber(raw?.width);
+      const height = asFiniteNumber(raw?.height);
+      const id = asFiniteNumber(raw?.id) ?? fallbackId;
+      if (x === null || y === null || width === null || height === null) return null;
+      if (width <= 0 || height <= 0 || width > MAX_ENTITY_DIMENSION || height > MAX_ENTITY_DIMENSION) return null;
+      const allowedZoneTypes = new Set(["slow_zone", "damage_zone", "boost_pad"]);
+      const zoneType = String(raw?.zone_type || "slow_zone");
+      if (!allowedZoneTypes.has(zoneType)) return null;
+      const clampedX = clamp(x, WORLD.minX, WORLD.maxX);
+      const clampedY = clamp(y, WORLD.minY, WORLD.maxY);
+      const clampedWidth = clamp(width, 1, WORLD.maxX - clampedX);
+      const clampedHeight = clamp(height, 1, WORLD.maxY - clampedY);
+      if (clampedWidth < 1 || clampedHeight < 1) return null;
+      const direction = asFiniteNumber(raw?.direction) ?? 0;
+      return {
+        id: Math.trunc(id),
+        x: clampedX,
+        y: clampedY,
+        width: clampedWidth,
+        height: clampedHeight,
+        zone_type: zoneType,
+        direction,
+      };
+    }
+
     function hitWall(world) {
       return state.walls.findIndex((w) => world.x >= w.x && world.x <= w.x + w.width && world.y >= w.y && world.y <= w.y + w.height);
     }
@@ -496,9 +581,26 @@
         alert("Invalid JSON");
         return;
       }
-      state.walls = Array.isArray(parsed.walls) ? parsed.walls : [];
-      state.pickups = Array.isArray(parsed.pickups) ? parsed.pickups : [];
-      state.zones = Array.isArray(parsed.zones) ? parsed.zones : [];
+      const rawWalls = Array.isArray(parsed.walls) ? parsed.walls.slice(0, MAX_IMPORT_WALLS) : [];
+      const rawPickups = Array.isArray(parsed.pickups) ? parsed.pickups.slice(0, MAX_IMPORT_PICKUPS) : [];
+      const rawZones = Array.isArray(parsed.zones) ? parsed.zones.slice(0, MAX_IMPORT_ZONES) : [];
+
+      state.walls = [];
+      state.pickups = [];
+      state.zones = [];
+      for (let i = 0; i < rawWalls.length; i += 1) {
+        const wall = sanitizeWall(rawWalls[i], 10001 + i);
+        if (wall) state.walls.push(wall);
+      }
+      for (let i = 0; i < rawPickups.length; i += 1) {
+        const pickup = sanitizePickup(rawPickups[i], 20001 + i);
+        if (pickup) state.pickups.push(pickup);
+      }
+      for (let i = 0; i < rawZones.length; i += 1) {
+        const zone = sanitizeZone(rawZones[i], 30001 + i);
+        if (zone) state.zones.push(zone);
+      }
+
       let maxId = 10000;
       for (const w of state.walls) maxId = Math.max(maxId, Number(w.id) || 0);
       for (const p of state.pickups) maxId = Math.max(maxId, Number(p.id) || 0);

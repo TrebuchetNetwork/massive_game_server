@@ -93,8 +93,16 @@ export function createInterpolationManager(getCtx) {
         const projectilePositionGain = smoothFollowGain(0.52 * mobileSmooth, deltaSeconds);
         const rotationGain = smoothFollowGain(0.34 * mobileSmooth, deltaSeconds);
 
-        while (serverUpdates.length > 0 && serverUpdates[0].timestamp <= renderTime - INTERPOLATION_RETENTION_MS) {
-            serverUpdates.shift();
+        const staleBefore = renderTime - INTERPOLATION_RETENTION_MS;
+        let firstFreshIndex = 0;
+        while (
+            firstFreshIndex < serverUpdates.length &&
+            serverUpdates[firstFreshIndex].timestamp <= staleBefore
+        ) {
+            firstFreshIndex += 1;
+        }
+        if (firstFreshIndex > 0) {
+            serverUpdates.splice(0, firstFreshIndex);
         }
 
         if (serverUpdates.length === 0) {

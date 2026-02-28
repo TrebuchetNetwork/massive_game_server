@@ -50,11 +50,20 @@ cp docker/.env.example docker/.env
 
 Then edit `docker/.env`:
 
-- set `GRAFANA_ADMIN_USER`
-- set `GRAFANA_ADMIN_PASSWORD` (strong secret)
+- set `GRAFANA_ADMIN_USER_SECRET_FILE`
+- set `GRAFANA_ADMIN_PASSWORD_SECRET_FILE`
+- set `OPENROUTER_API_KEY_SECRET_FILE` (optional; only needed if using arena code generation)
 - confirm `MGS_ALLOWED_ORIGINS=https://game.trebuchet.network`
 - keep `MGS_REQUIRE_AUTH=1` for production signaling auth enforcement
-- set optional secrets like `OPENROUTER_API_KEY`
+
+Create the referenced secret files (single-line raw values, no quotes):
+
+```bash
+mkdir -p docker/secrets
+printf '%s' '<openrouter-api-key>' > docker/secrets/openrouter_api_key
+printf '%s' '<grafana-admin-user>' > docker/secrets/grafana_admin_user
+printf '%s' '<grafana-admin-password>' > docker/secrets/grafana_admin_password
+```
 
 ## 4. Validate config
 
@@ -108,7 +117,5 @@ Prometheus is bound locally only by default:
 ## 8. Rollback
 
 ```bash
-DEPLOY_MODE=docker ./scripts/deploy.sh down
+DEPLOY_MODE=docker ./scripts/deploy.sh rollback
 ```
-
-Then redeploy a known-good commit.

@@ -146,15 +146,10 @@ export function createAuthHelpers(options) {
     }
 
     function withAuthTokenInUrl(rawUrl) {
-        const token = String(getAuthSessionToken() || "").trim();
-        if (!token) return rawUrl;
-        try {
-            const parsed = new URL(rawUrl);
-            parsed.searchParams.set("auth_token", token);
-            return parsed.toString();
-        } catch (_) {
-            return rawUrl;
-        }
+        // Query-string token transport is intentionally disabled.
+        // Server-side signaling ignores auth_token query params to avoid
+        // token leakage through logs, browser history, and referrers.
+        return rawUrl;
     }
 
     async function requestPhoneCode() {

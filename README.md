@@ -90,10 +90,27 @@ or:
 DEPLOY_MODE=docker ./scripts/deploy.sh up
 ```
 
+Before the first deploy, create secret files:
+
+```bash
+mkdir -p docker/secrets
+printf '%s' '<openrouter-api-key>' > docker/secrets/openrouter_api_key
+printf '%s' '<grafana-admin-user>' > docker/secrets/grafana_admin_user
+printf '%s' '<grafana-admin-password>' > docker/secrets/grafana_admin_password
+```
+
+Details: `docker/secrets/README.md`.
+
 Validate compose + nginx config before bringing services up:
 
 ```bash
 DEPLOY_MODE=docker ./scripts/deploy.sh validate
+```
+
+Rollback to the previously running game-server image snapshot:
+
+```bash
+DEPLOY_MODE=docker ./scripts/deploy.sh rollback
 ```
 
 Then open:
