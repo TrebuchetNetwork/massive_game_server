@@ -579,12 +579,18 @@ impl MassiveGameServer {
         }
 
         let partitions_for_lookup = self.world_partition_manager.get_partitions_for_processing();
-        let mut wall_partition_lookup: HashMap<EntityId, usize> = HashMap::new();
-        for (partition_idx, partition) in partitions_for_lookup.iter().enumerate() {
-            for wall_entry in partition.all_walls_in_partition.iter() {
-                wall_partition_lookup.insert(*wall_entry.key(), partition_idx);
+        let mut wall_partition_lookup: HashMap<EntityId, usize> =
+            HashMap::with_capacity(wall_damage_by_parent.len());
+        let mut lookup_partition_idx = |wall_id: EntityId| -> Option<usize> {
+            if let Some(idx) = wall_partition_lookup.get(&wall_id).copied() {
+                return Some(idx);
             }
-        }
+            let idx = partitions_for_lookup
+                .iter()
+                .position(|partition| partition.get_wall(wall_id).is_some())?;
+            wall_partition_lookup.insert(wall_id, idx);
+            Some(idx)
+        };
 
         let mut destroyed_count = 0usize;
         let mut topology_changed = false;
@@ -604,7 +610,7 @@ impl MassiveGameServer {
                 .map(|fragment| fragment.parent_wall.clone());
 
             if parent_wall_state.is_none() {
-                if let Some(partition_idx) = wall_partition_lookup.get(&parent_wall_id).copied() {
+                if let Some(partition_idx) = lookup_partition_idx(parent_wall_id) {
                     if let Some(partition) = partitions_for_lookup.get(partition_idx) {
                         parent_wall_state = partition.get_wall(parent_wall_id);
                     }
@@ -636,7 +642,7 @@ impl MassiveGameServer {
                     }
                 }
 
-                if let Some(partition_idx) = wall_partition_lookup.get(&parent_wall_id).copied() {
+                if let Some(partition_idx) = lookup_partition_idx(parent_wall_id) {
                     if let Some(partition) = partitions_for_lookup.get(partition_idx) {
                         if partition.get_wall(parent_wall_id).is_some() {
                             let _ = partition.damage_destructible_wall(
@@ -660,7 +666,7 @@ impl MassiveGameServer {
             }
 
             if !self.progressive_destructible_enabled {
-                if let Some(partition_idx) = wall_partition_lookup.get(&parent_wall_id).copied() {
+                if let Some(partition_idx) = lookup_partition_idx(parent_wall_id) {
                     if let Some(partition) = partitions_for_lookup.get(partition_idx) {
                         let _ = partition.damage_destructible_wall(parent_wall_id, total_damage);
                         if let Some(updated_wall) = partition.get_wall(parent_wall_id) {
@@ -682,7 +688,7 @@ impl MassiveGameServer {
             };
 
             if target_stage == 0 {
-                if let Some(partition_idx) = wall_partition_lookup.get(&parent_wall_id).copied() {
+                if let Some(partition_idx) = lookup_partition_idx(parent_wall_id) {
                     if let Some(partition) = partitions_for_lookup.get(partition_idx) {
                         if partition.get_wall(parent_wall_id).is_some() {
                             let _ =

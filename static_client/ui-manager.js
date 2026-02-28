@@ -435,12 +435,18 @@ class UIManager {
     
     const entry = document.createElement('div');
     entry.className = `kill-entry ${isHeadshot ? 'headshot' : ''}`;
-    entry.innerHTML = `
-      <span class="killer">${killer}</span>
-      <span class="weapon-icon">${weapon}</span>
-      <span class="victim">${victim}</span>
-      ${isHeadshot ? '<span class="headshot-icon">🎯</span>' : ''}
-    `;
+    const appendSpan = (className, value) => {
+      const span = document.createElement('span');
+      span.className = className;
+      span.textContent = String(value ?? '');
+      entry.appendChild(span);
+    };
+    appendSpan('killer', killer);
+    appendSpan('weapon-icon', weapon);
+    appendSpan('victim', victim);
+    if (isHeadshot) {
+      appendSpan('headshot-icon', '🎯');
+    }
     
     killFeed.appendChild(entry);
     

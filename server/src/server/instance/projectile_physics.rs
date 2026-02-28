@@ -658,6 +658,26 @@ impl MassiveGameServer {
                     if victim_was_carrying_flag_id != 0 {
                         let mut match_info_guard = self.match_info.write();
 
+                        // Award score to attacker's team if applicable.
+                        if let Some(attacker_state_for_score) =
+                            self.player_manager.get_player_state(&attacker_id)
+                        {
+                            if attacker_state_for_score.team_id != 0
+                                && attacker_state_for_score.team_id != victim_was_carrying_flag_id
+                            {
+                                let team_score_mut_ref = match_info_guard
+                                    .team_scores
+                                    .entry(attacker_state_for_score.team_id)
+                                    .or_insert(0);
+                                *team_score_mut_ref += 1;
+                                info!(
+                                    "Team {} scored +1 via projectile kill on flag carrier by {}",
+                                    attacker_state_for_score.team_id,
+                                    attacker_id.as_str()
+                                );
+                            }
+                        }
+
                         // Drop the flag
                         if let Some(flag_state) = match_info_guard
                             .flag_states

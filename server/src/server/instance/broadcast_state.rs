@@ -472,11 +472,13 @@ impl MassiveGameServer {
             let events_vec: Vec<_> = shared_data
                 .events
                 .iter()
-                .filter(|event| match event {
-                    GameEvent::TeamPing { team_id, .. } => {
+                .filter(|event| crate::server::event_mapping::should_serialize_game_event(event))
+                .filter(|event| {
+                    if let GameEvent::TeamPing { team_id, .. } = event {
                         own_is_spectator || (own_team_id != 0 && *team_id == own_team_id)
+                    } else {
+                        true
                     }
-                    _ => true,
                 })
                 .take(shared_data.max_delta_events_per_client)
                 .map(|event| build_game_event_fb(&mut builder, event))

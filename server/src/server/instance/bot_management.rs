@@ -423,15 +423,19 @@ impl MassiveGameServer {
     }
 
     fn remove_bots(&self, count: usize) {
-        let mut removed_count = 0;
-        while removed_count < count {
-            let Some(bot_key) = self.select_lowest_performing_bot() else {
+        if count == 0 {
+            return;
+        }
+        let mut candidates = self.bot_eviction_candidates();
+        candidates.sort_by_key(|(_, rating, _, _)| *rating);
+
+        let mut removed_count = 0usize;
+        for (bot_key, _, _, _) in candidates {
+            if removed_count >= count {
                 break;
-            };
+            }
             if self.evict_bot_for_human(&bot_key, "bot_population_manager", None) {
                 removed_count += 1;
-            } else {
-                break;
             }
         }
     }

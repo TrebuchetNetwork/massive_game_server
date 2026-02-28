@@ -212,6 +212,7 @@ impl MassiveGameServer {
                                     self.player_manager.get_player_state_mut(&attacker_id)
                                 {
                                     let attacker_mut_state = &mut *attacker_mut_state_entry;
+                                    let mut killstreak_event: Option<(u32, Vec2)> = None;
                                     attacker_mut_state.kills += 1;
                                     attacker_mut_state
                                         .record_kill_with_weapon(ServerWeaponType::Melee);
@@ -228,9 +229,41 @@ impl MassiveGameServer {
                                     } else {
                                         // Normal kill: positive score
                                         attacker_mut_state.score += POINTS_PER_KILL;
+                                        attacker_mut_state.current_streak += 1;
+                                        let streak = attacker_mut_state.current_streak;
+                                        if streak
+                                            == crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD
+                                        {
+                                            attacker_mut_state.streak_damage_boost_remaining =
+                                                crate::core::constants::KILLSTREAK_DAMAGE_BOOST_DURATION_SECS;
+                                        }
+                                        if streak
+                                            == crate::core::constants::KILLSTREAK_SPEED_BOOST_THRESHOLD
+                                        {
+                                            attacker_mut_state.streak_speed_boost_remaining =
+                                                crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS;
+                                        }
+                                        if streak
+                                            >= crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD
+                                        {
+                                            killstreak_event = Some((
+                                                streak,
+                                                Vec2::new(attacker_mut_state.x, attacker_mut_state.y),
+                                            ));
+                                        }
                                     }
 
                                     attacker_mut_state.mark_field_changed(FIELD_SCORE_STATS);
+                                    if let Some((streak, position)) = killstreak_event {
+                                        self.global_game_events.push(
+                                            GameEvent::Killstreak {
+                                                player_id: attacker_id.clone(),
+                                                streak,
+                                                position,
+                                            },
+                                            EventPriority::High,
+                                        );
+                                    }
                                 }
                             }
 

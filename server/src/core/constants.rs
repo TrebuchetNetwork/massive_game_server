@@ -1,4 +1,5 @@
 // massive_game_server/server/src/core/constants.rs
+use std::sync::OnceLock;
 use std::time::Duration;
 
 pub const SERVER_TICK_RATE: u64 = 60;
@@ -56,11 +57,14 @@ pub const ACCELERATION_VIOLATION_THRESHOLD: u32 = 3;
 /// environment variable, falling back to `MAX_PLAYER_SPEED_MULTIPLIER` if unset
 /// or unparseable.
 pub fn speed_hack_tolerance() -> f32 {
-    std::env::var("MGS_SPEED_HACK_TOLERANCE")
-        .ok()
-        .and_then(|v| v.parse::<f32>().ok())
-        .filter(|&v| v > 1.0 && v < 2.0)
-        .unwrap_or(MAX_PLAYER_SPEED_MULTIPLIER)
+    static SPEED_HACK_TOLERANCE: OnceLock<f32> = OnceLock::new();
+    *SPEED_HACK_TOLERANCE.get_or_init(|| {
+        std::env::var("MGS_SPEED_HACK_TOLERANCE")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|&v| v > 1.0 && v < 2.0)
+            .unwrap_or(MAX_PLAYER_SPEED_MULTIPLIER)
+    })
 }
 
 // ── Weapon tuning constants ──────────────────────────────────────────

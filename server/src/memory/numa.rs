@@ -2,6 +2,7 @@
 
 use core_affinity::CoreId;
 use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Default)]
 pub struct NumaTopology {
@@ -66,13 +67,20 @@ impl NumaTopology {
         let Some(core_ids) = core_affinity::get_core_ids() else {
             return false;
         };
-        let Some(candidate_core_id) = self
-            .nodes
-            .get(&node_id)
-            .and_then(|cores| cores.first())
-            .copied()
-        else {
+        let Some(node_cores) = self.nodes.get(&node_id) else {
             return false;
+        };
+        if node_cores.is_empty() {
+            return false;
+        }
+        static NODE_PIN_CURSOR: OnceLock<Mutex<BTreeMap<usize, usize>>> = OnceLock::new();
+        let candidate_core_id = {
+            let cursor_map = NODE_PIN_CURSOR.get_or_init(|| Mutex::new(BTreeMap::new()));
+            let mut cursor_guard = cursor_map.lock().expect("NUMA pin cursor mutex poisoned");
+            let cursor = cursor_guard.entry(node_id).or_insert(0);
+            let selected = node_cores[*cursor % node_cores.len()];
+            *cursor = cursor.wrapping_add(1);
+            selected
         };
         let Some(core) = core_ids.into_iter().find(|id| id.id == candidate_core_id) else {
             return false;

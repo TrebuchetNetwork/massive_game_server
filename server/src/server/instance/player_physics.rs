@@ -217,9 +217,10 @@ impl MassiveGameServer {
                     player_state.acceleration_violation_count
                 );
                 player_state.violation_count = player_state.violation_count.saturating_add(1);
-                // Snap velocity back to previous valid velocity
-                player_state.velocity_x = player_state.prev_velocity.0;
-                player_state.velocity_y = player_state.prev_velocity.1;
+                // Clamp to the maximum allowed acceleration instead of snapping to zero-like motion.
+                let clamp_scale = (MAX_ACCELERATION_PER_TICK / accel_magnitude).clamp(0.0, 1.0);
+                player_state.velocity_x = player_state.prev_velocity.0 + dvx * clamp_scale;
+                player_state.velocity_y = player_state.prev_velocity.1 + dvy * clamp_scale;
                 player_state.mark_field_changed(FIELD_POSITION_ROTATION);
             }
         } else {
@@ -250,7 +251,7 @@ impl MassiveGameServer {
                     target_id: player_state.id.clone(),
                     attacker_id: None,
                     damage: zone_damage,
-                    weapon: ServerWeaponType::Pistol,
+                    weapon: ServerWeaponType::Melee,
                     position: pos,
                 },
                 EventPriority::Low,
@@ -263,7 +264,7 @@ impl MassiveGameServer {
                     GameEvent::PlayerKilled {
                         victim_id: player_id.clone(),
                         killer_id: Arc::new("environment".to_string()),
-                        weapon: ServerWeaponType::Pistol,
+                        weapon: ServerWeaponType::Melee,
                         position: pos,
                     },
                     EventPriority::Normal,
@@ -271,7 +272,7 @@ impl MassiveGameServer {
                 self.push_kill_feed_entry(
                     "Environment".to_string(),
                     victim_name,
-                    ServerWeaponType::Pistol,
+                    ServerWeaponType::Melee,
                 );
 
                 // Losing team respawn reduction for zone deaths
@@ -472,12 +473,6 @@ impl MassiveGameServer {
                     self.get_server_timestamp_ms(),
                     spawn_pos.x,
                     spawn_pos.y,
-                );
-                self.global_game_events.push(
-                    GameEvent::PlayerJoined {
-                        player_id: player_id.clone(),
-                    },
-                    EventPriority::High,
                 );
             }
         }

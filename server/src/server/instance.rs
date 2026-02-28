@@ -935,14 +935,12 @@ impl MassiveGameServer {
     }
 
     pub(super) fn enqueue_direct_packet_for_all_players(&self, packet: Bytes) {
-        let mut peers = Vec::new();
+        let mut peers = std::collections::HashSet::new();
         for entry in self.data_channels_map.iter() {
-            peers.push(entry.key().clone());
+            peers.insert(entry.key().clone());
         }
         for peer_id in connected_quic_peer_ids() {
-            if !peers.iter().any(|known| known == &peer_id) {
-                peers.push(peer_id);
-            }
+            peers.insert(peer_id);
         }
         for peer_id in peers {
             self.enqueue_direct_packet_for_peer(&peer_id, packet.clone());
@@ -1023,6 +1021,7 @@ impl MassiveGameServer {
                 "[{}]: unable to ensure human join capacity for QUIC player",
                 peer_id
             );
+            return None;
         }
 
         let spawn = if requested_spectator {

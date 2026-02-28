@@ -71,7 +71,7 @@ pub async fn run_dry_run(scenario_name: &str, bot_count: usize, run_duration: Du
         "[dry-run] Complete. Simulated {} bots successfully.",
         bot_count
     );
-    true
+    passed
 }
 
 /// Simulate a single bot lifecycle without any network I/O.

@@ -403,18 +403,15 @@ impl MassiveGameServer {
             scheduled_delta_count
         );
 
-        let mut scheduled_peer_ids: Vec<String> = scheduled_client_entries
-            .iter()
-            .map(|(peer_id, _, _)| peer_id.clone())
-            .collect();
-        for (peer_id, _) in &quic_entries {
-            if !scheduled_peer_ids
+        let mut scheduled_peer_ids_set: std::collections::HashSet<String> =
+            scheduled_client_entries
                 .iter()
-                .any(|existing| existing == peer_id)
-            {
-                scheduled_peer_ids.push(peer_id.clone());
-            }
+                .map(|(peer_id, _, _)| peer_id.clone())
+                .collect();
+        for (peer_id, _) in &quic_entries {
+            scheduled_peer_ids_set.insert(peer_id.clone());
         }
+        let scheduled_peer_ids: Vec<String> = scheduled_peer_ids_set.into_iter().collect();
 
         let shared_broadcast_data = Arc::new(
             self.prepare_shared_broadcast_data(

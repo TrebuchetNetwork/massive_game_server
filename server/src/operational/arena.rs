@@ -959,22 +959,23 @@ impl ArenaService {
     }
 
     fn report_match(&self, body: ReportMatchBody) -> Result<ReportMatchResponse, ArenaError> {
-        let in_flight = self.inner.in_flight_matches.remove(body.match_id.trim());
+        let match_id = body.match_id.trim();
+        let in_flight = self.inner.in_flight_matches.remove(match_id);
         let pending_match = in_flight
             .map(|(_, value)| value)
             .or_else(|| {
-                let pending = self.inner.pending_matches.lock();
-                pending
+                let mut pending = self.inner.pending_matches.lock();
+                let idx = pending
                     .iter()
-                    .find(|entry| entry.match_id == body.match_id.trim())
-                    .cloned()
+                    .position(|entry| entry.match_id == match_id)?;
+                pending.remove(idx)
             })
             .ok_or_else(|| {
                 ArenaError::NotFound(
                     "match_not_found",
                     format!(
                         "match '{}' was not found in pending/in-flight queue",
-                        body.match_id.trim()
+                        match_id
                     ),
                 )
             })?;

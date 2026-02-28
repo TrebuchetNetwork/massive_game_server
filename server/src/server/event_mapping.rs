@@ -72,6 +72,13 @@ pub(crate) fn event_value(event: &GameEvent) -> Option<f32> {
     }
 }
 
+pub(crate) fn should_serialize_game_event(event: &GameEvent) -> bool {
+    !matches!(
+        event,
+        GameEvent::PlayerJoined { .. } | GameEvent::PlayerLeft { .. } | GameEvent::Footstep { .. }
+    )
+}
+
 pub(crate) fn map_game_event_type_to_fb(event: &GameEvent) -> fb::GameEventType {
     match event {
         GameEvent::PlayerDamaged { .. } => fb::GameEventType::PlayerDamageEffect,

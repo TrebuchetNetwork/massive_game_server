@@ -281,9 +281,9 @@ export function createRenderAssetManager(getCtx) {
 
                 let healthColor;
                 if (healthPercent > 0.6) {
-                    healthColor = interpolateColor(0x22C55E, 0xFACC15, (healthPercent - 0.6) / 0.4);
+                    healthColor = interpolateColor(0xFACC15, 0x22C55E, (healthPercent - 0.6) / 0.4);
                 } else if (healthPercent > 0.3) {
-                    healthColor = interpolateColor(0xFACC15, 0xEF4444, (healthPercent - 0.3) / 0.3);
+                    healthColor = interpolateColor(0xEF4444, 0xFACC15, (healthPercent - 0.3) / 0.3);
                 } else {
                     healthColor = 0xEF4444;
                 }

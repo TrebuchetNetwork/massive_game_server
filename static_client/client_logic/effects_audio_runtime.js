@@ -93,8 +93,11 @@ export function createEffectsAudioRuntime({
 class EffectsManager {
     constructor(app, container, audioManager = null) {
 this.app = app;
+const targetContainer = container && typeof container.addChild === 'function'
+    ? container
+    : new PIXI.Container();
 this.effectsContainer = new PIXI.Container();
-container.addChild(this.effectsContainer);
+targetContainer.addChild(this.effectsContainer);
 this.activeEffects = [];
 this.pendingTimers = new Set();
 this.particlesEnabled = true;
@@ -233,13 +236,23 @@ return node;
 
     generateParticleTextures() {
 const textures = {};
+const renderer = this.app && this.app.renderer && typeof this.app.renderer.generateTexture === 'function'
+    ? this.app.renderer
+    : null;
+if (!renderer) {
+    const fallbackTexture = PIXI.Texture?.WHITE || PIXI.Texture?.EMPTY;
+    textures.spark = fallbackTexture;
+    textures.smoke = fallbackTexture;
+    textures.debris = fallbackTexture;
+    return textures;
+}
 
 // Spark particle
 const sparkGraphics = new PIXI.Graphics();
 sparkGraphics.beginFill(0xFFFFFF);
 sparkGraphics.drawCircle(0, 0, 2);
 sparkGraphics.endFill();
-textures.spark = this.app.renderer.generateTexture(sparkGraphics);
+textures.spark = renderer.generateTexture(sparkGraphics);
 
 // Smoke particle
 const smokeGraphics = new PIXI.Graphics();
@@ -247,14 +260,14 @@ smokeGraphics.beginFill(0x888888, 0.5);
 smokeGraphics.drawCircle(0, 0, 8);
 smokeGraphics.endFill();
 smokeGraphics.filters = [new PIXI.BlurFilter(3)];
-textures.smoke = this.app.renderer.generateTexture(smokeGraphics);
+textures.smoke = renderer.generateTexture(smokeGraphics);
 
 // Debris particle
 const debrisGraphics = new PIXI.Graphics();
 debrisGraphics.beginFill(0x444444);
 debrisGraphics.drawRect(-3, -3, 6, 6);
 debrisGraphics.endFill();
-textures.debris = this.app.renderer.generateTexture(debrisGraphics);
+textures.debris = renderer.generateTexture(debrisGraphics);
 
 // Clean up
 sparkGraphics.destroy();
@@ -262,6 +275,16 @@ smokeGraphics.destroy();
 debrisGraphics.destroy();
 
 return textures;
+    }
+
+    findPlayerSpriteById(instigatorId) {
+const playerContainerRef = globalThis.playerContainer;
+if (!playerContainerRef || !Array.isArray(playerContainerRef.children)) return null;
+return (
+    playerContainerRef.children.find(
+        sprite => sprite && sprite.playerId === instigatorId
+    ) || null
+);
     }
     
     
@@ -755,6 +778,7 @@ this.activeEffects = survivors;
 
     processGameEvent(event) {
 if (!this.particlesEnabled && (event.event_type !== GP.GameEventType.PlayerDamageEffect)) return;
+const registerCombatEventFeedback = globalThis.registerCombatEventFeedback;
 if (typeof registerCombatEventFeedback === 'function') {
     registerCombatEventFeedback(event);
 }
@@ -957,8 +981,9 @@ this.animateEffect(impact, {
     createEnhancedMuzzleFlash(position, weaponType, instigatorId) {
 if (!this.shouldEmitEffect('muzzle')) return;
 const loadTier = this.getLoadTier();
-const playerSprite = playerContainer.children.find(s => s.playerId === instigatorId);
+const playerSprite = this.findPlayerSpriteById(instigatorId);
 if (!playerSprite) return;
+if (!playerSprite.gun || typeof playerSprite.gun.addChild !== 'function') return;
 
 const flashConfigs = {
     [GP.WeaponType.Pistol]: { size: 15, color: 0xFFFF66, points: 4 },
@@ -1760,7 +1785,7 @@ this.activeEffects = this.activeEffects.filter(effect => {
     }
 
     createMeleeSwingEffect(position, instigatorId) {
-const playerSprite = playerContainer.children.find(s => s.playerId === instigatorId);
+const playerSprite = this.findPlayerSpriteById(instigatorId);
 if (!playerSprite) return;
 
 const player = players.get(instigatorId);

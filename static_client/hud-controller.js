@@ -217,18 +217,20 @@ class HUDController {
     
     const entry = document.createElement('div');
     entry.className = `kill-entry ${isHeadshot ? 'headshot' : ''}`;
-    
-    let assistText = '';
-    if (assists.length > 0) {
-      assistText = `<span class="assist-indicator">+${assists.length}</span>`;
+    const appendSpan = (className, value) => {
+      const span = document.createElement('span');
+      span.className = className;
+      span.textContent = String(value ?? '');
+      entry.appendChild(span);
+    };
+
+    appendSpan('killer', killer);
+    appendSpan('weapon-icon', weapon);
+    const assistCount = Array.isArray(assists) ? assists.length : 0;
+    if (assistCount > 0) {
+      appendSpan('assist-indicator', `+${assistCount}`);
     }
-    
-    entry.innerHTML = `
-      <span class="killer">${killer}</span>
-      <span class="weapon-icon">${weapon}</span>
-      ${assistText}
-      <span class="victim">${victim}</span>
-    `;
+    appendSpan('victim', victim);
     
     this.elements.killFeed.appendChild(entry);
     

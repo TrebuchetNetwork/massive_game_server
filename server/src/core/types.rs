@@ -758,10 +758,10 @@ impl Projectile {
 
         // Get speed and lifetime for weapon
         let (speed, lifetime) = match weapon_type {
-            ServerWeaponType::Pistol => (450.0, 2.0),
-            ServerWeaponType::Shotgun => (400.0, 1.2),
-            ServerWeaponType::Rifle => (550.0, 2.5),
-            ServerWeaponType::Sniper => (700.0, 4.0),
+            ServerWeaponType::Pistol => (crate::core::constants::PISTOL_PROJECTILE_SPEED, 2.0),
+            ServerWeaponType::Shotgun => (crate::core::constants::SHOTGUN_PROJECTILE_SPEED, 1.2),
+            ServerWeaponType::Rifle => (crate::core::constants::RIFLE_PROJECTILE_SPEED, 2.5),
+            ServerWeaponType::Sniper => (crate::core::constants::SNIPER_PROJECTILE_SPEED, 4.0),
             ServerWeaponType::Melee => (0.0, 0.0),
         };
 

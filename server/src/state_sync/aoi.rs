@@ -57,6 +57,15 @@ impl AoiMembership {
             }
         }
 
+        if config.max_visible_entities == 0 {
+            self.visible.clear();
+            return;
+        }
+        if candidates.len() > config.max_visible_entities {
+            let nth = config.max_visible_entities;
+            candidates.select_nth_unstable_by(nth, |left, right| left.1.total_cmp(&right.1));
+            candidates.truncate(nth);
+        }
         candidates.sort_by(|left, right| left.1.total_cmp(&right.1));
 
         let mut retained = HashSet::with_capacity(config.max_visible_entities);

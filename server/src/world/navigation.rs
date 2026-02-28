@@ -606,9 +606,14 @@ fn point_in_polygon(point: Vec2, vertices: &[Vec2]) -> bool {
     for i in 0..vertices.len() {
         let vi = vertices[i];
         let vj = vertices[j];
+        let y_delta = vj.y - vi.y;
+        let safe_y_delta = if y_delta.abs() < 0.00001 {
+            0.00001_f32.copysign(y_delta)
+        } else {
+            y_delta
+        };
         let intersect = ((vi.y > point.y) != (vj.y > point.y))
-            && (point.x
-                < (vj.x - vi.x) * (point.y - vi.y) / ((vj.y - vi.y).abs().max(0.00001)) + vi.x);
+            && (point.x < (vj.x - vi.x) * (point.y - vi.y) / safe_y_delta + vi.x);
         if intersect {
             inside = !inside;
         }

@@ -291,11 +291,11 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
 
     // Include length mismatch in the accumulator instead of early-returning,
     // so comparison work remains proportional to max_len in all cases.
-    let mut diff = (left_bytes.len() ^ right_bytes.len()) as u8;
+    let mut diff: usize = left_bytes.len() ^ right_bytes.len();
     for idx in 0..max_len {
         let left_byte = *left_bytes.get(idx).unwrap_or(&0);
         let right_byte = *right_bytes.get(idx).unwrap_or(&0);
-        diff |= left_byte ^ right_byte;
+        diff |= (left_byte ^ right_byte) as usize;
     }
     diff == 0
 }
@@ -2134,6 +2134,12 @@ mod tests {
         assert!(constant_time_eq("same-value", "same-value"));
         assert!(!constant_time_eq("same-value", "different"));
         assert!(!constant_time_eq("short", "shorter"));
+        let left = "a".repeat(256);
+        let right = "a".repeat(512);
+        assert!(
+            !constant_time_eq(&left, &right),
+            "length mismatches must not alias through truncation"
+        );
     }
 
     #[test]

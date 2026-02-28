@@ -657,20 +657,24 @@ fn validate_source_impl(
     }
 
     let lowered = source.to_ascii_lowercase();
+    let lowered_no_whitespace: String = lowered
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect();
     let forbidden_patterns = [
-        "unsafe",
-        "std::fs",
-        "std::process",
-        "std::net",
-        "libc::",
-        "asm!(",
-        "thread::spawn",
-        "tokio::spawn",
-        "extern \"c\" fn main",
+        ("unsafe", "unsafe"),
+        ("std::fs", "std::fs"),
+        ("std::process", "std::process"),
+        ("std::net", "std::net"),
+        ("libc::", "libc::"),
+        ("asm!(", "asm!("),
+        ("thread::spawn", "thread::spawn"),
+        ("tokio::spawn", "tokio::spawn"),
+        ("extern \"c\" fn main", "extern\"c\"fnmain"),
     ];
-    for pattern in forbidden_patterns {
-        if lowered.contains(pattern) {
-            errors.push(format!("forbidden pattern detected: '{}'", pattern));
+    for (display_pattern, normalized_pattern) in forbidden_patterns {
+        if lowered.contains(display_pattern) || lowered_no_whitespace.contains(normalized_pattern) {
+            errors.push(format!("forbidden pattern detected: '{}'", display_pattern));
         }
     }
 
@@ -714,7 +718,11 @@ fn truncate_for_api(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.to_owned();
     }
-    let mut out = value[..max_bytes].to_owned();
+    let mut cutoff = max_bytes.min(value.len());
+    while cutoff > 0 && !value.is_char_boundary(cutoff) {
+        cutoff -= 1;
+    }
+    let mut out = value[..cutoff].to_owned();
     out.push_str("...<truncated>");
     out
 }

@@ -69,6 +69,7 @@ impl MassiveGameServer {
                 if effective_participant_count >= MIN_PLAYERS_TO_START {
                     match_info_guard.match_state = fb::MatchStateType::Active;
                     match_info_guard.time_remaining = self.match_duration_secs;
+                    match_info_guard.team_scores.clear();
                     if dynamic_mode_transitions {
                         match_info_guard.game_mode = fb::GameModeType::FreeForAll;
                     }
@@ -487,8 +488,6 @@ impl MassiveGameServer {
 
     fn reset_match_state(&self, match_info: &mut ServerMatchInfo) {
         match_info.time_remaining = self.match_duration_secs;
-        // Don't clear team scores - preserve them between rounds
-        // match_info.team_scores.clear();
         match_info.flag_states.clear();
         if match_info.match_state == fb::MatchStateType::Waiting
             && match_info.game_mode == fb::GameModeType::CaptureTheFlag
