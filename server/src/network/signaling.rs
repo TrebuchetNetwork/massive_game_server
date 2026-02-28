@@ -677,6 +677,8 @@ const DEFAULT_JOIN_RATE_LIMIT_PER_SEC: u32 = 30;
 const DEFAULT_JOIN_RATE_LIMIT_BURST: u32 = 50;
 const DEFAULT_IP_RATE_LIMIT_PER_SEC: u32 = 20;
 const DEFAULT_IP_RATE_LIMIT_BURST: u32 = 40;
+const DEFAULT_ICE_CANDIDATE_RATE_LIMIT_PER_SEC: u32 = 80;
+const DEFAULT_ICE_CANDIDATE_RATE_LIMIT_BURST: u32 = 160;
 const DEFAULT_SDP_ADMISSION_CONCURRENCY: usize = 4;
 const JOIN_RATE_LIMIT_THROTTLED_MESSAGE: &str = "Server busy handling joins, retry shortly.";
 const MAX_SIGNALING_TEXT_BYTES: usize = 128 * 1024;
@@ -725,6 +727,12 @@ struct InputRateLimitConfig {
 
 #[derive(Clone, Copy, Debug)]
 struct IpRateLimitConfig {
+    per_sec: u32,
+    burst: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IceCandidateRateLimitConfig {
     per_sec: u32,
     burst: u32,
 }
@@ -943,6 +951,36 @@ fn input_rate_limit_config() -> Option<InputRateLimitConfig> {
                 per_sec, burst
             );
             Some(InputRateLimitConfig { per_sec, burst })
+        })
+        .as_ref()
+        .copied()
+}
+
+fn ice_candidate_rate_limit_config() -> Option<IceCandidateRateLimitConfig> {
+    static ICE_CANDIDATE_RATE_LIMIT_CONFIG: OnceLock<Option<IceCandidateRateLimitConfig>> =
+        OnceLock::new();
+    ICE_CANDIDATE_RATE_LIMIT_CONFIG
+        .get_or_init(|| {
+            let per_sec = env_u32(
+                "MGS_SIGNALING_ICE_RATE_LIMIT_PER_SEC",
+                DEFAULT_ICE_CANDIDATE_RATE_LIMIT_PER_SEC,
+            );
+            if per_sec == 0 {
+                info!(
+                    "ICE candidate rate limiter disabled (MGS_SIGNALING_ICE_RATE_LIMIT_PER_SEC=0)."
+                );
+                return None;
+            }
+            let burst = env_u32(
+                "MGS_SIGNALING_ICE_RATE_LIMIT_BURST",
+                DEFAULT_ICE_CANDIDATE_RATE_LIMIT_BURST,
+            )
+            .max(per_sec);
+            info!(
+                "ICE candidate rate limiter enabled: {} candidates/sec with burst {}.",
+                per_sec, burst
+            );
+            Some(IceCandidateRateLimitConfig { per_sec, burst })
         })
         .as_ref()
         .copied()
@@ -1830,6 +1868,12 @@ pub async fn handle_signaling_connection(
     let pc_signal_receiver = Arc::clone(&peer_connection);
     let ws_signal_sender_clone = client_signaling_tx.clone();
     let current_peer_id_ws = peer_id_str.clone();
+    let ice_rate_limiter = ice_candidate_rate_limit_config().map(|cfg| {
+        Arc::new(AsyncMutex::new(InputRateLimiter::new(
+            cfg.per_sec,
+            cfg.burst,
+        )))
+    });
 
     while let Some(result) = ws_rx.next().await {
         shared_connection_manager().touch(&current_peer_id_ws);
@@ -1894,6 +1938,18 @@ pub async fn handle_signaling_connection(
                                         }
                                     }
                                 } else if let Some(ice) = sig_data.ice {
+                                    if let Some(rate_limiter) = ice_rate_limiter.as_ref() {
+                                        let mut limiter_guard = rate_limiter.lock().await;
+                                        if !limiter_guard.try_acquire() {
+                                            if limiter_guard.should_log_throttle() {
+                                                warn!(
+                                                    "[{}]: Dropping ICE candidate due to per-connection signaling rate limit.",
+                                                    current_peer_id_ws
+                                                );
+                                            }
+                                            continue;
+                                        }
+                                    }
                                     let ice_init = RTCIceCandidateInit {
                                         candidate: ice.candidate,
                                         sdp_mid: ice.sdp_mid,

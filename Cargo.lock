@@ -2410,7 +2410,7 @@ dependencies = [
 
 [[package]]
 name = "massive_game_server_core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aabb-quadtree",
  "ahash",

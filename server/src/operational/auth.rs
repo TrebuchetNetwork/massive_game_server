@@ -2,7 +2,7 @@ use crate::core::types::PlayerState;
 use crate::operational::monitoring::metrics;
 use dashmap::DashMap;
 use parking_lot::{Mutex as ParkingLotMutex, RwLock};
-use rand::Rng;
+use rand::{rngs::OsRng, RngCore};
 use redis::Commands;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -35,6 +35,8 @@ const PROGRESSION_XP_PER_KILL: u64 = 30;
 const PROGRESSION_BASE_CREDITS_PER_MATCH: u64 = 20;
 const PROGRESSION_CREDITS_PER_KILL: u64 = 8;
 const DEFAULT_ACCOUNT_DELETION_GRACE_PERIOD_HOURS: u64 = 72;
+const OTP_CODE_DIGITS: usize = 6;
+const OTP_CODE_UPPER_BOUND: u32 = 1_000_000;
 /// Interval for the periodic task that processes queued account deletions.
 const DELETION_PROCESSING_INTERVAL_SECS: u64 = 3600;
 const ACTIVE_PHONE_HASH_PREFIX: &str = "hash:";
@@ -674,7 +676,7 @@ impl AuthService {
             }
         }
 
-        let code = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
+        let code = generate_otp_code();
         let expires_at = now.saturating_add(self.inner.otp_ttl_seconds);
         let challenge = OtpChallenge {
             code: code.clone(),
@@ -717,9 +719,8 @@ impl AuthService {
 
         let now = unix_now();
         let mut remove_after_check = false;
-        let mut mismatch_remaining_attempts = None;
 
-        {
+        let verification_result = {
             let mut challenge_entry = self
                 .inner
                 .otp_challenges
@@ -729,56 +730,50 @@ impl AuthService {
                     AuthError::CodeNotRequested
                 })?;
 
-            if now > challenge_entry.expires_at
-                || challenge_entry.attempts >= self.inner.max_verify_attempts
-            {
+            if now > challenge_entry.expires_at {
                 remove_after_check = true;
-            } else if challenge_entry.code != code {
+                Err(AuthError::CodeExpired)
+            } else if challenge_entry.attempts >= self.inner.max_verify_attempts {
+                remove_after_check = true;
+                Err(AuthError::TooManyAttempts)
+            } else if !constant_time_eq_str(&challenge_entry.code, code) {
                 challenge_entry.attempts = challenge_entry.attempts.saturating_add(1);
                 if challenge_entry.attempts >= self.inner.max_verify_attempts {
                     remove_after_check = true;
+                    Err(AuthError::TooManyAttempts)
+                } else {
+                    Err(AuthError::CodeMismatch {
+                        remaining_attempts: self
+                            .inner
+                            .max_verify_attempts
+                            .saturating_sub(challenge_entry.attempts),
+                    })
                 }
-                mismatch_remaining_attempts = Some(
-                    self.inner
-                        .max_verify_attempts
-                        .saturating_sub(challenge_entry.attempts),
-                );
             } else {
                 remove_after_check = true;
+                Ok(())
             }
+        };
+
+        if remove_after_check {
+            self.inner.otp_challenges.remove(&phone_number);
         }
 
-        if let Some(remaining) = mismatch_remaining_attempts {
-            if remove_after_check {
-                self.inner.otp_challenges.remove(&phone_number);
+        if let Err(err) = verification_result {
+            match err {
+                AuthError::CodeExpired => {
+                    metrics::record_auth_attempt("verify_code", "code_expired");
+                }
+                AuthError::TooManyAttempts => {
+                    metrics::record_auth_attempt("verify_code", "too_many_attempts");
+                }
+                AuthError::CodeMismatch { .. } => {
+                    metrics::record_auth_attempt("verify_code", "code_mismatch");
+                }
+                _ => {}
             }
-            if remaining == 0 {
-                metrics::record_auth_attempt("verify_code", "too_many_attempts");
-                return Err(AuthError::TooManyAttempts);
-            }
-            metrics::record_auth_attempt("verify_code", "code_mismatch");
-            return Err(AuthError::CodeMismatch {
-                remaining_attempts: remaining,
-            });
+            return Err(err);
         }
-
-        if let Some(existing) = self.inner.otp_challenges.get(&phone_number) {
-            if now > existing.expires_at {
-                self.inner.otp_challenges.remove(&phone_number);
-                metrics::record_auth_attempt("verify_code", "code_expired");
-                return Err(AuthError::CodeExpired);
-            }
-            if existing.code != code {
-                self.inner.otp_challenges.remove(&phone_number);
-                metrics::record_auth_attempt("verify_code", "too_many_attempts");
-                return Err(AuthError::TooManyAttempts);
-            }
-        } else {
-            metrics::record_auth_attempt("verify_code", "code_not_requested");
-            return Err(AuthError::CodeNotRequested);
-        }
-
-        self.inner.otp_challenges.remove(&phone_number);
 
         let mut persistent_guard = self.inner.persistent_store.write();
         let phone_lookup_key = active_phone_lookup_key(&phone_number);
@@ -2027,6 +2022,34 @@ fn init_redis_cache_from_env() -> Option<AuthRedisCache> {
     })
 }
 
+fn generate_otp_code() -> String {
+    // Rejection sampling avoids modulo bias while keeping OTP generation
+    // cryptographically secure with OS entropy.
+    const REJECTION_THRESHOLD: u32 = u32::MAX - (u32::MAX % OTP_CODE_UPPER_BOUND);
+    loop {
+        let candidate = OsRng.next_u32();
+        if candidate < REJECTION_THRESHOLD {
+            let value = candidate % OTP_CODE_UPPER_BOUND;
+            return format!("{value:0width$}", width = OTP_CODE_DIGITS);
+        }
+    }
+}
+
+fn constant_time_eq_str(left: &str, right: &str) -> bool {
+    let left_bytes = left.as_bytes();
+    let right_bytes = right.as_bytes();
+    let mut diff = left_bytes.len() ^ right_bytes.len();
+    let max_len = left_bytes.len().max(right_bytes.len());
+
+    for idx in 0..max_len {
+        let l = left_bytes.get(idx).copied().unwrap_or(0);
+        let r = right_bytes.get(idx).copied().unwrap_or(0);
+        diff |= usize::from(l ^ r);
+    }
+
+    diff == 0
+}
+
 fn normalize_phone_number(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -2227,6 +2250,22 @@ mod tests {
         assert!(high_credits > low_credits);
     }
 
+    #[test]
+    fn otp_code_generation_produces_six_digits() {
+        for _ in 0..64 {
+            let code = generate_otp_code();
+            assert_eq!(code.len(), OTP_CODE_DIGITS);
+            assert!(code.chars().all(|ch| ch.is_ascii_digit()));
+        }
+    }
+
+    #[test]
+    fn constant_time_eq_str_behaves_for_equal_and_mismatch_cases() {
+        assert!(constant_time_eq_str("123456", "123456"));
+        assert!(!constant_time_eq_str("123456", "123457"));
+        assert!(!constant_time_eq_str("123456", "12345"));
+    }
+
     // ── Phone number masking tests ───────────────────────────────────────
 
     #[test]
@@ -2338,6 +2377,52 @@ mod tests {
     #[test]
     fn default_session_ttl_is_24_hours() {
         assert_eq!(DEFAULT_SESSION_TTL_SECONDS, 60 * 60 * 24);
+    }
+
+    #[test]
+    fn verify_code_rejects_even_correct_code_after_attempt_budget_exhausted() {
+        let auth = make_test_auth_service();
+        let phone = "+15551234567";
+        assert!(auth.request_phone_code(phone).is_ok());
+
+        let normalized_phone = normalize_phone_number(phone).expect("valid phone");
+        let issued_code = auth
+            .inner
+            .otp_challenges
+            .get(&normalized_phone)
+            .map(|entry| entry.code.clone())
+            .expect("issued otp code should exist");
+        let wrong_code = if issued_code == "000000" {
+            "000001"
+        } else {
+            "000000"
+        };
+
+        for _ in 0..(auth.inner.max_verify_attempts.saturating_sub(1)) {
+            let err = auth
+                .verify_phone_code(phone, wrong_code)
+                .expect_err("wrong code should not verify");
+            match err {
+                AuthError::CodeMismatch { .. } => {}
+                other => panic!("expected CodeMismatch, got {other:?}"),
+            }
+        }
+
+        let final_err = auth
+            .verify_phone_code(phone, wrong_code)
+            .expect_err("attempt budget should now be exhausted");
+        assert!(matches!(final_err, AuthError::TooManyAttempts));
+
+        let post_exhaust_err = auth
+            .verify_phone_code(phone, &issued_code)
+            .expect_err("valid code must not verify after exhaustion");
+        assert!(
+            matches!(
+                post_exhaust_err,
+                AuthError::CodeNotRequested | AuthError::TooManyAttempts
+            ),
+            "unexpected error after attempt exhaustion: {post_exhaust_err:?}"
+        );
     }
 
     #[test]
