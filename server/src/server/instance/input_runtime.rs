@@ -1,5 +1,22 @@
 use super::*;
 
+const DEFAULT_ANTI_CHEAT_KICK_THRESHOLD: u32 = 8;
+
+fn anti_cheat_kick_threshold() -> Option<u32> {
+    static KICK_THRESHOLD: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *KICK_THRESHOLD.get_or_init(|| {
+        let parsed = std::env::var("MGS_ANTI_CHEAT_KICK_THRESHOLD")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+            .unwrap_or(DEFAULT_ANTI_CHEAT_KICK_THRESHOLD);
+        if parsed == 0 {
+            None
+        } else {
+            Some(parsed.max(1))
+        }
+    })
+}
+
 impl MassiveGameServer {
     pub(super) fn prune_runtime_tracking_state(&self) {
         self.player_position_history
@@ -915,9 +932,11 @@ impl MassiveGameServer {
     pub async fn process_network_input(&self) {
         let network_start = Instant::now();
         let current_server_time = Instant::now();
+        let kick_threshold = anti_cheat_kick_threshold();
 
         // First, collect all player inputs with their IDs
         let mut all_inputs = Vec::new();
+        let mut anti_cheat_kicks: HashSet<PlayerID> = HashSet::new();
         self.player_manager
             .for_each_player_mut(|player_id, player_state| {
                 player_state.clear_changed_fields();
@@ -948,7 +967,30 @@ impl MassiveGameServer {
                         current_server_time,
                     );
                 }
+
+                if let Some(threshold) = kick_threshold {
+                    if !self.bot_players.contains_key(&player_id)
+                        && !player_state_entry.is_spectator
+                        && player_state_entry.violation_count >= threshold
+                    {
+                        anti_cheat_kicks.insert(player_id.clone());
+                    }
+                }
             }
+        }
+
+        for peer_id in anti_cheat_kicks {
+            if let Some(player_state) = self.player_manager.get_player_state(&peer_id) {
+                warn!(
+                    "[{}]: Auto-kicking player due to anti-cheat violations (count={}, threshold={}).",
+                    peer_id.as_str(),
+                    player_state.violation_count,
+                    kick_threshold.unwrap_or(DEFAULT_ANTI_CHEAT_KICK_THRESHOLD)
+                );
+            }
+            self.remove_quic_player(peer_id.as_str());
+            let _ = crate::network::connection_manager::shared_connection_manager()
+                .remove(peer_id.as_str());
         }
         metrics::record_subsystem_time("network", network_start.elapsed().as_secs_f64());
     }

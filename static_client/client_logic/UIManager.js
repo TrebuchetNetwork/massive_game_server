@@ -19,6 +19,17 @@ export function createUIManager(getCtx) {
             .replace(/'/g, "&#039;");
     }
 
+    function safeCssColor(value, fallback = '#94A3B8') {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return `#${Math.max(0, value >>> 0).toString(16).padStart(6, '0').slice(-6)}`;
+        }
+        const normalized = String(value || '').trim();
+        if (/^#[0-9a-fA-F]{3}$/.test(normalized) || /^#[0-9a-fA-F]{6}$/.test(normalized)) {
+            return normalized;
+        }
+        return fallback;
+    }
+
     function formatModeName(rawMode) {
         const normalized = String(rawMode || '').trim();
         if (!normalized) return 'Unknown';
@@ -61,32 +72,67 @@ export function createUIManager(getCtx) {
         const mvpKills = summaryPayload.mvp_kills || summaryPayload.mvpKills || 'N/A';
         const mvpDamage = summaryPayload.mvp_damage || summaryPayload.mvpDamage || 'N/A';
         const mvpObjectives = summaryPayload.mvp_objectives || summaryPayload.mvpObjectives || 'N/A';
-        ctx.postMatchMvpDiv.innerHTML = [
-            `<span class="mvp-award"><b>Most Kills:</b> ${escapeHtml(String(mvpKills))}</span>`,
-            `<span class="mvp-award"><b>Most Damage:</b> ${escapeHtml(String(mvpDamage))}</span>`,
-            `<span class="mvp-award"><b>Most Objective:</b> ${escapeHtml(String(mvpObjectives))}</span>`,
-        ].join(' ');
+        ctx.postMatchMvpDiv.replaceChildren();
+        [
+            ['Most Kills:', mvpKills],
+            ['Most Damage:', mvpDamage],
+            ['Most Objective:', mvpObjectives],
+        ].forEach(([label, value], index) => {
+            if (index > 0) ctx.postMatchMvpDiv.appendChild(document.createTextNode(' '));
+            const award = document.createElement('span');
+            award.className = 'mvp-award';
+            const boldLabel = document.createElement('b');
+            boldLabel.textContent = String(label);
+            award.appendChild(boldLabel);
+            award.appendChild(document.createTextNode(` ${String(value)}`));
+            ctx.postMatchMvpDiv.appendChild(award);
+        });
 
         const playersRows = Array.isArray(summaryPayload.players) ? summaryPayload.players : [];
-        const rows = playersRows.slice(0, 10).map((row) => {
-            const name = escapeHtml(String(row?.player_name || row?.playerName || 'Unknown'));
-            const team = Number(row?.team_id || row?.teamId || 0);
-            const kills = Number(row?.kills || 0) | 0;
-            const deaths = Number(row?.deaths || 0) | 0;
-            const score = Number(row?.score || 0) | 0;
-            const damage = Number(row?.damage_dealt || row?.damageDealt || 0) | 0;
-            const kd = Number(row?.kd_ratio || row?.kdRatio || 0);
-            return `<tr><td>${name}</td><td>${team || '-'}</td><td>${score}</td><td>${kills}/${deaths}</td><td>${damage}</td><td>${kd.toFixed(2)}</td></tr>`;
-        });
-        if (rows.length === 0) {
-            ctx.postMatchTableDiv.innerHTML = '<div class="post-match-panel__empty">No match stats available.</div>';
+        ctx.postMatchTableDiv.replaceChildren();
+        if (playersRows.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'post-match-panel__empty';
+            empty.textContent = 'No match stats available.';
+            ctx.postMatchTableDiv.appendChild(empty);
         } else {
-            ctx.postMatchTableDiv.innerHTML = `<table class="post-match-table"><thead><tr><th>Player</th><th>Team</th><th>Score</th><th>K/D</th><th>Dmg</th><th>KD</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+            const table = document.createElement('table');
+            table.className = 'post-match-table';
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            ['Player', 'Team', 'Score', 'K/D', 'Dmg', 'KD'].forEach((title) => {
+                const th = document.createElement('th');
+                th.textContent = title;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            playersRows.slice(0, 10).forEach((row) => {
+                const tr = document.createElement('tr');
+                const name = String(row?.player_name || row?.playerName || 'Unknown');
+                const team = Number(row?.team_id || row?.teamId || 0);
+                const kills = Number(row?.kills || 0) | 0;
+                const deaths = Number(row?.deaths || 0) | 0;
+                const score = Number(row?.score || 0) | 0;
+                const damage = Number(row?.damage_dealt || row?.damageDealt || 0) | 0;
+                const kd = Number(row?.kd_ratio || row?.kdRatio || 0);
+                [name, team || '-', score, `${kills}/${deaths}`, damage, kd.toFixed(2)].forEach((cellValue) => {
+                    const td = document.createElement('td');
+                    td.textContent = String(cellValue);
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            ctx.postMatchTableDiv.appendChild(table);
         }
 
         // Weapon breakdown for local player
         const weaponBreakdownDiv = document.getElementById('postMatchWeaponBreakdown');
         if (weaponBreakdownDiv) {
+            weaponBreakdownDiv.replaceChildren();
             const localRow = playersRows.find(r => {
                 const pid = r?.player_id || r?.playerId;
                 return pid && pid === ctx.myPlayerId;
@@ -95,20 +141,31 @@ export function createUIManager(getCtx) {
             const weaponEntries = Object.entries(weaponKills);
             if (weaponEntries.length > 0) {
                 const totalKills = weaponEntries.reduce((sum, [, k]) => sum + Number(k), 0) || 1;
-                const bars = weaponEntries.map(([wName, k]) => {
+                const label = document.createElement('div');
+                label.className = 'weapon-breakdown-label';
+                label.textContent = 'Weapon Kills';
+                weaponBreakdownDiv.appendChild(label);
+
+                const barsContainer = document.createElement('div');
+                barsContainer.className = 'weapon-breakdown-bars';
+                weaponEntries.forEach(([wName, k]) => {
                     const pct = Math.round((Number(k) / totalKills) * 100);
-                    const color = ctx.weaponColors[wName] || '#94A3B8';
-                    return `<div class="weapon-bar" style="flex:${pct}; background:${color}" title="${escapeHtml(wName)}: ${k} kills (${pct}%)">${pct > 10 ? escapeHtml(wName) : ''}</div>`;
-                }).join('');
-                weaponBreakdownDiv.innerHTML = `<div class="weapon-breakdown-label">Weapon Kills</div><div class="weapon-breakdown-bars">${bars}</div>`;
-            } else {
-                weaponBreakdownDiv.innerHTML = '';
+                    const bar = document.createElement('div');
+                    bar.className = 'weapon-bar';
+                    bar.style.flex = String(Math.max(1, pct));
+                    bar.style.background = safeCssColor(ctx.weaponColors[wName]);
+                    bar.title = `${String(wName)}: ${k} kills (${pct}%)`;
+                    bar.textContent = pct > 10 ? String(wName) : '';
+                    barsContainer.appendChild(bar);
+                });
+                weaponBreakdownDiv.appendChild(barsContainer);
             }
         }
 
         // K/D trend across matches (localStorage)
         const trendDiv = document.getElementById('postMatchTrend');
         if (trendDiv) {
+            trendDiv.replaceChildren();
             const localRow = playersRows.find(r => (r?.player_id || r?.playerId) === ctx.myPlayerId);
             if (localRow) {
                 const kd = Number(localRow?.kd_ratio || localRow?.kdRatio || 0);
@@ -120,11 +177,26 @@ export function createUIManager(getCtx) {
                 if (history.length >= 2) {
                     const maxKd = Math.max(...history.map(h => h.kd), 1);
                     const w = 200, h = 60;
-                    const step = w / (history.length - 1);
+                    const step = w / Math.max(history.length - 1, 1);
                     const points = history.map((p, i) => `${(i * step).toFixed(1)},${(h - (p.kd / maxKd) * h * 0.9).toFixed(1)}`).join(' ');
-                    trendDiv.innerHTML = `<div class="trend-label">K/D Trend (last ${history.length} matches)</div><svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block"><polyline points="${points}" fill="none" stroke="#60A5FA" stroke-width="2"/></svg>`;
-                } else {
-                    trendDiv.innerHTML = '';
+                    const label = document.createElement('div');
+                    label.className = 'trend-label';
+                    label.textContent = `K/D Trend (last ${history.length} matches)`;
+                    trendDiv.appendChild(label);
+
+                    const svgNs = 'http://www.w3.org/2000/svg';
+                    const svg = document.createElementNS(svgNs, 'svg');
+                    svg.setAttribute('width', String(w));
+                    svg.setAttribute('height', String(h));
+                    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+                    svg.style.display = 'block';
+                    const polyline = document.createElementNS(svgNs, 'polyline');
+                    polyline.setAttribute('points', points);
+                    polyline.setAttribute('fill', 'none');
+                    polyline.setAttribute('stroke', '#60A5FA');
+                    polyline.setAttribute('stroke-width', '2');
+                    svg.appendChild(polyline);
+                    trendDiv.appendChild(svg);
                 }
             }
         }

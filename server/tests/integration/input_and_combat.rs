@@ -203,6 +203,25 @@ async fn zero_sequence_input_is_ignored() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn anti_cheat_violation_threshold_auto_kicks_player() {
+    let server = setup_test_server();
+    let pid = add_player(&server, "cheater", 1, 0.0, 0.0);
+
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&pid) {
+        ps.violation_count = 8;
+        ps.input_queue.push_back(make_input(1));
+    }
+
+    server.process_network_input().await;
+
+    let removed = server.player_manager.get_player_state(&pid).is_none();
+    assert!(
+        removed,
+        "player should be removed after threshold violation"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn melee_attack_applies_forward_lunge() {
     let server = setup_test_server();
     let pid = add_player(&server, "melee_lunge", 1, 0.0, 0.0);
