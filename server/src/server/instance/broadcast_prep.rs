@@ -88,6 +88,7 @@ impl MassiveGameServer {
                     scheduled_peer_ids.len()
                 );
                 snapshot = self.rebuild_player_soa_snapshot_from_authoritative_state();
+                self.player_soa_snapshot.publish_arc(Arc::clone(&snapshot));
                 soa_fallback_active = true;
             }
             (snapshot, HashMap::new())
@@ -114,6 +115,8 @@ impl MassiveGameServer {
                         scheduled_peer_ids.len()
                     );
                     snapshot = self.rebuild_projectile_soa_snapshot_from_authoritative_state();
+                    self.projectile_soa_snapshot
+                        .publish_arc(Arc::clone(&snapshot));
                     soa_fallback_active = true;
                 }
                 (snapshot, Arc::new(HashMap::new()))
@@ -137,6 +140,7 @@ impl MassiveGameServer {
                         scheduled_peer_ids.len()
                     );
                     snapshot = self.rebuild_pickup_soa_snapshot_from_authoritative_state();
+                    self.pickup_soa_snapshot.publish_arc(Arc::clone(&snapshot));
                     soa_fallback_active = true;
                 }
                 (snapshot, Arc::new(HashMap::new()))

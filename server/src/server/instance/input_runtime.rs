@@ -449,6 +449,34 @@ impl MassiveGameServer {
         let desired_pickups = (8 + (target_players / 8)).clamp(8, 48);
         const PICKUP_SPACING_MIN: f32 = 70.0;
         const PICKUP_SPACING_MIN_SQ: f32 = PICKUP_SPACING_MIN * PICKUP_SPACING_MIN;
+        const PICKUP_WALL_GRID_CELL_SIZE: f32 = 220.0;
+
+        // Build a coarse spatial index once so each spawn attempt only checks
+        // nearby walls instead of scanning the entire map wall list.
+        let mut wall_buckets: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (wall_idx, wall) in map_walls.iter().enumerate() {
+            if wall.is_destructible && wall.current_health <= 0 {
+                continue;
+            }
+            let min_x = ((wall.x - PICKUP_COLLECTION_RADIUS - WORLD_MIN_X)
+                / PICKUP_WALL_GRID_CELL_SIZE)
+                .floor() as i32;
+            let max_x = ((wall.x + wall.width + PICKUP_COLLECTION_RADIUS - WORLD_MIN_X)
+                / PICKUP_WALL_GRID_CELL_SIZE)
+                .floor() as i32;
+            let min_y = ((wall.y - PICKUP_COLLECTION_RADIUS - WORLD_MIN_Y)
+                / PICKUP_WALL_GRID_CELL_SIZE)
+                .floor() as i32;
+            let max_y = ((wall.y + wall.height + PICKUP_COLLECTION_RADIUS - WORLD_MIN_Y)
+                / PICKUP_WALL_GRID_CELL_SIZE)
+                .floor() as i32;
+
+            for gy in min_y..=max_y {
+                for gx in min_x..=max_x {
+                    wall_buckets.entry((gx, gy)).or_default().push(wall_idx);
+                }
+            }
+        }
 
         for i in 0..desired_pickups {
             let base_pos = spawn_anchors[i % spawn_anchors.len()];
@@ -464,18 +492,25 @@ impl MassiveGameServer {
                 let x = (base_pos.x + x_offset).clamp(WORLD_MIN_X + 50.0, WORLD_MAX_X - 50.0);
                 let y = (base_pos.y + y_offset).clamp(WORLD_MIN_Y + 50.0, WORLD_MAX_Y - 50.0);
 
+                let cell_x = ((x - WORLD_MIN_X) / PICKUP_WALL_GRID_CELL_SIZE).floor() as i32;
+                let cell_y = ((y - WORLD_MIN_Y) / PICKUP_WALL_GRID_CELL_SIZE).floor() as i32;
                 let mut obstructed = false;
-                for wall in map_walls {
-                    if wall.is_destructible && wall.current_health <= 0 {
-                        continue;
-                    }
-                    if x + PICKUP_COLLECTION_RADIUS > wall.x
-                        && x - PICKUP_COLLECTION_RADIUS < wall.x + wall.width
-                        && y + PICKUP_COLLECTION_RADIUS > wall.y
-                        && y - PICKUP_COLLECTION_RADIUS < wall.y + wall.height
-                    {
-                        obstructed = true;
-                        break;
+                'wall_scan: for gy in (cell_y - 1)..=(cell_y + 1) {
+                    for gx in (cell_x - 1)..=(cell_x + 1) {
+                        let Some(bucket_wall_indices) = wall_buckets.get(&(gx, gy)) else {
+                            continue;
+                        };
+                        for wall_idx in bucket_wall_indices {
+                            let wall = &map_walls[*wall_idx];
+                            if x + PICKUP_COLLECTION_RADIUS > wall.x
+                                && x - PICKUP_COLLECTION_RADIUS < wall.x + wall.width
+                                && y + PICKUP_COLLECTION_RADIUS > wall.y
+                                && y - PICKUP_COLLECTION_RADIUS < wall.y + wall.height
+                            {
+                                obstructed = true;
+                                break 'wall_scan;
+                            }
+                        }
                     }
                 }
                 if !obstructed {

@@ -225,6 +225,8 @@ enum SpatialQueryMode {
 
 thread_local! {
     static CELL_QUERY_INDICES_SCRATCH: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    static PLAYER_QUERY_DEDUPE_SCRATCH: RefCell<HashSet<PlayerID>> = RefCell::new(HashSet::new());
+    static PROJECTILE_QUERY_DEDUPE_SCRATCH: RefCell<HashSet<EntityId>> = RefCell::new(HashSet::new());
 }
 
 pub struct ImprovedSpatialIndex {
@@ -477,21 +479,23 @@ impl ImprovedSpatialIndex {
         CELL_QUERY_INDICES_SCRATCH.with(|scratch| {
             let mut cell_indices = scratch.borrow_mut();
             self.fill_cells_in_radius(x, y, radius, &mut cell_indices);
+            PLAYER_QUERY_DEDUPE_SCRATCH.with(|dedupe_scratch| {
+                let mut checked_players = dedupe_scratch.borrow_mut();
+                checked_players.clear();
 
-            let mut candidate_ids = Vec::new();
-            let mut checked_players = HashSet::new();
-
-            for cell_idx in cell_indices.iter().copied() {
-                if let Some(cell) = self.player_cell_members.get(cell_idx) {
-                    for player_id in cell.iter() {
-                        if checked_players.insert(player_id.key().clone()) {
-                            candidate_ids.push(player_id.key().clone());
+                let mut candidate_ids = Vec::new();
+                for cell_idx in cell_indices.iter().copied() {
+                    if let Some(cell) = self.player_cell_members.get(cell_idx) {
+                        for player_id in cell.iter() {
+                            if checked_players.insert(player_id.key().clone()) {
+                                candidate_ids.push(player_id.key().clone());
+                            }
                         }
                     }
                 }
-            }
 
-            candidate_ids
+                candidate_ids
+            })
         })
     }
 
@@ -499,21 +503,23 @@ impl ImprovedSpatialIndex {
         CELL_QUERY_INDICES_SCRATCH.with(|scratch| {
             let mut cell_indices = scratch.borrow_mut();
             self.fill_cells_in_radius(x, y, radius, &mut cell_indices);
+            PROJECTILE_QUERY_DEDUPE_SCRATCH.with(|dedupe_scratch| {
+                let mut checked_projectiles = dedupe_scratch.borrow_mut();
+                checked_projectiles.clear();
 
-            let mut candidate_ids = Vec::new();
-            let mut checked_projectiles = HashSet::new();
-
-            for cell_idx in cell_indices.iter().copied() {
-                if let Some(cell) = self.projectile_cell_members.get(cell_idx) {
-                    for projectile_id in cell.iter() {
-                        if checked_projectiles.insert(*projectile_id.key()) {
-                            candidate_ids.push(*projectile_id.key());
+                let mut candidate_ids = Vec::new();
+                for cell_idx in cell_indices.iter().copied() {
+                    if let Some(cell) = self.projectile_cell_members.get(cell_idx) {
+                        for projectile_id in cell.iter() {
+                            if checked_projectiles.insert(*projectile_id.key()) {
+                                candidate_ids.push(*projectile_id.key());
+                            }
                         }
                     }
                 }
-            }
 
-            candidate_ids
+                candidate_ids
+            })
         })
     }
 

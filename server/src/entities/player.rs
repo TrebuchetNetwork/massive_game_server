@@ -1,8 +1,9 @@
 // massive_game_server/server/src/entities/player.rs
 use crate::concurrent::spatial_index::ImprovedSpatialIndex;
-use crate::core::types::{PlayerID, PlayerState};
+use crate::core::types::{PlayerID, PlayerState, Vec2};
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
+use parking_lot::Mutex;
 use seahash;
 use std::sync::atomic::{AtomicU8, Ordering as AtomicOrdering};
 use std::sync::Arc;
@@ -50,6 +51,7 @@ pub struct ImprovedPlayerManager {
     num_shards: usize,
     spatial_index: Arc<ImprovedSpatialIndex>,
     next_balanced_team: AtomicU8,
+    team_assignment_lock: Mutex<()>,
 }
 
 fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, updated: &PlayerState) {
@@ -274,13 +276,12 @@ impl Drop for PlayerStateWriteGuard {
         }
 
         let original = self.original.clone();
-        let updated = Arc::new(self.working.clone());
         self.cell.rcu(|current| {
             if Arc::ptr_eq(current, &original) {
-                Arc::clone(&updated)
+                Arc::new(self.working.clone())
             } else {
                 let mut merged = (**current).clone();
-                merge_player_state_delta(&mut merged, original.as_ref(), updated.as_ref());
+                merge_player_state_delta(&mut merged, original.as_ref(), &self.working);
                 Arc::new(merged)
             }
         });
@@ -299,6 +300,7 @@ impl ImprovedPlayerManager {
             num_shards,
             spatial_index,
             next_balanced_team: AtomicU8::new(0),
+            team_assignment_lock: Mutex::new(()),
         }
     }
 
@@ -306,7 +308,7 @@ impl ImprovedPlayerManager {
         (seahash::hash(player_id_str.as_bytes()) % self.num_shards as u64) as usize
     }
 
-    pub fn assign_team_to_new_player(&self) -> u8 {
+    fn assign_team_to_new_player_unlocked(&self) -> u8 {
         let mut team1_count = 0;
         let mut team2_count = 0;
 
@@ -339,6 +341,70 @@ impl ImprovedPlayerManager {
         } else {
             2
         }
+    }
+
+    pub fn assign_team_to_new_player(&self) -> u8 {
+        let _assignment_guard = self.team_assignment_lock.lock();
+        self.assign_team_to_new_player_unlocked()
+    }
+
+    /// Adds a newly-joining player while holding the team-assignment lock so
+    /// that team selection and insertion are atomic with respect to other joins.
+    pub fn add_player_for_join<F>(
+        &self,
+        id_str: String,
+        username: String,
+        requested_team: Option<u8>,
+        requested_spectator: bool,
+        mut spawn_resolver: F,
+    ) -> Option<(PlayerID, u8, Vec2)>
+    where
+        F: FnMut(&PlayerID, u8) -> Vec2,
+    {
+        let _assignment_guard = self.team_assignment_lock.lock();
+        let assigned_team = if requested_spectator {
+            0
+        } else {
+            requested_team
+                .filter(|team| *team == 1 || *team == 2)
+                .unwrap_or_else(|| self.assign_team_to_new_player_unlocked())
+        };
+
+        let player_arc_id = self.id_pool.get_or_create(&id_str);
+        let shard_idx = self.get_shard_index(&id_str);
+        if shard_idx >= self.shards.len() {
+            warn!(
+                "Calculated shard index {} is out of bounds for {} shards.",
+                shard_idx,
+                self.shards.len()
+            );
+            return None;
+        }
+        if self.shards[shard_idx].get(&player_arc_id).is_some() {
+            warn!(
+                "Player with ID {} already exists. Not adding again.",
+                id_str
+            );
+            return None;
+        }
+
+        let spawn = spawn_resolver(&player_arc_id, assigned_team);
+        let mut player_state = PlayerState::new(id_str.clone(), username, spawn.x, spawn.y);
+        player_state.team_id = assigned_team;
+        player_state.is_spectator = requested_spectator;
+        if requested_spectator {
+            player_state.health = player_state.max_health;
+            player_state.respawn_timer = None;
+            player_state.reload_progress = None;
+        }
+
+        self.shards[shard_idx].insert(
+            player_arc_id.clone(),
+            Arc::new(ArcSwap::from_pointee(player_state)),
+        );
+        self.spatial_index
+            .update_player_position(player_arc_id.clone(), spawn.x, spawn.y);
+        Some((player_arc_id, assigned_team, spawn))
     }
 
     pub fn add_player(

@@ -711,6 +711,18 @@ fn maybe_register_quic_peer(
         return;
     }
 
+    // Prevent a stale/competing stream from stealing a peer_id registration
+    // already bound to a different QUIC connection token.
+    if let Some(existing) = shared_quic_peer_senders().get(peer_id) {
+        if existing.connection_token != sender.connection_token {
+            warn!(
+                "Ignoring conflicting QUIC peer registration for '{}' (existing token={}, incoming token={})",
+                peer_id, existing.connection_token, sender.connection_token
+            );
+            return;
+        }
+    }
+
     shared_quic_peer_senders().insert(peer_id.to_string(), sender.clone());
     if let Ok(mut peers) = registered_peer_ids.lock() {
         if !peers.iter().any(|existing| existing == peer_id) {

@@ -1659,17 +1659,11 @@ pub async fn handle_signaling_connection(
                     let _ = dc_reject.close().await;
                 });
             }
-            let team_to_assign = if requested_spectator {
-                0
-            } else {
-                requested_team_on_open
-                    .filter(|team| *team == 1 || *team == 2)
-                    .unwrap_or_else(|| player_manager_on_open.assign_team_to_new_player())
-            };
+            let requested_balanced_team = requested_team_on_open.filter(|team| *team == 1 || *team == 2);
             if !requested_spectator
                 && !server_instance_on_open.ensure_human_join_capacity_for_team(
                     &current_peer_id_on_open_cb,
-                    Some(team_to_assign),
+                    requested_balanced_team,
                 )
             {
                 warn!(
@@ -1677,45 +1671,52 @@ pub async fn handle_signaling_connection(
                     current_peer_id_on_open_cb
                 );
             }
-
-            // Fix 2.2: Use RespawnManager for initial spawn
-            let player_id_arc_for_spawn = player_manager_on_open
+            let fallback_player_id = player_manager_on_open
                 .id_pool
                 .get_or_create(&current_peer_id_on_open_cb);
-            let initial_spawn_pos = if requested_spectator {
-                crate::core::types::Vec2::new(0.0, 0.0)
-            } else {
-                server_instance_on_open
-                    .respawn_manager
-                    .get_respawn_position(
-                        &server_instance_on_open, // Pass the server instance
-                        &player_id_arc_for_spawn,
-                        Some(team_to_assign),
-                        &[], // No specific enemy positions for initial spawn balancing here
+            let (new_player_id_arc_for_team, team_to_assign, initial_spawn_pos) =
+                if let Some((player_id, team_id, spawn)) = player_manager_on_open.add_player_for_join(
+                    current_peer_id_on_open_cb.clone(),
+                    username.clone(),
+                    requested_balanced_team,
+                    requested_spectator,
+                    |resolved_player_id, assigned_team| {
+                        if requested_spectator {
+                            crate::core::types::Vec2::new(0.0, 0.0)
+                        } else {
+                            server_instance_on_open.respawn_manager.get_respawn_position(
+                                &server_instance_on_open,
+                                resolved_player_id,
+                                Some(assigned_team),
+                                &[],
+                            )
+                        }
+                    },
+                ) {
+                    (player_id, team_id, spawn)
+                } else if let Some(existing_state) =
+                    player_manager_on_open.get_player_state(&fallback_player_id)
+                {
+                    (
+                        fallback_player_id.clone(),
+                        existing_state.team_id,
+                        crate::core::types::Vec2::new(existing_state.x, existing_state.y),
                     )
-            };
+                } else {
+                    warn!(
+                        "[{}]: failed to create or recover player state after join attempt.",
+                        current_peer_id_on_open_cb
+                    );
+                    let dc_reject = Arc::clone(&dc_for_async_block);
+                    return Box::pin(async move {
+                        let _ = dc_reject.close().await;
+                    });
+                };
 
             info!(
                 "[{}] Player spawned at ({}, {})",
                 current_peer_id_on_open_cb, initial_spawn_pos.x, initial_spawn_pos.y
             );
-
-            let new_player_id_arc_for_team = player_manager_on_open
-                .add_player(
-                    current_peer_id_on_open_cb.clone(),
-                    username.clone(),
-                    initial_spawn_pos.x, // Use determined spawn position
-                    initial_spawn_pos.y, // Use determined spawn position
-                )
-                .unwrap_or_else(|| {
-                    warn!(
-                        "[{}]: add_player returned None, attempting to get existing PlayerID Arc.",
-                        current_peer_id_on_open_cb
-                    );
-                    player_manager_on_open
-                        .id_pool
-                        .get_or_create(&current_peer_id_on_open_cb)
-                });
 
             if let Some(mut p_state_entry) =
                 player_manager_on_open.get_player_state_mut(&new_player_id_arc_for_team)

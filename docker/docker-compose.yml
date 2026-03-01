@@ -49,7 +49,7 @@ services:
     image: redis:7-alpine
     container_name: massive-game-server-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy volatile-ttl
     volumes:
       - redis_data:/data
     deploy:

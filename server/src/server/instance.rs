@@ -1004,29 +1004,7 @@ impl MassiveGameServer {
             return None;
         }
 
-        let chosen_team = if requested_spectator {
-            0
-        } else {
-            requested_team
-                .filter(|team| *team == 1 || *team == 2)
-                .unwrap_or_else(|| self.player_manager.assign_team_to_new_player())
-        };
-        if !requested_spectator
-            && !self.ensure_human_join_capacity_for_team(peer_id, Some(chosen_team))
-        {
-            warn!(
-                "[{}]: unable to ensure human join capacity for QUIC player",
-                peer_id
-            );
-            return None;
-        }
-
-        let spawn = if requested_spectator {
-            Vec2::new(0.0, 0.0)
-        } else {
-            self.respawn_manager
-                .get_respawn_position(self, &player_id, Some(chosen_team), &[])
-        };
+        let requested_balanced_team = requested_team.filter(|team| *team == 1 || *team == 2);
         let peer_id_short: String = peer_id.chars().take(6).collect();
         let fallback_username = format!("QPlayer_{}", peer_id_short);
         let username = username_override
@@ -1035,10 +1013,47 @@ impl MassiveGameServer {
             .map(str::to_owned)
             .unwrap_or(fallback_username);
 
-        let inserted_player_id = self
-            .player_manager
-            .add_player(peer_id.to_string(), username.clone(), spawn.x, spawn.y)
-            .unwrap_or(player_id);
+        if !requested_spectator
+            && !self.ensure_human_join_capacity_for_team(peer_id, requested_balanced_team)
+        {
+            warn!(
+                "[{}]: unable to ensure human join capacity for QUIC player",
+                peer_id
+            );
+            return None;
+        }
+
+        let (inserted_player_id, chosen_team, spawn, created) =
+            if let Some((player_id, team, spawn)) = self.player_manager.add_player_for_join(
+                peer_id.to_string(),
+                username.clone(),
+                requested_balanced_team,
+                requested_spectator,
+                |resolved_player_id, assigned_team| {
+                    if requested_spectator {
+                        Vec2::new(0.0, 0.0)
+                    } else {
+                        self.respawn_manager.get_respawn_position(
+                            self,
+                            resolved_player_id,
+                            Some(assigned_team),
+                            &[],
+                        )
+                    }
+                },
+            ) {
+                (player_id, team, spawn, true)
+            } else if let Some(existing_state) = self.player_manager.get_player_state(&player_id) {
+                (
+                    player_id.clone(),
+                    existing_state.team_id,
+                    Vec2::new(existing_state.x, existing_state.y),
+                    false,
+                )
+            } else {
+                return None;
+            };
+
         if let Some(mut player_state) = self
             .player_manager
             .get_player_state_mut(&inserted_player_id)
@@ -1059,7 +1074,7 @@ impl MassiveGameServer {
             team_id: chosen_team,
             spawn_x: spawn.x,
             spawn_y: spawn.y,
-            created: true,
+            created,
         })
     }
 

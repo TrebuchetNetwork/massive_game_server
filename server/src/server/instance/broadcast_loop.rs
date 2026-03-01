@@ -116,21 +116,26 @@ impl MassiveGameServer {
         self.last_broadcast_frame
             .store(current_frame, AtomicOrdering::Relaxed);
 
-        let client_entries: Vec<_> = {
-            let client_states_guard = self.client_states_map.read();
-            self.data_channels_map
-                .iter()
-                .map(|entry| {
-                    let peer_id = entry.key().clone();
-                    let data_channel = Arc::clone(entry.value());
-                    let needs_initial = !client_states_guard
-                        .get(&peer_id)
-                        .is_some_and(|cs_state| cs_state.known_walls_sent);
-                    let channel_open = data_channel.is_open();
-                    (peer_id, data_channel, needs_initial, channel_open)
-                })
-                .collect()
-        };
+        let known_walls_sent_by_peer: std::collections::HashMap<String, bool> = self
+            .client_states_map
+            .read()
+            .iter()
+            .map(|(peer_id, client_state)| (peer_id.clone(), client_state.known_walls_sent))
+            .collect();
+        let client_entries: Vec<_> = self
+            .data_channels_map
+            .iter()
+            .map(|entry| {
+                let peer_id = entry.key().clone();
+                let data_channel = Arc::clone(entry.value());
+                let needs_initial = !known_walls_sent_by_peer
+                    .get(&peer_id)
+                    .copied()
+                    .unwrap_or(false);
+                let channel_open = data_channel.is_open();
+                (peer_id, data_channel, needs_initial, channel_open)
+            })
+            .collect();
         let connected_clients_open = client_entries
             .iter()
             .filter(|(_, _, _, channel_open)| *channel_open)

@@ -53,6 +53,7 @@ use subtle::ConstantTimeEq;
 use tracing::{error, info, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
+use warp::http::uri::Authority;
 use warp::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use warp::{Filter, Reply};
 
@@ -329,6 +330,35 @@ fn parse_list_env(var_name: &str) -> Vec<String> {
 ///   - Same-origin: the Origin host matches the request Host header
 ///   - Any origin listed in `MGS_ALLOWED_ORIGINS` (comma-separated env var)
 ///   - localhost / 127.0.0.1 origins when `MGS_DEV_MODE` is enabled
+fn parse_authority_host_port(raw: &str) -> Option<(String, Option<u16>)> {
+    let authority = raw.trim().parse::<Authority>().ok()?;
+    if authority.as_str().contains('@') {
+        return None;
+    }
+    let host = authority.host().trim().to_ascii_lowercase();
+    if host.is_empty() {
+        return None;
+    }
+    Some((host, authority.port_u16()))
+}
+
+fn parse_ws_origin_host_port(raw_origin: &str) -> Option<(String, u16)> {
+    let origin_uri = raw_origin.trim().parse::<Uri>().ok()?;
+    let scheme = origin_uri.scheme_str()?.to_ascii_lowercase();
+    let default_port = match scheme.as_str() {
+        "https" => 443,
+        "http" => 80,
+        _ => return None,
+    };
+    let authority = origin_uri.authority()?;
+    let (host, explicit_port) = parse_authority_host_port(authority.as_str())?;
+    Some((host, explicit_port.unwrap_or(default_port)))
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
+}
+
 fn is_allowed_ws_origin(
     origin: Option<&str>,
     host: Option<&str>,
@@ -340,38 +370,41 @@ fn is_allowed_ws_origin(
         // No Origin header (non-browser client) -- allow
         _ => return true,
     };
+    let (origin_host, origin_port) = match parse_ws_origin_host_port(origin) {
+        Some(parsed) => parsed,
+        None => return false,
+    };
 
-    // Parse the origin to extract its host[:port] portion.
-    let origin_host = origin
-        .strip_prefix("https://")
-        .or_else(|| origin.strip_prefix("http://"))
-        .unwrap_or(origin);
-
-    // Same-origin check: compare against the Host header of the request.
+    // Same-origin check against Host header.
     if let Some(host_value) = host {
-        if !host_value.is_empty() && origin_host.eq_ignore_ascii_case(host_value) {
-            return true;
+        if let Some((host_name, host_port)) = parse_authority_host_port(host_value) {
+            if host_name == origin_host && host_port.map_or(true, |port| port == origin_port) {
+                return true;
+            }
         }
     }
 
     // Explicit allowlist from MGS_ALLOWED_ORIGINS.
     for allowed in allowed_origins {
-        let allowed_host = allowed
-            .strip_prefix("https://")
-            .or_else(|| allowed.strip_prefix("http://"))
-            .unwrap_or(allowed);
-        if origin_host.eq_ignore_ascii_case(allowed_host) {
-            return true;
+        if let Some((allowed_host, allowed_port)) = parse_ws_origin_host_port(allowed) {
+            if origin_host == allowed_host && origin_port == allowed_port {
+                return true;
+            }
+            continue;
+        }
+
+        // Backward-compatible support for host[:port]-only entries.
+        if let Some((allowed_host, allowed_port)) = parse_authority_host_port(allowed) {
+            if origin_host == allowed_host && allowed_port.map_or(true, |port| port == origin_port)
+            {
+                return true;
+            }
         }
     }
 
     // In dev mode, accept localhost / 127.0.0.1 origins.
-    if dev_mode {
-        let lower = origin_host.to_ascii_lowercase();
-        let host_part = lower.split(':').next().unwrap_or(&lower);
-        if host_part == "localhost" || host_part == "127.0.0.1" || host_part == "[::1]" {
-            return true;
-        }
+    if dev_mode && is_loopback_host(&origin_host) {
+        return true;
     }
 
     false
@@ -435,17 +468,13 @@ fn trusted_proxy_config() -> &'static TrustedProxyConfig {
     CONFIG.get_or_init(|| {
         let configured = parse_list_env("MGS_TRUSTED_PROXY_CIDRS");
         if configured.is_empty() {
-            let defaults = if env_flag("MGS_DEV_MODE") {
-                vec![
-                    "127.0.0.1/32",
-                    "::1/128",
-                    "10.0.0.0/8",
-                    "172.16.0.0/12",
-                    "192.168.0.0/16",
-                ]
-            } else {
-                vec!["127.0.0.1/32", "::1/128"]
-            };
+            let mut defaults = vec!["127.0.0.1/32", "::1/128"];
+            if env_flag("MGS_DEV_MODE") && env_flag("MGS_DEV_TRUST_PRIVATE_PROXIES") {
+                defaults.extend(["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]);
+                warn!(
+                    "MGS_DEV_TRUST_PRIVATE_PROXIES enabled: trusting RFC1918 proxy ranges in dev mode."
+                );
+            }
             let cidrs = defaults
                 .iter()
                 .filter_map(|entry| entry.parse::<IpNet>().ok())
