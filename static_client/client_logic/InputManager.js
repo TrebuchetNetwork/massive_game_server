@@ -121,6 +121,10 @@ export function createInputManager({
     let pendingInputs = [];
     let lastShotFeedbackTime = 0;
     let lastPredictedWeaponSoundAt = 0;
+    let playedOutOfAmmoSoundRecently = false;
+    let playedReloadNeededSoundRecently = false;
+    let outOfAmmoSoundResetTimer = null;
+    let reloadNeededSoundResetTimer = null;
 
     // Tactical pings
     const tacticalPings = [];
@@ -728,6 +732,16 @@ export function createInputManager({
         inputContextMenuHandler = null;
         inputUiKeyDownHandler = null;
         inputUiKeyUpHandler = null;
+        if (outOfAmmoSoundResetTimer) {
+            clearTimeout(outOfAmmoSoundResetTimer);
+            outOfAmmoSoundResetTimer = null;
+        }
+        if (reloadNeededSoundResetTimer) {
+            clearTimeout(reloadNeededSoundResetTimer);
+            reloadNeededSoundResetTimer = null;
+        }
+        playedOutOfAmmoSoundRecently = false;
+        playedReloadNeededSoundRecently = false;
         invalidateAppViewRectCache();
         inputHandlersInitialized = false;
     }
@@ -747,17 +761,25 @@ export function createInputManager({
             const audioManager = getAudioManager();
             if (e.button === 0) {
                 if (localPlayerState && localPlayerState.weapon !== GP.WeaponType.Melee && localPlayerState.ammo === 0) {
-                    if (audioManager && gameSettings.soundEnabled && !window.playedOutOfAmmoSoundRecently) {
+                    if (audioManager && gameSettings.soundEnabled && !playedOutOfAmmoSoundRecently) {
                         audioManager.playSound('outOfAmmo', null, 0.4);
-                        window.playedOutOfAmmoSoundRecently = true;
-                        setTimeout(() => { window.playedOutOfAmmoSoundRecently = false; }, 1000);
+                        playedOutOfAmmoSoundRecently = true;
+                        if (outOfAmmoSoundResetTimer) clearTimeout(outOfAmmoSoundResetTimer);
+                        outOfAmmoSoundResetTimer = setTimeout(() => {
+                            playedOutOfAmmoSoundRecently = false;
+                            outOfAmmoSoundResetTimer = null;
+                        }, 1000);
                     }
                     if (reloadPromptSpan && localPlayerState.reload_progress === -1) {
                         reloadPromptSpan.textContent = ' (Press R to Reload!)';
-                        if (audioManager && gameSettings.soundEnabled && !window.playedReloadNeededSoundRecently) {
+                        if (audioManager && gameSettings.soundEnabled && !playedReloadNeededSoundRecently) {
                             audioManager.playSound('reloadNeeded', null, 0.5);
-                            window.playedReloadNeededSoundRecently = true;
-                            setTimeout(() => { window.playedReloadNeededSoundRecently = false; }, 2000);
+                            playedReloadNeededSoundRecently = true;
+                            if (reloadNeededSoundResetTimer) clearTimeout(reloadNeededSoundResetTimer);
+                            reloadNeededSoundResetTimer = setTimeout(() => {
+                                playedReloadNeededSoundRecently = false;
+                                reloadNeededSoundResetTimer = null;
+                            }, 2000);
                         }
                     }
                 } else {
