@@ -1,8 +1,11 @@
 export function normalizeAngle(angle) {
-    let wrapped = angle;
-    while (wrapped > Math.PI) wrapped -= Math.PI * 2;
-    while (wrapped < -Math.PI) wrapped += Math.PI * 2;
-    return wrapped;
+    const value = Number(angle);
+    if (!Number.isFinite(value)) {
+        return 0;
+    }
+    const tau = Math.PI * 2;
+    const wrapped = ((value + Math.PI) % tau + tau) % tau - Math.PI;
+    return Object.is(wrapped, -0) ? 0 : wrapped;
 }
 
 export function clamp(value, min, max) {

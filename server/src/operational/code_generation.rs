@@ -661,19 +661,26 @@ fn validate_source_impl(
         .chars()
         .filter(|ch| !ch.is_ascii_whitespace())
         .collect();
+    let lowered_compact_alnum: String = lowered
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect();
     let forbidden_patterns = [
-        ("unsafe", "unsafe"),
-        ("std::fs", "std::fs"),
-        ("std::process", "std::process"),
-        ("std::net", "std::net"),
-        ("libc::", "libc::"),
-        ("asm!(", "asm!("),
-        ("thread::spawn", "thread::spawn"),
-        ("tokio::spawn", "tokio::spawn"),
-        ("extern \"c\" fn main", "extern\"c\"fnmain"),
+        ("unsafe", "unsafe", "unsafe"),
+        ("std::fs", "std::fs", "stdfs"),
+        ("std::process", "std::process", "stdprocess"),
+        ("std::net", "std::net", "stdnet"),
+        ("libc::", "libc::", "libc"),
+        ("asm!(", "asm!(", "asm"),
+        ("thread::spawn", "thread::spawn", "threadspawn"),
+        ("tokio::spawn", "tokio::spawn", "tokiospawn"),
+        ("extern \"c\" fn main", "extern\"c\"fnmain", "externcfnmain"),
     ];
-    for (display_pattern, normalized_pattern) in forbidden_patterns {
-        if lowered.contains(display_pattern) || lowered_no_whitespace.contains(normalized_pattern) {
+    for (display_pattern, normalized_pattern, compact_pattern) in forbidden_patterns {
+        if lowered.contains(display_pattern)
+            || lowered_no_whitespace.contains(normalized_pattern)
+            || lowered_compact_alnum.contains(compact_pattern)
+        {
             errors.push(format!("forbidden pattern detected: '{}'", display_pattern));
         }
     }
@@ -880,6 +887,37 @@ mod tests {
     fn sanitize_model_id_rejects_path_traversal() {
         assert!(sanitize_model_id("../bot").is_none());
         assert!(sanitize_model_id("bot_alpha-1").is_some());
+    }
+
+    #[test]
+    fn validator_rejects_std_fs_with_whitespace_bypass() {
+        let service = CodeGenerationService::new_from_env();
+        let response = service.validate_source(ValidateBotCodeBody {
+            source_code: r#"
+#[no_mangle]
+pub extern "C" fn bot_tick() -> i32 {
+    let _ = std :: fs :: read_to_string("/tmp/secret");
+    0
+}
+"#
+            .to_owned(),
+            language: Some("rust".to_owned()),
+        });
+        assert!(!response.valid);
+        assert!(
+            response.errors.iter().any(|line| line.contains("std::fs")),
+            "expected std::fs rejection, got {:?}",
+            response.errors
+        );
+    }
+
+    #[test]
+    fn truncate_for_api_preserves_utf8_boundaries() {
+        let value = "abc🙂def";
+        let truncated = truncate_for_api(value, 5);
+        assert!(truncated.ends_with("...<truncated>"));
+        let prefix = truncated.trim_end_matches("...<truncated>");
+        assert_eq!(prefix, "abc");
     }
 
     #[test]

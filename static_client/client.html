@@ -930,6 +930,12 @@
         let authProfile = null;
         let controlsPanelHidden = false;
         let focusModeEnabled = false;
+        const E2E_HOOKS_ENABLED = (
+            window.location.hostname === 'localhost' ||
+            window.location.hostname === '127.0.0.1' ||
+            window.location.search.includes('e2e=1') ||
+            localStorage.getItem('mgs_enable_e2e_hooks') === '1'
+        );
         if (!window.__e2e) {
             window.__e2e = {
                 matchInfoReady: false,
@@ -940,6 +946,7 @@
                 hasLocalPlayer: false
             };
         }
+        window.__e2e.hooksEnabled = E2E_HOOKS_ENABLED;
         window.__e2e.lastJoinTiming = null;
         window.__e2e.perfProfileForced = PERF_PROFILE_FORCED;
         window.__e2e.perfProfilingEnabled = perfEnabled;
@@ -1011,49 +1018,65 @@
         window.__e2e.lastSyntheticFxBurstAt = 0;
         window.__e2e.perfReport = null;
         window.__e2e.perfReportGeneratedAt = 0;
-        window.__e2e.resetPerfStats = () => {
-            resetPerfStats();
-            return true;
-        };
-        window.__e2e.setPerfProfiling = (enabled) => setPerfProfilingEnabled(enabled);
-        window.__e2e.setSyntheticProjectileCount = (count) => setSyntheticProjectileCount(count);
-        window.__e2e.clearSyntheticProjectiles = () => {
-            clearSyntheticProjectiles();
-            return true;
-        };
-        window.__e2e.applyFullFxMode = () => applyFullFxMode();
-        window.__e2e.emitSyntheticBattleFx = (intensity, options = {}) => emitSyntheticBattleFx(intensity, options);
-        window.__e2e.startFxStress = (options = {}) => startFxStress(options);
-        window.__e2e.stopFxStress = (clearProjectiles = false) => stopFxStress(clearProjectiles);
-        window.__e2e.runWebGPUTest = (options = {}) => runWebGPUTest({
-            ...options,
-            rendererBackend: getRendererBackendSummary(window.app || null, PIXI)
-        });
-        window.__e2e.forceCloseSignaling = () => {
-            if (!signalingSocket) return false;
-            try {
-                signalingSocket.close(4101, 'e2e chaos close');
-            } catch (_) {}
-            return true;
-        };
-        window.__e2e.forceCloseDataChannel = () => {
-            if (!dataChannel) return false;
-            try {
-                dataChannel.close();
-            } catch (_) {}
-            return true;
-        };
-        window.__e2e.forceResetConnection = () => {
-            resetConnectionUI({
-                allowReconnect: true,
-                reconnectReason: 'e2e forced reset'
+        if (E2E_HOOKS_ENABLED) {
+            window.__e2e.resetPerfStats = () => {
+                resetPerfStats();
+                return true;
+            };
+            window.__e2e.setPerfProfiling = (enabled) => setPerfProfilingEnabled(enabled);
+            window.__e2e.setSyntheticProjectileCount = (count) => setSyntheticProjectileCount(count);
+            window.__e2e.clearSyntheticProjectiles = () => {
+                clearSyntheticProjectiles();
+                return true;
+            };
+            window.__e2e.applyFullFxMode = () => applyFullFxMode();
+            window.__e2e.emitSyntheticBattleFx = (intensity, options = {}) => emitSyntheticBattleFx(intensity, options);
+            window.__e2e.startFxStress = (options = {}) => startFxStress(options);
+            window.__e2e.stopFxStress = (clearProjectiles = false) => stopFxStress(clearProjectiles);
+            window.__e2e.runWebGPUTest = (options = {}) => runWebGPUTest({
+                ...options,
+                rendererBackend: getRendererBackendSummary(window.app || null, PIXI)
             });
-            return true;
-        };
-        window.__e2e.forceReconnectNow = () => {
-            resetReconnectState();
-            return startConnectionAttempt({ isRetry: true });
-        };
+            window.__e2e.forceCloseSignaling = () => {
+                if (!signalingSocket) return false;
+                try {
+                    signalingSocket.close(4101, 'e2e chaos close');
+                } catch (_) {}
+                return true;
+            };
+            window.__e2e.forceCloseDataChannel = () => {
+                if (!dataChannel) return false;
+                try {
+                    dataChannel.close();
+                } catch (_) {}
+                return true;
+            };
+            window.__e2e.forceResetConnection = () => {
+                resetConnectionUI({
+                    allowReconnect: true,
+                    reconnectReason: 'e2e forced reset'
+                });
+                return true;
+            };
+            window.__e2e.forceReconnectNow = () => {
+                resetReconnectState();
+                return startConnectionAttempt({ isRetry: true });
+            };
+        } else {
+            delete window.__e2e.resetPerfStats;
+            delete window.__e2e.setPerfProfiling;
+            delete window.__e2e.setSyntheticProjectileCount;
+            delete window.__e2e.clearSyntheticProjectiles;
+            delete window.__e2e.applyFullFxMode;
+            delete window.__e2e.emitSyntheticBattleFx;
+            delete window.__e2e.startFxStress;
+            delete window.__e2e.stopFxStress;
+            delete window.__e2e.runWebGPUTest;
+            delete window.__e2e.forceCloseSignaling;
+            delete window.__e2e.forceCloseDataChannel;
+            delete window.__e2e.forceResetConnection;
+            delete window.__e2e.forceReconnectNow;
+        }
 
         const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
         let touchControlsInitialized = false;
