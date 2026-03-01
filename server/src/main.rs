@@ -1794,7 +1794,18 @@ async fn main() -> anyhow::Result<()> {
     // (with valid auth_token) and read-only ops like "healthz" are allowed.
     let quic_request_handler: QuicRequestHandler = Arc::new(
         move |payload: &[u8], bound_peer_id: Option<&str>| {
-            let request = serde_json::from_slice::<QuicControlRequest>(payload).unwrap_or_default();
+            let request = match serde_json::from_slice::<QuicControlRequest>(payload) {
+                Ok(request) => request,
+                Err(err) => {
+                    warn!("QUIC control request parse failed: {}", err);
+                    return serde_json::to_vec(&serde_json::json!({
+                        "ok": false,
+                        "op": "invalid",
+                        "error": "invalid_json",
+                    }))
+                    .ok();
+                }
+            };
             let op = request.op.unwrap_or_else(|| "echo".to_string());
 
             let response = match op.as_str() {

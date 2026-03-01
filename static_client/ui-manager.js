@@ -253,20 +253,29 @@ class UIManager {
     
     // Set stats
     if (statsEl && data.stats) {
-      statsEl.innerHTML = `
-        <div class="round-stat">
-          <div class="value">${data.stats.kills || 0}</div>
-          <div class="label">Kills</div>
-        </div>
-        <div class="round-stat">
-          <div class="value">${data.stats.deaths || 0}</div>
-          <div class="label">Deaths</div>
-        </div>
-        <div class="round-stat">
-          <div class="value">${data.stats.score || 0}</div>
-          <div class="label">Score</div>
-        </div>
-      `;
+      statsEl.textContent = '';
+      const statRows = [
+        { label: 'Kills', value: data.stats.kills || 0 },
+        { label: 'Deaths', value: data.stats.deaths || 0 },
+        { label: 'Score', value: data.stats.score || 0 }
+      ];
+
+      statRows.forEach((stat) => {
+        const statEl = document.createElement('div');
+        statEl.className = 'round-stat';
+
+        const valueEl = document.createElement('div');
+        valueEl.className = 'value';
+        valueEl.textContent = String(stat.value);
+        statEl.appendChild(valueEl);
+
+        const labelEl = document.createElement('div');
+        labelEl.className = 'label';
+        labelEl.textContent = stat.label;
+        statEl.appendChild(labelEl);
+
+        statsEl.appendChild(statEl);
+      });
     }
     
     roundEnd.classList.add('active');

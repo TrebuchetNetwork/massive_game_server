@@ -28,6 +28,7 @@ use tokio::time::timeout;
 const SHUTDOWN_CHAT_PLAYER_ID: &str = "__server__";
 const SHUTDOWN_CHAT_USERNAME: &str = "Server";
 const SHUTDOWN_CHAT_MESSAGE: &str = "Server is shutting down. Please reconnect shortly.";
+const AOI_UPDATE_DIVISOR_MAX: u64 = 60;
 
 fn cached_aoi_update_divisor() -> u64 {
     static AOI_UPDATE_DIVISOR: OnceLock<u64> = OnceLock::new();
@@ -36,7 +37,7 @@ fn cached_aoi_update_divisor() -> u64 {
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(AOI_UPDATE_DIVISOR_DEFAULT)
-            .max(1)
+            .clamp(1, AOI_UPDATE_DIVISOR_MAX)
     })
 }
 

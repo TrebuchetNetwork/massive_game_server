@@ -358,7 +358,7 @@ impl ImprovedSpatialIndex {
         // up-to-date).
         if self
             .quadtree_rebuilding
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
             return;

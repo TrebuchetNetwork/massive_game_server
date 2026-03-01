@@ -3,6 +3,7 @@
 use core_affinity::CoreId;
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
+use tracing::warn;
 
 #[derive(Debug, Clone, Default)]
 pub struct NumaTopology {
@@ -76,7 +77,13 @@ impl NumaTopology {
         static NODE_PIN_CURSOR: OnceLock<Mutex<BTreeMap<usize, usize>>> = OnceLock::new();
         let candidate_core_id = {
             let cursor_map = NODE_PIN_CURSOR.get_or_init(|| Mutex::new(BTreeMap::new()));
-            let mut cursor_guard = cursor_map.lock().expect("NUMA pin cursor mutex poisoned");
+            let mut cursor_guard = match cursor_map.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    warn!("NUMA pin cursor mutex poisoned; recovering lock state.");
+                    poisoned.into_inner()
+                }
+            };
             let cursor = cursor_guard.entry(node_id).or_insert(0);
             let selected = node_cores[*cursor % node_cores.len()];
             *cursor = cursor.wrapping_add(1);

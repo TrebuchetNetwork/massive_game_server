@@ -2,7 +2,7 @@
 
 use crate::operational::monitoring::metrics;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::fs;
@@ -311,9 +311,38 @@ impl BackupManager {
             if trimmed.is_empty() {
                 return Err("backup directory name cannot be empty".to_owned());
             }
-            let explicit = self.inner.output_dir.join(trimmed);
-            if explicit.exists() {
-                return Ok(explicit);
+            if !is_safe_backup_dir_name(trimmed) {
+                return Err(format!("invalid backup directory name '{}'", trimmed));
+            }
+
+            let canonical_output_dir =
+                fs::canonicalize(&self.inner.output_dir)
+                    .await
+                    .map_err(|err| {
+                        format!(
+                            "backup root '{}' is not accessible: {}",
+                            self.inner.output_dir.display(),
+                            err
+                        )
+                    })?;
+            let explicit = canonical_output_dir.join(trimmed);
+            let canonical_explicit = fs::canonicalize(&explicit).await.map_err(|err| {
+                format!(
+                    "backup directory '{}' does not exist under '{}': {}",
+                    trimmed,
+                    self.inner.output_dir.display(),
+                    err
+                )
+            })?;
+            if !canonical_explicit.starts_with(&canonical_output_dir) {
+                return Err(format!(
+                    "backup directory '{}' resolves outside backup root '{}'",
+                    trimmed,
+                    self.inner.output_dir.display()
+                ));
+            }
+            if canonical_explicit.is_dir() {
+                return Ok(canonical_explicit);
             }
             return Err(format!(
                 "backup directory '{}' does not exist under '{}'",
@@ -405,6 +434,14 @@ fn backup_name_for_path(path: &Path) -> String {
     format!("{}__{}", prefix, file_name)
 }
 
+fn is_safe_backup_dir_name(value: &str) -> bool {
+    let mut components = Path::new(value).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(_)), None)
+    )
+}
+
 fn resolve_backup_file_path(backup_root: &Path, copied_file: &BackupCopiedFile) -> PathBuf {
     let recorded_path = PathBuf::from(&copied_file.backup_path);
     if recorded_path.exists() {
@@ -453,6 +490,13 @@ mod tests {
     fn test_parse_bool_env_default() {
         assert!(parse_bool_env("NON_EXISTENT_VAR_123", true));
         assert!(!parse_bool_env("NON_EXISTENT_VAR_123", false));
+    }
+
+    #[test]
+    fn backup_dir_name_rejects_traversal() {
+        assert!(is_safe_backup_dir_name("backup-123"));
+        assert!(!is_safe_backup_dir_name("../backup-123"));
+        assert!(!is_safe_backup_dir_name("nested/backup-123"));
     }
 
     #[tokio::test(flavor = "current_thread")]

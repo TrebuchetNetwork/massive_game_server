@@ -392,20 +392,19 @@ impl WallRespawnManager {
         let now = Instant::now();
         let mut queue_guard = self.respawn_queue.write();
 
-        let i = 0;
-        while i < queue_guard.len() {
-            if now >= queue_guard[i].1 {
-                let (wall_id, _scheduled_time) = queue_guard.remove(i);
-                if let Some((_id, info)) = self.destroyed_walls.remove(&wall_id) {
-                    ready_to_respawn_walls.push(info.wall_data.clone());
-                } else {
-                    warn!(
-                        "Wall ID {} was due for respawn but not found in destroyed_walls map.",
-                        wall_id
-                    );
-                }
+        while queue_guard
+            .first()
+            .map(|(_, scheduled)| now >= *scheduled)
+            .unwrap_or(false)
+        {
+            let (wall_id, _scheduled_time) = queue_guard.remove(0);
+            if let Some((_id, info)) = self.destroyed_walls.remove(&wall_id) {
+                ready_to_respawn_walls.push(info.wall_data.clone());
             } else {
-                break;
+                warn!(
+                    "Wall ID {} was due for respawn but not found in destroyed_walls map.",
+                    wall_id
+                );
             }
         }
         ready_to_respawn_walls

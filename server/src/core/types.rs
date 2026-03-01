@@ -703,7 +703,9 @@ impl PlayerState {
     #[inline]
     pub fn record_kill_with_weapon(&mut self, weapon: ServerWeaponType) {
         let idx = Self::weapon_index(weapon);
-        self.kills_per_weapon[idx] = self.kills_per_weapon[idx].saturating_add(1);
+        if let Some(slot) = self.kills_per_weapon.get_mut(idx) {
+            *slot = slot.saturating_add(1);
+        }
     }
 
     pub fn reset_match_stats(&mut self) {

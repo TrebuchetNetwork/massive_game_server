@@ -348,37 +348,76 @@
         document.getElementById("metricCompleted").textContent = overview.total_completed_matches ?? 0;
     }
 
+    function clearChildren(node) {
+        while (node.firstChild) {
+            node.removeChild(node.firstChild);
+        }
+    }
+
+    function appendTextCell(row, value, title = null) {
+        const cell = document.createElement("td");
+        cell.textContent = String(value ?? "");
+        if (title !== null) {
+            cell.title = String(title ?? "");
+        }
+        row.appendChild(cell);
+    }
+
     function renderLeaderboard(leaderboard) {
         const rows = leaderboard?.models || [];
+        clearChildren(leaderboardBody);
         if (!rows.length) {
-            leaderboardBody.innerHTML = "<tr><td colspan='5'>No models yet.</td></tr>";
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.colSpan = 5;
+            cell.textContent = "No models yet.";
+            row.appendChild(cell);
+            leaderboardBody.appendChild(row);
             return;
         }
-        leaderboardBody.innerHTML = rows.map((model, idx) => {
+
+        rows.forEach((model, idx) => {
             const wr = Number(model.win_rate || 0) * 100;
-            return `<tr>
-                <td>${idx + 1}</td>
-                <td title="${model.model_id}">${model.model_name}</td>
-                <td>${Math.round(model.elo_rating || 0)}</td>
-                <td>${model.wins}-${model.losses}-${model.draws}</td>
-                <td>${wr.toFixed(1)}%</td>
-            </tr>`;
-        }).join("");
+            const row = document.createElement("tr");
+            appendTextCell(row, idx + 1);
+            appendTextCell(row, model.model_name, model.model_id);
+            appendTextCell(row, Math.round(model.elo_rating || 0));
+            appendTextCell(row, `${model.wins}-${model.losses}-${model.draws}`);
+            appendTextCell(row, `${wr.toFixed(1)}%`);
+            leaderboardBody.appendChild(row);
+        });
     }
 
     function renderPending(pending) {
-        if (!pending.length) {
-            pendingList.innerHTML = "<div class='pending-item'>No pending matches.</div>";
+        const rows = Array.isArray(pending) ? pending : [];
+        clearChildren(pendingList);
+        if (!rows.length) {
+            const empty = document.createElement("div");
+            empty.className = "pending-item";
+            empty.textContent = "No pending matches.";
+            pendingList.appendChild(empty);
             return;
         }
-        pendingList.innerHTML = pending.map(item => `
-            <div class="pending-item">
-                <strong>${item.model_a_id}</strong> vs <strong>${item.model_b_id}</strong>
-                <div style="color: var(--muted); margin-top: 4px;">
-                    ${item.mode} | ${item.match_id}
-                </div>
-            </div>
-        `).join("");
+        rows.forEach((item) => {
+            const container = document.createElement("div");
+            container.className = "pending-item";
+
+            const modelA = document.createElement("strong");
+            modelA.textContent = String(item.model_a_id ?? "");
+            container.appendChild(modelA);
+            container.appendChild(document.createTextNode(" vs "));
+            const modelB = document.createElement("strong");
+            modelB.textContent = String(item.model_b_id ?? "");
+            container.appendChild(modelB);
+
+            const detail = document.createElement("div");
+            detail.style.color = "var(--muted)";
+            detail.style.marginTop = "4px";
+            detail.textContent = `${item.mode ?? ""} | ${item.match_id ?? ""}`;
+            container.appendChild(detail);
+
+            pendingList.appendChild(container);
+        });
     }
 
     async function refreshAll(showStatus = false) {
