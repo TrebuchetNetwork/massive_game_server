@@ -41,7 +41,7 @@ use massive_game_server_core::server::instance::{LiveReplayDisputeRequest, Massi
 use massive_game_server_core::server::lifecycle;
 
 use parking_lot::RwLock as ParkingLotRwLock;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
@@ -736,6 +736,20 @@ fn parse_u64_env(var_name: &str, default_value: u64) -> u64 {
         .and_then(|raw| raw.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default_value)
+}
+
+fn serialize_quic_response<T: Serialize>(payload: &T, op_name: &str) -> Option<Vec<u8>> {
+    match serde_json::to_vec(payload) {
+        Ok(bytes) => Some(bytes),
+        Err(err) => {
+            error!(
+                "Failed to serialize QUIC response for op '{}': {}",
+                op_name, err
+            );
+            // Static fallback to avoid dropping the response path silently.
+            Some(br#"{"ok":false,"op":"internal_error","error":"serialization_failed"}"#.to_vec())
+        }
+    }
 }
 
 const DEFAULT_PANIC_LOG_DIR: &str = "data";
@@ -1833,12 +1847,14 @@ async fn main() -> anyhow::Result<()> {
                 Ok(request) => request,
                 Err(err) => {
                     warn!("QUIC control request parse failed: {}", err);
-                    return serde_json::to_vec(&serde_json::json!({
-                        "ok": false,
-                        "op": "invalid",
-                        "error": "invalid_json",
-                    }))
-                    .ok();
+                    return serialize_quic_response(
+                        &serde_json::json!({
+                            "ok": false,
+                            "op": "invalid",
+                            "error": "invalid_json",
+                        }),
+                        "invalid",
+                    );
                 }
             };
             let op = request.op.unwrap_or_else(|| "echo".to_string());
@@ -1881,7 +1897,14 @@ async fn main() -> anyhow::Result<()> {
                 }
                 "live_replay_dispute" => {
                     if bound_peer_id.is_none() {
-                        return serde_json::to_vec(&serde_json::json!({ "ok": false, "op": "live_replay_dispute", "error": "unauthorized" })).ok();
+                        return serialize_quic_response(
+                            &serde_json::json!({
+                                "ok": false,
+                                "op": "live_replay_dispute",
+                                "error": "unauthorized"
+                            }),
+                            "live_replay_dispute",
+                        );
                     }
                     let report = server_for_quic.build_live_replay_dispute_report(
                         LiveReplayDisputeRequest {
@@ -1891,7 +1914,7 @@ async fn main() -> anyhow::Result<()> {
                             player_id: request.player_id,
                         },
                     );
-                    return serde_json::to_vec(&report).ok();
+                    return serialize_quic_response(&report, "live_replay_dispute");
                 }
                 "join" => {
                     // FIX: peer_id trust — derive peer_id from auth_token, not from client.
@@ -1899,13 +1922,15 @@ async fn main() -> anyhow::Result<()> {
                     // and generates a server-controlled peer_id bound to this connection.
                     if bound_peer_id.is_some() {
                         // Already joined on this connection.
-                        return serde_json::to_vec(&serde_json::json!({
+                        return serialize_quic_response(
+                            &serde_json::json!({
                             "ok": false,
                             "op": "join",
                             "error": "already_joined",
                             "peer_id": bound_peer_id,
-                        }))
-                        .ok();
+                            }),
+                            "join",
+                        );
                     }
 
                     let auth_token = request
@@ -1916,23 +1941,27 @@ async fn main() -> anyhow::Result<()> {
 
                     let Some(token) = auth_token else {
                         warn!("QUIC join rejected: missing auth_token");
-                        return serde_json::to_vec(&serde_json::json!({
-                            "ok": false,
-                            "op": "join",
-                            "error": "auth_required",
-                        }))
-                        .ok();
+                        return serialize_quic_response(
+                            &serde_json::json!({
+                                "ok": false,
+                                "op": "join",
+                                "error": "auth_required",
+                            }),
+                            "join",
+                        );
                     };
 
                     let Some(user_id) = auth_service_for_quic.resolve_user_id_from_token(token)
                     else {
                         warn!("QUIC join rejected: invalid or expired auth_token");
-                        return serde_json::to_vec(&serde_json::json!({
-                            "ok": false,
-                            "op": "join",
-                            "error": "auth_invalid",
-                        }))
-                        .ok();
+                        return serialize_quic_response(
+                            &serde_json::json!({
+                                "ok": false,
+                                "op": "join",
+                                "error": "auth_invalid",
+                            }),
+                            "join",
+                        );
                     };
 
                     // Generate a server-assigned peer_id for this authenticated session.
@@ -1987,12 +2016,14 @@ async fn main() -> anyhow::Result<()> {
                 "input" => {
                     // FIX: use server-bound peer_id, not client-supplied.
                     let Some(peer_id) = bound_peer_id else {
-                        return serde_json::to_vec(&serde_json::json!({
-                            "ok": false,
-                            "op": "input",
-                            "error": "not_authenticated",
-                        }))
-                        .ok();
+                        return serialize_quic_response(
+                            &serde_json::json!({
+                                "ok": false,
+                                "op": "input",
+                                "error": "not_authenticated",
+                            }),
+                            "input",
+                        );
                     };
 
                     let mut inputs = Vec::new();
@@ -2047,7 +2078,7 @@ async fn main() -> anyhow::Result<()> {
                 }),
             };
 
-            serde_json::to_vec(&response).ok()
+            serialize_quic_response(&response, op.as_str())
         },
     );
     let quic_runtime = start_quic_runtime_from_env_with_handler(

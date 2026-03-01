@@ -31,7 +31,6 @@ export {
 export { createGameRenderer } from './GameRenderer.js';
 export { createProtocolHandler } from './ProtocolHandler.js?v=20260225a';
 export { createInputManager } from './InputManager.js';
-export { createGameState } from './GameState.js';
 export { createCombatFeedback } from './CombatFeedback.js';
 export { createAimingSystem } from './AimingSystem.js';
 export { createUIManager } from './UIManager.js';
