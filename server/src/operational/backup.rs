@@ -2,6 +2,7 @@
 
 use crate::operational::monitoring::metrics;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -228,6 +229,13 @@ impl BackupManager {
         backup_dir_name: Option<&str>,
     ) -> Result<BackupRestoreResult, String> {
         let backup_root = self.resolve_backup_root(backup_dir_name).await?;
+        let canonical_backup_root = fs::canonicalize(&backup_root).await.map_err(|err| {
+            format!(
+                "failed to canonicalize backup root '{}': {}",
+                backup_root.display(),
+                err
+            )
+        })?;
         let manifest_path = backup_root.join("manifest.json");
         let manifest_raw = fs::read(&manifest_path).await.map_err(|err| {
             format!(
@@ -244,14 +252,63 @@ impl BackupManager {
             )
         })?;
 
+        let allowed_sources: HashSet<String> = self
+            .inner
+            .sources
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect();
+
         let mut restored_files = Vec::new();
         let mut missing_backup_files = Vec::new();
         for copied_file in &manifest.copied_files {
+            if !allowed_sources.contains(&copied_file.source) {
+                return Err(format!(
+                    "backup manifest contains unexpected source '{}'",
+                    copied_file.source
+                ));
+            }
             let source_path = PathBuf::from(&copied_file.source);
-            let backup_path = resolve_backup_file_path(&backup_root, copied_file);
-            if !backup_path.exists() {
-                missing_backup_files.push(backup_path.to_string_lossy().to_string());
-                continue;
+            let backup_path = resolve_backup_file_path(&canonical_backup_root, copied_file);
+            let backup_meta = match fs::symlink_metadata(&backup_path).await {
+                Ok(meta) => meta,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    missing_backup_files.push(backup_path.to_string_lossy().to_string());
+                    continue;
+                }
+                Err(err) => {
+                    return Err(format!(
+                        "failed to stat backup file '{}': {}",
+                        backup_path.display(),
+                        err
+                    ));
+                }
+            };
+            if backup_meta.file_type().is_symlink() {
+                return Err(format!(
+                    "backup file '{}' is a symlink, refusing restore",
+                    backup_path.display()
+                ));
+            }
+            if !backup_meta.is_file() {
+                return Err(format!(
+                    "backup path '{}' is not a regular file",
+                    backup_path.display()
+                ));
+            }
+            let canonical_backup_path = fs::canonicalize(&backup_path).await.map_err(|err| {
+                format!(
+                    "failed to canonicalize backup file '{}': {}",
+                    backup_path.display(),
+                    err
+                )
+            })?;
+            if !canonical_backup_path.starts_with(&canonical_backup_root) {
+                return Err(format!(
+                    "backup path '{}' resolves outside '{}'",
+                    canonical_backup_path.display(),
+                    canonical_backup_root.display()
+                ));
             }
 
             if let Some(parent) = source_path.parent() {
@@ -264,14 +321,16 @@ impl BackupManager {
                 })?;
             }
 
-            fs::copy(&backup_path, &source_path).await.map_err(|err| {
-                format!(
-                    "failed restoring '{}' from '{}': {}",
-                    source_path.display(),
-                    backup_path.display(),
-                    err
-                )
-            })?;
+            fs::copy(&canonical_backup_path, &source_path)
+                .await
+                .map_err(|err| {
+                    format!(
+                        "failed restoring '{}' from '{}': {}",
+                        source_path.display(),
+                        canonical_backup_path.display(),
+                        err
+                    )
+                })?;
 
             let size_bytes = fs::metadata(&source_path)
                 .await
@@ -280,7 +339,7 @@ impl BackupManager {
                 .unwrap_or(copied_file.size_bytes);
             restored_files.push(BackupRestoredFile {
                 source: source_path.to_string_lossy().to_string(),
-                restored_from: backup_path.to_string_lossy().to_string(),
+                restored_from: canonical_backup_path.to_string_lossy().to_string(),
                 size_bytes,
             });
         }
@@ -306,6 +365,17 @@ impl BackupManager {
     }
 
     async fn resolve_backup_root(&self, backup_dir_name: Option<&str>) -> Result<PathBuf, String> {
+        let canonical_output_dir =
+            fs::canonicalize(&self.inner.output_dir)
+                .await
+                .map_err(|err| {
+                    format!(
+                        "backup root '{}' is not accessible: {}",
+                        self.inner.output_dir.display(),
+                        err
+                    )
+                })?;
+
         if let Some(backup_dir_name) = backup_dir_name {
             let trimmed = backup_dir_name.trim();
             if trimmed.is_empty() {
@@ -315,16 +385,6 @@ impl BackupManager {
                 return Err(format!("invalid backup directory name '{}'", trimmed));
             }
 
-            let canonical_output_dir =
-                fs::canonicalize(&self.inner.output_dir)
-                    .await
-                    .map_err(|err| {
-                        format!(
-                            "backup root '{}' is not accessible: {}",
-                            self.inner.output_dir.display(),
-                            err
-                        )
-                    })?;
             let explicit = canonical_output_dir.join(trimmed);
             let canonical_explicit = fs::canonicalize(&explicit).await.map_err(|err| {
                 format!(
@@ -375,9 +435,24 @@ impl BackupManager {
         }
 
         backup_dirs.sort();
-        backup_dirs
+        let selected = backup_dirs
             .pop()
-            .ok_or_else(|| format!("no backups found in '{}'", self.inner.output_dir.display()))
+            .ok_or_else(|| format!("no backups found in '{}'", self.inner.output_dir.display()))?;
+        let canonical_selected = fs::canonicalize(&selected).await.map_err(|err| {
+            format!(
+                "failed to canonicalize backup directory '{}': {}",
+                selected.display(),
+                err
+            )
+        })?;
+        if !canonical_selected.starts_with(&canonical_output_dir) {
+            return Err(format!(
+                "backup directory '{}' resolves outside backup root '{}'",
+                canonical_selected.display(),
+                canonical_output_dir.display()
+            ));
+        }
+        Ok(canonical_selected)
     }
 
     async fn prune_old_backups(&self) -> Result<(), String> {
@@ -443,10 +518,6 @@ fn is_safe_backup_dir_name(value: &str) -> bool {
 }
 
 fn resolve_backup_file_path(backup_root: &Path, copied_file: &BackupCopiedFile) -> PathBuf {
-    let recorded_path = PathBuf::from(&copied_file.backup_path);
-    if recorded_path.exists() {
-        return recorded_path;
-    }
     backup_root.join(backup_name_for_path(Path::new(&copied_file.source)))
 }
 

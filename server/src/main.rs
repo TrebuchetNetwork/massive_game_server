@@ -425,13 +425,17 @@ fn trusted_proxy_config() -> &'static TrustedProxyConfig {
     CONFIG.get_or_init(|| {
         let configured = parse_list_env("MGS_TRUSTED_PROXY_CIDRS");
         if configured.is_empty() {
-            let defaults = [
-                "127.0.0.1/32",
-                "::1/128",
-                "10.0.0.0/8",
-                "172.16.0.0/12",
-                "192.168.0.0/16",
-            ];
+            let defaults = if env_flag("MGS_DEV_MODE") {
+                vec![
+                    "127.0.0.1/32",
+                    "::1/128",
+                    "10.0.0.0/8",
+                    "172.16.0.0/12",
+                    "192.168.0.0/16",
+                ]
+            } else {
+                vec!["127.0.0.1/32", "::1/128"]
+            };
             let cidrs = defaults
                 .iter()
                 .filter_map(|entry| entry.parse::<IpNet>().ok())
@@ -517,7 +521,7 @@ fn requires_admin_auth(
                         let socket_ip = remote_addr.map(|addr| addr.ip());
 
                         // Only trust X-Forwarded-For / X-Real-IP if the direct
-                        // connecting IP is a known trusted proxy (private/loopback).
+                        // connecting IP is in trusted proxy CIDRs.
                         let source_ip = if socket_ip.is_some_and(is_trusted_proxy) {
                             let forwarded_ip = headers
                                 .get("x-forwarded-for")
@@ -1166,10 +1170,15 @@ async fn main() -> anyhow::Result<()> {
             "Trusted proxy CIDR allowlist configured explicitly ({} entries).",
             proxy_config.cidrs.len()
         );
+    } else if ws_dev_mode {
+        warn!(
+            "Using development trusted proxy defaults (loopback + RFC1918). Set \
+             MGS_TRUSTED_PROXY_CIDRS for explicit proxy trust."
+        );
     } else {
         warn!(
-            "Using broad default trusted proxy ranges (loopback + RFC1918). Set \
-             MGS_TRUSTED_PROXY_CIDRS for production-tight proxy trust."
+            "No explicit trusted proxy CIDRs configured; only loopback is trusted. \
+             Set MGS_TRUSTED_PROXY_CIDRS in production when running behind a proxy."
         );
     }
     if !ws_allowed_origins.is_empty() {

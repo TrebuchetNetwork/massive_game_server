@@ -231,7 +231,7 @@ A brief overview of the main directories:
 * `/static_client`: Contains the HTML, JavaScript, and CSS for the static web client.
     * `/static_client/generated_js/`: JavaScript files auto-generated from `game.fbs` by `flatc`.
 * `/scripts`: Utility shell scripts for tasks like generating FlatBuffers code.
-* `/config`: (Currently empty) Intended for YAML configuration files for different environments.
+* `/config`: Environment configuration files (`base.yaml`, `development.yaml`, `production.yaml`) used by `MGS_CONFIG_PATH`.
 * `/docs`: (Placeholder) For additional documentation.
 
 ## Contributing
