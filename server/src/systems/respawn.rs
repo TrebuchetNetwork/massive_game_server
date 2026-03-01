@@ -140,6 +140,91 @@ impl RespawnManager {
     }
 
     #[inline]
+    fn clamp_spawn_to_world(pos: Vec2) -> Vec2 {
+        const WORLD_MARGIN: f32 = 32.0;
+        Vec2::new(
+            pos.x
+                .clamp(WORLD_MIN_X + WORLD_MARGIN, WORLD_MAX_X - WORLD_MARGIN),
+            pos.y
+                .clamp(WORLD_MIN_Y + WORLD_MARGIN, WORLD_MAX_Y - WORLD_MARGIN),
+        )
+    }
+
+    fn find_nearby_unobstructed_spawn(
+        &self,
+        anchor: Vec2,
+        all_current_walls: &[Wall],
+    ) -> Option<Vec2> {
+        const SEARCH_RADII: [f32; 7] = [0.0, 48.0, 96.0, 144.0, 216.0, 288.0, 360.0];
+        const SEARCH_DIRECTIONS: [(f32, f32); 8] = [
+            (1.0, 0.0),
+            (0.70710677, 0.70710677),
+            (0.0, 1.0),
+            (-0.70710677, 0.70710677),
+            (-1.0, 0.0),
+            (-0.70710677, -0.70710677),
+            (0.0, -1.0),
+            (0.70710677, -0.70710677),
+        ];
+
+        let clamped_anchor = Self::clamp_spawn_to_world(anchor);
+        if !self.is_spawn_point_obstructed(clamped_anchor, all_current_walls) {
+            return Some(clamped_anchor);
+        }
+
+        for radius in SEARCH_RADII.iter().copied().skip(1) {
+            for (dx, dy) in SEARCH_DIRECTIONS {
+                let probe = Self::clamp_spawn_to_world(Vec2::new(
+                    clamped_anchor.x + dx * radius,
+                    clamped_anchor.y + dy * radius,
+                ));
+                if !self.is_spawn_point_obstructed(probe, all_current_walls) {
+                    return Some(probe);
+                }
+            }
+        }
+        None
+    }
+
+    fn resolve_emergency_spawn_position(
+        &self,
+        team_id: Option<u8>,
+        all_current_walls: &[Wall],
+    ) -> Vec2 {
+        let team_anchor = match team_id {
+            Some(1) => Vec2::new(WORLD_MIN_X + 140.0, 0.0),
+            Some(2) => Vec2::new(WORLD_MAX_X - 140.0, 0.0),
+            _ => Vec2::new(0.0, 0.0),
+        };
+
+        let candidate_anchors = [
+            team_anchor,
+            Vec2::new(0.0, 0.0),
+            Vec2::new(WORLD_MIN_X + 160.0, WORLD_MIN_Y + 160.0),
+            Vec2::new(WORLD_MAX_X - 160.0, WORLD_MIN_Y + 160.0),
+            Vec2::new(WORLD_MIN_X + 160.0, WORLD_MAX_Y - 160.0),
+            Vec2::new(WORLD_MAX_X - 160.0, WORLD_MAX_Y - 160.0),
+            Vec2::new(0.0, WORLD_MIN_Y + 200.0),
+            Vec2::new(0.0, WORLD_MAX_Y - 200.0),
+            Vec2::new(WORLD_MIN_X + 200.0, 0.0),
+            Vec2::new(WORLD_MAX_X - 200.0, 0.0),
+        ];
+
+        for anchor in candidate_anchors {
+            if let Some(position) = self.find_nearby_unobstructed_spawn(anchor, all_current_walls) {
+                return position;
+            }
+        }
+
+        let fallback = Self::clamp_spawn_to_world(team_anchor);
+        warn!(
+            "[RESPAWN_WARN] No unobstructed emergency spawn found; using bounded fallback at ({:.1}, {:.1}).",
+            fallback.x, fallback.y
+        );
+        fallback
+    }
+
+    #[inline]
     fn is_team_compatible(player_team: Option<u8>, spawn_team: Option<u8>) -> bool {
         match (player_team, spawn_team) {
             (Some(p_team), Some(sp_team)) => p_team == sp_team,
@@ -210,7 +295,9 @@ impl RespawnManager {
             .map(|(idx, _)| idx)?;
 
         spawn_points[selected_idx].last_used = now;
-        Some(spawn_points[selected_idx].position)
+        let selected_position = spawn_points[selected_idx].position;
+        self.find_nearby_unobstructed_spawn(selected_position, all_current_walls)
+            .or(Some(Self::clamp_spawn_to_world(selected_position)))
     }
 
     // Modified to accept &MassiveGameServer to access wall data
@@ -318,10 +405,10 @@ impl RespawnManager {
                 return position;
             }
             warn!(
-                "[RESPAWN_WARN] No spawn points are configured; returning world origin fallback. Player: {:?}",
+                "[RESPAWN_WARN] No spawn points are configured; using emergency spawn fallback. Player: {:?}",
                 player_id
             );
-            return Vec2::new(0.0, 0.0);
+            return self.resolve_emergency_spawn_position(team_id, all_current_walls);
         }
 
         scored_spawns.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -341,10 +428,10 @@ impl RespawnManager {
                 return position;
             }
             warn!(
-                "[RESPAWN_WARN] Critical fallback in respawn logic (top_n empty, no spawn points configured). Returning world origin. Player: {:?}",
+                "[RESPAWN_WARN] Critical fallback in respawn logic (top_n empty, no spawn points configured). Using emergency spawn fallback. Player: {:?}",
                 player_id
             );
-            return Vec2::new(0.0, 0.0);
+            return self.resolve_emergency_spawn_position(team_id, all_current_walls);
         }
 
         let seed = (team_id.unwrap_or(0) as u64)
@@ -380,10 +467,10 @@ impl RespawnManager {
                 return position;
             }
             warn!(
-                "[RESPAWN_WARN] Critical fallback in respawn logic (no spawn points configured). Returning world origin. Player: {:?}",
+                "[RESPAWN_WARN] Critical fallback in respawn logic (no spawn points configured). Using emergency spawn fallback. Player: {:?}",
                 player_id
             );
-            Vec2::new(0.0, 0.0)
+            self.resolve_emergency_spawn_position(team_id, all_current_walls)
         }
     }
 }

@@ -34,6 +34,14 @@ impl MassiveGameServer {
         }
     }
 
+    #[inline]
+    fn ctf_player_label(&self, player_id: &PlayerID) -> String {
+        self.player_manager
+            .get_player_state(player_id)
+            .map(|state| state.username.clone())
+            .unwrap_or_else(|| player_id.as_ref().to_owned())
+    }
+
     fn broadcast_dynamic_mode_event(
         &self,
         phase: &str,
@@ -272,9 +280,8 @@ impl MassiveGameServer {
                 }
             }
 
-            #[derive(Clone)]
+            #[derive(Clone, Copy)]
             struct CtfPlayerSnapshot {
-                username: String,
                 x: f32,
                 y: f32,
                 team_id: u8,
@@ -283,12 +290,11 @@ impl MassiveGameServer {
                 is_carrying_flag_team_id: u8,
             }
 
-            let mut player_snapshots: HashMap<PlayerID, CtfPlayerSnapshot> = HashMap::new();
+            let mut player_snapshots: Vec<(PlayerID, CtfPlayerSnapshot)> = Vec::new();
             self.player_manager.for_each_player(|id, state| {
-                player_snapshots.insert(
+                player_snapshots.push((
                     id.clone(),
                     CtfPlayerSnapshot {
-                        username: state.username.clone(),
                         x: state.x,
                         y: state.y,
                         team_id: state.team_id,
@@ -296,10 +302,10 @@ impl MassiveGameServer {
                         is_spectator: state.is_spectator,
                         is_carrying_flag_team_id: state.is_carrying_flag_team_id,
                     },
-                );
+                ));
             });
 
-            for (player_id_arc, player_state_snapshot) in &player_snapshots {
+            for (player_id_arc, player_state_snapshot) in player_snapshots.iter() {
                 if !player_state_snapshot.alive || player_state_snapshot.is_spectator {
                     continue;
                 }
@@ -344,7 +350,8 @@ impl MassiveGameServer {
                                     );
                                     info!(
                                         "Player {} grabbed flag of team {}",
-                                        player_state_snapshot.username, flag_state.team_id
+                                        self.ctf_player_label(player_id_arc),
+                                        flag_state.team_id
                                     );
                                     break;
                                 } else if flag_state.status == fb::FlagStatus::Dropped
@@ -374,7 +381,8 @@ impl MassiveGameServer {
                                     );
                                     info!(
                                         "Player {} returned own team {}'s flag.",
-                                        player_state_snapshot.username, flag_state.team_id
+                                        self.ctf_player_label(player_id_arc),
+                                        flag_state.team_id
                                     );
                                     break;
                                 }
@@ -445,7 +453,7 @@ impl MassiveGameServer {
                             );
                             info!(
                                 "Player {} captured team {}'s flag for team {}! (Score: {})",
-                                player_state_snapshot.username,
+                                self.ctf_player_label(player_id_arc),
                                 captured_flag_team_id,
                                 own_player_team_id,
                                 current_score
