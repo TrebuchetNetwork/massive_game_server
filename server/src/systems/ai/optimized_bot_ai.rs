@@ -646,16 +646,12 @@ impl OptimizedBotAI {
             > BOT_PREDICTIVE_MODEL_MAX_ENTRIES
             || predictive_models.threat_models.len() > BOT_PREDICTIVE_MODEL_MAX_ENTRIES;
         if frame_count.is_multiple_of(120) || predictive_over_capacity {
-            let mut live_ids: HashSet<PlayerID> = HashSet::with_capacity(live_players_by_id.len());
-            for id in live_players_by_id.keys() {
-                live_ids.insert(id.clone());
-            }
             predictive_models
                 .motion_models
-                .retain(|player_id, _| live_ids.contains(player_id));
+                .retain(|player_id, _| live_players_by_id.contains_key(player_id));
             predictive_models
                 .threat_models
-                .retain(|player_id, _| live_ids.contains(player_id));
+                .retain(|player_id, _| live_players_by_id.contains_key(player_id));
             if predictive_over_capacity {
                 debug!(
                     "Predictive model maps hit capacity guard (>{}), forcing immediate cleanup.",

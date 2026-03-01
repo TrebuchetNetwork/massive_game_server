@@ -139,6 +139,80 @@ impl RespawnManager {
         false
     }
 
+    #[inline]
+    fn is_team_compatible(player_team: Option<u8>, spawn_team: Option<u8>) -> bool {
+        match (player_team, spawn_team) {
+            (Some(p_team), Some(sp_team)) => p_team == sp_team,
+            (Some(_), None) => true,
+            (None, None) => true,
+            (None, Some(_)) => false,
+        }
+    }
+
+    fn select_fallback_spawn_position(
+        &self,
+        spawn_points: &mut [SpawnPoint],
+        team_id: Option<u8>,
+        all_current_walls: &[Wall],
+        now: Instant,
+    ) -> Option<Vec2> {
+        let mut best_unobstructed_team: Option<(usize, Duration)> = None;
+        let mut best_unobstructed_any: Option<(usize, Duration)> = None;
+        let mut best_team_any: Option<(usize, Duration)> = None;
+        let mut best_any: Option<(usize, Duration)> = None;
+
+        for (idx, spawn) in spawn_points.iter().enumerate() {
+            let age = now.saturating_duration_since(spawn.last_used);
+            let unobstructed = !self.is_spawn_point_obstructed(spawn.position, all_current_walls);
+            let team_compatible = Self::is_team_compatible(team_id, spawn.team_id);
+
+            if team_compatible
+                && unobstructed
+                && best_unobstructed_team
+                    .as_ref()
+                    .map(|(_, best_age)| age > *best_age)
+                    .unwrap_or(true)
+            {
+                best_unobstructed_team = Some((idx, age));
+            }
+
+            if unobstructed
+                && best_unobstructed_any
+                    .as_ref()
+                    .map(|(_, best_age)| age > *best_age)
+                    .unwrap_or(true)
+            {
+                best_unobstructed_any = Some((idx, age));
+            }
+
+            if team_compatible
+                && best_team_any
+                    .as_ref()
+                    .map(|(_, best_age)| age > *best_age)
+                    .unwrap_or(true)
+            {
+                best_team_any = Some((idx, age));
+            }
+
+            if best_any
+                .as_ref()
+                .map(|(_, best_age)| age > *best_age)
+                .unwrap_or(true)
+            {
+                best_any = Some((idx, age));
+            }
+        }
+
+        let selected_idx = best_unobstructed_team
+            .or(best_unobstructed_any)
+            .or(best_team_any)
+            .or(best_any)
+            .map(|(idx, _)| idx)?;
+
+        spawn_points[selected_idx].last_used = now;
+        Some(spawn_points[selected_idx].position)
+    }
+
     // Modified to accept &MassiveGameServer to access wall data
     pub fn get_respawn_position(
         &self,
@@ -183,12 +257,7 @@ impl RespawnManager {
             .iter()
             .enumerate()
             .filter_map(|(idx, sp)| {
-                let team_compatible = match (team_id, sp.team_id) {
-                    (Some(p_team), Some(sp_team)) => p_team == sp_team,
-                    (Some(_p_team), None) => true,
-                    (None, None) => true,
-                    (None, Some(_sp_team)) => false,
-                };
+                let team_compatible = Self::is_team_compatible(team_id, sp.team_id);
                 if !team_compatible {
                     return None;
                 }
@@ -236,14 +305,22 @@ impl RespawnManager {
             .collect();
 
         if scored_spawns.is_empty() {
-            for (idx, sp) in spawn_points_guard.iter().enumerate() {
-                if !self.is_spawn_point_obstructed(sp.position, all_current_walls) {
-                    // Check with combined walls
-                    spawn_points_guard[idx].last_used = now;
-                    return spawn_points_guard[idx].position;
-                }
+            warn!(
+                "[RESPAWN_WARN] No scored spawns available; using best fallback spawn. Player: {:?}",
+                player_id
+            );
+            if let Some(position) = self.select_fallback_spawn_position(
+                &mut spawn_points_guard,
+                team_id,
+                all_current_walls,
+                now,
+            ) {
+                return position;
             }
-            warn!("[RESPAWN_WARN] All spawn points are obstructed or unsuitable! Returning default (0,0). Player: {:?}", player_id);
+            warn!(
+                "[RESPAWN_WARN] No spawn points are configured; returning world origin fallback. Player: {:?}",
+                player_id
+            );
             return Vec2::new(0.0, 0.0);
         }
 
@@ -251,14 +328,22 @@ impl RespawnManager {
 
         let top_n = scored_spawns.iter().take(3).collect::<Vec<_>>();
         if top_n.is_empty() {
-            warn!("[RESPAWN_WARN] No top N spawns found, though scored_spawns was not empty. Player: {:?}", player_id);
-            if let Some(&(best_idx, _)) = scored_spawns.first() {
-                if best_idx < spawn_points_guard.len() {
-                    spawn_points_guard[best_idx].last_used = now;
-                    return spawn_points_guard[best_idx].position;
-                }
+            warn!(
+                "[RESPAWN_WARN] No top-N spawn candidates found; using fallback spawn. Player: {:?}",
+                player_id
+            );
+            if let Some(position) = self.select_fallback_spawn_position(
+                &mut spawn_points_guard,
+                team_id,
+                all_current_walls,
+                now,
+            ) {
+                return position;
             }
-            warn!("[RESPAWN_WARN] Critical fallback in respawn logic (top_n empty). Returning (0,0). Player: {:?}", player_id);
+            warn!(
+                "[RESPAWN_WARN] Critical fallback in respawn logic (top_n empty, no spawn points configured). Returning world origin. Player: {:?}",
+                player_id
+            );
             return Vec2::new(0.0, 0.0);
         }
 
@@ -286,14 +371,16 @@ impl RespawnManager {
                 spawn_points_guard.len(),
                 player_id
             );
-            if let Some(&(first_valid_idx, _)) = scored_spawns.first() {
-                if first_valid_idx < spawn_points_guard.len() {
-                    spawn_points_guard[first_valid_idx].last_used = now;
-                    return spawn_points_guard[first_valid_idx].position;
-                }
+            if let Some(position) = self.select_fallback_spawn_position(
+                &mut spawn_points_guard,
+                team_id,
+                all_current_walls,
+                now,
+            ) {
+                return position;
             }
             warn!(
-                "[RESPAWN_WARN] Critical fallback in respawn logic. Returning (0,0). Player: {:?}",
+                "[RESPAWN_WARN] Critical fallback in respawn logic (no spawn points configured). Returning world origin. Player: {:?}",
                 player_id
             );
             Vec2::new(0.0, 0.0)
@@ -413,9 +500,9 @@ impl WallRespawnManager {
             .map(|(_, scheduled)| now >= *scheduled)
             .unwrap_or(false)
         {
-            let (wall_id, _scheduled_time) = queue_guard
-                .pop_front()
-                .expect("front checked above when draining respawn queue");
+            let Some((wall_id, _scheduled_time)) = queue_guard.pop_front() else {
+                break;
+            };
             if let Some((_id, info)) = self.destroyed_walls.remove(&wall_id) {
                 ready_to_respawn_walls.push(info.wall_data.clone());
             } else {
