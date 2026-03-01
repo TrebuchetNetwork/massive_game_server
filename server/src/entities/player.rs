@@ -4,6 +4,7 @@ use crate::core::types::{PlayerID, PlayerState};
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use seahash;
+use std::sync::atomic::{AtomicU8, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -48,6 +49,7 @@ pub struct ImprovedPlayerManager {
     shards: Vec<Arc<DashMap<PlayerID, Arc<ArcSwap<PlayerState>>>>>,
     num_shards: usize,
     spatial_index: Arc<ImprovedSpatialIndex>,
+    next_balanced_team: AtomicU8,
 }
 
 fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, updated: &PlayerState) {
@@ -272,13 +274,13 @@ impl Drop for PlayerStateWriteGuard {
         }
 
         let original = self.original.clone();
-        let updated = self.working.clone();
+        let updated = Arc::new(self.working.clone());
         self.cell.rcu(|current| {
             if Arc::ptr_eq(current, &original) {
-                Arc::new(updated.clone())
+                Arc::clone(&updated)
             } else {
                 let mut merged = (**current).clone();
-                merge_player_state_delta(&mut merged, original.as_ref(), &updated);
+                merge_player_state_delta(&mut merged, original.as_ref(), updated.as_ref());
                 Arc::new(merged)
             }
         });
@@ -296,6 +298,7 @@ impl ImprovedPlayerManager {
             shards,
             num_shards,
             spatial_index,
+            next_balanced_team: AtomicU8::new(0),
         }
     }
 
@@ -317,10 +320,24 @@ impl ImprovedPlayerManager {
             }
         });
 
-        if team1_count <= team2_count {
-            1 // Assign to Red team
+        if team1_count < team2_count {
+            return 1;
+        }
+        if team2_count < team1_count {
+            return 2;
+        }
+
+        // Tie-break with an atomic alternator so concurrent joins from a tied
+        // snapshot do not all collapse onto the same team.
+        if self
+            .next_balanced_team
+            .fetch_add(1, AtomicOrdering::Relaxed)
+            % 2
+            == 0
+        {
+            1
         } else {
-            2 // Assign to Blue team
+            2
         }
     }
 

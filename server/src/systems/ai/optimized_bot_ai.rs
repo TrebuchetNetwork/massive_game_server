@@ -1772,9 +1772,10 @@ impl OptimizedBotAI {
                         1
                     };
 
-                    for (idx, waypoint) in grid_path.iter().enumerate().skip(1) {
-                        let is_last = idx + 1 == path_len;
-                        if is_last || idx % stride == 0 {
+                    for (relative_idx, waypoint) in grid_path.iter().skip(1).enumerate() {
+                        let absolute_idx = relative_idx + 1;
+                        let is_last = absolute_idx + 1 == path_len;
+                        if is_last || absolute_idx % stride == 0 {
                             bot_controller.current_path.push_back(*waypoint);
                         }
                     }
