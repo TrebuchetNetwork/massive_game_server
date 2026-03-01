@@ -78,15 +78,15 @@ impl PriorityEventQueue {
     pub fn pop(&self) -> Option<GameEvent> {
         // Pop from high priority first, then normal, then low
         if let Some(event) = self.high_priority.pop() {
-            self.queued_count.fetch_sub(1, Ordering::Relaxed);
+            self.decrement_queued_count();
             return Some(event);
         }
         if let Some(event) = self.normal_priority.pop() {
-            self.queued_count.fetch_sub(1, Ordering::Relaxed);
+            self.decrement_queued_count();
             return Some(event);
         }
         if let Some(event) = self.low_priority.pop() {
-            self.queued_count.fetch_sub(1, Ordering::Relaxed);
+            self.decrement_queued_count();
             return Some(event);
         }
         None
@@ -146,11 +146,20 @@ impl PriorityEventQueue {
         for _ in 0..limit {
             if let Some(event) = queue.pop() {
                 batch.push(event);
-                self.queued_count.fetch_sub(1, Ordering::Relaxed);
+                self.decrement_queued_count();
             } else {
                 break;
             }
         }
+    }
+
+    #[inline]
+    fn decrement_queued_count(&self) {
+        let _ = self
+            .queued_count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_sub(1))
+            });
     }
 
     pub fn is_empty(&self) -> bool {
@@ -174,13 +183,13 @@ mod tests {
 
     fn make_player_event(tag: &str) -> GameEvent {
         GameEvent::PlayerJoined {
-            player_id: Arc::new(tag.to_owned()),
+            player_id: Arc::from(tag.to_owned()),
         }
     }
 
     fn player_id_of(event: &GameEvent) -> &str {
         match event {
-            GameEvent::PlayerJoined { player_id } => player_id.as_str(),
+            GameEvent::PlayerJoined { player_id } => player_id.as_ref(),
             _ => panic!("unexpected variant"),
         }
     }

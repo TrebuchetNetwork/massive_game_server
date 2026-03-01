@@ -133,6 +133,33 @@ jobs:
       - name: Dependency review
         uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803
 
+  sast-codeql:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [rust, javascript]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+
   coverage:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
@@ -161,7 +188,7 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Enforce coverage floor
-        run: cargo llvm-cov -p massive_game_server_core --locked --summary-only --fail-under-lines 52
+        run: cargo llvm-cov -p massive_game_server_core --locked --summary-only --fail-under-lines 70
 
       - name: Generate LCOV report
         run: cargo llvm-cov -p massive_game_server_core --locked --lcov --output-path lcov.info
@@ -222,6 +249,7 @@ jobs:
         run: cargo build -p massive_game_server_core --release --bin massive_game_server_core --locked
 
   nightly-security:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -260,7 +288,7 @@ jobs:
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL,HIGH
-          exit-code: "0"
+          exit-code: "1"
 
   daily-smoke:
     if: github.event_name == 'schedule'

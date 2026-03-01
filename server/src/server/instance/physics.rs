@@ -88,9 +88,7 @@ impl MassiveGameServer {
 
         // Stage 3: Process Player Physics
         let player_physics_start = Instant::now();
-        let player_updates = self
-            .process_player_physics_parallel(&active_walls, delta_time)
-            .await;
+        let player_updates = self.process_player_physics_parallel(delta_time).await;
         debug!(
             "Frame {}: Processed {} player physics updates (took {:?})",
             frame,

@@ -12,6 +12,7 @@ use crate::flatbuffers_generated::game_protocol as fb;
 use crate::network::connection_manager::{
     shared_connection_manager, ConnectionInfo, TransportKind,
 };
+use crate::network::rate_limiter::TokenBucket;
 use crate::operational::auth::AuthService;
 use crate::operational::monitoring::metrics;
 use crate::server::instance::MassiveGameServer; // Added for server access for initial spawn
@@ -258,7 +259,7 @@ pub struct ClientState {
     pub last_kill_feed_count_sent: usize,
     pub last_chat_message_seq_sent: u64,
     pub last_broadcast_frame: u64,
-    pub last_known_players: HashSet<Arc<String>>,
+    pub last_known_players: HashSet<PlayerID>,
     pub last_known_wall_ids: Option<HashSet<EntityId>>,
     pub last_known_wall_states: HashMap<EntityId, (i32, i32)>, // wall_id -> (current_health, max_health)
     pub match_info_pending: bool,
@@ -582,78 +583,109 @@ pub struct ClientIceServer {
     pub credential: Option<String>,
 }
 
-fn build_ice_servers() -> Vec<RTCIceServer> {
+#[derive(Debug, Clone)]
+struct CachedIceConfig {
+    disable_stun: bool,
+    stun_urls: Vec<String>,
+    turn_urls: Vec<String>,
+    turn_credential_type: TurnCredentialType,
+    turn_username: Option<String>,
+    turn_credential: Option<String>,
+    extra_ice_servers: Vec<RTCIceServer>,
+}
+
+fn load_cached_ice_config() -> CachedIceConfig {
     let disable_stun = env_bool("MGS_DISABLE_STUN");
-    let mut ice_servers: Vec<RTCIceServer> = Vec::new();
-
-    if !disable_stun {
-        let stun_urls = std::env::var("MGS_STUN_URLS")
-            .ok()
-            .map(|raw| parse_csv(&raw))
-            .filter(|urls| !urls.is_empty())
-            .unwrap_or_else(|| vec!["stun:stun.l.google.com:19302".to_owned()]);
-        ice_servers.push(RTCIceServer {
-            urls: stun_urls,
-            ..Default::default()
-        });
-    }
-
+    let stun_urls = std::env::var("MGS_STUN_URLS")
+        .ok()
+        .map(|raw| parse_csv(&raw))
+        .filter(|urls| !urls.is_empty())
+        .unwrap_or_else(|| vec!["stun:stun.l.google.com:19302".to_owned()]);
     let turn_urls = std::env::var("MGS_TURN_URLS")
         .ok()
         .map(|raw| parse_csv(&raw))
         .unwrap_or_default();
-    if !turn_urls.is_empty() {
-        let credential_type = TurnCredentialType::from_env();
+    let turn_credential_type = TurnCredentialType::from_env();
+    let turn_username = std::env::var("MGS_TURN_USERNAME")
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|raw| !raw.is_empty());
+    let turn_credential = std::env::var("MGS_TURN_CREDENTIAL")
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|raw| !raw.is_empty());
+    let extra_ice_servers = std::env::var("MGS_ICE_SERVERS")
+        .ok()
+        .map(|raw| parse_ice_servers_env(&raw))
+        .unwrap_or_default();
+
+    CachedIceConfig {
+        disable_stun,
+        stun_urls,
+        turn_urls,
+        turn_credential_type,
+        turn_username,
+        turn_credential,
+        extra_ice_servers,
+    }
+}
+
+fn cached_ice_config() -> &'static CachedIceConfig {
+    static CONFIG: OnceLock<CachedIceConfig> = OnceLock::new();
+    CONFIG.get_or_init(load_cached_ice_config)
+}
+
+fn build_ice_servers() -> Vec<RTCIceServer> {
+    let cfg = cached_ice_config();
+    let mut ice_servers: Vec<RTCIceServer> = Vec::new();
+
+    if !cfg.disable_stun {
+        ice_servers.push(RTCIceServer {
+            urls: cfg.stun_urls.clone(),
+            ..Default::default()
+        });
+    }
+
+    if !cfg.turn_urls.is_empty() {
         let mut turn_server = RTCIceServer {
-            urls: turn_urls,
+            urls: cfg.turn_urls.clone(),
             ..Default::default()
         };
-        match credential_type {
+        match cfg.turn_credential_type {
             TurnCredentialType::Password => {
-                if let Ok(username) = std::env::var("MGS_TURN_USERNAME") {
-                    if !username.trim().is_empty() {
-                        turn_server.username = username.trim().to_owned();
-                    }
+                if let Some(username) = cfg.turn_username.as_ref() {
+                    turn_server.username = username.clone();
                 }
-                if let Ok(credential) = std::env::var("MGS_TURN_CREDENTIAL") {
-                    if !credential.trim().is_empty() {
-                        turn_server.credential = credential.trim().to_owned();
-                    }
+                if let Some(credential) = cfg.turn_credential.as_ref() {
+                    turn_server.credential = credential.clone();
                 }
             }
             TurnCredentialType::HmacSha256 => {
-                if let Ok(secret) = std::env::var("MGS_TURN_CREDENTIAL") {
-                    if !secret.trim().is_empty() {
-                        let suffix = std::env::var("MGS_TURN_USERNAME")
-                            .unwrap_or_else(|_| "server".to_owned());
-                        let (username, credential) =
-                            generate_turn_hmac_credentials(secret.trim(), suffix.trim());
-                        turn_server.username = username;
-                        turn_server.credential = credential;
-                    }
+                if let Some(secret) = cfg.turn_credential.as_ref() {
+                    let suffix = cfg.turn_username.as_deref().unwrap_or("server");
+                    let (username, credential) = generate_turn_hmac_credentials(secret, suffix);
+                    turn_server.username = username;
+                    turn_server.credential = credential;
                 }
             }
             TurnCredentialType::HmacSha1Legacy => {
-                if let Ok(secret) = std::env::var("MGS_TURN_CREDENTIAL") {
-                    if !secret.trim().is_empty() {
-                        let suffix = std::env::var("MGS_TURN_USERNAME")
-                            .unwrap_or_else(|_| "server".to_owned());
-                        let (username, credential) = generate_turn_hmac_credentials_with_algorithm(
-                            secret.trim(),
-                            suffix.trim(),
-                            TurnHmacAlgorithm::Sha1,
-                        );
-                        turn_server.username = username;
-                        turn_server.credential = credential;
-                    }
+                if let Some(secret) = cfg.turn_credential.as_ref() {
+                    let suffix = cfg.turn_username.as_deref().unwrap_or("server");
+                    let (username, credential) = generate_turn_hmac_credentials_with_algorithm(
+                        secret,
+                        suffix,
+                        TurnHmacAlgorithm::Sha1,
+                    );
+                    turn_server.username = username;
+                    turn_server.credential = credential;
                 }
             }
         }
         ice_servers.push(turn_server);
     }
 
-    if let Ok(extra_ice_servers) = std::env::var("MGS_ICE_SERVERS") {
-        ice_servers.extend(parse_ice_servers_env(&extra_ice_servers));
+    if !cfg.extra_ice_servers.is_empty() {
+        ice_servers.extend(cfg.extra_ice_servers.clone());
     }
 
     ice_servers
@@ -664,69 +696,48 @@ fn build_ice_servers() -> Vec<RTCIceServer> {
 /// When HMAC credential mode is active, this generates fresh per-session
 /// credentials so each client gets a unique short-lived TURN token.
 fn build_client_ice_config(session_id: &str) -> Vec<ClientIceServer> {
-    let disable_stun = env_bool("MGS_DISABLE_STUN");
+    let cfg = cached_ice_config();
     let mut servers: Vec<ClientIceServer> = Vec::new();
 
-    if !disable_stun {
-        let stun_urls = std::env::var("MGS_STUN_URLS")
-            .ok()
-            .map(|raw| parse_csv(&raw))
-            .filter(|urls| !urls.is_empty())
-            .unwrap_or_else(|| vec!["stun:stun.l.google.com:19302".to_owned()]);
+    if !cfg.disable_stun {
         servers.push(ClientIceServer {
-            urls: stun_urls,
+            urls: cfg.stun_urls.clone(),
             username: None,
             credential: None,
         });
     }
 
-    let turn_urls = std::env::var("MGS_TURN_URLS")
-        .ok()
-        .map(|raw| parse_csv(&raw))
-        .unwrap_or_default();
-    if !turn_urls.is_empty() {
-        let credential_type = TurnCredentialType::from_env();
+    if !cfg.turn_urls.is_empty() {
         let mut turn_entry = ClientIceServer {
-            urls: turn_urls,
+            urls: cfg.turn_urls.clone(),
             username: None,
             credential: None,
         };
-        match credential_type {
+        match cfg.turn_credential_type {
             TurnCredentialType::Password => {
-                if let Ok(username) = std::env::var("MGS_TURN_USERNAME") {
-                    let trimmed = username.trim().to_owned();
-                    if !trimmed.is_empty() {
-                        turn_entry.username = Some(trimmed);
-                    }
+                if let Some(username) = cfg.turn_username.as_ref() {
+                    turn_entry.username = Some(username.clone());
                 }
-                if let Ok(credential) = std::env::var("MGS_TURN_CREDENTIAL") {
-                    let trimmed = credential.trim().to_owned();
-                    if !trimmed.is_empty() {
-                        turn_entry.credential = Some(trimmed);
-                    }
+                if let Some(credential) = cfg.turn_credential.as_ref() {
+                    turn_entry.credential = Some(credential.clone());
                 }
             }
             TurnCredentialType::HmacSha256 => {
-                if let Ok(secret) = std::env::var("MGS_TURN_CREDENTIAL") {
-                    if !secret.trim().is_empty() {
-                        let (username, credential) =
-                            generate_turn_hmac_credentials(secret.trim(), session_id);
-                        turn_entry.username = Some(username);
-                        turn_entry.credential = Some(credential);
-                    }
+                if let Some(secret) = cfg.turn_credential.as_ref() {
+                    let (username, credential) = generate_turn_hmac_credentials(secret, session_id);
+                    turn_entry.username = Some(username);
+                    turn_entry.credential = Some(credential);
                 }
             }
             TurnCredentialType::HmacSha1Legacy => {
-                if let Ok(secret) = std::env::var("MGS_TURN_CREDENTIAL") {
-                    if !secret.trim().is_empty() {
-                        let (username, credential) = generate_turn_hmac_credentials_with_algorithm(
-                            secret.trim(),
-                            session_id,
-                            TurnHmacAlgorithm::Sha1,
-                        );
-                        turn_entry.username = Some(username);
-                        turn_entry.credential = Some(credential);
-                    }
+                if let Some(secret) = cfg.turn_credential.as_ref() {
+                    let (username, credential) = generate_turn_hmac_credentials_with_algorithm(
+                        secret,
+                        session_id,
+                        TurnHmacAlgorithm::Sha1,
+                    );
+                    turn_entry.username = Some(username);
+                    turn_entry.credential = Some(credential);
                 }
             }
         }
@@ -765,6 +776,7 @@ const SIGNALING_OUTBOX_CAPACITY: usize = 1000;
 const DEFAULT_WS_KEEPALIVE_INTERVAL_SECS: u32 = 30;
 const MIN_WS_KEEPALIVE_INTERVAL_SECS: u32 = 5;
 const MAX_WS_KEEPALIVE_INTERVAL_SECS: u32 = 300;
+const DISCONNECTED_CLEANUP_GRACE_SECS: u64 = 10;
 /// Maximum allowed size for incoming FlatBuffer messages on data channels.
 /// Messages exceeding this are dropped to prevent OOM from oversized payloads.
 const MAX_DATACHANNEL_MESSAGE_BYTES: usize = 1024 * 1024; // 1 MB
@@ -814,63 +826,34 @@ struct IceCandidateRateLimitConfig {
 
 #[derive(Debug)]
 struct JoinRateLimiter {
-    refill_per_sec: f64,
-    capacity: f64,
-    available_tokens: f64,
-    last_refill_at: Instant,
+    bucket: TokenBucket,
+    last_seen_at: Instant,
 }
 
 impl JoinRateLimiter {
     fn new(refill_per_sec: u32, capacity: u32) -> Self {
-        let refill = refill_per_sec.max(1) as f64;
-        let cap = capacity.max(1) as f64;
         Self {
-            refill_per_sec: refill,
-            capacity: cap,
-            available_tokens: cap,
-            last_refill_at: Instant::now(),
+            bucket: TokenBucket::new(refill_per_sec, capacity),
+            last_seen_at: Instant::now(),
         }
     }
 
     fn try_acquire(&mut self) -> bool {
-        let now = Instant::now();
-        let elapsed = now
-            .checked_duration_since(self.last_refill_at)
-            .unwrap_or(Duration::from_millis(0))
-            .as_secs_f64();
-        if elapsed > 0.0 {
-            self.available_tokens =
-                (self.available_tokens + (elapsed * self.refill_per_sec)).min(self.capacity);
-            self.last_refill_at = now;
-        }
-
-        if self.available_tokens >= 1.0 {
-            self.available_tokens -= 1.0;
-            true
-        } else {
-            false
-        }
+        self.last_seen_at = Instant::now();
+        self.bucket.try_acquire()
     }
 }
 
 #[derive(Debug)]
 struct InputRateLimiter {
-    refill_per_sec: f64,
-    capacity: f64,
-    available_tokens: f64,
-    last_refill_at: Instant,
+    bucket: TokenBucket,
     last_drop_log_at: Instant,
 }
 
 impl InputRateLimiter {
     fn new(refill_per_sec: u32, capacity: u32) -> Self {
-        let refill = refill_per_sec.max(1) as f64;
-        let cap = capacity.max(1) as f64;
         Self {
-            refill_per_sec: refill,
-            capacity: cap,
-            available_tokens: cap,
-            last_refill_at: Instant::now(),
+            bucket: TokenBucket::new(refill_per_sec, capacity),
             last_drop_log_at: Instant::now()
                 .checked_sub(Duration::from_secs(
                     INPUT_RATE_LIMIT_THROTTLE_LOG_INTERVAL_SECS,
@@ -880,23 +863,7 @@ impl InputRateLimiter {
     }
 
     fn try_acquire(&mut self) -> bool {
-        let now = Instant::now();
-        let elapsed = now
-            .checked_duration_since(self.last_refill_at)
-            .unwrap_or(Duration::from_millis(0))
-            .as_secs_f64();
-        if elapsed > 0.0 {
-            self.available_tokens =
-                (self.available_tokens + (elapsed * self.refill_per_sec)).min(self.capacity);
-            self.last_refill_at = now;
-        }
-
-        if self.available_tokens >= 1.0 {
-            self.available_tokens -= 1.0;
-            true
-        } else {
-            false
-        }
+        self.bucket.try_acquire()
     }
 
     fn should_log_throttle(&mut self) -> bool {
@@ -1087,10 +1054,12 @@ fn sdp_admission_semaphore() -> Option<&'static Arc<Semaphore>> {
 async fn acquire_sdp_admission_permit(
     peer_id: &str,
     sender: &mpsc::Sender<Result<Message, warp::Error>>,
-) -> Option<OwnedSemaphorePermit> {
-    let semaphore = sdp_admission_semaphore()?;
+) -> Result<Option<OwnedSemaphorePermit>, ()> {
+    let Some(semaphore) = sdp_admission_semaphore() else {
+        return Ok(None);
+    };
     match semaphore.clone().try_acquire_owned() {
-        Ok(permit) => Some(permit),
+        Ok(permit) => Ok(Some(permit)),
         Err(_) => {
             let queue_hint = semaphore.available_permits().saturating_add(1).max(1);
             let queue_notice = serde_json::json!({
@@ -1105,13 +1074,24 @@ async fn acquire_sdp_admission_permit(
                 "sdp_offer_queue",
             );
             match semaphore.clone().acquire_owned().await {
-                Ok(permit) => Some(permit),
+                Ok(permit) => Ok(Some(permit)),
                 Err(err) => {
                     warn!(
                         "[{}]: Failed to acquire SDP admission permit because semaphore is closed: {}",
                         peer_id, err
                     );
-                    None
+                    let rejection_notice = serde_json::json!({
+                        "event": "sdp_offer_rejected",
+                        "reason": "server_busy",
+                    })
+                    .to_string();
+                    let _ = try_queue_signaling_message(
+                        sender,
+                        Ok(Message::text(rejection_notice)),
+                        peer_id,
+                        "sdp_offer_rejected",
+                    );
+                    Err(())
                 }
             }
         }
@@ -1146,7 +1126,7 @@ fn cleanup_idle_ip_rate_limiters(limiters: &DashMap<IpAddr, JoinRateLimiter>) {
     let now = Instant::now();
     let idle_threshold = Duration::from_secs(IP_RATE_LIMITER_IDLE_SECS);
     limiters.retain(|_ip, limiter| {
-        now.saturating_duration_since(limiter.last_refill_at) < idle_threshold
+        now.saturating_duration_since(limiter.last_seen_at) < idle_threshold
     });
 }
 
@@ -1504,6 +1484,7 @@ pub async fn handle_signaling_connection(
     let pa_map_clone_sc = player_aois.clone();
     let auth_service_clone_sc = auth_service.clone();
     let cleanup_once_sc = Arc::clone(&cleanup_once);
+    let pc_for_state_change_cb = Arc::clone(&pc_for_state_change);
 
     pc_for_state_change.on_peer_connection_state_change(Box::new(
         move |s: RTCPeerConnectionState| {
@@ -1513,12 +1494,7 @@ pub async fn handle_signaling_connection(
                 "[{}]: Peer Connection State changed: {}",
                 current_peer_id, s
             );
-            if matches!(
-                s,
-                RTCPeerConnectionState::Failed
-                    | RTCPeerConnectionState::Closed
-                    | RTCPeerConnectionState::Disconnected
-            ) {
+            if matches!(s, RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed) {
                 info!(
                     "[{}]: Peer disconnected/closed. Initiating cleanup.",
                     current_peer_id
@@ -1539,6 +1515,48 @@ pub async fn handle_signaling_connection(
                         current_peer_id
                     );
                 }
+            } else if matches!(s, RTCPeerConnectionState::Disconnected) {
+                info!(
+                    "[{}]: Peer disconnected. Waiting {}s before cleanup to allow ICE restart.",
+                    current_peer_id, DISCONNECTED_CLEANUP_GRACE_SECS
+                );
+                let delayed_peer_id = current_peer_id.clone();
+                let pc_for_delay = Arc::clone(&pc_for_state_change_cb);
+                let sp_clone_delay = sp_clone_sc.clone();
+                let pm_clone_delay = pm_clone_sc.clone();
+                let dc_map_clone_delay = dc_map_clone_sc.clone();
+                let cs_map_clone_delay = cs_map_clone_sc.clone();
+                let pa_map_clone_delay = pa_map_clone_sc.clone();
+                let auth_service_clone_delay = auth_service_clone_sc.clone();
+                let cleanup_once_delay = Arc::clone(&cleanup_once_sc);
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(DISCONNECTED_CLEANUP_GRACE_SECS))
+                        .await;
+                    let latest_state = pc_for_delay.connection_state();
+                    if matches!(
+                        latest_state,
+                        RTCPeerConnectionState::Disconnected
+                            | RTCPeerConnectionState::Failed
+                            | RTCPeerConnectionState::Closed
+                    ) {
+                        if begin_cleanup_once(cleanup_once_delay.as_ref()) {
+                            cleanup_connection(
+                                &delayed_peer_id,
+                                &sp_clone_delay,
+                                &pm_clone_delay,
+                                &dc_map_clone_delay,
+                                &cs_map_clone_delay,
+                                &pa_map_clone_delay,
+                                &auth_service_clone_delay,
+                            );
+                        }
+                    } else {
+                        debug!(
+                            "[{}]: Peer recovered to state {:?}; skipping delayed disconnect cleanup.",
+                            delayed_peer_id, latest_state
+                        );
+                    }
+                });
             }
             Box::pin(async {})
         },
@@ -1930,7 +1948,7 @@ pub async fn handle_signaling_connection(
                                         info!(
                                             "[CHAT] {} ({}): {}",
                                             chat_entry.username,
-                                            *chat_entry.player_id,
+                                            chat_entry.player_id.as_ref(),
                                             chat_entry.message
                                         );
                                         let mut chat_q_guard = chat_q_on_msg.write().await;
@@ -2015,11 +2033,17 @@ pub async fn handle_signaling_connection(
                                     break;
                                 }
                                 if let Some(sdp) = sig_data.sdp {
-                                    let _sdp_permit = acquire_sdp_admission_permit(
+                                    let _sdp_permit = match acquire_sdp_admission_permit(
                                         &current_peer_id_ws,
                                         &ws_signal_sender_clone,
                                     )
-                                    .await;
+                                    .await
+                                    {
+                                        Ok(permit) => permit,
+                                        Err(()) => {
+                                            continue;
+                                        }
+                                    };
                                     if let Err(e) =
                                         pc_signal_receiver.set_remote_description(sdp.clone()).await
                                     {
@@ -2167,7 +2191,7 @@ pub fn cleanup_connection(
     player_aois.remove(peer_id_str);
 
     let player_state_snapshot = {
-        let player_id_lookup: PlayerID = Arc::new(peer_id_str.to_owned());
+        let player_id_lookup: PlayerID = Arc::from(peer_id_str.to_owned());
         player_manager
             .get_player_state(&player_id_lookup)
             .map(|entry| entry.clone())
@@ -2568,17 +2592,18 @@ mod tests {
 
     #[test]
     fn join_rate_limiter_starts_full() {
-        let limiter = JoinRateLimiter::new(10, 10);
-        assert_eq!(limiter.available_tokens, 10.0);
-        assert_eq!(limiter.capacity, 10.0);
-        assert_eq!(limiter.refill_per_sec, 10.0);
+        let mut limiter = JoinRateLimiter::new(10, 10);
+        for _ in 0..10 {
+            assert!(limiter.try_acquire());
+        }
+        assert!(!limiter.try_acquire());
     }
 
     #[test]
     fn join_rate_limiter_clamps_minimum_values() {
-        let limiter = JoinRateLimiter::new(0, 0);
-        assert_eq!(limiter.refill_per_sec, 1.0);
-        assert_eq!(limiter.capacity, 1.0);
+        let mut limiter = JoinRateLimiter::new(0, 0);
+        assert!(limiter.try_acquire());
+        assert!(!limiter.try_acquire());
     }
 
     #[test]
@@ -2605,17 +2630,18 @@ mod tests {
 
     #[test]
     fn input_rate_limiter_starts_full() {
-        let limiter = InputRateLimiter::new(240, 360);
-        assert_eq!(limiter.available_tokens, 360.0);
-        assert_eq!(limiter.capacity, 360.0);
-        assert_eq!(limiter.refill_per_sec, 240.0);
+        let mut limiter = InputRateLimiter::new(240, 360);
+        for _ in 0..360 {
+            assert!(limiter.try_acquire());
+        }
+        assert!(!limiter.try_acquire());
     }
 
     #[test]
     fn input_rate_limiter_clamps_minimum_values() {
-        let limiter = InputRateLimiter::new(0, 0);
-        assert_eq!(limiter.refill_per_sec, 1.0);
-        assert_eq!(limiter.capacity, 1.0);
+        let mut limiter = InputRateLimiter::new(0, 0);
+        assert!(limiter.try_acquire());
+        assert!(!limiter.try_acquire());
     }
 
     #[test]

@@ -90,6 +90,18 @@ export function createEffectsAudioRuntime({
     ultraPerformanceMode = !!safeRefresh(getUltraPerformanceMode, ultraPerformanceMode);
     smoothedFrameMs = Number(safeRefresh(getSmoothedFrameMs, smoothedFrameMs)) || 16;
   };
+
+  const blurFilterCache = new Map();
+  const getSharedBlurFilter = (strength) => {
+    const key = Number(strength);
+    if (!Number.isFinite(key) || key <= 0) return null;
+    if (blurFilterCache.has(key)) {
+      return blurFilterCache.get(key);
+    }
+    const filter = new PIXI.BlurFilter(key);
+    blurFilterCache.set(key, filter);
+    return filter;
+  };
 class EffectsManager {
     constructor(app, container, audioManager = null) {
 this.app = app;
@@ -259,7 +271,7 @@ const smokeGraphics = new PIXI.Graphics();
 smokeGraphics.beginFill(0x888888, 0.5);
 smokeGraphics.drawCircle(0, 0, 8);
 smokeGraphics.endFill();
-smokeGraphics.filters = [new PIXI.BlurFilter(3)];
+smokeGraphics.filters = [getSharedBlurFilter(3)];
 textures.smoke = renderer.generateTexture(smokeGraphics);
 
 // Debris particle
@@ -919,7 +931,7 @@ impact.drawCircle(0, 0, config.size);
 impact.endFill();
 impact.position.set(position.x, position.y);
 if (loadTier === 0) {
-    impact.filters = [new PIXI.BlurFilter(2)];
+    impact.filters = [getSharedBlurFilter(2)];
 }
 this.effectsContainer.addChild(impact);
 
@@ -1025,7 +1037,7 @@ if (loadTier === 0) {
     glow.beginFill(config.color, 0.3);
     glow.drawCircle(0, 0, config.size * 1.5);
     glow.endFill();
-    glow.filters = [new PIXI.BlurFilter(4)];
+    glow.filters = [getSharedBlurFilter(4)];
     flashContainer.addChild(glow);
 }
 
@@ -1343,7 +1355,7 @@ explosion.beginFill(0xFF0000, 0.4);
 explosion.drawCircle(0, 0, radius);
 explosion.endFill();
 if (loadTier === 0) {
-    explosion.filters = [new PIXI.BlurFilter(3)];
+    explosion.filters = [getSharedBlurFilter(3)];
 }
 explosionContainer.addChild(explosion);
 
@@ -1417,7 +1429,7 @@ dustCloud.beginFill(0x666666, 0.5);
 dustCloud.drawCircle(0, 0, 40);
 dustCloud.endFill();
 dustCloud.position.set(position.x, position.y);
-dustCloud.filters = [new PIXI.BlurFilter(8)];
+dustCloud.filters = [getSharedBlurFilter(8)];
 this.effectsContainer.addChild(dustCloud);
 
 // Debris pieces
@@ -1749,39 +1761,52 @@ if (updateStride > 1) {
     }
 }
 const now = Date.now();
-this.activeEffects = this.activeEffects.filter(effect => {
+let writeIndex = 0;
+for (let readIndex = 0; readIndex < this.activeEffects.length; readIndex += 1) {
+    const effect = this.activeEffects[readIndex];
     if (!effect || !effect.object || effect.object.destroyed) {
         if (effect && typeof effect.onAbort === 'function') {
             effect.onAbort(effect);
         }
-        return false;
+        continue;
     }
-    if (now < effect.startTime) return true;
+    if (now < effect.startTime) {
+        this.activeEffects[writeIndex] = effect;
+        writeIndex += 1;
+        continue;
+    }
     if (!effect.started) {
         effect.started = true;
         effect.actualStartTime = now;
     }
-    
+
     const elapsed = now - effect.actualStartTime;
     const progress = Math.min(elapsed / effect.duration, 1);
 
     if (progress < 1 && effect.updateStride > 1) {
         effect.updateStrideTick = (effect.updateStrideTick + 1) % effect.updateStride;
         if (effect.updateStrideTick !== 0) {
-            return true;
+            this.activeEffects[writeIndex] = effect;
+            writeIndex += 1;
+            continue;
         }
     }
 
     effect.onUpdate(progress, effect);
-    
+
     if (progress >= 1) {
         if (effect.onComplete && effect.object && !effect.object.destroyed) {
             effect.onComplete(effect);
         }
-        return false;
+        continue;
     }
-    return true;
-});
+
+    this.activeEffects[writeIndex] = effect;
+    writeIndex += 1;
+}
+if (writeIndex < this.activeEffects.length) {
+    this.activeEffects.length = writeIndex;
+}
     }
 
     createMeleeSwingEffect(position, instigatorId) {
@@ -1859,7 +1884,7 @@ energyField.moveTo(0, 0);
 energyField.arc(0, 0, arcRadius + 10, startAngle - 0.1, startAngle + arcAngle + 0.1, false);
 energyField.closePath();
 energyField.endFill();
-energyField.filters = [new PIXI.BlurFilter(5)];
+energyField.filters = [getSharedBlurFilter(5)];
 arcContainer.addChild(energyField);
 
 // Main arc layers
@@ -1895,7 +1920,7 @@ for (let i = 0; i < trailCount; i++) {
     trailGlow.beginFill(0x00FFFF, 0.3);
     trailGlow.drawCircle(0, 0, 8);
     trailGlow.endFill();
-    trailGlow.filters = [new PIXI.BlurFilter(3)];
+    trailGlow.filters = [getSharedBlurFilter(3)];
     trailContainer.addChild(trailGlow);
     
     const trail = new PIXI.Graphics();
@@ -1973,7 +1998,7 @@ for (let i = 0; i < slashCount; i++) {
         Math.cos(slashAngle) * arcRadius,
         Math.sin(slashAngle) * arcRadius
     );
-    slashGlow.filters = [new PIXI.BlurFilter(2)];
+    slashGlow.filters = [getSharedBlurFilter(2)];
     slashContainer.addChild(slashGlow);
     
     // Main slash
@@ -2035,7 +2060,7 @@ for (let i = 0; i < sparkCount; i++) {
     sparkGlow.beginFill(sparkColor, 0.5);
     sparkGlow.drawCircle(0, 0, 6);
     sparkGlow.endFill();
-    sparkGlow.filters = [new PIXI.BlurFilter(2)];
+    sparkGlow.filters = [getSharedBlurFilter(2)];
     sparkContainer.addChild(sparkGlow);
     
     // Spark core
@@ -2157,7 +2182,7 @@ for (let i = 0; i < particleCount; i++) {
     glow.beginFill(color, 0.3);
     glow.drawCircle(0, 0, 8);
     glow.endFill();
-    glow.filters = [new PIXI.BlurFilter(3)];
+    glow.filters = [getSharedBlurFilter(3)];
     
     particleContainer.addChild(glow);
     particleContainer.addChild(particle);
@@ -2401,7 +2426,7 @@ this.scheduleCallback(1200, () => {
             wallHeight + 30 + i * 10
         );
         flash.endFill();
-        flash.filters = [new PIXI.BlurFilter(3 + i * 2)];
+        flash.filters = [getSharedBlurFilter(3 + i * 2)];
         container.addChild(flash);
         flashLayers.push(flash);
     }

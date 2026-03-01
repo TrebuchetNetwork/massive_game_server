@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::deterministic_rng::DeterministicRng;
 
 const DEFAULT_ANTI_CHEAT_KICK_THRESHOLD: u32 = 8;
 
@@ -24,7 +25,7 @@ impl MassiveGameServer {
         self.aim_anomaly_states
             .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
         self.direct_packets.retain(|peer_id, _| {
-            let player_id = self.player_manager.id_pool.get_or_create(peer_id.as_str());
+            let player_id = self.player_manager.id_pool.get_or_create(peer_id.as_ref());
             self.player_manager.get_player_state(&player_id).is_some()
         });
         self.prune_match_runtime_state();
@@ -140,8 +141,12 @@ impl MassiveGameServer {
         }
     }
 
-    fn spawn_commander_supply_drop(&self, _team_id: u8, center: Vec2) -> usize {
-        let mut rng = rand::thread_rng();
+    fn spawn_commander_supply_drop(&self, team_id: u8, center: Vec2) -> usize {
+        let seed = self.frame_counter.load(AtomicOrdering::Relaxed)
+            ^ ((team_id as u64) << 48)
+            ^ ((center.x.to_bits() as u64) << 16)
+            ^ (center.y.to_bits() as u64);
+        let mut rng = DeterministicRng::new(seed);
         let pickup_types = [
             CorePickupType::Health,
             CorePickupType::Ammo,
@@ -155,8 +160,8 @@ impl MassiveGameServer {
         {
             let mut pickups = self.pickups.write();
             for idx in 0..COMMANDER_SUPPLY_DROP_PICKUPS {
-                let angle = rng.gen_range(0.0..(2.0 * std::f32::consts::PI));
-                let radius = rng.gen_range(6.0..45.0);
+                let angle = rng.gen_range_f32(0.0, 2.0 * std::f32::consts::PI);
+                let radius = rng.gen_range_f32(6.0, 45.0);
                 let spawn_x =
                     (center.x + radius * angle.cos()).clamp(WORLD_MIN_X + 40.0, WORLD_MAX_X - 40.0);
                 let spawn_y =
@@ -237,7 +242,7 @@ impl MassiveGameServer {
             info!(
                 "[Commander] Team {} commander {} set waypoint and triggered supply drop ({} pickups).",
                 team_id,
-                commander_id.as_str(),
+                commander_id.as_ref(),
                 spawned
             );
         }
@@ -372,7 +377,7 @@ impl MassiveGameServer {
             player_state.violation_count = player_state.violation_count.saturating_add(1);
             warn!(
                 "[{}]: Aim anomaly detected (rotation_speed={:.2} rad/s, suspicion={:.2}).",
-                player_id.as_str(),
+                player_id.as_ref(),
                 rotation_speed,
                 entry.suspicion_score
             );
@@ -503,7 +508,10 @@ impl MassiveGameServer {
         info!("Spawning {} initial bots...", count);
         // No longer reducing count here - use what's passed in
         let team_spawn_areas = MapGenerator::get_team_spawn_areas();
-        let mut rng = rand::thread_rng();
+        let seed = self.frame_counter.load(AtomicOrdering::Relaxed)
+            ^ ((count as u64) << 32)
+            ^ self.bot_name_counter.load(AtomicOrdering::Relaxed);
+        let mut rng = DeterministicRng::new(seed);
 
         for i in 0..count {
             let bot_name_num = self.bot_name_counter.fetch_add(1, AtomicOrdering::SeqCst);
@@ -530,10 +538,11 @@ impl MassiveGameServer {
 
             let spawn_pos = if !potential_spawns_for_team.is_empty() {
                 // Use team spawn point with some random offset
-                let base_spawn =
-                    potential_spawns_for_team[rng.gen_range(0..potential_spawns_for_team.len())];
+                let pick_idx =
+                    rng.gen_range_i32(0, potential_spawns_for_team.len() as i32) as usize;
+                let base_spawn = potential_spawns_for_team[pick_idx];
                 let offset_radius = 50.0; // Small offset to prevent stacking
-                let angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
+                let angle = rng.gen_range_f32(0.0, 2.0 * std::f32::consts::PI);
                 let offset_x = offset_radius * angle.cos();
                 let offset_y = offset_radius * angle.sin();
                 Vec2::new(
@@ -546,7 +555,7 @@ impl MassiveGameServer {
                 // Fallback: use respawn manager
                 self.respawn_manager.get_respawn_position(
                     self,
-                    &Arc::new(bot_player_id_str.clone()),
+                    &Arc::from(bot_player_id_str.clone()),
                     Some(team_id as u8),
                     &[],
                 )
@@ -808,11 +817,7 @@ impl MassiveGameServer {
             let proj_spawn_x = player_state.x + player_state.rotation.cos() * spawn_offset;
             let proj_spawn_y = player_state.y + player_state.rotation.sin() * spawn_offset;
 
-            let damage_multiplier = if player_state.damage_boost_remaining > 0.0 {
-                1.5
-            } else {
-                1.0
-            };
+            let damage_multiplier = player_state.effective_damage_multiplier();
 
             self.global_game_events.push(
                 GameEvent::WeaponFired {
@@ -828,10 +833,16 @@ impl MassiveGameServer {
 
             match player_state.weapon {
                 ServerWeaponType::Shotgun => {
+                    let spread_seed = self.frame_counter.load(AtomicOrdering::Relaxed)
+                        ^ ((input.timestamp as u64) << 1)
+                        ^ ((input.sequence as u64) << 33)
+                        ^ ((player_state.x.to_bits() as u64) << 17)
+                        ^ (player_state.y.to_bits() as u64)
+                        ^ ((player_state.rotation.to_bits() as u64) << 7);
+                    let mut spread_rng = DeterministicRng::new(spread_seed);
                     for _ in 0..SHOTGUN_PELLET_COUNT {
-                        // Changed i to _ as i is not used
                         let angle_offset =
-                            SHOTGUN_SPREAD_ANGLE_RAD * (2.0 * (rand::random::<f32>()) - 1.0); // Simplified spread
+                            SHOTGUN_SPREAD_ANGLE_RAD * spread_rng.gen_range_f32(-1.0, 1.0);
                         let dir_x = player_state.rotation.cos() * angle_offset.cos()
                             - player_state.rotation.sin() * angle_offset.sin();
                         let dir_y = player_state.rotation.sin() * angle_offset.cos()
@@ -983,14 +994,14 @@ impl MassiveGameServer {
             if let Some(player_state) = self.player_manager.get_player_state(&peer_id) {
                 warn!(
                     "[{}]: Auto-kicking player due to anti-cheat violations (count={}, threshold={}).",
-                    peer_id.as_str(),
+                    peer_id.as_ref(),
                     player_state.violation_count,
                     kick_threshold.unwrap_or(DEFAULT_ANTI_CHEAT_KICK_THRESHOLD)
                 );
             }
-            self.remove_quic_player(peer_id.as_str());
+            self.remove_quic_player(peer_id.as_ref());
             let _ = crate::network::connection_manager::shared_connection_manager()
-                .remove(peer_id.as_str());
+                .remove(peer_id.as_ref());
         }
         metrics::record_subsystem_time("network", network_start.elapsed().as_secs_f64());
     }

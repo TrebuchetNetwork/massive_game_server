@@ -114,21 +114,21 @@ pub struct ServerConfig {
     pub thread_pools: ThreadPoolConfig,
     pub cluster_shard_count: usize,
     pub local_shard_id: usize,
-    pub max_players_per_match: usize, // <<< ADD THIS LINE
+    pub max_players_per_match: usize,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         ServerConfig {
             tick_rate: super::constants::SERVER_TICK_RATE,
-            num_player_shards: 12, // Match core count for better distribution super::constants::PLAYER_SHARDS_COUNT,
+            num_player_shards: super::constants::PLAYER_SHARDS_COUNT,
             num_world_partitions: super::constants::PARTITION_GRID_SIZE
                 * super::constants::PARTITION_GRID_SIZE,
             world_partition_grid_dim: super::constants::PARTITION_GRID_SIZE,
             thread_pools: ThreadPoolConfig::default(),
             cluster_shard_count: 1,
             local_shard_id: 0,
-            max_players_per_match: 400, // <<< ADD THIS LINE (or your desired default)
+            max_players_per_match: 400,
         }
     }
 }

@@ -102,7 +102,7 @@ impl MassiveGameServer {
                     return;
                 }
                 sampled_players.push(LiveReplayPlayerSample {
-                    player_id: player_id.as_str().to_string(),
+                    player_id: player_id.as_ref().to_string(),
                     username: player_state.username.clone(),
                     x: player_state.x,
                     y: player_state.y,

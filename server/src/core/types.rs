@@ -3,10 +3,9 @@ use dashmap::DashMap;
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
-use std::time::Duration;
 use std::time::Instant; // Removed unused Duration
 
-pub type PlayerID = Arc<String>;
+pub type PlayerID = Arc<str>;
 pub type EntityId = u64;
 static ENTITY_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -188,7 +187,7 @@ pub struct PlayerState {
 
 impl PlayerState {
     pub fn new(id_val: String, username_val: String, initial_x: f32, initial_y: f32) -> Self {
-        let arc_id = Arc::new(id_val);
+        let arc_id: PlayerID = Arc::from(id_val);
         let primary_weapon = ServerWeaponType::Rifle;
         let secondary_weapon = ServerWeaponType::Pistol;
         let default_weapon = primary_weapon;
@@ -260,12 +259,16 @@ impl PlayerState {
     /// Returns `true` if the input was accepted, `false` if rejected.
     ///
     /// Rejection reasons:
+    /// - `sequence == 0` (reserved/invalid)
     /// - `sequence <= last_queued_input_sequence` (replay / duplicate)
     /// - `sequence > last_queued_input_sequence + MAX_INPUT_SEQUENCE_GAP` (suspicious jump)
     pub fn queue_input(&mut self, input: PlayerInputData) -> bool {
         let seq = input.sequence;
+        if seq == 0 {
+            return false;
+        }
         // Reject replayed or duplicate inputs.
-        if seq > 0 && seq <= self.last_queued_input_sequence {
+        if seq <= self.last_queued_input_sequence {
             return false;
         }
         // Reject suspiciously large sequence jumps.
@@ -395,10 +398,14 @@ impl PlayerState {
             return false;
         }
         if let Some(last_shot) = self.last_shot_time {
-            let cooldown = Self::get_weapon_fire_rate_seconds(self.weapon);
-            let effective_cooldown = cooldown
-                .max(crate::core::constants::MIN_SHOT_INTERVAL_SECONDS)
-                - crate::core::constants::FIRE_RATE_JITTER_TOLERANCE_SECS;
+            let cooldown = Self::get_weapon_fire_rate_seconds(self.weapon)
+                .max(crate::core::constants::MIN_SHOT_INTERVAL_SECONDS);
+            let effective_cooldown =
+                if cooldown > crate::core::constants::FIRE_RATE_JITTER_TOLERANCE_SECS {
+                    cooldown - crate::core::constants::FIRE_RATE_JITTER_TOLERANCE_SECS
+                } else {
+                    cooldown
+                };
             if current_time.duration_since(last_shot).as_secs_f32() < effective_cooldown {
                 return false;
             }
@@ -767,9 +774,9 @@ impl Projectile {
             ServerWeaponType::Melee => (0.0, 0.0),
         };
 
-        // Use PlayerState::get_weapon_damage for consistent damage calculation
-        let has_damage_boost = damage_multiplier > 1.0;
-        let damage = PlayerState::get_weapon_damage(weapon_type, has_damage_boost);
+        // Preserve full multiplier precision (pickup + streak boosts can stack).
+        let base_damage = PlayerState::get_weapon_damage(weapon_type, false) as f32;
+        let damage = (base_damage * damage_multiplier.max(0.0)).round() as i32;
 
         Projectile {
             id,
@@ -936,23 +943,6 @@ impl Pickup {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MatchState {
-    WaitingForPlayers,
-    InProgress,
-    Ended,
-}
-
-#[derive(Clone)]
-#[allow(dead_code)]
-struct MatchStatus {
-    state: MatchState,
-    time_remaining: Duration,
-    team1_score: i32,
-    team2_score: i32,
-    winning_team: Option<u8>,
-}
-
 #[derive(Clone, Debug)]
 pub struct PlayerAoI {
     pub visible_players: HashSet<PlayerID>,
@@ -981,21 +971,6 @@ impl PlayerAoI {
 }
 
 pub type PlayerAoIs = Arc<DashMap<String, PlayerAoI>>;
-
-#[derive(Clone, Debug)]
-pub struct DeltaState {}
-#[derive(Debug, Clone)]
-pub struct NetworkConnection {
-    pub last_heartbeat: Instant,
-}
-impl NetworkConnection {
-    pub fn send_zero_copy(&self, _bytes: Vec<u8>) -> Result<(), String> {
-        Ok(())
-    }
-    pub fn poll_input(&self) -> Option<PlayerInputData> {
-        None
-    }
-}
 #[derive(Clone, Debug)]
 pub struct BoundaryUpdate {
     pub player_id: PlayerID,
@@ -1047,61 +1022,6 @@ pub enum EventPriority {
     pub fn reset(&mut self) {}
     pub fn finished_data(&self) -> &[u8] { &[] }
 }*/
-pub struct PerformanceMetrics;
-impl Default for PerformanceMetrics {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl PerformanceMetrics {
-    pub fn new() -> Self {
-        PerformanceMetrics
-    }
-    pub fn get_average_frame_time(&self) -> f64 {
-        0.016
-    }
-    pub fn get_cpu_usage(&self) -> f64 {
-        50.0
-    }
-}
-pub struct NumaAwareServer;
-impl NumaAwareServer {
-    pub fn new() -> Result<Self, String> {
-        Ok(NumaAwareServer)
-    }
-}
-pub type ThreadId = std::thread::ThreadId;
-#[derive(Clone, Debug)]
-pub struct ThreadState {
-    pub last_progress: Instant,
-}
-impl Default for ThreadState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ThreadState {
-    pub fn new() -> Self {
-        ThreadState {
-            last_progress: Instant::now(),
-        }
-    }
-}
-pub struct PrometheusHistogram;
-impl PrometheusHistogram {
-    pub fn observe(&self, _val: f64) {}
-}
-pub struct PrometheusGauge;
-impl PrometheusGauge {
-    pub fn set(&self, _val: f64) {}
-}
-pub struct PrometheusCounter;
-impl PrometheusCounter {
-    pub fn inc(&self) {}
-}
-
 #[derive(Clone)]
 enum RTCDataChannelBackend {
     Real(Arc<webrtc::data_channel::RTCDataChannel>),
@@ -1162,6 +1082,7 @@ impl RTCDataChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use std::time::Instant;
 
     fn make_player(name: &str) -> PlayerState {
@@ -1342,7 +1263,7 @@ mod tests {
     #[test]
     fn record_incoming_damage_creates_entry() {
         let mut p = make_player("victim");
-        let attacker_id: PlayerID = Arc::new("attacker1".to_string());
+        let attacker_id: PlayerID = Arc::from("attacker1".to_string());
         let now = Instant::now();
         p.record_incoming_damage(&attacker_id, 25, now);
         assert_eq!(p.recent_damage_sources.len(), 1);
@@ -1352,7 +1273,7 @@ mod tests {
     #[test]
     fn record_incoming_damage_accumulates_same_attacker() {
         let mut p = make_player("victim");
-        let attacker_id: PlayerID = Arc::new("attacker1".to_string());
+        let attacker_id: PlayerID = Arc::from("attacker1".to_string());
         let now = Instant::now();
         p.record_incoming_damage(&attacker_id, 20, now);
         p.record_incoming_damage(&attacker_id, 15, now);
@@ -1363,8 +1284,8 @@ mod tests {
     #[test]
     fn record_incoming_damage_separate_attackers() {
         let mut p = make_player("victim");
-        let a1: PlayerID = Arc::new("a1".to_string());
-        let a2: PlayerID = Arc::new("a2".to_string());
+        let a1: PlayerID = Arc::from("a1".to_string());
+        let a2: PlayerID = Arc::from("a2".to_string());
         let now = Instant::now();
         p.record_incoming_damage(&a1, 20, now);
         p.record_incoming_damage(&a2, 30, now);
@@ -1374,22 +1295,22 @@ mod tests {
     #[test]
     fn get_assist_ids_excludes_killer() {
         let mut p = make_player("victim");
-        let killer: PlayerID = Arc::new("killer".to_string());
-        let assister: PlayerID = Arc::new("assister".to_string());
+        let killer: PlayerID = Arc::from("killer".to_string());
+        let assister: PlayerID = Arc::from("assister".to_string());
         let now = Instant::now();
         p.record_incoming_damage(&killer, 60, now);
         p.record_incoming_damage(&assister, 30, now);
         let assists = p.get_assist_ids(&killer, now);
         assert_eq!(assists.len(), 1);
-        assert_eq!(*assists[0], "assister");
+        assert_eq!(assists[0].as_ref(), "assister");
     }
 
     #[test]
     fn get_assist_ids_stale_entries_pruned() {
         let mut p = make_player("victim");
-        let old_attacker: PlayerID = Arc::new("old".to_string());
-        let recent_attacker: PlayerID = Arc::new("recent".to_string());
-        let killer: PlayerID = Arc::new("killer".to_string());
+        let old_attacker: PlayerID = Arc::from("old".to_string());
+        let recent_attacker: PlayerID = Arc::from("recent".to_string());
+        let killer: PlayerID = Arc::from("killer".to_string());
         let old_time = Instant::now();
         p.record_incoming_damage(&old_attacker, 20, old_time);
         // Simulate time passing beyond ASSIST_WINDOW_SECS (5s)
@@ -1398,7 +1319,7 @@ mod tests {
         let assists = p.get_assist_ids(&killer, now);
         // old_attacker should be expired
         assert_eq!(assists.len(), 1);
-        assert_eq!(*assists[0], "recent");
+        assert_eq!(assists[0].as_ref(), "recent");
     }
 
     // ── effective_damage_multiplier / streak tests ────────────────
@@ -1525,6 +1446,28 @@ mod tests {
         assert!(p.can_shoot(within_tolerance));
         let too_soon = shot_time + Duration::from_millis(400);
         assert!(!p.can_shoot(too_soon));
+    }
+
+    #[test]
+    fn queue_input_rejects_zero_sequence() {
+        let mut p = make_player("p1");
+        let accepted = p.queue_input(PlayerInputData {
+            timestamp: 1,
+            sequence: 0,
+            move_forward: false,
+            move_backward: false,
+            move_left: false,
+            move_right: false,
+            shooting: false,
+            reload: false,
+            rotation: 0.0,
+            melee_attack: false,
+            change_weapon_slot: 0,
+            use_ability_slot: 0,
+            ping_x: 0.0,
+            ping_y: 0.0,
+        });
+        assert!(!accepted);
     }
 
     // ── Health tracker race condition tests ──────────────────────────

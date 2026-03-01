@@ -98,12 +98,17 @@ impl MapGenerator {
         walls.extend(Self::create_border_walls());
         walls.extend(Self::create_central_arena_open());
         walls.extend(Self::create_team_bases_open());
-        walls.extend(Self::create_strategic_cover_sparse(&mut rng, cover_points));
+        walls.extend(Self::create_strategic_cover_sparse(
+            &mut rng,
+            cover_points,
+            &walls,
+        ));
         walls.extend(Self::create_destructible_nodes_sparse(
             &mut rng,
             destructible_nodes,
+            &walls,
         ));
-        walls.extend(Self::create_lanes_and_pathways(&mut rng)); // rng is used here
+        walls.extend(Self::create_lanes_and_pathways());
 
         walls
     }
@@ -160,7 +165,6 @@ impl MapGenerator {
         let center_x = 0.0;
         let center_y = 0.0;
         let arena_radius = 200.0;
-        let _opening_size = 150.0; // Prefixed with underscore as it's unused
         let wall_thickness = 15.0;
 
         let pillar_size = 80.0;
@@ -351,11 +355,15 @@ impl MapGenerator {
     fn create_strategic_cover_sparse(
         rng: &mut impl Rng,
         number_of_cover_points: usize,
+        existing_walls: &[Wall],
     ) -> Vec<Wall> {
         let mut walls = Vec::new();
         let cover_health = 120;
+        let mut attempts = 0usize;
+        let max_attempts = number_of_cover_points.saturating_mul(12).max(16);
 
-        for _ in 0..number_of_cover_points {
+        while walls.len() < number_of_cover_points && attempts < max_attempts {
+            attempts += 1;
             let x = rng.gen_range(WORLD_MIN_X + 200.0..WORLD_MAX_X - 200.0);
             let y = rng.gen_range(WORLD_MIN_Y + 200.0..WORLD_MAX_Y - 200.0);
 
@@ -368,7 +376,7 @@ impl MapGenerator {
 
             let width = rng.gen_range(40.0..80.0);
             let height = rng.gen_range(15.0..30.0);
-            walls.push(Wall {
+            let candidate = Wall {
                 id: generate_entity_id(),
                 x,
                 y,
@@ -377,16 +385,29 @@ impl MapGenerator {
                 is_destructible: true,
                 current_health: cover_health,
                 max_health: cover_health,
-            });
+            };
+            if Self::wall_overlaps_any(&candidate, existing_walls, 20.0)
+                || Self::wall_overlaps_any(&candidate, &walls, 20.0)
+            {
+                continue;
+            }
+            walls.push(candidate);
         }
         walls
     }
 
-    fn create_destructible_nodes_sparse(rng: &mut impl Rng, number_of_nodes: usize) -> Vec<Wall> {
+    fn create_destructible_nodes_sparse(
+        rng: &mut impl Rng,
+        number_of_nodes: usize,
+        existing_walls: &[Wall],
+    ) -> Vec<Wall> {
         let mut walls = Vec::new();
         let node_health = 200;
+        let mut attempts = 0usize;
+        let max_attempts = number_of_nodes.saturating_mul(12).max(16);
 
-        for _ in 0..number_of_nodes {
+        while walls.len() < number_of_nodes && attempts < max_attempts {
+            attempts += 1;
             let x = rng.gen_range(WORLD_MIN_X + 300.0..WORLD_MAX_X - 300.0);
             let y = rng.gen_range(WORLD_MIN_Y + 300.0..WORLD_MAX_Y - 300.0);
 
@@ -395,7 +416,7 @@ impl MapGenerator {
             }
 
             let size = rng.gen_range(50.0..70.0);
-            walls.push(Wall {
+            let candidate = Wall {
                 id: generate_entity_id(),
                 x,
                 y,
@@ -404,12 +425,18 @@ impl MapGenerator {
                 is_destructible: true,
                 current_health: node_health,
                 max_health: node_health,
-            });
+            };
+            if Self::wall_overlaps_any(&candidate, existing_walls, 24.0)
+                || Self::wall_overlaps_any(&candidate, &walls, 24.0)
+            {
+                continue;
+            }
+            walls.push(candidate);
         }
         walls
     }
 
-    fn create_lanes_and_pathways(_rng: &mut impl Rng) -> Vec<Wall> {
+    fn create_lanes_and_pathways() -> Vec<Wall> {
         // Prefixed rng as it's not used in this version
         let mut walls = Vec::new();
         let wall_thickness = 15.0;
@@ -483,6 +510,25 @@ impl MapGenerator {
         });
 
         walls
+    }
+
+    fn wall_overlaps_any(candidate: &Wall, walls: &[Wall], padding: f32) -> bool {
+        walls.iter().any(|existing| {
+            let candidate_left = candidate.x - padding;
+            let candidate_right = candidate.x + candidate.width + padding;
+            let candidate_top = candidate.y - padding;
+            let candidate_bottom = candidate.y + candidate.height + padding;
+
+            let existing_left = existing.x;
+            let existing_right = existing.x + existing.width;
+            let existing_top = existing.y;
+            let existing_bottom = existing.y + existing.height;
+
+            candidate_left < existing_right
+                && candidate_right > existing_left
+                && candidate_top < existing_bottom
+                && candidate_bottom > existing_top
+        })
     }
 
     /// "Corridors" - tight lanes, favors Shotgun/Melee

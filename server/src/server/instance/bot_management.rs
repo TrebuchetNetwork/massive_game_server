@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::deterministic_rng::DeterministicRng;
 
 impl MassiveGameServer {
     pub(super) fn manage_bot_population(&self) {
@@ -131,7 +132,7 @@ impl MassiveGameServer {
                         state.username.clone(),
                     )
                 })
-                .unwrap_or((i64::MIN, 0, bot_id.as_str().to_owned()));
+                .unwrap_or((i64::MIN, 0, bot_id.as_ref().to_owned()));
             candidates.push((bot_id, rating, team_id, username));
         }
 
@@ -239,12 +240,12 @@ impl MassiveGameServer {
             return false;
         }
 
-        self.player_manager.remove_player(bot_id.as_str());
-        self.data_channels_map.remove(bot_id.as_str());
-        self.client_states_map.write().remove(bot_id.as_str());
-        self.player_aois.remove(bot_id.as_str());
+        self.player_manager.remove_player(bot_id.as_ref());
+        self.data_channels_map.remove(bot_id.as_ref());
+        self.client_states_map.write().remove(bot_id.as_ref());
+        self.player_aois.remove(bot_id.as_ref());
         // Clean up per-player tracking state to prevent unbounded memory growth
-        self.cleanup_player_tracking_state(bot_id.as_str());
+        self.cleanup_player_tracking_state(bot_id.as_ref());
 
         info!(
             "[Human Priority] Evicted bot '{}' to free a slot for human '{}'.",
@@ -253,7 +254,7 @@ impl MassiveGameServer {
 
         if joining_peer_id != "bot_population_manager" {
             let (bot_team, bot_name) =
-                bot_snapshot.unwrap_or((0, format!("Bot {}", bot_id.as_str())));
+                bot_snapshot.unwrap_or((0, format!("Bot {}", bot_id.as_ref())));
             let mut announcement = format!(
                 "{} was rotated out to free a slot for {}.",
                 bot_name, joining_peer_id
@@ -288,7 +289,10 @@ impl MassiveGameServer {
         );
 
         let team_spawn_areas = crate::world::map_generator::MapGenerator::get_team_spawn_areas();
-        let mut rng = rand::thread_rng();
+        let seed = self.frame_counter.load(AtomicOrdering::Relaxed)
+            ^ ((count_to_add as u64) << 32)
+            ^ self.bot_name_counter.load(AtomicOrdering::Relaxed);
+        let mut rng = DeterministicRng::new(seed);
         let bot_names = [
             "Alpha", "Beta", "Gamma", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India",
             "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa", "Quebec", "Romeo",
@@ -341,10 +345,11 @@ impl MassiveGameServer {
                 .collect();
 
             let spawn_pos = if !potential_spawns_for_team.is_empty() {
-                let base_spawn =
-                    potential_spawns_for_team[rng.gen_range(0..potential_spawns_for_team.len())];
+                let pick_idx =
+                    rng.gen_range_i32(0, potential_spawns_for_team.len() as i32) as usize;
+                let base_spawn = potential_spawns_for_team[pick_idx];
                 let offset_radius = 50.0;
-                let angle = rng.gen_range(0.0..2.0 * std::f32::consts::PI);
+                let angle = rng.gen_range_f32(0.0, 2.0 * std::f32::consts::PI);
                 let offset_x = offset_radius * angle.cos();
                 let offset_y = offset_radius * angle.sin();
                 Vec2::new(
@@ -356,7 +361,7 @@ impl MassiveGameServer {
             } else {
                 self.respawn_manager.get_respawn_position(
                     self,
-                    &Arc::new(bot_player_id_str.clone()),
+                    &Arc::from(bot_player_id_str.clone()),
                     Some(team_id),
                     &[],
                 )

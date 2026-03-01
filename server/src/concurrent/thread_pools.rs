@@ -17,67 +17,6 @@ pub struct ThreadPoolSystem {
 }
 
 impl ThreadPoolSystem {
-    /*pub fn new_old(config: Arc<ServerConfig>) -> ServerResult<Self> {
-        let core_alloc = CoreAllocation::new(&config.thread_pools);
-        let all_core_ids_arc: Arc<Option<Vec<CoreId>>> = Arc::new(core_affinity::get_core_ids());
-
-
-        if all_core_ids_arc.is_none() {
-            warn!("Could not get core IDs. Core affinity will not be applied.");
-        }
-        // Correctly access the length of the Vec<CoreId> inside the Option inside the Arc
-        let available_cores = all_core_ids_arc.as_ref().as_ref().map_or(0, |ids_vec| ids_vec.len());
-
-        let total_requested_cores = config.thread_pools.physics_threads +
-                                    config.thread_pools.networking_threads +
-                                    config.thread_pools.game_logic_threads +
-                                    config.thread_pools.ai_threads +
-                                    config.thread_pools.io_threads;
-
-        if available_cores > 0 && total_requested_cores > available_cores {
-            warn!(
-                "Requested {} total cores for thread pools, but only {} cores are available. Performance may be impacted.",
-                total_requested_cores, available_cores
-            );
-        }
-
-        let physics_pool = Self::create_pool(
-            "physics",
-            config.thread_pools.physics_threads,
-            core_alloc.physics_cores_indices.clone(),
-            all_core_ids_arc.clone(),
-        )?;
-        let network_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(config.thread_pools.networking_threads)
-            .build()?;
-        let game_logic_pool = Self::create_pool(
-            "game_logic",
-            config.thread_pools.game_logic_threads,
-            core_alloc.game_logic_cores_indices.clone(),
-            all_core_ids_arc.clone(),
-        )?;
-        let ai_pool = Self::create_pool(
-            "ai",
-             config.thread_pools.ai_threads,
-            core_alloc.ai_cores_indices.clone(),
-            all_core_ids_arc.clone(),
-        )?;
-        let io_pool = Self::create_pool(
-            "io",
-            config.thread_pools.io_threads,
-            core_alloc.io_cores_indices.clone(),
-            all_core_ids_arc, // Last one can move the Arc
-        )?;
-
-        Ok(ThreadPoolSystem {
-            physics_pool: Arc::new(physics_pool),
-            network_pool: Arc::new(network_pool),
-            game_logic_pool: Arc::new(game_logic_pool),
-            ai_pool: Arc::new(ai_pool),
-            io_pool: Arc::new(io_pool),
-        })
-    }*/
-
     pub fn new(config: Arc<ServerConfig>) -> Result<Self, anyhow::Error> {
         let numa_aware = env_bool("MGS_NUMA_AWARE");
         let numa_topology = Arc::new(NumaTopology::from_env());

@@ -4,10 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::hash::Hasher;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
 use tracing::{info, warn};
+use uuid::Uuid;
 use warp::{Filter, Reply};
 
 #[derive(Clone)]
@@ -257,6 +260,7 @@ fn to_view(record: &FeatureFlagRecord) -> FeatureFlagView {
 fn is_subject_in_rollout(key: &str, subject: &str, rollout_percentage: u8) -> bool {
     let mut hasher = SeaHasher::new();
     hasher.write(key.as_bytes());
+    hasher.write_u8(0x1f);
     hasher.write(subject.as_bytes());
     let bucket = (hasher.finish() % 100) as u8;
     bucket < rollout_percentage
@@ -301,8 +305,27 @@ fn persist_store(path: &Path, flags: &HashMap<String, FeatureFlagRecord>) -> Res
     }
     let serialized = serde_json::to_string_pretty(flags)
         .map_err(|err| format!("failed to serialize flags: {}", err))?;
-    fs::write(path, serialized)
-        .map_err(|err| format!("failed to write '{}': {}", path.display(), err))
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("feature_flags.json");
+    let tmp_path = path.with_file_name(format!(".{}.{}.tmp", file_name, Uuid::new_v4().simple()));
+    let mut tmp_file = fs::File::create(&tmp_path)
+        .map_err(|err| format!("failed to create '{}': {}", tmp_path.display(), err))?;
+    tmp_file
+        .write_all(serialized.as_bytes())
+        .map_err(|err| format!("failed to write '{}': {}", tmp_path.display(), err))?;
+    tmp_file
+        .sync_all()
+        .map_err(|err| format!("failed to fsync '{}': {}", tmp_path.display(), err))?;
+    fs::rename(&tmp_path, path).map_err(|err| {
+        format!(
+            "failed to atomically replace '{}' with '{}': {}",
+            path.display(),
+            tmp_path.display(),
+            err
+        )
+    })
 }
 
 fn parse_flags_from_env() -> Vec<(String, bool)> {
@@ -362,6 +385,46 @@ fn with_service(
     warp::any().map(move || service.clone())
 }
 
+fn inline_admin_expected_token() -> Option<&'static String> {
+    static TOKEN: OnceLock<Option<String>> = OnceLock::new();
+    TOKEN
+        .get_or_init(|| {
+            std::env::var("MGS_ADMIN_BEARER_TOKEN")
+                .or_else(|_| std::env::var("MGS_ADMIN_TOKEN"))
+                .ok()
+                .map(|raw| raw.trim().to_owned())
+                .filter(|raw| !raw.is_empty())
+        })
+        .as_ref()
+}
+
+fn parse_bearer_token(authorization_header: Option<&str>) -> Option<&str> {
+    let raw = authorization_header?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    raw.strip_prefix("Bearer ")
+        .or_else(|| raw.strip_prefix("bearer "))
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    let left_bytes = left.as_bytes();
+    let right_bytes = right.as_bytes();
+    left_bytes.len() == right_bytes.len() && left_bytes.ct_eq(right_bytes).into()
+}
+
+fn inline_admin_authorized(authorization_header: Option<&str>) -> bool {
+    let Some(expected) = inline_admin_expected_token() else {
+        return false;
+    };
+    let Some(provided) = parse_bearer_token(authorization_header) else {
+        return false;
+    };
+    constant_time_eq(expected.as_str(), provided)
+}
+
 pub fn build_feature_flag_routes(
     service: FeatureFlagService,
 ) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
@@ -370,30 +433,57 @@ pub fn build_feature_flag_routes(
 
     let list = warp::path!("api" / "ops" / "feature-flags")
         .and(warp::get())
+        .and(warp::header::optional::<String>("authorization"))
         .and(with_service(service.clone()))
-        .map(|flags: FeatureFlagService| ok_response(flags.list_flags()));
+        .map(|authorization: Option<String>, flags: FeatureFlagService| {
+            if !inline_admin_authorized(authorization.as_deref()) {
+                return error_response(
+                    "admin_auth_required",
+                    "Admin bearer token required.".to_owned(),
+                );
+            }
+            ok_response(flags.list_flags())
+        });
 
     let set = warp::path!("api" / "ops" / "feature-flags" / "set")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
-            |body: SetFlagBody, flags: FeatureFlagService| match flags.set_flag(body) {
-                Ok(result) => ok_response(result),
-                Err(err) => error_response(err.code(), err.message()),
+            |authorization: Option<String>, body: SetFlagBody, flags: FeatureFlagService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match flags.set_flag(body) {
+                    Ok(result) => ok_response(result),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
             },
         );
 
     let evaluate = warp::path!("api" / "ops" / "feature-flags" / "evaluate")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service))
         .map(
-            |body: EvaluateFlagBody, flags: FeatureFlagService| match flags.evaluate_flag(body) {
-                Ok(result) => ok_response(result),
-                Err(err) => error_response(err.code(), err.message()),
+            |authorization: Option<String>, body: EvaluateFlagBody, flags: FeatureFlagService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match flags.evaluate_flag(body) {
+                    Ok(result) => ok_response(result),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
             },
         );
 

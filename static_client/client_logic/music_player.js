@@ -2,17 +2,12 @@ const DEFAULT_PLAYLIST = [
   "music/Untitled.mp3",
   "music/Untitled (1).mp3",
   "music/Untitled (2).mp3",
-  "music/Untitled (3).mp3",
   "music/Untitled (4).mp3",
   "music/Untitled (5).mp3",
   "music/Untitled (6).mp3",
-  "music/Untitled (7).mp3",
   "music/Untitled (8).mp3",
-  "music/Untitled (9).mp3",
   "music/Untitled (10).mp3",
   "music/Untitled (11).mp3",
-  "music/Untitled (12).mp3",
-  "music/Untitled (13).mp3",
   "music/cassete.mp3",
   "music/cassete (1).mp3"
 ];

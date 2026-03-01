@@ -10,10 +10,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::{info, warn};
@@ -21,6 +23,7 @@ use uuid::Uuid;
 use warp::{Filter, Reply};
 
 const DEFAULT_ARENA_LEADERBOARD_LIMIT: usize = 25;
+const MAX_ARENA_LEADERBOARD_LIMIT: usize = 100;
 const DEFAULT_ARENA_PENDING_LIMIT: usize = 20;
 const DEFAULT_ARENA_RECENT_REPLAY_LIMIT: usize = 20;
 const DEFAULT_BASE_ELO: f64 = 1000.0;
@@ -32,6 +35,8 @@ const DEFAULT_ARENA_REPLAY_MATCH_HISTORY_CAP: usize = 256;
 const DEFAULT_ARENA_REPLAY_EVENTS_LIMIT: usize = 256;
 const DEFAULT_ARENA_REPLAY_STREAM_BACKLOG: usize = 64;
 const DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP: usize = 1_024;
+const MAX_ARENA_PENDING_MATCHES: usize = 10_000;
+const MAX_MODEL_ID_LEN: usize = 128;
 const MAX_ARENA_REPLAY_HISTORY_CAP: usize = 4096;
 const MAX_ARENA_REPLAY_EVENT_HISTORY_CAP: usize = 32_768;
 const MAX_ARENA_REPLAY_MATCH_HISTORY_CAP: usize = 4_096;
@@ -850,6 +855,15 @@ impl ArenaService {
         };
 
         let mut pending = self.inner.pending_matches.lock();
+        if pending.len() >= MAX_ARENA_PENDING_MATCHES {
+            return Err(ArenaError::Conflict(
+                "queue_full",
+                format!(
+                    "pending queue is full (max {} matches)",
+                    MAX_ARENA_PENDING_MATCHES
+                ),
+            ));
+        }
         pending.push_back(queued.clone());
         let pending_total = pending.len();
         drop(pending);
@@ -868,6 +882,18 @@ impl ArenaService {
         let include_inactive = body.include_inactive.unwrap_or(false);
         let mode = normalize_match_mode(body.mode.as_deref())?;
         let max_pairs = body.max_pairs.unwrap_or(512).max(1);
+        let pending_before = self.inner.pending_matches.lock().len();
+        if pending_before >= MAX_ARENA_PENDING_MATCHES {
+            return Err(ArenaError::Conflict(
+                "queue_full",
+                format!(
+                    "pending queue is full (max {} matches)",
+                    MAX_ARENA_PENDING_MATCHES
+                ),
+            ));
+        }
+        let available_slots = MAX_ARENA_PENDING_MATCHES - pending_before;
+        let capped_max_pairs = max_pairs.min(available_slots);
 
         let mut model_ids: Vec<String> = {
             let store = self.inner.persistent_store.read();
@@ -899,23 +925,29 @@ impl ArenaService {
                     metadata: HashMap::new(),
                 };
                 queued_matches.push(queued);
-                if queued_matches.len() >= max_pairs {
+                if queued_matches.len() >= capped_max_pairs {
                     break 'outer;
                 }
             }
         }
 
         let mut pending = self.inner.pending_matches.lock();
-        for queued in &queued_matches {
+        let remaining_slots = MAX_ARENA_PENDING_MATCHES.saturating_sub(pending.len());
+        let enqueue_count = queued_matches.len().min(remaining_slots);
+        for queued in queued_matches.iter().take(enqueue_count) {
             pending.push_back(queued.clone());
         }
         let pending_total = pending.len();
         drop(pending);
 
         Ok(QueueMatchResponse {
-            queued_count: queued_matches.len(),
+            queued_count: enqueue_count,
             pending_total,
-            queued_matches: queued_matches.iter().map(to_queued_match_view).collect(),
+            queued_matches: queued_matches
+                .iter()
+                .take(enqueue_count)
+                .map(to_queued_match_view)
+                .collect(),
         })
     }
 
@@ -955,7 +987,7 @@ impl ArenaService {
     }
 
     fn leaderboard(&self, limit: usize) -> ArenaLeaderboardResponse {
-        let bounded_limit = limit.max(1);
+        let bounded_limit = limit.clamp(1, MAX_ARENA_LEADERBOARD_LIMIT);
         let store = self.inner.persistent_store.read();
         let mut models: Vec<ArenaModelView> = store.models.values().map(to_model_view).collect();
         models.sort_by(|left, right| {
@@ -1056,23 +1088,6 @@ impl ArenaService {
         let model_b_score = body.model_b_score.unwrap_or(0);
         let completed_at = unix_now();
 
-        let (model_a_old_elo, model_b_old_elo) = {
-            let store = self.inner.persistent_store.read();
-            let Some(model_a) = store.models.get(&model_a_id) else {
-                return Err(ArenaError::NotFound(
-                    "model_not_found",
-                    format!("model '{}' does not exist", model_a_id),
-                ));
-            };
-            let Some(model_b) = store.models.get(&model_b_id) else {
-                return Err(ArenaError::NotFound(
-                    "model_not_found",
-                    format!("model '{}' does not exist", model_b_id),
-                ));
-            };
-            (model_a.elo_rating, model_b.elo_rating)
-        };
-
         let model_a_result = if draw {
             MatchResult::Draw
         } else if winner_model_id.as_deref() == Some(model_a_id.as_str()) {
@@ -1081,15 +1096,31 @@ impl ArenaService {
             MatchResult::Loss
         };
         let model_b_result = model_a_result.inverse();
-        let (new_a, new_b) = update_elo_pair(
-            model_a_old_elo,
-            model_b_old_elo,
-            model_a_result,
-            model_b_result,
-        );
 
         let (model_a_view, model_b_view) = {
             let mut store = self.inner.persistent_store.write();
+            let (model_a_old_elo, model_b_old_elo) = {
+                let Some(model_a) = store.models.get(&model_a_id) else {
+                    return Err(ArenaError::NotFound(
+                        "model_not_found",
+                        format!("model '{}' does not exist", model_a_id),
+                    ));
+                };
+                let Some(model_b) = store.models.get(&model_b_id) else {
+                    return Err(ArenaError::NotFound(
+                        "model_not_found",
+                        format!("model '{}' does not exist", model_b_id),
+                    ));
+                };
+                (model_a.elo_rating, model_b.elo_rating)
+            };
+            let (new_a, new_b) = update_elo_pair(
+                model_a_old_elo,
+                model_b_old_elo,
+                model_a_result,
+                model_b_result,
+            );
+
             {
                 let Some(model_a) = store.models.get_mut(&model_a_id) else {
                     return Err(ArenaError::NotFound(
@@ -1882,7 +1913,10 @@ fn normalize_match_mode(raw_mode: Option<&str>) -> Result<String, ArenaError> {
 
 fn sanitize_model_id(model_id: &str) -> Option<String> {
     let trimmed = model_id.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || trimmed.len() > MAX_MODEL_ID_LEN {
+        return None;
+    }
+    if trimmed.starts_with('.') || trimmed.ends_with('.') || trimmed.contains("..") {
         return None;
     }
     if trimmed
@@ -1930,8 +1964,27 @@ fn persist_store(path: &Path, store: &PersistentArenaStore) -> Result<(), String
     }
     let serialized = serde_json::to_string_pretty(store)
         .map_err(|err| format!("failed to serialize arena store: {}", err))?;
-    fs::write(path, serialized)
-        .map_err(|err| format!("failed to write '{}': {}", path.display(), err))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("arena_store.json");
+    let tmp_path = path.with_file_name(format!(".{}.{}.tmp", file_name, Uuid::new_v4().simple()));
+    let mut tmp_file = fs::File::create(&tmp_path)
+        .map_err(|err| format!("failed to create '{}': {}", tmp_path.display(), err))?;
+    tmp_file
+        .write_all(serialized.as_bytes())
+        .map_err(|err| format!("failed to write '{}': {}", tmp_path.display(), err))?;
+    tmp_file
+        .sync_all()
+        .map_err(|err| format!("failed to fsync '{}': {}", tmp_path.display(), err))?;
+    fs::rename(&tmp_path, path).map_err(|err| {
+        format!(
+            "failed to atomically replace '{}' with '{}': {}",
+            path.display(),
+            tmp_path.display(),
+            err
+        )
+    })?;
     Ok(())
 }
 
@@ -1978,6 +2031,46 @@ fn with_service(
     warp::any().map(move || service.clone())
 }
 
+fn inline_admin_expected_token() -> Option<&'static String> {
+    static TOKEN: OnceLock<Option<String>> = OnceLock::new();
+    TOKEN
+        .get_or_init(|| {
+            std::env::var("MGS_ADMIN_BEARER_TOKEN")
+                .or_else(|_| std::env::var("MGS_ADMIN_TOKEN"))
+                .ok()
+                .map(|raw| raw.trim().to_owned())
+                .filter(|raw| !raw.is_empty())
+        })
+        .as_ref()
+}
+
+fn parse_bearer_token(authorization_header: Option<&str>) -> Option<&str> {
+    let raw = authorization_header?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    raw.strip_prefix("Bearer ")
+        .or_else(|| raw.strip_prefix("bearer "))
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    let left_bytes = left.as_bytes();
+    let right_bytes = right.as_bytes();
+    left_bytes.len() == right_bytes.len() && left_bytes.ct_eq(right_bytes).into()
+}
+
+fn inline_admin_authorized(authorization_header: Option<&str>) -> bool {
+    let Some(expected) = inline_admin_expected_token() else {
+        return false;
+    };
+    let Some(provided) = parse_bearer_token(authorization_header) else {
+        return false;
+    };
+    constant_time_eq(expected.as_str(), provided)
+}
+
 pub fn build_arena_routes(
     service: ArenaService,
 ) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
@@ -1988,39 +2081,66 @@ pub fn build_arena_routes(
 
     let register_model = warp::path!("api" / "arena" / "models" / "register")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
-            |body: RegisterModelBody, arena: ArenaService| match arena.register_model(body) {
-                Ok(model) => ok_response(model),
-                Err(err) => error_response(err.code(), err.message()),
+            |authorization: Option<String>, body: RegisterModelBody, arena: ArenaService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match arena.register_model(body) {
+                    Ok(model) => ok_response(model),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
             },
         );
 
     let model_heartbeat = warp::path!("api" / "arena" / "models" / "heartbeat")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
-            |body: ModelHeartbeatBody, arena: ArenaService| match arena.heartbeat_model(body) {
-                Ok(model) => ok_response(model),
-                Err(err) => error_response(err.code(), err.message()),
+            |authorization: Option<String>, body: ModelHeartbeatBody, arena: ArenaService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match arena.heartbeat_model(body) {
+                    Ok(model) => ok_response(model),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
             },
         );
 
     let upload_model_wasm = warp::path!("api" / "arena" / "models" / "upload_wasm")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(wasm_upload_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
-        .map(|body: UploadModelWasmBody, arena: ArenaService| {
-            match arena.upload_model_wasm(body) {
-                Ok(result) => ok_response(result),
-                Err(err) => error_response(err.code(), err.message()),
-            }
-        });
+        .map(
+            |authorization: Option<String>, body: UploadModelWasmBody, arena: ArenaService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match arena.upload_model_wasm(body) {
+                    Ok(result) => ok_response(result),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
+            },
+        );
 
     let list_models = warp::path!("api" / "arena" / "models")
         .and(warp::get())
@@ -2038,35 +2158,63 @@ pub fn build_arena_routes(
 
     let queue_match = warp::path!("api" / "arena" / "matches" / "queue")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
-            |body: QueueMatchBody, arena: ArenaService| match arena.queue_match(body) {
-                Ok(result) => ok_response(result),
-                Err(err) => error_response(err.code(), err.message()),
+            |authorization: Option<String>, body: QueueMatchBody, arena: ArenaService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match arena.queue_match(body) {
+                    Ok(result) => ok_response(result),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
             },
         );
 
     let queue_round_robin = warp::path!("api" / "arena" / "matches" / "queue_round_robin")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
-        .map(|body: QueueRoundRobinBody, arena: ArenaService| {
-            match arena.queue_round_robin(body) {
-                Ok(result) => ok_response(result),
-                Err(err) => error_response(err.code(), err.message()),
-            }
-        });
+        .map(
+            |authorization: Option<String>, body: QueueRoundRobinBody, arena: ArenaService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match arena.queue_round_robin(body) {
+                    Ok(result) => ok_response(result),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
+            },
+        );
 
     let claim_next = warp::path!("api" / "arena" / "matches" / "claim_next")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(with_service(service.clone()))
-        .map(|arena: ArenaService| ok_response(arena.claim_next_match()));
+        .map(|authorization: Option<String>, arena: ArenaService| {
+            if !inline_admin_authorized(authorization.as_deref()) {
+                return error_response(
+                    "admin_auth_required",
+                    "Admin bearer token required.".to_owned(),
+                );
+            }
+            ok_response(arena.claim_next_match())
+        });
 
     let execute_next = warp::path!("api" / "arena" / "matches" / "execute_next")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(
             warp::body::content_length_limit(json_body_limit)
                 .and(warp::body::json::<ExecuteNextBody>())
@@ -2075,14 +2223,23 @@ pub fn build_arena_routes(
         )
         .and(with_service(service.clone()))
         .map(
-            |body: ExecuteNextBody, arena: ArenaService| match arena.execute_next_match(body) {
-                Ok(result) => ok_response(result),
-                Err(err) => error_response(err.code(), err.message()),
+            |authorization: Option<String>, body: ExecuteNextBody, arena: ArenaService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match arena.execute_next_match(body) {
+                    Ok(result) => ok_response(result),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
             },
         );
 
     let simulate_team_battle = warp::path!("api" / "arena" / "matches" / "simulate_team_battle")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(
             warp::body::content_length_limit(json_body_limit)
                 .and(warp::body::json::<SimulateTeamBattleBody>())
@@ -2090,12 +2247,20 @@ pub fn build_arena_routes(
                 .unify(),
         )
         .and(with_service(service.clone()))
-        .map(|body: SimulateTeamBattleBody, arena: ArenaService| {
-            match arena.simulate_team_battle(body) {
-                Ok(result) => ok_response(result),
-                Err(err) => error_response(err.code(), err.message()),
-            }
-        });
+        .map(
+            |authorization: Option<String>, body: SimulateTeamBattleBody, arena: ArenaService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match arena.simulate_team_battle(body) {
+                    Ok(result) => ok_response(result),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
+            },
+        );
 
     let list_pending = warp::path!("api" / "arena" / "matches" / "pending")
         .and(warp::get())
@@ -2166,13 +2331,22 @@ pub fn build_arena_routes(
 
     let report_match = warp::path!("api" / "arena" / "matches" / "report")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
-            |body: ReportMatchBody, arena: ArenaService| match arena.report_match(body) {
-                Ok(result) => ok_response(result),
-                Err(err) => error_response(err.code(), err.message()),
+            |authorization: Option<String>, body: ReportMatchBody, arena: ArenaService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match arena.report_match(body) {
+                    Ok(result) => ok_response(result),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
             },
         );
 
@@ -2350,6 +2524,14 @@ mod tests {
             .queued_matches
             .iter()
             .all(|entry| entry.mode == "tdm"));
+    }
+
+    #[test]
+    fn sanitize_model_id_rejects_hidden_and_traversal_like_names() {
+        assert!(sanitize_model_id("../etc/passwd").is_none());
+        assert!(sanitize_model_id(".hidden-model").is_none());
+        assert!(sanitize_model_id("model..double-dot").is_none());
+        assert!(sanitize_model_id("bot-alpha_1").is_some());
     }
 
     #[test]

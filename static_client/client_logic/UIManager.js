@@ -843,9 +843,18 @@ export function createUIManager(getCtx) {
 
         const ffaScoreboardSection = document.getElementById('ffaScoreboardSection');
         const teamScoreboardSection = document.getElementById('teamScoreboardSection');
-        const ffaPlayersTableBody = document.getElementById('ffaPlayersTable').getElementsByTagName('tbody')[0];
-        const redTeamPlayersTableBody = document.getElementById('redTeamPlayers').getElementsByTagName('tbody')[0];
-        const blueTeamPlayersTableBody = document.getElementById('blueTeamPlayers').getElementsByTagName('tbody')[0];
+        const ffaPlayersTable = document.getElementById('ffaPlayersTable');
+        const redTeamPlayersTable = document.getElementById('redTeamPlayers');
+        const blueTeamPlayersTable = document.getElementById('blueTeamPlayers');
+        if (!scoreboardContentDiv || !ffaScoreboardSection || !teamScoreboardSection || !ffaPlayersTable || !redTeamPlayersTable || !blueTeamPlayersTable) {
+            return;
+        }
+        const ffaPlayersTableBody = ffaPlayersTable.getElementsByTagName('tbody')[0];
+        const redTeamPlayersTableBody = redTeamPlayersTable.getElementsByTagName('tbody')[0];
+        const blueTeamPlayersTableBody = blueTeamPlayersTable.getElementsByTagName('tbody')[0];
+        if (!ffaPlayersTableBody || !redTeamPlayersTableBody || !blueTeamPlayersTableBody) {
+            return;
+        }
 
         if (ctx.matchInfo.game_mode === ctx.GP.GameModeType.FreeForAll) {
             ffaScoreboardSection.classList.remove('hidden');
@@ -942,8 +951,25 @@ export function createUIManager(getCtx) {
         const ctx = getCtx();
         const storedSettings = localStorage.getItem('gameSettings');
         if (storedSettings) {
-            Object.assign(ctx.gameSettings, JSON.parse(storedSettings));
-            ctx.log('Settings loaded from localStorage.', 'info');
+            try {
+                const parsed = JSON.parse(storedSettings);
+                if (parsed && typeof parsed === 'object') {
+                    for (const [key, value] of Object.entries(parsed)) {
+                        if (!(key in ctx.gameSettings)) continue;
+                        const currentValue = ctx.gameSettings[key];
+                        if (typeof currentValue === 'boolean' && typeof value === 'boolean') {
+                            ctx.gameSettings[key] = value;
+                        } else if (typeof currentValue === 'string' && typeof value === 'string') {
+                            ctx.gameSettings[key] = value;
+                        } else if (typeof currentValue === 'number' && Number.isFinite(value)) {
+                            ctx.gameSettings[key] = value;
+                        }
+                    }
+                    ctx.log('Settings loaded from localStorage.', 'info');
+                }
+            } catch (_err) {
+                ctx.log('Ignoring invalid settings payload from localStorage.', 'warning');
+            }
         }
         ctx.gameSettings.showDestroyedWallDebug = false;
         ctx.gameSettings.combatUiQuality = ctx.normalizeCombatUiQuality(ctx.gameSettings.combatUiQuality);

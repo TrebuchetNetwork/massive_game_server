@@ -3,10 +3,8 @@ use super::*;
 impl MassiveGameServer {
     pub(super) async fn process_player_physics_parallel(
         &self,
-        walls: &[Wall],
         delta_time: f32,
     ) -> PlayerPhysicsResults {
-        let wall_arc = Arc::new(walls.to_vec());
         let mut all_to_respawn = Vec::new();
         let mut total_alive = 0;
         let sample_timestamp_ms = self.get_server_timestamp_ms();
@@ -23,7 +21,7 @@ impl MassiveGameServer {
                 player_state.update_timers(delta_time);
 
                 if player_state.is_spectator {
-                    self.process_player_movement_optimized(player_state, &wall_arc, delta_time);
+                    self.process_player_movement_optimized(player_state, delta_time);
                     self.record_player_position_sample(
                         player_id,
                         sample_timestamp_ms,
@@ -33,7 +31,7 @@ impl MassiveGameServer {
                 } else if player_state.alive {
                     total_alive += 1;
                     // Process movement with optimized collision
-                    self.process_player_movement_optimized(player_state, &wall_arc, delta_time);
+                    self.process_player_movement_optimized(player_state, delta_time);
                     self.record_player_position_sample(
                         player_id,
                         sample_timestamp_ms,
@@ -56,7 +54,6 @@ impl MassiveGameServer {
     pub(super) fn process_player_movement_optimized(
         &self,
         player_state: &mut PlayerState,
-        _walls: &[Wall],
         delta_time: f32,
     ) {
         let old_x = player_state.x;
@@ -213,7 +210,7 @@ impl MassiveGameServer {
             if player_state.acceleration_violation_count > ACCELERATION_VIOLATION_THRESHOLD {
                 warn!(
                     "[{}]: Acceleration anomaly (accel={:.1}, threshold={:.1}, count={}).",
-                    player_state.id.as_str(),
+                    player_state.id.as_ref(),
                     accel_magnitude,
                     MAX_ACCELERATION_PER_TICK,
                     player_state.acceleration_violation_count
@@ -265,7 +262,7 @@ impl MassiveGameServer {
                 self.global_game_events.push(
                     GameEvent::PlayerKilled {
                         victim_id: player_id.clone(),
-                        killer_id: Arc::new("environment".to_string()),
+                        killer_id: Arc::from("environment".to_string()),
                         weapon: ServerWeaponType::Melee,
                         position: pos,
                     },

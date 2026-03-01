@@ -930,12 +930,11 @@
         let authProfile = null;
         let controlsPanelHidden = false;
         let focusModeEnabled = false;
-        const E2E_HOOKS_ENABLED = (
+        const IS_LOCAL_E2E_CONTEXT = (
             window.location.hostname === 'localhost' ||
-            window.location.hostname === '127.0.0.1' ||
-            window.location.search.includes('e2e=1') ||
-            localStorage.getItem('mgs_enable_e2e_hooks') === '1'
+            window.location.hostname === '127.0.0.1'
         );
+        const E2E_HOOKS_ENABLED = IS_LOCAL_E2E_CONTEXT;
         if (!window.__e2e) {
             window.__e2e = {
                 matchInfoReady: false,

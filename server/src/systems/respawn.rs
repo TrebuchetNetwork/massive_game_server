@@ -1,11 +1,12 @@
 // massive_game_server/server/src/systems/respawn.rs
 
 use crate::core::constants::*;
+use crate::core::deterministic_rng::DeterministicRng;
 use crate::core::types::{EntityId, PlayerID, Vec2, Wall};
 use crate::server::instance::MassiveGameServer; // Added for server access
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use rand::Rng;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
@@ -171,7 +172,6 @@ impl RespawnManager {
         enemy_positions: &[(Vec2, PlayerID)],
         all_current_walls: &[Wall], // Combined wall list
     ) -> Vec2 {
-        let mut rng = rand::thread_rng();
         let now = Instant::now();
         let death_location_opt = self
             .recent_deaths
@@ -262,7 +262,18 @@ impl RespawnManager {
             return Vec2::new(0.0, 0.0);
         }
 
-        let chosen_spawn_ref = top_n[rng.gen_range(0..top_n.len())];
+        let seed = (team_id.unwrap_or(0) as u64)
+            ^ ((top_n.len() as u64) << 8)
+            ^ (enemy_positions.len() as u64)
+            ^ death_location_opt
+                .map(|pos| ((pos.x.to_bits() as u64) << 32) ^ (pos.y.to_bits() as u64))
+                .unwrap_or(0)
+            ^ player_id.bytes().fold(0u64, |acc, byte| {
+                acc.wrapping_mul(131).wrapping_add(byte as u64)
+            });
+        let mut rng = DeterministicRng::new(seed);
+        let chosen_idx = rng.gen_range_i32(0, top_n.len() as i32) as usize;
+        let chosen_spawn_ref = top_n[chosen_idx];
         let spawn_idx = chosen_spawn_ref.0;
 
         if spawn_idx < spawn_points_guard.len() {
@@ -303,7 +314,7 @@ pub(crate) struct DestroyedWallInfo {
 
 pub struct WallRespawnManager {
     destroyed_walls: Arc<DashMap<EntityId, DestroyedWallInfo>>,
-    respawn_queue: Arc<RwLock<Vec<(EntityId, Instant)>>>,
+    respawn_queue: Arc<RwLock<VecDeque<(EntityId, Instant)>>>,
     wall_templates: Arc<DashMap<EntityId, Wall>>,
 }
 
@@ -317,7 +328,7 @@ impl WallRespawnManager {
     pub fn new() -> Self {
         Self {
             destroyed_walls: Arc::new(DashMap::new()),
-            respawn_queue: Arc::new(RwLock::new(Vec::new())),
+            respawn_queue: Arc::new(RwLock::new(VecDeque::new())),
             wall_templates: Arc::new(DashMap::new()),
         }
     }
@@ -372,8 +383,13 @@ impl WallRespawnManager {
 
             let scheduled_time = Instant::now() + respawn_delay_duration;
             let mut queue_guard = self.respawn_queue.write();
-            queue_guard.push((wall_id, scheduled_time));
-            queue_guard.sort_by_key(|k| k.1);
+            let insert_idx = {
+                let slice = queue_guard.make_contiguous();
+                slice
+                    .binary_search_by_key(&scheduled_time, |(_, scheduled)| *scheduled)
+                    .unwrap_or_else(|idx| idx)
+            };
+            queue_guard.insert(insert_idx, (wall_id, scheduled_time));
             debug!(
                 "Wall ID {} scheduled for respawn in {} seconds.",
                 wall_id,
@@ -393,11 +409,13 @@ impl WallRespawnManager {
         let mut queue_guard = self.respawn_queue.write();
 
         while queue_guard
-            .first()
+            .front()
             .map(|(_, scheduled)| now >= *scheduled)
             .unwrap_or(false)
         {
-            let (wall_id, _scheduled_time) = queue_guard.remove(0);
+            let (wall_id, _scheduled_time) = queue_guard
+                .pop_front()
+                .expect("front checked above when draining respawn queue");
             if let Some((_id, info)) = self.destroyed_walls.remove(&wall_id) {
                 ready_to_respawn_walls.push(info.wall_data.clone());
             } else {

@@ -44,6 +44,7 @@ const BOT_STUCK_THRESHOLD: f32 = 10.0; // Min distance to move to not be conside
 const BOT_STUCK_TIME_THRESHOLD: f32 = 2.0; // Seconds before considering bot stuck
 const BOT_STUCK_CHECK_INTERVAL: f32 = 0.5; // Check every half second
 const BOT_STUCK_TARGET_TOLERANCE: f32 = BOT_MOVEMENT_TOLERANCE + 20.0;
+const BOT_PREDICTIVE_MODEL_MAX_ENTRIES: usize = 4096;
 
 // ── A* pathfinding constants ─────────────────────────────────────────
 /// Cell size for the A* navigation grid (world units per cell).
@@ -250,6 +251,7 @@ struct EnemySnapshot {
 struct BotSnapshotOwned {
     id: PlayerID,
     username: String,
+    health: i32,
     x: f32,
     y: f32,
     velocity_x: f32,
@@ -474,6 +476,7 @@ impl OptimizedBotAI {
                 BotSnapshotOwned {
                     id: bot_state.id.clone(),
                     username: bot_state.username.clone(),
+                    health: bot_state.health,
                     x: bot_state.x,
                     y: bot_state.y,
                     velocity_x: bot_state.velocity_x,
@@ -639,7 +642,10 @@ impl OptimizedBotAI {
                 }
             }
         }
-        if frame_count.is_multiple_of(120) {
+        let predictive_over_capacity = predictive_models.motion_models.len()
+            > BOT_PREDICTIVE_MODEL_MAX_ENTRIES
+            || predictive_models.threat_models.len() > BOT_PREDICTIVE_MODEL_MAX_ENTRIES;
+        if frame_count.is_multiple_of(120) || predictive_over_capacity {
             let mut live_ids: HashSet<PlayerID> = HashSet::with_capacity(live_players_by_id.len());
             for id in live_players_by_id.keys() {
                 live_ids.insert(id.clone());
@@ -650,6 +656,12 @@ impl OptimizedBotAI {
             predictive_models
                 .threat_models
                 .retain(|player_id, _| live_ids.contains(player_id));
+            if predictive_over_capacity {
+                debug!(
+                    "Predictive model maps hit capacity guard (>{}), forcing immediate cleanup.",
+                    BOT_PREDICTIVE_MODEL_MAX_ENTRIES
+                );
+            }
         }
 
         drop(match_info_guard);
@@ -1034,42 +1046,81 @@ impl OptimizedBotAI {
 
     /// Check if there's a clear line of sight between two positions
     fn has_line_of_sight(from: Vec2, to: Vec2, server_instance: &MassiveGameServer) -> bool {
-        let dx = to.x - from.x;
-        let dy = to.y - from.y;
-        let distance = (dx * dx + dy * dy).sqrt();
+        let candidate_walls = server_instance
+            .wall_spatial_index
+            .query_line_segment(from.x, from.y, to.x, to.y);
+        for wall in candidate_walls {
+            if wall.is_destructible && wall.current_health <= 0 {
+                continue;
+            }
+            if Self::segment_hits_aabb(
+                from.x,
+                from.y,
+                to.x,
+                to.y,
+                wall.x,
+                wall.x + wall.width,
+                wall.y,
+                wall.y + wall.height,
+            ) {
+                return false;
+            }
+        }
+        true
+    }
 
-        // Number of steps to check along the line
-        let steps = (distance / 20.0).ceil() as usize;
+    fn segment_hits_aabb(
+        start_x: f32,
+        start_y: f32,
+        end_x: f32,
+        end_y: f32,
+        min_x: f32,
+        max_x: f32,
+        min_y: f32,
+        max_y: f32,
+    ) -> bool {
+        let dx = end_x - start_x;
+        let dy = end_y - start_y;
+        let mut t_min = 0.0f32;
+        let mut t_max = 1.0f32;
 
-        for i in 1..=steps {
-            let t = i as f32 / steps as f32;
-            let check_x = from.x + dx * t;
-            let check_y = from.y + dy * t;
-
-            // Query walls near this point
-            let nearby_walls = server_instance
-                .wall_spatial_index
-                .query_radius(check_x, check_y, 5.0);
-
-            // Check if any wall blocks this point
-            for wall in nearby_walls {
-                // Skip destructible walls that are destroyed
-                if wall.is_destructible && wall.current_health <= 0 {
-                    continue;
-                }
-
-                // Check if point is inside wall
-                if check_x >= wall.x
-                    && check_x <= wall.x + wall.width
-                    && check_y >= wall.y
-                    && check_y <= wall.y + wall.height
-                {
-                    return false; // Wall blocks line of sight
-                }
+        if dx.abs() < f32::EPSILON {
+            if start_x < min_x || start_x > max_x {
+                return false;
+            }
+        } else {
+            let inv_dx = 1.0 / dx;
+            let mut t1 = (min_x - start_x) * inv_dx;
+            let mut t2 = (max_x - start_x) * inv_dx;
+            if t1 > t2 {
+                std::mem::swap(&mut t1, &mut t2);
+            }
+            t_min = t_min.max(t1);
+            t_max = t_max.min(t2);
+            if t_min > t_max {
+                return false;
             }
         }
 
-        true // Clear line of sight
+        if dy.abs() < f32::EPSILON {
+            if start_y < min_y || start_y > max_y {
+                return false;
+            }
+        } else {
+            let inv_dy = 1.0 / dy;
+            let mut t1 = (min_y - start_y) * inv_dy;
+            let mut t2 = (max_y - start_y) * inv_dy;
+            if t1 > t2 {
+                std::mem::swap(&mut t1, &mut t2);
+            }
+            t_min = t_min.max(t1);
+            t_max = t_max.min(t2);
+            if t_min > t_max {
+                return false;
+            }
+        }
+
+        !(t_max < 0.0 || t_min > 1.0)
     }
 
     fn select_enemy_target(
@@ -1347,12 +1398,16 @@ impl OptimizedBotAI {
                 // Tighten movement vector around predicted enemy motion when engaging.
                 let predicted = target.predicted_position;
                 let predict_angle = (predicted.y - bot_state.y).atan2(predicted.x - bot_state.x);
-                input.rotation = (input.rotation + predict_angle) * 0.5;
+                let blend_x = input.rotation.cos() + predict_angle.cos();
+                let blend_y = input.rotation.sin() + predict_angle.sin();
+                if blend_x != 0.0 || blend_y != 0.0 {
+                    input.rotation = blend_y.atan2(blend_x);
+                }
                 trace!(
                     "Bot {} ({:?}) engaging predicted target {}",
                     bot_state.username,
                     personality,
-                    target.enemy_id.as_str()
+                    target.enemy_id.as_ref()
                 );
             }
 
@@ -1399,6 +1454,8 @@ impl OptimizedBotAI {
             if has_enemy_target && !movement_handled {
                 let engagement_range = personality.engagement_range();
                 let engagement_range_sq = engagement_range * engagement_range;
+                let health_pct = bot_state.health.clamp(0, 100) as f32;
+                let retreat_now = personality.should_retreat(health_pct);
 
                 match personality {
                     BotPersonality::Aggressive => {
@@ -1417,7 +1474,7 @@ impl OptimizedBotAI {
                     }
                     BotPersonality::Defensive => {
                         // Defensive: maintain distance, retreat when too close
-                        if nearest_enemy_dist < engagement_range_sq {
+                        if retreat_now || nearest_enemy_dist < engagement_range_sq {
                             // Too close - retreat
                             input.move_backward = true;
                             input.move_forward = false;
@@ -1436,7 +1493,14 @@ impl OptimizedBotAI {
                     }
                     BotPersonality::Balanced => {
                         // Default balanced behavior
-                        if nearest_enemy_dist < 200.0 * 200.0 {
+                        if retreat_now {
+                            input.move_backward = true;
+                            input.move_forward = false;
+                            if with_bot_rng(|rng| rng.gen_bool(0.6)) {
+                                input.move_left = with_bot_rng(|rng| rng.gen_bool(0.5));
+                                input.move_right = !input.move_left;
+                            }
+                        } else if nearest_enemy_dist < 200.0 * 200.0 {
                             // Strafe at close range
                             if with_bot_rng(|rng| rng.gen_bool(0.6)) {
                                 input.move_left = with_bot_rng(|rng| rng.gen_bool(0.5));
@@ -2014,7 +2078,7 @@ mod tests {
     /// optional pre-loaded path.
     fn make_test_bot_controller(pos: Vec2, path: Vec<Vec2>) -> BotController {
         let mut bc = BotController {
-            player_id: std::sync::Arc::new("test-bot".to_string()),
+            player_id: std::sync::Arc::from("test-bot".to_string()),
             target_position: None,
             target_enemy_id: None,
             last_decision_time: Instant::now(),

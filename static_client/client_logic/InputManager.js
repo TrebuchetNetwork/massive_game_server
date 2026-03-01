@@ -93,6 +93,10 @@ export function createInputManager({
     let inputContextMenuHandler = null;
     let inputUiKeyDownHandler = null;
     let inputUiKeyUpHandler = null;
+    let managedTouchListeners = [];
+    let appViewRectCache = null;
+    let appViewRectCachedAt = 0;
+    let pingWheelTouchBoundsRect = null;
 
     let mobileAimActive = false;
     let mobileStickyFireArmed = false;
@@ -242,6 +246,51 @@ export function createInputManager({
 
     // ── Mobile helper functions ───────────────────────────────────────
 
+    function nowMs() {
+        return (typeof performance !== 'undefined' && performance.now)
+            ? performance.now()
+            : Date.now();
+    }
+
+    function addManagedTouchListener(target, type, handler, options) {
+        if (!target || typeof target.addEventListener !== 'function') return;
+        target.addEventListener(type, handler, options);
+        managedTouchListeners.push({ target, type, handler, options });
+    }
+
+    function teardownTouchControls() {
+        if (!touchControlsInitialized) return;
+        for (const entry of managedTouchListeners) {
+            entry.target.removeEventListener(entry.type, entry.handler, entry.options);
+        }
+        managedTouchListeners = [];
+        touchControlsInitialized = false;
+        mobileAimActive = false;
+        mobileStickyFireArmed = false;
+        mobileFireTouchActive = false;
+        pingWheelTouchBoundsRect = null;
+    }
+
+    function getAppViewRect(forceRefresh = false) {
+        const app = getApp();
+        if (!app || !app.view) return null;
+        const now = nowMs();
+        if (
+            forceRefresh ||
+            !appViewRectCache ||
+            (now - appViewRectCachedAt) > 250
+        ) {
+            appViewRectCache = app.view.getBoundingClientRect();
+            appViewRectCachedAt = now;
+        }
+        return appViewRectCache;
+    }
+
+    function invalidateAppViewRectCache() {
+        appViewRectCache = null;
+        appViewRectCachedAt = 0;
+    }
+
     function setMoveInputFromVector(dx, dy, deadzone = 10) {
         const inputState = getInputState();
         inputState.move_left = dx < -deadzone;
@@ -250,15 +299,15 @@ export function createInputManager({
         inputState.move_backward = dy > deadzone;
     }
 
-    function updateAimFromTouch(touch) {
+    function updateAimFromTouch(touch, forceRectRefresh = false) {
         const app = getApp();
         const gameScene = getGameScene();
         const localPlayerState = getLocalPlayerState();
         const mouseWorldPos = getMouseWorldPos();
         const inputState = getInputState();
-        const gameSettings = getGameSettings();
         if (!app || !app.view || !gameScene || !localPlayerState) return;
-        const rect = app.view.getBoundingClientRect();
+        const rect = getAppViewRect(forceRectRefresh);
+        if (!rect) return;
         const touchGlobal = new PIXI.Point(touch.clientX - rect.left, touch.clientY - rect.top);
         const touchLocal = gameScene.toLocal(touchGlobal);
         mouseWorldPos.x = touchLocal.x;
@@ -266,7 +315,7 @@ export function createInputManager({
 
         const dx = touchLocal.x - (localPlayerState.render_x || localPlayerState.x);
         const dy = touchLocal.y - (localPlayerState.render_y || localPlayerState.y);
-        inputState.rotation = Math.atan2(dy, dx) * gameSettings.sensitivity * aimSensitivity;
+        inputState.rotation = Math.atan2(dy, dx);
     }
 
     function syncMobileFireButtonState() {
@@ -302,9 +351,7 @@ export function createInputManager({
             ? fromBottom
             : ((mobileActionReachPx * 0.8) + (fromBottom * 0.2));
         mobileActionReachSamples = Math.min(240, mobileActionReachSamples + 1);
-        const now = (typeof performance !== 'undefined' && performance.now)
-            ? performance.now()
-            : Date.now();
+        const now = nowMs();
         if ((now - mobileLastAdaptiveSizingAt) >= 120) {
             mobileLastAdaptiveSizingAt = now;
             updateMobileButtonSizing();
@@ -331,6 +378,7 @@ export function createInputManager({
         }
         pingWheelOpen = false;
         pingWheelTouchId = null;
+        pingWheelTouchBoundsRect = null;
         pingWheelAnchorWorld = null;
         if (pingWheelDiv) pingWheelDiv.classList.remove('ping-wheel--visible');
     }
@@ -348,7 +396,7 @@ export function createInputManager({
         const minimap = getMinimap();
         const localPlayerState = getLocalPlayerState();
         if (!minimap || !localPlayerState || !minimapContainerDiv) return null;
-        const rect = minimapContainerDiv.getBoundingClientRect();
+        const rect = pingWheelTouchBoundsRect || minimapContainerDiv.getBoundingClientRect();
         if (!rect || rect.width <= 0 || rect.height <= 0) return null;
         const localOffsetX = clientX - rect.left - (rect.width / 2);
         const localOffsetY = clientY - rect.top - (rect.height / 2);
@@ -495,9 +543,9 @@ export function createInputManager({
         const localPlayerState = getLocalPlayerState();
         const mouseWorldPos = getMouseWorldPos();
         const inputState = getInputState();
-        const gameSettings = getGameSettings();
         if (!app || !app.view || !localPlayerSprite || !localPlayerState) return;
-        const rect = app.view.getBoundingClientRect();
+        const rect = getAppViewRect(false);
+        if (!rect) return;
         const mouseGlobal = new PIXI.Point(event.clientX - rect.left, event.clientY - rect.top);
         const mouseLocalToGameScene = gameScene.toLocal(mouseGlobal);
 
@@ -506,7 +554,7 @@ export function createInputManager({
 
         const dx = mouseLocalToGameScene.x - (localPlayerState.render_x || localPlayerState.x);
         const dy = mouseLocalToGameScene.y - (localPlayerState.render_y || localPlayerState.y);
-        inputState.rotation = Math.atan2(dy, dx) * gameSettings.sensitivity;
+        inputState.rotation = Math.atan2(dy, dx);
     }
 
     // ── Send inputs to server ─────────────────────────────────────────
@@ -622,7 +670,11 @@ export function createInputManager({
         if (pendingInputs.length > RECONCILIATION_BUFFER_SIZE) pendingInputs.shift();
 
         const bytes = createInputMessage(currentFrameInput);
-        dataChannel.send(bytes);
+        try {
+            dataChannel.send(bytes);
+        } catch (_err) {
+            return;
+        }
         lastInputStateSentAt = now;
         lastSentInputMoveMask = moveMask;
         lastSentInputRotationQuant = quantizedRotation;
@@ -640,6 +692,7 @@ export function createInputManager({
     // ── Setup / teardown ──────────────────────────────────────────────
 
     function teardownInputHandlers() {
+        teardownTouchControls();
         if (!inputHandlersInitialized) return;
         const app = getApp();
         if (inputGameplayKeyDownHandler) {
@@ -675,6 +728,7 @@ export function createInputManager({
         inputContextMenuHandler = null;
         inputUiKeyDownHandler = null;
         inputUiKeyUpHandler = null;
+        invalidateAppViewRectCache();
         inputHandlersInitialized = false;
     }
 
@@ -763,6 +817,7 @@ export function createInputManager({
         touchControlsInitialized = true;
         const inputState = getInputState();
         const gameSettings = getGameSettings();
+        invalidateAppViewRectCache();
 
         updateMobileControlsVisibility();
         updateMobileButtonSizing();
@@ -795,7 +850,7 @@ export function createInputManager({
             setMoveInputFromVector(clampedX, clampedY);
         };
 
-        mobileMoveArea?.addEventListener('touchstart', (event) => {
+        addManagedTouchListener(mobileMoveArea, 'touchstart', (event) => {
             if (moveTouchId !== null) return;
             const touch = event.changedTouches[0];
             moveTouchId = touch.identifier;
@@ -804,7 +859,7 @@ export function createInputManager({
             event.preventDefault();
         }, { passive: false });
 
-        mobileMoveArea?.addEventListener('touchmove', (event) => {
+        addManagedTouchListener(mobileMoveArea, 'touchmove', (event) => {
             if (moveTouchId === null) return;
             for (const touch of event.changedTouches) {
                 if (touch.identifier === moveTouchId) {
@@ -815,7 +870,7 @@ export function createInputManager({
             }
         }, { passive: false });
 
-        mobileMoveArea?.addEventListener('touchend', (event) => {
+        addManagedTouchListener(mobileMoveArea, 'touchend', (event) => {
             if (moveTouchId === null) return;
             for (const touch of event.changedTouches) {
                 if (touch.identifier === moveTouchId) {
@@ -826,21 +881,21 @@ export function createInputManager({
             }
         }, { passive: false });
 
-        mobileMoveArea?.addEventListener('touchcancel', resetMoveStick, { passive: true });
+        addManagedTouchListener(mobileMoveArea, 'touchcancel', resetMoveStick, { passive: true });
 
         let aimTouchId = null;
-        mobileAimArea?.addEventListener('touchstart', (event) => {
+        addManagedTouchListener(mobileAimArea, 'touchstart', (event) => {
             if (aimTouchId !== null) return;
             const touch = event.changedTouches[0];
             aimTouchId = touch.identifier;
             mobileAimActive = true;
             recordMobileActionReachSample(touch);
-            updateAimFromTouch(touch);
+            updateAimFromTouch(touch, true);
             if (gameSettings.mobileAutoFireAim) inputState.shooting = true;
             event.preventDefault();
         }, { passive: false });
 
-        mobileAimArea?.addEventListener('touchmove', (event) => {
+        addManagedTouchListener(mobileAimArea, 'touchmove', (event) => {
             if (aimTouchId === null) return;
             for (const touch of event.changedTouches) {
                 if (touch.identifier === aimTouchId) {
@@ -867,8 +922,8 @@ export function createInputManager({
                 }
             }
         };
-        mobileAimArea?.addEventListener('touchend', endAimTouch, { passive: false });
-        mobileAimArea?.addEventListener('touchcancel', endAimTouch, { passive: false });
+        addManagedTouchListener(mobileAimArea, 'touchend', endAimTouch, { passive: false });
+        addManagedTouchListener(mobileAimArea, 'touchcancel', endAimTouch, { passive: false });
 
         let fireTouchId = null;
         const endFire = () => {
@@ -877,7 +932,7 @@ export function createInputManager({
             fireTouchId = null;
         };
 
-        mobileFireButton?.addEventListener('touchstart', (event) => {
+        addManagedTouchListener(mobileFireButton, 'touchstart', (event) => {
             if (fireTouchId !== null) return;
             const touch = event.changedTouches[0];
             fireTouchId = touch.identifier;
@@ -903,7 +958,7 @@ export function createInputManager({
             event.preventDefault();
         }, { passive: false });
 
-        mobileFireButton?.addEventListener('touchend', (event) => {
+        addManagedTouchListener(mobileFireButton, 'touchend', (event) => {
             if (fireTouchId === null) return;
             for (const touch of event.changedTouches) {
                 if (touch.identifier === fireTouchId) {
@@ -913,9 +968,9 @@ export function createInputManager({
                 }
             }
         }, { passive: false });
-        mobileFireButton?.addEventListener('touchcancel', endFire, { passive: true });
+        addManagedTouchListener(mobileFireButton, 'touchcancel', endFire, { passive: true });
 
-        mobileReloadButton?.addEventListener('touchstart', (event) => {
+        addManagedTouchListener(mobileReloadButton, 'touchstart', (event) => {
             const localPlayerState = getLocalPlayerState();
             const audioManager = getAudioManager();
             recordMobileActionReachSample(event.changedTouches[0]);
@@ -928,14 +983,14 @@ export function createInputManager({
             event.preventDefault();
         }, { passive: false });
 
-        mobileMeleeButton?.addEventListener('touchstart', (event) => {
+        addManagedTouchListener(mobileMeleeButton, 'touchstart', (event) => {
             recordMobileActionReachSample(event.changedTouches[0]);
             inputState.melee_attack = true;
             triggerHapticFn(8);
             event.preventDefault();
         }, { passive: false });
 
-        mobileWeaponPrimaryButton?.addEventListener('touchstart', (event) => {
+        addManagedTouchListener(mobileWeaponPrimaryButton, 'touchstart', (event) => {
             recordMobileActionReachSample(event.changedTouches[0]);
             inputState.change_weapon_slot = 1;
             setObjectiveUrgency('Swapping to primary weapon', 'info', 650);
@@ -943,7 +998,7 @@ export function createInputManager({
             event.preventDefault();
         }, { passive: false });
 
-        mobileWeaponSecondaryButton?.addEventListener('touchstart', (event) => {
+        addManagedTouchListener(mobileWeaponSecondaryButton, 'touchstart', (event) => {
             recordMobileActionReachSample(event.changedTouches[0]);
             inputState.change_weapon_slot = 2;
             setObjectiveUrgency('Swapping to secondary weapon', 'info', 650);
@@ -951,7 +1006,7 @@ export function createInputManager({
             event.preventDefault();
         }, { passive: false });
 
-        mobileAbilityDashButton?.addEventListener('touchstart', (event) => {
+        addManagedTouchListener(mobileAbilityDashButton, 'touchstart', (event) => {
             recordMobileActionReachSample(event.changedTouches[0]);
             inputState.use_ability_slot = 1;
             setObjectiveUrgency('Dash ability activated', 'positive', 600);
@@ -959,7 +1014,7 @@ export function createInputManager({
             event.preventDefault();
         }, { passive: false });
 
-        mobileAbilityDodgeButton?.addEventListener('touchstart', (event) => {
+        addManagedTouchListener(mobileAbilityDodgeButton, 'touchstart', (event) => {
             recordMobileActionReachSample(event.changedTouches[0]);
             inputState.use_ability_slot = 2;
             setObjectiveUrgency('Dodge ability activated', 'positive', 600);
@@ -973,7 +1028,7 @@ export function createInputManager({
         const mobileConnQualityDiv = document.getElementById('mobileConnectionQuality');
 
         if (mobileDataSaverBtn) {
-            mobileDataSaverBtn.addEventListener('touchstart', (event) => {
+            addManagedTouchListener(mobileDataSaverBtn, 'touchstart', (event) => {
                 triggerHapticFn(8);
                 event.preventDefault();
             }, { passive: false });
@@ -981,7 +1036,7 @@ export function createInputManager({
 
         if (mobileAimAssistBtn) {
             if (aimAssistEnabled) mobileAimAssistBtn.classList.add('mobile-button--active');
-            mobileAimAssistBtn.addEventListener('touchstart', (event) => {
+            addManagedTouchListener(mobileAimAssistBtn, 'touchstart', (event) => {
                 aimAssistEnabled = !aimAssistEnabled;
                 localStorage.setItem('aimAssist', aimAssistEnabled);
                 mobileAimAssistBtn.classList.toggle('mobile-button--active', aimAssistEnabled);
@@ -997,6 +1052,7 @@ export function createInputManager({
         // Ping wheel
         const schedulePingWheel = (touch, touchId = null) => {
             if (!touch) return;
+            pingWheelTouchBoundsRect = minimapContainerDiv?.getBoundingClientRect() || null;
             const anchor = getWorldPointFromMinimap(touch.clientX, touch.clientY);
             if (!anchor) return;
             pingWheelTouchId = touchId;
@@ -1007,19 +1063,19 @@ export function createInputManager({
             }, 320);
         };
 
-        minimapContainerDiv?.addEventListener('touchstart', (event) => {
+        addManagedTouchListener(minimapContainerDiv, 'touchstart', (event) => {
             if (pingWheelOpen) return;
             const touch = event.changedTouches[0];
             schedulePingWheel(touch, touch.identifier);
         }, { passive: true });
 
-        minimapContainerDiv?.addEventListener('touchmove', (event) => {
+        addManagedTouchListener(minimapContainerDiv, 'touchmove', (event) => {
             if (pingWheelOpen || pingWheelTouchId === null) return;
             for (const touch of event.changedTouches) {
                 if (touch.identifier === pingWheelTouchId) {
                     const anchor = getWorldPointFromMinimap(touch.clientX, touch.clientY);
                     if (!anchor) { closePingWheel(); return; }
-                    const rect = minimapContainerDiv.getBoundingClientRect();
+                    const rect = pingWheelTouchBoundsRect || minimapContainerDiv.getBoundingClientRect();
                     if (touch.clientX < rect.left - 12 || touch.clientX > rect.right + 12 ||
                         touch.clientY < rect.top - 12 || touch.clientY > rect.bottom + 12) {
                         closePingWheel();
@@ -1028,13 +1084,14 @@ export function createInputManager({
             }
         }, { passive: true });
 
-        minimapContainerDiv?.addEventListener('touchend', () => {
+        addManagedTouchListener(minimapContainerDiv, 'touchend', () => {
             if (!pingWheelOpen) closePingWheel();
         }, { passive: true });
-        minimapContainerDiv?.addEventListener('touchcancel', closePingWheel, { passive: true });
+        addManagedTouchListener(minimapContainerDiv, 'touchcancel', closePingWheel, { passive: true });
 
-        minimapContainerDiv?.addEventListener('mousedown', (event) => {
+        addManagedTouchListener(minimapContainerDiv, 'mousedown', (event) => {
             if (event.button !== 0 || pingWheelOpen) return;
+            pingWheelTouchBoundsRect = minimapContainerDiv?.getBoundingClientRect() || null;
             const anchor = getWorldPointFromMinimap(event.clientX, event.clientY);
             if (!anchor) return;
             pingWheelLongPressTimer = setTimeout(() => {
@@ -1042,10 +1099,10 @@ export function createInputManager({
                 openPingWheel(event.clientX, event.clientY, anchor.x, anchor.y);
             }, 320);
         });
-        minimapContainerDiv?.addEventListener('contextmenu', (event) => {
+        addManagedTouchListener(minimapContainerDiv, 'contextmenu', (event) => {
             event.preventDefault();
         });
-        window.addEventListener('mouseup', (event) => {
+        addManagedTouchListener(window, 'mouseup', (event) => {
             if (!pingWheelOpen) { closePingWheel(); return; }
             if (pingWheelDiv && event?.target && !pingWheelDiv.contains(event.target)) {
                 closePingWheel();
@@ -1053,18 +1110,20 @@ export function createInputManager({
         });
 
         pingWheelDiv?.querySelectorAll('[data-ping-kind]')?.forEach((btn) => {
-            btn.addEventListener('click', (event) => {
+            addManagedTouchListener(btn, 'click', (event) => {
                 event.preventDefault();
                 const kind = btn.getAttribute('data-ping-kind') || 'group';
                 if (pingWheelAnchorWorld) sendTacticalPing(kind, pingWheelAnchorWorld);
                 closePingWheel();
             });
         });
-        document.addEventListener('keydown', (event) => {
+        addManagedTouchListener(document, 'keydown', (event) => {
             if (event.key === 'Escape' && pingWheelOpen) closePingWheel();
         });
 
-        window.addEventListener('resize', () => {
+        addManagedTouchListener(window, 'resize', () => {
+            invalidateAppViewRectCache();
+            pingWheelTouchBoundsRect = minimapContainerDiv?.getBoundingClientRect() || null;
             updateMobileControlsVisibility();
             updateMobileButtonSizing();
         });

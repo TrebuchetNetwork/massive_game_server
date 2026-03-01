@@ -529,13 +529,13 @@ impl ImprovedSpatialIndex {
 
         if let Some(old_idx) = old_cell_idx {
             if old_idx != new_cell_idx {
-                if let Some(old_cell) = self.player_cell_members.get(old_idx) {
-                    old_cell.remove(&player_id);
-                }
                 if let Some(new_cell) = self.player_cell_members.get(new_cell_idx) {
                     new_cell.insert(player_id.clone());
                 }
                 self.player_cells.insert(player_id.clone(), new_cell_idx);
+                if let Some(old_cell) = self.player_cell_members.get(old_idx) {
+                    old_cell.remove(&player_id);
+                }
             }
         } else {
             // First time tracking this player
@@ -830,7 +830,7 @@ mod tests {
     use std::sync::Arc;
 
     fn pid(raw: &str) -> PlayerID {
-        Arc::new(raw.to_string())
+        Arc::from(raw.to_string())
     }
 
     #[test]
@@ -845,13 +845,13 @@ mod tests {
         index.update_player_position(p3, 420.0, 400.0);
 
         let mut nearby = index.query_nearby_players_with_positions(12.0, 12.0, 30.0);
-        nearby.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        nearby.sort_by(|a, b| a.0.as_ref().cmp(b.0.as_ref()));
 
         assert_eq!(nearby.len(), 2);
-        assert_eq!(nearby[0].0.as_str(), "p1");
+        assert_eq!(nearby[0].0.as_ref(), "p1");
         assert_eq!(nearby[0].1, 10.0);
         assert_eq!(nearby[0].2, 10.0);
-        assert_eq!(nearby[1].0.as_str(), "p2");
+        assert_eq!(nearby[1].0.as_ref(), "p2");
         assert_eq!(nearby[1].1, 28.0);
         assert_eq!(nearby[1].2, 24.0);
     }
@@ -866,14 +866,14 @@ mod tests {
 
         let old_cell_hits = index.query_nearby_players(20.0, 20.0, 24.0);
         assert!(
-            !old_cell_hits.iter().any(|id| id.as_str() == "p1"),
+            !old_cell_hits.iter().any(|id| id.as_ref() == "p1"),
             "player should have been removed from the old cell"
         );
 
         let new_cell_hits = index.query_nearby_players(220.0, 20.0, 24.0);
         let matches = new_cell_hits
             .iter()
-            .filter(|id| id.as_str() == "p1")
+            .filter(|id| id.as_ref() == "p1")
             .count();
         assert_eq!(matches, 1, "player should exist exactly once");
     }

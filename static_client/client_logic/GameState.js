@@ -40,21 +40,34 @@ export function createGameState({
 
     // ── Network type change detection (WiFi <-> cellular) ─────────
     let lastNetworkType = null;
+    let networkConnectionRef = null;
+    let networkChangeHandler = null;
 
     function initNetworkChangeDetection(getAdaptiveDelayRef) {
-        if (navigator.connection) {
-            lastNetworkType = navigator.connection.type || navigator.connection.effectiveType;
-            navigator.connection.addEventListener('change', () => {
-                const newType = navigator.connection.type || navigator.connection.effectiveType;
-                if (lastNetworkType && newType !== lastNetworkType) {
-                    log(`Network changed: ${lastNetworkType} -> ${newType}`, 'warn');
-                    if (getAdaptiveDelayRef) {
-                        getAdaptiveDelayRef().value = MAX_INTERPOLATION_DELAY_MS;
-                    }
+        teardownNetworkChangeDetection();
+        if (!navigator.connection) return;
+        networkConnectionRef = navigator.connection;
+        lastNetworkType = networkConnectionRef.type || networkConnectionRef.effectiveType;
+        networkChangeHandler = () => {
+            if (!networkConnectionRef) return;
+            const newType = networkConnectionRef.type || networkConnectionRef.effectiveType;
+            if (lastNetworkType && newType !== lastNetworkType) {
+                log(`Network changed: ${lastNetworkType} -> ${newType}`, 'warn');
+                if (getAdaptiveDelayRef) {
+                    getAdaptiveDelayRef().value = MAX_INTERPOLATION_DELAY_MS;
                 }
-                lastNetworkType = newType;
-            });
+            }
+            lastNetworkType = newType;
+        };
+        networkConnectionRef.addEventListener('change', networkChangeHandler);
+    }
+
+    function teardownNetworkChangeDetection() {
+        if (networkConnectionRef && networkChangeHandler) {
+            networkConnectionRef.removeEventListener('change', networkChangeHandler);
         }
+        networkConnectionRef = null;
+        networkChangeHandler = null;
     }
 
     // ── Connection status titles and constants ────────────────────
@@ -327,6 +340,7 @@ export function createGameState({
         updateConnectionQuality,
         getConnectionQuality,
         initNetworkChangeDetection,
+        teardownNetworkChangeDetection,
         createConnectionStatusManager,
         connectionStatusTitles,
         CONNECTION_ERROR_FALLBACK,

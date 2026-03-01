@@ -142,7 +142,7 @@ impl MassiveGameServer {
                             }
 
                             info!("[Melee] {} attempting to hit {} (dist_sq: {:.1}, angle_diff: {:.2} rad).",
-                                  attacker_id.as_str(), target_id_arc_nearby.as_str(), dist_sq, angle_diff);
+                                  attacker_id.as_ref(), target_id_arc_nearby.as_ref(), dist_sq, angle_diff);
 
                             // Apply damage and collect necessary data
                             let died = target_state.apply_damage(melee_damage);
@@ -351,7 +351,7 @@ impl MassiveGameServer {
                                             .or_insert(0);
                                         *team_score_mut_ref += 1;
                                         info!("Team {} scored +1 via melee kill on flag carrier by {}",
-                                              attacker_state_for_score.team_id, attacker_id.as_str());
+                                              attacker_state_for_score.team_id, attacker_id.as_ref());
                                     }
                                 }
 

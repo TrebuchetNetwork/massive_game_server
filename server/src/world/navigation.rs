@@ -119,6 +119,12 @@ impl GridNav {
         origin_x: f32,
         origin_y: f32,
     ) -> Self {
+        assert!(width > 0, "navigation width must be > 0");
+        assert!(height > 0, "navigation height must be > 0");
+        assert!(
+            cell_size.is_finite() && cell_size > 0.0,
+            "navigation cell_size must be finite and > 0"
+        );
         Self {
             width,
             height,
@@ -691,6 +697,12 @@ mod tests {
             assert!((last.x - 7.5).abs() < 0.001);
             assert!((last.y - 7.5).abs() < 0.001);
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "navigation cell_size must be finite and > 0")]
+    fn grid_nav_rejects_zero_cell_size() {
+        let _ = GridNav::new(8, 8, 0.0);
     }
 
     #[test]

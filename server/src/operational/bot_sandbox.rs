@@ -15,10 +15,11 @@ const MAX_TEAM_BATTLE_ROUNDS: u32 = 32;
 const MAX_REPLAY_FRAMES: usize = 8_192;
 const BOT_TICK_EXPORT: &str = "bot_tick";
 const DEFAULT_RESPAWNS_NON_ARENA: i32 = 3;
+const MAX_MODEL_ID_LEN: usize = 128;
 
 #[derive(Clone)]
 pub struct BotSandbox {
-    engine: Engine,
+    engine: Option<Engine>,
     wasm_dir: PathBuf,
     fuel_per_tick: u64,
     default_max_ticks: u32,
@@ -244,10 +245,14 @@ impl BotSandbox {
         let mut config = Config::new();
         config.consume_fuel(true);
         let engine = match Engine::new(&config) {
-            Ok(e) => e,
+            Ok(e) => Some(e),
             Err(err) => {
-                error!("Failed to create wasmtime engine: {err}. Using default config.");
-                Engine::default()
+                error!(
+                    "Failed to initialize wasmtime engine with fuel metering: {}. \
+                     WASM runtime disabled; only fallback runtime will be used.",
+                    err
+                );
+                None
             }
         };
 
@@ -690,7 +695,7 @@ impl BotSandbox {
                 module,
                 source_path,
             } => {
-                let mut store = Store::new(&self.engine, ());
+                let mut store = Store::new(module.engine(), ());
                 if let Err(err) = store.set_fuel(self.fuel_per_tick) {
                     warnings.push(format!(
                         "wasm store fuel init failed for '{}': {}. using fallback runtime",
@@ -744,6 +749,14 @@ impl BotSandbox {
     }
 
     fn load_program(&self, model_id: &str) -> BotProgram {
+        if self.engine.is_none() {
+            return BotProgram::Fallback {
+                reason:
+                    "wasm runtime unavailable because wasmtime fuel metering could not initialize"
+                        .to_owned(),
+            };
+        }
+
         let Some(safe_model_id) = sanitize_model_id(model_id) else {
             return BotProgram::Fallback {
                 reason: format!(
@@ -764,8 +777,12 @@ impl BotSandbox {
             };
         }
 
+        let engine = self
+            .engine
+            .as_ref()
+            .expect("engine checked above for load_program");
         match fs::read(&path) {
-            Ok(bytes) => match Module::from_binary(&self.engine, &bytes) {
+            Ok(bytes) => match Module::from_binary(engine, &bytes) {
                 Ok(module) => match validate_bot_tick_export(&module) {
                     Ok(()) => BotProgram::Wasm {
                         module,
@@ -1139,7 +1156,10 @@ fn validate_bot_tick_export(module: &Module) -> Result<(), String> {
 
 fn sanitize_model_id(model_id: &str) -> Option<String> {
     let trimmed = model_id.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || trimmed.len() > MAX_MODEL_ID_LEN {
+        return None;
+    }
+    if trimmed.starts_with('.') || trimmed.ends_with('.') || trimmed.contains("..") {
         return None;
     }
     if trimmed
@@ -1201,6 +1221,8 @@ mod tests {
     #[test]
     fn sanitize_model_id_rejects_path_traversal() {
         assert!(sanitize_model_id("../etc/passwd").is_none());
+        assert!(sanitize_model_id(".hidden_model").is_none());
+        assert!(sanitize_model_id("model..double-dot").is_none());
         assert!(sanitize_model_id("bot-alpha_1").is_some());
     }
 

@@ -117,7 +117,7 @@ mod tests {
         let candidates = collect_pickup_candidates(&players, &pickups);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].pickup_index, 0);
-        assert_eq!(candidates[0].player_id.as_str(), "p1");
+        assert_eq!(candidates[0].player_id.as_ref(), "p1");
     }
 
     #[test]

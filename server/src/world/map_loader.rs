@@ -9,6 +9,7 @@ use std::fs;
 
 const DEFAULT_MAX_MAP_WALLS: usize = 4096;
 const DEFAULT_MAX_MAP_PICKUPS: usize = 2048;
+const DEFAULT_MAX_MAP_ZONES: usize = 512;
 const MAX_MAP_COORD_ABS: f32 = 100_000.0;
 const MIN_WALL_DIMENSION: f32 = 1.0;
 const MAX_WALL_DIMENSION: f32 = 10_000.0;
@@ -111,7 +112,7 @@ pub fn load_map_from_json(path: &str) -> Result<LoadedMap> {
     })
 }
 
-fn map_entity_limits() -> (usize, usize) {
+fn map_entity_limits() -> (usize, usize, usize) {
     let max_walls = std::env::var("MGS_MAP_MAX_WALLS")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
@@ -122,11 +123,16 @@ fn map_entity_limits() -> (usize, usize) {
         .and_then(|raw| raw.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_MAX_MAP_PICKUPS);
-    (max_walls, max_pickups)
+    let max_zones = std::env::var("MGS_MAP_MAX_ZONES")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_MAP_ZONES);
+    (max_walls, max_pickups, max_zones)
 }
 
 fn validate_map_file(parsed: &MapFile) -> Result<()> {
-    let (max_walls, max_pickups) = map_entity_limits();
+    let (max_walls, max_pickups, max_zones) = map_entity_limits();
     if parsed.walls.len() > max_walls {
         return Err(anyhow!(
             "map contains {} walls but limit is {}",
@@ -139,6 +145,13 @@ fn validate_map_file(parsed: &MapFile) -> Result<()> {
             "map contains {} pickups but limit is {}",
             parsed.pickups.len(),
             max_pickups
+        ));
+    }
+    if parsed.zones.len() > max_zones {
+        return Err(anyhow!(
+            "map contains {} zones but limit is {}",
+            parsed.zones.len(),
+            max_zones
         ));
     }
 
@@ -154,6 +167,12 @@ fn validate_map_file(parsed: &MapFile) -> Result<()> {
             return Err(anyhow!("duplicate entity id {} in map", pickup.id));
         }
         validate_pickup(pickup)?;
+    }
+    for zone in &parsed.zones {
+        if !seen_ids.insert(zone.id) {
+            return Err(anyhow!("duplicate entity id {} in map", zone.id));
+        }
+        validate_zone(zone)?;
     }
     Ok(())
 }
@@ -240,6 +259,48 @@ fn validate_pickup(pickup: &MapPickup) -> Result<()> {
         ));
     }
     let _ = parse_pickup_type(&pickup.pickup_type)?;
+    Ok(())
+}
+
+fn validate_zone(zone: &MapZone) -> Result<()> {
+    validate_finite_coord(zone.x, "zone.x", zone.id)?;
+    validate_finite_coord(zone.y, "zone.y", zone.id)?;
+    validate_finite_coord(zone.width, "zone.width", zone.id)?;
+    validate_finite_coord(zone.height, "zone.height", zone.id)?;
+    validate_finite_coord(zone.direction, "zone.direction", zone.id)?;
+
+    if zone.width <= 0.0 || zone.height <= 0.0 {
+        return Err(anyhow!(
+            "zone {} dimensions must be positive: width={} height={}",
+            zone.id,
+            zone.width,
+            zone.height
+        ));
+    }
+
+    let zone_min_x = zone.x;
+    let zone_min_y = zone.y;
+    let zone_max_x = zone.x + zone.width;
+    let zone_max_y = zone.y + zone.height;
+    if zone_min_x < WORLD_MIN_X
+        || zone_min_y < WORLD_MIN_Y
+        || zone_max_x > WORLD_MAX_X
+        || zone_max_y > WORLD_MAX_Y
+    {
+        return Err(anyhow!(
+            "zone {} is out of world bounds: ({}, {}) to ({}, {}) not within [{}, {}]x[{}, {}]",
+            zone.id,
+            zone_min_x,
+            zone_min_y,
+            zone_max_x,
+            zone_max_y,
+            WORLD_MIN_X,
+            WORLD_MAX_X,
+            WORLD_MIN_Y,
+            WORLD_MAX_Y
+        ));
+    }
+    let _ = parse_zone_type(&zone.zone_type)?;
     Ok(())
 }
 
@@ -354,6 +415,25 @@ mod tests {
         };
         let err = validate_map_file(&map).expect_err("invalid health range should fail");
         assert!(err.to_string().contains("invalid current_health"));
+    }
+
+    #[test]
+    fn rejects_out_of_bounds_zone() {
+        let map = MapFile {
+            walls: vec![],
+            pickups: vec![],
+            zones: vec![MapZone {
+                id: 13,
+                x: WORLD_MAX_X - 5.0,
+                y: WORLD_MAX_Y - 5.0,
+                width: 20.0,
+                height: 20.0,
+                zone_type: "slow".to_string(),
+                direction: 0.0,
+            }],
+        };
+        let err = validate_map_file(&map).expect_err("out-of-bounds zones should be rejected");
+        assert!(err.to_string().contains("zone 13 is out of world bounds"));
     }
 
     #[test]

@@ -23,7 +23,7 @@ impl PlayerIdPool {
         if let Some(existing_arc) = self.allocated_ids.get(id_str) {
             return existing_arc.value().clone();
         }
-        let new_arc_id = Arc::new(id_str.to_string());
+        let new_arc_id: PlayerID = Arc::from(id_str.to_owned());
         self.allocated_ids
             .insert(id_str.to_string(), new_arc_id.clone());
         new_arc_id
@@ -396,7 +396,7 @@ impl ImprovedPlayerManager {
     }
 
     pub fn update_player_position(&self, player_id: &PlayerID, new_x: f32, new_y: f32) {
-        let shard_idx = self.get_shard_index(player_id.as_str());
+        let shard_idx = self.get_shard_index(player_id.as_ref());
         if shard_idx < self.shards.len() {
             if let Some(player_state_cell) = self.shards[shard_idx]
                 .get(player_id)
@@ -415,7 +415,7 @@ impl ImprovedPlayerManager {
     }
 
     pub fn get_player_state(&self, player_id: &PlayerID) -> Option<PlayerStateReadGuard> {
-        let shard_idx = self.get_shard_index(player_id.as_str());
+        let shard_idx = self.get_shard_index(player_id.as_ref());
         if shard_idx < self.shards.len() {
             self.shards[shard_idx]
                 .get(player_id)
@@ -428,7 +428,7 @@ impl ImprovedPlayerManager {
     }
 
     pub fn get_player_state_mut(&self, player_id: &PlayerID) -> Option<PlayerStateWriteGuard> {
-        let shard_idx = self.get_shard_index(player_id.as_str());
+        let shard_idx = self.get_shard_index(player_id.as_ref());
         if shard_idx < self.shards.len() {
             self.shards[shard_idx]
                 .get(player_id)

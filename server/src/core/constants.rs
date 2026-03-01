@@ -206,6 +206,9 @@ pub const QUANTIZE_VELOCITY_SCALE: f32 = 127.0 / QUANTIZE_VELOCITY_MAX;
 /// to f32 on the same grid.  This correctly handles negative coordinates.
 #[inline]
 pub fn quantize_position(v: f32) -> f32 {
+    if !v.is_finite() {
+        return 0.0;
+    }
     let clamped = v.clamp(QUANTIZE_POSITION_MIN, QUANTIZE_POSITION_MAX);
     let shifted = clamped - QUANTIZE_POSITION_MIN; // now in [0, RANGE]
     let q = (shifted * QUANTIZE_POSITION_SCALE).round() as u16;
@@ -222,6 +225,9 @@ pub fn dequantize_position(q: u16) -> f32 {
 /// The result is snapped to the i8 grid, then dequantized back to f32.
 #[inline]
 pub fn quantize_velocity(v: f32) -> f32 {
+    if !v.is_finite() {
+        return 0.0;
+    }
     let clamped = v.clamp(-QUANTIZE_VELOCITY_MAX, QUANTIZE_VELOCITY_MAX);
     let q = (clamped * QUANTIZE_VELOCITY_SCALE).round() as i8;
     q as f32 / QUANTIZE_VELOCITY_SCALE
@@ -231,11 +237,14 @@ pub fn quantize_velocity(v: f32) -> f32 {
 /// The result is snapped to the u8 grid, then dequantized back to f32.
 #[inline]
 pub fn quantize_rotation(v: f32) -> f32 {
+    if !v.is_finite() {
+        return 0.0;
+    }
     // Normalize to [0, 2*PI)
     let two_pi = std::f32::consts::TAU;
     let normalized = ((v % two_pi) + two_pi) % two_pi;
-    let q = (normalized / two_pi * 255.0).round() as u8;
-    q as f32 / 255.0 * two_pi
+    let q = ((normalized / two_pi) * 256.0).floor() as u8;
+    q as f32 / 256.0 * two_pi
 }
 
 /// Runtime validation for partition grid size (for values loaded from config).
@@ -404,6 +413,13 @@ mod tests {
     }
 
     #[test]
+    fn quantize_position_non_finite_defaults_to_zero() {
+        assert_eq!(quantize_position(f32::NAN), 0.0);
+        assert_eq!(quantize_position(f32::INFINITY), 0.0);
+        assert_eq!(quantize_position(f32::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
     fn dequantize_position_zero_is_min() {
         // u16 value 0 should map back to QUANTIZE_POSITION_MIN
         let v = dequantize_position(0);
@@ -448,6 +464,13 @@ mod tests {
         assert!((q - -200.0).abs() < 10.0);
     }
 
+    #[test]
+    fn quantize_velocity_non_finite_defaults_to_zero() {
+        assert_eq!(quantize_velocity(f32::NAN), 0.0);
+        assert_eq!(quantize_velocity(f32::INFINITY), 0.0);
+        assert_eq!(quantize_velocity(f32::NEG_INFINITY), 0.0);
+    }
+
     // ── quantize_rotation tests ──────────────────────────────────
 
     #[test]
@@ -455,6 +478,23 @@ mod tests {
         let q = quantize_rotation(-std::f32::consts::FRAC_PI_2);
         // Should wrap to ~3*PI/2
         assert!(q > 0.0, "quantize_rotation(-PI/2) should wrap to positive");
+    }
+
+    #[test]
+    fn quantize_rotation_non_finite_defaults_to_zero() {
+        assert_eq!(quantize_rotation(f32::NAN), 0.0);
+        assert_eq!(quantize_rotation(f32::INFINITY), 0.0);
+        assert_eq!(quantize_rotation(f32::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn quantize_rotation_wraps_tau_to_zero_bucket() {
+        let at_zero = quantize_rotation(0.0);
+        let at_tau = quantize_rotation(std::f32::consts::TAU);
+        assert!(
+            (at_zero - at_tau).abs() < f32::EPSILON,
+            "expected TAU to quantize to same bucket as 0, got {at_zero} vs {at_tau}"
+        );
     }
 
     // ── partition & tick tests ──────────────────────────────────

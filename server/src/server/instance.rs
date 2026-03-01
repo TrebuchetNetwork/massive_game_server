@@ -272,8 +272,6 @@ pub struct MassiveGameServer {
     pub global_game_events: Arc<PriorityEventQueue>,
     pub melee_hit_events: Arc<SegQueue<GameEvent>>,
 
-    pub active_connections: Arc<DashMap<String, NetworkConnection>>,
-
     pub frame_counter: Arc<AtomicU64>,
     /// Epoch millis of the most recent completed game tick (0 = no tick yet).
     pub last_tick_epoch_ms: Arc<AtomicU64>,
@@ -715,7 +713,6 @@ impl MassiveGameServer {
             projectiles_to_add: Arc::new(SegQueue::new()),
             global_game_events: Arc::new(PriorityEventQueue::new()),
             melee_hit_events: Arc::new(SegQueue::new()),
-            active_connections: Arc::new(DashMap::new()),
             frame_counter: Arc::new(AtomicU64::new(0)),
             last_tick_epoch_ms: Arc::new(AtomicU64::new(0)),
             tick_durations_history: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(1000))),
@@ -1092,7 +1089,7 @@ impl MassiveGameServer {
     /// to prevent unbounded memory growth after a player disconnects.
     /// Called from both QUIC and WebRTC disconnect paths.
     pub fn cleanup_player_tracking_state(&self, peer_id: &str) {
-        let player_id: PlayerID = Arc::new(peer_id.to_owned());
+        let player_id: PlayerID = Arc::from(peer_id.to_owned());
         self.player_position_history.remove(&player_id);
         self.aim_anomaly_states.remove(&player_id);
         self.player_last_sync_positions.remove(&player_id);

@@ -50,19 +50,16 @@ networkIndicator.update(currentPing);
 ```
 
 ### Utilities
-Shared utility functions and constants for colors, shapes, and visual effects.
+Shared utility helpers now live in focused modules such as `math_utils.js`,
+`networking_utils.js`, and `effects_audio_runtime.js`.
 
 ```javascript
 import { 
-    teamColors, 
-    weaponNames, 
-    mixColors, 
-    drawStar,
-    createStarfield,
-    createHealthVignette,
-    applyScreenShake,
-    initializeEnhancedGraphics
-} from './client_logic/utils.js';
+    clamp,
+    lerp,
+    normalizeAngle,
+    smoothFollowGain
+} from './client_logic/math_utils.js';
 ```
 
 ## Usage Example

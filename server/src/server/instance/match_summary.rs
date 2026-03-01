@@ -8,7 +8,7 @@ impl MassiveGameServer {
     pub fn latest_killcam_for_player(&self, player_id: &str) -> Option<KillCamData> {
         self.recent_killcams
             .iter()
-            .find(|entry| entry.key().as_str() == player_id)
+            .find(|entry| entry.key().as_ref() == player_id)
             .map(|entry| entry.value().clone())
     }
 
@@ -34,7 +34,7 @@ impl MassiveGameServer {
                     player_state.kills as f32 / player_state.deaths as f32
                 };
                 players.push(PlayerMatchStats {
-                    player_id: player_id.as_str().to_string(),
+                    player_id: player_id.as_ref().to_string(),
                     player_name: player_state.username.clone(),
                     team_id: player_state.team_id,
                     kills: player_state.kills,
@@ -163,20 +163,20 @@ impl MassiveGameServer {
         self.recent_killcams.insert(
             victim_id.clone(),
             KillCamData {
-                victim_id: victim_id.as_str().to_string(),
+                victim_id: victim_id.as_ref().to_string(),
                 victim_name: victim_name.to_string(),
-                killer_id: killer_id.as_str().to_string(),
+                killer_id: killer_id.as_ref().to_string(),
                 killer_name,
                 weapon: format!("{:?}", weapon),
                 generated_at_ms: self.get_server_timestamp_ms(),
                 samples,
             },
         );
-        if let Some(killcam) = self.latest_killcam_for_player(victim_id.as_str()) {
+        if let Some(killcam) = self.latest_killcam_for_player(victim_id.as_ref()) {
             if let Some(killcam_event_packet) =
                 self.build_system_event_packet("killcam", Some(&killcam))
             {
-                self.enqueue_direct_packet_for_peer(victim_id.as_str(), killcam_event_packet);
+                self.enqueue_direct_packet_for_peer(victim_id.as_ref(), killcam_event_packet);
             }
         }
     }

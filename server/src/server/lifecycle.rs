@@ -197,7 +197,7 @@ pub async fn persist_shutdown_state_if_configured(
             }
             *team_counts.entry(player_state.team_id).or_insert(0) += 1;
             players.push(ShutdownPlayerSummary {
-                id: player_id.as_str().to_owned(),
+                id: player_id.as_ref().to_owned(),
                 username: player_state.username.clone(),
                 team_id: player_state.team_id,
                 alive: player_state.alive,

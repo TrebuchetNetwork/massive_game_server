@@ -53,7 +53,7 @@ impl MassiveGameServer {
             .as_millis() as u64;
         let shutdown_chat = ChatMessage {
             seq: next_chat_message_seq(),
-            player_id: Arc::new(SHUTDOWN_CHAT_PLAYER_ID.to_owned()),
+            player_id: Arc::from(SHUTDOWN_CHAT_PLAYER_ID.to_owned()),
             username: SHUTDOWN_CHAT_USERNAME.to_owned(),
             message: SHUTDOWN_CHAT_MESSAGE.to_owned(),
             timestamp: timestamp_ms,
@@ -79,8 +79,15 @@ impl MassiveGameServer {
     }
 
     pub async fn run_game_loop(self: Arc<Self>) {
-        let delta_time_fixed = 1.0 / self.config.tick_rate as f32;
-        let tick_duration = Duration::from_secs_f64(1.0 / self.config.tick_rate as f64);
+        let tick_rate_hz = self.config.tick_rate.max(1);
+        if tick_rate_hz != self.config.tick_rate {
+            warn!(
+                "Invalid tick_rate={} detected at runtime; clamping to {} Hz.",
+                self.config.tick_rate, tick_rate_hz
+            );
+        }
+        let delta_time_fixed = 1.0 / tick_rate_hz as f32;
+        let tick_duration = Duration::from_secs_f64(1.0 / tick_rate_hz as f64);
         // Cap accumulator to prevent spiral-of-death: process at most 3 ticks
         // per iteration so a single long frame cannot snowball into unbounded
         // catch-up work that starves the event loop.
@@ -242,7 +249,7 @@ impl MassiveGameServer {
         self.player_manager
             .for_each_player(|player_id, player_state| {
                 let is_connected_client =
-                    update_aoi_this_frame && connected_client_ids.contains(player_id.as_str());
+                    update_aoi_this_frame && connected_client_ids.contains(player_id.as_ref());
 
                 self.spatial_index.update_player_position(
                     player_id.clone(),
@@ -291,7 +298,7 @@ impl MassiveGameServer {
         let effective_aoi_radius = AOI_RADIUS * quality.aoi_radius_scale;
         let effective_aoi_radius_sq = effective_aoi_radius * effective_aoi_radius;
 
-        let player_id_str = player_id.as_str();
+        let player_id_str = player_id.as_ref();
 
         // Determine per-client AoI limits (mobile vs desktop)
         let is_mobile = self

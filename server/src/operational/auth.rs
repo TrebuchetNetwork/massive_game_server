@@ -1,4 +1,5 @@
 use crate::core::types::PlayerState;
+use crate::network::rate_limiter::TokenBucket;
 use crate::operational::monitoring::metrics;
 use dashmap::DashMap;
 use parking_lot::{Mutex as ParkingLotMutex, RwLock};
@@ -27,6 +28,7 @@ const DEFAULT_SESSION_TTL_SECONDS: u64 = 60 * 60 * 24;
 const DEFAULT_RESEND_INTERVAL_SECONDS: u64 = 30;
 const DEFAULT_MAX_VERIFY_ATTEMPTS: u32 = 5;
 const DEFAULT_LEADERBOARD_LIMIT: usize = 50;
+const MAX_LEADERBOARD_LIMIT: usize = 100;
 const DEFAULT_REDIS_STORE_KEY: &str = "mgs:auth:persistent_store";
 const DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_PER_SEC: u32 = 24;
 const DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_BURST: u32 = 48;
@@ -50,6 +52,12 @@ const OTP_IP_LONG_WINDOW_SECS: u64 = 3600;
 const OTP_IP_LONG_WINDOW_MAX: u32 = 20;
 /// Maximum number of tracked IPs in the OTP IP rate limiter before cleanup triggers.
 const OTP_IP_RATE_LIMITER_MAX_ENTRIES: usize = 10_000;
+/// High-watermark for token validation limiter map; forces immediate cleanup
+/// even if the periodic interval has not elapsed.
+const TOKEN_VALIDATION_RATE_LIMITER_MAX_ENTRIES: usize = 10_000;
+const TOKEN_VALIDATION_CLEANUP_INTERVAL_SECS: u64 = 30;
+const OTP_IP_CLEANUP_MIN_ENTRIES: usize = 256;
+const OTP_IP_CLEANUP_INTERVAL_SECS: u64 = 30;
 
 static TOKEN_VALIDATION_RATE_LIMITERS: OnceLock<
     DashMap<String, Arc<ParkingLotMutex<TokenValidationRateLimiter>>>,
@@ -396,35 +404,21 @@ struct TokenValidationRateLimitConfig {
 
 #[derive(Debug)]
 struct TokenValidationRateLimiter {
-    refill_per_sec: f64,
-    capacity: f64,
-    available_tokens: f64,
-    last_refill_at: Instant,
+    bucket: TokenBucket,
+    last_seen_at: Instant,
 }
 
 impl TokenValidationRateLimiter {
     fn new(refill_per_sec: u32, capacity: u32) -> Self {
         Self {
-            refill_per_sec: refill_per_sec.max(1) as f64,
-            capacity: capacity.max(1) as f64,
-            available_tokens: capacity.max(1) as f64,
-            last_refill_at: Instant::now(),
+            bucket: TokenBucket::new(refill_per_sec, capacity),
+            last_seen_at: Instant::now(),
         }
     }
 
     fn try_acquire(&mut self) -> bool {
-        let now = Instant::now();
-        let elapsed = now.saturating_duration_since(self.last_refill_at);
-        self.last_refill_at = now;
-        let refill = elapsed.as_secs_f64() * self.refill_per_sec;
-        self.available_tokens = (self.available_tokens + refill).min(self.capacity);
-
-        if self.available_tokens >= 1.0 {
-            self.available_tokens -= 1.0;
-            true
-        } else {
-            false
-        }
+        self.last_seen_at = Instant::now();
+        self.bucket.try_acquire()
     }
 }
 
@@ -460,10 +454,7 @@ fn try_acquire_token_validation_token(remote_addr: Option<SocketAddr>) -> bool {
     let key = token_validation_rate_limit_key(remote_addr);
     let limiters = shared_token_validation_rate_limiters();
 
-    // Periodic cleanup: evict stale entries when map exceeds threshold.
-    if limiters.len() > OTP_IP_RATE_LIMITER_MAX_ENTRIES {
-        cleanup_token_validation_rate_limiters();
-    }
+    maybe_cleanup_token_validation_rate_limiters(limiters);
 
     let limiter_arc = limiters
         .entry(key)
@@ -485,8 +476,29 @@ fn cleanup_token_validation_rate_limiters() {
     let idle_threshold = std::time::Duration::from_secs(300);
     limiters.retain(|_key, limiter_arc| {
         let limiter = limiter_arc.lock();
-        now.saturating_duration_since(limiter.last_refill_at) < idle_threshold
+        now.saturating_duration_since(limiter.last_seen_at) < idle_threshold
     });
+}
+
+fn maybe_cleanup_token_validation_rate_limiters(
+    limiters: &DashMap<String, Arc<ParkingLotMutex<TokenValidationRateLimiter>>>,
+) {
+    static LAST_CLEANUP_UNIX_SECS: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+    let len = limiters.len();
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(std::time::Duration::from_secs(0))
+        .as_secs();
+    let previous = LAST_CLEANUP_UNIX_SECS.load(std::sync::atomic::Ordering::Relaxed);
+    let interval_elapsed = previous == 0
+        || now_secs.saturating_sub(previous) >= TOKEN_VALIDATION_CLEANUP_INTERVAL_SECS;
+    let above_high_watermark = len > TOKEN_VALIDATION_RATE_LIMITER_MAX_ENTRIES;
+    if !interval_elapsed && !above_high_watermark {
+        return;
+    }
+    LAST_CLEANUP_UNIX_SECS.store(now_secs, std::sync::atomic::Ordering::Relaxed);
+    cleanup_token_validation_rate_limiters();
 }
 
 // ── OTP per-IP rate limiting (sliding window counters) ───────────────────────
@@ -564,10 +576,7 @@ fn check_otp_ip_rate_limit(client_ip: Option<IpAddr>) -> Result<(), u64> {
     let limiters = shared_otp_ip_rate_limiters();
     let now = unix_now();
 
-    // Periodic cleanup when the map grows too large.
-    if limiters.len() > OTP_IP_RATE_LIMITER_MAX_ENTRIES {
-        cleanup_otp_ip_rate_limiters(now);
-    }
+    maybe_cleanup_otp_ip_rate_limiters(limiters, now);
 
     let mut entry = limiters.entry(ip).or_insert_with(OtpIpRateState::new);
     entry.try_record(now)
@@ -584,6 +593,22 @@ fn cleanup_otp_ip_rate_limiters(now: u64) {
         state.long_window_timestamps.retain(|&ts| ts > long_cutoff);
         !state.is_empty()
     });
+}
+
+fn maybe_cleanup_otp_ip_rate_limiters(limiters: &DashMap<IpAddr, OtpIpRateState>, now: u64) {
+    if limiters.len() < OTP_IP_CLEANUP_MIN_ENTRIES {
+        return;
+    }
+    static LAST_OTP_CLEANUP_UNIX_SECS: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+    let previous = LAST_OTP_CLEANUP_UNIX_SECS.load(std::sync::atomic::Ordering::Relaxed);
+    if previous != 0 && now.saturating_sub(previous) < OTP_IP_CLEANUP_INTERVAL_SECS {
+        if limiters.len() <= OTP_IP_RATE_LIMITER_MAX_ENTRIES {
+            return;
+        }
+    }
+    LAST_OTP_CLEANUP_UNIX_SECS.store(now, std::sync::atomic::Ordering::Relaxed);
+    cleanup_otp_ip_rate_limiters(now);
 }
 
 impl AuthService {
@@ -1025,7 +1050,7 @@ impl AuthService {
                 .then_with(|| a.user_id.cmp(&b.user_id))
         });
 
-        let bounded_limit = limit.clamp(1, 200);
+        let bounded_limit = limit.clamp(1, MAX_LEADERBOARD_LIMIT);
         if profiles.len() > bounded_limit {
             profiles.truncate(bounded_limit);
         }
@@ -1370,6 +1395,8 @@ pub fn build_auth_routes(
 
     let leaderboard = warp::path!("auth" / "leaderboard")
         .and(warp::get())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::optional::<String>("cookie"))
         .and(
             warp::query::<LeaderboardQuery>()
                 .or(warp::any().map(LeaderboardQuery::default))
@@ -1435,7 +1462,19 @@ async fn handle_request_code(
         }));
     }
 
-    let reply = match auth_service.request_phone_code(&body.phone_number) {
+    let phone_number = body.phone_number;
+    let auth_for_task = auth_service.clone();
+    let request_result =
+        tokio::task::spawn_blocking(move || auth_for_task.request_phone_code(&phone_number))
+            .await
+            .unwrap_or_else(|join_err| {
+                Err(AuthError::DeliveryFailed(format!(
+                    "OTP delivery worker failed: {}",
+                    join_err
+                )))
+            });
+
+    let reply = match request_result {
         Ok(result) => ok_response(result),
         Err(error) => error_response(error),
     };
@@ -1533,6 +1572,8 @@ async fn handle_auth_logout(
 }
 
 async fn handle_auth_leaderboard(
+    authorization_header: Option<String>,
+    cookie_header: Option<String>,
     query: LeaderboardQuery,
     remote_addr: Option<SocketAddr>,
     auth_service: AuthService,
@@ -1542,7 +1583,22 @@ async fn handle_auth_leaderboard(
             retry_after_seconds: 1,
         }));
     }
-    let limit = query.limit.unwrap_or(DEFAULT_LEADERBOARD_LIMIT);
+    let token_query = TokenQuery::default();
+    let token = resolve_token_with_cookie(
+        authorization_header.as_deref(),
+        &token_query,
+        cookie_header.as_deref(),
+    );
+    let Some(token_value) = token else {
+        return Ok(error_response(AuthError::SessionInvalid));
+    };
+    if auth_service.profile_from_token(&token_value).is_none() {
+        return Ok(error_response(AuthError::SessionInvalid));
+    }
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_LEADERBOARD_LIMIT)
+        .clamp(1, MAX_LEADERBOARD_LIMIT);
     let players = auth_service.leaderboard(limit);
     Ok(ok_response(LeaderboardResult { players }))
 }

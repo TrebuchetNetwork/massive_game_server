@@ -1,11 +1,11 @@
 // massive_game_server/server/src/world/partition.rs
 use crate::core::constants::BOUNDARY_ZONE_WIDTH; // Removed unused constants
 use crate::core::types::{
-    BoundaryAction, BoundarySnapshot, BoundaryUpdate, Direction, EntityId, GameEvent,
-    PartitionBounds, Pickup, PlayerID, Vec2, Wall,
+    BoundaryAction, BoundarySnapshot, BoundaryUpdate, Direction, EntityId, PartitionBounds, Pickup,
+    PlayerID, Vec2, Wall,
 };
 use arc_swap::ArcSwap;
-use crossbeam_queue::{ArrayQueue, SegQueue};
+use crossbeam_queue::ArrayQueue;
 use dashmap::{DashMap, DashSet};
 // Removed unused: use parking_lot::RwLock;
 // Removed unused: use smallvec::SmallVec;
@@ -55,23 +55,39 @@ impl LockFreeBoundaryZone {
         };
         if y - partition_bounds.min_y < self.width {
             if let Some(idx) = Direction::North.cardinal_channel_index() {
-                let _ = self.channels[idx].push(update.clone());
+                self.enqueue_boundary_update(idx, &update);
             }
         }
         if partition_bounds.max_x - x < self.width {
             if let Some(idx) = Direction::East.cardinal_channel_index() {
-                let _ = self.channels[idx].push(update.clone());
+                self.enqueue_boundary_update(idx, &update);
             }
         }
         if partition_bounds.max_y - y < self.width {
             if let Some(idx) = Direction::South.cardinal_channel_index() {
-                let _ = self.channels[idx].push(update.clone());
+                self.enqueue_boundary_update(idx, &update);
             }
         }
         if x - partition_bounds.min_x < self.width {
             if let Some(idx) = Direction::West.cardinal_channel_index() {
-                let _ = self.channels[idx].push(update.clone());
+                self.enqueue_boundary_update(idx, &update);
             }
+        }
+    }
+
+    #[inline]
+    fn enqueue_boundary_update(&self, channel_idx: usize, update: &BoundaryUpdate) {
+        if self.channels[channel_idx].push(update.clone()).is_ok() {
+            return;
+        }
+        // Keep latest visibility changes under pressure by evicting the oldest
+        // queued update instead of silently dropping the new one.
+        let _ = self.channels[channel_idx].pop();
+        if self.channels[channel_idx].push(update.clone()).is_err() {
+            debug!(
+                channel = channel_idx,
+                "Boundary update queue remained saturated after eviction; dropped latest update."
+            );
         }
     }
 
@@ -168,12 +184,10 @@ pub struct ImprovedWorldPartition {
     pub id: usize,
     pub bounds: PartitionBounds,
     pub local_players: Arc<DashSet<PlayerID>>,
-    pub local_projectiles: Arc<DashSet<EntityId>>,
     pub all_walls_in_partition: Arc<DashMap<EntityId, Wall>>,
     pub dynamic_objects: Arc<DashMap<EntityId, Pickup>>,
     pub boundary_zone: Arc<LockFreeBoundaryZone>,
     pub neighbor_ids: [Option<usize>; 8],
-    pub local_events: Arc<SegQueue<GameEvent>>,
 }
 
 impl ImprovedWorldPartition {
@@ -187,7 +201,6 @@ impl ImprovedWorldPartition {
             id,
             bounds,
             local_players: Arc::new(DashSet::new()),
-            local_projectiles: Arc::new(DashSet::new()),
             all_walls_in_partition: Arc::new(DashMap::new()),
             dynamic_objects: Arc::new(DashMap::new()),
             boundary_zone: Arc::new(LockFreeBoundaryZone::new(
@@ -195,7 +208,6 @@ impl ImprovedWorldPartition {
                 BOUNDARY_ZONE_WIDTH,
             )),
             neighbor_ids,
-            local_events: Arc::new(SegQueue::new()),
         }
     }
 
@@ -340,6 +352,15 @@ impl WorldPartitionManager {
         world_min_y: f32,
         boundary_config_capacity_per_channel: usize,
     ) -> Self {
+        assert!(grid_dim > 0, "world_partition_grid_dim must be > 0");
+        assert!(
+            world_width.is_finite() && world_width > 0.0,
+            "world_width must be finite and > 0"
+        );
+        assert!(
+            world_height.is_finite() && world_height > 0.0,
+            "world_height must be finite and > 0"
+        );
         let partition_width = world_width / grid_dim as f32;
         let partition_height = world_height / grid_dim as f32;
         let mut partitions = Vec::with_capacity(grid_dim * grid_dim);
@@ -463,5 +484,16 @@ impl WorldPartitionManager {
                 partition_arc.boundary_zone.update_snapshots();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorldPartitionManager;
+
+    #[test]
+    #[should_panic(expected = "world_partition_grid_dim must be > 0")]
+    fn partition_manager_rejects_zero_grid_dim() {
+        let _ = WorldPartitionManager::new(0, 100.0, 100.0, 0.0, 0.0, 32);
     }
 }

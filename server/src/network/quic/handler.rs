@@ -3,6 +3,7 @@
 use crate::network::connection_manager::{
     shared_connection_manager, ConnectionInfo, TransportKind,
 };
+use crate::network::rate_limiter::TokenBucket;
 use crate::operational::monitoring::metrics;
 use crate::operational::monitoring::tracing as monitoring_tracing;
 use anyhow::{anyhow, Context, Result};
@@ -213,39 +214,21 @@ pub fn validate_quic_config(config: &QuicEndpointConfig) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 struct IpRateLimiter {
-    refill_per_sec: f64,
-    capacity: f64,
-    available: f64,
-    last_refill: Instant,
+    bucket: TokenBucket,
+    last_seen: Instant,
 }
 
 impl IpRateLimiter {
     fn new(refill_per_sec: u32, burst: u32) -> Self {
-        let cap = burst.max(1) as f64;
         Self {
-            refill_per_sec: refill_per_sec.max(1) as f64,
-            capacity: cap,
-            available: cap,
-            last_refill: Instant::now(),
+            bucket: TokenBucket::new(refill_per_sec, burst),
+            last_seen: Instant::now(),
         }
     }
 
     fn try_acquire(&mut self) -> bool {
-        let now = Instant::now();
-        let elapsed = now
-            .checked_duration_since(self.last_refill)
-            .unwrap_or_default()
-            .as_secs_f64();
-        if elapsed > 0.0 {
-            self.available = (self.available + elapsed * self.refill_per_sec).min(self.capacity);
-            self.last_refill = now;
-        }
-        if self.available >= 1.0 {
-            self.available -= 1.0;
-            true
-        } else {
-            false
-        }
+        self.last_seen = Instant::now();
+        self.bucket.try_acquire()
     }
 }
 
@@ -284,7 +267,7 @@ impl ConnectionRateLimiters {
         let now = Instant::now();
         map.retain(|_ip, limiter| {
             // Keep entries that were active in the last 60 seconds.
-            now.checked_duration_since(limiter.last_refill)
+            now.checked_duration_since(limiter.last_seen)
                 .unwrap_or_default()
                 .as_secs()
                 < 60
@@ -774,7 +757,13 @@ async fn handle_bidi_stream(
     // Determine the effective peer_id for this stream:
     // 1. If the connection already has a bound peer_id, use that (ignore client-supplied).
     // 2. Otherwise, this is pre-auth — the request handler will validate auth_token and set it.
-    let current_bound = bound_peer_id.lock().ok().and_then(|guard| guard.clone());
+    let current_bound = match bound_peer_id.lock() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => {
+            warn!("QUIC bound_peer_id mutex poisoned; recovering inner state.");
+            poisoned.into_inner().clone()
+        }
+    };
 
     let stream_span = tracing::info_span!(
         "quic_bidi_stream",
@@ -806,17 +795,50 @@ async fn handle_bidi_stream(
                         .and_then(|v| v.as_str())
                         .filter(|s| !s.is_empty())
                     {
-                        if let Ok(mut guard) = bound_peer_id.lock() {
-                            *guard = Some(new_peer_id.to_string());
-                        }
-                        // Now register the peer sender with the authenticated peer_id.
-                        if let Some(ref envelope) = parsed_envelope {
-                            maybe_register_quic_peer(
-                                envelope,
-                                Some(new_peer_id),
-                                &peer_sender,
-                                &registered_peer_ids,
-                            );
+                        let should_register = match bound_peer_id.lock() {
+                            Ok(mut guard) => match guard.as_deref() {
+                                None => {
+                                    *guard = Some(new_peer_id.to_string());
+                                    true
+                                }
+                                Some(existing) if existing == new_peer_id => true,
+                                Some(existing) => {
+                                    warn!(
+                                        "Ignoring QUIC rebind attempt from '{}' to '{}'",
+                                        existing, new_peer_id
+                                    );
+                                    false
+                                }
+                            },
+                            Err(poisoned) => {
+                                let mut guard = poisoned.into_inner();
+                                match guard.as_deref() {
+                                    None => {
+                                        *guard = Some(new_peer_id.to_string());
+                                        true
+                                    }
+                                    Some(existing) if existing == new_peer_id => true,
+                                    Some(existing) => {
+                                        warn!(
+                                            "Ignoring QUIC rebind attempt from '{}' to '{}' (poison recovery)",
+                                            existing, new_peer_id
+                                        );
+                                        false
+                                    }
+                                }
+                            }
+                        };
+
+                        if should_register {
+                            // Register the peer sender with the authenticated peer_id.
+                            if let Some(ref envelope) = parsed_envelope {
+                                maybe_register_quic_peer(
+                                    envelope,
+                                    Some(new_peer_id),
+                                    &peer_sender,
+                                    &registered_peer_ids,
+                                );
+                            }
                         }
                     }
                 }

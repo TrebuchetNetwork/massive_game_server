@@ -677,7 +677,7 @@ impl MassiveGameServer {
                                 info!(
                                     "Team {} scored +1 via projectile kill on flag carrier by {}",
                                     attacker_state_for_score.team_id,
-                                    attacker_id.as_str()
+                                    attacker_id.as_ref()
                                 );
                             }
                         }

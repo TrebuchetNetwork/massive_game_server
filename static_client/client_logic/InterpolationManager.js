@@ -101,25 +101,26 @@ export function createInterpolationManager(getCtx) {
         ) {
             firstFreshIndex += 1;
         }
-        if (firstFreshIndex > 0) {
-            serverUpdates.splice(0, firstFreshIndex);
-        }
+        // Avoid mutating the shared updates buffer while interpolation logic is resolving indices.
+        const renderUpdates = firstFreshIndex > 0
+            ? serverUpdates.slice(firstFreshIndex)
+            : serverUpdates;
 
-        if (serverUpdates.length === 0) {
+        if (renderUpdates.length === 0) {
             return;
         }
 
         let update1 = null;
         let update2 = null;
-        for (let i = serverUpdates.length - 1; i >= 1; i--) {
-            if (serverUpdates[i].timestamp >= renderTime && serverUpdates[i - 1].timestamp <= renderTime) {
-                update2 = serverUpdates[i];
-                update1 = serverUpdates[i - 1];
+        for (let i = renderUpdates.length - 1; i >= 1; i--) {
+            if (renderUpdates[i].timestamp >= renderTime && renderUpdates[i - 1].timestamp <= renderTime) {
+                update2 = renderUpdates[i];
+                update1 = renderUpdates[i - 1];
                 break;
             }
         }
 
-        const latestUpdate = serverUpdates[serverUpdates.length - 1];
+        const latestUpdate = renderUpdates[renderUpdates.length - 1];
         if (!update1 || !update2) {
             if (renderTime >= latestUpdate.timestamp) {
                 const playerExtraSec = clamp(
@@ -178,7 +179,7 @@ export function createInterpolationManager(getCtx) {
                     });
                 }
             } else {
-                const oldestUpdate = serverUpdates[0];
+                const oldestUpdate = renderUpdates[0];
                 players.forEach((currentPlayerState, playerId) => {
                     if (playerId === myPlayerId) return;
                     const state = oldestUpdate.players.get(playerId);

@@ -10,6 +10,7 @@ static_client/client_logic_ts_build/
 data/
 server/data/
 test-results/
+scripts/e2e/test-results/
 panic.log
 runtime_server.log
 .claude/worktrees/

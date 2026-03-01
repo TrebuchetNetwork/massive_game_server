@@ -2,8 +2,10 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::Arc;
+use std::process::{Command, Output, Stdio};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
+use subtle::ConstantTimeEq;
 use warp::{Filter, Reply};
 use wasmtime::{Config, Engine, ExternType, Module, ValType};
 
@@ -14,6 +16,12 @@ const DEFAULT_ARENA_WASM_DIR: &str = "data/arena_bots";
 const DEFAULT_ARENA_SOURCE_DIR: &str = "data/arena_sources";
 const DEFAULT_OPENROUTER_MAX_TOKENS: u32 = 700;
 const MAX_MODEL_ID_LEN: usize = 128;
+const DEFAULT_RUSTC_TIMEOUT_SECS: u64 = 12;
+const MAX_RUSTC_TIMEOUT_SECS: u64 = 120;
+const DEFAULT_RUSTC_CPU_LIMIT_SECS: u64 = 10;
+const MAX_RUSTC_CPU_LIMIT_SECS: u64 = 120;
+const DEFAULT_RUSTC_MEMORY_LIMIT_MB: u64 = 512;
+const MAX_RUSTC_MEMORY_LIMIT_MB: u64 = 4096;
 
 fn read_env_secret(env_key: &str) -> Option<String> {
     if let Ok(raw) = std::env::var(env_key) {
@@ -539,33 +547,46 @@ fn compile_generated_code_impl(
         };
     }
 
-    let output = Command::new("rustc")
-        .arg("--edition=2021")
-        .arg("--crate-type=cdylib")
-        .arg("--target=wasm32-unknown-unknown")
-        .arg("-O")
-        .arg(&source_path)
-        .arg("-o")
-        .arg(&wasm_path)
-        .output();
+    let rustc_run = run_rustc_with_limits(&source_path, &wasm_path);
 
-    let Ok(output) = output else {
+    let (output, timed_out) = match rustc_run {
+        Ok(value) => value,
+        Err(err) => {
+            return CompileBotCodeResponse {
+                model_id,
+                source_path: source_path.display().to_string(),
+                wasm_path: None,
+                compiled: false,
+                bytes_written: 0,
+                compiler_stdout: String::new(),
+                compiler_stderr: format!(
+                    "failed to execute rustc. Ensure rustc is installed, wasm target is \
+available, and compile sandbox limits are valid. {}",
+                    err
+                ),
+                warnings,
+            };
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if timed_out {
+        warnings.push(format!(
+            "rustc timed out after {}s and was terminated",
+            rustc_timeout_secs()
+        ));
         return CompileBotCodeResponse {
             model_id,
             source_path: source_path.display().to_string(),
             wasm_path: None,
             compiled: false,
             bytes_written: 0,
-            compiler_stdout: String::new(),
-            compiler_stderr:
-                "failed to execute rustc. Ensure rustc is installed and wasm target is available."
-                    .to_owned(),
+            compiler_stdout: truncate_for_api(&stdout, 4000),
+            compiler_stderr: truncate_for_api(&stderr, 4000),
             warnings,
         };
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    }
     if !output.status.success() {
         return CompileBotCodeResponse {
             model_id,
@@ -673,6 +694,9 @@ fn validate_source_impl(
         ("std::net", "std::net", "stdnet"),
         ("libc::", "libc::", "libc"),
         ("asm!(", "asm!(", "asm"),
+        ("include!(", "include!(", "include"),
+        ("proc_macro", "proc_macro", "procmacro"),
+        ("macro_rules!", "macro_rules!", "macrorules"),
         ("thread::spawn", "thread::spawn", "threadspawn"),
         ("tokio::spawn", "tokio::spawn", "tokiospawn"),
         ("extern \"c\" fn main", "extern\"c\"fnmain", "externcfnmain"),
@@ -800,6 +824,159 @@ fn with_service(
     warp::any().map(move || service.clone())
 }
 
+fn inline_admin_expected_token() -> Option<&'static String> {
+    static TOKEN: OnceLock<Option<String>> = OnceLock::new();
+    TOKEN
+        .get_or_init(|| {
+            std::env::var("MGS_ADMIN_BEARER_TOKEN")
+                .or_else(|_| std::env::var("MGS_ADMIN_TOKEN"))
+                .ok()
+                .map(|raw| raw.trim().to_owned())
+                .filter(|raw| !raw.is_empty())
+        })
+        .as_ref()
+}
+
+fn parse_bearer_token(authorization_header: Option<&str>) -> Option<&str> {
+    let raw = authorization_header?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    raw.strip_prefix("Bearer ")
+        .or_else(|| raw.strip_prefix("bearer "))
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    let left_bytes = left.as_bytes();
+    let right_bytes = right.as_bytes();
+    left_bytes.len() == right_bytes.len() && left_bytes.ct_eq(right_bytes).into()
+}
+
+fn inline_admin_authorized(authorization_header: Option<&str>) -> bool {
+    let Some(expected) = inline_admin_expected_token() else {
+        return false;
+    };
+    let Some(provided) = parse_bearer_token(authorization_header) else {
+        return false;
+    };
+    constant_time_eq(expected.as_str(), provided)
+}
+
+fn rustc_timeout_secs() -> u64 {
+    static VALUE: OnceLock<u64> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("MGS_CODEGEN_RUSTC_TIMEOUT_SECS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_RUSTC_TIMEOUT_SECS)
+            .clamp(1, MAX_RUSTC_TIMEOUT_SECS)
+    })
+}
+
+fn rustc_cpu_limit_secs() -> Option<u64> {
+    static VALUE: OnceLock<Option<u64>> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("MGS_CODEGEN_RUSTC_CPU_LIMIT_SECS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .map(|value| value.clamp(1, MAX_RUSTC_CPU_LIMIT_SECS))
+            .or(Some(DEFAULT_RUSTC_CPU_LIMIT_SECS))
+    })
+}
+
+fn rustc_memory_limit_bytes() -> Option<u64> {
+    static VALUE: OnceLock<Option<u64>> = OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("MGS_CODEGEN_RUSTC_MEMORY_LIMIT_MB")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .map(|value| value.clamp(64, MAX_RUSTC_MEMORY_LIMIT_MB))
+            .or(Some(DEFAULT_RUSTC_MEMORY_LIMIT_MB))
+            .map(|mb| mb.saturating_mul(1024 * 1024))
+    })
+}
+
+fn apply_rustc_child_limits(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let cpu_limit_secs = rustc_cpu_limit_secs();
+        let memory_limit_bytes = rustc_memory_limit_bytes();
+        // SAFETY: pre_exec runs in the child process after fork and before exec.
+        // We only invoke async-signal-safe libc::setrlimit and return I/O errors.
+        unsafe {
+            command.pre_exec(move || {
+                if let Some(cpu_secs) = cpu_limit_secs {
+                    let limit = libc::rlimit {
+                        rlim_cur: cpu_secs as libc::rlim_t,
+                        rlim_max: cpu_secs as libc::rlim_t,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_CPU, &limit) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                if let Some(memory_bytes) = memory_limit_bytes {
+                    let limit = libc::rlimit {
+                        rlim_cur: memory_bytes as libc::rlim_t,
+                        rlim_max: memory_bytes as libc::rlim_t,
+                    };
+                    if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+    }
+}
+
+fn run_rustc_with_limits(source_path: &Path, wasm_path: &Path) -> Result<(Output, bool), String> {
+    let mut command = Command::new("rustc");
+    command
+        .arg("--edition=2021")
+        .arg("--crate-type=cdylib")
+        .arg("--target=wasm32-unknown-unknown")
+        .arg("-O")
+        .arg(source_path)
+        .arg("-o")
+        .arg(wasm_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_rustc_child_limits(&mut command);
+
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("failed to execute rustc: {}", err))?;
+    let timeout = Duration::from_secs(rustc_timeout_secs());
+    let started = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|err| format!("failed collecting rustc output: {}", err))?;
+                return Ok((output, false));
+            }
+            Ok(None) => {
+                if started.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let output = child.wait_with_output().map_err(|err| {
+                        format!("failed collecting timed-out rustc output: {}", err)
+                    })?;
+                    return Ok((output, true));
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(err) => {
+                return Err(format!("failed while waiting for rustc: {}", err));
+            }
+        }
+    }
+}
+
 pub fn build_code_generation_routes(
     service: CodeGenerationService,
 ) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
@@ -810,22 +987,40 @@ pub fn build_code_generation_routes(
 
     let validate = warp::path!("api" / "arena" / "code" / "validate")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(source_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .map(
-            |body: ValidateBotCodeBody, service: CodeGenerationService| {
+            |authorization: Option<String>,
+             body: ValidateBotCodeBody,
+             service: CodeGenerationService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
                 ok_response(service.validate_source(body))
             },
         );
 
     let generate = warp::path!("api" / "arena" / "code" / "generate")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .and_then(
-            |body: GenerateBotCodeBody, service: CodeGenerationService| async move {
+            |authorization: Option<String>,
+             body: GenerateBotCodeBody,
+             service: CodeGenerationService| async move {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return Ok::<_, warp::Rejection>(error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    ));
+                }
                 let reply = match service.generate_bot_code(body).await {
                     Ok(response) => ok_response(response),
                     Err(err) => error_response(err.code, err.message),
@@ -836,11 +1031,20 @@ pub fn build_code_generation_routes(
 
     let generate_and_compile = warp::path!("api" / "arena" / "code" / "generate_and_compile")
         .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
         .and(warp::body::content_length_limit(json_body_limit))
         .and(warp::body::json())
         .and(with_service(service))
         .and_then(
-            |body: GenerateAndCompileBotCodeBody, service: CodeGenerationService| async move {
+            |authorization: Option<String>,
+             body: GenerateAndCompileBotCodeBody,
+             service: CodeGenerationService| async move {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return Ok::<_, warp::Rejection>(error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    ));
+                }
                 let reply = match service.generate_and_compile(body).await {
                     Ok(response) => ok_response(response),
                     Err(err) => error_response(err.code, err.message),

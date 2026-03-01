@@ -166,10 +166,10 @@ impl MassiveGameServer {
         self.refresh_commander_runtime_state(current_timestamp_ms);
         let team1_commander_id = self
             .commander_id_for_team(1)
-            .map(|commander_id| commander_id.as_str().to_owned());
+            .map(|commander_id| commander_id.as_ref().to_owned());
         let team2_commander_id = self
             .commander_id_for_team(2)
-            .map(|commander_id| commander_id.as_str().to_owned());
+            .map(|commander_id| commander_id.as_ref().to_owned());
         let team1_commander_waypoint = self.commander_primary_waypoint_for_team(1);
         let team2_commander_waypoint = self.commander_primary_waypoint_for_team(2);
         let team1_commander_attack_bias = self.commander_attack_bias_for_team(1).unwrap_or(0.0);

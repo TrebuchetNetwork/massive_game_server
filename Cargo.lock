@@ -2461,6 +2461,7 @@ dependencies = [
  "sha2",
  "shell-escape",
  "smallvec 1.15.1",
+ "subtle",
  "thiserror 1.0.69",
  "tikv-jemallocator",
  "tokio",

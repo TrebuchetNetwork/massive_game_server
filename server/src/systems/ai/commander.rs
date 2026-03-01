@@ -1,6 +1,7 @@
 // massive_game_server/server/src/systems/ai/commander.rs
 
 use crate::core::types::Vec2;
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MotionSample {
@@ -10,20 +11,20 @@ pub struct MotionSample {
 
 #[derive(Debug, Clone, Default)]
 pub struct PredictiveMotionModel {
-    samples: Vec<MotionSample>,
+    samples: VecDeque<MotionSample>,
 }
 
 impl PredictiveMotionModel {
     pub fn push_sample(&mut self, sample: MotionSample) {
-        self.samples.push(sample);
+        self.samples.push_back(sample);
         if self.samples.len() > 16 {
-            self.samples.remove(0);
+            let _ = self.samples.pop_front();
         }
     }
 
     // Lightweight online prediction based on a short velocity+acceleration estimate.
     pub fn predict_position(&self, future_timestamp_ms: u64) -> Option<Vec2> {
-        let last = self.samples.last()?;
+        let last = self.samples.back()?;
         let prev = self.samples.iter().rev().nth(1)?;
         let dt_ms = (last.timestamp_ms.saturating_sub(prev.timestamp_ms)).max(1) as f32;
 

@@ -170,7 +170,7 @@ impl MassiveGameServer {
 
         trace!(
             "Updated client state for {}: {} projectiles, {} pickups, {} players tracked",
-            player_id.as_str(),
+            player_id.as_ref(),
             client_state.last_known_projectile_ids.len(),
             client_state.last_known_pickup_states.len(),
             client_state.last_known_players.len()
@@ -206,7 +206,7 @@ impl MassiveGameServer {
                 .unwrap_or_else(Self::get_empty_player_aoi)
         } else {
             self.player_aois
-                .get(player_id.as_str())
+                .get(player_id.as_ref())
                 .map(|entry| entry.value().clone())
                 .unwrap_or_else(Self::get_empty_player_aoi)
         }
@@ -360,7 +360,7 @@ impl MassiveGameServer {
             if !player_aoi.visible_players.contains(known_player_id)
                 && known_player_id != &player_id
             {
-                removed_player_ids_vec.push(builder.create_string(known_player_id.as_str()));
+                removed_player_ids_vec.push(builder.create_string(known_player_id.as_ref()));
             }
         }
 
@@ -381,7 +381,7 @@ impl MassiveGameServer {
         for proj_id in &player_aoi.visible_projectiles {
             if let Some(proj) = Self::lookup_projectile_from_shared(shared_data, proj_id) {
                 let id_str = fb_safe_entity_id(&mut builder, proj.id);
-                let owner_str = builder.create_string(proj.owner_id.as_str());
+                let owner_str = builder.create_string(proj.owner_id.as_ref());
 
                 // Apply mobile quantization to projectile positions/velocities.
                 let (px, py, vx, vy) = if quantize {
@@ -908,7 +908,7 @@ impl MassiveGameServer {
             {
                 if let Some(proj) = Self::lookup_projectile_from_shared(shared_data, proj_id) {
                     let id_fb = fb_safe_entity_id(&mut builder, proj.id);
-                    let owner_id_fb = fb_safe_str(&mut builder, proj.owner_id.as_str());
+                    let owner_id_fb = fb_safe_str(&mut builder, proj.owner_id.as_ref());
                     projectiles_fb_vec.push(fb::ProjectileState::create(
                         &mut builder,
                         &fb::ProjectileStateArgs {
@@ -1022,7 +1022,7 @@ impl MassiveGameServer {
                 let carrier_id_fb = fs
                     .carrier_id
                     .as_ref()
-                    .map(|id| fb_safe_str(&mut builder, id.as_str()));
+                    .map(|id| fb_safe_str(&mut builder, id.as_ref()));
                 let pos_fb = fb::Vec2::create(
                     &mut builder,
                     &fb::Vec2Args {

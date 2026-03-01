@@ -49,6 +49,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
+use subtle::ConstantTimeEq;
 use tracing::{error, info, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
@@ -287,17 +288,10 @@ fn parse_bearer_token(authorization_header: Option<&str>) -> Option<String> {
 fn constant_time_eq(left: &str, right: &str) -> bool {
     let left_bytes = left.as_bytes();
     let right_bytes = right.as_bytes();
-    let max_len = left_bytes.len().max(right_bytes.len());
-
-    // Include length mismatch in the accumulator instead of early-returning,
-    // so comparison work remains proportional to max_len in all cases.
-    let mut diff: usize = left_bytes.len() ^ right_bytes.len();
-    for idx in 0..max_len {
-        let left_byte = *left_bytes.get(idx).unwrap_or(&0);
-        let right_byte = *right_bytes.get(idx).unwrap_or(&0);
-        diff |= (left_byte ^ right_byte) as usize;
+    if left_bytes.len() != right_bytes.len() {
+        return false;
     }
-    diff == 0
+    left_bytes.ct_eq(right_bytes).into()
 }
 
 fn effective_ws_auth_requirement(require_auth_env: bool, ws_dev_mode: bool) -> bool {
@@ -414,6 +408,22 @@ fn admin_ip_allowed(ip_allowlist: &[IpNet], source_ip: IpAddr) -> bool {
     ip_allowlist.iter().any(|cidr| cidr.contains(&source_ip))
 }
 
+fn resolve_admin_source_ip(socket_ip: Option<IpAddr>, headers: &HeaderMap) -> Option<IpAddr> {
+    if socket_ip.is_some_and(is_trusted_proxy) {
+        let forwarded_ip = headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_forwarded_for_ip);
+        let real_ip = headers
+            .get("x-real-ip")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<IpAddr>().ok());
+        forwarded_ip.or(real_ip).or(socket_ip)
+    } else {
+        socket_ip
+    }
+}
+
 #[derive(Clone)]
 struct TrustedProxyConfig {
     cidrs: Vec<IpNet>,
@@ -512,29 +522,16 @@ fn requires_admin_auth(
                     }
 
                     let Some(expected_token) = config.bearer_token.as_ref() else {
-                        return Err(warp::reject::custom(AdminAuthRejection::service_unavailable(
-                            "Admin routes are disabled until MGS_ADMIN_BEARER_TOKEN is configured.",
-                        )));
+                        return Err(warp::reject::custom(
+                            AdminAuthRejection::service_unavailable(
+                                "Admin routes are currently unavailable.",
+                            ),
+                        ));
                     };
 
                     if !config.ip_allowlist.is_empty() {
                         let socket_ip = remote_addr.map(|addr| addr.ip());
-
-                        // Only trust X-Forwarded-For / X-Real-IP if the direct
-                        // connecting IP is in trusted proxy CIDRs.
-                        let source_ip = if socket_ip.is_some_and(is_trusted_proxy) {
-                            let forwarded_ip = headers
-                                .get("x-forwarded-for")
-                                .and_then(|value| value.to_str().ok())
-                                .and_then(parse_forwarded_for_ip);
-                            let real_ip = headers
-                                .get("x-real-ip")
-                                .and_then(|value| value.to_str().ok())
-                                .and_then(|value| value.trim().parse::<IpAddr>().ok());
-                            forwarded_ip.or(real_ip).or(socket_ip)
-                        } else {
-                            socket_ip
-                        };
+                        let source_ip = resolve_admin_source_ip(socket_ip, &headers);
 
                         let Some(source_ip) = source_ip else {
                             return Err(warp::reject::custom(AdminAuthRejection::forbidden(
@@ -700,8 +697,8 @@ fn static_cache_control_for_path(path: &Path) -> &'static str {
 fn parse_forwarded_for_ip(raw: &str) -> Option<IpAddr> {
     raw.split(',')
         .map(str::trim)
-        .rfind(|candidate| !candidate.is_empty())
-        .and_then(|candidate| candidate.parse::<IpAddr>().ok())
+        .filter(|candidate| !candidate.is_empty())
+        .find_map(|candidate| candidate.parse::<IpAddr>().ok())
 }
 
 fn parse_u64_env(var_name: &str, default_value: u64) -> u64 {
@@ -2318,7 +2315,7 @@ mod tests {
     fn test_parse_forwarded_for_ip_multiple() {
         assert_eq!(
             parse_forwarded_for_ip("10.0.0.1, 192.168.1.1"),
-            Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))
+            Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)))
         );
     }
 
@@ -2326,5 +2323,26 @@ mod tests {
     fn test_parse_forwarded_for_ip_invalid() {
         assert_eq!(parse_forwarded_for_ip("invalid-ip"), None);
         assert_eq!(parse_forwarded_for_ip(""), None);
+    }
+
+    #[test]
+    fn test_resolve_admin_source_ip_trusts_forwarded_headers_only_for_trusted_proxy() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("198.51.100.10"));
+        headers.insert("x-real-ip", HeaderValue::from_static("198.51.100.11"));
+
+        // Default trusted list includes loopback.
+        let trusted_socket = Some(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+        assert_eq!(
+            resolve_admin_source_ip(trusted_socket, &headers),
+            Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 10)))
+        );
+
+        // Public/untrusted socket should ignore spoofable forwarding headers.
+        let untrusted_socket = Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 20)));
+        assert_eq!(
+            resolve_admin_source_ip(untrusted_socket, &headers),
+            Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 20)))
+        );
     }
 }

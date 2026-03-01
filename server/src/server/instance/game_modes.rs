@@ -261,7 +261,7 @@ impl MassiveGameServer {
                         flag_state.carrier_id = None;
                         self.global_game_events.push(
                             GameEvent::FlagReturned {
-                                player_id: Arc::new("server".to_string()),
+                                player_id: Arc::from("server".to_string()),
                                 flag_team_id: flag_state.team_id,
                                 position: flag_state.position,
                             },
@@ -272,9 +272,31 @@ impl MassiveGameServer {
                 }
             }
 
-            let mut player_snapshots: HashMap<PlayerID, PlayerState> = HashMap::new();
+            #[derive(Clone)]
+            struct CtfPlayerSnapshot {
+                username: String,
+                x: f32,
+                y: f32,
+                team_id: u8,
+                alive: bool,
+                is_spectator: bool,
+                is_carrying_flag_team_id: u8,
+            }
+
+            let mut player_snapshots: HashMap<PlayerID, CtfPlayerSnapshot> = HashMap::new();
             self.player_manager.for_each_player(|id, state| {
-                player_snapshots.insert(id.clone(), state.clone());
+                player_snapshots.insert(
+                    id.clone(),
+                    CtfPlayerSnapshot {
+                        username: state.username.clone(),
+                        x: state.x,
+                        y: state.y,
+                        team_id: state.team_id,
+                        alive: state.alive,
+                        is_spectator: state.is_spectator,
+                        is_carrying_flag_team_id: state.is_carrying_flag_team_id,
+                    },
+                );
             });
 
             for (player_id_arc, player_state_snapshot) in &player_snapshots {

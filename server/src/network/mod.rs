@@ -5,4 +5,3 @@ pub mod connection_manager;
 pub mod quic;
 pub mod rate_limiter;
 pub mod signaling;
-pub mod webrtc;

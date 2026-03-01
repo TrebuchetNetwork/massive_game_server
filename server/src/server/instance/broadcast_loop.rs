@@ -284,7 +284,11 @@ impl MassiveGameServer {
 
         let scheduled_initial_entries =
             if pending_initial_open_count > max_initial_per_frame && max_initial_per_frame > 0 {
-                let start_index = (current_frame as usize) % pending_initial_open_count;
+                let start_index = if pending_initial_open_count == 0 {
+                    0
+                } else {
+                    (current_frame as usize) % pending_initial_open_count
+                };
                 let mut selected = Vec::with_capacity(max_initial_per_frame);
                 for offset in 0..max_initial_per_frame {
                     let idx = (start_index + offset) % pending_initial_open_count;

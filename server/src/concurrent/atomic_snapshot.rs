@@ -543,7 +543,7 @@ mod tests {
     use std::sync::Arc;
 
     fn pid(raw: &str) -> PlayerID {
-        Arc::new(raw.to_string())
+        Arc::from(raw.to_string())
     }
 
     fn make_player_state(id: &str, x: f32, y: f32) -> PlayerState {

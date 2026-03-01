@@ -80,7 +80,7 @@ pub(super) fn create_fb_player_state_for_delta_ext<'a>(
     let has_shield_delta = is_full_state || (changed_fields & FIELD_SHIELD) != 0;
     let has_flag_delta = is_full_state || (changed_fields & FIELD_FLAG) != 0;
 
-    let id_fb = fb_safe_str(builder, pstate.id.as_str());
+    let id_fb = fb_safe_str(builder, pstate.id.as_ref());
     let username_fb = if is_full_state || has_score_delta {
         Some(fb_safe_str(builder, &pstate.username))
     } else {
@@ -221,7 +221,7 @@ pub(super) fn create_fb_player_state_for_delta_ext<'a>(
 pub(super) fn build_chat_game_message_bytes(chat_entry: &ChatMessage) -> Bytes {
     let mut chat_builder = flatbuffers::FlatBufferBuilder::with_capacity(256);
 
-    let player_id_fb = chat_builder.create_string(chat_entry.player_id.as_str());
+    let player_id_fb = chat_builder.create_string(chat_entry.player_id.as_ref());
     let username_fb = chat_builder.create_string(&chat_entry.username);
     let message_fb = chat_builder.create_string(&chat_entry.message);
 
@@ -264,7 +264,7 @@ pub(super) fn build_game_event_fb<'a>(
             y: event_pos.y,
         },
     );
-    let instigator_id_fb = event_instigator_id(event).map(|id| builder.create_string(id.as_str()));
+    let instigator_id_fb = event_instigator_id(event).map(|id| builder.create_string(id.as_ref()));
     let target_id_fb = event_target_id(event).map(|id| builder.create_string(&id));
     let weapon_type_fb =
         event_weapon_type(event).map_or(fb::WeaponType::Pistol, map_server_weapon_to_fb);

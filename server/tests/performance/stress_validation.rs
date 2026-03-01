@@ -9,6 +9,7 @@
 //! Gated behind `RUN_STRESS_TEST=1` to avoid running in normal CI.
 
 use std::collections::HashMap;
+use std::mem::MaybeUninit;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,6 +29,49 @@ use tokio::sync::RwLock as TokioRwLock;
 
 fn stress_enabled() -> bool {
     std::env::var("RUN_STRESS_TEST").ok().as_deref() == Some("1")
+}
+
+fn percentile_nearest_rank(sorted_values: &[f64], quantile: f64) -> f64 {
+    if sorted_values.is_empty() {
+        return 0.0;
+    }
+    let q = quantile.clamp(0.0, 1.0);
+    let rank = (q * sorted_values.len() as f64).ceil() as usize;
+    let index = rank.saturating_sub(1).min(sorted_values.len() - 1);
+    sorted_values[index]
+}
+
+fn process_max_rss_bytes() -> Option<u64> {
+    #[cfg(unix)]
+    {
+        let mut usage = MaybeUninit::<libc::rusage>::zeroed();
+        // SAFETY: getrusage initializes the provided rusage struct on success.
+        let rc = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+        if rc != 0 {
+            return None;
+        }
+        // SAFETY: rc == 0 guarantees usage has been initialized.
+        let usage = unsafe { usage.assume_init() };
+        if usage.ru_maxrss <= 0 {
+            return None;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Some(usage.ru_maxrss as u64)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Some((usage.ru_maxrss as u64) * 1024)
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+fn to_mb(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
 }
 
 fn setup_test_server() -> Arc<MassiveGameServer> {
@@ -111,9 +155,11 @@ async fn stress_validation_concurrent_players() {
     }
 
     let server = setup_test_server();
+    let rss_before = process_max_rss_bytes();
     let player_count = 20;
     let tick_count = 60;
     let dt = 1.0 / 60.0_f32;
+    const MAX_RSS_GROWTH_BYTES: u64 = 256 * 1024 * 1024;
 
     // Spawn players across the map
     let mut player_ids: Vec<PlayerID> = Vec::with_capacity(player_count);
@@ -169,8 +215,8 @@ async fn stress_validation_concurrent_players() {
     let avg = tick_durations_ms.iter().sum::<f64>() / tick_durations_ms.len() as f64;
     let mut sorted = tick_durations_ms.clone();
     sorted.sort_by(|a, b| a.total_cmp(b));
-    let p95 = sorted[((sorted.len() - 1) as f64 * 0.95).round() as usize];
-    let p99 = sorted[((sorted.len() - 1) as f64 * 0.99).round() as usize];
+    let p95 = percentile_nearest_rank(&sorted, 0.95);
+    let p99 = percentile_nearest_rank(&sorted, 0.99);
     let max = sorted.last().copied().unwrap_or(0.0);
 
     eprintln!(
@@ -193,6 +239,22 @@ async fn stress_validation_concurrent_players() {
         "p95 tick duration {:.2}ms exceeds 500ms budget",
         p95
     );
+
+    if let (Some(before), Some(after)) = (rss_before, process_max_rss_bytes()) {
+        let rss_growth = after.saturating_sub(before);
+        eprintln!(
+            "[stress_validation] RSS max growth {:.2} MiB (before {:.2} MiB -> after {:.2} MiB)",
+            to_mb(rss_growth),
+            to_mb(before),
+            to_mb(after)
+        );
+        assert!(
+            rss_growth <= MAX_RSS_GROWTH_BYTES,
+            "RSS growth {:.2} MiB exceeds {:.2} MiB budget",
+            to_mb(rss_growth),
+            to_mb(MAX_RSS_GROWTH_BYTES)
+        );
+    }
 }
 
 /// Adds players, runs ticks, then removes players and runs more ticks.
@@ -205,7 +267,9 @@ async fn stress_validation_player_churn() {
     }
 
     let server = setup_test_server();
+    let rss_before = process_max_rss_bytes();
     let dt = 1.0 / 60.0_f32;
+    const MAX_RSS_GROWTH_BYTES: u64 = 256 * 1024 * 1024;
 
     // Phase 1: Add 15 players, run 30 ticks
     let mut player_ids: Vec<(String, PlayerID)> = Vec::new();
@@ -275,6 +339,22 @@ async fn stress_validation_player_churn() {
         "[stress_validation:churn] Completed 90 ticks with player add/remove churn. Final count={}",
         server.player_manager.player_count()
     );
+
+    if let (Some(before), Some(after)) = (rss_before, process_max_rss_bytes()) {
+        let rss_growth = after.saturating_sub(before);
+        eprintln!(
+            "[stress_validation:churn] RSS max growth {:.2} MiB (before {:.2} MiB -> after {:.2} MiB)",
+            to_mb(rss_growth),
+            to_mb(before),
+            to_mb(after)
+        );
+        assert!(
+            rss_growth <= MAX_RSS_GROWTH_BYTES,
+            "RSS growth {:.2} MiB exceeds {:.2} MiB budget",
+            to_mb(rss_growth),
+            to_mb(MAX_RSS_GROWTH_BYTES)
+        );
+    }
 }
 
 /// Runs ticks with 20 players + 10 bots to verify hybrid tick processing.
@@ -286,10 +366,12 @@ async fn stress_validation_players_and_bots() {
     }
 
     let server = setup_test_server();
+    let rss_before = process_max_rss_bytes();
     let dt = 1.0 / 60.0_f32;
     let player_count = 20;
     let bot_count = 10;
     let tick_count = 60;
+    const MAX_RSS_GROWTH_BYTES: u64 = 256 * 1024 * 1024;
 
     // Set target bot count so the server manages exactly this many bots
     server
@@ -340,11 +422,27 @@ async fn stress_validation_players_and_bots() {
     let avg = tick_durations_ms.iter().sum::<f64>() / tick_durations_ms.len() as f64;
     let mut sorted = tick_durations_ms.clone();
     sorted.sort_by(|a, b| a.total_cmp(b));
-    let p95 = sorted[((sorted.len() - 1) as f64 * 0.95).round() as usize];
+    let p95 = percentile_nearest_rank(&sorted, 0.95);
     let max = sorted.last().copied().unwrap_or(0.0);
 
     eprintln!(
         "[stress_validation:hybrid] {}p + {}b x {} ticks: avg={:.2}ms p95={:.2}ms max={:.2}ms",
         player_count, bot_count, tick_count, avg, p95, max
     );
+
+    if let (Some(before), Some(after)) = (rss_before, process_max_rss_bytes()) {
+        let rss_growth = after.saturating_sub(before);
+        eprintln!(
+            "[stress_validation:hybrid] RSS max growth {:.2} MiB (before {:.2} MiB -> after {:.2} MiB)",
+            to_mb(rss_growth),
+            to_mb(before),
+            to_mb(after)
+        );
+        assert!(
+            rss_growth <= MAX_RSS_GROWTH_BYTES,
+            "RSS growth {:.2} MiB exceeds {:.2} MiB budget",
+            to_mb(rss_growth),
+            to_mb(MAX_RSS_GROWTH_BYTES)
+        );
+    }
 }
