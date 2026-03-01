@@ -345,7 +345,8 @@ impl MassiveGameServer {
             ((max_delta_events_per_client as f32) * quality.max_projectiles_scale)
                 .round()
                 .clamp(1.0, MAX_DELTA_EVENTS_DEFAULT as f32) as usize;
-        delta_skip_modulus = delta_skip_modulus.max(quality.delta_skip_modulus);
+        // Defensive clamp: a zero modulus would panic in `is_multiple_of`.
+        delta_skip_modulus = delta_skip_modulus.max(quality.delta_skip_modulus.max(1));
 
         let mut scheduled_client_entries = scheduled_initial_entries;
         let mut scheduled_delta_count = 0usize;

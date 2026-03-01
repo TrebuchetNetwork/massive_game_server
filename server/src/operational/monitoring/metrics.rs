@@ -107,6 +107,10 @@ fn describe_metrics_catalog() {
         "game_shutdown_duration_seconds",
         "Graceful shutdown duration in seconds"
     );
+    describe_counter!(
+        "game_quic_outbound_dropped_packets_total",
+        "Dropped outbound QUIC packets by reason"
+    );
 }
 
 pub fn init_metrics_exporter_from_env() -> Result<()> {
@@ -253,6 +257,17 @@ pub fn record_quic_connection_rejected(reason: &'static str) {
         return;
     }
     counter!("game_quic_connections_rejected_total", "reason" => reason).increment(1);
+}
+
+pub fn record_quic_outbound_dropped_packets(reason: &'static str, count: u64) {
+    if !enabled() || count == 0 {
+        return;
+    }
+    counter!(
+        "game_quic_outbound_dropped_packets_total",
+        "reason" => reason
+    )
+    .increment(count);
 }
 
 pub struct MetricsSystem {

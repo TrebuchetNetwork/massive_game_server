@@ -148,6 +148,7 @@ impl MassiveGameServer {
                 .clamp(WORLD_MIN_Y + half_radius, WORLD_MAX_Y - half_radius);
             player_state.velocity_x = 0.0;
             player_state.velocity_y = 0.0;
+            player_state.last_valid_position = (player_state.x, player_state.y);
             player_state.mark_field_changed(FIELD_POSITION_ROTATION);
             return;
         }
@@ -171,6 +172,7 @@ impl MassiveGameServer {
                 player_state.y = old_y;
                 player_state.velocity_x = 0.0;
                 player_state.velocity_y = 0.0;
+                player_state.last_valid_position = (old_x, old_y);
                 player_state.mark_field_changed(FIELD_POSITION_ROTATION);
                 return;
             }

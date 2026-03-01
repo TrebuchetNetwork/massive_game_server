@@ -12,6 +12,6 @@
     "webgpu-probe": "node webgpu_probe.js"
   },
   "devDependencies": {
-    "playwright": "^1.42.1"
+    "playwright": "^1.50.1"
   }
 }

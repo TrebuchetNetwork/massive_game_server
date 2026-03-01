@@ -120,7 +120,9 @@ fn apply_env_overrides(config: &mut ServerConfig) {
     if let Some(value) = env_usize("MGS_LOCAL_SHARD_ID") {
         config.local_shard_id = value;
     }
-    if let Some(value) = env_usize("MGS_MAX_PLAYERS_PER_MATCH") {
+    if let Some(value) =
+        env_usize("MGS_MAX_PLAYERS_PER_MATCH").or_else(|| env_usize("MGS_MAX_PLAYERS"))
+    {
         config.max_players_per_match = value;
     }
 
@@ -144,6 +146,16 @@ fn apply_env_overrides(config: &mut ServerConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn with_env_lock<T>(f: impl FnOnce() -> T) -> T {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned");
+        f()
+    }
 
     #[test]
     fn test_apply_partial() {
@@ -174,5 +186,42 @@ mod tests {
         assert_eq!(config.local_shard_id, 1);
         assert_eq!(config.max_players_per_match, 64);
         assert_eq!(config.thread_pools.physics_threads, 4);
+    }
+
+    #[test]
+    fn env_override_accepts_legacy_max_players_name() {
+        with_env_lock(|| {
+            let previous_new = std::env::var("MGS_MAX_PLAYERS_PER_MATCH").ok();
+            let previous_legacy = std::env::var("MGS_MAX_PLAYERS").ok();
+            // SAFETY: test-only process environment mutation under global lock.
+            unsafe { std::env::remove_var("MGS_MAX_PLAYERS_PER_MATCH") };
+            // SAFETY: test-only process environment mutation under global lock.
+            unsafe { std::env::set_var("MGS_MAX_PLAYERS", "321") };
+
+            let mut config = ServerConfig::default();
+            apply_env_overrides(&mut config);
+            assert_eq!(config.max_players_per_match, 321);
+
+            match previous_new {
+                Some(value) => {
+                    // SAFETY: test-only process environment mutation under global lock.
+                    unsafe { std::env::set_var("MGS_MAX_PLAYERS_PER_MATCH", value) }
+                }
+                None => {
+                    // SAFETY: test-only process environment mutation under global lock.
+                    unsafe { std::env::remove_var("MGS_MAX_PLAYERS_PER_MATCH") }
+                }
+            }
+            match previous_legacy {
+                Some(value) => {
+                    // SAFETY: test-only process environment mutation under global lock.
+                    unsafe { std::env::set_var("MGS_MAX_PLAYERS", value) }
+                }
+                None => {
+                    // SAFETY: test-only process environment mutation under global lock.
+                    unsafe { std::env::remove_var("MGS_MAX_PLAYERS") }
+                }
+            }
+        });
     }
 }

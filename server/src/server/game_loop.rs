@@ -321,22 +321,16 @@ impl MassiveGameServer {
             AOI_MAX_VISIBLE_WALLS
         };
 
-        let mut player_aoi_entry = self
+        let should_skip_update = self
             .player_aois
-            .entry(player_id_str.to_string())
-            .or_default();
-
-        if player_aoi_entry.value().last_update.elapsed().as_secs_f32() < AOI_UPDATE_INTERVAL_SECS {
+            .get(player_id_str)
+            .map(|aoi| aoi.last_update.elapsed().as_secs_f32() < AOI_UPDATE_INTERVAL_SECS)
+            .unwrap_or(false);
+        if should_skip_update {
             return;
         }
 
-        let player_aoi = player_aoi_entry.value_mut();
-
-        // Clear previous data
-        player_aoi.visible_players.clear();
-        player_aoi.visible_projectiles.clear();
-        player_aoi.visible_pickups.clear();
-        player_aoi.visible_walls.clear();
+        let mut next_aoi = crate::core::types::PlayerAoI::new();
 
         let is_spectator = self
             .player_manager
@@ -345,21 +339,21 @@ impl MassiveGameServer {
             .unwrap_or(false);
         if is_spectator {
             self.player_manager.for_each_player(|other_id, _| {
-                if other_id != player_id && player_aoi.visible_players.len() < max_visible_players {
-                    player_aoi.visible_players.insert(other_id.clone());
+                if other_id != player_id && next_aoi.visible_players.len() < max_visible_players {
+                    next_aoi.visible_players.insert(other_id.clone());
                 }
             });
             {
                 let projectiles = self.projectiles.read();
                 for projectile in projectiles.iter().take(max_visible_projectiles) {
-                    player_aoi.visible_projectiles.insert(projectile.id);
+                    next_aoi.visible_projectiles.insert(projectile.id);
                 }
             }
             {
                 let pickups = self.pickups.read();
                 for pickup in pickups.iter().take(max_visible_pickups) {
                     if pickup.is_active {
-                        player_aoi.visible_pickups.insert(pickup.id);
+                        next_aoi.visible_pickups.insert(pickup.id);
                     }
                 }
             }
@@ -370,9 +364,10 @@ impl MassiveGameServer {
                 WORLD_MAX_Y,
             );
             for wall in active_walls.into_iter().take(max_visible_walls) {
-                player_aoi.visible_walls.insert(wall.id);
+                next_aoi.visible_walls.insert(wall.id);
             }
-            player_aoi.last_update = Instant::now();
+            next_aoi.last_update = Instant::now();
+            self.player_aois.insert(player_id_str.to_owned(), next_aoi);
             return;
         }
 
@@ -385,8 +380,8 @@ impl MassiveGameServer {
             .take(max_visible_players.saturating_add(1))
         {
             if &other_id_arc != player_id {
-                player_aoi.visible_players.insert(other_id_arc);
-                if player_aoi.visible_players.len() >= max_visible_players {
+                next_aoi.visible_players.insert(other_id_arc);
+                if next_aoi.visible_players.len() >= max_visible_players {
                     break;
                 }
             }
@@ -400,7 +395,7 @@ impl MassiveGameServer {
             .into_iter()
             .take(max_visible_projectiles)
         {
-            player_aoi.visible_projectiles.insert(proj_id);
+            next_aoi.visible_projectiles.insert(proj_id);
         }
 
         // Candidate partitions for map/items within this AoI.
@@ -429,8 +424,8 @@ impl MassiveGameServer {
                     let dx = pickup.x - x;
                     let dy = pickup.y - y;
                     if (dx * dx + dy * dy) <= effective_aoi_radius_sq {
-                        player_aoi.visible_pickups.insert(pickup.id);
-                        if player_aoi.visible_pickups.len() >= max_visible_pickups {
+                        next_aoi.visible_pickups.insert(pickup.id);
+                        if next_aoi.visible_pickups.len() >= max_visible_pickups {
                             break 'pickups;
                         }
                     }
@@ -452,22 +447,23 @@ impl MassiveGameServer {
             if wall.is_destructible && wall.current_health <= 0 {
                 continue;
             }
-            player_aoi.visible_walls.insert(wall.id);
+            next_aoi.visible_walls.insert(wall.id);
         }
 
         // Debug logging
         trace!(
             "[AoI Update] Player {}: {} players, {} projectiles, {} pickups ({} active/{} candidates), {} walls ({} candidates)",
             player_id_str,
-            player_aoi.visible_players.len(),
-            player_aoi.visible_projectiles.len(),
-            player_aoi.visible_pickups.len(),
+            next_aoi.visible_players.len(),
+            next_aoi.visible_projectiles.len(),
+            next_aoi.visible_pickups.len(),
             active_pickups,
             candidate_pickups,
-            player_aoi.visible_walls.len(),
+            next_aoi.visible_walls.len(),
             candidate_walls
         );
 
-        player_aoi.last_update = Instant::now();
+        next_aoi.last_update = Instant::now();
+        self.player_aois.insert(player_id_str.to_owned(), next_aoi);
     }
 }

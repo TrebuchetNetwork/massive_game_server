@@ -7,7 +7,11 @@ E2E_DIR="$ROOT_DIR/scripts/e2e"
 cd "$E2E_DIR"
 
 if [ ! -d node_modules ]; then
-  npm install
+  if [ -f package-lock.json ]; then
+    npm ci
+  else
+    npm install
+  fi
 fi
 
 cd "$ROOT_DIR"

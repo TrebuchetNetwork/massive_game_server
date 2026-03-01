@@ -38,6 +38,17 @@ impl<T: Interpolate> InterpolationBuffer<T> {
     }
 
     pub fn push(&mut self, timestamp_ms: u64, value: T) {
+        if let Some(last) = self.samples.back_mut() {
+            if timestamp_ms < last.timestamp_ms {
+                // Ignore out-of-order samples to preserve monotonic interpolation windows.
+                return;
+            }
+            if timestamp_ms == last.timestamp_ms {
+                // Replace duplicate timestamp with fresher value.
+                last.value = value;
+                return;
+            }
+        }
         self.samples.push_back(TimedSample {
             timestamp_ms,
             value,
@@ -117,6 +128,26 @@ mod tests {
         buffer.push(100, Vec2::new(0.0, 0.0));
         buffer.push(200, Vec2::new(10.0, 10.0));
         let sample = buffer.sample_at(150).expect("sample");
+        assert!((sample.x - 5.0).abs() < 0.01);
+        assert!((sample.y - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn ignores_out_of_order_samples() {
+        let mut buffer = InterpolationBuffer::new(8);
+        buffer.push(100, Vec2::new(1.0, 1.0));
+        buffer.push(120, Vec2::new(2.0, 2.0));
+        buffer.push(110, Vec2::new(99.0, 99.0));
+        assert_eq!(buffer.sample_count(), 2);
+    }
+
+    #[test]
+    fn replaces_duplicate_timestamp_sample() {
+        let mut buffer = InterpolationBuffer::new(8);
+        buffer.push(100, Vec2::new(1.0, 1.0));
+        buffer.push(100, Vec2::new(5.0, 5.0));
+        assert_eq!(buffer.sample_count(), 1);
+        let sample = buffer.sample_at(100).expect("sample at exact ts");
         assert!((sample.x - 5.0).abs() < 0.01);
         assert!((sample.y - 5.0).abs() < 0.01);
     }

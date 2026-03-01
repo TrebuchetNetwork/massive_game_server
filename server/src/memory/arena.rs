@@ -6,13 +6,13 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ArenaHandle {
     pub index: usize,
-    pub generation: u32,
+    pub generation: u64,
 }
 
 #[derive(Debug)]
 struct Slot<T> {
     value: Option<T>,
-    generation: u32,
+    generation: u64,
 }
 
 #[derive(Debug)]

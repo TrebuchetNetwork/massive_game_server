@@ -8,7 +8,11 @@ cd "$BENCH_DIR"
 
 if [ ! -d node_modules ]; then
   echo "Installing ui bench dependencies..."
-  npm install
+  if [ -f package-lock.json ]; then
+    npm ci
+  else
+    npm install
+  fi
   npx playwright install chromium
 fi
 

@@ -12,7 +12,7 @@ use std::convert::Infallible;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
@@ -38,6 +38,19 @@ const MAX_ARENA_REPLAY_MATCH_HISTORY_CAP: usize = 4_096;
 const MAX_ARENA_REPLAY_EVENTS_LIMIT: usize = 2_048;
 const MAX_ARENA_REPLAY_WARNINGS: usize = 24;
 const MAX_ARENA_STREAM_BACKLOG: usize = 2_048;
+const DEFAULT_ARENA_IN_FLIGHT_TTL_SECS: u64 = 30 * 60;
+const MAX_ARENA_IN_FLIGHT_TTL_SECS: u64 = 24 * 60 * 60;
+
+fn arena_in_flight_ttl_secs() -> u64 {
+    static TTL_SECS: OnceLock<u64> = OnceLock::new();
+    *TTL_SECS.get_or_init(|| {
+        std::env::var("MGS_ARENA_IN_FLIGHT_TTL_SECS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_ARENA_IN_FLIGHT_TTL_SECS)
+            .clamp(60, MAX_ARENA_IN_FLIGHT_TTL_SECS)
+    })
+}
 
 #[derive(Clone)]
 pub struct ArenaService {
@@ -485,6 +498,25 @@ impl ArenaError {
 }
 
 impl ArenaService {
+    fn prune_stale_in_flight_matches(&self) {
+        let ttl_secs = arena_in_flight_ttl_secs();
+        let now = unix_now();
+        let mut removed = 0usize;
+        self.inner.in_flight_matches.retain(|_match_id, queued| {
+            let keep = now.saturating_sub(queued.queued_at) <= ttl_secs;
+            if !keep {
+                removed += 1;
+            }
+            keep
+        });
+        if removed > 0 {
+            warn!(
+                "Pruned {} stale arena in-flight matches older than {} seconds",
+                removed, ttl_secs
+            );
+        }
+    }
+
     pub fn new_from_env() -> Self {
         let store_path = std::env::var("MGS_ARENA_STORE_PATH")
             .map(PathBuf::from)
@@ -888,6 +920,7 @@ impl ArenaService {
     }
 
     fn claim_next_match(&self) -> ClaimMatchResponse {
+        self.prune_stale_in_flight_matches();
         let maybe_claimed = {
             let mut pending = self.inner.pending_matches.lock();
             pending.pop_front()
@@ -944,6 +977,7 @@ impl ArenaService {
     }
 
     fn overview(&self) -> ArenaOverviewResponse {
+        self.prune_stale_in_flight_matches();
         let store = self.inner.persistent_store.read();
         ArenaOverviewResponse {
             generated_at: unix_now(),

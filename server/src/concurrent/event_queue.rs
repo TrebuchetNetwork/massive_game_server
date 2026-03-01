@@ -1,7 +1,9 @@
 // massive_game_server/server/src/concurrent/event_queue.rs
 use crate::core::types::{EventPriority, GameEvent}; // Assuming GameEvent and EventPriority are defined
 use crossbeam_queue::SegQueue;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
+use tracing::warn;
 
 /// Maximum number of high-priority events drained per `pop_batch` call before
 /// normal/low-priority events get a turn. This prevents high-priority flood
@@ -11,12 +13,28 @@ const HIGH_PRIORITY_BATCH_LIMIT: usize = 64;
 /// Maximum number of normal-priority events drained per `pop_batch` call before
 /// low-priority events get a turn.
 const NORMAL_PRIORITY_BATCH_LIMIT: usize = 32;
+const DEFAULT_EVENT_QUEUE_MAX_EVENTS: usize = 65_536;
+const MAX_EVENT_QUEUE_MAX_EVENTS: usize = 1_000_000;
+
+fn event_queue_max_events() -> usize {
+    static MAX_EVENTS: OnceLock<usize> = OnceLock::new();
+    *MAX_EVENTS.get_or_init(|| {
+        std::env::var("MGS_EVENT_QUEUE_MAX_EVENTS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .unwrap_or(DEFAULT_EVENT_QUEUE_MAX_EVENTS)
+            .clamp(1_024, MAX_EVENT_QUEUE_MAX_EVENTS)
+    })
+}
 
 // Lock-free event queue with priority (from user code)
 pub struct PriorityEventQueue {
     high_priority: Arc<SegQueue<GameEvent>>,
     normal_priority: Arc<SegQueue<GameEvent>>,
     low_priority: Arc<SegQueue<GameEvent>>,
+    queued_count: AtomicUsize,
+    dropped_count: AtomicUsize,
+    max_events: usize,
 }
 
 impl PriorityEventQueue {
@@ -25,10 +43,29 @@ impl PriorityEventQueue {
             high_priority: Arc::new(SegQueue::new()),
             normal_priority: Arc::new(SegQueue::new()),
             low_priority: Arc::new(SegQueue::new()),
+            queued_count: AtomicUsize::new(0),
+            dropped_count: AtomicUsize::new(0),
+            max_events: event_queue_max_events(),
         }
     }
 
     pub fn push(&self, event: GameEvent, priority: EventPriority) {
+        if self
+            .queued_count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                (current < self.max_events).then_some(current + 1)
+            })
+            .is_err()
+        {
+            let dropped = self.dropped_count.fetch_add(1, Ordering::Relaxed) + 1;
+            if dropped % 1024 == 1 {
+                warn!(
+                    "PriorityEventQueue full (max_events={}), dropping events (dropped_total={})",
+                    self.max_events, dropped
+                );
+            }
+            return;
+        }
         match priority {
             EventPriority::High => self.high_priority.push(event),
             EventPriority::Normal => self.normal_priority.push(event),
@@ -41,12 +78,15 @@ impl PriorityEventQueue {
     pub fn pop(&self) -> Option<GameEvent> {
         // Pop from high priority first, then normal, then low
         if let Some(event) = self.high_priority.pop() {
+            self.queued_count.fetch_sub(1, Ordering::Relaxed);
             return Some(event);
         }
         if let Some(event) = self.normal_priority.pop() {
+            self.queued_count.fetch_sub(1, Ordering::Relaxed);
             return Some(event);
         }
         if let Some(event) = self.low_priority.pop() {
+            self.queued_count.fetch_sub(1, Ordering::Relaxed);
             return Some(event);
         }
         None
@@ -67,7 +107,7 @@ impl PriorityEventQueue {
 
         // Phase 1: Drain up to HIGH_PRIORITY_BATCH_LIMIT from high.
         let high_limit = HIGH_PRIORITY_BATCH_LIMIT.min(max_count);
-        Self::drain_queue(&self.high_priority, &mut batch, high_limit);
+        self.drain_queue(&self.high_priority, &mut batch, high_limit);
 
         if batch.len() >= max_count {
             return batch;
@@ -75,7 +115,7 @@ impl PriorityEventQueue {
 
         // Phase 2: Drain up to NORMAL_PRIORITY_BATCH_LIMIT from normal.
         let normal_limit = NORMAL_PRIORITY_BATCH_LIMIT.min(max_count - batch.len());
-        Self::drain_queue(&self.normal_priority, &mut batch, normal_limit);
+        self.drain_queue(&self.normal_priority, &mut batch, normal_limit);
 
         if batch.len() >= max_count {
             return batch;
@@ -83,7 +123,7 @@ impl PriorityEventQueue {
 
         // Phase 3: Fill remaining from low.
         let low_limit = max_count - batch.len();
-        Self::drain_queue(&self.low_priority, &mut batch, low_limit);
+        self.drain_queue(&self.low_priority, &mut batch, low_limit);
 
         if batch.len() >= max_count {
             return batch;
@@ -92,20 +132,21 @@ impl PriorityEventQueue {
         // Phase 4: If budget remains, continue draining high then normal to
         // avoid wasting capacity when low is empty.
         let remaining = max_count - batch.len();
-        Self::drain_queue(&self.high_priority, &mut batch, remaining);
+        self.drain_queue(&self.high_priority, &mut batch, remaining);
 
         if batch.len() < max_count {
             let remaining = max_count - batch.len();
-            Self::drain_queue(&self.normal_priority, &mut batch, remaining);
+            self.drain_queue(&self.normal_priority, &mut batch, remaining);
         }
 
         batch
     }
 
-    fn drain_queue(queue: &SegQueue<GameEvent>, batch: &mut Vec<GameEvent>, limit: usize) {
+    fn drain_queue(&self, queue: &SegQueue<GameEvent>, batch: &mut Vec<GameEvent>, limit: usize) {
         for _ in 0..limit {
             if let Some(event) = queue.pop() {
                 batch.push(event);
+                self.queued_count.fetch_sub(1, Ordering::Relaxed);
             } else {
                 break;
             }
@@ -113,13 +154,11 @@ impl PriorityEventQueue {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.high_priority.is_empty()
-            && self.normal_priority.is_empty()
-            && self.low_priority.is_empty()
+        self.queued_count.load(Ordering::Relaxed) == 0
     }
 
     pub fn len(&self) -> usize {
-        self.high_priority.len() + self.normal_priority.len() + self.low_priority.len()
+        self.queued_count.load(Ordering::Relaxed)
     }
 }
 

@@ -153,14 +153,17 @@ pub fn send_quic_packet_batch(peer_id: &str, packets: &[Bytes]) -> usize {
         match sender.outbound_tx.try_send(packet.clone()) {
             Ok(()) => sent += 1,
             Err(mpsc::error::TrySendError::Full(_)) => {
+                let dropped = packets.len().saturating_sub(sent) as u64;
+                metrics::record_quic_outbound_dropped_packets("channel_full", dropped);
                 debug!(
                     "QUIC outbound channel full for peer '{}', dropping {} remaining packets",
-                    peer_id,
-                    packets.len() - sent
+                    peer_id, dropped
                 );
                 break;
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
+                let dropped = packets.len().saturating_sub(sent) as u64;
+                metrics::record_quic_outbound_dropped_packets("channel_closed", dropped);
                 saw_closed = true;
                 break;
             }

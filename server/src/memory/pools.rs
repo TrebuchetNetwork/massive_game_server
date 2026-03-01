@@ -1,6 +1,7 @@
 // massive_game_server/server/src/memory/pools.rs
 
 use parking_lot::Mutex;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -94,12 +95,17 @@ impl<T> ObjectPool<T> {
                 return value;
             }
         }
-        // All shards empty — create a new object outside any lock.
-        // If the factory panics, the counter stays consistent and no Mutex
-        // is held across the unwinding call.
-        let value = (self.factory)();
+        // All shards empty — reserve in_use before factory execution and
+        // rollback if the factory panics.
         self.in_use.fetch_add(1, Ordering::Relaxed);
-        value
+        let created = catch_unwind(AssertUnwindSafe(|| (self.factory)()));
+        match created {
+            Ok(value) => value,
+            Err(panic_payload) => {
+                self.in_use.fetch_sub(1, Ordering::Relaxed);
+                resume_unwind(panic_payload);
+            }
+        }
     }
 
     pub fn release(&self, value: T) {

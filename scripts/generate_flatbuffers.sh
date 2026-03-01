@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -36,6 +37,7 @@ SERVER_OUTPUT_DIR="../target/flatbuffers"
 # Parse command line arguments
 SKIP_TSC=false
 INSTALL_TSC=false
+TSC_CMD=("tsc")
 while [[ $# -gt 0 ]]; do
     case $1 in
         --skip-tsc)
@@ -95,37 +97,21 @@ if flatc --ts -o "$OUTPUT_DIR" "$SCHEMA_FILE"; then
     
     # TypeScript compilation
     if [ "$SKIP_TSC" = false ]; then
-        # Check if TypeScript compiler is available
-        if ! command -v tsc &> /dev/null; then
+        # Resolve TypeScript compiler command.
+        if command -v tsc &> /dev/null; then
+            TSC_CMD=("tsc")
+        elif command -v npx &> /dev/null; then
             echo -e "${YELLOW}⚠ TypeScript compiler not found.${NC}"
-            
-            if [ "$INSTALL_TSC" = true ]; then
-                echo -e "${BLUE}Installing TypeScript...${NC}"
-                if command -v npm &> /dev/null; then
-                    npm install -g typescript
-                    if command -v tsc &> /dev/null; then
-                        echo -e "${GREEN}✓ TypeScript installed successfully${NC}"
-                    else
-                        echo -e "${RED}✗ Failed to install TypeScript${NC}"
-                        exit 1
-                    fi
-                else
-                    echo -e "${RED}npm not found. Cannot install TypeScript.${NC}"
-                    echo "Please install Node.js/npm first or run with --skip-tsc"
-                    exit 1
-                fi
-            else
-                echo ""
-                echo "To compile TypeScript files, you can:"
-                echo "  1. Install TypeScript: npm install -g typescript"
-                echo "  2. Run this script with --install-tsc flag"
-                echo "  3. Run with --skip-tsc to skip compilation"
-                echo ""
-                echo "Note: Modern browsers can use .ts files directly with type=\"module\""
-                exit 1
-            fi
+            echo -e "${BLUE}Using npx-managed TypeScript compiler (no global install).${NC}"
+            TSC_CMD=("npx" "--yes" "tsc")
+        else
+            echo -e "${RED}Neither tsc nor npx is available. Install Node.js/npm or run with --skip-tsc${NC}"
+            exit 1
         fi
-        
+        if [ "$INSTALL_TSC" = true ]; then
+            echo -e "${YELLOW}Note: --install-tsc is deprecated; using project-local compiler resolution.${NC}"
+        fi
+
         # Now compile TypeScript
         echo -e "${YELLOW}Compiling TypeScript to JavaScript...${NC}"
         
@@ -161,8 +147,8 @@ EOF
         # Change to output directory and compile
         cd "$OUTPUT_DIR"
         
-        echo -e "${BLUE}Running: tsc${NC}"
-        if tsc; then
+        echo -e "${BLUE}Running: ${TSC_CMD[*]}${NC}"
+        if "${TSC_CMD[@]}"; then
             echo -e "${GREEN}✓ JavaScript files compiled successfully${NC}"
             
             # Count generated files

@@ -712,6 +712,10 @@ fn sanitize_model_id(model_id: &str) -> Option<String> {
     if trimmed.is_empty() || trimmed.len() > MAX_MODEL_ID_LEN {
         return None;
     }
+    // Disallow dot-path tricks and hidden-file style ids even though slashes are rejected.
+    if trimmed.starts_with('.') || trimmed.ends_with('.') || trimmed.contains("..") {
+        return None;
+    }
     if trimmed
         .bytes()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'-' || ch == b'.')
@@ -897,6 +901,9 @@ mod tests {
     #[test]
     fn sanitize_model_id_rejects_path_traversal() {
         assert!(sanitize_model_id("../bot").is_none());
+        assert!(sanitize_model_id("..").is_none());
+        assert!(sanitize_model_id(".hidden").is_none());
+        assert!(sanitize_model_id("bot..v2").is_none());
         assert!(sanitize_model_id("bot_alpha-1").is_some());
         assert!(sanitize_model_id(&"a".repeat(MAX_MODEL_ID_LEN + 1)).is_none());
     }
