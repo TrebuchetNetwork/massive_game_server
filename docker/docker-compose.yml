@@ -16,7 +16,7 @@ services:
       MGS_REQUIRE_AUTH: "${MGS_REQUIRE_AUTH:-1}"
       MGS_ALLOWED_ORIGINS: "${MGS_ALLOWED_ORIGINS:-https://game.trebuchet.network}"
       MGS_METRICS_ENABLED: "true"
-      MGS_METRICS_BIND_ADDR: "0.0.0.0:9090"
+      MGS_METRICS_BIND_ADDR: "${MGS_METRICS_BIND_ADDR:-127.0.0.1:9090}"
       RUST_LOG: "${RUST_LOG:-massive_game_server_core=info,warp=warn,webrtc=warn}"
       MGS_LOG_FORMAT: "${MGS_LOG_FORMAT:-json}"
       OPENROUTER_API_KEY_FILE: "/run/secrets/openrouter_api_key"

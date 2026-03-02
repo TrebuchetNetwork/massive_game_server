@@ -8,7 +8,7 @@ fn bench_nearby_player_query(c: &mut Criterion) {
     for idx in 0..player_count {
         let x = -760.0 + ((idx % 100) as f32) * 15.0;
         let y = -560.0 + ((idx / 100) as f32) * 20.0;
-        index.update_player_position(Arc::new(format!("bench_player_{idx}")), x, y);
+        index.update_player_position(Arc::<str>::from(format!("bench_player_{idx}")), x, y);
     }
 
     c.bench_function("spatial_index/query_nearby_players_5k", |b| {

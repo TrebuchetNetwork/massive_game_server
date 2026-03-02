@@ -1049,32 +1049,23 @@ impl OptimizedBotAI {
             if wall.is_destructible && wall.current_health <= 0 {
                 continue;
             }
-            if Self::segment_hits_aabb(
-                from.x,
-                from.y,
-                to.x,
-                to.y,
-                wall.x,
-                wall.x + wall.width,
-                wall.y,
-                wall.y + wall.height,
-            ) {
+            if Self::segment_hits_aabb(from, to, &wall) {
                 return false;
             }
         }
         true
     }
 
-    fn segment_hits_aabb(
-        start_x: f32,
-        start_y: f32,
-        end_x: f32,
-        end_y: f32,
-        min_x: f32,
-        max_x: f32,
-        min_y: f32,
-        max_y: f32,
-    ) -> bool {
+    fn segment_hits_aabb(start: Vec2, end: Vec2, wall: &Wall) -> bool {
+        let start_x = start.x;
+        let start_y = start.y;
+        let end_x = end.x;
+        let end_y = end.y;
+        let min_x = wall.x;
+        let max_x = wall.x + wall.width;
+        let min_y = wall.y;
+        let max_y = wall.y + wall.height;
+
         let dx = end_x - start_x;
         let dy = end_y - start_y;
         let mut t_min = 0.0f32;

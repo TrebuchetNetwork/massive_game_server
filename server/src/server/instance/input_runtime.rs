@@ -869,7 +869,7 @@ impl MassiveGameServer {
             match player_state.weapon {
                 ServerWeaponType::Shotgun => {
                     let spread_seed = self.frame_counter.load(AtomicOrdering::Relaxed)
-                        ^ ((input.timestamp as u64) << 1)
+                        ^ (input.timestamp << 1)
                         ^ ((input.sequence as u64) << 33)
                         ^ ((player_state.x.to_bits() as u64) << 17)
                         ^ (player_state.y.to_bits() as u64)

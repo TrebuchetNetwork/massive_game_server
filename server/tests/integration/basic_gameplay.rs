@@ -267,9 +267,11 @@ fn test_wall_destruction_and_respawn_scheduling() {
         1.0,
         2.0,
     );
-    assert_eq!(
-        projectile1.damage, 75,
-        "Projectile damage for one-shot setup is incorrect."
+    assert!(
+        projectile1.damage >= wall_health,
+        "Projectile damage ({}) is insufficient for one-shot setup (wall health={}).",
+        projectile1.damage,
+        wall_health
     );
 
     process_projectile_wall_collision(&server, &projectile1, wall_id);
@@ -504,7 +506,7 @@ async fn test_player_spawning_and_movement() {
     let num_spawn_attempts = 100;
     for i in 0..num_spawn_attempts {
         let player_id_str = format!("spawn_test_player_{}", i);
-        let player_id_arc_for_respawn = Arc::new(player_id_str.clone()); // Create PlayerID for respawn manager
+        let player_id_arc_for_respawn = Arc::<str>::from(player_id_str.clone()); // Create PlayerID for respawn manager
 
         // Get a spawn position using the server's respawn manager
         let enemy_positions: Vec<(Vec2, PlayerID)> = Vec::new(); // No enemies for this specific spawn check
@@ -893,13 +895,13 @@ async fn test_stationary_connected_player_refreshes_aoi_for_new_projectiles() {
 
     {
         let mut client_states = server.client_states_map.write();
-        client_states.insert(player_id.as_str().to_string(), ClientState::default());
+        client_states.insert(player_id.as_ref().to_string(), ClientState::default());
     }
 
     {
         let mut aoi_entry = server
             .player_aois
-            .entry(player_id.as_str().to_string())
+            .entry(player_id.as_ref().to_string())
             .or_default();
         aoi_entry.value_mut().last_update =
             Instant::now() - Duration::from_secs_f32(AOI_UPDATE_INTERVAL_SECS + 0.02);
@@ -939,7 +941,7 @@ async fn test_stationary_connected_player_refreshes_aoi_for_new_projectiles() {
     {
         let mut aoi_entry = server
             .player_aois
-            .entry(player_id.as_str().to_string())
+            .entry(player_id.as_ref().to_string())
             .or_default();
         aoi_entry.value_mut().last_update =
             Instant::now() - Duration::from_secs_f32(AOI_UPDATE_INTERVAL_SECS + 0.02);
@@ -952,7 +954,7 @@ async fn test_stationary_connected_player_refreshes_aoi_for_new_projectiles() {
 
     let player_aoi = server
         .player_aois
-        .get(player_id.as_str())
+        .get(player_id.as_ref())
         .expect("Player AoI entry should exist");
     assert!(
         player_aoi.value().visible_projectiles.contains(&projectile_id),

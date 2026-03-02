@@ -37,6 +37,18 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
     ))
 }
 
+fn setup_isolated_wall_test_server() -> Arc<MassiveGameServer> {
+    let server = setup_test_server();
+    for partition in server
+        .world_partition_manager
+        .get_partitions_for_processing()
+    {
+        partition.all_walls_in_partition.clear();
+    }
+    server.wall_spatial_index.rebuild(&[], 0);
+    server
+}
+
 #[allow(clippy::too_many_arguments)]
 fn create_wall(
     server: &MassiveGameServer,
@@ -78,7 +90,7 @@ fn rebuild_wall_index(server: &MassiveGameServer) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn wall_placed_in_correct_partition() {
-    let server = setup_test_server();
+    let server = setup_isolated_wall_test_server();
     let wall_id = 42u64;
     create_wall(&server, wall_id, 100.0, 100.0, 50.0, 50.0, 200, true);
 
@@ -100,7 +112,7 @@ async fn wall_placed_in_correct_partition() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn wall_destroyed_by_sufficient_damage() {
-    let server = setup_test_server();
+    let server = setup_isolated_wall_test_server();
     let wall_id = 100u64;
     create_wall(&server, wall_id, 100.0, -25.0, 50.0, 50.0, 50, true);
     rebuild_wall_index(&server);
@@ -146,7 +158,7 @@ async fn wall_destroyed_by_sufficient_damage() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn indestructible_wall_takes_no_damage() {
-    let server = setup_test_server();
+    let server = setup_isolated_wall_test_server();
     let wall_id = 200u64;
     create_wall(&server, wall_id, 100.0, -25.0, 50.0, 50.0, 1000, false);
     rebuild_wall_index(&server);
@@ -186,7 +198,7 @@ async fn indestructible_wall_takes_no_damage() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn wall_spatial_index_rebuilt_includes_new_walls() {
-    let server = setup_test_server();
+    let server = setup_isolated_wall_test_server();
 
     // Create walls and rebuild.
     create_wall(&server, 301, -100.0, -100.0, 40.0, 40.0, 100, true);
@@ -205,7 +217,7 @@ async fn wall_spatial_index_rebuilt_includes_new_walls() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn wall_spatial_index_empty_before_rebuild() {
-    let server = setup_test_server();
+    let server = setup_isolated_wall_test_server();
     create_wall(&server, 400, 0.0, 0.0, 50.0, 50.0, 100, true);
 
     // Don't rebuild index — query should miss the new wall.
@@ -223,7 +235,7 @@ async fn wall_spatial_index_empty_before_rebuild() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_walls_take_independent_damage() {
-    let server = setup_test_server();
+    let server = setup_isolated_wall_test_server();
 
     // Two walls side by side.
     create_wall(&server, 501, 100.0, -25.0, 30.0, 50.0, 100, true);
@@ -285,7 +297,7 @@ async fn multiple_walls_take_independent_damage() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn destroyed_wall_tracked_in_respawn_manager() {
-    let server = setup_test_server();
+    let server = setup_isolated_wall_test_server();
     let wall_id = 600u64;
     create_wall(&server, wall_id, 100.0, -25.0, 50.0, 50.0, 1, true);
     rebuild_wall_index(&server);

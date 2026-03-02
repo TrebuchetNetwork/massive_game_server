@@ -18,5 +18,6 @@ This directory contains Prometheus + Grafana provisioning for the Docker deploym
 
 ## Notes
 
-- The game server exporter is enabled by `MGS_METRICS_ENABLED=true` and bound to `0.0.0.0:9090` inside the container.
+- The game server exporter is enabled by `MGS_METRICS_ENABLED=true` and defaults to `127.0.0.1:9090` in Docker compose for least-privilege binding.
+- If you run Prometheus in a separate container, override `MGS_METRICS_BIND_ADDR=0.0.0.0:9090` intentionally.
 - Alerts are evaluated by Prometheus only; no Alertmanager wiring is included in this baseline.

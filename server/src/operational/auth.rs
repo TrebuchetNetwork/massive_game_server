@@ -602,10 +602,11 @@ fn maybe_cleanup_otp_ip_rate_limiters(limiters: &DashMap<IpAddr, OtpIpRateState>
     static LAST_OTP_CLEANUP_UNIX_SECS: std::sync::atomic::AtomicU64 =
         std::sync::atomic::AtomicU64::new(0);
     let previous = LAST_OTP_CLEANUP_UNIX_SECS.load(std::sync::atomic::Ordering::Relaxed);
-    if previous != 0 && now.saturating_sub(previous) < OTP_IP_CLEANUP_INTERVAL_SECS {
-        if limiters.len() <= OTP_IP_RATE_LIMITER_MAX_ENTRIES {
-            return;
-        }
+    if previous != 0
+        && now.saturating_sub(previous) < OTP_IP_CLEANUP_INTERVAL_SECS
+        && limiters.len() <= OTP_IP_RATE_LIMITER_MAX_ENTRIES
+    {
+        return;
     }
     LAST_OTP_CLEANUP_UNIX_SECS.store(now, std::sync::atomic::Ordering::Relaxed);
     cleanup_otp_ip_rate_limiters(now);

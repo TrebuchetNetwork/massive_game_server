@@ -321,6 +321,25 @@ fn parse_list_env(var_name: &str) -> Vec<String> {
         .collect()
 }
 
+fn normalize_ws_host(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_end_matches('.');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let ip_candidate = trimmed
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    if let Ok(ip) = ip_candidate.parse::<IpAddr>() {
+        return Some(ip.to_string());
+    }
+
+    idna::domain_to_ascii(trimmed)
+        .ok()
+        .map(|host| host.to_ascii_lowercase())
+}
+
 /// Validate the Origin header on a WebSocket upgrade request to prevent
 /// Cross-Site WebSocket Hijacking (CSWSH). Returns `true` if the origin is
 /// acceptable.
@@ -335,10 +354,7 @@ fn parse_authority_host_port(raw: &str) -> Option<(String, Option<u16>)> {
     if authority.as_str().contains('@') {
         return None;
     }
-    let host = authority.host().trim().to_ascii_lowercase();
-    if host.is_empty() {
-        return None;
-    }
+    let host = normalize_ws_host(authority.host())?;
     Some((host, authority.port_u16()))
 }
 
@@ -350,13 +366,31 @@ fn parse_ws_origin_host_port(raw_origin: &str) -> Option<(String, u16)> {
         "http" => 80,
         _ => return None,
     };
+    if origin_uri.query().is_some() {
+        return None;
+    }
+    let origin_path = origin_uri.path();
+    if !origin_path.is_empty() && origin_path != "/" {
+        return None;
+    }
     let authority = origin_uri.authority()?;
     let (host, explicit_port) = parse_authority_host_port(authority.as_str())?;
     Some((host, explicit_port.unwrap_or(default_port)))
 }
 
 fn is_loopback_host(host: &str) -> bool {
-    matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or_else(|_| {
+            host.strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .and_then(|value| value.parse::<IpAddr>().ok())
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false)
+        })
 }
 
 fn is_allowed_ws_origin(
@@ -378,7 +412,7 @@ fn is_allowed_ws_origin(
     // Same-origin check against Host header.
     if let Some(host_value) = host {
         if let Some((host_name, host_port)) = parse_authority_host_port(host_value) {
-            if host_name == origin_host && host_port.map_or(true, |port| port == origin_port) {
+            if host_name == origin_host && (host_port.is_none() || host_port == Some(origin_port)) {
                 return true;
             }
         }
@@ -395,7 +429,8 @@ fn is_allowed_ws_origin(
 
         // Backward-compatible support for host[:port]-only entries.
         if let Some((allowed_host, allowed_port)) = parse_authority_host_port(allowed) {
-            if origin_host == allowed_host && allowed_port.map_or(true, |port| port == origin_port)
+            if origin_host == allowed_host
+                && (allowed_port.is_none() || allowed_port == Some(origin_port))
             {
                 return true;
             }

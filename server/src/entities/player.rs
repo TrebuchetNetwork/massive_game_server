@@ -240,17 +240,18 @@ impl std::ops::Deref for PlayerStateReadGuard {
 pub struct PlayerStateWriteGuard {
     cell: Arc<ArcSwap<PlayerState>>,
     original: Arc<PlayerState>,
-    working: PlayerState,
+    // Lazily materialized mutable copy. Many write guards are dropped without
+    // mutation, so avoid cloning PlayerState up front in that case.
+    working: Option<PlayerState>,
 }
 
 impl PlayerStateWriteGuard {
     fn new(cell: Arc<ArcSwap<PlayerState>>) -> Self {
         let original = cell.load_full();
-        let working = (*original).clone();
         Self {
             cell,
             original,
-            working,
+            working: None,
         }
     }
 }
@@ -259,29 +260,35 @@ impl std::ops::Deref for PlayerStateWriteGuard {
     type Target = PlayerState;
 
     fn deref(&self) -> &Self::Target {
-        &self.working
+        self.working.as_ref().unwrap_or(self.original.as_ref())
     }
 }
 
 impl std::ops::DerefMut for PlayerStateWriteGuard {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.working
+        self.working.get_or_insert_with(|| (*self.original).clone())
     }
 }
 
 impl Drop for PlayerStateWriteGuard {
     fn drop(&mut self) {
-        if self.working == *self.original {
+        let Some(working) = self.working.take() else {
+            // Guard never observed mutably.
+            return;
+        };
+
+        if working == *self.original {
             return;
         }
 
-        let original = self.original.clone();
+        let original = Arc::clone(&self.original);
+        let desired = Arc::new(working);
         self.cell.rcu(|current| {
             if Arc::ptr_eq(current, &original) {
-                Arc::new(self.working.clone())
+                Arc::clone(&desired)
             } else {
                 let mut merged = (**current).clone();
-                merge_player_state_delta(&mut merged, original.as_ref(), &self.working);
+                merge_player_state_delta(&mut merged, original.as_ref(), desired.as_ref());
                 Arc::new(merged)
             }
         });
@@ -334,8 +341,7 @@ impl ImprovedPlayerManager {
         if self
             .next_balanced_team
             .fetch_add(1, AtomicOrdering::Relaxed)
-            % 2
-            == 0
+            .is_multiple_of(2)
         {
             1
         } else {

@@ -90,6 +90,7 @@ shell-escape = "0.1"
 rcgen = "0.13"
 rustls-pemfile = "2.2.0"
 ipnet = "2.10"
+idna = "1.0"
 # atomic = "0.6" # Usually not needed
 
 # Spatial Indexing
