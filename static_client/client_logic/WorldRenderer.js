@@ -338,6 +338,9 @@ export function createWorldRenderer(getCtx) {
     function updateFlags(newFlagStates) {
         const ctx = getCtx();
         const { flagContainer, flagStates, GP, createFlagSprite, minimap } = ctx;
+        if (!flagContainer || !Array.isArray(flagContainer.children)) {
+            return;
+        }
 
         newFlagStates.forEach(fs => flagStates.set(fs.team_id, fs));
 

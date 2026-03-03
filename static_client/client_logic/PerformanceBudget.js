@@ -153,15 +153,17 @@ export function createPerformanceBudget(getCtx) {
         if (ctx.cullWorker) {
             return;
         }
+        let worker = null;
         try {
-            ctx.setCullWorker(new Worker('./workers/entity_cull_worker.js', { type: 'module' }));
+            worker = new Worker('./workers/entity_cull_worker.js', { type: 'module' });
+            ctx.setCullWorker(worker);
         } catch (error) {
             ctx.log(`Cull worker unavailable: ${error?.message || error}`, 'warn');
             ctx.setCullWorker(null);
             return;
         }
 
-        ctx.cullWorker.onmessage = (event) => {
+        worker.onmessage = (event) => {
             const message = event?.data || {};
             if (message.type === 'ready') {
                 ctx.setCullWorkerReady(true);
@@ -212,7 +214,7 @@ export function createPerformanceBudget(getCtx) {
             }
         };
 
-        ctx.cullWorker.onerror = (event) => {
+        worker.onerror = (event) => {
             ctx.setCullWorkerBusy(false);
             ctx.setCullWorkerReady(false);
             ctx.log(`Cull worker crashed: ${event?.message || 'unknown error'}`, 'warn');
@@ -225,7 +227,7 @@ export function createPerformanceBudget(getCtx) {
         } catch (_) {
             resolvedWasmUrl = '';
         }
-        ctx.cullWorker.postMessage({
+        worker.postMessage({
             type: 'init',
             wasmUrl: resolvedWasmUrl
         });
