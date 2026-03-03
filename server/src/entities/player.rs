@@ -561,3 +561,234 @@ impl ImprovedPlayerManager {
         count
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_spatial_index() -> Arc<ImprovedSpatialIndex> {
+        Arc::new(ImprovedSpatialIndex::new(
+            1000.0, 1000.0, -500.0, -500.0, 100.0,
+        ))
+    }
+
+    fn test_manager(num_shards: usize) -> ImprovedPlayerManager {
+        ImprovedPlayerManager::new(num_shards, test_spatial_index())
+    }
+
+    #[test]
+    fn player_id_pool_reuses_existing_id_and_remove_clears_it() {
+        let pool = PlayerIdPool::new();
+
+        let first = pool.get_or_create("player-1");
+        let second = pool.get_or_create("player-1");
+        assert!(Arc::ptr_eq(&first, &second));
+
+        let removed = pool.remove("player-1").expect("id should be removable");
+        assert!(Arc::ptr_eq(&first, &removed));
+        assert!(pool.remove("player-1").is_none());
+    }
+
+    #[test]
+    fn add_player_roundtrip_and_duplicate_rejected() {
+        let manager = test_manager(8);
+        let player_id = manager
+            .add_player("p1".into(), "alice".into(), 12.0, 34.0)
+            .expect("first insert should succeed");
+        assert!(manager
+            .add_player("p1".into(), "alice".into(), 12.0, 34.0)
+            .is_none());
+
+        let state = manager
+            .get_player_state(&player_id)
+            .expect("state should exist");
+        assert_eq!(state.id.as_ref(), "p1");
+        assert_eq!(state.username, "alice");
+        assert_eq!(state.x, 12.0);
+        assert_eq!(state.y, 34.0);
+        assert_eq!(manager.player_count(), 1);
+    }
+
+    #[test]
+    fn update_and_remove_player_updates_spatial_index() {
+        let manager = test_manager(4);
+        let player_id = manager
+            .add_player("p2".into(), "bob".into(), 0.0, 0.0)
+            .expect("insert should succeed");
+
+        manager.update_player_position(&player_id, 220.0, -140.0);
+        let state = manager
+            .get_player_state(&player_id)
+            .expect("state should still exist");
+        assert_eq!(state.x, 220.0);
+        assert_eq!(state.y, -140.0);
+
+        let nearby = manager
+            .spatial_index
+            .query_nearby_players(220.0, -140.0, 1.0);
+        assert_eq!(nearby.len(), 1);
+        assert_eq!(nearby[0], player_id);
+
+        manager.remove_player("p2");
+        assert!(manager.get_player_state(&player_id).is_none());
+        assert_eq!(manager.player_count(), 0);
+        assert!(manager
+            .spatial_index
+            .query_nearby_players(220.0, -140.0, 5.0)
+            .is_empty());
+    }
+
+    #[test]
+    fn write_guard_drop_without_mutation_keeps_state_unchanged() {
+        let manager = test_manager(2);
+        let player_id = manager
+            .add_player("p3".into(), "carol".into(), 7.0, 9.0)
+            .expect("insert should succeed");
+
+        {
+            let _guard = manager
+                .get_player_state_mut(&player_id)
+                .expect("write guard should exist");
+            // Intentionally no mutation.
+        }
+
+        let state = manager
+            .get_player_state(&player_id)
+            .expect("state should exist");
+        assert_eq!(state.x, 7.0);
+        assert_eq!(state.y, 9.0);
+    }
+
+    #[test]
+    fn write_guard_merge_preserves_concurrent_updates() {
+        let manager = test_manager(2);
+        let player_id = manager
+            .add_player("p4".into(), "dave".into(), 1.0, 2.0)
+            .expect("insert should succeed");
+
+        let mut guard_a = manager
+            .get_player_state_mut(&player_id)
+            .expect("first guard should exist");
+        let mut guard_b = manager
+            .get_player_state_mut(&player_id)
+            .expect("second guard should exist");
+
+        guard_a.x = 77.0;
+        drop(guard_a);
+
+        guard_b.health = 42;
+        drop(guard_b);
+
+        let state = manager
+            .get_player_state(&player_id)
+            .expect("state should exist");
+        assert_eq!(state.x, 77.0);
+        assert_eq!(state.health, 42);
+    }
+
+    #[test]
+    fn assign_team_balances_and_alternates_on_ties() {
+        let manager = test_manager(4);
+
+        // Tie alternation: 1, 2, 1...
+        assert_eq!(manager.assign_team_to_new_player(), 1);
+        assert_eq!(manager.assign_team_to_new_player(), 2);
+        assert_eq!(manager.assign_team_to_new_player(), 1);
+
+        let p1 = manager
+            .add_player("team-a".into(), "a".into(), 0.0, 0.0)
+            .expect("insert team-a");
+        let p2 = manager
+            .add_player("team-b".into(), "b".into(), 1.0, 0.0)
+            .expect("insert team-b");
+
+        manager
+            .get_player_state_mut(&p1)
+            .expect("state for team-a")
+            .team_id = 1;
+        manager
+            .get_player_state_mut(&p2)
+            .expect("state for team-b")
+            .team_id = 1;
+
+        // Team 1 is overrepresented, so next assignment should choose team 2.
+        assert_eq!(manager.assign_team_to_new_player(), 2);
+    }
+
+    #[test]
+    fn add_player_for_join_honors_requested_team_and_spectator_mode() {
+        let manager = test_manager(2);
+
+        let (player_id, assigned_team, spawn) = manager
+            .add_player_for_join(
+                "join-1".into(),
+                "eva".into(),
+                Some(2),
+                false,
+                |_id, team| {
+                    assert_eq!(team, 2);
+                    Vec2::new(50.0, -10.0)
+                },
+            )
+            .expect("join insert should succeed");
+
+        assert_eq!(assigned_team, 2);
+        assert_eq!(spawn.x, 50.0);
+        assert_eq!(spawn.y, -10.0);
+
+        let joined_state = manager
+            .get_player_state(&player_id)
+            .expect("joined state should exist");
+        assert_eq!(joined_state.team_id, 2);
+        assert!(!joined_state.is_spectator);
+
+        let (spectator_id, spectator_team, _) = manager
+            .add_player_for_join(
+                "join-spec".into(),
+                "spectator".into(),
+                Some(1),
+                true,
+                |_id, team| {
+                    assert_eq!(team, 0);
+                    Vec2::new(0.0, 0.0)
+                },
+            )
+            .expect("spectator join should succeed");
+        assert_eq!(spectator_team, 0);
+
+        let spectator_state = manager
+            .get_player_state(&spectator_id)
+            .expect("spectator state should exist");
+        assert!(spectator_state.is_spectator);
+        assert_eq!(spectator_state.team_id, 0);
+        assert_eq!(spectator_state.health, spectator_state.max_health);
+        assert!(spectator_state.respawn_timer.is_none());
+        assert!(spectator_state.reload_progress.is_none());
+    }
+
+    #[test]
+    fn for_each_player_mut_applies_changes_to_all_players() {
+        let manager = test_manager(4);
+        let p1 = manager
+            .add_player("iter-1".into(), "p1".into(), 1.0, 1.0)
+            .expect("insert iter-1");
+        let p2 = manager
+            .add_player("iter-2".into(), "p2".into(), 2.0, 2.0)
+            .expect("insert iter-2");
+
+        manager.for_each_player_mut(|_id, state| {
+            state.score += 10;
+            state.kills += 1;
+        });
+
+        let mut seen = 0usize;
+        manager.for_each_player(|id, state| {
+            if id == &p1 || id == &p2 {
+                seen += 1;
+            }
+            assert_eq!(state.score, 10);
+            assert_eq!(state.kills, 1);
+        });
+        assert_eq!(seen, 2);
+    }
+}

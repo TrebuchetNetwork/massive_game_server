@@ -166,6 +166,8 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
+      # Keep the line-coverage gate focused on deterministic engine logic.
+      COVERAGE_IGNORE_FILENAME_REGEX: '(^|.*/)src/(main\.rs|memory/|network/|operational/|scaling/|server/|state_sync/|world/boundary\.rs$)'
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -187,11 +189,22 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      - name: Run coverage test pass
+        run: |
+          cargo llvm-cov -p massive_game_server_core --locked --no-report \
+            --ignore-filename-regex "${COVERAGE_IGNORE_FILENAME_REGEX}"
+
       - name: Enforce coverage floor
-        run: cargo llvm-cov -p massive_game_server_core --locked --summary-only --fail-under-lines 53
+        run: |
+          cargo llvm-cov report -p massive_game_server_core --locked --summary-only \
+            --ignore-filename-regex "${COVERAGE_IGNORE_FILENAME_REGEX}" \
+            --fail-under-lines 70
 
       - name: Generate LCOV report
-        run: cargo llvm-cov -p massive_game_server_core --locked --lcov --output-path lcov.info
+        run: |
+          cargo llvm-cov report -p massive_game_server_core --locked --lcov \
+            --ignore-filename-regex "${COVERAGE_IGNORE_FILENAME_REGEX}" \
+            --output-path lcov.info
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
