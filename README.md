@@ -14,8 +14,15 @@ target_bot_count: Arc::new(AtomicU64::new(80))
 max_players_per_match: 400
 
 
-## Gameplay Preview
-![Gameplay Preview GIF](massive_game_server_demo.gif)
+## Latest Gameplay
+![Latest Gameplay](massive_game_server_demo.gif)
+
+### What's New
+
+- Security and reliability hardening across auth, signaling, QUIC, and deployment defaults, including stricter input validation, better route protection, and safer network policies.
+- Gameplay and systems expanded with CTF improvements, spectator/replay flow refinements, progressive destructible terrain updates, and stronger anti-cheat/runtime correctness safeguards.
+- Performance and scale optimizations in hot paths (spatial indexing, bot/navigation logic, state sync, and server loops) to improve frame stability under heavy player+bot load.
+- CI and quality raised significantly with broader test coverage, automated security scanning (CodeQL/Trivy), and a coverage gate now enforced at 70%+ for core engine logic.
 
 
 
