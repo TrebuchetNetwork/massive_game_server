@@ -1013,6 +1013,37 @@ for (let i = 0; i < sparkCount; i++) {
     });
 }
 
+// Impact streak trails (high/medium quality only).
+if (loadTier <= 1) {
+    let streakCount = this.scaleEffectCount(5, 2);
+    if (loadTier === 1) {
+        streakCount = Math.max(2, Math.floor(streakCount * 0.6));
+    }
+    for (let i = 0; i < streakCount; i += 1) {
+        const streak = new PIXI.Graphics();
+        const angle = Math.random() * Math.PI * 2;
+        const length = config.size * (2.8 + Math.random() * 3.2);
+        const sx = Math.cos(angle) * (config.size * 0.25);
+        const sy = Math.sin(angle) * (config.size * 0.25);
+        const ex = Math.cos(angle) * length;
+        const ey = Math.sin(angle) * length;
+        streak.lineStyle(1.6 + Math.random() * 1.1, config.color, 0.72);
+        streak.moveTo(sx, sy);
+        streak.lineTo(ex, ey);
+        streak.position.set(position.x, position.y);
+        this.effectsContainer.addChild(streak);
+
+        this.animateEffect(streak, {
+            duration: 170 + Math.random() * 90,
+            onUpdate: (p) => {
+                streak.alpha = 0.76 * (1 - p);
+                streak.scale.set(1 + p * 0.34);
+            },
+            onComplete: () => streak.destroy()
+        });
+    }
+}
+
 this.animateEffect(impact, {
     duration: 150,
     onUpdate: p => {

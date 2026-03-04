@@ -7,6 +7,8 @@
  */
 
 export function createCombatFeedback(getCtx) {
+    let lastLocalDamageImpactAt = 0;
+
     function getCombatUiQualityMode() {
         const ctx = getCtx();
         return ctx.normalizeCombatUiQuality(ctx.gameSettings?.combatUiQuality);
@@ -441,6 +443,36 @@ export function createCombatFeedback(getCtx) {
             });
             if (ctx.combatUiState.recentDamageSources.length > 24) {
                 ctx.combatUiState.recentDamageSources.splice(0, ctx.combatUiState.recentDamageSources.length - 24);
+            }
+            const now = Date.now();
+            if (now - lastLocalDamageImpactAt >= 95) {
+                const damageValue = Math.max(0, Number(event.value) || 0);
+                const normalizedImpact = ctx.clamp(damageValue / 42, 0.12, 1);
+                if (
+                    ctx.gameSettings?.screenShake &&
+                    ctx.gameScene &&
+                    !ctx.ultraPerformanceMode &&
+                    typeof ctx.applyScreenShake === 'function'
+                ) {
+                    ctx.applyScreenShake(
+                        ctx.gameScene,
+                        1.15 + normalizedImpact * 1.55,
+                        2 + Math.floor(normalizedImpact * 3)
+                    );
+                }
+                if (
+                    ctx.app &&
+                    !ctx.ultraPerformanceMode &&
+                    typeof ctx.createScreenFlash === 'function'
+                ) {
+                    ctx.createScreenFlash(
+                        ctx.app,
+                        0xFFB3B3,
+                        6 + Math.floor(normalizedImpact * 4),
+                        0.06 + normalizedImpact * 0.08
+                    );
+                }
+                lastLocalDamageImpactAt = now;
             }
             triggerHaptic([8, 12, 8]);
             return;
