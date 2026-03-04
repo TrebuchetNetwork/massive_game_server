@@ -586,10 +586,22 @@ impl MassiveGameServer {
                                     attacker_state_entry.username, victim_username
                                 );
                             } else {
-                                // Normal kill: positive score
-                                let kill_points = self.hot_zone_kill_points_at_position(target_pos);
+                                let streak = self.advance_killstreak(&mut attacker_state_entry);
+                                let base_kill_points =
+                                    self.hot_zone_kill_points_at_position(target_pos);
+                                let kill_points =
+                                    Self::apply_momentum_score_bonus(base_kill_points, streak);
                                 attacker_state_entry.score += kill_points;
-                                if kill_points > crate::core::constants::POINTS_PER_KILL {
+                                if kill_points > base_kill_points {
+                                    info!(
+                                        "Momentum bonus: {} streak {} boosted kill score {} -> {}",
+                                        attacker_state_entry.username,
+                                        streak,
+                                        base_kill_points,
+                                        kill_points
+                                    );
+                                }
+                                if base_kill_points > crate::core::constants::POINTS_PER_KILL {
                                     info!(
                                         "Hot zone bonus: {} gained {} points for elimination at ({:.1}, {:.1})",
                                         attacker_state_entry.username,
@@ -598,9 +610,6 @@ impl MassiveGameServer {
                                         target_pos.y
                                     );
                                 }
-
-                                // --- Killstreak system ---
-                                let streak = self.advance_killstreak(&mut attacker_state_entry);
                                 if streak
                                     >= crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD
                                 {

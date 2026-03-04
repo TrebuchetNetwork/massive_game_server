@@ -348,21 +348,21 @@ export function createCombatFeedback(getCtx) {
             if (isLocal) {
                 if (streakCount >= 7) {
                     showCombatBanner('DOMINATING!', 'kill', 1700);
-                    setObjectiveUrgency('DOMINATING! 7+ killstreak!', 'critical', 3000);
+                    setObjectiveUrgency('DOMINATING! Momentum score x3 active', 'critical', 3000);
                 } else if (streakCount >= 5) {
                     showCombatBanner('KILLING SPREE!', 'kill', 1500);
-                    setObjectiveUrgency('KILLING SPREE! second streak reward active', 'positive', 2500);
+                    setObjectiveUrgency('KILLING SPREE! Momentum score x2 active', 'positive', 2500);
                 } else if (streakCount >= 3) {
                     showCombatBanner('ON FIRE!', 'kill', 1300);
-                    setObjectiveUrgency('Triple kill! first streak reward active', 'positive', 2000);
+                    setObjectiveUrgency('ON FIRE! Momentum score x1.5 active', 'positive', 2000);
                 }
             } else {
                 if (streakCount >= 7) {
                     showCombatBanner(`${killerName} DOMINATING!`, 'kill', 1700);
-                    setObjectiveUrgency(`${killerName} is DOMINATING!`, 'critical', 2000);
+                    setObjectiveUrgency(`${killerName} is DOMINATING (x3 score)!`, 'critical', 2000);
                 } else if (streakCount >= 5) {
                     showCombatBanner(`${killerName} KILLING SPREE!`, 'kill', 1500);
-                    setObjectiveUrgency(`${killerName} is on a spree!`, 'critical', 1800);
+                    setObjectiveUrgency(`${killerName} is on a spree (x2 score)!`, 'critical', 1800);
                 } else if (streakCount >= 3) {
                     showCombatBanner(`${killerName} ON FIRE!`, 'kill', 1300);
                 }
