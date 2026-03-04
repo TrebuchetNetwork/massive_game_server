@@ -444,6 +444,37 @@ export function createUIManager(getCtx) {
             return true;
         }
 
+        if (eventName === 'fortress_phase' && payload && typeof payload === 'object') {
+            const phase = String(payload.phase || 'round_start');
+            const attackingTeam = Math.max(1, Math.trunc(Number(payload.attacking_team || payload.attackingTeam || 1)));
+            const defendingTeam = Math.max(1, Math.trunc(Number(payload.defending_team || payload.defendingTeam || 2)));
+            const outcome = String(payload.outcome || '');
+            const timeRemaining = Number(payload.time_remaining ?? payload.timeRemaining ?? 0);
+            if (phase === 'round_start') {
+                if (Number.isFinite(timeRemaining) && timeRemaining > 0) {
+                    ctx.setObjectiveUrgency(
+                        `Fortress mode: Team ${attackingTeam} attack, Team ${defendingTeam} defend (${Math.round(timeRemaining)}s)`,
+                        'critical',
+                        3400
+                    );
+                } else {
+                    ctx.setObjectiveUrgency(
+                        `Fortress mode: Team ${attackingTeam} attack, Team ${defendingTeam} defend`,
+                        'critical',
+                        3000
+                    );
+                }
+            } else if (phase === 'round_end' && outcome === 'attackers_captured') {
+                ctx.setObjectiveUrgency(`Attackers (Team ${attackingTeam}) breached the fortress`, 'critical', 3200);
+            } else if (phase === 'round_end' && outcome === 'defenders_hold') {
+                ctx.setObjectiveUrgency(`Defenders (Team ${defendingTeam}) held the fortress`, 'positive', 3200);
+            } else {
+                ctx.setObjectiveUrgency('Fortress phase updated', 'info', 2200);
+            }
+            ctx.log(`Fortress phase: ${phase} (${outcome || 'none'}).`, phase === 'round_end' ? 'warn' : 'info');
+            return true;
+        }
+
         if (eventName === 'map_event' && payload && typeof payload === 'object') {
             const eventType = String(payload.event_type || payload.eventType || 'map_event');
             const eventIndex = Math.max(1, Math.trunc(Number(payload.event_index || payload.eventIndex || 1)));

@@ -32,6 +32,21 @@ fn map_event_interval_from_seed(seed: u64) -> f32 {
 }
 
 impl MassiveGameServer {
+    #[inline]
+    fn fortress_attack_defend_map(&self) -> bool {
+        self.map_name.trim().eq_ignore_ascii_case("Fortress")
+    }
+
+    #[inline]
+    fn fortress_attacking_team() -> u8 {
+        1
+    }
+
+    #[inline]
+    fn fortress_defending_team() -> u8 {
+        2
+    }
+
     fn game_mode_label(mode: fb::GameModeType) -> &'static str {
         match mode {
             fb::GameModeType::FreeForAll => "FreeForAll",
@@ -77,6 +92,26 @@ impl MassiveGameServer {
             "time_remaining": duration_secs.max(0.0),
         });
         if let Some(packet) = self.build_system_event_packet("ctf_overtime", Some(&payload)) {
+            self.enqueue_direct_packet_for_all_players(packet);
+        }
+    }
+
+    fn broadcast_fortress_phase_event(
+        &self,
+        phase: &str,
+        attacking_team: u8,
+        defending_team: u8,
+        time_remaining: f32,
+        outcome: Option<&str>,
+    ) {
+        let payload = serde_json::json!({
+            "phase": phase,
+            "attacking_team": attacking_team,
+            "defending_team": defending_team,
+            "time_remaining": time_remaining.max(0.0),
+            "outcome": outcome,
+        });
+        if let Some(packet) = self.build_system_event_packet("fortress_phase", Some(&payload)) {
             self.enqueue_direct_packet_for_all_players(packet);
         }
     }
@@ -182,7 +217,9 @@ impl MassiveGameServer {
             .len()
             .saturating_add(connected_quic_peer_count());
         let effective_participant_count = player_count;
-        let dynamic_mode_transitions = env_bool_value("MGS_DYNAMIC_MODE_TRANSITIONS");
+        let fortress_attack_defend_mode = self.fortress_attack_defend_map();
+        let dynamic_mode_transitions =
+            env_bool_value("MGS_DYNAMIC_MODE_TRANSITIONS") && !fortress_attack_defend_mode;
 
         match match_info_guard.match_state {
             fb::MatchStateType::Waiting => {
@@ -194,7 +231,9 @@ impl MassiveGameServer {
                     match_info_guard.map_event_count = 0;
                     match_info_guard.map_event_elapsed_secs = 0.0;
                     match_info_guard.map_event_interval_secs = self.next_map_event_interval_secs(0);
-                    if dynamic_mode_transitions {
+                    if fortress_attack_defend_mode {
+                        match_info_guard.game_mode = fb::GameModeType::CaptureTheFlag;
+                    } else if dynamic_mode_transitions {
                         match_info_guard.game_mode = fb::GameModeType::FreeForAll;
                     }
                     info!(
@@ -206,6 +245,15 @@ impl MassiveGameServer {
                     );
                     if match_info_guard.game_mode == fb::GameModeType::CaptureTheFlag {
                         self.initialize_ctf_flags(&mut match_info_guard);
+                        if fortress_attack_defend_mode {
+                            self.broadcast_fortress_phase_event(
+                                "round_start",
+                                Self::fortress_attacking_team(),
+                                Self::fortress_defending_team(),
+                                match_info_guard.time_remaining,
+                                None,
+                            );
+                        }
                     }
                     self.player_manager.for_each_player_mut(|_id, p_state| {
                         if p_state.is_spectator {
@@ -358,6 +406,27 @@ impl MassiveGameServer {
                 }
                 if match_info_guard.time_remaining <= 0.0 {
                     if match_info_guard.game_mode == fb::GameModeType::CaptureTheFlag {
+                        if fortress_attack_defend_mode {
+                            let attacking_team = Self::fortress_attacking_team();
+                            let defending_team = Self::fortress_defending_team();
+                            match_info_guard.team_scores.insert(attacking_team, 0);
+                            match_info_guard.team_scores.insert(defending_team, 1);
+                            match_info_guard.match_state = fb::MatchStateType::Ended;
+                            self.broadcast_fortress_phase_event(
+                                "round_end",
+                                attacking_team,
+                                defending_team,
+                                0.0,
+                                Some("defenders_hold"),
+                            );
+                            info!(
+                                "Fortress Attack/Defend ended: defenders (team {}) held.",
+                                defending_team
+                            );
+                            drop(match_info_guard);
+                            self.capture_match_end_summary("fortress_defenders_hold");
+                            return;
+                        }
                         let team1_score =
                             match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
                         let team2_score =
@@ -432,6 +501,9 @@ impl MassiveGameServer {
         if match_info_write_guard.game_mode == fb::GameModeType::CaptureTheFlag
             && match_info_write_guard.match_state == fb::MatchStateType::Active
         {
+            let fortress_attack_defend_mode = self.fortress_attack_defend_map();
+            let fortress_attacking_team = Self::fortress_attacking_team();
+            let fortress_defending_team = Self::fortress_defending_team();
             for flag_state in match_info_write_guard.flag_states.values_mut() {
                 if flag_state.status == fb::FlagStatus::Dropped && flag_state.respawn_timer > 0.0 {
                     flag_state.respawn_timer -= delta_time;
@@ -504,6 +576,13 @@ impl MassiveGameServer {
                                 < (PICKUP_COLLECTION_RADIUS * PICKUP_COLLECTION_RADIUS)
                             {
                                 if flag_state.team_id != player_state_snapshot.team_id {
+                                    if fortress_attack_defend_mode
+                                        && (player_state_snapshot.team_id
+                                            != fortress_attacking_team
+                                            || flag_state.team_id != fortress_defending_team)
+                                    {
+                                        continue;
+                                    }
                                     flag_state.status = fb::FlagStatus::Carried;
                                     flag_state.carrier_id = Some(player_id_arc.clone());
                                     if let Some(mut p_state_mut_entry) =
@@ -608,12 +687,22 @@ impl MassiveGameServer {
                                 p_state_mut.mark_field_changed(FIELD_SCORE_STATS);
                             }
 
-                            let team_score_mut_ref = match_info_write_guard
-                                .team_scores
-                                .entry(own_player_team_id)
-                                .or_insert(0);
-                            *team_score_mut_ref += 1;
-                            let current_score = *team_score_mut_ref;
+                            let current_score = if fortress_attack_defend_mode {
+                                match_info_write_guard
+                                    .team_scores
+                                    .insert(fortress_attacking_team, 1);
+                                match_info_write_guard
+                                    .team_scores
+                                    .insert(fortress_defending_team, 0);
+                                1
+                            } else {
+                                let team_score_mut_ref = match_info_write_guard
+                                    .team_scores
+                                    .entry(own_player_team_id)
+                                    .or_insert(0);
+                                *team_score_mut_ref += 1;
+                                *team_score_mut_ref
+                            };
 
                             self.global_game_events.push(
                                 GameEvent::FlagCaptured {
@@ -632,8 +721,33 @@ impl MassiveGameServer {
                                 current_score
                             );
 
+                            if fortress_attack_defend_mode {
+                                let fortress_capture_valid = own_player_team_id
+                                    == fortress_attacking_team
+                                    && captured_flag_team_id == fortress_defending_team;
+                                if fortress_capture_valid {
+                                    match_info_write_guard.match_state = fb::MatchStateType::Ended;
+                                    self.broadcast_fortress_phase_event(
+                                        "round_end",
+                                        fortress_attacking_team,
+                                        fortress_defending_team,
+                                        0.0,
+                                        Some("attackers_captured"),
+                                    );
+                                    info!(
+                                        "Fortress Attack/Defend ended: attackers (team {}) captured objective.",
+                                        fortress_attacking_team
+                                    );
+                                    drop(match_info_write_guard);
+                                    self.capture_match_end_summary("fortress_attackers_captured");
+                                    return;
+                                }
+                            }
+
                             let overtime_capture = match_info_write_guard.ctf_overtime_round > 0;
-                            if overtime_capture || current_score >= CTF_CAPTURE_LIMIT {
+                            if !fortress_attack_defend_mode
+                                && (overtime_capture || current_score >= CTF_CAPTURE_LIMIT)
+                            {
                                 match_info_write_guard.match_state = fb::MatchStateType::Ended;
                                 if overtime_capture {
                                     info!(

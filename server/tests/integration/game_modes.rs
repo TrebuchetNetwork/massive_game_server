@@ -40,6 +40,13 @@ fn setup_test_server() -> Arc<MassiveGameServer> {
     ))
 }
 
+fn setup_fortress_server() -> Arc<MassiveGameServer> {
+    let mut server = setup_test_server();
+    let server_mut = Arc::get_mut(&mut server).expect("expected unique server Arc in test setup");
+    server_mut.map_name = "Fortress".to_string();
+    server
+}
+
 fn add_player(server: &MassiveGameServer, peer_id: &str, team_id: u8, x: f32, y: f32) -> PlayerID {
     server
         .player_manager
@@ -146,6 +153,28 @@ async fn ctf_tie_enters_overtime_then_times_out() {
         server.match_info.read().match_state,
         fb::MatchStateType::Ended
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fortress_timeout_awards_defenders_and_skips_overtime() {
+    let server = setup_fortress_server();
+    add_player(&server, "attacker", 1, 0.0, 0.0);
+    add_player(&server, "defender", 2, 30.0, 30.0);
+    server.run_game_logic_update(0.016).await;
+
+    {
+        let mut mi = server.match_info.write();
+        mi.game_mode = fb::GameModeType::CaptureTheFlag;
+        mi.time_remaining = 0.01;
+        mi.team_scores.insert(1, 9);
+        mi.team_scores.insert(2, 7);
+    }
+
+    server.run_game_logic_update(0.1).await;
+    let mi = server.match_info.read();
+    assert_eq!(mi.match_state, fb::MatchStateType::Ended);
+    assert_eq!(mi.team_scores.get(&1).copied(), Some(0));
+    assert_eq!(mi.team_scores.get(&2).copied(), Some(1));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -434,6 +463,63 @@ async fn ctf_overtime_capture_ends_match_immediately() {
     let mi = server.match_info.read();
     assert_eq!(mi.match_state, fb::MatchStateType::Ended);
     assert_eq!(mi.team_scores.get(&1).copied(), Some(2));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fortress_attacker_capture_ends_match() {
+    let server = setup_fortress_server();
+    {
+        let mut mi = server.match_info.write();
+        mi.game_mode = fb::GameModeType::CaptureTheFlag;
+    }
+
+    let runner_id = add_player(&server, "runner", 1, 0.0, 0.0);
+    add_player(&server, "defender", 2, -500.0, -500.0);
+    server.run_game_logic_update(0.016).await;
+
+    let enemy_base = MassiveGameServer::get_flag_base_position(2);
+    let own_base = MassiveGameServer::get_flag_base_position(1);
+
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&runner_id) {
+        ps.x = enemy_base.x;
+        ps.y = enemy_base.y;
+    }
+    server.run_game_logic_update(0.016).await;
+
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&runner_id) {
+        ps.x = own_base.x;
+        ps.y = own_base.y;
+    }
+    server.run_game_logic_update(0.016).await;
+
+    let mi = server.match_info.read();
+    assert_eq!(mi.match_state, fb::MatchStateType::Ended);
+    assert_eq!(mi.team_scores.get(&1).copied(), Some(1));
+    assert_eq!(mi.team_scores.get(&2).copied(), Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fortress_defenders_cannot_steal_attacker_flag() {
+    let server = setup_fortress_server();
+    let defender_id = add_player(&server, "defender", 2, 0.0, 0.0);
+    add_player(&server, "attacker", 1, -500.0, -500.0);
+    server.run_game_logic_update(0.016).await;
+
+    let team1_base = MassiveGameServer::get_flag_base_position(1);
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&defender_id) {
+        ps.x = team1_base.x;
+        ps.y = team1_base.y;
+    }
+    server.run_game_logic_update(0.016).await;
+
+    let defender_state = server
+        .player_manager
+        .get_player_state(&defender_id)
+        .unwrap();
+    assert_eq!(defender_state.is_carrying_flag_team_id, 0);
+    let mi = server.match_info.read();
+    let attacker_flag = mi.flag_states.get(&1).unwrap();
+    assert_eq!(attacker_flag.status, fb::FlagStatus::AtBase);
 }
 
 // ── Flag base positions ──────────────────────────────────────────────
