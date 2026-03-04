@@ -198,6 +198,32 @@ export function createCombatFeedback(getCtx) {
         ctx.streakMedalDiv.classList.add('streak-medal--visible');
     }
 
+    function showStreakAnnouncer(text, tone = 'critical', durationMs = 1700) {
+        const ctx = getCtx();
+        if (!ctx.EXCITEMENT_UI_ENABLED || !ctx.streakAnnouncerDiv || !text) return;
+        const normalizedTone = tone === 'positive' ? 'positive' : 'critical';
+        ctx.combatUiState.streakAnnouncerText = String(text);
+        ctx.combatUiState.streakAnnouncerTone = normalizedTone;
+        ctx.combatUiState.streakAnnouncerUntilMs = Date.now() + Math.max(900, Number(durationMs) || 1700);
+        ctx.streakAnnouncerDiv.textContent = ctx.combatUiState.streakAnnouncerText;
+        ctx.streakAnnouncerDiv.classList.remove('streak-announcer--critical', 'streak-announcer--positive');
+        ctx.streakAnnouncerDiv.classList.add(
+            normalizedTone === 'positive'
+                ? 'streak-announcer--positive'
+                : 'streak-announcer--critical'
+        );
+    }
+
+    function getStreakBroadcastLabel(streakCount) {
+        const value = Math.max(0, Math.trunc(Number(streakCount) || 0));
+        if (value === 3) return 'ON FIRE';
+        if (value === 5) return 'KILLING SPREE';
+        if (value === 7) return 'DOMINATING';
+        if (value === 8) return 'GODLIKE';
+        if (value === 10) return 'LEGENDARY';
+        return '';
+    }
+
     function setObjectiveUrgency(text, tone = 'critical', durationMs = 1300) {
         const ctx = getCtx();
         if (!ctx.EXCITEMENT_UI_ENABLED || !ctx.objectiveUrgencyDiv || !text) return;
@@ -347,6 +373,19 @@ export function createCombatFeedback(getCtx) {
             const instigatorId = typeof event.instigator_id === 'string' ? event.instigator_id : '';
             const isLocal = instigatorId === ctx.myPlayerId;
             const killerName = ctx.players.get(instigatorId)?.username || 'Unknown';
+            const killerTeamId = Number(ctx.players.get(instigatorId)?.team_id) || 0;
+            const localTeamId = Number(ctx.localPlayerState?.team_id) || 0;
+            const isFriendly = !isLocal && localTeamId !== 0 && killerTeamId !== 0 && localTeamId === killerTeamId;
+            const broadcastLabel = getStreakBroadcastLabel(streakCount);
+            if (broadcastLabel) {
+                if (isLocal) {
+                    showStreakAnnouncer(`${broadcastLabel}!`, 'positive', 2000);
+                } else if (isFriendly) {
+                    showStreakAnnouncer(`${killerName} ${broadcastLabel}!`, 'positive', 1850);
+                } else {
+                    showStreakAnnouncer(`${killerName} ${broadcastLabel}!`, 'critical', 1850);
+                }
+            }
             if (isLocal) {
                 if (streakCount >= 10) {
                     showCombatBanner('LEGENDARY!', 'kill', 2000);
@@ -602,7 +641,7 @@ export function createCombatFeedback(getCtx) {
         if (
             !ctx.EXCITEMENT_UI_ENABLED || !ctx.combatOverlayDiv || !ctx.damageFlashLayerDiv ||
             !ctx.speedLinesLayerDiv || !ctx.damageDirectionLayerDiv || !ctx.hitMarkerDiv ||
-            !ctx.streakMedalDiv || !ctx.objectiveUrgencyDiv || !ctx.combatRadialHudDiv ||
+            !ctx.streakAnnouncerDiv || !ctx.streakMedalDiv || !ctx.objectiveUrgencyDiv || !ctx.combatRadialHudDiv ||
             !ctx.combatMomentumDiv || !ctx.combatMomentumFillDiv || !ctx.combatMomentumValueDiv ||
             !ctx.combatStreakChipSpan || !ctx.combatComboChipSpan || !ctx.combatBannerDiv
         ) { return; }
@@ -620,6 +659,7 @@ export function createCombatFeedback(getCtx) {
             ctx.combatComboChipSpan.classList.remove('combat-chip--active');
             ctx.combatMomentumDiv.classList.remove('combat-momentum--hot');
             ctx.combatBannerDiv.classList.remove('combat-banner--visible');
+            ctx.streakAnnouncerDiv.classList.remove('streak-announcer--visible');
             ctx.streakMedalDiv.classList.remove('streak-medal--visible');
             ctx.objectiveUrgencyDiv.classList.remove('objective-urgency--visible');
             ctx.hitMarkerDiv.classList.remove('hit-marker--visible', 'hit-marker--headshot');
@@ -700,6 +740,18 @@ export function createCombatFeedback(getCtx) {
             ctx.combatBannerDiv.classList.remove('combat-banner--kill', 'combat-banner--headshot', 'combat-banner--death');
             ctx.combatBannerDiv.classList.add(`combat-banner--${ctx.combatUiState.bannerTone || 'kill'}`);
         }
+
+        const announcerVisible = ctx.combatUiState.streakAnnouncerUntilMs > currentTime && !!ctx.combatUiState.streakAnnouncerText;
+        if (announcerVisible) {
+            ctx.streakAnnouncerDiv.textContent = ctx.combatUiState.streakAnnouncerText;
+            ctx.streakAnnouncerDiv.classList.remove('streak-announcer--critical', 'streak-announcer--positive');
+            ctx.streakAnnouncerDiv.classList.add(
+                ctx.combatUiState.streakAnnouncerTone === 'positive'
+                    ? 'streak-announcer--positive'
+                    : 'streak-announcer--critical'
+            );
+        }
+        ctx.streakAnnouncerDiv.classList.toggle('streak-announcer--visible', announcerVisible);
 
         const hitMarkerVisible = ctx.combatUiState.markerUntilMs > currentTime;
         ctx.hitMarkerDiv.classList.toggle('hit-marker--visible', hitMarkerVisible);
@@ -822,6 +874,7 @@ export function createCombatFeedback(getCtx) {
         addDamageDirectionIndicator,
         getStreakAnnouncement,
         showStreakMedal,
+        showStreakAnnouncer,
         setObjectiveUrgency,
         updateObjectiveUrgency,
         showDeathRecap,
