@@ -131,6 +131,8 @@ export function createInputManager({
     let lastPingChatAt = 0;
     const TACTICAL_PING_MS = 6200;
     const TACTICAL_PING_CHAT_THROTTLE_MS = 900;
+    const KILLSTREAK_PREF_DAMAGE_FIRST_SLOT = 3;
+    const KILLSTREAK_PREF_SPEED_FIRST_SLOT = 4;
 
     function getPredictedWeaponSoundIntervalMs(weaponType) {
         switch (weaponType) {
@@ -523,6 +525,18 @@ export function createInputManager({
                 if (isDown && !event.repeat && localPlayerState && localPlayerState.alive) {
                     inputState.use_ability_slot = 2;
                     setObjectiveUrgency('Dodge ability activated', 'positive', 600);
+                }
+                break;
+            case 'KeyZ':
+                if (isDown && !event.repeat && localPlayerState && localPlayerState.alive) {
+                    inputState.use_ability_slot = KILLSTREAK_PREF_DAMAGE_FIRST_SLOT;
+                    setObjectiveUrgency('Killstreak rewards: damage first', 'info', 1000);
+                }
+                break;
+            case 'KeyX':
+                if (isDown && !event.repeat && localPlayerState && localPlayerState.alive) {
+                    inputState.use_ability_slot = KILLSTREAK_PREF_SPEED_FIRST_SLOT;
+                    setObjectiveUrgency('Killstreak rewards: speed first', 'info', 1000);
                 }
                 break;
             case 'KeyC':

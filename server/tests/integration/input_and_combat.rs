@@ -7,7 +7,8 @@ use massive_game_server_core::core::constants::{
     MELEE_LUNGE_DISTANCE, PLAYER_BASE_SPEED, POINTS_PER_KILL, WORLD_MAX_X, WORLD_MIN_X,
 };
 use massive_game_server_core::core::types::{
-    EntityId, PlayerAoIs, PlayerID, PlayerInputData, Projectile, ServerWeaponType, Wall,
+    EntityId, KillstreakRewardPreference, PlayerAoIs, PlayerID, PlayerInputData, Projectile,
+    ServerWeaponType, Wall,
 };
 use massive_game_server_core::network::signaling::{
     BoundedChatQueue, ChatMessagesQueue, ClientStatesMap, DataChannelsMap, MAX_CHAT_QUEUE_SIZE,
@@ -589,6 +590,26 @@ async fn dodge_ability_grants_invulnerability() {
     assert!(
         ps.invulnerable_remaining > 0.0,
         "Dodge should grant invulnerability"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn killstreak_reward_preference_switches_via_reserved_input_slots() {
+    let server = setup_test_server();
+    let pid = add_player(&server, "streak_pref", 1, 0.0, 0.0);
+
+    let mut input = make_input(1);
+    input.use_ability_slot =
+        massive_game_server_core::core::constants::KILLSTREAK_PREF_SPEED_FIRST_INPUT_SLOT;
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&pid) {
+        ps.input_queue.push_back(input);
+    }
+    server.process_network_input().await;
+
+    let ps = server.player_manager.get_player_state(&pid).unwrap();
+    assert_eq!(
+        ps.killstreak_reward_preference,
+        KillstreakRewardPreference::SpeedFirst
     );
 }
 

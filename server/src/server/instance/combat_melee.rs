@@ -229,20 +229,7 @@ impl MassiveGameServer {
                                     } else {
                                         // Normal kill: positive score
                                         attacker_mut_state.score += POINTS_PER_KILL;
-                                        attacker_mut_state.current_streak += 1;
-                                        let streak = attacker_mut_state.current_streak;
-                                        if streak
-                                            == crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD
-                                        {
-                                            attacker_mut_state.streak_damage_boost_remaining =
-                                                crate::core::constants::KILLSTREAK_DAMAGE_BOOST_DURATION_SECS;
-                                        }
-                                        if streak
-                                            == crate::core::constants::KILLSTREAK_SPEED_BOOST_THRESHOLD
-                                        {
-                                            attacker_mut_state.streak_speed_boost_remaining =
-                                                crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS;
-                                        }
+                                        let streak = self.advance_killstreak(attacker_mut_state);
                                         if streak
                                             >= crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD
                                         {

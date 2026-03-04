@@ -79,6 +79,7 @@ mod constants;
 mod game_modes;
 mod input_runtime;
 mod join_stage;
+mod killstreaks;
 mod match_info;
 mod match_summary;
 mod navigation_mesh;

@@ -211,6 +211,9 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     if original.streak_speed_boost_remaining != updated.streak_speed_boost_remaining {
         base.streak_speed_boost_remaining = updated.streak_speed_boost_remaining;
     }
+    if original.killstreak_reward_preference != updated.killstreak_reward_preference {
+        base.killstreak_reward_preference = updated.killstreak_reward_preference;
+    }
     if original.recent_damage_sources != updated.recent_damage_sources {
         base.recent_damage_sources = updated.recent_damage_sources.clone();
     }

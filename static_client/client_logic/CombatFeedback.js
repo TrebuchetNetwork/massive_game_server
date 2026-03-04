@@ -316,8 +316,8 @@ export function createCombatFeedback(getCtx) {
             const isLocal = instigatorId === ctx.myPlayerId;
             if (isLocal) {
                 if (streakCount >= 7) setObjectiveUrgency('DOMINATING! 7+ killstreak!', 'critical', 3000);
-                else if (streakCount >= 5) setObjectiveUrgency('KILLING SPREE! Speed boost!', 'positive', 2500);
-                else if (streakCount >= 3) setObjectiveUrgency('Triple kill! +10% damage!', 'positive', 2000);
+                else if (streakCount >= 5) setObjectiveUrgency('KILLING SPREE! second streak reward active', 'positive', 2500);
+                else if (streakCount >= 3) setObjectiveUrgency('Triple kill! first streak reward active', 'positive', 2000);
             } else {
                 if (streakCount >= 7) {
                     const killerName = ctx.players.get(instigatorId)?.username || 'Unknown';

@@ -591,21 +591,7 @@ impl MassiveGameServer {
                                     crate::core::constants::POINTS_PER_KILL;
 
                                 // --- Killstreak system ---
-                                attacker_state_entry.current_streak += 1;
-                                let streak = attacker_state_entry.current_streak;
-
-                                if streak
-                                    == crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD
-                                {
-                                    attacker_state_entry.streak_damage_boost_remaining =
-                                        crate::core::constants::KILLSTREAK_DAMAGE_BOOST_DURATION_SECS;
-                                }
-                                if streak
-                                    == crate::core::constants::KILLSTREAK_SPEED_BOOST_THRESHOLD
-                                {
-                                    attacker_state_entry.streak_speed_boost_remaining =
-                                        crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS;
-                                }
+                                let streak = self.advance_killstreak(&mut attacker_state_entry);
                                 if streak
                                     >= crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD
                                 {

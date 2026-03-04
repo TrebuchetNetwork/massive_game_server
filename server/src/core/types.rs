@@ -32,6 +32,13 @@ pub enum ServerWeaponType {
     Melee,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KillstreakRewardPreference {
+    #[default]
+    DamageFirst,
+    SpeedFirst,
+}
+
 // --- PlayerInputData ---
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayerInputData {
@@ -172,6 +179,7 @@ pub struct PlayerState {
     pub current_streak: u32,
     pub streak_damage_boost_remaining: f32,
     pub streak_speed_boost_remaining: f32,
+    pub killstreak_reward_preference: KillstreakRewardPreference,
 
     // Assist tracking: (attacker_id, damage_dealt, timestamp)
     pub recent_damage_sources: Vec<(PlayerID, i32, Instant)>,
@@ -250,6 +258,7 @@ impl PlayerState {
             current_streak: 0,
             streak_damage_boost_remaining: 0.0,
             streak_speed_boost_remaining: 0.0,
+            killstreak_reward_preference: KillstreakRewardPreference::DamageFirst,
             recent_damage_sources: Vec::new(),
             last_queued_input_sequence: 0,
             prev_velocity: (0.0, 0.0),
@@ -358,6 +367,64 @@ impl PlayerState {
             mult *= KILLSTREAK_DAMAGE_BOOST_MULTIPLIER;
         }
         mult
+    }
+
+    pub fn set_killstreak_reward_preference_from_input_slot(&mut self, input_slot: u8) -> bool {
+        use crate::core::constants::{
+            KILLSTREAK_PREF_DAMAGE_FIRST_INPUT_SLOT, KILLSTREAK_PREF_SPEED_FIRST_INPUT_SLOT,
+        };
+
+        let next_pref = match input_slot {
+            KILLSTREAK_PREF_DAMAGE_FIRST_INPUT_SLOT => KillstreakRewardPreference::DamageFirst,
+            KILLSTREAK_PREF_SPEED_FIRST_INPUT_SLOT => KillstreakRewardPreference::SpeedFirst,
+            _ => return false,
+        };
+        if self.killstreak_reward_preference == next_pref {
+            return false;
+        }
+        self.killstreak_reward_preference = next_pref;
+        true
+    }
+
+    pub fn apply_killstreak_reward_for_streak(&mut self, streak: u32) {
+        use crate::core::constants::{
+            KILLSTREAK_DAMAGE_BOOST_DURATION_SECS, KILLSTREAK_DAMAGE_BOOST_THRESHOLD,
+            KILLSTREAK_SPEED_BOOST_DURATION_SECS, KILLSTREAK_SPEED_BOOST_THRESHOLD,
+        };
+
+        match streak {
+            KILLSTREAK_DAMAGE_BOOST_THRESHOLD => match self.killstreak_reward_preference {
+                KillstreakRewardPreference::DamageFirst => {
+                    self.streak_damage_boost_remaining = self
+                        .streak_damage_boost_remaining
+                        .max(KILLSTREAK_DAMAGE_BOOST_DURATION_SECS);
+                }
+                KillstreakRewardPreference::SpeedFirst => {
+                    self.streak_speed_boost_remaining = self
+                        .streak_speed_boost_remaining
+                        .max(KILLSTREAK_SPEED_BOOST_DURATION_SECS);
+                    self.speed_boost_remaining = self
+                        .speed_boost_remaining
+                        .max(KILLSTREAK_SPEED_BOOST_DURATION_SECS);
+                }
+            },
+            KILLSTREAK_SPEED_BOOST_THRESHOLD => match self.killstreak_reward_preference {
+                KillstreakRewardPreference::DamageFirst => {
+                    self.streak_speed_boost_remaining = self
+                        .streak_speed_boost_remaining
+                        .max(KILLSTREAK_SPEED_BOOST_DURATION_SECS);
+                    self.speed_boost_remaining = self
+                        .speed_boost_remaining
+                        .max(KILLSTREAK_SPEED_BOOST_DURATION_SECS);
+                }
+                KillstreakRewardPreference::SpeedFirst => {
+                    self.streak_damage_boost_remaining = self
+                        .streak_damage_boost_remaining
+                        .max(KILLSTREAK_DAMAGE_BOOST_DURATION_SECS);
+                }
+            },
+            _ => {}
+        }
     }
 
     /// Record an incoming damage event for assist tracking
@@ -1367,6 +1434,81 @@ mod tests {
         let expected = crate::core::constants::DAMAGE_BOOST_MULTIPLIER
             * crate::core::constants::KILLSTREAK_DAMAGE_BOOST_MULTIPLIER;
         assert!((mult - expected).abs() < 0.001);
+    }
+
+    #[test]
+    fn set_killstreak_reward_preference_from_input_slot_updates_preference() {
+        let mut p = make_player("p1");
+        assert_eq!(
+            p.killstreak_reward_preference,
+            KillstreakRewardPreference::DamageFirst
+        );
+        let changed = p.set_killstreak_reward_preference_from_input_slot(
+            crate::core::constants::KILLSTREAK_PREF_SPEED_FIRST_INPUT_SLOT,
+        );
+        assert!(changed);
+        assert_eq!(
+            p.killstreak_reward_preference,
+            KillstreakRewardPreference::SpeedFirst
+        );
+        let unchanged = p.set_killstreak_reward_preference_from_input_slot(
+            crate::core::constants::KILLSTREAK_PREF_SPEED_FIRST_INPUT_SLOT,
+        );
+        assert!(!unchanged);
+    }
+
+    #[test]
+    fn apply_killstreak_reward_for_streak_damage_first_grants_damage_then_speed() {
+        let mut p = make_player("p1");
+        p.killstreak_reward_preference = KillstreakRewardPreference::DamageFirst;
+
+        p.apply_killstreak_reward_for_streak(
+            crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD,
+        );
+        assert_eq!(
+            p.streak_damage_boost_remaining,
+            crate::core::constants::KILLSTREAK_DAMAGE_BOOST_DURATION_SECS
+        );
+        assert_eq!(p.streak_speed_boost_remaining, 0.0);
+
+        p.apply_killstreak_reward_for_streak(
+            crate::core::constants::KILLSTREAK_SPEED_BOOST_THRESHOLD,
+        );
+        assert_eq!(
+            p.streak_speed_boost_remaining,
+            crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS
+        );
+        assert_eq!(
+            p.speed_boost_remaining,
+            crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS
+        );
+    }
+
+    #[test]
+    fn apply_killstreak_reward_for_streak_speed_first_grants_speed_then_damage() {
+        let mut p = make_player("p1");
+        p.killstreak_reward_preference = KillstreakRewardPreference::SpeedFirst;
+
+        p.apply_killstreak_reward_for_streak(
+            crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD,
+        );
+        assert_eq!(
+            p.streak_speed_boost_remaining,
+            crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS
+        );
+        assert_eq!(
+            p.speed_boost_remaining,
+            crate::core::constants::KILLSTREAK_SPEED_BOOST_DURATION_SECS
+        );
+        assert_eq!(p.streak_damage_boost_remaining, 0.0);
+
+        p.apply_killstreak_reward_for_streak(
+            crate::core::constants::KILLSTREAK_SPEED_BOOST_THRESHOLD,
+        );
+        assert_eq!(
+            p.streak_damage_boost_remaining,
+            crate::core::constants::KILLSTREAK_DAMAGE_BOOST_DURATION_SECS
+        );
     }
 
     // ── die / respawn / reset tests ──────────────────────────────

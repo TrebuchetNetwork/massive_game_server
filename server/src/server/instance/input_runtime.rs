@@ -750,7 +750,9 @@ impl MassiveGameServer {
         );
         player_state.mark_field_changed(FIELD_POSITION_ROTATION);
 
-        if input.use_ability_slot != 0 {
+        if player_state.set_killstreak_reward_preference_from_input_slot(input.use_ability_slot) {
+            player_state.mark_field_changed(FIELD_SCORE_STATS);
+        } else if input.use_ability_slot != 0 {
             match input.use_ability_slot {
                 1 if player_state.ability_1_cooldown_remaining <= 0.0 => {
                     player_state.ability_1_cooldown_remaining = ABILITY_DASH_COOLDOWN_SECS;
@@ -789,7 +791,9 @@ impl MassiveGameServer {
             strafe_intent += 1.0;
         }
 
-        let effective_speed = if player_state.speed_boost_remaining > 0.0 {
+        let speed_boost_active = player_state.speed_boost_remaining > 0.0
+            || player_state.streak_speed_boost_remaining > 0.0;
+        let effective_speed = if speed_boost_active {
             PLAYER_BASE_SPEED * SPEED_BOOST_MULTIPLIER
         } else {
             PLAYER_BASE_SPEED
