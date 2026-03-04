@@ -1610,8 +1610,10 @@ if (!this.shouldEmitEffect('explosion')) return;
 const teamId = Number(options.teamId) || 0;
 const isLocalVictim = !!options.isLocalVictim;
 const isLocalKiller = !!options.isLocalKiller;
+const isHeadshot = !!options.isHeadshot;
 const loadTier = this.getLoadTier();
 const baseColor = teamId === 1 ? 0xFF6B6B : (teamId === 2 ? 0x6BB8FF : 0xFFD166);
+const accentColor = isHeadshot ? 0xFFD84A : baseColor;
 
 const container = new PIXI.Container();
 container.position.set(position.x, position.y);
@@ -1624,18 +1626,35 @@ core.endFill();
 container.addChild(core);
 
 const ring = new PIXI.Graphics();
-ring.lineStyle(3, baseColor, 0.9);
+ring.lineStyle(3, accentColor, 0.9);
 ring.drawCircle(0, 0, 18);
 container.addChild(ring);
 
 const pulse = new PIXI.Graphics();
-pulse.beginFill(baseColor, 0.26);
+pulse.beginFill(accentColor, 0.26);
 pulse.drawCircle(0, 0, 16);
 pulse.endFill();
 if (loadTier === 0) {
     pulse.filters = [getSharedBlurFilter(4)];
 }
 container.addChildAt(pulse, 0);
+
+let critBurst = null;
+if (isHeadshot && loadTier <= 1) {
+    critBurst = new PIXI.Graphics();
+    critBurst.lineStyle(2.2, 0xFFF0B0, 0.9);
+    drawStar(critBurst, 0, 0, 8, 22, 11);
+    container.addChild(critBurst);
+    this.animateEffect(critBurst, {
+        duration: this.scaleDuration(280, 140),
+        onUpdate: (progress) => {
+            critBurst.scale.set(0.65 + progress * 2.5);
+            critBurst.rotation = progress * Math.PI * 1.35;
+            critBurst.alpha = 0.92 * (1 - progress);
+        },
+        onComplete: () => critBurst.destroy()
+    });
+}
 
 this.animateEffect(core, {
     duration: this.scaleDuration(170, 90),
@@ -1665,12 +1684,15 @@ this.animateEffect(pulse, {
 });
 
 let sparkCount = this.scaleEffectCount(12, 4);
+if (isHeadshot && loadTier <= 1) sparkCount += this.scaleEffectCount(4, 2);
 if (loadTier >= 2) sparkCount = Math.max(3, Math.floor(sparkCount * 0.6));
 for (let i = 0; i < sparkCount; i += 1) {
     const spark = new PIXI.Sprite(this.particleTextures.spark);
     spark.anchor.set(0.5);
     spark.position.set(0, 0);
-    spark.tint = i % 3 === 0 ? 0xFFFFFF : baseColor;
+    spark.tint = i % 3 === 0
+        ? 0xFFFFFF
+        : (isHeadshot && i % 2 === 0 ? 0xFFE598 : accentColor);
     spark.scale.set(0.45 + Math.random() * 0.55);
     const angle = Math.random() * Math.PI * 2;
     const speed = 2.5 + Math.random() * 4.5;
@@ -1698,12 +1720,15 @@ if (isLocalVictim && gameSettings.screenShake && gameScene) {
     applyScreenShake(gameScene, 120, 4);
 }
 if (isLocalVictim && app) {
-    createScreenFlash(app, 0xFFFFFF, 16, 0.34);
+    createScreenFlash(app, isHeadshot ? 0xFFE8B0 : 0xFFFFFF, 16, isHeadshot ? 0.38 : 0.34);
 } else if (isLocalKiller && app) {
-    createScreenFlash(app, baseColor, 10, 0.2);
+    createScreenFlash(app, isHeadshot ? 0xFFDF78 : accentColor, isHeadshot ? 14 : 10, isHeadshot ? 0.26 : 0.2);
 }
 if (this.audioManager) {
     this.audioManager.playSound('explosion', position, isLocalVictim ? 0.65 : 0.42);
+    if (isHeadshot && isLocalKiller) {
+        this.audioManager.playSound('hitMarkerHeadshot', position, 0.2);
+    }
 }
     }
 

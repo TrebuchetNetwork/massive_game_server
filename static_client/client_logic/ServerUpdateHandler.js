@@ -247,6 +247,7 @@ export function createServerUpdateHandler(getCtx) {
                     teamId,
                     isLocalVictim: victimId === myPlayerId,
                     isLocalKiller: killerId === myPlayerId,
+                    isHeadshot: !!entry.is_headshot,
                 }
             );
         }
