@@ -197,6 +197,11 @@ pub const HOT_ZONE_ROTATE_INTERVAL_SECS: f32 = 45.0;
 pub const HOT_ZONE_RADIUS: f32 = 185.0;
 pub const HOT_ZONE_POINTS_MULTIPLIER: f32 = 1.5;
 pub const HOT_ZONE_SPAWN_MARGIN: f32 = 180.0;
+pub const LATE_PHASE_SUPPLY_WARNING_FULL_MATCH_REMAINING_SECS: f32 = 90.0;
+pub const LATE_PHASE_ZONE_SURGE_FULL_MATCH_REMAINING_SECS: f32 = 60.0;
+pub const LATE_PHASE_FINAL_STAND_FULL_MATCH_REMAINING_SECS: f32 = 30.0;
+pub const LATE_PHASE_ZONE_SURGE_RADIUS_SCALE: f32 = 0.82;
+pub const LATE_PHASE_FINAL_STAND_EVENT_INTERVAL_SECS: f32 = 24.0;
 
 // ── Projectile knockback ────────────────────────────────────────────
 pub const KNOCKBACK_FORCE_PER_DAMAGE: f32 = 0.4; // reduced shove intensity for better close-range control

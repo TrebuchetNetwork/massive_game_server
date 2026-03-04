@@ -3131,6 +3131,8 @@ this.soundSamples = Object.freeze({
 });
 this.sampleBuffers = new Map();
 this.sampleLoadPromises = new Map();
+this.sampleLoadFailures = new Set();
+this.warnedSampleOnlyFallback = new Set();
 
 this.resumeInFlight = false;
 this.soundActivity = new Map();
@@ -3303,11 +3305,14 @@ const loadPromise = fetch(samplePath, { cache: 'force-cache' })
     .then((buffer) => {
         if (buffer) {
             this.sampleBuffers.set(soundName, buffer);
+            this.sampleLoadFailures.delete(soundName);
+            this.warnedSampleOnlyFallback.delete(soundName);
             return buffer;
         }
         return null;
     })
     .catch((error) => {
+        this.sampleLoadFailures.add(soundName);
         console.warn(`Failed to load sound sample '${soundName}' (${samplePath}):`, error);
         return null;
     })
@@ -3646,10 +3651,17 @@ if (!bypassLimiter && !this.shouldPlaySoundNow(soundName, nowMs)) {
 if (this.tryPlaySample(soundName, finalVolume, panValue, nowMs, prioritizeLocal)) {
     return;
 }
-if (this.soundSamples[soundName]) {
+const hasSampleMapping = !!this.soundSamples[soundName];
+if (hasSampleMapping) {
     this.loadSampleBuffer(soundName).catch(() => {
         // loadSampleBuffer already logs detailed failures.
     });
+    if (this.sampleLoadFailures.has(soundName) && !this.warnedSampleOnlyFallback.has(soundName)) {
+        this.warnedSampleOnlyFallback.add(soundName);
+        console.warn(`Skipping tone fallback for '${soundName}' because sample-first mode is enabled.`);
+    }
+    // Preserve sample fidelity: do not synthesize fallback tones for mapped SFX.
+    return;
 }
 this._playTone(
     soundName,

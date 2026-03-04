@@ -1503,12 +1503,19 @@
             if (!worldPoint || !Number.isFinite(worldPoint.x) || !Number.isFinite(worldPoint.y)) return;
             const now = Date.now();
             const localCommander = isLocalTeamCommander();
+            const normalizedKind = kind === 'enemy' ? 'enemy' : (kind === 'defend' ? 'defend' : 'group');
+            const pingLabelText = localCommander
+                ? 'COMMAND ORDER'
+                : (normalizedKind === 'enemy' ? 'ENEMY SPOTTED' : (normalizedKind === 'defend' ? 'DEFEND HERE' : 'GROUP UP'));
             tacticalPings.push({
                 kind: localCommander
                     ? 'defend'
-                    : (kind === 'enemy' ? 'enemy' : (kind === 'defend' ? 'defend' : 'group')),
+                    : normalizedKind,
                 x: worldPoint.x,
                 y: worldPoint.y,
+                strength: localCommander ? 1.3 : (normalizedKind === 'enemy' ? 1.2 : 1.0),
+                source: localCommander ? 'commander' : 'local',
+                label: pingLabelText,
                 createdAt: now,
                 expiresAt: now + TACTICAL_PING_MS
             });
@@ -1575,6 +1582,7 @@
         let projectileContainer;
         let playerContainer;
         let flagContainer;
+        let tacticalPingLabelContainer;
         let localPlayerSprite;
         let aimingGraphics;
         let trajectoryGraphics;
@@ -2748,13 +2756,14 @@
             GLOBAL_LIGHT_DIR, gameSettings,
             app, gameScene, localPlayerState, overviewMode, overviewScale,
             dynamicsTuning, cameraCombatImpulse, mouseWorldPos,
-            players, myPlayerId, setObjectiveUrgency, hotZoneState,
+            players, myPlayerId, setObjectiveUrgency, hotZoneState, tacticalPings,
+            tacticalPingLabelContainer,
             setCameraCombatImpulse: (v) => { cameraCombatImpulse = v; },
             setMinimapWallsCacheDirty: (v) => { minimapWallsCacheDirty = v; },
             setMinimapFlagsCacheDirty: (v) => { minimapFlagsCacheDirty = v; },
         }));
         const {
-            drawZones, updateZonePulse, updateZoneAmbientParticles,
+            drawZones, updateZonePulse, updateZoneAmbientParticles, updateTacticalPingLabels,
             drawWalls, drawEnhancedWallCracks, drawSimplifiedWallCracks,
             updateFlags, updateCamera,
             hasPendingWallRedraw,
@@ -2944,6 +2953,7 @@
                 });
                 playerContainer = new PIXI.Container();
                 flagContainer = new PIXI.Container();
+                tacticalPingLabelContainer = new PIXI.Container();
 
                 zoneContainer = new PIXI.Container();
                 zoneAmbientContainer = new PIXI.Container();
@@ -2954,6 +2964,7 @@
                 worldContainer.addChild(projectileContainer);
                 worldContainer.addChild(playerContainer);
                 worldContainer.addChild(flagContainer);
+                worldContainer.addChild(tacticalPingLabelContainer);
 
                 // Create aiming and trajectory graphics
                 aimingGraphics = new PIXI.Graphics();
@@ -3757,6 +3768,7 @@
             // Animate zone pulse effects (damage zones)
             updateZonePulse(presentationDeltaTime);
             updateZoneAmbientParticles(presentationDeltaTime);
+            updateTacticalPingLabels(presentationDeltaTime);
 
             if (!backgroundThrottleActive && !LOW_OVERHEAD_MODE && !ultraPerformanceMode && starfield && currentTime - lastStarfieldUpdateTime >= STARFIELD_UPDATE_INTERVAL_MS) {
                 lastStarfieldUpdateTime = currentTime;
@@ -4786,6 +4798,7 @@
                 projectileContainer = null;
                 playerContainer = null;
                 flagContainer = null;
+                tacticalPingLabelContainer = null;
                 aimingGraphics = null;
                 trajectoryGraphics = null;
                 sniperRangeText = null;

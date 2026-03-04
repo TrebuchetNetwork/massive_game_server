@@ -20,6 +20,53 @@ export function createWorldRenderer(getCtx) {
     let hotZoneOverlayGraphics = null;
     let lastHotZoneOverlayDrawAt = 0;
     let lastHotZoneOverlaySignature = '';
+    let tacticalPingLabelContainerRef = null;
+    const tacticalPingLabelPool = [];
+    const tacticalPingLabelsActive = [];
+
+    function releaseAllTacticalPingLabels() {
+        for (let i = 0; i < tacticalPingLabelsActive.length; i += 1) {
+            const label = tacticalPingLabelsActive[i];
+            if (!label) continue;
+            label.visible = false;
+            if (label.parent) label.parent.removeChild(label);
+            tacticalPingLabelPool.push(label);
+        }
+        tacticalPingLabelsActive.length = 0;
+    }
+
+    function acquireTacticalPingLabel(PIXI) {
+        const pooled = tacticalPingLabelPool.pop();
+        if (pooled) return pooled;
+        const label = new PIXI.Text('', {
+            fontFamily: 'Arial',
+            fontSize: 12,
+            fontWeight: '700',
+            fill: 0xFACC15,
+            stroke: 0x111827,
+            strokeThickness: 3,
+            align: 'center',
+            letterSpacing: 0.4,
+        });
+        label.anchor.set(0.5, 1.0);
+        label.roundPixels = true;
+        label.zIndex = 8;
+        return label;
+    }
+
+    function resolveTacticalPingLabel(pingEntry) {
+        const explicit = String(pingEntry?.label || '').trim();
+        if (explicit) return explicit.slice(0, 40);
+        const streak = Math.max(0, Math.trunc(Number(pingEntry?.streak) || 0));
+        if (streak > 0) return `STREAK x${streak}`;
+        const source = String(pingEntry?.source || '').trim().toLowerCase();
+        if (source === 'commander') return 'COMMAND ORDER';
+        if (source === 'teammate') return 'TEAM PING';
+        const kind = String(pingEntry?.kind || '').trim().toLowerCase();
+        if (kind === 'enemy') return 'ENEMY';
+        if (kind === 'defend') return 'DEFEND';
+        return 'PING';
+    }
 
     function clearZoneAmbientParticles(zoneAmbientContainer) {
         while (zoneAmbientParticles.length > 0) {
@@ -32,6 +79,8 @@ export function createWorldRenderer(getCtx) {
         hotZoneOverlayGraphics = null;
         lastHotZoneOverlayDrawAt = 0;
         lastHotZoneOverlaySignature = '';
+        releaseAllTacticalPingLabels();
+        tacticalPingLabelContainerRef = null;
     }
 
     function drawZones() {
@@ -265,6 +314,109 @@ export function createWorldRenderer(getCtx) {
             particle.sprite.y += particle.driftY * frameDtSec;
             const lifeAlpha = Math.max(0, particle.life / Math.max(0.001, particle.maxLife));
             particle.sprite.alpha = lifeAlpha * lifeAlpha;
+        }
+    }
+
+    function updateTacticalPingLabels() {
+        const ctx = getCtx();
+        const {
+            tacticalPingLabelContainer,
+            tacticalPings,
+            PIXI,
+            ultraPerformanceMode,
+            STABLE_MODE_FORCED,
+            smoothedFrameMs,
+            players,
+        } = ctx;
+        if (!PIXI || !tacticalPingLabelContainer || !Array.isArray(tacticalPings)) {
+            releaseAllTacticalPingLabels();
+            tacticalPingLabelContainerRef = null;
+            return;
+        }
+        if (tacticalPingLabelContainerRef !== tacticalPingLabelContainer) {
+            releaseAllTacticalPingLabels();
+            tacticalPingLabelContainerRef = tacticalPingLabelContainer;
+        }
+
+        const highDensityScene =
+            ultraPerformanceMode ||
+            STABLE_MODE_FORCED ||
+            Number(smoothedFrameMs) >= 22 ||
+            (players && players.size >= 130);
+        if (highDensityScene) {
+            for (let i = 0; i < tacticalPingLabelsActive.length; i += 1) {
+                if (tacticalPingLabelsActive[i]) tacticalPingLabelsActive[i].visible = false;
+            }
+            return;
+        }
+
+        const now = Date.now();
+        const candidates = [];
+        for (let i = 0; i < tacticalPings.length; i += 1) {
+            const pingEntry = tacticalPings[i];
+            if (!pingEntry) continue;
+            const x = Number(pingEntry.x);
+            const y = Number(pingEntry.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            const expiresAt = Number(pingEntry.expiresAt) || 0;
+            if (expiresAt > 0 && expiresAt <= now) continue;
+            const streak = Math.max(0, Math.trunc(Number(pingEntry.streak) || 0));
+            const hasLabel = !!String(pingEntry.label || '').trim();
+            const source = String(pingEntry.source || '').trim().toLowerCase();
+            if (!hasLabel && streak < 3 && source !== 'killstreak' && source !== 'commander') {
+                continue;
+            }
+            const strength = Number.isFinite(Number(pingEntry.strength))
+                ? Number(pingEntry.strength)
+                : 1;
+            candidates.push({
+                pingEntry,
+                strength,
+                createdAt: Number(pingEntry.createdAt) || now,
+            });
+        }
+        if (candidates.length === 0) {
+            for (let i = 0; i < tacticalPingLabelsActive.length; i += 1) {
+                if (tacticalPingLabelsActive[i]) tacticalPingLabelsActive[i].visible = false;
+            }
+            return;
+        }
+
+        candidates.sort((a, b) => {
+            if (a.strength !== b.strength) return b.strength - a.strength;
+            return b.createdAt - a.createdAt;
+        });
+        const visibleLimit = Math.min(6, candidates.length);
+        while (tacticalPingLabelsActive.length < visibleLimit) {
+            const label = acquireTacticalPingLabel(PIXI);
+            tacticalPingLabelContainer.addChild(label);
+            tacticalPingLabelsActive.push(label);
+        }
+
+        for (let i = 0; i < visibleLimit; i += 1) {
+            const row = candidates[i];
+            const pingEntry = row.pingEntry;
+            const label = tacticalPingLabelsActive[i];
+            const text = resolveTacticalPingLabel(pingEntry);
+            if (label.text !== text) label.text = text;
+            const kind = String(pingEntry.kind || '').trim().toLowerCase();
+            const color = kind === 'enemy' ? 0xF97373 : (kind === 'defend' ? 0xFACC15 : 0x34D399);
+            if (label.style.fill !== color) {
+                label.style.fill = color;
+            }
+            const createdAt = Number(pingEntry.createdAt) || now;
+            const expiresAt = Number(pingEntry.expiresAt) || (now + 2500);
+            const lifeWindow = Math.max(120, expiresAt - createdAt);
+            const lifeRatio = Math.max(0, Math.min(1, (expiresAt - now) / lifeWindow));
+            const pulse = 0.82 + Math.sin((now + i * 173) * 0.012) * 0.18;
+            const strength = Math.max(0.8, Math.min(2.0, Number(row.strength) || 1));
+            label.alpha = Math.max(0.1, (0.38 + lifeRatio * 0.62) * pulse);
+            label.scale.set(0.9 + (strength - 1) * 0.2);
+            label.position.set(Number(pingEntry.x), Number(pingEntry.y) - 22 - (strength - 1) * 4);
+            label.visible = true;
+        }
+        for (let i = visibleLimit; i < tacticalPingLabelsActive.length; i += 1) {
+            if (tacticalPingLabelsActive[i]) tacticalPingLabelsActive[i].visible = false;
         }
     }
 
@@ -736,6 +888,7 @@ export function createWorldRenderer(getCtx) {
         drawZones,
         updateZonePulse,
         updateZoneAmbientParticles,
+        updateTacticalPingLabels,
         drawWalls,
         drawEnhancedWallCracks,
         drawSimplifiedWallCracks,

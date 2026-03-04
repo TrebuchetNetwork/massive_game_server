@@ -104,6 +104,9 @@ pub struct ServerMatchInfo {
     pub hot_zone_elapsed_secs: f32,
     pub hot_zone_center: Vec2,
     pub hot_zone_radius: f32,
+    pub late_phase_supply_warning_triggered: bool,
+    pub late_phase_zone_surge_triggered: bool,
+    pub late_phase_final_stand_triggered: bool,
     pub flag_states: HashMap<u8, ServerFlagState>, // team_id of flag -> state
 }
 
@@ -123,6 +126,9 @@ impl Default for ServerMatchInfo {
             hot_zone_elapsed_secs: 0.0,
             hot_zone_center: Vec2::new(0.0, 0.0),
             hot_zone_radius: HOT_ZONE_RADIUS,
+            late_phase_supply_warning_triggered: false,
+            late_phase_zone_surge_triggered: false,
+            late_phase_final_stand_triggered: false,
             flag_states: HashMap::new(),
         }
     }

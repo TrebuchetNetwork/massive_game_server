@@ -21,6 +21,9 @@ export function createUIManager(getCtx) {
     const CHAT_BLOCKED_NAMES_KEY = 'mgs_chat_blocked_names_v1';
     const CHAT_REPORT_LOG_KEY = 'mgs_chat_report_log_v1';
     const CHAT_REPORT_LOG_LIMIT = 80;
+    const CAREER_PROFILE_KEY = 'mgs_career_profile_v1';
+    const SOCIAL_GRAPH_KEY = 'mgs_social_graph_v1';
+    const SOCIAL_GRAPH_LIMIT = 120;
     let chatModerationRevision = 0;
     const mutedPlayerIds = new Set();
     const mutedNames = new Set();
@@ -108,6 +111,181 @@ export function createUIManager(getCtx) {
         } catch (_) {
             return fallbackValue;
         }
+    }
+
+    function normalizeIdentityValue(rawValue) {
+        return String(rawValue ?? '').trim().toLowerCase();
+    }
+
+    function computeLevelFromXp(totalXpRaw) {
+        const totalXp = Math.max(0, Math.trunc(Number(totalXpRaw) || 0));
+        let level = 1;
+        let spentXp = 0;
+        let nextLevelXp = 900;
+        while (level < 250 && totalXp >= (spentXp + nextLevelXp)) {
+            spentXp += nextLevelXp;
+            level += 1;
+            nextLevelXp = Math.round(nextLevelXp * 1.11 + 60);
+        }
+        return {
+            level,
+            totalXp,
+            xpIntoLevel: Math.max(0, totalXp - spentXp),
+            xpToNextLevel: Math.max(1, nextLevelXp),
+        };
+    }
+
+    function upsertWeaponMastery(baseMastery, weaponKills) {
+        const output = { ...(baseMastery && typeof baseMastery === 'object' ? baseMastery : {}) };
+        const entries = weaponKills && typeof weaponKills === 'object'
+            ? Object.entries(weaponKills)
+            : [];
+        for (let i = 0; i < entries.length; i += 1) {
+            const [weaponName, rawKills] = entries[i];
+            const normalizedName = String(weaponName || '').trim();
+            if (!normalizedName) continue;
+            const kills = Math.max(0, Math.trunc(Number(rawKills) || 0));
+            if (kills <= 0) continue;
+            output[normalizedName] = Math.max(0, Math.trunc(Number(output[normalizedName]) || 0)) + kills;
+        }
+        return output;
+    }
+
+    function updateCareerProgress(localRow, summaryPayload, context) {
+        if (!localRow || typeof localRow !== 'object') return null;
+        const kills = Math.max(0, toInt(localRow?.kills, 0));
+        const deaths = Math.max(0, toInt(localRow?.deaths, 0));
+        const score = Math.max(0, toInt(localRow?.score, 0));
+        const damage = Math.max(0, toInt(localRow?.damage_dealt || localRow?.damageDealt, 0));
+        const objectiveRaw = localRow?.objectives ?? localRow?.flag_captures ?? localRow?.flagCaptures ?? 0;
+        const objectives = Math.max(0, toInt(objectiveRaw, 0));
+        const winnerTeam = Number(summaryPayload?.winning_team || summaryPayload?.winningTeam || 0);
+        const winnerName = String(summaryPayload?.winning_name || summaryPayload?.winner_name || '').trim().toLowerCase();
+        const localTeamId = toInt(context?.localTeamId, 0);
+        const localName = String(context?.localName || '').trim().toLowerCase();
+        const localWon = (
+            ((winnerTeam === 1 || winnerTeam === 2) && (localTeamId === 1 || localTeamId === 2) && winnerTeam === localTeamId) ||
+            (!!winnerName && !!localName && winnerName === localName)
+        );
+        const xpGain = Math.max(
+            40,
+            Math.round(score * 0.62 + kills * 34 + damage * 0.04 + objectives * 115 + (localWon ? 180 : 0))
+        );
+        const defaults = {
+            matches: 0,
+            wins: 0,
+            kills: 0,
+            deaths: 0,
+            score: 0,
+            damage: 0,
+            objectives: 0,
+            total_xp: 0,
+            weapon_mastery: {},
+        };
+        const rawStored = loadStoredJson(CAREER_PROFILE_KEY, defaults);
+        const previous = {
+            ...defaults,
+            ...(rawStored && typeof rawStored === 'object' ? rawStored : {}),
+        };
+        const nextProfile = {
+            matches: Math.max(0, toInt(previous.matches, 0)) + 1,
+            wins: Math.max(0, toInt(previous.wins, 0)) + (localWon ? 1 : 0),
+            kills: Math.max(0, toInt(previous.kills, 0)) + kills,
+            deaths: Math.max(0, toInt(previous.deaths, 0)) + deaths,
+            score: Math.max(0, toInt(previous.score, 0)) + score,
+            damage: Math.max(0, toInt(previous.damage, 0)) + damage,
+            objectives: Math.max(0, toInt(previous.objectives, 0)) + objectives,
+            total_xp: Math.max(0, toInt(previous.total_xp, 0)) + xpGain,
+            weapon_mastery: upsertWeaponMastery(previous.weapon_mastery, localRow?.weapon_kills || localRow?.weaponKills),
+        };
+        try {
+            localStorage.setItem(CAREER_PROFILE_KEY, JSON.stringify(nextProfile));
+        } catch (_) {}
+        const levelState = computeLevelFromXp(nextProfile.total_xp);
+        const masteryTop = Object.entries(nextProfile.weapon_mastery || {})
+            .map(([name, value]) => ({ name: String(name), kills: Math.max(0, toInt(value, 0)) }))
+            .filter((row) => row.kills > 0)
+            .sort((a, b) => b.kills - a.kills)
+            .slice(0, 3);
+        return {
+            profile: nextProfile,
+            levelState,
+            xpGain,
+            masteryTop,
+            lifetimeKd: nextProfile.deaths > 0
+                ? (nextProfile.kills / nextProfile.deaths)
+                : nextProfile.kills,
+            winRate: nextProfile.matches > 0
+                ? (nextProfile.wins / nextProfile.matches) * 100
+                : 0,
+        };
+    }
+
+    function updateSocialGraph(summaryPayload, context) {
+        const playersRows = Array.isArray(summaryPayload?.players) ? summaryPayload.players : [];
+        if (playersRows.length === 0) return null;
+        const localId = String(context?.localPlayerId || '').trim();
+        const localName = normalizeIdentityValue(context?.localName);
+        const localTeamId = toInt(context?.localTeamId, 0);
+        const defaults = { entries: {} };
+        const stored = loadStoredJson(SOCIAL_GRAPH_KEY, defaults);
+        const entries = { ...(stored?.entries && typeof stored.entries === 'object' ? stored.entries : {}) };
+        const now = Date.now();
+        for (let i = 0; i < playersRows.length; i += 1) {
+            const row = playersRows[i];
+            if (!row || typeof row !== 'object') continue;
+            const playerId = String(row.player_id || row.playerId || '').trim();
+            const name = String(row.player_name || row.playerName || '').trim();
+            const team = toInt(row.team_id || row.teamId, 0);
+            if (!name) continue;
+            if ((localId && playerId && playerId === localId) || (!localId && normalizeIdentityValue(name) === localName)) {
+                continue;
+            }
+            const key = playerId ? `id:${playerId}` : `name:${normalizeIdentityValue(name)}`;
+            const existing = entries[key] && typeof entries[key] === 'object' ? entries[key] : {
+                name,
+                encounters: 0,
+                teammate_matches: 0,
+                rival_matches: 0,
+                last_seen_at: 0,
+            };
+            existing.name = name || existing.name || 'Player';
+            existing.encounters = Math.max(0, toInt(existing.encounters, 0)) + 1;
+            if (team > 0 && localTeamId > 0 && team === localTeamId) {
+                existing.teammate_matches = Math.max(0, toInt(existing.teammate_matches, 0)) + 1;
+            } else {
+                existing.rival_matches = Math.max(0, toInt(existing.rival_matches, 0)) + 1;
+            }
+            existing.last_seen_at = now;
+            entries[key] = existing;
+        }
+
+        const trimmed = Object.entries(entries)
+            .map(([key, value]) => ({ key, value }))
+            .sort((a, b) => (toInt(b.value?.last_seen_at, 0) - toInt(a.value?.last_seen_at, 0)))
+            .slice(0, SOCIAL_GRAPH_LIMIT)
+            .reduce((acc, row) => {
+                acc[row.key] = row.value;
+                return acc;
+            }, {});
+        try {
+            localStorage.setItem(SOCIAL_GRAPH_KEY, JSON.stringify({ entries: trimmed }));
+        } catch (_) {}
+
+        const highlights = Object.values(trimmed)
+            .map((value) => ({
+                name: String(value?.name || 'Player'),
+                encounters: Math.max(0, toInt(value?.encounters, 0)),
+                teammateMatches: Math.max(0, toInt(value?.teammate_matches, 0)),
+                rivalMatches: Math.max(0, toInt(value?.rival_matches, 0)),
+            }))
+            .sort((a, b) => {
+                const scoreA = a.encounters + a.rivalMatches * 0.6 + a.teammateMatches * 0.4;
+                const scoreB = b.encounters + b.rivalMatches * 0.6 + b.teammateMatches * 0.4;
+                return scoreB - scoreA;
+            })
+            .slice(0, 4);
+        return { highlights };
     }
 
     function normalizeChatIdentity(rawValue) {
@@ -302,6 +480,8 @@ export function createUIManager(getCtx) {
         const minutes = Math.floor(durationSec / 60);
         const seconds = Math.floor(durationSec % 60);
         const winnerTeam = Number(summaryPayload.winning_team || summaryPayload.winningTeam || 0);
+        const localTeamId = toInt(ctx.localPlayerState?.team_id, 0);
+        const localName = String(ctx.localPlayerState?.username || '').trim();
         const winnerText = winnerTeam > 0 ? `Winner: Team ${winnerTeam}` : 'Winner: Draw / FFA';
         const reasonText = reasonRaw.charAt(0).toUpperCase() + reasonRaw.slice(1);
         ctx.postMatchMetaDiv.textContent = `${modeName} \u00b7 ${winnerText} \u00b7 ${minutes}:${seconds.toString().padStart(2, '0')} \u00b7 ${reasonText}`;
@@ -580,6 +760,113 @@ export function createUIManager(getCtx) {
                         : `${newRecordLabels.length} New Personal Bests`;
                     showPostMatchCallout(labelText, 'positive');
                     playUiSound(newRecordLabels.length >= 3 ? 'announcerTripleKill' : 'victorySting', 0.34);
+                }
+
+                const careerProgress = updateCareerProgress(localRow, summaryPayload, {
+                    localTeamId,
+                    localName,
+                });
+                if (careerProgress) {
+                    const levelLabel = document.createElement('div');
+                    levelLabel.className = 'trend-label';
+                    levelLabel.textContent = `Career Progress · Level ${careerProgress.levelState.level}`;
+                    trendDiv.appendChild(levelLabel);
+
+                    const progressBarOuter = document.createElement('div');
+                    progressBarOuter.style.height = '10px';
+                    progressBarOuter.style.borderRadius = '999px';
+                    progressBarOuter.style.background = 'rgba(30,41,59,0.85)';
+                    progressBarOuter.style.overflow = 'hidden';
+                    progressBarOuter.style.marginBottom = '8px';
+                    const progressBarInner = document.createElement('div');
+                    const xpRatio = careerProgress.levelState.xpToNextLevel > 0
+                        ? Math.max(0, Math.min(1, careerProgress.levelState.xpIntoLevel / careerProgress.levelState.xpToNextLevel))
+                        : 0;
+                    progressBarInner.style.width = `${Math.round(xpRatio * 100)}%`;
+                    progressBarInner.style.height = '100%';
+                    progressBarInner.style.background = 'linear-gradient(90deg, #22d3ee, #6366f1)';
+                    progressBarOuter.appendChild(progressBarInner);
+                    trendDiv.appendChild(progressBarOuter);
+
+                    const careerGrid = document.createElement('div');
+                    careerGrid.className = 'post-match-records';
+                    [
+                        { label: 'XP Gain', value: `+${careerProgress.xpGain}` },
+                        {
+                            label: 'Lifetime K/D',
+                            value: Number.isFinite(careerProgress.lifetimeKd)
+                                ? careerProgress.lifetimeKd.toFixed(2)
+                                : '0.00',
+                        },
+                        { label: 'Win Rate', value: `${Math.round(careerProgress.winRate)}%` },
+                        { label: 'Matches', value: String(Math.max(0, toInt(careerProgress.profile.matches, 0))) },
+                    ].forEach((entry) => {
+                        const card = document.createElement('div');
+                        card.className = 'post-match-record';
+                        const title = document.createElement('div');
+                        title.className = 'post-match-record__label';
+                        title.textContent = entry.label;
+                        const value = document.createElement('div');
+                        value.className = 'post-match-record__value';
+                        value.textContent = entry.value;
+                        card.appendChild(title);
+                        card.appendChild(value);
+                        careerGrid.appendChild(card);
+                    });
+                    trendDiv.appendChild(careerGrid);
+
+                    if (careerProgress.masteryTop.length > 0) {
+                        const masteryLabel = document.createElement('div');
+                        masteryLabel.className = 'trend-label';
+                        masteryLabel.textContent = 'Weapon Mastery';
+                        trendDiv.appendChild(masteryLabel);
+                        const masteryGrid = document.createElement('div');
+                        masteryGrid.className = 'post-match-records';
+                        for (let i = 0; i < careerProgress.masteryTop.length; i += 1) {
+                            const row = careerProgress.masteryTop[i];
+                            const card = document.createElement('div');
+                            card.className = 'post-match-record';
+                            const title = document.createElement('div');
+                            title.className = 'post-match-record__label';
+                            title.textContent = row.name;
+                            const value = document.createElement('div');
+                            value.className = 'post-match-record__value';
+                            value.textContent = `${row.kills} kills`;
+                            card.appendChild(title);
+                            card.appendChild(value);
+                            masteryGrid.appendChild(card);
+                        }
+                        trendDiv.appendChild(masteryGrid);
+                    }
+                }
+
+                const socialGraph = updateSocialGraph(summaryPayload, {
+                    localPlayerId: ctx.myPlayerId,
+                    localTeamId,
+                    localName,
+                });
+                if (socialGraph && socialGraph.highlights.length > 0) {
+                    const socialLabel = document.createElement('div');
+                    socialLabel.className = 'trend-label';
+                    socialLabel.textContent = 'Squad & Rivals';
+                    trendDiv.appendChild(socialLabel);
+                    const socialGrid = document.createElement('div');
+                    socialGrid.className = 'post-match-records';
+                    for (let i = 0; i < socialGraph.highlights.length; i += 1) {
+                        const row = socialGraph.highlights[i];
+                        const card = document.createElement('div');
+                        card.className = 'post-match-record';
+                        const title = document.createElement('div');
+                        title.className = 'post-match-record__label';
+                        title.textContent = row.name;
+                        const value = document.createElement('div');
+                        value.className = 'post-match-record__value';
+                        value.textContent = `${row.encounters} matches · ${row.rivalMatches} rival · ${row.teammateMatches} ally`;
+                        card.appendChild(title);
+                        card.appendChild(value);
+                        socialGrid.appendChild(card);
+                    }
+                    trendDiv.appendChild(socialGrid);
                 }
             }
         }
@@ -878,9 +1165,10 @@ export function createUIManager(getCtx) {
             const spawnedPickups = Math.max(0, Math.trunc(Number(payload.spawned_pickups ?? payload.spawnedPickups ?? 0)));
             const nextEventSecs = Number(payload.next_event_secs ?? payload.nextEventSecs ?? 0);
             const bonusMultiplier = Number(payload.bonus_multiplier ?? payload.bonusMultiplier ?? 1);
-            const hasHotZoneBonus = eventType === 'hot_zone' && Number.isFinite(bonusMultiplier) && bonusMultiplier > 1;
+            const hotZoneDrivenEvent = eventType === 'hot_zone' || eventType === 'zone_surge';
+            const hasHotZoneBonus = hotZoneDrivenEvent && Number.isFinite(bonusMultiplier) && bonusMultiplier > 1;
             const bonusPct = hasHotZoneBonus ? Math.round((bonusMultiplier - 1) * 100) : 0;
-            if (eventType === 'hot_zone' && typeof ctx.setHotZoneEvent === 'function') {
+            if (hotZoneDrivenEvent && typeof ctx.setHotZoneEvent === 'function') {
                 ctx.setHotZoneEvent({
                     event_index: eventIndex,
                     x: Number(payload.x),
@@ -905,6 +1193,49 @@ export function createUIManager(getCtx) {
                     );
                 }
                 playUiSound('countdownBeep', 0.24);
+            } else if (eventType === 'supply_drop_incoming') {
+                const incomingSecs = Number(payload.seconds_remaining ?? payload.secondsRemaining ?? nextEventSecs);
+                if (Number.isFinite(incomingSecs) && incomingSecs > 0) {
+                    ctx.setObjectiveUrgency(
+                        `Supply drop incoming in ${Math.round(incomingSecs)}s - converge center`,
+                        'critical',
+                        3200
+                    );
+                    maybePlayCountdownBeep(incomingSecs);
+                } else {
+                    ctx.setObjectiveUrgency('Supply drop incoming - converge center', 'critical', 3000);
+                }
+                playUiSound('flagFanfare', 0.34);
+            } else if (eventType === 'zone_surge') {
+                if (Number.isFinite(nextEventSecs) && nextEventSecs > 0) {
+                    ctx.setObjectiveUrgency(
+                        `Zone surge active (+${bonusPct}% points, ${spawnedPickups} pickups). Rotates in ${Math.round(nextEventSecs)}s`,
+                        'critical',
+                        3400
+                    );
+                } else {
+                    ctx.setObjectiveUrgency(
+                        `Zone surge active (+${bonusPct}% points, ${spawnedPickups} pickups)`,
+                        'critical',
+                        3000
+                    );
+                }
+                playUiSound('announcerRampage', 0.34);
+            } else if (eventType === 'final_stand') {
+                if (Number.isFinite(nextEventSecs) && nextEventSecs > 0) {
+                    ctx.setObjectiveUrgency(
+                        `FINAL STAND: ${spawnedPickups} pickups at center. Next surge in ${Math.round(nextEventSecs)}s`,
+                        'critical',
+                        3600
+                    );
+                } else {
+                    ctx.setObjectiveUrgency(
+                        `FINAL STAND: ${spawnedPickups} pickups at center`,
+                        'critical',
+                        3200
+                    );
+                }
+                playUiSound('announcerRampage', 0.38);
             } else {
                 const label = eventType === 'center_supply_drop' ? 'Center supply drop' : 'Map event';
                 if (Number.isFinite(nextEventSecs) && nextEventSecs > 0) {
@@ -933,10 +1264,27 @@ export function createUIManager(getCtx) {
                 const now = Date.now();
                 const pingKindRaw = String(payload.ping_kind || payload.pingKind || 'defend').trim().toLowerCase();
                 const pingKind = pingKindRaw === 'enemy' || pingKindRaw === 'defend' ? pingKindRaw : 'group';
+                const eventLabel = (() => {
+                    if (eventType === 'hot_zone') return `HOT ZONE +${Math.max(0, bonusPct)}%`;
+                    if (eventType === 'supply_drop_incoming') return 'SUPPLY DROP INCOMING';
+                    if (eventType === 'zone_surge') return `ZONE SURGE +${Math.max(0, bonusPct)}%`;
+                    if (eventType === 'final_stand') return 'FINAL STAND';
+                    if (eventType === 'center_supply_drop') return 'CENTER SUPPLY DROP';
+                    return 'MAP EVENT';
+                })();
+                const eventStrength = (
+                    eventType === 'final_stand'
+                        ? 1.7
+                        : (eventType === 'zone_surge' ? 1.55 : (eventType === 'supply_drop_incoming' ? 1.35 : 1.2))
+                );
                 ctx.tacticalPings.push({
                     kind: pingKind,
                     x: pingX,
                     y: pingY,
+                    strength: eventStrength,
+                    source: 'map_event',
+                    label: eventLabel,
+                    event_type: eventType,
                     createdAt: now,
                     expiresAt: now + Math.max(2200, Number(ctx.TACTICAL_PING_MS) || 6200),
                 });
@@ -975,10 +1323,16 @@ export function createUIManager(getCtx) {
                 const fallbackKind = pickupLabel.toLowerCase().includes('weapon') ? 'defend' : 'group';
                 const pingKindRaw = String(payload.ping_kind || payload.pingKind || fallbackKind).trim().toLowerCase();
                 const pingKind = pingKindRaw === 'enemy' || pingKindRaw === 'defend' ? pingKindRaw : 'group';
+                const pingLabel = phase === 'countdown'
+                    ? `${String(pickupLabel).toUpperCase()} SOON`.slice(0, 36)
+                    : `${String(pickupLabel).toUpperCase()} READY`.slice(0, 36);
                 ctx.tacticalPings.push({
                     kind: pingKind,
                     x: pingX,
                     y: pingY,
+                    strength: phase === 'countdown' ? 1.05 : 1.2,
+                    source: 'pickup_spawn',
+                    label: pingLabel,
                     createdAt: now,
                     expiresAt: now + Math.max(1500, Number(ctx.TACTICAL_PING_MS) || 6200),
                 });

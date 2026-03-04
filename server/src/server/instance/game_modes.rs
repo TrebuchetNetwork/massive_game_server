@@ -25,6 +25,26 @@ fn dynamic_mode_thresholds(match_duration_secs: f32) -> DynamicModeThresholds {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LatePhaseThresholds {
+    supply_warning_remaining: f32,
+    zone_surge_remaining: f32,
+    final_stand_remaining: f32,
+}
+
+fn late_phase_thresholds(match_duration_secs: f32) -> LatePhaseThresholds {
+    let scaled_remaining = |seconds_for_full_match: f32| {
+        (match_duration_secs * (seconds_for_full_match / FULL_MATCH_DURATION_SECS)).max(6.0)
+    };
+    LatePhaseThresholds {
+        supply_warning_remaining: scaled_remaining(
+            LATE_PHASE_SUPPLY_WARNING_FULL_MATCH_REMAINING_SECS,
+        ),
+        zone_surge_remaining: scaled_remaining(LATE_PHASE_ZONE_SURGE_FULL_MATCH_REMAINING_SECS),
+        final_stand_remaining: scaled_remaining(LATE_PHASE_FINAL_STAND_FULL_MATCH_REMAINING_SECS),
+    }
+}
+
 fn map_event_interval_from_seed(seed: u64) -> f32 {
     let mut rng = DeterministicRng::new(seed ^ 0xA5A5_A5A5_1F2E_3D4C);
     rng.gen_range_f32(MAP_EVENT_INTERVAL_MIN_SECS, MAP_EVENT_INTERVAL_MAX_SECS)
@@ -43,6 +63,22 @@ fn hot_zone_center_from_seed(seed: u64) -> Vec2 {
         rng.gen_range_f32(min_x, max_x),
         rng.gen_range_f32(min_y, max_y),
     )
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LatePhaseEvent {
+    SupplyWarning {
+        time_remaining: f32,
+    },
+    ZoneSurge {
+        event_index: u64,
+        center: Vec2,
+        radius: f32,
+    },
+    FinalStand {
+        event_index: u64,
+        next_interval_secs: f32,
+    },
 }
 
 impl MassiveGameServer {
@@ -256,6 +292,86 @@ impl MassiveGameServer {
         );
     }
 
+    fn trigger_supply_warning_event(&self, time_remaining: f32) {
+        let center = Vec2::new(
+            (WORLD_MIN_X + WORLD_MAX_X) * 0.5,
+            (WORLD_MIN_Y + WORLD_MAX_Y) * 0.5,
+        );
+        let payload = serde_json::json!({
+            "phase": "countdown",
+            "event_type": "supply_drop_incoming",
+            "event_index": 0,
+            "x": center.x,
+            "y": center.y,
+            "spawned_pickups": 0,
+            "seconds_remaining": time_remaining.max(0.0),
+            "next_event_secs": time_remaining.max(0.0),
+            "ping_kind": "defend",
+        });
+        if let Some(packet) = self.build_system_event_packet("map_event", Some(&payload)) {
+            self.enqueue_direct_packet_for_all_players(packet);
+        }
+    }
+
+    fn trigger_zone_surge_event(&self, event_index: u64, center: Vec2, radius: f32) {
+        let spawned_pickups =
+            self.spawn_map_event_supply_drop(center, event_index ^ 0x0DDC_0FFE_EC0A_41D5);
+        let payload = serde_json::json!({
+            "phase": "triggered",
+            "event_type": "zone_surge",
+            "event_index": event_index.saturating_add(1),
+            "x": center.x,
+            "y": center.y,
+            "radius": radius.max(40.0),
+            "bonus_multiplier": HOT_ZONE_POINTS_MULTIPLIER,
+            "spawned_pickups": spawned_pickups,
+            "next_event_secs": HOT_ZONE_ROTATE_INTERVAL_SECS.max(0.0),
+            "ping_kind": "enemy",
+        });
+        if let Some(packet) = self.build_system_event_packet("map_event", Some(&payload)) {
+            self.enqueue_direct_packet_for_all_players(packet);
+        }
+        info!(
+            "Late-phase zone surge triggered at ({:.1}, {:.1}) radius={:.1}, pickups={}.",
+            center.x, center.y, radius, spawned_pickups
+        );
+    }
+
+    fn trigger_final_stand_event(&self, event_index: u64, next_interval_secs: f32) {
+        let center = Vec2::new(
+            (WORLD_MIN_X + WORLD_MAX_X) * 0.5,
+            (WORLD_MIN_Y + WORLD_MAX_Y) * 0.5,
+        );
+        let offset_center = Vec2::new(
+            (center.x + 65.0).clamp(WORLD_MIN_X + 40.0, WORLD_MAX_X - 40.0),
+            center.y,
+        );
+        let spawned_primary =
+            self.spawn_map_event_supply_drop(center, event_index ^ 0xFA11_57A0_0000_0001);
+        let spawned_secondary =
+            self.spawn_map_event_supply_drop(offset_center, event_index ^ 0xFA11_57A0_0000_0002);
+        let spawned_pickups = spawned_primary.saturating_add(spawned_secondary);
+        let payload = serde_json::json!({
+            "phase": "triggered",
+            "event_type": "final_stand",
+            "event_index": event_index.saturating_add(1),
+            "x": center.x,
+            "y": center.y,
+            "radius": HOT_ZONE_RADIUS,
+            "bonus_multiplier": HOT_ZONE_POINTS_MULTIPLIER,
+            "spawned_pickups": spawned_pickups,
+            "next_event_secs": next_interval_secs.max(0.0),
+            "ping_kind": "enemy",
+        });
+        if let Some(packet) = self.build_system_event_packet("map_event", Some(&payload)) {
+            self.enqueue_direct_packet_for_all_players(packet);
+        }
+        info!(
+            "Final stand triggered with {} pickups (next_interval={:.1}s).",
+            spawned_pickups, next_interval_secs
+        );
+    }
+
     pub(super) fn hot_zone_bonus_multiplier_at_position(&self, position: Vec2) -> f32 {
         let match_info_guard = self.match_info.read();
         if !match_info_guard.hot_zone_active
@@ -307,6 +423,9 @@ impl MassiveGameServer {
                     match_info_guard.hot_zone_elapsed_secs = HOT_ZONE_ROTATE_INTERVAL_SECS;
                     match_info_guard.hot_zone_center = Vec2::new(0.0, 0.0);
                     match_info_guard.hot_zone_radius = HOT_ZONE_RADIUS;
+                    match_info_guard.late_phase_supply_warning_triggered = false;
+                    match_info_guard.late_phase_zone_surge_triggered = false;
+                    match_info_guard.late_phase_final_stand_triggered = false;
                     if fortress_attack_defend_mode {
                         match_info_guard.game_mode = fb::GameModeType::CaptureTheFlag;
                     } else if dynamic_mode_transitions {
@@ -348,6 +467,7 @@ impl MassiveGameServer {
             fb::MatchStateType::Active => {
                 let mut map_event_to_trigger: Option<(u64, f32)> = None;
                 let mut hot_zone_to_trigger: Option<(u64, Vec2)> = None;
+                let mut late_phase_events: Vec<LatePhaseEvent> = Vec::new();
                 let previous_time_remaining = match_info_guard.time_remaining;
                 match_info_guard.time_remaining -= delta_time;
                 if dynamic_mode_transitions {
@@ -449,6 +569,52 @@ impl MassiveGameServer {
                             match_info_guard.time_remaining,
                         );
                     }
+                }
+                let late_phase = late_phase_thresholds(self.match_duration_secs);
+                if !match_info_guard.late_phase_supply_warning_triggered
+                    && previous_time_remaining > late_phase.supply_warning_remaining
+                    && match_info_guard.time_remaining <= late_phase.supply_warning_remaining
+                {
+                    match_info_guard.late_phase_supply_warning_triggered = true;
+                    late_phase_events.push(LatePhaseEvent::SupplyWarning {
+                        time_remaining: match_info_guard.time_remaining,
+                    });
+                }
+                if !match_info_guard.late_phase_zone_surge_triggered
+                    && previous_time_remaining > late_phase.zone_surge_remaining
+                    && match_info_guard.time_remaining <= late_phase.zone_surge_remaining
+                {
+                    match_info_guard.late_phase_zone_surge_triggered = true;
+                    let hot_zone_index = match_info_guard.hot_zone_event_count as u64;
+                    let hot_zone_center = self.next_hot_zone_center(hot_zone_index ^ 0x57A7);
+                    match_info_guard.hot_zone_event_count =
+                        match_info_guard.hot_zone_event_count.saturating_add(1);
+                    match_info_guard.hot_zone_elapsed_secs = 0.0;
+                    match_info_guard.hot_zone_active = true;
+                    match_info_guard.hot_zone_center = hot_zone_center;
+                    match_info_guard.hot_zone_radius =
+                        (HOT_ZONE_RADIUS * LATE_PHASE_ZONE_SURGE_RADIUS_SCALE).max(80.0);
+                    late_phase_events.push(LatePhaseEvent::ZoneSurge {
+                        event_index: hot_zone_index,
+                        center: hot_zone_center,
+                        radius: match_info_guard.hot_zone_radius,
+                    });
+                }
+                if !match_info_guard.late_phase_final_stand_triggered
+                    && previous_time_remaining > late_phase.final_stand_remaining
+                    && match_info_guard.time_remaining <= late_phase.final_stand_remaining
+                {
+                    match_info_guard.late_phase_final_stand_triggered = true;
+                    let event_index = match_info_guard.map_event_count as u64;
+                    match_info_guard.map_event_count =
+                        match_info_guard.map_event_count.saturating_add(1);
+                    let tightened_interval = LATE_PHASE_FINAL_STAND_EVENT_INTERVAL_SECS.max(8.0);
+                    match_info_guard.map_event_interval_secs = tightened_interval;
+                    match_info_guard.map_event_elapsed_secs = 0.0;
+                    late_phase_events.push(LatePhaseEvent::FinalStand {
+                        event_index,
+                        next_interval_secs: tightened_interval,
+                    });
                 }
                 let safe_delta = delta_time.max(0.0);
                 if safe_delta > 0.0 {
@@ -570,15 +736,39 @@ impl MassiveGameServer {
                     self.capture_match_end_summary("time_expired");
                     return;
                 }
-                if map_event_to_trigger.is_some() || hot_zone_to_trigger.is_some() {
+                if map_event_to_trigger.is_some()
+                    || hot_zone_to_trigger.is_some()
+                    || !late_phase_events.is_empty()
+                {
                     let map_event = map_event_to_trigger;
                     let hot_zone_event = hot_zone_to_trigger;
+                    let scripted_events = late_phase_events;
                     drop(match_info_guard);
                     if let Some((event_index, next_interval_secs)) = map_event {
                         self.trigger_center_supply_drop_map_event(event_index, next_interval_secs);
                     }
                     if let Some((event_index, center)) = hot_zone_event {
                         self.trigger_hot_zone_map_event(event_index, center);
+                    }
+                    for scripted_event in scripted_events {
+                        match scripted_event {
+                            LatePhaseEvent::SupplyWarning { time_remaining } => {
+                                self.trigger_supply_warning_event(time_remaining);
+                            }
+                            LatePhaseEvent::ZoneSurge {
+                                event_index,
+                                center,
+                                radius,
+                            } => {
+                                self.trigger_zone_surge_event(event_index, center, radius);
+                            }
+                            LatePhaseEvent::FinalStand {
+                                event_index,
+                                next_interval_secs,
+                            } => {
+                                self.trigger_final_stand_event(event_index, next_interval_secs);
+                            }
+                        }
                     }
                 }
             }
@@ -924,6 +1114,9 @@ impl MassiveGameServer {
         match_info.hot_zone_elapsed_secs = 0.0;
         match_info.hot_zone_center = Vec2::new(0.0, 0.0);
         match_info.hot_zone_radius = HOT_ZONE_RADIUS;
+        match_info.late_phase_supply_warning_triggered = false;
+        match_info.late_phase_zone_surge_triggered = false;
+        match_info.late_phase_final_stand_triggered = false;
         match_info.flag_states.clear();
         if match_info.match_state == fb::MatchStateType::Waiting
             && match_info.game_mode == fb::GameModeType::CaptureTheFlag
@@ -968,6 +1161,22 @@ mod tests {
         assert!((thresholds.ctf_countdown_20_remaining - 54.0).abs() < 0.001);
         assert!((thresholds.ctf_countdown_10_remaining - 48.0).abs() < 0.001);
         assert!((thresholds.ctf_countdown_5_remaining - 45.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn late_phase_thresholds_match_full_match_defaults() {
+        let thresholds = late_phase_thresholds(FULL_MATCH_DURATION_SECS);
+        assert!((thresholds.supply_warning_remaining - 90.0).abs() < 0.001);
+        assert!((thresholds.zone_surge_remaining - 60.0).abs() < 0.001);
+        assert!((thresholds.final_stand_remaining - 30.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn late_phase_thresholds_scale_for_short_matches() {
+        let thresholds = late_phase_thresholds(MOBILE_BLITZ_DURATION_SECS);
+        assert!((thresholds.supply_warning_remaining - 54.0).abs() < 0.001);
+        assert!((thresholds.zone_surge_remaining - 36.0).abs() < 0.001);
+        assert!((thresholds.final_stand_remaining - 18.0).abs() < 0.001);
     }
 
     #[test]

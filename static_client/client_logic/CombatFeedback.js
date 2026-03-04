@@ -248,6 +248,11 @@ export function createCombatFeedback(getCtx) {
             if (streakCount >= 5) return 1.3;
             return 1.15;
         })();
+        const playerName = String(player.username || '').trim();
+        const streakBroadcastLabel = getStreakBroadcastLabel(streakCount) || `STREAK x${Math.max(1, Math.trunc(Number(streakCount) || 0))}`;
+        const worldLabel = playerName
+            ? `${playerName} ${streakBroadcastLabel}`.slice(0, 36)
+            : streakBroadcastLabel;
 
         ctx.tacticalPings.push({
             kind: isFriendly ? 'defend' : 'enemy',
@@ -256,6 +261,8 @@ export function createCombatFeedback(getCtx) {
             strength: streakStrength,
             source: 'killstreak',
             streak: Math.max(0, Number(streakCount) || 0),
+            label: worldLabel,
+            player_name: playerName,
             createdAt: now,
             expiresAt: now + Math.max(1600, Math.round((Number(ctx.TACTICAL_PING_MS) || 6200) * 0.55))
         });
@@ -493,12 +500,18 @@ export function createCombatFeedback(getCtx) {
                     const localTeamId = Number(ctx.localPlayerState?.team_id) || 0;
                     const localCommanderId = ctx.getCommanderIdForTeam(localTeamId);
                     const fromCommander = !!localCommanderId && String(localCommanderId) === String(instigatorId);
+                    const issuerName = String(ctx.players.get(instigatorId)?.username || '').trim();
+                    const pingLabel = fromCommander
+                        ? `ORDER${issuerName ? `: ${issuerName}` : ''}`.slice(0, 34)
+                        : `${issuerName || 'TEAM'} PING`.slice(0, 34);
                     ctx.tacticalPings.push({
                         kind: fromCommander ? 'defend' : 'group',
                         x: pingX,
                         y: pingY,
                         strength: fromCommander ? 1.25 : 1.0,
                         source: fromCommander ? 'commander' : 'teammate',
+                        label: pingLabel,
+                        player_name: issuerName,
                         createdAt: Date.now(),
                         expiresAt: Date.now() + ctx.TACTICAL_PING_MS
                     });

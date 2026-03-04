@@ -447,12 +447,19 @@ export function createInputManager({
         if (!worldPoint || !Number.isFinite(worldPoint.x) || !Number.isFinite(worldPoint.y)) return;
         const now = Date.now();
         const localCommander = isLocalTeamCommander();
+        const normalizedKind = kind === 'enemy' ? 'enemy' : (kind === 'defend' ? 'defend' : 'group');
+        const label = localCommander
+            ? 'COMMAND ORDER'
+            : (normalizedKind === 'enemy' ? 'ENEMY SPOTTED' : (normalizedKind === 'defend' ? 'DEFEND HERE' : 'GROUP UP'));
         tacticalPings.push({
             kind: localCommander
                 ? 'defend'
-                : (kind === 'enemy' ? 'enemy' : (kind === 'defend' ? 'defend' : 'group')),
+                : normalizedKind,
             x: worldPoint.x,
             y: worldPoint.y,
+            strength: localCommander ? 1.3 : (normalizedKind === 'enemy' ? 1.2 : 1.0),
+            source: localCommander ? 'commander' : 'local',
+            label,
             createdAt: now,
             expiresAt: now + TACTICAL_PING_MS
         });
