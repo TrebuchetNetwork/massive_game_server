@@ -241,11 +241,21 @@ export function createCombatFeedback(getCtx) {
         const lastPingAt = Number(streakPingCooldownByPlayer.get(identity)) || 0;
         if ((now - lastPingAt) < cooldownMs) return;
         streakPingCooldownByPlayer.set(identity, now);
+        const streakStrength = (() => {
+            if (streakCount >= 10) return 1.85;
+            if (streakCount >= 8) return 1.65;
+            if (streakCount >= 7) return 1.45;
+            if (streakCount >= 5) return 1.3;
+            return 1.15;
+        })();
 
         ctx.tacticalPings.push({
             kind: isFriendly ? 'defend' : 'enemy',
             x,
             y,
+            strength: streakStrength,
+            source: 'killstreak',
+            streak: Math.max(0, Number(streakCount) || 0),
             createdAt: now,
             expiresAt: now + Math.max(1600, Math.round((Number(ctx.TACTICAL_PING_MS) || 6200) * 0.55))
         });
@@ -487,6 +497,8 @@ export function createCombatFeedback(getCtx) {
                         kind: fromCommander ? 'defend' : 'group',
                         x: pingX,
                         y: pingY,
+                        strength: fromCommander ? 1.25 : 1.0,
+                        source: fromCommander ? 'commander' : 'teammate',
                         createdAt: Date.now(),
                         expiresAt: Date.now() + ctx.TACTICAL_PING_MS
                     });

@@ -281,11 +281,26 @@ export class Minimap {
                         : pingEntry.kind === "defend"
                             ? 0xFBBF24
                             : 0x34D399;
-                this.pingsGraphics.lineStyle(2, color, 0.95 * pulse);
-                this.pingsGraphics.drawCircle(dotX, dotY, 5 + pulse * 2.8);
-                this.pingsGraphics.beginFill(color, 0.78 * pulse);
-                this.pingsGraphics.drawCircle(dotX, dotY, 2.6);
+                const rawStrength = Number(pingEntry.strength);
+                let strength = Number.isFinite(rawStrength) ? rawStrength : 1;
+                if (this.performanceMode === "dense") {
+                    strength = Math.min(strength, 1.35);
+                } else if (this.performanceMode === "ultra") {
+                    strength = Math.min(strength, 1.2);
+                }
+                strength = Math.max(0.8, Math.min(2.1, strength));
+                const radius = (5 + pulse * 2.8) * (0.9 + strength * 0.2);
+                const ringAlpha = Math.min(0.98, 0.68 + strength * 0.14) * pulse;
+                const coreAlpha = Math.min(0.92, 0.62 + strength * 0.16) * pulse;
+                this.pingsGraphics.lineStyle(2 + (strength - 1) * 0.6, color, ringAlpha);
+                this.pingsGraphics.drawCircle(dotX, dotY, radius);
+                this.pingsGraphics.beginFill(color, coreAlpha);
+                this.pingsGraphics.drawCircle(dotX, dotY, 2.4 + (strength - 1) * 0.9);
                 this.pingsGraphics.endFill();
+                if (strength >= 1.45 && this.performanceMode === "normal") {
+                    this.pingsGraphics.lineStyle(1.2, color, Math.max(0.2, ringAlpha * 0.6));
+                    this.pingsGraphics.drawCircle(dotX, dotY, radius + 3.6 + pulse * 2.1);
+                }
             }
         }
     }
