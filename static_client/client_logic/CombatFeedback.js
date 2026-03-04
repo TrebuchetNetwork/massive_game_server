@@ -8,6 +8,7 @@
 
 export function createCombatFeedback(getCtx) {
     let lastLocalDamageImpactAt = 0;
+    const streakPingCooldownByPlayer = new Map();
 
     function getCombatUiQualityMode() {
         const ctx = getCtx();
@@ -224,6 +225,43 @@ export function createCombatFeedback(getCtx) {
         return '';
     }
 
+    function maybeEmitStreakTacticalPing(instigatorId, streakCount, isFriendly) {
+        const ctx = getCtx();
+        if (!Array.isArray(ctx.tacticalPings)) return;
+        const player = ctx.players.get(instigatorId);
+        if (!player) return;
+        const x = Number.isFinite(player.render_x) ? Number(player.render_x) : Number(player.x);
+        const y = Number.isFinite(player.render_y) ? Number(player.render_y) : Number(player.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+        const now = Date.now();
+        const identity = instigatorId || String(player.username || '').trim().toLowerCase();
+        if (!identity) return;
+        const cooldownMs = streakCount >= 10 ? 1200 : 2100;
+        const lastPingAt = Number(streakPingCooldownByPlayer.get(identity)) || 0;
+        if ((now - lastPingAt) < cooldownMs) return;
+        streakPingCooldownByPlayer.set(identity, now);
+
+        ctx.tacticalPings.push({
+            kind: isFriendly ? 'defend' : 'enemy',
+            x,
+            y,
+            createdAt: now,
+            expiresAt: now + Math.max(1600, Math.round((Number(ctx.TACTICAL_PING_MS) || 6200) * 0.55))
+        });
+        if (ctx.tacticalPings.length > 18) {
+            ctx.tacticalPings.splice(0, ctx.tacticalPings.length - 18);
+        }
+
+        if (streakPingCooldownByPlayer.size > 192) {
+            for (const [key, pingAt] of streakPingCooldownByPlayer.entries()) {
+                if ((now - (Number(pingAt) || 0)) > 30000) {
+                    streakPingCooldownByPlayer.delete(key);
+                }
+            }
+        }
+    }
+
     function setObjectiveUrgency(text, tone = 'critical', durationMs = 1300) {
         const ctx = getCtx();
         if (!ctx.EXCITEMENT_UI_ENABLED || !ctx.objectiveUrgencyDiv || !text) return;
@@ -378,6 +416,7 @@ export function createCombatFeedback(getCtx) {
             const isFriendly = !isLocal && localTeamId !== 0 && killerTeamId !== 0 && localTeamId === killerTeamId;
             const broadcastLabel = getStreakBroadcastLabel(streakCount);
             if (broadcastLabel) {
+                maybeEmitStreakTacticalPing(instigatorId, streakCount, isLocal || isFriendly);
                 if (isLocal) {
                     showStreakAnnouncer(`${broadcastLabel}!`, 'positive', 2000);
                 } else if (isFriendly) {
