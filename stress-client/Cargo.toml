@@ -21,7 +21,7 @@ futures-util = "0.3"
 flatbuffers = "25.2.10"
 
 # Protocol crate (shared FlatBuffers generated code)
-massive_game_server_protocol = { path = "../protocol" }
+massive_game_server_protocol = { version = "0.1.0", path = "../protocol" }
 
 # Serialization (signaling messages are JSON)
 serde = { version = "1.0", features = ["derive"] }

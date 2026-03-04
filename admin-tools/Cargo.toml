@@ -2,6 +2,9 @@
 name = "massive_game_server_admin_tools"
 version = "0.1.0"
 edition = "2021"
+description = "Administrative CLI utilities for massive_game_server operations."
+license = "MIT"
+repository = "https://github.com/TrebuchetNetwork/massive_game_server"
 
 [dependencies]
 anyhow = "1.0"
