@@ -534,12 +534,18 @@ export function createInputManager({
                 if (isDown && !event.repeat) {
                     inputState.change_weapon_slot = 1;
                     setObjectiveUrgency('Swapping to primary weapon', 'info', 650);
+                    if (audioManager && gameSettings.soundEnabled) {
+                        audioManager.playSound('weaponSwap', null, 0.24);
+                    }
                 }
                 break;
             case 'Digit2':
                 if (isDown && !event.repeat) {
                     inputState.change_weapon_slot = 2;
                     setObjectiveUrgency('Swapping to secondary weapon', 'info', 650);
+                    if (audioManager && gameSettings.soundEnabled) {
+                        audioManager.playSound('weaponSwap', null, 0.24);
+                    }
                 }
                 break;
             case 'KeyQ':
@@ -1098,6 +1104,10 @@ export function createInputManager({
             recordMobileActionReachSample(event.changedTouches[0]);
             inputState.change_weapon_slot = 1;
             setObjectiveUrgency('Swapping to primary weapon', 'info', 650);
+            const audioManager = getAudioManager();
+            if (audioManager && gameSettings.soundEnabled) {
+                audioManager.playSound('weaponSwap', null, 0.24);
+            }
             triggerHapticFn(8);
             event.preventDefault();
         }, { passive: false });
@@ -1106,6 +1116,10 @@ export function createInputManager({
             recordMobileActionReachSample(event.changedTouches[0]);
             inputState.change_weapon_slot = 2;
             setObjectiveUrgency('Swapping to secondary weapon', 'info', 650);
+            const audioManager = getAudioManager();
+            if (audioManager && gameSettings.soundEnabled) {
+                audioManager.playSound('weaponSwap', null, 0.24);
+            }
             triggerHapticFn(8);
             event.preventDefault();
         }, { passive: false });

@@ -10,6 +10,9 @@
 
 export function createUIManager(getCtx) {
 
+    let lastCountdownBeepSecond = null;
+    let lastMatchOutcomeAudioSignature = '';
+
     function escapeHtml(unsafe) {
         const raw = String(unsafe ?? '');
         return raw
@@ -43,6 +46,53 @@ export function createUIManager(getCtx) {
         if (normalized === 'TeamDeathmatch') return 'TDM';
         if (normalized === 'CaptureTheFlag') return 'CTF';
         return normalized;
+    }
+
+    function playUiSound(soundName, volume = 0.24) {
+        const ctx = getCtx();
+        if (!ctx.audioManager || !ctx.gameSettings?.soundEnabled) return;
+        ctx.audioManager.playSound(soundName, null, volume);
+    }
+
+    function maybePlayCountdownBeep(remainingSecs) {
+        const seconds = Math.max(0, Math.ceil(Number(remainingSecs) || 0));
+        if (seconds > 10 || seconds <= 0) {
+            if (seconds > 10) {
+                lastCountdownBeepSecond = null;
+            }
+            return;
+        }
+        if (seconds === lastCountdownBeepSecond) return;
+        lastCountdownBeepSecond = seconds;
+        playUiSound('countdownBeep', seconds <= 3 ? 0.3 : 0.22);
+    }
+
+    function maybePlayMatchOutcomeSound(winnerTeamRaw, winnerNameRaw) {
+        const ctx = getCtx();
+        const winnerTeam = toInt(winnerTeamRaw, 0);
+        const winnerName = String(winnerNameRaw || '').trim();
+        const signature = `${winnerTeam}:${winnerName || 'none'}`;
+        if (signature === lastMatchOutcomeAudioSignature) return;
+        lastMatchOutcomeAudioSignature = signature;
+
+        const localTeamId = toInt(ctx.localPlayerState?.team_id, 0);
+        const localName = String(ctx.localPlayerState?.username || '').trim().toLowerCase();
+        const winnerNameNorm = winnerName.toLowerCase();
+        let localWon = false;
+        if ((winnerTeam === 1 || winnerTeam === 2) && (localTeamId === 1 || localTeamId === 2)) {
+            localWon = winnerTeam === localTeamId;
+        } else if (winnerNameNorm && localName) {
+            localWon = winnerNameNorm === localName;
+        }
+
+        if (localWon) {
+            playUiSound('victorySting', 0.42);
+            return;
+        }
+
+        if (winnerTeam > 0 || winnerNameNorm) {
+            playUiSound('defeatSting', 0.4);
+        }
     }
 
     function closePostMatchSummary() {
@@ -396,12 +446,14 @@ export function createUIManager(getCtx) {
             ctx.latestMatchSummary = payload;
             renderPostMatchSummary(payload);
             const winner = Number(payload.winning_team || 0);
+            const winnerName = String(payload.winning_name || payload.winner_name || '').trim();
             const reason = payload.reason || 'match_complete';
             if (winner > 0) {
                 ctx.setObjectiveUrgency(`Match ended (${reason}). Winner: Team ${winner}`, 'info', 6000);
             } else {
                 ctx.setObjectiveUrgency(`Match ended (${reason}).`, 'info', 6000);
             }
+            maybePlayMatchOutcomeSound(winner, winnerName);
             ctx.log(`Match summary received (${reason}).`, 'info');
             return true;
         }
@@ -417,6 +469,7 @@ export function createUIManager(getCtx) {
                     'info',
                     2200
                 );
+                maybePlayCountdownBeep(countdownSeconds);
             } else {
                 ctx.setObjectiveUrgency(`Mode shifted: ${fromMode} -> ${toMode}`, 'positive', 2600);
             }
@@ -688,6 +741,7 @@ export function createUIManager(getCtx) {
         if (!ctx.matchInfo) {
             ctx.uiCache.matchInfoSignature = null;
             ctx.matchInfoDiv.classList.add('hidden');
+            lastCountdownBeepSecond = null;
             return;
         }
         const teamScoresSignature = (ctx.matchInfo.team_scores || [])
@@ -793,6 +847,8 @@ export function createUIManager(getCtx) {
 
         switch (ctx.matchInfo.match_state) {
             case ctx.GP.MatchStateType.Waiting: {
+                lastCountdownBeepSecond = null;
+                lastMatchOutcomeAudioSignature = '';
                 const waitingPlayerCount = Math.max(ctx.players.size, ctx.localPlayerState ? 1 : 0);
                 if (waitingPlayerCount >= ctx.MIN_PLAYERS_TO_START) {
                     appendTextRow('text-yellow-300', 'Match is initializing...');
@@ -806,6 +862,8 @@ export function createUIManager(getCtx) {
             }
             case ctx.GP.MatchStateType.Active: {
                 const timeRemaining = Math.max(0, Number(ctx.matchInfo.time_remaining || 0));
+                maybePlayCountdownBeep(timeRemaining);
+                lastMatchOutcomeAudioSignature = '';
                 const minutes = Math.floor(timeRemaining / 60);
                 const seconds = Math.floor(timeRemaining % 60);
                 appendTextRow('text-white', `Time: ${minutes}:${seconds.toString().padStart(2, '0')}`);
@@ -833,6 +891,7 @@ export function createUIManager(getCtx) {
                 break;
             }
             case ctx.GP.MatchStateType.Ended: {
+                lastCountdownBeepSecond = null;
                 const statusRow = document.createElement('div');
                 statusRow.className = 'text-green-400';
                 statusRow.appendChild(document.createTextNode('Match Ended! '));
@@ -850,6 +909,7 @@ export function createUIManager(getCtx) {
                 } else {
                     statusRow.appendChild(document.createTextNode("It's a Draw!"));
                 }
+                maybePlayMatchOutcomeSound(winnerTeamId, winnerNameRaw);
                 fragment.appendChild(statusRow);
                 break;
             }

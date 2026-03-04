@@ -12,6 +12,10 @@ The following event sounds are generated from layered FFmpeg synth/noise chains:
 - `dodge_whoosh.wav`
 - `spawn_chime.wav`
 - `flag_fanfare.wav`
+- `weapon_swap.wav`
+- `countdown_beep.wav`
+- `victory_sting.wav`
+- `defeat_sting.wav`
 
 Run:
 

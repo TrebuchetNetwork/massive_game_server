@@ -45,4 +45,36 @@ ffmpeg -y \
   -filter_complex "[0:a][1:a][2:a][3:a]amix=inputs=4:normalize=0,afade=t=in:st=0:d=0.01,afade=t=out:st=0.66:d=0.18,aecho=0.82:0.36:75:0.3,alimiter=limit=0.86" \
   -c:a pcm_s16le flag_fanfare.wav
 
+echo "Generating weapon_swap.wav"
+ffmpeg -y \
+  -f lavfi -i "anoisesrc=color=white:duration=0.09:sample_rate=48000,highpass=f=2800,lowpass=f=9000,volume=0.14" \
+  -f lavfi -i "sine=frequency=1500:duration=0.09:sample_rate=48000,afade=t=out:st=0.04:d=0.05,volume=0.18" \
+  -filter_complex "[0:a][1:a]amix=inputs=2:normalize=0,afade=t=in:st=0:d=0.005,afade=t=out:st=0.05:d=0.04,alimiter=limit=0.86" \
+  -c:a pcm_s16le weapon_swap.wav
+
+echo "Generating countdown_beep.wav"
+ffmpeg -y \
+  -f lavfi -i "sine=frequency=980:duration=0.17:sample_rate=48000,afade=t=out:st=0.10:d=0.07,volume=0.28" \
+  -f lavfi -i "anoisesrc=color=white:duration=0.17:sample_rate=48000,highpass=f=2800,lowpass=f=6000,afade=t=out:st=0.08:d=0.09,volume=0.04" \
+  -filter_complex "[0:a][1:a]amix=inputs=2:normalize=0,alimiter=limit=0.86" \
+  -c:a pcm_s16le countdown_beep.wav
+
+echo "Generating victory_sting.wav"
+ffmpeg -y \
+  -f lavfi -i "sine=frequency=620:duration=1.05:sample_rate=48000,volume=0.2" \
+  -f lavfi -i "sine=frequency=830:duration=1.05:sample_rate=48000,volume=0.15" \
+  -f lavfi -i "sine=frequency=1240:duration=1.05:sample_rate=48000,volume=0.12" \
+  -f lavfi -i "anoisesrc=color=white:duration=1.05:sample_rate=48000,highpass=f=2400,lowpass=f=7500,volume=0.02" \
+  -filter_complex "[0:a][1:a][2:a][3:a]amix=inputs=4:normalize=0,afade=t=in:st=0:d=0.01,afade=t=out:st=0.86:d=0.19,aecho=0.82:0.35:88:0.26,alimiter=limit=0.86" \
+  -c:a pcm_s16le victory_sting.wav
+
+echo "Generating defeat_sting.wav"
+ffmpeg -y \
+  -f lavfi -i "sine=frequency=540:duration=1.0:sample_rate=48000,volume=0.2" \
+  -f lavfi -i "sine=frequency=360:duration=1.0:sample_rate=48000,volume=0.15" \
+  -f lavfi -i "sine=frequency=240:duration=1.0:sample_rate=48000,volume=0.12" \
+  -f lavfi -i "anoisesrc=color=pink:duration=1.0:sample_rate=48000,highpass=f=1400,lowpass=f=3800,volume=0.028" \
+  -filter_complex "[0:a][1:a][2:a][3:a]amix=inputs=4:normalize=0,afade=t=in:st=0:d=0.01,afade=t=out:st=0.80:d=0.20,aecho=0.82:0.3:72:0.23,alimiter=limit=0.86" \
+  -c:a pcm_s16le defeat_sting.wav
+
 echo "Done."
