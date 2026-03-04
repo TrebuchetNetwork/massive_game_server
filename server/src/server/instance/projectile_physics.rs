@@ -1,6 +1,48 @@
 use super::*;
 
 impl MassiveGameServer {
+    fn pickup_announcement_meta(
+        pickup_type: &CorePickupType,
+    ) -> Option<(&'static str, &'static str)> {
+        match pickup_type {
+            CorePickupType::SpeedBoost => Some(("Speed Boost", "defend")),
+            CorePickupType::DamageBoost => Some(("Damage Boost", "defend")),
+            CorePickupType::Shield => Some(("Shield", "defend")),
+            CorePickupType::WeaponCrate(_) => Some(("Weapon Crate", "defend")),
+            CorePickupType::Health | CorePickupType::Ammo => None,
+        }
+    }
+
+    #[inline]
+    fn should_emit_pickup_countdown(previous_timer: f32, next_timer: f32) -> bool {
+        previous_timer > PICKUP_RESPAWN_ANNOUNCE_SECS
+            && next_timer <= PICKUP_RESPAWN_ANNOUNCE_SECS
+            && next_timer > 0.0
+    }
+
+    fn broadcast_pickup_spawn_notice_event(
+        &self,
+        pickup: &Pickup,
+        phase: &str,
+        seconds_remaining: f32,
+        pickup_label: &str,
+        ping_kind: &str,
+    ) {
+        let payload = serde_json::json!({
+            "phase": phase,
+            "pickup_id": pickup.id,
+            "pickup_label": pickup_label,
+            "ping_kind": ping_kind,
+            "x": pickup.x,
+            "y": pickup.y,
+            "seconds_remaining": seconds_remaining.max(0.0),
+        });
+        if let Some(packet) = self.build_system_event_packet("pickup_spawn_notice", Some(&payload))
+        {
+            self.enqueue_direct_packet_for_all_players(packet);
+        }
+    }
+
     pub(super) fn drain_queued_projectiles_to_authoritative_state(&self) {
         let mut queued_projectiles = Vec::new();
         while let Some(proj) = self.projectiles_to_add.pop() {
@@ -769,13 +811,44 @@ impl MassiveGameServer {
     ) {
         for pickup in pickups.iter_mut() {
             if !pickup.is_active {
+                let mut emit_countdown: Option<(&'static str, &'static str)> = None;
+                let mut emit_spawned: Option<(&'static str, &'static str)> = None;
                 if let Some(timer) = &mut pickup.respawn_timer {
+                    let previous_timer = *timer;
                     *timer -= delta_time;
+                    if let Some((pickup_label, ping_kind)) =
+                        Self::pickup_announcement_meta(&pickup.pickup_type)
+                    {
+                        if Self::should_emit_pickup_countdown(previous_timer, *timer) {
+                            emit_countdown = Some((pickup_label, ping_kind));
+                        }
+                        if *timer <= 0.0 {
+                            emit_spawned = Some((pickup_label, ping_kind));
+                        }
+                    }
                     if *timer <= 0.0 {
                         pickup.is_active = true;
                         pickup.respawn_timer = None;
                         self.upsert_pickup_in_partition_index(pickup);
                     }
+                }
+                if let Some((pickup_label, ping_kind)) = emit_countdown {
+                    self.broadcast_pickup_spawn_notice_event(
+                        pickup,
+                        "countdown",
+                        PICKUP_RESPAWN_ANNOUNCE_SECS,
+                        pickup_label,
+                        ping_kind,
+                    );
+                }
+                if let Some((pickup_label, ping_kind)) = emit_spawned {
+                    self.broadcast_pickup_spawn_notice_event(
+                        pickup,
+                        "spawned",
+                        0.0,
+                        pickup_label,
+                        ping_kind,
+                    );
                 }
             }
         }
@@ -858,5 +931,42 @@ impl MassiveGameServer {
     pub(super) async fn process_pickup_respawns(&self, delta_time: f32) {
         let mut pickups_guard = self.pickups.write();
         self.process_pickup_respawns_authoritative(pickups_guard.as_mut_slice(), delta_time);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pickup_countdown_emits_only_on_threshold_crossing() {
+        assert!(MassiveGameServer::should_emit_pickup_countdown(7.0, 4.9));
+        assert!(!MassiveGameServer::should_emit_pickup_countdown(4.9, 4.0));
+        assert!(!MassiveGameServer::should_emit_pickup_countdown(7.0, 0.0));
+        assert!(!MassiveGameServer::should_emit_pickup_countdown(7.0, -1.0));
+    }
+
+    #[test]
+    fn pickup_announcement_meta_filters_common_pickups() {
+        assert!(MassiveGameServer::pickup_announcement_meta(&CorePickupType::Health).is_none());
+        assert!(MassiveGameServer::pickup_announcement_meta(&CorePickupType::Ammo).is_none());
+        assert_eq!(
+            MassiveGameServer::pickup_announcement_meta(&CorePickupType::SpeedBoost),
+            Some(("Speed Boost", "defend"))
+        );
+        assert_eq!(
+            MassiveGameServer::pickup_announcement_meta(&CorePickupType::DamageBoost),
+            Some(("Damage Boost", "defend"))
+        );
+        assert_eq!(
+            MassiveGameServer::pickup_announcement_meta(&CorePickupType::Shield),
+            Some(("Shield", "defend"))
+        );
+        assert_eq!(
+            MassiveGameServer::pickup_announcement_meta(&CorePickupType::WeaponCrate(
+                ServerWeaponType::Sniper
+            )),
+            Some(("Weapon Crate", "defend"))
+        );
     }
 }

@@ -424,6 +424,46 @@ export function createUIManager(getCtx) {
             return true;
         }
 
+        if (eventName === 'pickup_spawn_notice' && payload && typeof payload === 'object') {
+            const phase = String(payload.phase || 'spawned');
+            const pickupLabel = String(
+                payload.pickup_label || payload.pickupLabel || payload.pickup_type || payload.pickupType || 'Power-up'
+            );
+            const secondsRemaining = Number(payload.seconds_remaining ?? payload.secondsRemaining ?? 0);
+            const tone = phase === 'countdown' ? 'info' : 'positive';
+            if (phase === 'countdown' && Number.isFinite(secondsRemaining) && secondsRemaining > 0) {
+                ctx.setObjectiveUrgency(
+                    `${pickupLabel} spawning in ${Math.round(secondsRemaining)}s`,
+                    tone,
+                    2200
+                );
+            } else {
+                ctx.setObjectiveUrgency(`${pickupLabel} available now`, tone, 2600);
+            }
+
+            const pingX = Number(payload.x);
+            const pingY = Number(payload.y);
+            if (Number.isFinite(pingX) && Number.isFinite(pingY) && Array.isArray(ctx.tacticalPings)) {
+                const now = Date.now();
+                const fallbackKind = pickupLabel.toLowerCase().includes('weapon') ? 'defend' : 'group';
+                const pingKindRaw = String(payload.ping_kind || payload.pingKind || fallbackKind).trim().toLowerCase();
+                const pingKind = pingKindRaw === 'enemy' || pingKindRaw === 'defend' ? pingKindRaw : 'group';
+                ctx.tacticalPings.push({
+                    kind: pingKind,
+                    x: pingX,
+                    y: pingY,
+                    createdAt: now,
+                    expiresAt: now + Math.max(1500, Number(ctx.TACTICAL_PING_MS) || 6200),
+                });
+                if (ctx.tacticalPings.length > 18) {
+                    ctx.tacticalPings.splice(0, ctx.tacticalPings.length - 18);
+                }
+            }
+
+            ctx.log(`Pickup event: ${pickupLabel} (${phase}).`, 'info');
+            return true;
+        }
+
         return false;
     }
 

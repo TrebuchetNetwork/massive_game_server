@@ -36,6 +36,7 @@ pub const MIN_PLAYERS_TO_START: usize = 1; // Reduced to 1 so single player can 
 // Pickup constants
 pub const PICKUP_COLLECTION_RADIUS: f32 = 25.0;
 pub const PICKUP_DEFAULT_RESPAWN_TIME_SECS: f32 = 10.0;
+pub const PICKUP_RESPAWN_ANNOUNCE_SECS: f32 = 5.0;
 
 // Anti-cheat constants – tightened from V6 defaults (dash/dodge are server-side
 // so client speed should never legitimately exceed 1.08× base).
