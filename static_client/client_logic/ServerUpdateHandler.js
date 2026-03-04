@@ -204,6 +204,54 @@ export function createServerUpdateHandler(getCtx) {
         }
     }
 
+    function killFeedEntryKey(entry) {
+        if (!entry || typeof entry !== 'object') return '';
+        return `${entry.killer_id || ''}:${entry.victim_id || ''}:${entry.weapon || 0}:${entry.timestamp || 0}:${entry.is_headshot ? 1 : 0}`;
+    }
+
+    function maybeTriggerDeathEffectsFromKillFeed(
+        effectsManager,
+        players,
+        previousKillFeed,
+        nextKillFeed,
+        myPlayerId,
+        suppress
+    ) {
+        if (suppress || !effectsManager || typeof effectsManager.createEnhancedPlayerDeathEffect !== 'function') {
+            return;
+        }
+        if (!Array.isArray(nextKillFeed) || nextKillFeed.length === 0) return;
+
+        const prevRows = Array.isArray(previousKillFeed) ? previousKillFeed : [];
+        // Avoid replaying a whole historical feed burst when syncing mid-match.
+        if (prevRows.length === 0 && nextKillFeed.length > 1) {
+            return;
+        }
+
+        const known = new Set(prevRows.map(killFeedEntryKey).filter(Boolean));
+        for (let i = 0; i < nextKillFeed.length; i += 1) {
+            const entry = nextKillFeed[i];
+            const key = killFeedEntryKey(entry);
+            if (!key || known.has(key)) continue;
+            const victimPos = entry?.victim_position;
+            const x = Number(victimPos?.x);
+            const y = Number(victimPos?.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+            const victimId = typeof entry.victim_id === 'string' ? entry.victim_id : '';
+            const killerId = typeof entry.killer_id === 'string' ? entry.killer_id : '';
+            const teamId = Number(players?.get(victimId)?.team_id) || 0;
+            effectsManager.createEnhancedPlayerDeathEffect(
+                { x, y },
+                {
+                    teamId,
+                    isLocalVictim: victimId === myPlayerId,
+                    isLocalKiller: killerId === myPlayerId,
+                }
+            );
+        }
+    }
+
     function processServerUpdate(messageData, isInitial = false) {
         const ctx = getCtx();
         const {
@@ -512,7 +560,16 @@ export function createServerUpdateHandler(getCtx) {
         }
 
         if (messageData.kill_feed) {
-            ctx.setKillFeed(messageData.kill_feed);
+            maybeTriggerDeathEffectsFromKillFeed(
+                effectsManager,
+                players,
+                killFeed,
+                messageData.kill_feed,
+                myPlayerId,
+                isInitial
+            );
+            killFeed = messageData.kill_feed;
+            ctx.setKillFeed(killFeed);
             updateKillFeed();
         }
 
@@ -875,6 +932,15 @@ export function createServerUpdateHandler(getCtx) {
             }
             if (writeIdx > 0) {
                 rows.length = writeIdx;
+                maybeTriggerDeathEffectsFromKillFeed(
+                    effectsManager,
+                    players,
+                    killFeed,
+                    rows,
+                    myPlayerId,
+                    false
+                );
+                killFeed = rows;
                 ctx.setKillFeed(rows);
                 updateKillFeed();
             }
