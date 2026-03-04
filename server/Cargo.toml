@@ -1,6 +1,6 @@
 [package]
 name = "massive_game_server_core" # Or your desired public crate name
-version = "0.1.1" # Published versions must be unique on crates.io
+version = "0.1.2" # Published versions must be unique on crates.io
 authors = ["Trebuchet Network Contributors <contact@trebuchet.network>"] # Or your details
 edition = "2021"
 description = "A high-performance Rust game server core for massive multiplayer interactions, part of Project Trebuchet."
