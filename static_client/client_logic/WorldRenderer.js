@@ -13,6 +13,10 @@ export function createWorldRenderer(getCtx) {
     let zoneAmbientSpawnAccumulator = 0;
     const zoneAmbientParticles = [];
     const MAX_ZONE_AMBIENT_PARTICLES = 20;
+    let respawnSpectateTargetId = '';
+    let respawnSpectateCycleIndex = 0;
+    let lastRespawnSpectateSwitchAt = 0;
+    let lastRespawnSpectateHintAt = 0;
 
     function clearZoneAmbientParticles(zoneAmbientContainer) {
         while (zoneAmbientParticles.length > 0) {
@@ -477,15 +481,77 @@ export function createWorldRenderer(getCtx) {
         if (minimap) minimap.objectivesNeedUpdate = true;
     }
 
+    function getRenderCoordinate(entity, axis) {
+        if (!entity) return 0;
+        const renderKey = axis === 'x' ? 'render_x' : 'render_y';
+        const baseKey = axis === 'x' ? 'x' : 'y';
+        const renderValue = Number(entity[renderKey]);
+        if (Number.isFinite(renderValue)) return renderValue;
+        const baseValue = Number(entity[baseKey]);
+        return Number.isFinite(baseValue) ? baseValue : 0;
+    }
+
+    function getRespawnSpectateTarget(localPlayerState, players, myPlayerId, currentTimeMs) {
+        const localTeamId = Number(localPlayerState?.team_id) || 0;
+        if (!localPlayerState || localPlayerState.alive || localTeamId === 0 || !players) {
+            respawnSpectateTargetId = '';
+            return null;
+        }
+        const respawnTimer = Number(localPlayerState.respawn_timer);
+        if (!Number.isFinite(respawnTimer) || respawnTimer <= 0) {
+            respawnSpectateTargetId = '';
+            return null;
+        }
+
+        const teammates = [];
+        players.forEach((player, playerId) => {
+            if (!player || String(playerId) === String(myPlayerId)) return;
+            if (!player.alive || player.is_spectator) return;
+            if ((Number(player.team_id) || 0) !== localTeamId) return;
+            teammates.push([String(playerId), player]);
+        });
+        if (teammates.length === 0) {
+            respawnSpectateTargetId = '';
+            return null;
+        }
+
+        teammates.sort((a, b) => {
+            const killsA = Number(a[1]?.kills) || 0;
+            const killsB = Number(b[1]?.kills) || 0;
+            if (killsA !== killsB) return killsB - killsA;
+            return a[0].localeCompare(b[0]);
+        });
+
+        const hasCurrentTarget = teammates.some(([id]) => id === respawnSpectateTargetId);
+        const shouldRotate = (currentTimeMs - lastRespawnSpectateSwitchAt) > 5500;
+        if (!hasCurrentTarget || shouldRotate) {
+            if (shouldRotate && teammates.length > 1) {
+                respawnSpectateCycleIndex = (respawnSpectateCycleIndex + 1) % teammates.length;
+            } else if (!hasCurrentTarget) {
+                respawnSpectateCycleIndex = Math.min(respawnSpectateCycleIndex, teammates.length - 1);
+            }
+            respawnSpectateTargetId = teammates[respawnSpectateCycleIndex][0];
+            lastRespawnSpectateSwitchAt = currentTimeMs;
+        }
+
+        const nextTarget = teammates.find(([id]) => id === respawnSpectateTargetId) || teammates[0];
+        if (!nextTarget) return null;
+        return nextTarget[1];
+    }
+
     function updateCamera() {
         const ctx = getCtx();
         const {
             app, gameScene, localPlayerState, overviewMode, overviewScale,
             dynamicsTuning, cameraCombatImpulse, setCameraCombatImpulse, mouseWorldPos,
+            players, myPlayerId, setObjectiveUrgency,
         } = ctx;
         if (!app || !gameScene) return;
 
         const deltaSec = Math.max(0.001, (app.ticker?.deltaMS || 16.67) / 1000);
+        const currentTimeMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? performance.now()
+            : Date.now();
         const nextImpulse = Math.max(0, cameraCombatImpulse - dynamicsTuning.cameraCombatDecayPerSec * deltaSec);
         setCameraCombatImpulse(nextImpulse);
 
@@ -505,10 +571,36 @@ export function createWorldRenderer(getCtx) {
             gameScene.position.x += (targetX - gameScene.position.x) * posSmoothing;
             gameScene.position.y += (targetY - gameScene.position.y) * posSmoothing;
         } else if (localPlayerState) {
-            const playerX = localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x;
-            const playerY = localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y;
-            const velocityX = localPlayerState.velocity_x || 0;
-            const velocityY = localPlayerState.velocity_y || 0;
+            let cameraTarget = localPlayerState;
+            const respawnSpectateTarget = getRespawnSpectateTarget(
+                localPlayerState,
+                players,
+                myPlayerId,
+                currentTimeMs
+            );
+            if (respawnSpectateTarget) {
+                cameraTarget = respawnSpectateTarget;
+                if (
+                    typeof setObjectiveUrgency === 'function' &&
+                    currentTimeMs - lastRespawnSpectateHintAt > 2200
+                ) {
+                    const teammateName = String(respawnSpectateTarget.username || 'teammate');
+                    const timerValue = Math.max(0, Math.ceil(Number(localPlayerState.respawn_timer) || 0));
+                    setObjectiveUrgency(
+                        `Spectating ${teammateName} (${timerValue}s to respawn)`,
+                        'positive',
+                        1400
+                    );
+                    lastRespawnSpectateHintAt = currentTimeMs;
+                }
+            } else {
+                respawnSpectateTargetId = '';
+            }
+
+            const playerX = getRenderCoordinate(cameraTarget, 'x');
+            const playerY = getRenderCoordinate(cameraTarget, 'y');
+            const velocityX = Number(cameraTarget.velocity_x) || 0;
+            const velocityY = Number(cameraTarget.velocity_y) || 0;
             const speed = Math.hypot(velocityX, velocityY);
 
             const speedZoomOut = Math.min(
@@ -526,7 +618,12 @@ export function createWorldRenderer(getCtx) {
             const lookAheadY = velocityY * dynamicsTuning.cameraLookAheadFactor;
             let cursorLeadX = 0;
             let cursorLeadY = 0;
-            if (mouseWorldPos && Number.isFinite(mouseWorldPos.x) && Number.isFinite(mouseWorldPos.y)) {
+            if (
+                cameraTarget === localPlayerState &&
+                mouseWorldPos &&
+                Number.isFinite(mouseWorldPos.x) &&
+                Number.isFinite(mouseWorldPos.y)
+            ) {
                 const cursorDx = mouseWorldPos.x - playerX;
                 const cursorDy = mouseWorldPos.y - playerY;
                 const cursorDist = Math.hypot(cursorDx, cursorDy);

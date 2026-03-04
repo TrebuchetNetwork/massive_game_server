@@ -304,6 +304,18 @@ export function createCombatFeedback(getCtx) {
         }
         if (event.event_type === ctx.GP.GameEventType.FlagCaptured) {
             setObjectiveUrgency('Flag captured - reset and defend', 'critical', 1300);
+            const capturerId = typeof event.instigator_id === 'string' ? event.instigator_id : '';
+            const localTeamId = Number(ctx.localPlayerState?.team_id) || 0;
+            const capturerTeamId = Number(ctx.players.get(capturerId)?.team_id) || 0;
+            if (
+                localTeamId !== 0 &&
+                capturerTeamId !== 0 &&
+                localTeamId === capturerTeamId &&
+                ctx.audioManager &&
+                ctx.gameSettings?.soundEnabled
+            ) {
+                ctx.audioManager.playSound('flagFanfare', null, 0.42);
+            }
             return;
         }
         if (event.event_type === ctx.GP.GameEventType.FlagReturned) {

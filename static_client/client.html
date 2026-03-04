@@ -167,6 +167,15 @@
                     <label for="wsUrl" class="block text-sm font-medium text-gray-300 mb-1">WebSocket URL:</label>
                     <input type="text" id="wsUrl" value="ws://localhost:8080/ws" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
                 </div>
+                <div>
+                    <label for="matchTypeSelect" class="block text-sm font-medium text-gray-300 mb-1">Match Mode:</label>
+                    <select id="matchTypeSelect" class="w-full p-2 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white text-sm">
+                        <option value="full">Full Match (400 Players)</option>
+                        <option value="quick">Quick Match (Short Round)</option>
+                        <option value="mobile_standard">Mobile Standard</option>
+                        <option value="mobile_blitz">Mobile Blitz</option>
+                    </select>
+                </div>
                 <div id="authCard" class="p-3 bg-gray-800 border border-gray-700 rounded-md space-y-2">
                     <div class="text-sm font-semibold text-gray-200">Phone Login (Persistent Score)</div>
                     <div id="authSignedOut" class="space-y-2">
@@ -545,6 +554,7 @@
 
         // DOM Elements
         const wsUrlInput = document.getElementById('wsUrl');
+        const matchTypeSelect = document.getElementById('matchTypeSelect');
         const connectButton = document.getElementById('connectButton');
         const chatInput = document.getElementById('chatInput');
         const sendChatButton = document.getElementById('sendChatButton');
@@ -1854,6 +1864,20 @@
         let fireButtonTapCount = 0;
         let fireButtonTapWindowUntil = 0;
         let respawnVisualSuppressionActive = false;
+        const DASH_TRAIL_INTERVAL_MS = 64;
+        const DODGE_TRAIL_INTERVAL_MS = 72;
+        const NEAR_MISS_CHECK_INTERVAL_MS = 90;
+        const NEAR_MISS_COOLDOWN_MS = 850;
+        const NEAR_MISS_MIN_DISTANCE_SQ = 26 * 26;
+        const NEAR_MISS_MAX_DISTANCE_SQ = 185 * 185;
+        const NEAR_MISS_MAX_PROJECTILES_PER_SCAN = 80;
+        let prevLocalAliveState = null;
+        let prevDashRemaining = 0;
+        let prevDodgeRemaining = 0;
+        let lastDashTrailAt = 0;
+        let lastDodgeTrailAt = 0;
+        let lastNearMissCheckAt = 0;
+        const projectileNearMissCooldownUntil = new Map();
         updateMobileControlsVisibility();
 
         // ── Combat feedback module ─────────────────────────────────────
@@ -1904,11 +1928,64 @@
         let lastProcessedInput = 0;
         let localPlayerState = null;
         const PLAYER_NAME_STORAGE_KEY = 'mgs_player_name';
+        const MATCH_TYPE_STORAGE_KEY = 'mgs_match_type';
         const PLAYER_NAME_MIN_CHARS = 2;
         const PLAYER_NAME_MAX_CHARS = 20;
         const IS_AUTOMATION_CONTEXT = typeof navigator !== 'undefined' && navigator.webdriver === true;
+        const MATCH_TYPE_DEFAULT = 'full';
         let preferredPlayerName = '';
+        let selectedMatchType = MATCH_TYPE_DEFAULT;
         let pendingConnectAfterNameSave = false;
+
+        function normalizeSelectedMatchType(rawValue) {
+            const normalized = String(rawValue || '').trim().toLowerCase();
+            if (normalized === 'full' || normalized === 'desktop' || normalized === 'full_match' || normalized === 'fullmatch') {
+                return 'full';
+            }
+            if (normalized === 'quick' || normalized === 'quick_match' || normalized === 'quickmatch') {
+                return 'quick';
+            }
+            if (normalized === 'mobile_blitz' || normalized === 'mobileblitz' || normalized === 'blitz') {
+                return 'mobile_blitz';
+            }
+            if (normalized === 'mobile_standard' || normalized === 'mobilestandard' || normalized === 'mobile') {
+                return 'mobile_standard';
+            }
+            return '';
+        }
+
+        function loadSelectedMatchType() {
+            const urlMatchType = normalizeSelectedMatchType(
+                uiModeParams.get('match_type') || uiModeParams.get('mode') || ''
+            );
+            if (urlMatchType) {
+                return urlMatchType;
+            }
+            try {
+                const stored = localStorage.getItem(MATCH_TYPE_STORAGE_KEY);
+                const normalizedStored = normalizeSelectedMatchType(stored || '');
+                if (normalizedStored) return normalizedStored;
+            } catch (_) {}
+            return MATCH_TYPE_DEFAULT;
+        }
+
+        function saveSelectedMatchType(nextType) {
+            const normalized = normalizeSelectedMatchType(nextType) || MATCH_TYPE_DEFAULT;
+            selectedMatchType = normalized;
+            try {
+                localStorage.setItem(MATCH_TYPE_STORAGE_KEY, normalized);
+            } catch (_) {}
+            if (matchTypeSelect && matchTypeSelect.value !== normalized) {
+                matchTypeSelect.value = normalized;
+            }
+            if (window.__e2e) {
+                window.__e2e.selectedMatchType = normalized;
+            }
+        }
+
+        function hydrateMatchTypeSelection() {
+            saveSelectedMatchType(loadSelectedMatchType());
+        }
 
         function sanitizePreferredPlayerName(rawName) {
             const normalized = String(rawName || '')
@@ -2009,6 +2086,7 @@
         }
 
         preferredPlayerName = loadPreferredPlayerName();
+        selectedMatchType = loadSelectedMatchType();
 
         // Interpolation state
         let serverUpdates = [];
@@ -2560,10 +2638,17 @@
                 if (!Number.isFinite(x) || !Number.isFinite(y)) return;
                 effectsManager.createEnhancedExplosion({ x, y }, 24);
             },
-            emitPlayerRespawnEffect: (x, y, _teamId, _isLocalSprite) => {
+            emitPlayerRespawnEffect: (x, y, _teamId, isLocalSprite) => {
                 if (!effectsManager || typeof effectsManager.createEnhancedPowerupCollectEffect !== 'function') return;
                 if (!Number.isFinite(x) || !Number.isFinite(y)) return;
                 effectsManager.createEnhancedPowerupCollectEffect({ x, y });
+                if (
+                    isLocalSprite &&
+                    audioManager &&
+                    gameSettings?.soundEnabled
+                ) {
+                    audioManager.playSound('spawnChime', { x, y }, 0.38);
+                }
             },
             setLocalPlayerSprite: (v) => { localPlayerSprite = v; },
         }));
@@ -2620,6 +2705,7 @@
             GLOBAL_LIGHT_DIR, gameSettings,
             app, gameScene, localPlayerState, overviewMode, overviewScale,
             dynamicsTuning, cameraCombatImpulse, mouseWorldPos,
+            players, myPlayerId, setObjectiveUrgency,
             setCameraCombatImpulse: (v) => { cameraCombatImpulse = v; },
             setMinimapWallsCacheDirty: (v) => { minimapWallsCacheDirty = v; },
             setMinimapFlagsCacheDirty: (v) => { minimapFlagsCacheDirty = v; },
@@ -2915,6 +3001,165 @@
             // Flag visuals are updated through authoritative state snapshots in updateFlags().
         }
 
+        function getEntityRenderPos(entity) {
+            if (!entity) return { x: 0, y: 0 };
+            const renderX = Number(entity.render_x);
+            const renderY = Number(entity.render_y);
+            const x = Number.isFinite(renderX) ? renderX : (Number(entity.x) || 0);
+            const y = Number.isFinite(renderY) ? renderY : (Number(entity.y) || 0);
+            return { x, y };
+        }
+
+        function maybeEmitMovementJuice(currentTime) {
+            const alive = !!localPlayerState?.alive;
+            if (!alive) {
+                prevLocalAliveState = false;
+                prevDashRemaining = 0;
+                prevDodgeRemaining = 0;
+                return;
+            }
+            if (prevLocalAliveState === false) {
+                prevDashRemaining = 0;
+                prevDodgeRemaining = 0;
+            }
+            prevLocalAliveState = true;
+
+            const dashRemaining = Math.max(0, Number(localPlayerState?.dash_remaining) || 0);
+            const dodgeRemaining = Math.max(0, Number(localPlayerState?.dodge_roll_remaining) || 0);
+            const dashStarted = dashRemaining > 0.001 && prevDashRemaining <= 0.001;
+            const dodgeStarted = dodgeRemaining > 0.001 && prevDodgeRemaining <= 0.001;
+            const playerPos = getEntityRenderPos(localPlayerState);
+            const velocityX = Number(localPlayerState?.velocity_x) || 0;
+            const velocityY = Number(localPlayerState?.velocity_y) || 0;
+            const speed = Math.hypot(velocityX, velocityY);
+            const invSpeed = speed > 0.0001 ? (1 / speed) : 0;
+
+            if (dashStarted) {
+                if (gameSettings?.screenShake) {
+                    applyScreenShake(gameScene, 3.4, 5);
+                }
+                if (audioManager && gameSettings?.soundEnabled) {
+                    audioManager.playSound('dashWhoosh', playerPos, 0.3);
+                }
+            }
+            if (dodgeStarted) {
+                if (gameSettings?.screenShake) {
+                    applyScreenShake(gameScene, 2.4, 4);
+                }
+                if (audioManager && gameSettings?.soundEnabled) {
+                    audioManager.playSound('dodgeWhoosh', playerPos, 0.27);
+                }
+            }
+
+            if (
+                effectsManager &&
+                speed > 28 &&
+                (gameSettings?.particleEffects || gameSettings?.graphicsQuality === 'high')
+            ) {
+                if (dashRemaining > 0.001 && currentTime - lastDashTrailAt >= DASH_TRAIL_INTERVAL_MS) {
+                    const backOffset = Math.max(10, Math.min(22, speed * 0.08));
+                    effectsManager.createEnhancedBulletImpact(
+                        {
+                            x: playerPos.x - velocityX * invSpeed * backOffset + (Math.random() - 0.5) * 5,
+                            y: playerPos.y - velocityY * invSpeed * backOffset + (Math.random() - 0.5) * 5,
+                        },
+                        GP.WeaponType.Rifle
+                    );
+                    lastDashTrailAt = currentTime;
+                } else if (dodgeRemaining > 0.001 && currentTime - lastDodgeTrailAt >= DODGE_TRAIL_INTERVAL_MS) {
+                    const backOffset = Math.max(8, Math.min(18, speed * 0.07));
+                    effectsManager.createEnhancedBulletImpact(
+                        {
+                            x: playerPos.x - velocityX * invSpeed * backOffset + (Math.random() - 0.5) * 4,
+                            y: playerPos.y - velocityY * invSpeed * backOffset + (Math.random() - 0.5) * 4,
+                        },
+                        GP.WeaponType.Pistol
+                    );
+                    lastDodgeTrailAt = currentTime;
+                }
+            }
+
+            prevDashRemaining = dashRemaining;
+            prevDodgeRemaining = dodgeRemaining;
+        }
+
+        function maybeEmitProjectileNearMissAudio(currentTime) {
+            if (
+                !audioManager ||
+                !gameSettings?.soundEnabled ||
+                !localPlayerState ||
+                !localPlayerState.alive
+            ) {
+                return;
+            }
+            if (currentTime - lastNearMissCheckAt < NEAR_MISS_CHECK_INTERVAL_MS) {
+                return;
+            }
+            lastNearMissCheckAt = currentTime;
+
+            const localPos = getEntityRenderPos(localPlayerState);
+            const myId = String(myPlayerId || '');
+            const localTeamId = Number(localPlayerState.team_id) || 0;
+            let scanned = 0;
+            let bestCandidate = null;
+            let bestDistanceSq = Number.POSITIVE_INFINITY;
+
+            for (const projectile of projectiles.values()) {
+                if (scanned >= NEAR_MISS_MAX_PROJECTILES_PER_SCAN) break;
+                if (!projectile) continue;
+                scanned += 1;
+
+                const projectileId = String(projectile.id || '');
+                const cooldownUntil = Number(projectileNearMissCooldownUntil.get(projectileId)) || 0;
+                if (cooldownUntil > currentTime) continue;
+
+                const ownerId = String(projectile.owner_id || '');
+                if (ownerId && ownerId === myId) continue;
+                if (ownerId && localTeamId !== 0) {
+                    const ownerPlayer = players.get(ownerId);
+                    if (ownerPlayer && ((Number(ownerPlayer.team_id) || 0) === localTeamId)) continue;
+                }
+
+                const projectilePos = getEntityRenderPos(projectile);
+                const dx = projectilePos.x - localPos.x;
+                const dy = projectilePos.y - localPos.y;
+                const distanceSq = dx * dx + dy * dy;
+                if (distanceSq <= NEAR_MISS_MIN_DISTANCE_SQ || distanceSq >= NEAR_MISS_MAX_DISTANCE_SQ) continue;
+
+                const vx = Number(projectile.velocity_x) || 0;
+                const vy = Number(projectile.velocity_y) || 0;
+                const speedSq = vx * vx + vy * vy;
+                if (speedSq < (34 * 34)) continue;
+
+                const towardDot = vx * (localPos.x - projectilePos.x) + vy * (localPos.y - projectilePos.y);
+                if (towardDot <= 0) continue;
+
+                if (distanceSq < bestDistanceSq) {
+                    bestDistanceSq = distanceSq;
+                    bestCandidate = projectile;
+                }
+            }
+
+            if (bestCandidate) {
+                const nearMissPos = getEntityRenderPos(bestCandidate);
+                const normalized = 1 - (
+                    (bestDistanceSq - NEAR_MISS_MIN_DISTANCE_SQ) /
+                    Math.max(1, NEAR_MISS_MAX_DISTANCE_SQ - NEAR_MISS_MIN_DISTANCE_SQ)
+                );
+                const volume = 0.13 + Math.max(0, Math.min(1, normalized)) * 0.2;
+                audioManager.playSound('bulletWhiz', nearMissPos, volume);
+                projectileNearMissCooldownUntil.set(String(bestCandidate.id || ''), currentTime + NEAR_MISS_COOLDOWN_MS);
+            }
+
+            if (projectileNearMissCooldownUntil.size > 256 || (frameCounter % 90) === 0) {
+                for (const [projectileId, cooldownUntil] of projectileNearMissCooldownUntil.entries()) {
+                    if ((Number(cooldownUntil) || 0) <= currentTime) {
+                        projectileNearMissCooldownUntil.delete(projectileId);
+                    }
+                }
+            }
+        }
+
 
         // Main game loop
         function gameLoop(delta) {
@@ -3118,6 +3363,8 @@
                 updateProjectilePresentation();
             }
 
+            maybeEmitMovementJuice(currentTime);
+            maybeEmitProjectileNearMissAudio(currentTime);
 
             updateWorldViewBounds();
             dispatchCullWorkerIfNeeded(currentTime);
@@ -3618,6 +3865,9 @@
                 startConnectionAttempt({ isRetry: false });
             }
         });
+        matchTypeSelect?.addEventListener('change', () => {
+            saveSelectedMatchType(matchTypeSelect.value);
+        });
         if (!preferredPlayerName && IS_AUTOMATION_CONTEXT) {
             savePreferredPlayerName('E2EPlayer');
         }
@@ -3710,6 +3960,7 @@
             normalizeSignalingUrl, summarizeSignalingError,
             wsUrlInput, isMobileDevice, dataSaverMode,
             getPreferredPlayerName: () => preferredPlayerName,
+            getSelectedMatchType: () => selectedMatchType,
             canStartConnectionAttempt, initCullWorker, cullWorker, WORKER_CULL_ENABLED,
             startJoinTimingAttempt, markJoinTimingStage, markJoinTimingAborted,
             withAuthTokenInUrl, setConnectionError, clearConnectionOverride,
@@ -3842,6 +4093,13 @@
             chatMessages = [];
             matchInfo = null;
             serverUpdates = [];
+            prevLocalAliveState = null;
+            prevDashRemaining = 0;
+            prevDodgeRemaining = 0;
+            lastDashTrailAt = 0;
+            lastDodgeTrailAt = 0;
+            lastNearMissCheckAt = 0;
+            projectileNearMissCooldownUntil.clear();
             if (playerContainer) {
                 playerContainer.removeChildren().forEach(child => child.destroy?.({ children: true }));
             }
@@ -3995,6 +4253,13 @@
             combatUiState.radialHudCache.abilityColor = '';
             combatUiState.radialHudCache.abilityLabel = '';
             combatUiState.radialHudCache.hudVisible = false;
+            prevLocalAliveState = null;
+            prevDashRemaining = 0;
+            prevDodgeRemaining = 0;
+            lastDashTrailAt = 0;
+            lastDodgeTrailAt = 0;
+            lastNearMissCheckAt = 0;
+            projectileNearMissCooldownUntil.clear();
             if (damageFlashLayerDiv) damageFlashLayerDiv.style.opacity = '0';
             if (speedLinesLayerDiv) speedLinesLayerDiv.style.opacity = '0';
             if (deathRecapDiv) deathRecapDiv.classList.remove('death-recap--visible');
@@ -4362,6 +4627,7 @@
             }
 
             hydrateDefaultWsUrl();
+            hydrateMatchTypeSelection();
             loadAuthToken();
             if (authSessionToken) {
                 refreshAuthProfile();

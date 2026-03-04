@@ -100,17 +100,39 @@ export function createConnectionManager(getCtx) {
         const { uiModeParams } = ctx;
         const joinTeam = uiModeParams.get('team') || '';
         const spectatorRequested = uiModeParams.get('spectator') === '1';
+        const selectedMatchTypeRaw = typeof ctx.getSelectedMatchType === 'function'
+            ? ctx.getSelectedMatchType()
+            : (uiModeParams.get('match_type') || '');
+        const selectedMatchType = (() => {
+            const normalized = String(selectedMatchTypeRaw || '').trim().toLowerCase();
+            if (!normalized) return '';
+            if (normalized === 'full') return 'full';
+            if (normalized === 'quick') return 'quick';
+            if (normalized === 'mobile_blitz' || normalized === 'blitz') return 'mobile_blitz';
+            if (normalized === 'mobile_standard' || normalized === 'mobile') return 'mobile_standard';
+            return '';
+        })();
         const preferredNameRaw = typeof ctx.getPreferredPlayerName === 'function'
             ? ctx.getPreferredPlayerName()
             : '';
         const preferredName = String(preferredNameRaw || '').trim();
         if (!joinTeam && !spectatorRequested) {
             if (!preferredName) {
-                return rawUrl;
+                if (!selectedMatchType) return rawUrl;
+                try {
+                    const urlObj = new URL(rawUrl);
+                    urlObj.searchParams.set('match_type', selectedMatchType);
+                    return urlObj.toString();
+                } catch (_) {
+                    return rawUrl;
+                }
             }
             try {
                 const urlObj = new URL(rawUrl);
                 urlObj.searchParams.set('username', preferredName);
+                if (selectedMatchType) {
+                    urlObj.searchParams.set('match_type', selectedMatchType);
+                }
                 return urlObj.toString();
             } catch (_) {
                 return rawUrl;
@@ -132,6 +154,9 @@ export function createConnectionManager(getCtx) {
             }
             if (preferredName) {
                 urlObj.searchParams.set('username', preferredName);
+            }
+            if (selectedMatchType) {
+                urlObj.searchParams.set('match_type', selectedMatchType);
             }
             return urlObj.toString();
         } catch (_) {
