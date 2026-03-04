@@ -1510,6 +1510,11 @@ mod instance_tests {
         assert_eq!(info.map_event_count, 0);
         assert_eq!(info.map_event_elapsed_secs, 0.0);
         assert_eq!(info.map_event_interval_secs, 75.0);
+        assert!(!info.hot_zone_active);
+        assert_eq!(info.hot_zone_event_count, 0);
+        assert_eq!(info.hot_zone_elapsed_secs, 0.0);
+        assert_eq!(info.hot_zone_center, Vec2::new(0.0, 0.0));
+        assert_eq!(info.hot_zone_radius, HOT_ZONE_RADIUS);
         assert!(info.flag_states.is_empty());
     }
 

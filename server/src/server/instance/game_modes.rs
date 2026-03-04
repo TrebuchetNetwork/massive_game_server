@@ -31,6 +31,20 @@ fn map_event_interval_from_seed(seed: u64) -> f32 {
         .clamp(MAP_EVENT_INTERVAL_MIN_SECS, MAP_EVENT_INTERVAL_MAX_SECS)
 }
 
+fn hot_zone_center_from_seed(seed: u64) -> Vec2 {
+    let mut rng = DeterministicRng::new(seed ^ 0x4C3D_2E1F_A5A5_A5A5);
+    let margin_x = HOT_ZONE_SPAWN_MARGIN.clamp(0.0, (WORLD_MAX_X - WORLD_MIN_X) * 0.45);
+    let margin_y = HOT_ZONE_SPAWN_MARGIN.clamp(0.0, (WORLD_MAX_Y - WORLD_MIN_Y) * 0.45);
+    let min_x = (WORLD_MIN_X + margin_x).min(WORLD_MAX_X - 40.0);
+    let max_x = (WORLD_MAX_X - margin_x).max(WORLD_MIN_X + 40.0);
+    let min_y = (WORLD_MIN_Y + margin_y).min(WORLD_MAX_Y - 40.0);
+    let max_y = (WORLD_MAX_Y - margin_y).max(WORLD_MIN_Y + 40.0);
+    Vec2::new(
+        rng.gen_range_f32(min_x, max_x),
+        rng.gen_range_f32(min_y, max_y),
+    )
+}
+
 impl MassiveGameServer {
     #[inline]
     fn fortress_attack_defend_map(&self) -> bool {
@@ -121,6 +135,11 @@ impl MassiveGameServer {
         map_event_interval_from_seed(frame ^ event_sequence.wrapping_mul(0x9E37_79B9_7F4A_7C15))
     }
 
+    fn next_hot_zone_center(&self, event_sequence: u64) -> Vec2 {
+        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+        hot_zone_center_from_seed(frame ^ event_sequence.wrapping_mul(0x94D0_49BB_1331_11EB))
+    }
+
     fn spawn_map_event_supply_drop(&self, center: Vec2, event_index: u64) -> usize {
         let seed = self.frame_counter.load(AtomicOrdering::Relaxed)
             ^ event_index.wrapping_mul(0xD6E8_FEB8_6659_FD93)
@@ -209,6 +228,58 @@ impl MassiveGameServer {
         );
     }
 
+    fn trigger_hot_zone_map_event(&self, event_index: u64, center: Vec2) {
+        let spawned_pickups =
+            self.spawn_map_event_supply_drop(center, event_index ^ 0xBADC_0FFE_D00D_F00D);
+        let payload = serde_json::json!({
+            "phase": "triggered",
+            "event_type": "hot_zone",
+            "event_index": event_index.saturating_add(1),
+            "x": center.x,
+            "y": center.y,
+            "radius": HOT_ZONE_RADIUS,
+            "bonus_multiplier": HOT_ZONE_POINTS_MULTIPLIER,
+            "spawned_pickups": spawned_pickups,
+            "next_event_secs": HOT_ZONE_ROTATE_INTERVAL_SECS.max(0.0),
+            "ping_kind": "enemy",
+        });
+        if let Some(packet) = self.build_system_event_packet("map_event", Some(&payload)) {
+            self.enqueue_direct_packet_for_all_players(packet);
+        }
+        info!(
+            "Map event #{} triggered: hot zone at ({:.1}, {:.1}), radius={:.1}, pickups={}.",
+            event_index.saturating_add(1),
+            center.x,
+            center.y,
+            HOT_ZONE_RADIUS,
+            spawned_pickups
+        );
+    }
+
+    pub(super) fn hot_zone_bonus_multiplier_at_position(&self, position: Vec2) -> f32 {
+        let match_info_guard = self.match_info.read();
+        if !match_info_guard.hot_zone_active
+            || match_info_guard.match_state != fb::MatchStateType::Active
+        {
+            return 1.0;
+        }
+        let dx = position.x - match_info_guard.hot_zone_center.x;
+        let dy = position.y - match_info_guard.hot_zone_center.y;
+        if (dx * dx + dy * dy)
+            <= match_info_guard.hot_zone_radius * match_info_guard.hot_zone_radius
+        {
+            HOT_ZONE_POINTS_MULTIPLIER
+        } else {
+            1.0
+        }
+    }
+
+    pub(super) fn hot_zone_kill_points_at_position(&self, position: Vec2) -> i32 {
+        let multiplier = self.hot_zone_bonus_multiplier_at_position(position);
+        let scaled = (POINTS_PER_KILL as f32 * multiplier).round() as i32;
+        scaled.max(POINTS_PER_KILL)
+    }
+
     pub(super) fn update_match_state_authoritative(&self, delta_time: f32) {
         let mut match_info_guard = self.match_info.write();
         let player_count = self.participant_count();
@@ -231,6 +302,11 @@ impl MassiveGameServer {
                     match_info_guard.map_event_count = 0;
                     match_info_guard.map_event_elapsed_secs = 0.0;
                     match_info_guard.map_event_interval_secs = self.next_map_event_interval_secs(0);
+                    match_info_guard.hot_zone_active = false;
+                    match_info_guard.hot_zone_event_count = 0;
+                    match_info_guard.hot_zone_elapsed_secs = HOT_ZONE_ROTATE_INTERVAL_SECS;
+                    match_info_guard.hot_zone_center = Vec2::new(0.0, 0.0);
+                    match_info_guard.hot_zone_radius = HOT_ZONE_RADIUS;
                     if fortress_attack_defend_mode {
                         match_info_guard.game_mode = fb::GameModeType::CaptureTheFlag;
                     } else if dynamic_mode_transitions {
@@ -271,6 +347,7 @@ impl MassiveGameServer {
             }
             fb::MatchStateType::Active => {
                 let mut map_event_to_trigger: Option<(u64, f32)> = None;
+                let mut hot_zone_to_trigger: Option<(u64, Vec2)> = None;
                 let previous_time_remaining = match_info_guard.time_remaining;
                 match_info_guard.time_remaining -= delta_time;
                 if dynamic_mode_transitions {
@@ -389,6 +466,21 @@ impl MassiveGameServer {
                         match_info_guard.map_event_interval_secs = next_interval;
                         map_event_to_trigger = Some((event_index, next_interval));
                     }
+
+                    match_info_guard.hot_zone_elapsed_secs += safe_delta;
+                    if !match_info_guard.hot_zone_active
+                        || match_info_guard.hot_zone_elapsed_secs >= HOT_ZONE_ROTATE_INTERVAL_SECS
+                    {
+                        let hot_zone_index = match_info_guard.hot_zone_event_count as u64;
+                        let hot_zone_center = self.next_hot_zone_center(hot_zone_index);
+                        match_info_guard.hot_zone_event_count =
+                            match_info_guard.hot_zone_event_count.saturating_add(1);
+                        match_info_guard.hot_zone_elapsed_secs = 0.0;
+                        match_info_guard.hot_zone_active = true;
+                        match_info_guard.hot_zone_center = hot_zone_center;
+                        match_info_guard.hot_zone_radius = HOT_ZONE_RADIUS;
+                        hot_zone_to_trigger = Some((hot_zone_index, hot_zone_center));
+                    }
                 }
                 if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch {
                     let team1_score = match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
@@ -478,9 +570,16 @@ impl MassiveGameServer {
                     self.capture_match_end_summary("time_expired");
                     return;
                 }
-                if let Some((event_index, next_interval_secs)) = map_event_to_trigger {
+                if map_event_to_trigger.is_some() || hot_zone_to_trigger.is_some() {
+                    let map_event = map_event_to_trigger;
+                    let hot_zone_event = hot_zone_to_trigger;
                     drop(match_info_guard);
-                    self.trigger_center_supply_drop_map_event(event_index, next_interval_secs);
+                    if let Some((event_index, next_interval_secs)) = map_event {
+                        self.trigger_center_supply_drop_map_event(event_index, next_interval_secs);
+                    }
+                    if let Some((event_index, center)) = hot_zone_event {
+                        self.trigger_hot_zone_map_event(event_index, center);
+                    }
                 }
             }
             fb::MatchStateType::Ended => {
@@ -820,6 +919,11 @@ impl MassiveGameServer {
         match_info.map_event_count = 0;
         match_info.map_event_elapsed_secs = 0.0;
         match_info.map_event_interval_secs = self.next_map_event_interval_secs(0);
+        match_info.hot_zone_active = false;
+        match_info.hot_zone_event_count = 0;
+        match_info.hot_zone_elapsed_secs = 0.0;
+        match_info.hot_zone_center = Vec2::new(0.0, 0.0);
+        match_info.hot_zone_radius = HOT_ZONE_RADIUS;
         match_info.flag_states.clear();
         if match_info.match_state == fb::MatchStateType::Waiting
             && match_info.game_mode == fb::GameModeType::CaptureTheFlag
@@ -883,5 +987,29 @@ mod tests {
             distinct_intervals.insert((interval * 100.0).round() as i32);
         }
         assert!(distinct_intervals.len() > 1);
+    }
+
+    #[test]
+    fn hot_zone_center_stays_within_world_bounds() {
+        for seed in [0_u64, 1, 2, 17, 98_765, u64::MAX - 1] {
+            let center = hot_zone_center_from_seed(seed);
+            assert!(center.x >= WORLD_MIN_X);
+            assert!(center.x <= WORLD_MAX_X);
+            assert!(center.y >= WORLD_MIN_Y);
+            assert!(center.y <= WORLD_MAX_Y);
+        }
+    }
+
+    #[test]
+    fn hot_zone_center_varies_across_seeds() {
+        let mut distinct = BTreeSet::new();
+        for seed in 0_u64..24 {
+            let center = hot_zone_center_from_seed(seed);
+            distinct.insert((
+                (center.x * 10.0).round() as i32,
+                (center.y * 10.0).round() as i32,
+            ));
+        }
+        assert!(distinct.len() > 1);
     }
 }

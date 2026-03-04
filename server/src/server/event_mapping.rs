@@ -26,6 +26,7 @@ pub(crate) fn event_instigator_id(event: &GameEvent) -> Option<PlayerID> {
         GameEvent::PlayerDamaged { attacker_id, .. } => attacker_id.clone(),
         GameEvent::PlayerKilled { killer_id, .. } => Some(killer_id.clone()),
         GameEvent::WeaponFired { player_id, .. } => Some(player_id.clone()),
+        GameEvent::MeleeHit { attacker_id, .. } => Some(attacker_id.clone()),
         GameEvent::PowerupCollected { player_id, .. } => Some(player_id.clone()),
         GameEvent::FlagGrabbed { player_id, .. } => Some(player_id.clone()),
         GameEvent::FlagCaptured { capturer_id, .. } => Some(capturer_id.clone()),
@@ -58,6 +59,7 @@ pub(crate) fn event_weapon_type(event: &GameEvent) -> Option<ServerWeaponType> {
         GameEvent::PlayerDamaged { weapon, .. } => Some(*weapon),
         GameEvent::PlayerKilled { weapon, .. } => Some(*weapon),
         GameEvent::WeaponFired { weapon, .. } => Some(*weapon),
+        GameEvent::MeleeHit { .. } => Some(ServerWeaponType::Melee),
         _ => None,
     }
 }
@@ -83,6 +85,7 @@ pub(crate) fn map_game_event_type_to_fb(event: &GameEvent) -> Option<fb::GameEve
         GameEvent::ProjectileHitWall { .. } => Some(fb::GameEventType::WallImpact),
         GameEvent::PowerupCollected { .. } => Some(fb::GameEventType::PowerupActivated),
         GameEvent::WeaponFired { .. } => Some(fb::GameEventType::WeaponFire),
+        GameEvent::MeleeHit { .. } => Some(fb::GameEventType::WeaponFire),
         GameEvent::WallDestroyed { .. } => Some(fb::GameEventType::WallDestroyed),
         GameEvent::WallImpact { .. } => Some(fb::GameEventType::WallImpact),
         GameEvent::FlagGrabbed { .. } => Some(fb::GameEventType::FlagGrabbed),
@@ -90,7 +93,6 @@ pub(crate) fn map_game_event_type_to_fb(event: &GameEvent) -> Option<fb::GameEve
         GameEvent::FlagReturned { .. } => Some(fb::GameEventType::FlagReturned),
         GameEvent::FlagCaptured { .. } => Some(fb::GameEventType::FlagCaptured),
         GameEvent::TeamPing { .. } => Some(fb::GameEventType::TeamPing),
-        GameEvent::MeleeHit { .. } => Some(fb::GameEventType::PlayerDamageEffect),
         GameEvent::Killstreak { .. } => Some(fb::GameEventType::Killstreak),
         GameEvent::AssistKill { .. } => Some(fb::GameEventType::AssistKill),
         // These events currently do not have explicit FlatBuffer variants in game.fbs.

@@ -587,8 +587,17 @@ impl MassiveGameServer {
                                 );
                             } else {
                                 // Normal kill: positive score
-                                attacker_state_entry.score +=
-                                    crate::core::constants::POINTS_PER_KILL;
+                                let kill_points = self.hot_zone_kill_points_at_position(target_pos);
+                                attacker_state_entry.score += kill_points;
+                                if kill_points > crate::core::constants::POINTS_PER_KILL {
+                                    info!(
+                                        "Hot zone bonus: {} gained {} points for elimination at ({:.1}, {:.1})",
+                                        attacker_state_entry.username,
+                                        kill_points,
+                                        target_pos.x,
+                                        target_pos.y
+                                    );
+                                }
 
                                 // --- Killstreak system ---
                                 let streak = self.advance_killstreak(&mut attacker_state_entry);

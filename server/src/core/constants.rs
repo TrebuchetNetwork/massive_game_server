@@ -114,6 +114,10 @@ pub const MELEE_MAX_RANGE: f32 = 30.0;
 pub const MELEE_MIN_MULTIPLIER: f32 = 1.0;
 pub const MELEE_CONE_HALF_ANGLE_RAD: f32 = std::f32::consts::FRAC_PI_6; // π/6 (60° cone)
 pub const MELEE_LUNGE_DISTANCE: f32 = 10.0; // extends effective reach to ~40u without widening the cone
+pub const MELEE_PARRY_WINDOW_SECS: f32 = 0.22;
+pub const MELEE_PARRY_CONE_HALF_ANGLE_RAD: f32 = std::f32::consts::FRAC_PI_4;
+pub const MELEE_PARRY_COUNTER_DAMAGE: i32 = 14;
+pub const MELEE_PARRY_KNOCKBACK_DISTANCE: f32 = 14.0;
 
 pub const SPEED_BOOST_MULTIPLIER: f32 = 1.15; // Speed boost powerup multiplier (separate from anti-cheat tolerance)
 pub const DAMAGE_BOOST_MULTIPLIER: f32 = 1.5;
@@ -179,6 +183,10 @@ pub const MAP_EVENT_INTERVAL_MAX_SECS: f32 = 90.0;
 pub const MAP_EVENT_SUPPLY_DROP_PICKUPS: usize = 8;
 pub const MAP_EVENT_SUPPLY_DROP_INNER_RADIUS: f32 = 14.0;
 pub const MAP_EVENT_SUPPLY_DROP_OUTER_RADIUS: f32 = 75.0;
+pub const HOT_ZONE_ROTATE_INTERVAL_SECS: f32 = 45.0;
+pub const HOT_ZONE_RADIUS: f32 = 185.0;
+pub const HOT_ZONE_POINTS_MULTIPLIER: f32 = 1.5;
+pub const HOT_ZONE_SPAWN_MARGIN: f32 = 180.0;
 
 // ── Projectile knockback ────────────────────────────────────────────
 pub const KNOCKBACK_FORCE_PER_DAMAGE: f32 = 0.4; // reduced shove intensity for better close-range control

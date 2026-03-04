@@ -52,6 +52,7 @@ export function createInputManager({
     mobileDynamicsEnabled,
     // Functions called from input handlers
     setObjectiveUrgency,
+    triggerHitMarkerFn,
     isLocalTeamCommander,
     getCommanderIdForTeam,
     createChatMessage,
@@ -121,6 +122,7 @@ export function createInputManager({
     let pendingInputs = [];
     let lastShotFeedbackTime = 0;
     let lastPredictedWeaponSoundAt = 0;
+    let lastOptimisticHitFeedbackAt = 0;
     let playedOutOfAmmoSoundRecently = false;
     let playedReloadNeededSoundRecently = false;
     let outOfAmmoSoundResetTimer = null;
@@ -141,6 +143,31 @@ export function createInputManager({
             case GP.WeaponType.Rifle: return 95;
             case GP.WeaponType.Sniper: return 680;
             default: return 180;
+        }
+    }
+
+    function optimisticHitRangeForWeapon(weaponType) {
+        switch (weaponType) {
+            case GP.WeaponType.Shotgun: return 170;
+            case GP.WeaponType.Pistol: return 360;
+            case GP.WeaponType.Rifle: return 520;
+            case GP.WeaponType.Sniper: return 1100;
+            default: return 320;
+        }
+    }
+
+    function optimisticHitLateralAllowanceForWeapon(weaponType, alongDistance) {
+        const dist = Math.max(0, Number(alongDistance) || 0);
+        const baseRadius = 18;
+        switch (weaponType) {
+            case GP.WeaponType.Shotgun:
+                return baseRadius + Math.min(70, dist * 0.28);
+            case GP.WeaponType.Rifle:
+                return baseRadius + Math.min(24, dist * 0.05);
+            case GP.WeaponType.Sniper:
+                return baseRadius + Math.min(16, dist * 0.03);
+            default:
+                return baseRadius + Math.min(28, dist * 0.06);
         }
     }
 
@@ -682,6 +709,47 @@ export function createInputManager({
                 combatUiStateRef.speedPulse = Math.min(1, combatUiStateRef.speedPulse + 0.08);
             }
             lastShotFeedbackTime = now;
+        }
+
+        if (
+            currentFrameInput.shooting &&
+            typeof triggerHitMarkerFn === 'function' &&
+            (now - lastOptimisticHitFeedbackAt) >= 95
+        ) {
+            const players = getPlayers();
+            const myPlayerId = getMyPlayerId();
+            const originX = Number(localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x) || 0;
+            const originY = Number(localPlayerState.render_y !== undefined ? localPlayerState.render_y : localPlayerState.y) || 0;
+            const rot = Number(localPlayerState.rotation) || 0;
+            const dirX = Math.cos(rot);
+            const dirY = Math.sin(rot);
+            const maxRange = optimisticHitRangeForWeapon(localPlayerState.weapon);
+            const myTeam = Number(localPlayerState.team_id) || 0;
+            let optimisticHitFound = false;
+
+            for (const [playerId, player] of players) {
+                if (!player || playerId === myPlayerId || !player.alive) continue;
+                const targetTeam = Number(player.team_id) || 0;
+                if (myTeam !== 0 && targetTeam !== 0 && myTeam === targetTeam) continue;
+                const targetX = Number(player.render_x !== undefined ? player.render_x : player.x);
+                const targetY = Number(player.render_y !== undefined ? player.render_y : player.y);
+                if (!Number.isFinite(targetX) || !Number.isFinite(targetY)) continue;
+
+                const toX = targetX - originX;
+                const toY = targetY - originY;
+                const along = toX * dirX + toY * dirY;
+                if (!Number.isFinite(along) || along <= 0 || along > maxRange) continue;
+                const lateral = Math.abs(toX * dirY - toY * dirX);
+                const lateralAllowance = optimisticHitLateralAllowanceForWeapon(localPlayerState.weapon, along);
+                if (lateral > lateralAllowance) continue;
+                optimisticHitFound = true;
+                break;
+            }
+
+            if (optimisticHitFound) {
+                triggerHitMarkerFn(false);
+                lastOptimisticHitFeedbackAt = now;
+            }
         }
 
         pendingInputs.push(currentFrameInput);

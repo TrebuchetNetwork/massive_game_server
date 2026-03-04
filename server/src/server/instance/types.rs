@@ -99,6 +99,11 @@ pub struct ServerMatchInfo {
     pub map_event_count: u32,
     pub map_event_elapsed_secs: f32,
     pub map_event_interval_secs: f32,
+    pub hot_zone_active: bool,
+    pub hot_zone_event_count: u32,
+    pub hot_zone_elapsed_secs: f32,
+    pub hot_zone_center: Vec2,
+    pub hot_zone_radius: f32,
     pub flag_states: HashMap<u8, ServerFlagState>, // team_id of flag -> state
 }
 
@@ -113,6 +118,11 @@ impl Default for ServerMatchInfo {
             map_event_count: 0,
             map_event_elapsed_secs: 0.0,
             map_event_interval_secs: 75.0,
+            hot_zone_active: false,
+            hot_zone_event_count: 0,
+            hot_zone_elapsed_secs: 0.0,
+            hot_zone_center: Vec2::new(0.0, 0.0),
+            hot_zone_radius: HOT_ZONE_RADIUS,
             flag_states: HashMap::new(),
         }
     }

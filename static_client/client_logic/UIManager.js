@@ -480,19 +480,38 @@ export function createUIManager(getCtx) {
             const eventIndex = Math.max(1, Math.trunc(Number(payload.event_index || payload.eventIndex || 1)));
             const spawnedPickups = Math.max(0, Math.trunc(Number(payload.spawned_pickups ?? payload.spawnedPickups ?? 0)));
             const nextEventSecs = Number(payload.next_event_secs ?? payload.nextEventSecs ?? 0);
-            const label = eventType === 'center_supply_drop' ? 'Center supply drop' : 'Map event';
-            if (Number.isFinite(nextEventSecs) && nextEventSecs > 0) {
-                ctx.setObjectiveUrgency(
-                    `${label} active (${spawnedPickups} pickups). Next event in ${Math.round(nextEventSecs)}s`,
-                    'critical',
-                    3200
-                );
+            const bonusMultiplier = Number(payload.bonus_multiplier ?? payload.bonusMultiplier ?? 1);
+            const hasHotZoneBonus = eventType === 'hot_zone' && Number.isFinite(bonusMultiplier) && bonusMultiplier > 1;
+            const bonusPct = hasHotZoneBonus ? Math.round((bonusMultiplier - 1) * 100) : 0;
+            if (eventType === 'hot_zone') {
+                if (Number.isFinite(nextEventSecs) && nextEventSecs > 0) {
+                    ctx.setObjectiveUrgency(
+                        `Hot zone shifted (+${bonusPct}% points, ${spawnedPickups} pickups). Rotates in ${Math.round(nextEventSecs)}s`,
+                        'critical',
+                        3400
+                    );
+                } else {
+                    ctx.setObjectiveUrgency(
+                        `Hot zone shifted (+${bonusPct}% points, ${spawnedPickups} pickups)`,
+                        'critical',
+                        3000
+                    );
+                }
             } else {
-                ctx.setObjectiveUrgency(
-                    `${label} active (${spawnedPickups} pickups)`,
-                    'critical',
-                    2800
-                );
+                const label = eventType === 'center_supply_drop' ? 'Center supply drop' : 'Map event';
+                if (Number.isFinite(nextEventSecs) && nextEventSecs > 0) {
+                    ctx.setObjectiveUrgency(
+                        `${label} active (${spawnedPickups} pickups). Next event in ${Math.round(nextEventSecs)}s`,
+                        'critical',
+                        3200
+                    );
+                } else {
+                    ctx.setObjectiveUrgency(
+                        `${label} active (${spawnedPickups} pickups)`,
+                        'critical',
+                        2800
+                    );
+                }
             }
 
             const pingX = Number(payload.x);

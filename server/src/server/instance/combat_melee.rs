@@ -90,6 +90,20 @@ impl MassiveGameServer {
                     melee_check_radius,
                 );
 
+                enum MeleeResolution {
+                    Hit {
+                        died: bool,
+                        target_position: Vec2,
+                        target_username: String,
+                        victim_was_carrying_flag_id: u8,
+                    },
+                    Parried {
+                        defender_id: PlayerID,
+                        defender_position: Vec2,
+                        defender_username: String,
+                    },
+                }
+
                 // Process each potential target
                 for target_id_arc_nearby in nearby_player_ids {
                     if target_id_arc_nearby == attacker_id {
@@ -141,44 +155,167 @@ impl MassiveGameServer {
                                 continue; // Outside melee arc
                             }
 
-                            info!("[Melee] {} attempting to hit {} (dist_sq: {:.1}, angle_diff: {:.2} rad).",
-                                  attacker_id.as_ref(), target_id_arc_nearby.as_ref(), dist_sq, angle_diff);
-
-                            // Apply damage and collect necessary data
-                            let died = target_state.apply_damage(melee_damage);
-                            let target_position = Vec2::new(target_state.x, target_state.y);
-                            let target_username = target_state.username.clone();
-                            let victim_was_carrying_flag_id = if died {
-                                target_state.is_carrying_flag_team_id
+                            let parry_active = target_state.weapon == ServerWeaponType::Melee
+                                && target_state
+                                    .last_shot_time
+                                    .map(|last_melee_time| {
+                                        last_melee_time.elapsed().as_secs_f32()
+                                            <= crate::core::constants::MELEE_PARRY_WINDOW_SECS
+                                    })
+                                    .unwrap_or(false);
+                            if parry_active
+                                && is_within_melee_arc(
+                                    target_state.x,
+                                    target_state.y,
+                                    target_state.rotation,
+                                    attacker_pos_x,
+                                    attacker_pos_y,
+                                    crate::core::constants::MELEE_PARRY_CONE_HALF_ANGLE_RAD,
+                                )
+                            {
+                                let defender_position = Vec2::new(target_state.x, target_state.y);
+                                let defender_username = target_state.username.clone();
+                                Some(MeleeResolution::Parried {
+                                    defender_id: target_id_arc_nearby.clone(),
+                                    defender_position,
+                                    defender_username,
+                                })
                             } else {
-                                0
-                            };
+                                info!("[Melee] {} attempting to hit {} (dist_sq: {:.1}, angle_diff: {:.2} rad).",
+                                      attacker_id.as_ref(), target_id_arc_nearby.as_ref(), dist_sq, angle_diff);
 
-                            if died {
-                                // Reset flag carry state on the victim
-                                target_state.is_carrying_flag_team_id = 0;
-                                target_state.mark_field_changed(FIELD_FLAG);
+                                // Apply damage and collect necessary data
+                                let died = target_state.apply_damage(melee_damage);
+                                let target_position = Vec2::new(target_state.x, target_state.y);
+                                let target_username = target_state.username.clone();
+                                let victim_was_carrying_flag_id = if died {
+                                    target_state.is_carrying_flag_team_id
+                                } else {
+                                    0
+                                };
+
+                                if died {
+                                    // Reset flag carry state on the victim
+                                    target_state.is_carrying_flag_team_id = 0;
+                                    target_state.mark_field_changed(FIELD_FLAG);
+                                }
+
+                                Some(MeleeResolution::Hit {
+                                    died,
+                                    target_position,
+                                    target_username,
+                                    victim_was_carrying_flag_id,
+                                })
                             }
-
-                            Some((
-                                died,
-                                target_position,
-                                target_username,
-                                victim_was_carrying_flag_id,
-                            ))
                         } else {
                             None
                         }
                     };
 
                     // Now process the hit results without holding any mutable borrows
-                    if let Some((
-                        died,
-                        target_position,
-                        target_username,
-                        victim_was_carrying_flag_id,
-                    )) = target_hit_data
-                    {
+                    if let Some(target_resolution) = target_hit_data {
+                        if let MeleeResolution::Parried {
+                            defender_id,
+                            defender_position,
+                            defender_username,
+                        } = target_resolution
+                        {
+                            let mut counter_damage_applied = 0;
+                            let mut parry_impact_position =
+                                Vec2::new(attacker_pos_x, attacker_pos_y);
+                            if let Some(mut attacker_state_entry) =
+                                self.player_manager.get_player_state_mut(&attacker_id)
+                            {
+                                let attacker_state = &mut *attacker_state_entry;
+                                let max_nonlethal = (attacker_state.health - 1).max(0);
+                                let counter_damage =
+                                    crate::core::constants::MELEE_PARRY_COUNTER_DAMAGE
+                                        .min(max_nonlethal);
+                                if counter_damage > 0
+                                    && attacker_state.alive
+                                    && attacker_state.invulnerable_remaining <= 0.0
+                                {
+                                    let _ = attacker_state.apply_damage(counter_damage);
+                                    counter_damage_applied = counter_damage;
+                                }
+
+                                let away_dx = attacker_state.x - defender_position.x;
+                                let away_dy = attacker_state.y - defender_position.y;
+                                let away_len = (away_dx * away_dx + away_dy * away_dy).sqrt();
+                                let (dir_x, dir_y) = if away_len > 0.001 {
+                                    (away_dx / away_len, away_dy / away_len)
+                                } else {
+                                    (-attacker_rot.cos(), -attacker_rot.sin())
+                                };
+                                let knockback_dist =
+                                    crate::core::constants::MELEE_PARRY_KNOCKBACK_DISTANCE.max(0.0);
+                                let next_x = (attacker_state.x + dir_x * knockback_dist).clamp(
+                                    WORLD_MIN_X + PLAYER_RADIUS,
+                                    WORLD_MAX_X - PLAYER_RADIUS,
+                                );
+                                let next_y = (attacker_state.y + dir_y * knockback_dist).clamp(
+                                    WORLD_MIN_Y + PLAYER_RADIUS,
+                                    WORLD_MAX_Y - PLAYER_RADIUS,
+                                );
+                                if self.has_clear_line_of_sight(
+                                    attacker_state.x,
+                                    attacker_state.y,
+                                    next_x,
+                                    next_y,
+                                ) && !self.position_overlaps_any_wall(next_x, next_y)
+                                {
+                                    attacker_state.x = next_x;
+                                    attacker_state.y = next_y;
+                                    attacker_state.mark_field_changed(FIELD_POSITION_ROTATION);
+                                }
+                                parry_impact_position =
+                                    Vec2::new(attacker_state.x, attacker_state.y);
+                            }
+
+                            if counter_damage_applied > 0 {
+                                if let Some(mut defender_state) =
+                                    self.player_manager.get_player_state_mut(&defender_id)
+                                {
+                                    defender_state.record_damage_dealt(counter_damage_applied);
+                                    defender_state.mark_field_changed(FIELD_SCORE_STATS);
+                                }
+                                self.global_game_events.push(
+                                    GameEvent::PlayerDamaged {
+                                        target_id: attacker_id.clone(),
+                                        attacker_id: Some(defender_id.clone()),
+                                        damage: counter_damage_applied,
+                                        weapon: ServerWeaponType::Melee,
+                                        position: parry_impact_position,
+                                    },
+                                    EventPriority::Normal,
+                                );
+                            }
+
+                            self.global_game_events.push(
+                                GameEvent::WeaponFired {
+                                    player_id: defender_id,
+                                    weapon: ServerWeaponType::Melee,
+                                    position: defender_position,
+                                },
+                                EventPriority::Normal,
+                            );
+                            info!(
+                                "[Melee] {} parried {} and countered for {} damage.",
+                                defender_username, attacker_username, counter_damage_applied
+                            );
+                            break;
+                        }
+
+                        let MeleeResolution::Hit {
+                            died,
+                            target_position,
+                            target_username,
+                            victim_was_carrying_flag_id,
+                        } = target_resolution
+                        else {
+                            continue;
+                        };
+
                         if let Some(mut attacker_state_entry) =
                             self.player_manager.get_player_state_mut(&attacker_id)
                         {
@@ -228,7 +365,15 @@ impl MassiveGameServer {
                                               attacker_username, target_username);
                                     } else {
                                         // Normal kill: positive score
-                                        attacker_mut_state.score += POINTS_PER_KILL;
+                                        let kill_points =
+                                            self.hot_zone_kill_points_at_position(target_position);
+                                        attacker_mut_state.score += kill_points;
+                                        if kill_points > POINTS_PER_KILL {
+                                            info!(
+                                                "Hot zone bonus: {} gained {} points for melee elimination at ({:.1}, {:.1})",
+                                                attacker_username, kill_points, target_position.x, target_position.y
+                                            );
+                                        }
                                         let streak = self.advance_killstreak(attacker_mut_state);
                                         if streak
                                             >= crate::core::constants::KILLSTREAK_DAMAGE_BOOST_THRESHOLD
