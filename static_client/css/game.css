@@ -869,6 +869,49 @@
             margin-bottom: 6px;
         }
 
+        .post-match-callout {
+            opacity: 0;
+            transform: translateY(-6px) scale(0.96);
+            margin-bottom: 0;
+            border-radius: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.42);
+            background: rgba(15, 23, 42, 0.82);
+            color: #e2e8f0;
+            text-align: center;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 0;
+            pointer-events: none;
+            transition: opacity 130ms ease-out, transform 150ms ease-out, margin-bottom 130ms ease-out, padding 130ms ease-out;
+        }
+
+        .post-match-callout--visible {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            margin-bottom: 8px;
+            padding: 7px 10px;
+        }
+
+        .post-match-callout--positive {
+            border-color: rgba(52, 211, 153, 0.72);
+            background: linear-gradient(150deg, rgba(6, 78, 59, 0.74), rgba(4, 120, 87, 0.64));
+            color: #d1fae5;
+            box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.22) inset;
+        }
+
+        .post-match-callout--critical {
+            border-color: rgba(248, 113, 113, 0.72);
+            background: linear-gradient(150deg, rgba(127, 29, 29, 0.72), rgba(153, 27, 27, 0.62));
+            color: #fee2e2;
+            box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.22) inset;
+        }
+
+        .post-match-callout--burst {
+            animation: postMatchCalloutBurst 360ms ease-out;
+        }
+
         .post-match-panel__mvp {
             font-size: 12px;
             color: #FDE68A;
@@ -1211,6 +1254,12 @@
         @keyframes objectiveUrgencyPulse {
             0%, 100% { transform: translateX(-50%) scale(1); }
             45% { transform: translateX(-50%) scale(1.02); }
+        }
+
+        @keyframes postMatchCalloutBurst {
+            0% { transform: translateY(-6px) scale(0.92); }
+            65% { transform: translateY(0) scale(1.02); }
+            100% { transform: translateY(0) scale(1); }
         }
 
         .chat-display { position: absolute; bottom: 10px; left: 10px; width: 350px; background-color: rgba(31, 41, 55, 0.8); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 -2px 5px rgba(0,0,0,0.2); z-index: 30; }

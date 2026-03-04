@@ -113,6 +113,7 @@
                     <button id="closePostMatchButton" class="post-match-panel__close" type="button">Close</button>
                 </div>
             </div>
+            <div id="postMatchCallout" class="post-match-callout"></div>
             <div id="postMatchMeta" class="post-match-panel__meta"></div>
             <div id="postMatchMvp" class="post-match-panel__mvp"></div>
             <div id="postMatchWeaponBreakdown" class="post-match-panel__weapons"></div>
@@ -630,6 +631,7 @@
             : null;
         const killcamProgressDiv = document.getElementById('killcamProgress');
         const postMatchPanelDiv = document.getElementById('postMatchPanel');
+        const postMatchCalloutDiv = document.getElementById('postMatchCallout');
         const postMatchMetaDiv = document.getElementById('postMatchMeta');
         const postMatchMvpDiv = document.getElementById('postMatchMvp');
         const postMatchTableDiv = document.getElementById('postMatchTable');
@@ -2503,7 +2505,7 @@
             set latestMatchSummary(v) { latestMatchSummary = v; },
             get mobileStickyFireArmed() { return mobileStickyFireArmed; },
             set mobileStickyFireArmed(v) { mobileStickyFireArmed = v; },
-            postMatchPanelDiv, postMatchMetaDiv, postMatchMvpDiv, postMatchTableDiv,
+            postMatchPanelDiv, postMatchCalloutDiv, postMatchMetaDiv, postMatchMvpDiv, postMatchTableDiv,
             killcamPanelDiv, killcamProgressDiv, killcamCanvasCtx, killcamCanvas,
             killcamMetaDiv, killFeedDiv, chatDisplayDiv, matchInfoDiv,
             networkProfilerDiv, scoreboardDiv, settingsMenuDiv, fpsCounterDiv,

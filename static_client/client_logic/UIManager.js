@@ -246,9 +246,38 @@ export function createUIManager(getCtx) {
         }
     }
 
+    function hidePostMatchCallout({ clearText = false } = {}) {
+        const ctx = getCtx();
+        if (!ctx.postMatchCalloutDiv) return;
+        ctx.postMatchCalloutDiv.classList.remove(
+            'post-match-callout--visible',
+            'post-match-callout--positive',
+            'post-match-callout--critical',
+            'post-match-callout--burst'
+        );
+        if (clearText) {
+            ctx.postMatchCalloutDiv.textContent = '';
+        }
+    }
+
+    function showPostMatchCallout(text, tone = 'positive') {
+        const ctx = getCtx();
+        if (!ctx.postMatchCalloutDiv || !text) return;
+        const normalizedTone = tone === 'critical' ? 'critical' : 'positive';
+        hidePostMatchCallout();
+        ctx.postMatchCalloutDiv.textContent = String(text);
+        ctx.postMatchCalloutDiv.classList.add(
+            'post-match-callout--visible',
+            normalizedTone === 'critical' ? 'post-match-callout--critical' : 'post-match-callout--positive'
+        );
+        void ctx.postMatchCalloutDiv.offsetWidth;
+        ctx.postMatchCalloutDiv.classList.add('post-match-callout--burst');
+    }
+
     function closePostMatchSummary() {
         const ctx = getCtx();
         ctx.postMatchSummaryVisible = false;
+        hidePostMatchCallout({ clearText: true });
         if (ctx.postMatchPanelDiv) {
             ctx.postMatchPanelDiv.classList.remove('post-match-panel--visible');
         }
@@ -258,6 +287,7 @@ export function createUIManager(getCtx) {
         const ctx = getCtx();
         if (!summaryPayload || typeof summaryPayload !== 'object') return;
         if (!ctx.postMatchPanelDiv || !ctx.postMatchMetaDiv || !ctx.postMatchMvpDiv || !ctx.postMatchTableDiv) return;
+        hidePostMatchCallout({ clearText: true });
 
         const generatedAt = Number(summaryPayload.generated_at_ms || summaryPayload.generatedAtMs || 0);
         const summarySignature = `${generatedAt}:${summaryPayload.reason || ''}:${summaryPayload.match_duration || 0}:${(summaryPayload.players || []).length}`;
@@ -497,7 +527,7 @@ export function createUIManager(getCtx) {
 
                 const recordGrid = document.createElement('div');
                 recordGrid.className = 'post-match-records';
-                [
+                const recordEntries = [
                     {
                         label: 'Best Kills',
                         value: Math.trunc(nextRecords.bestKills),
@@ -518,7 +548,11 @@ export function createUIManager(getCtx) {
                         value: nextRecords.bestKd.toFixed(2),
                         isNew: currentPerf.kd > prevRecords.bestKd,
                     },
-                ].forEach((entry) => {
+                ];
+                const newRecordLabels = recordEntries
+                    .filter((entry) => entry && entry.isNew)
+                    .map((entry) => String(entry.label || 'Record'));
+                recordEntries.forEach((entry) => {
                     const card = document.createElement('div');
                     card.className = 'post-match-record';
                     if (entry.isNew) card.classList.add('post-match-record--new');
@@ -539,6 +573,14 @@ export function createUIManager(getCtx) {
                     recordGrid.appendChild(card);
                 });
                 trendDiv.appendChild(recordGrid);
+
+                if (newRecordLabels.length > 0) {
+                    const labelText = newRecordLabels.length === 1
+                        ? `New Personal Best: ${newRecordLabels[0]}`
+                        : `${newRecordLabels.length} New Personal Bests`;
+                    showPostMatchCallout(labelText, 'positive');
+                    playUiSound(newRecordLabels.length >= 3 ? 'announcerTripleKill' : 'victorySting', 0.34);
+                }
             }
         }
 
