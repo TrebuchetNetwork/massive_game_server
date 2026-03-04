@@ -96,6 +96,12 @@
         .focus\:ring-offset-gray-800:focus { background-clip: padding-box; }
 
         body { font-family: 'Inter', sans-serif; background-color: #111827; }
+        :root {
+            --safe-area-top: env(safe-area-inset-top, 0px);
+            --safe-area-right: env(safe-area-inset-right, 0px);
+            --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+            --safe-area-left: env(safe-area-inset-left, 0px);
+        }
         .log-entry { padding: 8px; margin-bottom: 4px; border-radius: 4px; font-size: 0.875rem; }
         .log-info { background-color: #e0f2fe; color: #0c4a6e; }
         .log-success { background-color: #dcfce7; color: #166534; }
@@ -140,8 +146,8 @@
         /* Controls Panel */
         .controls-panel {
             position: fixed;
-            left: 20px;
-            top: 20px;
+            left: calc(20px + var(--safe-area-left));
+            top: calc(20px + var(--safe-area-top));
             background-color: rgba(31, 41, 55, 0.9);
             border-radius: 8px;
             padding: 15px;
@@ -153,8 +159,8 @@
         }
         .hud-menu-toggle {
             position: fixed;
-            left: 20px;
-            top: 20px;
+            left: calc(20px + var(--safe-area-left));
+            top: calc(20px + var(--safe-area-top));
             z-index: 15;
             background: rgba(15, 23, 42, 0.92);
             border: 1px solid rgba(148, 163, 184, 0.45);
@@ -179,7 +185,7 @@
             touch-action: none;
         }
 
-        .kill-feed { position: absolute; top: 10px; right: 10px; width: 280px; background-color: rgba(31, 41, 55, 0.85); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .kill-feed { position: absolute; top: calc(10px + var(--safe-area-top)); right: calc(10px + var(--safe-area-right)); width: 280px; background-color: rgba(31, 41, 55, 0.85); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
         .kill-entry { color: #E5E7EB; font-size: 13px; margin-bottom: 5px; animation: fadeIn 0.5s ease-out forwards; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; line-height: 1.2; border-radius: 6px; padding: 2px 4px; }
         .kill-entry--local { color: #A7F3D0; text-shadow: 0 0 10px rgba(16, 185, 129, 0.45); }
         .kill-entry--death { color: #FECACA; text-shadow: 0 0 10px rgba(239, 68, 68, 0.4); }
@@ -228,7 +234,7 @@
         .combat-banner {
             position: absolute;
             left: 50%;
-            top: 72px;
+            top: calc(72px + var(--safe-area-top));
             transform: translateX(-50%) translateY(-10px) scale(0.92);
             opacity: 0;
             padding: 8px 14px;
@@ -269,7 +275,7 @@
         .combat-momentum {
             position: absolute;
             left: 50%;
-            bottom: 14px;
+            bottom: calc(14px + var(--safe-area-bottom));
             transform: translateX(-50%);
             width: min(340px, calc(100vw - 44px));
             background: rgba(15, 23, 42, 0.78);
@@ -1262,7 +1268,7 @@
             100% { transform: translateY(0) scale(1); }
         }
 
-        .chat-display { position: absolute; bottom: 10px; left: 10px; width: 350px; background-color: rgba(31, 41, 55, 0.8); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 -2px 5px rgba(0,0,0,0.2); z-index: 30; }
+        .chat-display { position: absolute; bottom: calc(10px + var(--safe-area-bottom)); left: calc(10px + var(--safe-area-left)); width: 350px; background-color: rgba(31, 41, 55, 0.8); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 -2px 5px rgba(0,0,0,0.2); z-index: 30; }
         .chat-entry { color: #D1D5DB; font-size: 12px; margin-bottom: 3px; display: flex; align-items: center; gap: 6px; line-height: 1.25; }
         .chat-entry .username { font-weight: bold; }
         .chat-entry__ts { color: #9CA3AF; font-size: 10px; flex: 0 0 auto; min-width: 64px; }
@@ -1277,7 +1283,7 @@
         .chat-entry__action--block { border-color: rgba(251, 146, 60, 0.5); color: #FED7AA; }
         .chat-entry__action--report { border-color: rgba(248, 113, 113, 0.58); color: #FECACA; }
 
-        .match-info { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background-color: rgba(31, 41, 55, 0.9); border-radius: 8px; padding: 8px 15px; text-align: center; color: #E5E7EB; box-shadow: 0 2px 4px rgba(0,0,0,0.2); font-size: 14px;}
+        .match-info { position: absolute; top: calc(10px + var(--safe-area-top)); left: 50%; transform: translateX(-50%); background-color: rgba(31, 41, 55, 0.9); border-radius: 8px; padding: 8px 15px; text-align: center; color: #E5E7EB; box-shadow: 0 2px 4px rgba(0,0,0,0.2); font-size: 14px;}
         .team-scores { display: flex; gap: 20px; justify-content: center; margin-top: 5px; }
         .team-score { font-weight: bold; }
         .team-red { color: #FF6B6B; }
@@ -1333,7 +1339,7 @@
 
         .connection-status {
             position: absolute;
-            top: 14px;
+            top: calc(14px + var(--safe-area-top));
             left: 50%;
             transform: translateX(-50%);
             z-index: 25;
@@ -1396,8 +1402,8 @@
             50% { transform: scale(1.4); opacity: 1; }
         }
         body.mobile-mode .controls-panel {
-            left: 10px;
-            top: 10px;
+            left: calc(10px + var(--safe-area-left));
+            top: calc(10px + var(--safe-area-top));
             max-width: 220px;
             padding: 10px;
             opacity: 0.92;
@@ -1408,18 +1414,18 @@
             max-height: 120px;
         }
         body.mobile-mode .combat-banner {
-            top: 58px;
+            top: calc(58px + var(--safe-area-top));
             font-size: 10px;
             padding: 6px 10px;
         }
         body.mobile-mode .streak-announcer {
-            top: 12px;
+            top: calc(12px + var(--safe-area-top));
             font-size: 11px;
             padding: 7px 11px;
             max-width: calc(100vw - 22px);
         }
         body.mobile-mode .combat-momentum {
-            bottom: 94px;
+            bottom: calc(94px + var(--safe-area-bottom));
             width: min(300px, calc(100vw - 30px));
         }
         body.mobile-mode .radial-widget--ability {
@@ -1436,8 +1442,8 @@
         }
 
         body.mobile-mode #minimapContainer {
-            right: 8px;
-            bottom: 8px;
+            right: calc(8px + var(--safe-area-right));
+            bottom: calc(8px + var(--safe-area-bottom));
             transform: scale(0.92);
             transform-origin: bottom right;
         }
@@ -1459,8 +1465,8 @@
 
         .mobile-controls__left {
             position: absolute;
-            left: 16px;
-            bottom: 24px;
+            left: calc(16px + var(--safe-area-left));
+            bottom: calc(24px + var(--safe-area-bottom));
             width: 120px;
             height: 120px;
         }
@@ -1504,8 +1510,8 @@
 
         .mobile-controls__buttons {
             position: absolute;
-            right: 16px;
-            bottom: var(--mobile-buttons-bottom, 24px);
+            right: calc(16px + var(--safe-area-right));
+            bottom: calc(var(--mobile-buttons-bottom, 24px) + var(--safe-area-bottom));
             display: flex;
             flex-direction: column;
             gap: 10px;
@@ -1557,8 +1563,8 @@
 
         .mobile-controls__settings {
             position: fixed;
-            top: 8px;
-            right: 8px;
+            top: calc(8px + var(--safe-area-top));
+            right: calc(8px + var(--safe-area-right));
             display: flex;
             gap: 6px;
             align-items: center;
@@ -1592,8 +1598,8 @@
 
         @media (max-width: 900px) {
             .controls-panel {
-                left: 10px;
-                top: 10px;
+                left: calc(10px + var(--safe-area-left));
+                top: calc(10px + var(--safe-area-top));
                 padding: 12px;
                 max-width: 240px;
                 opacity: 0.92;
@@ -1610,8 +1616,8 @@
                 font-size: 12px;
             }
             .killcam-panel {
-                left: 10px;
-                bottom: 166px;
+                left: calc(10px + var(--safe-area-left));
+                bottom: calc(166px + var(--safe-area-bottom));
                 width: min(300px, calc(100vw - 20px));
             }
             .killcam-panel__canvas {
@@ -1636,6 +1642,8 @@
             backdrop-filter: blur(10px);
             background-color: rgba(31, 41, 55, 0.95);
             z-index: 60;
+            right: calc(1.25rem + var(--safe-area-right));
+            bottom: calc(1.25rem + var(--safe-area-bottom));
         }
         
         #musicPlayer:hover {

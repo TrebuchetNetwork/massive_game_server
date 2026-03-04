@@ -296,9 +296,15 @@ struct EnemySnapshot {
     y: f32,
     velocity_x: f32,
     velocity_y: f32,
-    team_id: u8,
     carries_flag_team_id: u8,
     weapon: ServerWeaponType,
+}
+
+#[derive(Clone, Copy)]
+struct LivePlayerSnapshot {
+    x: f32,
+    y: f32,
+    team_id: u8,
 }
 
 #[derive(Clone)]
@@ -454,7 +460,7 @@ impl OptimizedBotAI {
         // Precompute enemies and team objective counts once per tick.
         let mut enemies_team1 = Vec::new();
         let mut enemies_team2 = Vec::new();
-        let mut live_players_by_id: HashMap<PlayerID, EnemySnapshot> = HashMap::new();
+        let mut live_players_by_id: HashMap<PlayerID, LivePlayerSnapshot> = HashMap::new();
         let mut team_objectives = TeamObjectiveSummary::default();
         let team1_base = MassiveGameServer::get_flag_base_position(1);
         let team2_base = MassiveGameServer::get_flag_base_position(2);
@@ -483,18 +489,24 @@ impl OptimizedBotAI {
                     });
                 }
 
-                let snapshot = EnemySnapshot {
+                let enemy_snapshot = EnemySnapshot {
                     id: id.clone(),
                     x: player.x,
                     y: player.y,
                     velocity_x: player.velocity_x,
                     velocity_y: player.velocity_y,
-                    team_id: player.team_id,
                     carries_flag_team_id: player.is_carrying_flag_team_id,
                     weapon: player.weapon,
                 };
 
-                live_players_by_id.insert(id.clone(), snapshot.clone());
+                live_players_by_id.insert(
+                    id.clone(),
+                    LivePlayerSnapshot {
+                        x: player.x,
+                        y: player.y,
+                        team_id: player.team_id,
+                    },
+                );
 
                 if let Some(metrics) = team_objectives.for_team_mut(player.team_id) {
                     let own_base = if player.team_id == 1 {
@@ -523,9 +535,9 @@ impl OptimizedBotAI {
                 }
 
                 if player.team_id == 1 {
-                    enemies_team2.push(snapshot);
+                    enemies_team2.push(enemy_snapshot);
                 } else if player.team_id == 2 {
-                    enemies_team1.push(snapshot);
+                    enemies_team1.push(enemy_snapshot);
                 }
             });
 
@@ -837,7 +849,7 @@ impl OptimizedBotAI {
         bot_controller: &mut BotController,
         bot_state: &BotSnapshotOwned,
         flag_states: &HashMap<u8, crate::server::instance::ServerFlagState>,
-        live_players_by_id: &HashMap<PlayerID, EnemySnapshot>,
+        live_players_by_id: &HashMap<PlayerID, LivePlayerSnapshot>,
         team_objectives: TeamObjectiveSummary,
         enemies: &[EnemySnapshot],
         commander_attack_bias: Option<f32>,
@@ -955,7 +967,7 @@ impl OptimizedBotAI {
     fn determine_ctf_objective(
         bot_state: &BotSnapshotOwned,
         flag_states: &HashMap<u8, crate::server::instance::ServerFlagState>,
-        live_players_by_id: &HashMap<PlayerID, EnemySnapshot>,
+        live_players_by_id: &HashMap<PlayerID, LivePlayerSnapshot>,
         team_objectives: TeamObjectiveSummary,
         commander_attack_bias: Option<f32>,
     ) -> BotObjective {
@@ -1408,19 +1420,20 @@ impl OptimizedBotAI {
             let aim_angle =
                 (predicted_position.y - bot_state.y).atan2(predicted_position.x - bot_state.x);
 
-            let candidate = TargetSolution {
-                enemy_id: enemy.id.clone(),
-                direct_position,
-                predicted_position,
-                distance_sq: dist_sq,
-                aim_angle,
-            };
-
             let should_replace = selected
                 .as_ref()
                 .is_none_or(|(best_score, _)| threat_score > *best_score);
             if should_replace {
-                selected = Some((threat_score, candidate));
+                selected = Some((
+                    threat_score,
+                    TargetSolution {
+                        enemy_id: enemy.id.clone(),
+                        direct_position,
+                        predicted_position,
+                        distance_sq: dist_sq,
+                        aim_angle,
+                    },
+                ));
             }
         }
 

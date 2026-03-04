@@ -158,6 +158,9 @@ static SHARED_WEBRTC_API: OnceLock<Result<Arc<API>, String>> = OnceLock::new();
 static WEBRTC_PEER_STATES: OnceLock<DashMap<String, &'static str>> = OnceLock::new();
 const MAX_CHAT_MESSAGE_CHARS: usize = 160;
 const MAX_CHAT_USERNAME_CHARS: usize = 32;
+const DEFAULT_CHAT_COOLDOWN_MS: u64 = 450;
+const MIN_CHAT_COOLDOWN_MS: u64 = 0;
+const MAX_CHAT_COOLDOWN_MS: u64 = 5_000;
 const WEBRTC_STATE_LABELS: [&str; 7] = [
     "new",
     "connecting",
@@ -170,6 +173,60 @@ const WEBRTC_STATE_LABELS: [&str; 7] = [
 
 pub fn next_chat_message_seq() -> u64 {
     NEXT_CHAT_MESSAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+fn chat_cooldown_ms() -> u64 {
+    static CHAT_COOLDOWN_MS: OnceLock<u64> = OnceLock::new();
+    *CHAT_COOLDOWN_MS.get_or_init(|| {
+        std::env::var("MGS_CHAT_COOLDOWN_MS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .unwrap_or(DEFAULT_CHAT_COOLDOWN_MS)
+            .clamp(MIN_CHAT_COOLDOWN_MS, MAX_CHAT_COOLDOWN_MS)
+    })
+}
+
+fn shared_chat_cooldowns() -> &'static DashMap<String, u64> {
+    static LAST_CHAT_BY_PEER_MS: OnceLock<DashMap<String, u64>> = OnceLock::new();
+    LAST_CHAT_BY_PEER_MS.get_or_init(DashMap::new)
+}
+
+fn try_consume_chat_cooldown_with_map(
+    peer_id: &str,
+    now_timestamp_ms: u64,
+    cooldown_ms: u64,
+    cooldowns: &DashMap<String, u64>,
+) -> bool {
+    if cooldown_ms == 0 {
+        return true;
+    }
+    match cooldowns.entry(peer_id.to_owned()) {
+        dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
+            let last_sent = *occupied.get();
+            if now_timestamp_ms.saturating_sub(last_sent) < cooldown_ms {
+                return false;
+            }
+            *occupied.get_mut() = now_timestamp_ms;
+            true
+        }
+        dashmap::mapref::entry::Entry::Vacant(vacant) => {
+            vacant.insert(now_timestamp_ms);
+            true
+        }
+    }
+}
+
+fn try_consume_chat_cooldown(peer_id: &str, now_timestamp_ms: u64) -> bool {
+    try_consume_chat_cooldown_with_map(
+        peer_id,
+        now_timestamp_ms,
+        chat_cooldown_ms(),
+        shared_chat_cooldowns(),
+    )
+}
+
+fn clear_chat_cooldown(peer_id: &str) {
+    shared_chat_cooldowns().remove(peer_id);
 }
 
 fn begin_cleanup_once(cleanup_once: &AtomicBool) -> bool {
@@ -1920,6 +1977,17 @@ pub async fn handle_signaling_connection(
                                     game_msg_root.actual_message_as_chat_message()
                                 {
                                     if let Some(message_text_fb) = chat_fb.message() {
+                                        let chat_timestamp = now_millis();
+                                        if !try_consume_chat_cooldown(
+                                            &pid_msg_inner_str,
+                                            chat_timestamp,
+                                        ) {
+                                            trace!(
+                                                "[{}]: Dropping chat message due to per-player cooldown.",
+                                                pid_msg_inner_str
+                                            );
+                                            return;
+                                        }
                                         let player_id_from_connection = pid_msg_inner_str.clone();
                                         let player_id_arc_for_chat = players_map_on_msg
                                             .id_pool
@@ -1952,7 +2020,7 @@ pub async fn handle_signaling_connection(
                                             message: sanitized_message,
                                             // Use server authoritative wall-clock timestamp to
                                             // prevent client-side future timestamp spoofing.
-                                            timestamp: now_millis(),
+                                            timestamp: chat_timestamp,
                                         };
                                         info!(
                                             "[CHAT] {} ({}): {}",
@@ -2188,6 +2256,7 @@ pub fn cleanup_connection(
     auth_service: &AuthService,
 ) {
     info!("[{}]: Cleaning up resources.", peer_id_str);
+    clear_chat_cooldown(peer_id_str);
     remove_webrtc_peer_state(peer_id_str);
     let _ = shared_connection_manager().remove(peer_id_str);
     // Remove signaling sender first; duplicate cleanups are expected under concurrent callbacks.
@@ -2283,6 +2352,57 @@ mod tests {
         };
         guard.defuse();
         assert!(guard.peer_connection.is_none());
+    }
+
+    #[test]
+    fn chat_cooldown_blocks_burst_for_same_peer() {
+        let cooldowns = DashMap::new();
+        let peer_id = "peer-1";
+        let cooldown_ms = 450;
+
+        assert!(try_consume_chat_cooldown_with_map(
+            peer_id,
+            1_000,
+            cooldown_ms,
+            &cooldowns
+        ));
+        assert!(!try_consume_chat_cooldown_with_map(
+            peer_id,
+            1_200,
+            cooldown_ms,
+            &cooldowns
+        ));
+        assert!(try_consume_chat_cooldown_with_map(
+            peer_id,
+            1_451,
+            cooldown_ms,
+            &cooldowns
+        ));
+    }
+
+    #[test]
+    fn chat_cooldown_is_per_peer() {
+        let cooldowns = DashMap::new();
+        let cooldown_ms = 450;
+
+        assert!(try_consume_chat_cooldown_with_map(
+            "peer-a",
+            2_000,
+            cooldown_ms,
+            &cooldowns
+        ));
+        assert!(try_consume_chat_cooldown_with_map(
+            "peer-b",
+            2_050,
+            cooldown_ms,
+            &cooldowns
+        ));
+        assert!(!try_consume_chat_cooldown_with_map(
+            "peer-a",
+            2_200,
+            cooldown_ms,
+            &cooldowns
+        ));
     }
 
     // ── sanitize_text_field tests ────────────────────────────────────

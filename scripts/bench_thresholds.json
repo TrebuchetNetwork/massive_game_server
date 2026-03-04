@@ -1,0 +1,10 @@
+{
+  "metric": "median.point_estimate_ns",
+  "benchmarks": {
+    "physics_filter_indices_within_radius_8k": 12000,
+    "serialization_build_welcome_message": 450,
+    "serialization_parse_welcome_message": 350,
+    "spatial_index_query_nearby_players_5k": 60000,
+    "spatial_index_batch_update_projectiles_2k": 180000
+  }
+}

@@ -120,6 +120,42 @@ jobs:
             /tmp/root_headers
             /tmp/root_body
 
+  bench-regression:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: always
+      # Keep benches quick but consistent for regression checks.
+      MGS_BENCH_WARMUP_TIME: "0.2"
+      MGS_BENCH_MEASUREMENT_TIME: "0.6"
+      MGS_BENCH_SAMPLE_SIZE: "20"
+      MGS_BENCH_NRESAMPLES: "2000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Install FlatBuffers compiler
+        run: scripts/install_flatc.sh
+
+      - name: Run benchmark regression gate
+        run: scripts/run_bench_regression.sh
+
+      - name: Upload criterion output on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: criterion-bench-output
+          path: target/criterion
+
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

@@ -23,7 +23,7 @@
         <div id="killFeed" class="kill-feed hidden"></div>
         <div id="chatDisplay" class="chat-display hidden"></div>
         <div id="matchInfo" class="match-info hidden"></div>
-        <div id="minimapContainer" style="position: absolute; bottom: 10px; right: 10px; border: 1px solid #4B5563; border-radius: 6px; background-color: rgba(31, 41, 55, 0.7);"></div>
+        <div id="minimapContainer" style="position: absolute; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); right: calc(10px + env(safe-area-inset-right, 0px)); border: 1px solid #4B5563; border-radius: 6px; background-color: rgba(31, 41, 55, 0.7);"></div>
         <div id="connectionStatus" class="connection-status connection-status--idle">
             <div class="connection-status__dot"></div>
             <div>
