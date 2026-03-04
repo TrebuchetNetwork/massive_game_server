@@ -106,6 +106,8 @@ export function createSpriteManager(getCtx) {
         container._lastTeamId = null;
         container._lastAlive = null;
         container._lastWeapon = null;
+        container._weaponSwapPunchUntilMs = 0;
+        container._weaponSwapPunchDurationMs = 170;
         container._lastDamageBoost = false;
         container._lastHealthPercent = null;
         container._lastHealthAlive = null;
@@ -429,13 +431,38 @@ export function createSpriteManager(getCtx) {
                     sprite.weaponSwapEffect.visible = swapVisible;
                 }
                 if (swapVisible) {
-                    sprite.weaponSwapEffect.rotation += 0.15;
-                    sprite.weaponSwapEffect.alpha = 0.5 + 0.5 * player.weapon_swap_progress;
+                    const swapPunchRemaining = Math.max(
+                        0,
+                        (Number(sprite._weaponSwapPunchUntilMs) || 0) - frameNowMs
+                    );
+                    const swapPunchDuration = Math.max(1, Number(sprite._weaponSwapPunchDurationMs) || 170);
+                    const swapPunchProgress = 1 - (swapPunchRemaining / swapPunchDuration);
+                    const swapPunch = swapPunchRemaining > 0
+                        ? Math.sin(Math.max(0, Math.min(1, swapPunchProgress)) * Math.PI)
+                        : 0;
+                    sprite.weaponSwapEffect.rotation += 0.15 + swapPunch * 0.06;
+                    sprite.weaponSwapEffect.alpha = Math.min(
+                        1,
+                        0.42 + 0.58 * player.weapon_swap_progress + swapPunch * 0.28
+                    );
+                    const swapScale = 1 + swapPunch * 0.45;
+                    if (
+                        Math.abs((sprite.weaponSwapEffect.scale.x || 1) - swapScale) > TRANSFORM_EPSILON ||
+                        Math.abs((sprite.weaponSwapEffect.scale.y || 1) - swapScale) > TRANSFORM_EPSILON
+                    ) {
+                        sprite.weaponSwapEffect.scale.set(swapScale);
+                    }
                 }
             }
         } else if (sprite.weaponSwapEffect) {
             if (sprite.weaponSwapEffect.visible) sprite.weaponSwapEffect.visible = false;
             sprite.weaponSwapEffect.rotation = 0;
+            if (
+                Math.abs((sprite.weaponSwapEffect.scale.x || 1) - 1) > TRANSFORM_EPSILON ||
+                Math.abs((sprite.weaponSwapEffect.scale.y || 1) - 1) > TRANSFORM_EPSILON
+            ) {
+                sprite.weaponSwapEffect.scale.set(1);
+            }
         }
 
         const carryingTeam = player.is_carrying_flag_team_id > 0 && player.alive ? player.is_carrying_flag_team_id : 0;
@@ -466,6 +493,12 @@ export function createSpriteManager(getCtx) {
         if (!gun) return;
         if (!player.alive) {
             if (gun.visible) gun.visible = false;
+            if (
+                Math.abs((gun.scale.x || 1) - 1) > ALPHA_EPSILON ||
+                Math.abs((gun.scale.y || 1) - 1) > ALPHA_EPSILON
+            ) {
+                gun.scale.set(1, 1);
+            }
             return;
         }
 
@@ -473,6 +506,11 @@ export function createSpriteManager(getCtx) {
         const weapon = player.weapon ?? GP.WeaponType.Pistol;
         if (sprite._lastWeapon !== weapon) {
             gun.texture = renderAssetCache.gunTextures.get(weapon) || renderAssetCache.gunTextures.get(GP.WeaponType.Pistol);
+            if (sprite._lastWeapon !== null && sprite._lastWeapon !== undefined) {
+                const punchDurationMs = 170;
+                sprite._weaponSwapPunchDurationMs = punchDurationMs;
+                sprite._weaponSwapPunchUntilMs = frameNowMs + punchDurationMs;
+            }
             sprite._lastWeapon = weapon;
         }
 
@@ -491,6 +529,27 @@ export function createSpriteManager(getCtx) {
         } else {
             if (gun.tint !== baseTint) gun.tint = baseTint;
             if (gun.alpha !== 1) gun.alpha = 1;
+        }
+
+        const punchRemaining = Math.max(0, (Number(sprite._weaponSwapPunchUntilMs) || 0) - frameNowMs);
+        const punchDuration = Math.max(1, Number(sprite._weaponSwapPunchDurationMs) || 170);
+        const punchProgress = 1 - (punchRemaining / punchDuration);
+        const swapPunch = punchRemaining > 0
+            ? Math.sin(Math.max(0, Math.min(1, punchProgress)) * Math.PI)
+            : 0;
+        const targetScaleX = 1 + swapPunch * 0.2;
+        const targetScaleY = 1 - swapPunch * 0.09;
+        if (
+            Math.abs((gun.scale.x || 1) - targetScaleX) > ALPHA_EPSILON ||
+            Math.abs((gun.scale.y || 1) - targetScaleY) > ALPHA_EPSILON
+        ) {
+            gun.scale.set(targetScaleX, targetScaleY);
+        }
+        if (swapPunch > 0) {
+            const punchedAlpha = Math.min(1, (Number(gun.alpha) || 1) + swapPunch * 0.14);
+            if (Math.abs((Number(gun.alpha) || 1) - punchedAlpha) > ALPHA_EPSILON) {
+                gun.alpha = punchedAlpha;
+            }
         }
         sprite._lastDamageBoost = hasDamageBoost;
     }

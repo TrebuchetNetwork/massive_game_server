@@ -174,6 +174,10 @@ this.maxActiveEffects = this.performanceProfile.maxActiveEffects;
 this.effectSpawnSequence = 0;
 this.effectUpdateFrame = 0;
 this.lastLoadTier = 0;
+this.nearMissTriggerByProjectile = new Map();
+this.nearMissScanAccumulatorMs = 0;
+this.lastNearMissPruneAtMs = 0;
+this.nearMissScanCursor = 0;
 this.ensureDamageNumberBitmapFonts();
 const preallocCount = Math.min(DAMAGE_NUMBER_POOL_PREALLOC, DAMAGE_NUMBER_POOL_MAX);
 for (let i = 0; i < preallocCount; i += 1) {
@@ -1931,10 +1935,160 @@ this.activeEffects.push(effect);
 return effect;
     }
 
+    emitNearMissStreak(localX, localY, velocityX, velocityY, proximity = 0.5) {
+if (!this.shouldEmitEffect('movement')) return;
+const speed = Math.hypot(velocityX, velocityY);
+if (!Number.isFinite(speed) || speed < 1) return;
+
+const dirX = velocityX / speed;
+const dirY = velocityY / speed;
+const normalX = -dirY;
+const normalY = dirX;
+const offset = (Math.random() < 0.5 ? -1 : 1) * (16 + Math.random() * 16);
+const streakLength = 22 + proximity * 34;
+
+const startX = localX + normalX * offset - dirX * streakLength * 0.55;
+const startY = localY + normalY * offset - dirY * streakLength * 0.55;
+const endX = localX + normalX * offset + dirX * streakLength * 0.45;
+const endY = localY + normalY * offset + dirY * streakLength * 0.45;
+
+const streak = new PIXI.Graphics();
+streak.lineStyle(2.4, 0xFFFFFF, 0.82);
+streak.moveTo(startX, startY);
+streak.lineTo(endX, endY);
+this.effectsContainer.addChild(streak);
+
+this.animateEffect(streak, {
+    duration: this.scaleDuration(110, 55),
+    priority: 2,
+    onUpdate: (progress) => {
+        streak.alpha = 0.86 * (1 - progress);
+        streak.scale.set(1 + progress * 0.24);
+    },
+    onComplete: () => streak.destroy()
+});
+    }
+
+    processProjectileNearMissFeedback(deltaMS = 16.67) {
+if (!this.audioManager || !localPlayerState || !localPlayerState.alive || localPlayerState.is_spectator) {
+    return;
+}
+if (!projectiles || projectiles.size === 0) return;
+
+const localX = Number.isFinite(localPlayerState.render_x)
+    ? localPlayerState.render_x
+    : Number(localPlayerState.x);
+const localY = Number.isFinite(localPlayerState.render_y)
+    ? localPlayerState.render_y
+    : Number(localPlayerState.y);
+if (!Number.isFinite(localX) || !Number.isFinite(localY)) return;
+
+const loadTier = this.getLoadTier();
+const scanIntervalMs = loadTier >= 2 ? 66 : (loadTier === 1 ? 50 : 33);
+this.nearMissScanAccumulatorMs += Math.max(0, Number(deltaMS) || 16.67);
+if (this.nearMissScanAccumulatorMs < scanIntervalMs) {
+    return;
+}
+
+const scanStepMs = this.nearMissScanAccumulatorMs;
+this.nearMissScanAccumulatorMs = 0;
+const dtSec = Math.min(0.1, Math.max(0.016, scanStepMs / 1000));
+const nearMissRadius = loadTier >= 2 ? 48 : 56;
+const nearMissRadiusSq = nearMissRadius * nearMissRadius;
+const maxChecks = loadTier >= 2 ? 140 : (loadTier === 1 ? 260 : 420);
+const nowMs = Date.now();
+const localId = myPlayerId != null ? String(myPlayerId) : '';
+const projectileCount = projectiles.size;
+if (projectileCount <= 0) return;
+
+if (nowMs - this.lastNearMissPruneAtMs > 1200) {
+    this.lastNearMissPruneAtMs = nowMs;
+    this.nearMissTriggerByProjectile.forEach((triggerAt, projectileId) => {
+        if ((nowMs - triggerAt) > 2500 || !projectiles.has(projectileId)) {
+            this.nearMissTriggerByProjectile.delete(projectileId);
+        }
+    });
+}
+
+let checked = 0;
+let triggered = 0;
+let scanProcessed = 0;
+const startIndex = this.nearMissScanCursor % projectileCount;
+const processProjectileCandidate = (projectileId, projectile) => {
+    if (checked >= maxChecks || triggered >= 2) return false;
+    checked += 1;
+    if (!projectile || this.nearMissTriggerByProjectile.has(projectileId)) return false;
+
+    const ownerId = projectile.owner_id != null ? String(projectile.owner_id) : '';
+    if (ownerId && localId && ownerId === localId) return false;
+
+    const px = Number.isFinite(projectile.render_x) ? projectile.render_x : Number(projectile.x);
+    const py = Number.isFinite(projectile.render_y) ? projectile.render_y : Number(projectile.y);
+    const vx = Number(projectile.velocity_x) || 0;
+    const vy = Number(projectile.velocity_y) || 0;
+    if (!Number.isFinite(px) || !Number.isFinite(py)) return false;
+    const speedSq = vx * vx + vy * vy;
+    if (!Number.isFinite(speedSq) || speedSq < 1) return false;
+
+    const relX = localX - px;
+    const relY = localY - py;
+    if ((relX * vx + relY * vy) <= 0) return false;
+
+    const nextX = px + vx * dtSec * 1.25;
+    const nextY = py + vy * dtSec * 1.25;
+    const segX = nextX - px;
+    const segY = nextY - py;
+    const segLenSq = segX * segX + segY * segY;
+    if (!Number.isFinite(segLenSq) || segLenSq <= 1e-4) return false;
+
+    let t = ((localX - px) * segX + (localY - py) * segY) / segLenSq;
+    t = Math.max(0, Math.min(1, t));
+    const closestX = px + segX * t;
+    const closestY = py + segY * t;
+    const dx = localX - closestX;
+    const dy = localY - closestY;
+    const distSq = dx * dx + dy * dy;
+    if (!Number.isFinite(distSq) || distSq > nearMissRadiusSq) return false;
+
+    const dist = Math.sqrt(Math.max(0, distSq));
+    const proximity = 1 - Math.min(1, dist / nearMissRadius);
+    const volume = 0.2 + proximity * 0.34;
+    this.audioManager.playSound('bulletWhiz', { x: px, y: py }, volume);
+    this.emitNearMissStreak(localX, localY, vx, vy, proximity);
+    this.nearMissTriggerByProjectile.set(projectileId, nowMs);
+    triggered += 1;
+    return true;
+};
+
+let index = 0;
+for (const [projectileId, projectile] of projectiles) {
+    if (checked >= maxChecks || triggered >= 2) break;
+    if (index < startIndex) {
+        index += 1;
+        continue;
+    }
+    processProjectileCandidate(projectileId, projectile);
+    index += 1;
+    scanProcessed += 1;
+}
+
+if (checked < maxChecks && triggered < 2 && startIndex > 0) {
+    index = 0;
+    for (const [projectileId, projectile] of projectiles) {
+        if (checked >= maxChecks || triggered >= 2 || index >= startIndex) break;
+        processProjectileCandidate(projectileId, projectile);
+        index += 1;
+        scanProcessed += 1;
+    }
+}
+this.nearMissScanCursor = (startIndex + scanProcessed) % Math.max(1, projectileCount);
+    }
+
     update(deltaMS) {
 if (this.activeEffects.length > this.maxActiveEffects) {
     this.dropOverflowEffects(0);
 }
+this.processProjectileNearMissFeedback(deltaMS);
 const loadTier = this.getLoadTier();
 this.lastLoadTier = loadTier;
 this.flushQueuedDamageNumbers(false, loadTier);
