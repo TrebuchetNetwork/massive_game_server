@@ -12,6 +12,9 @@ export function createUIManager(getCtx) {
 
     let lastCountdownBeepSecond = null;
     let lastMatchOutcomeAudioSignature = '';
+    const POST_MATCH_RECORDS_KEY = 'mgs_post_match_records_v1';
+    const POST_MATCH_PERF_HISTORY_KEY = 'mgs_post_match_perf_history_v1';
+    const POST_MATCH_PERF_HISTORY_LIMIT = 20;
 
     function escapeHtml(unsafe) {
         const raw = String(unsafe ?? '');
@@ -46,6 +49,54 @@ export function createUIManager(getCtx) {
         if (normalized === 'TeamDeathmatch') return 'TDM';
         if (normalized === 'CaptureTheFlag') return 'CTF';
         return normalized;
+    }
+
+    function parseMvpMetricNumber(rawValue) {
+        if (typeof rawValue === 'number' && Number.isFinite(rawValue)) return rawValue;
+        const match = String(rawValue ?? '').match(/-?\d+(?:\.\d+)?/);
+        if (!match) return null;
+        const parsed = Number(match[0]);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function getMvpTier(metricKey, numericValue) {
+        if (!Number.isFinite(numericValue)) {
+            return { code: 'D', label: 'Entry' };
+        }
+        const value = Number(numericValue);
+        if (metricKey === 'kills') {
+            if (value >= 20) return { code: 'S', label: 'Elite' };
+            if (value >= 14) return { code: 'A', label: 'Pro' };
+            if (value >= 9) return { code: 'B', label: 'Strong' };
+            if (value >= 5) return { code: 'C', label: 'Solid' };
+            return { code: 'D', label: 'Entry' };
+        }
+        if (metricKey === 'damage') {
+            if (value >= 4500) return { code: 'S', label: 'Elite' };
+            if (value >= 3000) return { code: 'A', label: 'Pro' };
+            if (value >= 1800) return { code: 'B', label: 'Strong' };
+            if (value >= 900) return { code: 'C', label: 'Solid' };
+            return { code: 'D', label: 'Entry' };
+        }
+        if (metricKey === 'objective') {
+            if (value >= 6) return { code: 'S', label: 'Elite' };
+            if (value >= 4) return { code: 'A', label: 'Pro' };
+            if (value >= 2) return { code: 'B', label: 'Strong' };
+            if (value >= 1) return { code: 'C', label: 'Solid' };
+            return { code: 'D', label: 'Entry' };
+        }
+        return { code: 'D', label: 'Entry' };
+    }
+
+    function loadStoredJson(key, fallbackValue) {
+        try {
+            const raw = localStorage.getItem(key);
+            if (!raw) return fallbackValue;
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' ? parsed : fallbackValue;
+        } catch (_) {
+            return fallbackValue;
+        }
     }
 
     function playUiSound(soundName, volume = 0.24) {
@@ -130,21 +181,35 @@ export function createUIManager(getCtx) {
         const mvpObjectives = summaryPayload.mvp_objectives || summaryPayload.mvpObjectives || 'N/A';
         ctx.postMatchMvpDiv.replaceChildren();
         [
-            ['Most Kills:', mvpKills],
-            ['Most Damage:', mvpDamage],
-            ['Most Objective:', mvpObjectives],
-        ].forEach(([label, value], index) => {
+            { label: 'Most Kills:', value: mvpKills, metricKey: 'kills', shortCode: 'K' },
+            { label: 'Most Damage:', value: mvpDamage, metricKey: 'damage', shortCode: 'DMG' },
+            { label: 'Most Objective:', value: mvpObjectives, metricKey: 'objective', shortCode: 'OBJ' },
+        ].forEach((entry, index) => {
             if (index > 0) ctx.postMatchMvpDiv.appendChild(document.createTextNode(' '));
             const award = document.createElement('span');
-            award.className = 'mvp-award';
+            const tier = getMvpTier(entry.metricKey, parseMvpMetricNumber(entry.value));
+            award.className = `mvp-award mvp-award--tier-${tier.code.toLowerCase()}`;
+            award.title = `${tier.label} tier`;
+            const icon = document.createElement('span');
+            icon.className = 'mvp-award__icon';
+            icon.textContent = entry.shortCode;
+            award.appendChild(icon);
             const boldLabel = document.createElement('b');
-            boldLabel.textContent = String(label);
+            boldLabel.textContent = String(entry.label);
             award.appendChild(boldLabel);
-            award.appendChild(document.createTextNode(` ${String(value)}`));
+            award.appendChild(document.createTextNode(` ${String(entry.value)}`));
+            const tierBadge = document.createElement('span');
+            tierBadge.className = 'mvp-award__tier';
+            tierBadge.textContent = tier.code;
+            award.appendChild(tierBadge);
             ctx.postMatchMvpDiv.appendChild(award);
         });
 
         const playersRows = Array.isArray(summaryPayload.players) ? summaryPayload.players : [];
+        const localRow = playersRows.find((row) => {
+            const pid = row?.player_id || row?.playerId;
+            return pid && pid === ctx.myPlayerId;
+        }) || null;
         ctx.postMatchTableDiv.replaceChildren();
         if (playersRows.length === 0) {
             const empty = document.createElement('div');
@@ -189,10 +254,6 @@ export function createUIManager(getCtx) {
         const weaponBreakdownDiv = document.getElementById('postMatchWeaponBreakdown');
         if (weaponBreakdownDiv) {
             weaponBreakdownDiv.replaceChildren();
-            const localRow = playersRows.find(r => {
-                const pid = r?.player_id || r?.playerId;
-                return pid && pid === ctx.myPlayerId;
-            });
             const weaponKills = localRow?.weapon_kills || localRow?.weaponKills || {};
             const weaponEntries = Object.entries(weaponKills);
             if (weaponEntries.length > 0) {
@@ -222,11 +283,13 @@ export function createUIManager(getCtx) {
         const trendDiv = document.getElementById('postMatchTrend');
         if (trendDiv) {
             trendDiv.replaceChildren();
-            const localRow = playersRows.find(r => (r?.player_id || r?.playerId) === ctx.myPlayerId);
             if (localRow) {
+                const kills = toInt(localRow?.kills, 0);
+                const score = toInt(localRow?.score, 0);
+                const damage = toInt(localRow?.damage_dealt || localRow?.damageDealt, 0);
                 const kd = Number(localRow?.kd_ratio || localRow?.kdRatio || 0);
                 let history = [];
-                try { history = JSON.parse(localStorage.getItem('kdTrend') || '[]'); } catch(e) {}
+                try { history = JSON.parse(localStorage.getItem('kdTrend') || '[]'); } catch (_) {}
                 history.push({ kd: Math.round(kd * 100) / 100, ts: Date.now() });
                 if (history.length > 20) history = history.slice(-20);
                 localStorage.setItem('kdTrend', JSON.stringify(history));
@@ -254,6 +317,128 @@ export function createUIManager(getCtx) {
                     svg.appendChild(polyline);
                     trendDiv.appendChild(svg);
                 }
+
+                const currentPerf = {
+                    kills,
+                    score,
+                    damage,
+                    kd: Number.isFinite(kd) ? Number(kd.toFixed(2)) : 0,
+                    ts: Date.now(),
+                };
+                const storedPerfHistory = loadStoredJson(POST_MATCH_PERF_HISTORY_KEY, []);
+                const perfHistory = Array.isArray(storedPerfHistory) ? storedPerfHistory : [];
+                const baselineWindow = perfHistory.slice(-10);
+                if (baselineWindow.length >= 3) {
+                    const avgKills = baselineWindow.reduce((sum, row) => sum + (Number(row?.kills) || 0), 0) / baselineWindow.length;
+                    const avgScore = baselineWindow.reduce((sum, row) => sum + (Number(row?.score) || 0), 0) / baselineWindow.length;
+                    const avgDamage = baselineWindow.reduce((sum, row) => sum + (Number(row?.damage) || 0), 0) / baselineWindow.length;
+                    const avgKd = baselineWindow.reduce((sum, row) => sum + (Number(row?.kd) || 0), 0) / baselineWindow.length;
+                    const comparisons = [
+                        { label: 'Kills', now: kills, avg: avgKills },
+                        { label: 'Score', now: score, avg: avgScore },
+                        { label: 'Damage', now: damage, avg: avgDamage },
+                        { label: 'K/D', now: currentPerf.kd, avg: avgKd },
+                    ];
+                    const compareLabel = document.createElement('div');
+                    compareLabel.className = 'trend-label';
+                    compareLabel.textContent = 'Performance vs last 10';
+                    trendDiv.appendChild(compareLabel);
+
+                    const compareGrid = document.createElement('div');
+                    compareGrid.className = 'post-match-compare';
+                    comparisons.forEach((entry) => {
+                        const avg = Number(entry.avg) || 0;
+                        const deltaPct = avg > 0 ? ((Number(entry.now) - avg) / avg) * 100 : 0;
+                        const item = document.createElement('div');
+                        item.className = 'post-match-compare__item';
+                        const stateClass = deltaPct >= 2 ? 'up' : (deltaPct <= -2 ? 'down' : 'flat');
+                        item.classList.add(`post-match-compare__item--${stateClass}`);
+                        const sign = deltaPct > 0 ? '+' : '';
+                        item.textContent = `${entry.label} ${sign}${deltaPct.toFixed(0)}%`;
+                        compareGrid.appendChild(item);
+                    });
+                    trendDiv.appendChild(compareGrid);
+                }
+                perfHistory.push(currentPerf);
+                const trimmedHistory = perfHistory.slice(-POST_MATCH_PERF_HISTORY_LIMIT);
+                try {
+                    localStorage.setItem(POST_MATCH_PERF_HISTORY_KEY, JSON.stringify(trimmedHistory));
+                } catch (_) {}
+
+                const defaultRecords = {
+                    matches: 0,
+                    bestKills: 0,
+                    bestScore: 0,
+                    bestDamage: 0,
+                    bestKd: 0,
+                };
+                const storedRecords = loadStoredJson(POST_MATCH_RECORDS_KEY, defaultRecords);
+                const prevRecords = {
+                    bestKills: Number(storedRecords?.bestKills) || 0,
+                    bestScore: Number(storedRecords?.bestScore) || 0,
+                    bestDamage: Number(storedRecords?.bestDamage) || 0,
+                    bestKd: Number(storedRecords?.bestKd) || 0,
+                };
+                const nextRecords = {
+                    matches: Math.max(0, toInt(storedRecords?.matches, 0)) + 1,
+                    bestKills: Math.max(prevRecords.bestKills, kills),
+                    bestScore: Math.max(prevRecords.bestScore, score),
+                    bestDamage: Math.max(prevRecords.bestDamage, damage),
+                    bestKd: Math.max(prevRecords.bestKd, currentPerf.kd),
+                };
+                try {
+                    localStorage.setItem(POST_MATCH_RECORDS_KEY, JSON.stringify(nextRecords));
+                } catch (_) {}
+
+                const recordLabel = document.createElement('div');
+                recordLabel.className = 'trend-label';
+                recordLabel.textContent = `Personal Records (${nextRecords.matches} matches)`;
+                trendDiv.appendChild(recordLabel);
+
+                const recordGrid = document.createElement('div');
+                recordGrid.className = 'post-match-records';
+                [
+                    {
+                        label: 'Best Kills',
+                        value: Math.trunc(nextRecords.bestKills),
+                        isNew: kills > prevRecords.bestKills,
+                    },
+                    {
+                        label: 'Best Score',
+                        value: Math.trunc(nextRecords.bestScore),
+                        isNew: score > prevRecords.bestScore,
+                    },
+                    {
+                        label: 'Best Damage',
+                        value: Math.trunc(nextRecords.bestDamage),
+                        isNew: damage > prevRecords.bestDamage,
+                    },
+                    {
+                        label: 'Best K/D',
+                        value: nextRecords.bestKd.toFixed(2),
+                        isNew: currentPerf.kd > prevRecords.bestKd,
+                    },
+                ].forEach((entry) => {
+                    const card = document.createElement('div');
+                    card.className = 'post-match-record';
+                    if (entry.isNew) card.classList.add('post-match-record--new');
+                    const title = document.createElement('div');
+                    title.className = 'post-match-record__label';
+                    title.textContent = entry.label;
+                    const value = document.createElement('div');
+                    value.className = 'post-match-record__value';
+                    value.textContent = String(entry.value);
+                    card.appendChild(title);
+                    card.appendChild(value);
+                    if (entry.isNew) {
+                        const tag = document.createElement('div');
+                        tag.className = 'post-match-record__tag';
+                        tag.textContent = 'NEW';
+                        card.appendChild(tag);
+                    }
+                    recordGrid.appendChild(card);
+                });
+                trendDiv.appendChild(recordGrid);
             }
         }
 

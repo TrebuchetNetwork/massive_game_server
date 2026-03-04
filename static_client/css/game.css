@@ -877,12 +877,162 @@
             font-size: 12px;
         }
 
+        .mvp-award__icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 26px;
+            padding: 1px 5px;
+            margin-right: 6px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.5);
+            color: #bfdbfe;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+        }
+
+        .mvp-award__tier {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            margin-left: 7px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 800;
+            border: 1px solid rgba(148, 163, 184, 0.45);
+            color: #e2e8f0;
+            background: rgba(15, 23, 42, 0.65);
+        }
+
+        .mvp-award--tier-s {
+            border-color: rgba(251, 191, 36, 0.72);
+            background: rgba(251, 191, 36, 0.18);
+        }
+
+        .mvp-award--tier-s .mvp-award__tier {
+            border-color: rgba(251, 191, 36, 0.92);
+            color: #fef08a;
+        }
+
+        .mvp-award--tier-a {
+            border-color: rgba(244, 114, 182, 0.6);
+            background: rgba(244, 114, 182, 0.16);
+        }
+
+        .mvp-award--tier-a .mvp-award__tier {
+            border-color: rgba(244, 114, 182, 0.8);
+            color: #fbcfe8;
+        }
+
+        .mvp-award--tier-b {
+            border-color: rgba(56, 189, 248, 0.62);
+            background: rgba(56, 189, 248, 0.16);
+        }
+
+        .mvp-award--tier-b .mvp-award__tier {
+            border-color: rgba(56, 189, 248, 0.8);
+            color: #bae6fd;
+        }
+
+        .mvp-award--tier-c {
+            border-color: rgba(52, 211, 153, 0.56);
+            background: rgba(52, 211, 153, 0.14);
+        }
+
+        .mvp-award--tier-c .mvp-award__tier {
+            border-color: rgba(52, 211, 153, 0.76);
+            color: #bbf7d0;
+        }
+
         .weapon-breakdown-label, .trend-label {
             font-size: 11px;
             color: #94A3B8;
             margin-bottom: 4px;
             text-transform: uppercase;
             letter-spacing: 0.05em;
+        }
+
+        .post-match-compare {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: 6px 0 10px;
+        }
+
+        .post-match-compare__item {
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            border: 1px solid rgba(71, 85, 105, 0.72);
+            background: rgba(15, 23, 42, 0.58);
+            color: #cbd5e1;
+        }
+
+        .post-match-compare__item--up {
+            color: #86efac;
+            border-color: rgba(34, 197, 94, 0.55);
+            background: rgba(22, 101, 52, 0.22);
+        }
+
+        .post-match-compare__item--down {
+            color: #fca5a5;
+            border-color: rgba(248, 113, 113, 0.58);
+            background: rgba(127, 29, 29, 0.22);
+        }
+
+        .post-match-compare__item--flat {
+            color: #bfdbfe;
+            border-color: rgba(59, 130, 246, 0.5);
+            background: rgba(30, 64, 175, 0.18);
+        }
+
+        .post-match-records {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+            gap: 7px;
+            margin-top: 6px;
+        }
+
+        .post-match-record {
+            border: 1px solid rgba(71, 85, 105, 0.62);
+            border-radius: 8px;
+            background: rgba(15, 23, 42, 0.64);
+            padding: 8px;
+            min-height: 62px;
+            position: relative;
+        }
+
+        .post-match-record--new {
+            border-color: rgba(250, 204, 21, 0.62);
+            box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.24) inset;
+            background: linear-gradient(160deg, rgba(113, 63, 18, 0.48), rgba(30, 41, 59, 0.7));
+        }
+
+        .post-match-record__label {
+            font-size: 10px;
+            letter-spacing: 0.04em;
+            color: #94a3b8;
+            text-transform: uppercase;
+        }
+
+        .post-match-record__value {
+            margin-top: 5px;
+            font-size: 16px;
+            font-weight: 800;
+            color: #e2e8f0;
+        }
+
+        .post-match-record__tag {
+            position: absolute;
+            top: 6px;
+            right: 7px;
+            font-size: 9px;
+            font-weight: 800;
+            letter-spacing: 0.05em;
+            color: #fde68a;
         }
 
         .weapon-breakdown-bars {
