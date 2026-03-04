@@ -347,8 +347,7 @@ impl ImprovedPlayerManager {
         if self
             .next_balanced_team
             .fetch_add(1, AtomicOrdering::Relaxed)
-            % 2
-            == 0
+            .is_multiple_of(2)
         {
             1
         } else {

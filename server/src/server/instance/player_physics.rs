@@ -9,7 +9,7 @@ impl MassiveGameServer {
         let sample_timestamp_ms = self.get_server_timestamp_ms();
 
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-        if frame % 120 == 0 {
+        if frame.is_multiple_of(120) {
             self.prune_runtime_tracking_state();
         }
 

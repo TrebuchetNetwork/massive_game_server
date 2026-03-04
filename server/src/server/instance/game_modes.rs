@@ -481,7 +481,6 @@ impl MassiveGameServer {
                 if let Some((event_index, next_interval_secs)) = map_event_to_trigger {
                     drop(match_info_guard);
                     self.trigger_center_supply_drop_map_event(event_index, next_interval_secs);
-                    return;
                 }
             }
             fb::MatchStateType::Ended => {
