@@ -6,19 +6,30 @@ Welcome to the Massive Game Server project! This is a high-performance game serv
 
 Public live links are temporarily disabled until the hosted deployment is back online.
 
-# Settings
-target_bot_count: Arc::new(AtomicU64::new(80))
-max_players_per_match: 400
+## Latest Gameplay & UI Showcase
 
+### Combat and Effects
 
-## Latest Gameplay
-![Latest Gameplay](docs/media/gameplay/latest_moment_02_crossfire_surge.gif)
+| Combat Push | FX Overload |
+| --- | --- |
+| ![Gameplay Showcase](docs/media/gameplay/gameplay_showcase.gif) | ![Effects Showcase](docs/media/gameplay/effects_showcase.gif) |
 
-### Highlight Reel
+### Admin and Settings
 
-| Dash Firefight | Crossfire Surge | Final Chaos |
-| --- | --- | --- |
-| ![Dash Firefight](docs/media/gameplay/latest_moment_01_dash_firefight.gif) | ![Crossfire Surge](docs/media/gameplay/latest_moment_02_crossfire_surge.gif) | ![Final Chaos](docs/media/gameplay/latest_moment_03_final_chaos.gif) |
+| Arena Console | Settings Panel |
+| --- | --- |
+| ![Admin Arena Console](docs/media/screenshots/admin_arena_console.png) | ![Settings Panel](docs/media/screenshots/settings_panel.png) |
+
+### In-Game Screenshots
+
+| Crossfire Moment | Effects Snapshot |
+| --- | --- |
+| ![Gameplay Crossfire](docs/media/screenshots/gameplay_crossfire.png) | ![Effects Overload](docs/media/screenshots/effects_overload.png) |
+
+### Short Video Captures
+
+- [Gameplay Showcase (MP4)](docs/media/videos/gameplay_showcase.mp4)
+- [Effects Showcase (MP4)](docs/media/videos/effects_showcase.mp4)
 
 ### What's New
 
