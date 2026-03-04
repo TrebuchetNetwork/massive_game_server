@@ -837,6 +837,26 @@ switch (event.event_type) {
     case GP.GameEventType.WeaponFire:
         if (event.weapon_type === GP.WeaponType.Melee) {
             this.createMeleeSwingEffect(pos, event.instigator_id);
+            const instigatorIdString = event.instigator_id != null ? String(event.instigator_id) : '';
+            const localIdString = myPlayerId != null ? String(myPlayerId) : '';
+            const isLocalMelee = !!instigatorIdString && !!localIdString && instigatorIdString === localIdString;
+            let shouldShowParryWindow = isLocalMelee;
+            if (!shouldShowParryWindow && localPlayerState) {
+                const localX = Number.isFinite(localPlayerState.render_x)
+                    ? localPlayerState.render_x
+                    : Number(localPlayerState.x);
+                const localY = Number.isFinite(localPlayerState.render_y)
+                    ? localPlayerState.render_y
+                    : Number(localPlayerState.y);
+                if (Number.isFinite(localX) && Number.isFinite(localY)) {
+                    const dx = pos.x - localX;
+                    const dy = pos.y - localY;
+                    shouldShowParryWindow = (dx * dx + dy * dy) <= (420 * 420);
+                }
+            }
+            if (shouldShowParryWindow) {
+                this.createParryWindowIndicator(pos, event.instigator_id, isLocalMelee);
+            }
         } else {
             if (!this.shouldEmitEffect('muzzle')) break;
             this.createEnhancedMuzzleFlash(pos, event.weapon_type, event.instigator_id);
@@ -1901,6 +1921,81 @@ this.scheduleCallback(2000, () => {
     if (container.parent) {
         container.destroy();
     }
+});
+    }
+
+    createParryWindowIndicator(position, instigatorId, isLocalPlayer = false) {
+if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return;
+if (!isLocalPlayer && !this.shouldEmitEffect('movement')) return;
+
+const player = players.get(instigatorId);
+const facing = Number.isFinite(player?.rotation) ? player.rotation : 0;
+const windowMs = 220;
+const radius = PLAYER_RADIUS + 20;
+const halfArc = Math.PI * 0.42;
+
+const container = new PIXI.Container();
+container.position.set(position.x, position.y);
+this.effectsContainer.addChild(container);
+
+const arc = new PIXI.Graphics();
+const core = new PIXI.Graphics();
+const sparkColor = isLocalPlayer ? 0x7EE8FF : 0xB8FFF2;
+container.addChild(arc);
+container.addChild(core);
+
+for (let i = 0; i < 3; i += 1) {
+    const tick = new PIXI.Graphics();
+    tick.lineStyle(2, sparkColor, 0.8 - i * 0.15);
+    const ang = facing + (i - 1) * 0.32;
+    const inner = radius - 8;
+    const outer = radius + 2 + i * 3;
+    tick.moveTo(Math.cos(ang) * inner, Math.sin(ang) * inner);
+    tick.lineTo(Math.cos(ang) * outer, Math.sin(ang) * outer);
+    container.addChild(tick);
+    this.animateEffect(tick, {
+        duration: this.scaleDuration(windowMs, 90),
+        onUpdate: (progress) => {
+            tick.alpha = (0.8 - i * 0.15) * (1 - progress);
+            tick.scale.set(1 + progress * 0.2);
+        },
+        onComplete: () => tick.destroy()
+    });
+}
+
+this.animateEffect(arc, {
+    duration: this.scaleDuration(windowMs, 90),
+    priority: 2,
+    onUpdate: (progress) => {
+        arc.clear();
+        arc.lineStyle(3, sparkColor, 0.9 * (1 - progress));
+        arc.arc(
+            0,
+            0,
+            radius + progress * 3,
+            facing - halfArc,
+            facing + halfArc,
+            false
+        );
+    },
+    onComplete: () => arc.destroy()
+});
+
+this.animateEffect(core, {
+    duration: this.scaleDuration(windowMs, 90),
+    priority: 2,
+    onUpdate: (progress) => {
+        core.clear();
+        core.lineStyle(1.8, 0xFFFFFF, 0.7 * (1 - progress));
+        core.drawCircle(0, 0, PLAYER_RADIUS + 3 + progress * 4);
+    },
+    onComplete: () => core.destroy()
+});
+
+this.animateEffect(container, {
+    duration: this.scaleDuration(windowMs + 40, 110),
+    onUpdate: () => {},
+    onComplete: () => container.destroy({ children: true })
 });
     }
 

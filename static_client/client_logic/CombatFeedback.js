@@ -346,7 +346,19 @@ export function createCombatFeedback(getCtx) {
             const isLocal = instigatorId === ctx.myPlayerId;
             const killerName = ctx.players.get(instigatorId)?.username || 'Unknown';
             if (isLocal) {
-                if (streakCount >= 7) {
+                if (streakCount >= 10) {
+                    showCombatBanner('LEGENDARY!', 'kill', 2000);
+                    showStreakMedal('Legendary', 1800);
+                    setObjectiveUrgency('LEGENDARY! Momentum score x3 active', 'critical', 3400);
+                    playAnnouncerCue('rampage');
+                    triggerHaptic([12, 14, 18, 14]);
+                } else if (streakCount >= 8) {
+                    showCombatBanner('GODLIKE!', 'kill', 1900);
+                    showStreakMedal('Godlike', 1700);
+                    setObjectiveUrgency('GODLIKE! Keep the pressure up', 'critical', 3200);
+                    playAnnouncerCue('rampage');
+                    triggerHaptic([12, 14, 16]);
+                } else if (streakCount >= 7) {
                     showCombatBanner('DOMINATING!', 'kill', 1700);
                     setObjectiveUrgency('DOMINATING! Momentum score x3 active', 'critical', 3000);
                 } else if (streakCount >= 5) {
@@ -357,7 +369,13 @@ export function createCombatFeedback(getCtx) {
                     setObjectiveUrgency('ON FIRE! Momentum score x1.5 active', 'positive', 2000);
                 }
             } else {
-                if (streakCount >= 7) {
+                if (streakCount >= 10) {
+                    showCombatBanner(`${killerName} LEGENDARY!`, 'kill', 2000);
+                    setObjectiveUrgency(`${killerName} is LEGENDARY (x3 score)!`, 'critical', 2400);
+                } else if (streakCount >= 8) {
+                    showCombatBanner(`${killerName} GODLIKE!`, 'kill', 1900);
+                    setObjectiveUrgency(`${killerName} is GODLIKE (x3 score)!`, 'critical', 2200);
+                } else if (streakCount >= 7) {
                     showCombatBanner(`${killerName} DOMINATING!`, 'kill', 1700);
                     setObjectiveUrgency(`${killerName} is DOMINATING (x3 score)!`, 'critical', 2000);
                 } else if (streakCount >= 5) {
