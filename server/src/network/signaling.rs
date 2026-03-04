@@ -1231,6 +1231,7 @@ pub async fn handle_signaling_connection(
     auth_service: AuthService,
     auth_user_id: Option<String>,
     requested_team_id: Option<u8>,
+    requested_username: Option<String>,
     remote_ip: Option<IpAddr>,
     is_mobile: bool,
 ) {
@@ -1593,6 +1594,7 @@ pub async fn handle_signaling_connection(
         let auth_service_on_open = auth_service_for_dc_event.clone();
         let auth_user_id_on_open = auth_user_id_for_dc_event.clone();
         let requested_team_on_open = requested_team_id;
+        let requested_username_on_open = requested_username.clone();
 
         dc_on_open_arc.on_open(Box::new(move || {
             let current_peer_id_on_open_cb = peer_id_on_open.clone();
@@ -1645,6 +1647,12 @@ pub async fn handle_signaling_connection(
                         "[{}]: Bound authenticated user '{}' to peer.",
                         current_peer_id_on_open_cb, bound_user_id
                     );
+                }
+            } else if let Some(requested_name) = requested_username_on_open.as_deref() {
+                if let Some(sanitized) =
+                    sanitize_username_field(requested_name, MAX_CHAT_USERNAME_CHARS)
+                {
+                    username = sanitized;
                 }
             }
 

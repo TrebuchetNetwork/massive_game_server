@@ -107,7 +107,10 @@
         <div id="postMatchPanel" class="post-match-panel">
             <div class="post-match-panel__header">
                 <div class="post-match-panel__title">Match Summary</div>
-                <button id="closePostMatchButton" class="post-match-panel__close" type="button">Close</button>
+                <div class="post-match-panel__actions">
+                    <button id="playAgainButton" class="post-match-panel__play-again" type="button">Play Again</button>
+                    <button id="closePostMatchButton" class="post-match-panel__close" type="button">Close</button>
+                </div>
             </div>
             <div id="postMatchMeta" class="post-match-panel__meta"></div>
             <div id="postMatchMvp" class="post-match-panel__mvp"></div>
@@ -120,6 +123,27 @@
             <button type="button" data-ping-kind="enemy" class="ping-wheel__btn ping-wheel__btn--enemy">Enemy</button>
             <button type="button" data-ping-kind="defend" class="ping-wheel__btn ping-wheel__btn--defend">Defend</button>
             <button type="button" data-ping-kind="group" class="ping-wheel__btn ping-wheel__btn--group">Group</button>
+        </div>
+    </div>
+
+    <div id="usernameModal" class="username-modal hidden">
+        <div class="username-modal__card">
+            <div class="username-modal__title">Choose Your Callsign</div>
+            <div class="username-modal__subtitle">Saved locally for fast queueing on future sessions.</div>
+            <input
+                id="usernameInput"
+                class="username-modal__input"
+                type="text"
+                maxlength="20"
+                placeholder="Enter display name"
+                autocomplete="off"
+                spellcheck="false"
+            >
+            <div id="usernameError" class="username-modal__error hidden"></div>
+            <div class="username-modal__actions">
+                <button id="usernameSkipButton" class="username-modal__btn username-modal__btn--secondary" type="button">Quick Start</button>
+                <button id="usernameSaveButton" class="username-modal__btn username-modal__btn--primary" type="button">Save Name</button>
+            </div>
         </div>
     </div>
 
@@ -598,6 +622,12 @@
         const postMatchMvpDiv = document.getElementById('postMatchMvp');
         const postMatchTableDiv = document.getElementById('postMatchTable');
         const closePostMatchButton = document.getElementById('closePostMatchButton');
+        const playAgainButton = document.getElementById('playAgainButton');
+        const usernameModalDiv = document.getElementById('usernameModal');
+        const usernameInput = document.getElementById('usernameInput');
+        const usernameSaveButton = document.getElementById('usernameSaveButton');
+        const usernameSkipButton = document.getElementById('usernameSkipButton');
+        const usernameErrorDiv = document.getElementById('usernameError');
         const combatUiQualitySelect = document.getElementById('combatUiQuality');
         const showNetworkProfilerCheckbox = document.getElementById('showNetworkProfiler');
         const mobileStickyFireCheckbox = document.getElementById('mobileStickyFire');
@@ -1873,6 +1903,112 @@
         let pendingInputs = [];
         let lastProcessedInput = 0;
         let localPlayerState = null;
+        const PLAYER_NAME_STORAGE_KEY = 'mgs_player_name';
+        const PLAYER_NAME_MIN_CHARS = 2;
+        const PLAYER_NAME_MAX_CHARS = 20;
+        const IS_AUTOMATION_CONTEXT = typeof navigator !== 'undefined' && navigator.webdriver === true;
+        let preferredPlayerName = '';
+        let pendingConnectAfterNameSave = false;
+
+        function sanitizePreferredPlayerName(rawName) {
+            const normalized = String(rawName || '')
+                .replace(/[^a-zA-Z0-9 _.-]/g, '')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, PLAYER_NAME_MAX_CHARS);
+            return normalized;
+        }
+
+        function randomFallbackPlayerName() {
+            return `Pilot${Math.floor(100 + Math.random() * 900)}`;
+        }
+
+        function loadPreferredPlayerName() {
+            try {
+                const stored = localStorage.getItem(PLAYER_NAME_STORAGE_KEY);
+                return sanitizePreferredPlayerName(stored || '');
+            } catch (_) {
+                return '';
+            }
+        }
+
+        function savePreferredPlayerName(nextName) {
+            preferredPlayerName = sanitizePreferredPlayerName(nextName);
+            try {
+                if (preferredPlayerName) {
+                    localStorage.setItem(PLAYER_NAME_STORAGE_KEY, preferredPlayerName);
+                } else {
+                    localStorage.removeItem(PLAYER_NAME_STORAGE_KEY);
+                }
+            } catch (_) {}
+            if (usernameInput && usernameInput.value !== preferredPlayerName) {
+                usernameInput.value = preferredPlayerName;
+            }
+        }
+
+        function setUsernameModalError(message) {
+            if (!usernameErrorDiv) return;
+            const text = String(message || '').trim();
+            if (!text) {
+                usernameErrorDiv.textContent = '';
+                usernameErrorDiv.classList.add('hidden');
+                return;
+            }
+            usernameErrorDiv.textContent = text;
+            usernameErrorDiv.classList.remove('hidden');
+        }
+
+        function openUsernameModal(allowQuickStart = true) {
+            if (!usernameModalDiv) return;
+            if (usernameInput) {
+                usernameInput.value = preferredPlayerName || '';
+                setTimeout(() => {
+                    try {
+                        usernameInput.focus();
+                        usernameInput.select();
+                    } catch (_) {}
+                }, 0);
+            }
+            if (usernameSkipButton) {
+                usernameSkipButton.classList.toggle('hidden', !allowQuickStart);
+            }
+            setUsernameModalError('');
+            usernameModalDiv.classList.remove('hidden');
+        }
+
+        function closeUsernameModal() {
+            usernameModalDiv?.classList.add('hidden');
+            setUsernameModalError('');
+        }
+
+        function ensurePreferredPlayerNameReady(allowQuickStart = true) {
+            if (preferredPlayerName.length >= PLAYER_NAME_MIN_CHARS) {
+                return true;
+            }
+            if (IS_AUTOMATION_CONTEXT) {
+                savePreferredPlayerName('E2EPlayer');
+                return true;
+            }
+            openUsernameModal(allowQuickStart);
+            return false;
+        }
+
+        function commitPreferredPlayerName(rawName, allowGeneratedFallback = false) {
+            const sanitized = sanitizePreferredPlayerName(rawName);
+            if (sanitized.length < PLAYER_NAME_MIN_CHARS) {
+                if (!allowGeneratedFallback) {
+                    setUsernameModalError(`Use at least ${PLAYER_NAME_MIN_CHARS} characters.`);
+                    return false;
+                }
+                savePreferredPlayerName(randomFallbackPlayerName());
+            } else {
+                savePreferredPlayerName(sanitized);
+            }
+            closeUsernameModal();
+            return true;
+        }
+
+        preferredPlayerName = loadPreferredPlayerName();
 
         // Interpolation state
         let serverUpdates = [];
@@ -3400,9 +3536,6 @@
             loadSettings(); // Revert to saved settings on cancel
             settingsMenuDiv.classList.add('hidden');
         });
-        closePostMatchButton?.addEventListener('click', () => {
-            closePostMatchSummary();
-        });
         document.getElementById('soundVolume').addEventListener('input', (e) => {
             document.getElementById('soundVolumeValue').textContent = e.target.value + '%';
             if (audioManager) audioManager.setGlobalVolume(e.target.value / 100); // Live update
@@ -3447,6 +3580,49 @@
                 authCodeInput.value = cleaned;
             }
         });
+        usernameInput?.addEventListener('input', () => {
+            if (!usernameInput) return;
+            const sanitized = sanitizePreferredPlayerName(usernameInput.value);
+            if (usernameInput.value !== sanitized) {
+                usernameInput.value = sanitized;
+            }
+            if (sanitized.length >= PLAYER_NAME_MIN_CHARS) {
+                setUsernameModalError('');
+            }
+        });
+        usernameInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const ok = commitPreferredPlayerName(usernameInput?.value || '', false);
+                if (ok && pendingConnectAfterNameSave) {
+                    pendingConnectAfterNameSave = false;
+                    resetReconnectState();
+                    startConnectionAttempt({ isRetry: false });
+                }
+            }
+        });
+        usernameSaveButton?.addEventListener('click', () => {
+            const ok = commitPreferredPlayerName(usernameInput?.value || '', false);
+            if (ok && pendingConnectAfterNameSave) {
+                pendingConnectAfterNameSave = false;
+                resetReconnectState();
+                startConnectionAttempt({ isRetry: false });
+            }
+        });
+        usernameSkipButton?.addEventListener('click', () => {
+            const ok = commitPreferredPlayerName('', true);
+            if (ok && pendingConnectAfterNameSave) {
+                pendingConnectAfterNameSave = false;
+                resetReconnectState();
+                startConnectionAttempt({ isRetry: false });
+            }
+        });
+        if (!preferredPlayerName && IS_AUTOMATION_CONTEXT) {
+            savePreferredPlayerName('E2EPlayer');
+        }
+        if (!preferredPlayerName && !IS_AUTOMATION_CONTEXT) {
+            openUsernameModal(true);
+        }
 
         function handleParsedMessage(parsed) {
             if (!parsed || typeof parsed !== 'object') return;
@@ -3532,6 +3708,7 @@
             log, GP, GameProtocol, PIXI, uiModeParams,
             normalizeSignalingUrl, summarizeSignalingError,
             wsUrlInput, isMobileDevice, dataSaverMode,
+            getPreferredPlayerName: () => preferredPlayerName,
             canStartConnectionAttempt, initCullWorker, cullWorker, WORKER_CULL_ENABLED,
             startJoinTimingAttempt, markJoinTimingStage, markJoinTimingAborted,
             withAuthTokenInUrl, setConnectionError, clearConnectionOverride,
@@ -3569,9 +3746,38 @@
             setupDataChannelEvents,
         } = connectionManager;
 
+        function triggerPlayAgainFlow() {
+            closePostMatchSummary();
+            if (dataChannel && dataChannel.readyState === 'open') {
+                applyConnectionStatus('waiting', 'Queued for next round...');
+                setObjectiveUrgency('Queued for next round', 'positive', 1100);
+                return;
+            }
+            if (!ensurePreferredPlayerNameReady(true)) {
+                pendingConnectAfterNameSave = true;
+                return;
+            }
+            pendingConnectAfterNameSave = false;
+            resetReconnectState();
+            resetConnectionUI({ allowReconnect: false });
+            setConnectionError('');
+            startConnectionAttempt({ isRetry: false });
+        }
+
+        closePostMatchButton?.addEventListener('click', () => {
+            triggerPlayAgainFlow();
+        });
+        playAgainButton?.addEventListener('click', () => {
+            triggerPlayAgainFlow();
+        });
 
         // WebRTC Connection
         connectButton.addEventListener('click', () => {
+            if (!ensurePreferredPlayerNameReady(true)) {
+                pendingConnectAfterNameSave = true;
+                return;
+            }
+            pendingConnectAfterNameSave = false;
             resetReconnectState();
             startConnectionAttempt({ isRetry: false });
         });

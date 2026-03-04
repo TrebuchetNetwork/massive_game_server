@@ -69,6 +69,7 @@ struct WsAuthQuery {
     team: Option<String>,
     spectator: Option<String>,
     mode: Option<String>,
+    username: Option<String>,
     is_mobile: Option<bool>,
     match_type: Option<String>,
 }
@@ -1377,6 +1378,7 @@ async fn main() -> anyhow::Result<()> {
                 // Accept server instance Arc
                 let peer_id = Uuid::new_v4().to_string();
                 let requested_team_id = ws_auth_query.requested_team_id();
+                let requested_username = ws_auth_query.username.clone();
                 // Token resolution priority: Authorization header > Cookie.
                 // Query parameters are strictly ignored to prevent leaking tokens in URLs.
                 let auth_token = request_headers
@@ -1493,6 +1495,7 @@ async fn main() -> anyhow::Result<()> {
                         auth_service,
                         auth_user_id,
                         requested_team_id,
+                        requested_username,
                         client_ip,
                         is_mobile,
                     )

@@ -100,8 +100,21 @@ export function createConnectionManager(getCtx) {
         const { uiModeParams } = ctx;
         const joinTeam = uiModeParams.get('team') || '';
         const spectatorRequested = uiModeParams.get('spectator') === '1';
+        const preferredNameRaw = typeof ctx.getPreferredPlayerName === 'function'
+            ? ctx.getPreferredPlayerName()
+            : '';
+        const preferredName = String(preferredNameRaw || '').trim();
         if (!joinTeam && !spectatorRequested) {
-            return rawUrl;
+            if (!preferredName) {
+                return rawUrl;
+            }
+            try {
+                const urlObj = new URL(rawUrl);
+                urlObj.searchParams.set('username', preferredName);
+                return urlObj.toString();
+            } catch (_) {
+                return rawUrl;
+            }
         }
         try {
             const urlObj = new URL(rawUrl);
@@ -116,6 +129,9 @@ export function createConnectionManager(getCtx) {
                 } else {
                     urlObj.searchParams.set('team', joinTeam);
                 }
+            }
+            if (preferredName) {
+                urlObj.searchParams.set('username', preferredName);
             }
             return urlObj.toString();
         } catch (_) {

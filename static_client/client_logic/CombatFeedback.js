@@ -314,14 +314,27 @@ export function createCombatFeedback(getCtx) {
             const streakCount = Math.round(event.value || 0);
             const instigatorId = typeof event.instigator_id === 'string' ? event.instigator_id : '';
             const isLocal = instigatorId === ctx.myPlayerId;
+            const killerName = ctx.players.get(instigatorId)?.username || 'Unknown';
             if (isLocal) {
-                if (streakCount >= 7) setObjectiveUrgency('DOMINATING! 7+ killstreak!', 'critical', 3000);
-                else if (streakCount >= 5) setObjectiveUrgency('KILLING SPREE! second streak reward active', 'positive', 2500);
-                else if (streakCount >= 3) setObjectiveUrgency('Triple kill! first streak reward active', 'positive', 2000);
+                if (streakCount >= 7) {
+                    showCombatBanner('DOMINATING!', 'kill', 1700);
+                    setObjectiveUrgency('DOMINATING! 7+ killstreak!', 'critical', 3000);
+                } else if (streakCount >= 5) {
+                    showCombatBanner('KILLING SPREE!', 'kill', 1500);
+                    setObjectiveUrgency('KILLING SPREE! second streak reward active', 'positive', 2500);
+                } else if (streakCount >= 3) {
+                    showCombatBanner('ON FIRE!', 'kill', 1300);
+                    setObjectiveUrgency('Triple kill! first streak reward active', 'positive', 2000);
+                }
             } else {
                 if (streakCount >= 7) {
-                    const killerName = ctx.players.get(instigatorId)?.username || 'Unknown';
+                    showCombatBanner(`${killerName} DOMINATING!`, 'kill', 1700);
                     setObjectiveUrgency(`${killerName} is DOMINATING!`, 'critical', 2000);
+                } else if (streakCount >= 5) {
+                    showCombatBanner(`${killerName} KILLING SPREE!`, 'kill', 1500);
+                    setObjectiveUrgency(`${killerName} is on a spree!`, 'critical', 1800);
+                } else if (streakCount >= 3) {
+                    showCombatBanner(`${killerName} ON FIRE!`, 'kill', 1300);
                 }
             }
             return;
@@ -442,8 +455,9 @@ export function createCombatFeedback(getCtx) {
                 ctx.combatUiState.speedPulse = Math.min(1, ctx.combatUiState.speedPulse + 0.22);
                 if (entry.is_headshot) {
                     triggerHitMarker(true);
-                    showCombatBanner('Headshot', 'headshot', 950);
+                    showCombatBanner('Headshot', 'headshot', 1100);
                     showStreakMedal('Headshot');
+                    setObjectiveUrgency('CRIT +50', 'positive', 850);
                 } else {
                     const streakAnnouncement = getStreakAnnouncement(ctx.combatUiState.localKillStreak);
                     showCombatBanner(streakAnnouncement?.label || 'Elimination', 'kill', streakAnnouncement ? 1450 : 900);

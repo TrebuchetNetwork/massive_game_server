@@ -289,6 +289,7 @@ pub fn validate_partition_grid_size(grid_size: usize) {
 
 // Other game constants
 pub const DEFAULT_RESPAWN_DURATION_SECS: f32 = 2.5;
+pub const SPAWN_INVULNERABILITY_SECS: f32 = 2.5;
 pub const MAX_INPUT_QUEUE_SIZE_PER_PLAYER: usize = 32;
 pub const MAX_INPUTS_PROCESSED_PER_TICK_PER_PLAYER: usize = 8;
 

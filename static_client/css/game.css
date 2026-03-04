@@ -769,6 +769,12 @@
             margin-bottom: 8px;
         }
 
+        .post-match-panel__actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
         .post-match-panel__title {
             font-size: 15px;
             font-weight: 700;
@@ -790,6 +796,23 @@
 
         .post-match-panel__close:hover {
             border-color: rgba(125, 211, 252, 0.8);
+        }
+
+        .post-match-panel__play-again {
+            border-radius: 8px;
+            border: 1px solid rgba(34, 197, 94, 0.65);
+            background: linear-gradient(180deg, rgba(16, 185, 129, 0.92), rgba(5, 150, 105, 0.92));
+            color: #ecfeff;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            letter-spacing: 0.03em;
+        }
+
+        .post-match-panel__play-again:hover {
+            filter: brightness(1.08);
+            border-color: rgba(52, 211, 153, 0.85);
         }
 
         .post-match-panel__meta {
@@ -886,6 +909,99 @@
 
         .post-match-panel__trend {
             padding: 4px 12px 8px;
+        }
+
+        .username-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 180;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(2, 6, 23, 0.82);
+            backdrop-filter: blur(4px);
+        }
+
+        .username-modal__card {
+            width: min(420px, calc(100vw - 24px));
+            border-radius: 14px;
+            border: 1px solid rgba(125, 211, 252, 0.35);
+            background: linear-gradient(170deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.93));
+            box-shadow: 0 20px 50px rgba(2, 6, 23, 0.62);
+            padding: 18px 16px;
+        }
+
+        .username-modal__title {
+            font-size: 18px;
+            font-weight: 800;
+            color: #dbeafe;
+            letter-spacing: 0.02em;
+            margin-bottom: 4px;
+        }
+
+        .username-modal__subtitle {
+            font-size: 12px;
+            color: #93c5fd;
+            margin-bottom: 12px;
+        }
+
+        .username-modal__input {
+            width: 100%;
+            border-radius: 9px;
+            border: 1px solid rgba(148, 163, 184, 0.45);
+            background: rgba(15, 23, 42, 0.92);
+            color: #e2e8f0;
+            padding: 11px 12px;
+            font-size: 15px;
+            font-weight: 600;
+            outline: none;
+        }
+
+        .username-modal__input:focus {
+            border-color: rgba(56, 189, 248, 0.78);
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.24);
+        }
+
+        .username-modal__error {
+            margin-top: 8px;
+            min-height: 16px;
+            font-size: 12px;
+            color: #fca5a5;
+            font-weight: 600;
+        }
+
+        .username-modal__actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .username-modal__btn {
+            border-radius: 8px;
+            border: 1px solid transparent;
+            padding: 8px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            letter-spacing: 0.03em;
+        }
+
+        .username-modal__btn--secondary {
+            color: #e2e8f0;
+            border-color: rgba(148, 163, 184, 0.4);
+            background: rgba(30, 41, 59, 0.9);
+        }
+
+        .username-modal__btn--primary {
+            color: #ecfeff;
+            border-color: rgba(59, 130, 246, 0.75);
+            background: linear-gradient(180deg, rgba(59, 130, 246, 0.94), rgba(29, 78, 216, 0.94));
+        }
+
+        .username-modal__btn--primary:hover,
+        .username-modal__btn--secondary:hover {
+            filter: brightness(1.08);
         }
 
         @keyframes combatBannerPop {

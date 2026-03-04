@@ -591,7 +591,7 @@ impl PlayerState {
         self.ability_2_cooldown_remaining = 0.0;
         self.dash_remaining = 0.0;
         self.dodge_roll_remaining = 0.0;
-        self.invulnerable_remaining = 0.0;
+        self.invulnerable_remaining = crate::core::constants::SPAWN_INVULNERABILITY_SECS;
         self.ping_cooldown_remaining = 0.0;
         self.zone_boost_cooldown_remaining = 0.0;
         self.shield_current = 0;
@@ -1540,6 +1540,10 @@ mod tests {
         assert!(p.respawn_timer.is_none());
         assert_eq!(p.current_streak, 0);
         assert_eq!(p.shield_current, 0);
+        assert_eq!(
+            p.invulnerable_remaining,
+            crate::core::constants::SPAWN_INVULNERABILITY_SECS
+        );
     }
 
     // ── fire rate jitter tolerance tests ──────────────────────────

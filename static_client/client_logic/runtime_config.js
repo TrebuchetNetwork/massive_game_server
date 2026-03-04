@@ -173,8 +173,8 @@ export function buildRuntimeConfig(search, GP) {
     const EFFECTS_ADAPTIVE_EVAL_INTERVAL_MS = 500;
 
     // Game constants
-    const INTERPOLATION_DELAY = isMobileUA ? 120 : 100; // ms - higher base for mobile jitter
-    const MIN_INTERPOLATION_DELAY_MS = isMobileUA ? 80 : 70;
+    const INTERPOLATION_DELAY = isMobileUA ? 90 : 70; // ms - lower baseline for snappier feel
+    const MIN_INTERPOLATION_DELAY_MS = isMobileUA ? 70 : 55;
     const MAX_INTERPOLATION_DELAY_MS = isMobileUA ? 250 : 180;
     const PLAYER_EXTRAPOLATION_LIMIT_MS = isMobileUA ? 250 : 120; // Extended for mobile networks
     const PROJECTILE_EXTRAPOLATION_LIMIT_MS = isMobileUA ? 280 : 160;
@@ -192,8 +192,8 @@ export function buildRuntimeConfig(search, GP) {
     const SERVER_TICK_RATE = 60;
     const DEBUG_WALL_UPDATES = false;
     const INTERPOLATION_RETENTION_MS = 500;
-    const INTERPOLATION_SNAPSHOT_INTERVAL_MS = 66;
-    const MAX_INTERPOLATION_SNAPSHOTS = 20;
+    const INTERPOLATION_SNAPSHOT_INTERVAL_MS = 50;
+    const MAX_INTERPOLATION_SNAPSHOTS = 40;
     const INTERPOLATION_PLAYER_LIMIT = 120;
     const INTERPOLATION_PROJECTILE_LIMIT = 600;
 
