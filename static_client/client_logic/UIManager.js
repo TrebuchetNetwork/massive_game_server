@@ -956,8 +956,31 @@ export function createUIManager(getCtx) {
         const ctx = getCtx();
         ctx.processKillFeedCombatMoments(ctx.killFeed);
         const visibleEntries = ctx.killFeed.slice(-5).reverse();
+        const streakByEntryKey = new Map();
+        const activeStreakByIdentity = new Map();
+        const toIdentity = (playerId, playerName) => {
+            const rawId = String(playerId ?? '').trim();
+            if (rawId) return `id:${rawId}`;
+            const rawName = String(playerName ?? '').trim().toLowerCase();
+            return rawName ? `name:${rawName}` : '';
+        };
+        const feedEntryKey = (entry) =>
+            `${entry.killer_id}:${entry.victim_id}:${entry.weapon}:${entry.timestamp || 0}:${entry.is_headshot ? 1 : 0}`;
+        for (let i = 0; i < ctx.killFeed.length; i += 1) {
+            const row = ctx.killFeed[i];
+            if (!row || typeof row !== 'object') continue;
+            const victimIdentity = toIdentity(row.victim_id, row.victim_name);
+            if (victimIdentity) {
+                activeStreakByIdentity.set(victimIdentity, 0);
+            }
+            const killerIdentity = toIdentity(row.killer_id, row.killer_name);
+            if (!killerIdentity || killerIdentity === victimIdentity) continue;
+            const nextStreak = (activeStreakByIdentity.get(killerIdentity) || 0) + 1;
+            activeStreakByIdentity.set(killerIdentity, nextStreak);
+            streakByEntryKey.set(feedEntryKey(row), nextStreak);
+        }
         const signature = visibleEntries
-            .map(entry => `${entry.killer_id}:${entry.victim_id}:${entry.weapon}:${entry.timestamp || 0}:${entry.is_headshot ? 1 : 0}`)
+            .map(entry => `${feedEntryKey(entry)}:${streakByEntryKey.get(feedEntryKey(entry)) || 0}`)
             .join('|');
         if (ctx.uiCache.killFeedSignature === signature) {
             return;
@@ -974,6 +997,8 @@ export function createUIManager(getCtx) {
         visibleEntries.forEach(entry => {
             const div = document.createElement('div');
             div.className = 'kill-entry';
+            const entryKey = feedEntryKey(entry);
+            const streakCount = Math.max(0, Number(streakByEntryKey.get(entryKey)) || 0);
             const weaponIcon = entry.is_headshot ? '\uD83C\uDFAF' : '';
             const killerColor = ctx.teamColors[ctx.players.get(entry.killer_id)?.team_id] || ctx.teamColors[0];
             const victimColor = ctx.teamColors[ctx.players.get(entry.victim_id)?.team_id] || ctx.teamColors[0];
@@ -984,6 +1009,13 @@ export function createUIManager(getCtx) {
             const victimMatchesName = !!localName && String(entry.victim_name || '').trim() === localName;
             if (killerMatchesId || killerMatchesName) div.classList.add('kill-entry--local');
             if (victimMatchesId || victimMatchesName) div.classList.add('kill-entry--death');
+            if (streakCount >= 8) {
+                div.classList.add('kill-entry--godlike');
+            } else if (streakCount >= 7) {
+                div.classList.add('kill-entry--dominating');
+            } else if (streakCount >= 5) {
+                div.classList.add('kill-entry--spree');
+            }
 
             const killerSpan = document.createElement('span');
             killerSpan.style.color = '#' + killerColor.toString(16).padStart(6, '0');
@@ -1004,6 +1036,20 @@ export function createUIManager(getCtx) {
             div.appendChild(victimSpan);
             if (weaponIcon) {
                 div.appendChild(document.createTextNode(` ${weaponIcon}`));
+            }
+            if (streakCount >= 5) {
+                const streakBadge = document.createElement('span');
+                streakBadge.className = 'kill-entry__streak';
+                if (streakCount >= 10) {
+                    streakBadge.textContent = `LEGENDARY x${streakCount}`;
+                } else if (streakCount >= 8) {
+                    streakBadge.textContent = `GODLIKE x${streakCount}`;
+                } else if (streakCount >= 7) {
+                    streakBadge.textContent = `DOMINATING x${streakCount}`;
+                } else {
+                    streakBadge.textContent = `SPREE x${streakCount}`;
+                }
+                div.appendChild(streakBadge);
             }
             ctx.killFeedDiv.appendChild(div);
         });
