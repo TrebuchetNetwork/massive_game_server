@@ -1880,6 +1880,11 @@
         const OPTIMISTIC_HIT_MAX_PROJECTILES_SCAN = 72;
         const OPTIMISTIC_HIT_MAX_TARGETS_SCAN = 96;
         const OPTIMISTIC_HIT_TARGET_RANGE_SQ = 1700 * 1700;
+        const HOT_ZONE_WARNING_WINDOW_MS = 12000;
+        const HOT_ZONE_PRESSURE_CHECK_INTERVAL_MS = 95;
+        const HOT_ZONE_MIN_PULSE_INTERVAL_MS = 480;
+        const HOT_ZONE_MAX_PULSE_INTERVAL_MS = 1250;
+        const HOT_ZONE_OBJECTIVE_THROTTLE_MS = 1450;
         let prevLocalAliveState = null;
         let prevDashRemaining = 0;
         let prevDodgeRemaining = 0;
@@ -1887,6 +1892,11 @@
         let lastDodgeTrailAt = 0;
         let lastNearMissCheckAt = 0;
         let lastOptimisticHitScanAt = 0;
+        let lastHotZonePressureCheckAt = 0;
+        let lastHotZonePulseAt = 0;
+        let lastHotZoneObjectiveAt = 0;
+        let lastHotZoneCountdownSecond = -1;
+        let trackedHotZoneEventIndex = -1;
         const projectileNearMissCooldownUntil = new Map();
         const optimisticHitPredictions = new Map();
         const optimisticProjectileHitCooldownUntil = new Map();
@@ -3046,6 +3056,10 @@
                     eventIndex: 0,
                     expiresAt: 0,
                 };
+                trackedHotZoneEventIndex = -1;
+                lastHotZonePulseAt = 0;
+                lastHotZoneObjectiveAt = 0;
+                lastHotZoneCountdownSecond = -1;
                 return;
             }
             const centerX = Number(payload.x);
@@ -3066,6 +3080,12 @@
                 eventIndex,
                 expiresAt: Date.now() + Math.round(nextEventSecs * 1000),
             };
+            if (eventIndex !== trackedHotZoneEventIndex) {
+                trackedHotZoneEventIndex = eventIndex;
+                lastHotZonePulseAt = 0;
+                lastHotZoneObjectiveAt = 0;
+                lastHotZoneCountdownSecond = -1;
+            }
         }
 
         function registerServerHitConfirmation(event) {
@@ -3341,6 +3361,119 @@
             }
         }
 
+        function maybeEmitHotZonePressureEffects(currentTime) {
+            if (currentTime - lastHotZonePressureCheckAt < HOT_ZONE_PRESSURE_CHECK_INTERVAL_MS) {
+                return;
+            }
+            lastHotZonePressureCheckAt = currentTime;
+
+            if (!hotZoneState.active || !localPlayerState || !localPlayerState.alive) {
+                lastHotZoneCountdownSecond = -1;
+                return;
+            }
+
+            const centerX = Number(hotZoneState.centerX);
+            const centerY = Number(hotZoneState.centerY);
+            const radius = Number(hotZoneState.radius);
+            const expiresAt = Number(hotZoneState.expiresAt) || 0;
+            if (
+                !Number.isFinite(centerX) ||
+                !Number.isFinite(centerY) ||
+                !Number.isFinite(radius) ||
+                radius <= 0 ||
+                !Number.isFinite(expiresAt) ||
+                expiresAt <= currentTime
+            ) {
+                lastHotZoneCountdownSecond = -1;
+                return;
+            }
+
+            const eventIndex = Math.max(0, Math.trunc(Number(hotZoneState.eventIndex) || 0));
+            if (eventIndex !== trackedHotZoneEventIndex) {
+                trackedHotZoneEventIndex = eventIndex;
+                lastHotZonePulseAt = 0;
+                lastHotZoneObjectiveAt = 0;
+                lastHotZoneCountdownSecond = -1;
+            }
+
+            const remainingMs = Math.max(0, expiresAt - currentTime);
+            const warningProgress = 1 - Math.min(1, remainingMs / HOT_ZONE_WARNING_WINDOW_MS);
+            const localPos = getEntityRenderPos(localPlayerState);
+            const dx = localPos.x - centerX;
+            const dy = localPos.y - centerY;
+            const insideHotZone = (dx * dx + dy * dy) <= (radius * radius);
+            const bonusMultiplier = Math.max(1, Number(hotZoneState.bonusMultiplier) || 1);
+            const bonusPct = Math.max(0, Math.round((bonusMultiplier - 1) * 100));
+
+            if (remainingMs <= HOT_ZONE_WARNING_WINDOW_MS && remainingMs > 0) {
+                const countdownSecond = Math.max(1, Math.ceil(remainingMs / 1000));
+                if (countdownSecond !== lastHotZoneCountdownSecond) {
+                    if (audioManager && gameSettings?.soundEnabled) {
+                        const volume = insideHotZone
+                            ? (0.14 + warningProgress * 0.16)
+                            : (0.1 + warningProgress * 0.12);
+                        audioManager.playSound('countdownBeep', { x: centerX, y: centerY }, volume);
+                    }
+                    if (insideHotZone && gameSettings?.screenShake && warningProgress >= 0.58) {
+                        applyScreenShake(
+                            gameScene,
+                            0.65 + warningProgress * 1.1,
+                            2 + Math.floor(warningProgress * 3)
+                        );
+                    }
+                    lastHotZoneCountdownSecond = countdownSecond;
+                }
+            } else if (remainingMs > HOT_ZONE_WARNING_WINDOW_MS) {
+                lastHotZoneCountdownSecond = -1;
+            }
+
+            const objectiveText = String(combatUiState?.objectiveText || '').toLowerCase();
+            const objectiveUntil = Number(combatUiState?.objectiveUntilMs) || 0;
+            const objectiveOpen = objectiveUntil <= currentTime + 120 || objectiveText.includes('hot zone');
+
+            if (insideHotZone) {
+                const pulseInterval = HOT_ZONE_MAX_PULSE_INTERVAL_MS -
+                    warningProgress * (HOT_ZONE_MAX_PULSE_INTERVAL_MS - HOT_ZONE_MIN_PULSE_INTERVAL_MS);
+                if (currentTime - lastHotZonePulseAt >= pulseInterval) {
+                    if (app && (gameSettings?.particleEffects || gameSettings?.graphicsQuality === 'high')) {
+                        createScreenFlash(
+                            app,
+                            0xFFAB4A,
+                            7 + Math.round(warningProgress * 8),
+                            0.05 + warningProgress * 0.07
+                        );
+                    }
+                    lastHotZonePulseAt = currentTime;
+                }
+
+                if (
+                    remainingMs <= HOT_ZONE_WARNING_WINDOW_MS &&
+                    objectiveOpen &&
+                    currentTime - lastHotZoneObjectiveAt >= HOT_ZONE_OBJECTIVE_THROTTLE_MS
+                ) {
+                    const secondsLeft = Math.max(1, Math.ceil(remainingMs / 1000));
+                    setObjectiveUrgency(
+                        `Hold hot zone ${secondsLeft}s (+${bonusPct}% points)`,
+                        'positive',
+                        900
+                    );
+                    lastHotZoneObjectiveAt = currentTime;
+                }
+            } else if (
+                remainingMs <= HOT_ZONE_WARNING_WINDOW_MS &&
+                objectiveOpen &&
+                currentTime - lastHotZoneObjectiveAt >= HOT_ZONE_OBJECTIVE_THROTTLE_MS * 1.35
+            ) {
+                const secondsLeft = Math.max(1, Math.ceil(remainingMs / 1000));
+                setObjectiveUrgency(
+                    `Hot zone closes in ${secondsLeft}s - collapse now`,
+                    'critical',
+                    1000
+                );
+                lastHotZoneObjectiveAt = currentTime;
+            }
+        }
+
 
         // Main game loop
         function gameLoop(delta) {
@@ -3547,6 +3680,7 @@
             maybeEmitMovementJuice(currentTime);
             maybeEmitProjectileNearMissAudio(currentTime);
             maybeEmitOptimisticHitFeedback(currentTime);
+            maybeEmitHotZonePressureEffects(currentTime);
 
             updateWorldViewBounds();
             dispatchCullWorkerIfNeeded(currentTime);
