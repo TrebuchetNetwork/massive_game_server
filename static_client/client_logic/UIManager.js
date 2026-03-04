@@ -444,6 +444,48 @@ export function createUIManager(getCtx) {
             return true;
         }
 
+        if (eventName === 'map_event' && payload && typeof payload === 'object') {
+            const eventType = String(payload.event_type || payload.eventType || 'map_event');
+            const eventIndex = Math.max(1, Math.trunc(Number(payload.event_index || payload.eventIndex || 1)));
+            const spawnedPickups = Math.max(0, Math.trunc(Number(payload.spawned_pickups ?? payload.spawnedPickups ?? 0)));
+            const nextEventSecs = Number(payload.next_event_secs ?? payload.nextEventSecs ?? 0);
+            const label = eventType === 'center_supply_drop' ? 'Center supply drop' : 'Map event';
+            if (Number.isFinite(nextEventSecs) && nextEventSecs > 0) {
+                ctx.setObjectiveUrgency(
+                    `${label} active (${spawnedPickups} pickups). Next event in ${Math.round(nextEventSecs)}s`,
+                    'critical',
+                    3200
+                );
+            } else {
+                ctx.setObjectiveUrgency(
+                    `${label} active (${spawnedPickups} pickups)`,
+                    'critical',
+                    2800
+                );
+            }
+
+            const pingX = Number(payload.x);
+            const pingY = Number(payload.y);
+            if (Number.isFinite(pingX) && Number.isFinite(pingY) && Array.isArray(ctx.tacticalPings)) {
+                const now = Date.now();
+                const pingKindRaw = String(payload.ping_kind || payload.pingKind || 'defend').trim().toLowerCase();
+                const pingKind = pingKindRaw === 'enemy' || pingKindRaw === 'defend' ? pingKindRaw : 'group';
+                ctx.tacticalPings.push({
+                    kind: pingKind,
+                    x: pingX,
+                    y: pingY,
+                    createdAt: now,
+                    expiresAt: now + Math.max(2200, Number(ctx.TACTICAL_PING_MS) || 6200),
+                });
+                if (ctx.tacticalPings.length > 18) {
+                    ctx.tacticalPings.splice(0, ctx.tacticalPings.length - 18);
+                }
+            }
+
+            ctx.log(`Map event #${eventIndex}: ${eventType} (${spawnedPickups} pickups).`, 'info');
+            return true;
+        }
+
         if (eventName === 'pickup_spawn_notice' && payload && typeof payload === 'object') {
             const phase = String(payload.phase || 'spawned');
             const pickupLabel = String(

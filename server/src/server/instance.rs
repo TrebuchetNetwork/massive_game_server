@@ -1506,6 +1506,9 @@ mod instance_tests {
         assert_eq!(info.game_mode, fb::GameModeType::CaptureTheFlag);
         assert!(info.team_scores.is_empty());
         assert_eq!(info.ctf_overtime_round, 0);
+        assert_eq!(info.map_event_count, 0);
+        assert_eq!(info.map_event_elapsed_secs, 0.0);
+        assert_eq!(info.map_event_interval_secs, 75.0);
         assert!(info.flag_states.is_empty());
     }
 

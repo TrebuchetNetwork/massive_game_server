@@ -172,6 +172,11 @@ pub const LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS: f32 = 0.5;
 pub const TDM_KILL_LIMIT: i32 = 50;
 pub const CTF_CAPTURE_LIMIT: i32 = 3;
 pub const CTF_OVERTIME_DURATION_SECS: f32 = 30.0;
+pub const MAP_EVENT_INTERVAL_MIN_SECS: f32 = 60.0;
+pub const MAP_EVENT_INTERVAL_MAX_SECS: f32 = 90.0;
+pub const MAP_EVENT_SUPPLY_DROP_PICKUPS: usize = 8;
+pub const MAP_EVENT_SUPPLY_DROP_INNER_RADIUS: f32 = 14.0;
+pub const MAP_EVENT_SUPPLY_DROP_OUTER_RADIUS: f32 = 75.0;
 
 // ── Projectile knockback ────────────────────────────────────────────
 pub const KNOCKBACK_FORCE_PER_DAMAGE: f32 = 0.4; // reduced shove intensity for better close-range control

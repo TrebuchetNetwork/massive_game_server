@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::deterministic_rng::DeterministicRng;
 
 #[derive(Debug, Clone, Copy)]
 struct DynamicModeThresholds {
@@ -22,6 +23,12 @@ fn dynamic_mode_thresholds(match_duration_secs: f32) -> DynamicModeThresholds {
         ctf_countdown_10_remaining: scaled_threshold(80.0),
         ctf_countdown_5_remaining: scaled_threshold(75.0),
     }
+}
+
+fn map_event_interval_from_seed(seed: u64) -> f32 {
+    let mut rng = DeterministicRng::new(seed ^ 0xA5A5_A5A5_1F2E_3D4C);
+    rng.gen_range_f32(MAP_EVENT_INTERVAL_MIN_SECS, MAP_EVENT_INTERVAL_MAX_SECS)
+        .clamp(MAP_EVENT_INTERVAL_MIN_SECS, MAP_EVENT_INTERVAL_MAX_SECS)
 }
 
 impl MassiveGameServer {
@@ -74,6 +81,99 @@ impl MassiveGameServer {
         }
     }
 
+    fn next_map_event_interval_secs(&self, event_sequence: u64) -> f32 {
+        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+        map_event_interval_from_seed(frame ^ event_sequence.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+    }
+
+    fn spawn_map_event_supply_drop(&self, center: Vec2, event_index: u64) -> usize {
+        let seed = self.frame_counter.load(AtomicOrdering::Relaxed)
+            ^ event_index.wrapping_mul(0xD6E8_FEB8_6659_FD93)
+            ^ ((center.x.to_bits() as u64) << 17)
+            ^ ((center.y.to_bits() as u64) << 1);
+        let mut rng = DeterministicRng::new(seed);
+        let pickup_types = [
+            CorePickupType::DamageBoost,
+            CorePickupType::Shield,
+            CorePickupType::SpeedBoost,
+            CorePickupType::WeaponCrate(ServerWeaponType::Shotgun),
+            CorePickupType::WeaponCrate(ServerWeaponType::Sniper),
+            CorePickupType::Health,
+            CorePickupType::Ammo,
+        ];
+
+        let mut spawned = Vec::with_capacity(MAP_EVENT_SUPPLY_DROP_PICKUPS);
+        {
+            let mut pickups = self.pickups.write();
+            for idx in 0..MAP_EVENT_SUPPLY_DROP_PICKUPS {
+                let angle = rng.gen_range_f32(0.0, 2.0 * std::f32::consts::PI);
+                let radius = rng.gen_range_f32(
+                    MAP_EVENT_SUPPLY_DROP_INNER_RADIUS,
+                    MAP_EVENT_SUPPLY_DROP_OUTER_RADIUS,
+                );
+                let spawn_x =
+                    (center.x + radius * angle.cos()).clamp(WORLD_MIN_X + 40.0, WORLD_MAX_X - 40.0);
+                let spawn_y =
+                    (center.y + radius * angle.sin()).clamp(WORLD_MIN_Y + 40.0, WORLD_MAX_Y - 40.0);
+                let overlaps_wall = self
+                    .wall_spatial_index
+                    .query_radius(spawn_x, spawn_y, PLAYER_RADIUS + 8.0)
+                    .iter()
+                    .any(|wall| {
+                        let closest_x = spawn_x.clamp(wall.x, wall.x + wall.width);
+                        let closest_y = spawn_y.clamp(wall.y, wall.y + wall.height);
+                        let dx = spawn_x - closest_x;
+                        let dy = spawn_y - closest_y;
+                        dx * dx + dy * dy < PLAYER_RADIUS * PLAYER_RADIUS
+                    });
+                if overlaps_wall {
+                    continue;
+                }
+
+                let pickup = Pickup::new(
+                    generate_entity_id(),
+                    spawn_x,
+                    spawn_y,
+                    pickup_types[idx % pickup_types.len()].clone(),
+                );
+                pickups.push(pickup.clone());
+                spawned.push(pickup);
+            }
+        }
+
+        for pickup in &spawned {
+            self.upsert_pickup_in_partition_index(pickup);
+        }
+        spawned.len()
+    }
+
+    fn trigger_center_supply_drop_map_event(&self, event_index: u64, next_interval_secs: f32) {
+        let center = Vec2::new(
+            (WORLD_MIN_X + WORLD_MAX_X) * 0.5,
+            (WORLD_MIN_Y + WORLD_MAX_Y) * 0.5,
+        );
+        let spawned_pickups = self.spawn_map_event_supply_drop(center, event_index);
+        let payload = serde_json::json!({
+            "phase": "triggered",
+            "event_type": "center_supply_drop",
+            "event_index": event_index.saturating_add(1),
+            "x": center.x,
+            "y": center.y,
+            "spawned_pickups": spawned_pickups,
+            "next_event_secs": next_interval_secs.max(0.0),
+            "ping_kind": "defend",
+        });
+        if let Some(packet) = self.build_system_event_packet("map_event", Some(&payload)) {
+            self.enqueue_direct_packet_for_all_players(packet);
+        }
+        info!(
+            "Map event #{} triggered: center supply drop (pickups={}, next_in={:.1}s).",
+            event_index.saturating_add(1),
+            spawned_pickups,
+            next_interval_secs
+        );
+    }
+
     pub(super) fn update_match_state_authoritative(&self, delta_time: f32) {
         let mut match_info_guard = self.match_info.write();
         let player_count = self.participant_count();
@@ -91,6 +191,9 @@ impl MassiveGameServer {
                     match_info_guard.time_remaining = self.match_duration_secs;
                     match_info_guard.team_scores.clear();
                     match_info_guard.ctf_overtime_round = 0;
+                    match_info_guard.map_event_count = 0;
+                    match_info_guard.map_event_elapsed_secs = 0.0;
+                    match_info_guard.map_event_interval_secs = self.next_map_event_interval_secs(0);
                     if dynamic_mode_transitions {
                         match_info_guard.game_mode = fb::GameModeType::FreeForAll;
                     }
@@ -119,6 +222,7 @@ impl MassiveGameServer {
                 }
             }
             fb::MatchStateType::Active => {
+                let mut map_event_to_trigger: Option<(u64, f32)> = None;
                 let previous_time_remaining = match_info_guard.time_remaining;
                 match_info_guard.time_remaining -= delta_time;
                 if dynamic_mode_transitions {
@@ -221,6 +325,23 @@ impl MassiveGameServer {
                         );
                     }
                 }
+                let safe_delta = delta_time.max(0.0);
+                if safe_delta > 0.0 {
+                    match_info_guard.map_event_elapsed_secs += safe_delta;
+                    let current_interval = match_info_guard
+                        .map_event_interval_secs
+                        .clamp(MAP_EVENT_INTERVAL_MIN_SECS, MAP_EVENT_INTERVAL_MAX_SECS);
+                    if match_info_guard.map_event_elapsed_secs >= current_interval {
+                        let event_index = match_info_guard.map_event_count as u64;
+                        match_info_guard.map_event_count =
+                            match_info_guard.map_event_count.saturating_add(1);
+                        match_info_guard.map_event_elapsed_secs = 0.0;
+                        let next_interval =
+                            self.next_map_event_interval_secs(event_index.saturating_add(1));
+                        match_info_guard.map_event_interval_secs = next_interval;
+                        map_event_to_trigger = Some((event_index, next_interval));
+                    }
+                }
                 if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch {
                     let team1_score = match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
                     let team2_score = match_info_guard.team_scores.get(&2).cloned().unwrap_or(0);
@@ -286,6 +407,12 @@ impl MassiveGameServer {
                     }
                     drop(match_info_guard);
                     self.capture_match_end_summary("time_expired");
+                    return;
+                }
+                if let Some((event_index, next_interval_secs)) = map_event_to_trigger {
+                    drop(match_info_guard);
+                    self.trigger_center_supply_drop_map_event(event_index, next_interval_secs);
+                    return;
                 }
             }
             fb::MatchStateType::Ended => {
@@ -577,6 +704,9 @@ impl MassiveGameServer {
     fn reset_match_state(&self, match_info: &mut ServerMatchInfo) {
         match_info.time_remaining = self.match_duration_secs;
         match_info.ctf_overtime_round = 0;
+        match_info.map_event_count = 0;
+        match_info.map_event_elapsed_secs = 0.0;
+        match_info.map_event_interval_secs = self.next_map_event_interval_secs(0);
         match_info.flag_states.clear();
         if match_info.match_state == fb::MatchStateType::Waiting
             && match_info.game_mode == fb::GameModeType::CaptureTheFlag
@@ -599,6 +729,7 @@ impl MassiveGameServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn dynamic_mode_thresholds_match_legacy_full_match_values() {
@@ -620,5 +751,24 @@ mod tests {
         assert!((thresholds.ctf_countdown_20_remaining - 54.0).abs() < 0.001);
         assert!((thresholds.ctf_countdown_10_remaining - 48.0).abs() < 0.001);
         assert!((thresholds.ctf_countdown_5_remaining - 45.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn map_event_interval_stays_within_bounds() {
+        for seed in [0_u64, 1, 2, 17, 98_765, u64::MAX - 1] {
+            let interval = map_event_interval_from_seed(seed);
+            assert!(interval >= MAP_EVENT_INTERVAL_MIN_SECS);
+            assert!(interval <= MAP_EVENT_INTERVAL_MAX_SECS);
+        }
+    }
+
+    #[test]
+    fn map_event_interval_varies_across_seeds() {
+        let mut distinct_intervals = BTreeSet::new();
+        for seed in 0_u64..24 {
+            let interval = map_event_interval_from_seed(seed);
+            distinct_intervals.insert((interval * 100.0).round() as i32);
+        }
+        assert!(distinct_intervals.len() > 1);
     }
 }

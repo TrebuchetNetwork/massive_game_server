@@ -4,7 +4,8 @@
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
 use massive_game_server_core::core::constants::{
-    CTF_OVERTIME_DURATION_SECS, POINTS_FLAG_CAPTURE, POINTS_FLAG_RETURN, TDM_KILL_LIMIT,
+    CTF_OVERTIME_DURATION_SECS, MAP_EVENT_INTERVAL_MAX_SECS, MAP_EVENT_INTERVAL_MIN_SECS,
+    POINTS_FLAG_CAPTURE, POINTS_FLAG_RETURN, TDM_KILL_LIMIT,
 };
 use massive_game_server_core::core::types::{PlayerAoIs, PlayerID, Vec2};
 use massive_game_server_core::flatbuffers_generated::game_protocol as fb;
@@ -145,6 +146,28 @@ async fn ctf_tie_enters_overtime_then_times_out() {
         server.match_info.read().match_state,
         fb::MatchStateType::Ended
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn active_match_triggers_periodic_map_event() {
+    let server = setup_test_server();
+    add_player(&server, "player1", 1, 0.0, 0.0);
+    add_player(&server, "player2", 2, 30.0, 30.0);
+    server.run_game_logic_update(0.016).await;
+
+    {
+        let mut mi = server.match_info.write();
+        mi.map_event_count = 0;
+        mi.map_event_elapsed_secs = 999.0;
+        mi.map_event_interval_secs = MAP_EVENT_INTERVAL_MIN_SECS;
+    }
+    server.run_game_logic_update(0.016).await;
+
+    let mi = server.match_info.read();
+    assert_eq!(mi.map_event_count, 1);
+    assert_eq!(mi.map_event_elapsed_secs, 0.0);
+    assert!(mi.map_event_interval_secs >= MAP_EVENT_INTERVAL_MIN_SECS);
+    assert!(mi.map_event_interval_secs <= MAP_EVENT_INTERVAL_MAX_SECS);
 }
 
 #[tokio::test(flavor = "multi_thread")]

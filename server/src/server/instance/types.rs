@@ -96,6 +96,9 @@ pub struct ServerMatchInfo {
     pub game_mode: fb::GameModeType,     // fb from flatbuffers_generated
     pub team_scores: HashMap<u8, i32>,   // team_id -> score
     pub ctf_overtime_round: u8,
+    pub map_event_count: u32,
+    pub map_event_elapsed_secs: f32,
+    pub map_event_interval_secs: f32,
     pub flag_states: HashMap<u8, ServerFlagState>, // team_id of flag -> state
 }
 
@@ -107,6 +110,9 @@ impl Default for ServerMatchInfo {
             game_mode: fb::GameModeType::CaptureTheFlag, // Changed to CTF mode
             team_scores: HashMap::new(),
             ctf_overtime_round: 0,
+            map_event_count: 0,
+            map_event_elapsed_secs: 0.0,
+            map_event_interval_secs: 75.0,
             flag_states: HashMap::new(),
         }
     }
