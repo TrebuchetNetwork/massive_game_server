@@ -762,6 +762,7 @@ export function createUIManager(getCtx) {
                         3000
                     );
                 }
+                playUiSound('countdownBeep', 0.24);
             } else {
                 const label = eventType === 'center_supply_drop' ? 'Center supply drop' : 'Map event';
                 if (Number.isFinite(nextEventSecs) && nextEventSecs > 0) {
@@ -776,6 +777,11 @@ export function createUIManager(getCtx) {
                         'critical',
                         2800
                     );
+                }
+                if (eventType === 'center_supply_drop') {
+                    playUiSound('flagFanfare', 0.3);
+                } else {
+                    playUiSound('countdownBeep', 0.2);
                 }
             }
 
@@ -814,8 +820,10 @@ export function createUIManager(getCtx) {
                     tone,
                     2200
                 );
+                maybePlayCountdownBeep(secondsRemaining);
             } else {
                 ctx.setObjectiveUrgency(`${pickupLabel} available now`, tone, 2600);
+                playUiSound('powerupCollect', 0.26);
             }
 
             const pingX = Number(payload.x);
