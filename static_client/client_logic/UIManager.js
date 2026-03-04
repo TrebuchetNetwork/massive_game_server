@@ -424,6 +424,26 @@ export function createUIManager(getCtx) {
             return true;
         }
 
+        if (eventName === 'ctf_overtime' && payload && typeof payload === 'object') {
+            const overtimeRound = Math.max(1, Math.trunc(Number(payload.round || 1)));
+            const durationSecs = Number(payload.duration_secs ?? payload.durationSecs ?? payload.time_remaining ?? 0);
+            if (Number.isFinite(durationSecs) && durationSecs > 0) {
+                ctx.setObjectiveUrgency(
+                    `CTF Overtime (Round ${overtimeRound}) - ${Math.round(durationSecs)}s to win`,
+                    'critical',
+                    3200
+                );
+            } else {
+                ctx.setObjectiveUrgency(
+                    `CTF Overtime (Round ${overtimeRound}) started`,
+                    'critical',
+                    2800
+                );
+            }
+            ctx.log(`CTF overtime triggered (round ${overtimeRound}).`, 'warn');
+            return true;
+        }
+
         if (eventName === 'pickup_spawn_notice' && payload && typeof payload === 'object') {
             const phase = String(payload.phase || 'spawned');
             const pickupLabel = String(
