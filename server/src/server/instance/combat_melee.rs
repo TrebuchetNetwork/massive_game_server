@@ -39,6 +39,25 @@ pub(crate) fn is_within_melee_range(
     (dx * dx + dy * dy) < max_range * max_range
 }
 
+#[inline]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn compute_melee_damage(
+    base_damage: i32,
+    attacker_damage_multiplier: f32,
+    chain_bonus_applied: bool,
+) -> i32 {
+    let scaled_base_damage = ((base_damage.max(0) as f32) * attacker_damage_multiplier.max(0.0))
+        .round()
+        .max(1.0) as i32;
+    if chain_bonus_applied {
+        ((scaled_base_damage as f32) * crate::core::constants::DASH_TO_MELEE_DAMAGE_MULTIPLIER)
+            .round()
+            .max(1.0) as i32
+    } else {
+        scaled_base_damage
+    }
+}
+
 impl MassiveGameServer {
     // Extracted melee processing logic
     pub(super) fn process_melee_hits(&self, melee_hit_events: Vec<GameEvent>) {
@@ -63,6 +82,7 @@ impl MassiveGameServer {
                     attacker_username,
                     attacker_is_spectator,
                     attacker_has_dash_chain_bonus,
+                    attacker_damage_multiplier,
                 ) = {
                     if let Some(attacker_state_guard) =
                         self.player_manager.get_player_state(&attacker_id)
@@ -75,6 +95,7 @@ impl MassiveGameServer {
                             attacker_state_guard.username.clone(),
                             attacker_state_guard.is_spectator,
                             attacker_state_guard.has_dash_melee_chain_bonus(),
+                            attacker_state_guard.effective_damage_multiplier(),
                         )
                     } else {
                         continue; // Attacker not found
@@ -191,14 +212,11 @@ impl MassiveGameServer {
 
                                 let chain_bonus_applied =
                                     attacker_has_dash_chain_bonus && !dash_chain_bonus_consumed;
-                                let effective_melee_damage = if chain_bonus_applied {
-                                    ((melee_damage as f32)
-                                        * crate::core::constants::DASH_TO_MELEE_DAMAGE_MULTIPLIER)
-                                        .round()
-                                        .max(1.0) as i32
-                                } else {
-                                    melee_damage
-                                };
+                                let effective_melee_damage = compute_melee_damage(
+                                    melee_damage,
+                                    attacker_damage_multiplier,
+                                    chain_bonus_applied,
+                                );
 
                                 // Apply damage and collect necessary data
                                 let died = target_state.apply_damage(effective_melee_damage);
@@ -350,9 +368,8 @@ impl MassiveGameServer {
                                 if attacker_state_entry.consume_dash_melee_chain_bonus() {
                                     attacker_state_entry.mark_field_changed(FIELD_POWERUPS);
                                     info!(
-                                        "Dash->melee chain bonus: {} landed melee with +50% damage (base={} boosted={})",
+                                        "Dash->melee chain bonus: {} landed melee with +50% damage (boosted={})",
                                         attacker_username,
-                                        melee_damage,
                                         damage
                                     );
                                 }
@@ -694,5 +711,17 @@ mod tests {
         let tx2 = 10.0 * (half + 0.05_f32).cos();
         let ty2 = 10.0 * (half + 0.05_f32).sin();
         assert!(!is_within_melee_arc(0.0, 0.0, 0.0, tx2, ty2, half));
+    }
+
+    #[test]
+    fn compute_melee_damage_applies_attacker_multiplier() {
+        let damage = compute_melee_damage(30, 1.10, false);
+        assert_eq!(damage, 33);
+    }
+
+    #[test]
+    fn compute_melee_damage_stacks_chain_bonus_after_multiplier() {
+        let damage = compute_melee_damage(30, 1.10, true);
+        assert_eq!(damage, 50);
     }
 }

@@ -414,6 +414,13 @@ impl OptimizedBotAI {
         );
 
         if bot_ids.is_empty() {
+            if !predictive_models.motion_models.is_empty()
+                || !predictive_models.threat_models.is_empty()
+            {
+                predictive_models.motion_models.clear();
+                predictive_models.threat_models.clear();
+                debug!("Cleared predictive bot AI models because there are no active bots.");
+            }
             BOT_IDS.with(|cell| *cell.borrow_mut() = bot_ids);
             return;
         }
@@ -730,20 +737,38 @@ impl OptimizedBotAI {
                 }
             }
         }
+        let live_player_count = live_players_by_id.len();
         let predictive_over_capacity = predictive_models.motion_models.len()
             > BOT_PREDICTIVE_MODEL_MAX_ENTRIES
             || predictive_models.threat_models.len() > BOT_PREDICTIVE_MODEL_MAX_ENTRIES;
-        if frame_count.is_multiple_of(120) || predictive_over_capacity {
+        let predictive_may_have_stale_entries = predictive_models.motion_models.len()
+            > live_player_count
+            || predictive_models.threat_models.len() > live_player_count;
+        if frame_count.is_multiple_of(60)
+            || predictive_over_capacity
+            || predictive_may_have_stale_entries
+        {
+            let motion_before = predictive_models.motion_models.len();
+            let threat_before = predictive_models.threat_models.len();
             predictive_models
                 .motion_models
                 .retain(|player_id, _| live_players_by_id.contains_key(player_id));
             predictive_models
                 .threat_models
                 .retain(|player_id, _| live_players_by_id.contains_key(player_id));
-            if predictive_over_capacity {
+            let motion_after = predictive_models.motion_models.len();
+            let threat_after = predictive_models.threat_models.len();
+            let removed_motion = motion_before.saturating_sub(motion_after);
+            let removed_threat = threat_before.saturating_sub(threat_after);
+            if predictive_over_capacity || removed_motion > 0 || removed_threat > 0 {
                 debug!(
-                    "Predictive model maps hit capacity guard (>{}), forcing immediate cleanup.",
-                    BOT_PREDICTIVE_MODEL_MAX_ENTRIES
+                    "Predictive model cleanup complete (live={} motion:{}->{} threat:{}->{} cap_guard={}).",
+                    live_player_count,
+                    motion_before,
+                    motion_after,
+                    threat_before,
+                    threat_after,
+                    predictive_over_capacity
                 );
             }
         }

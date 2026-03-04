@@ -9,6 +9,32 @@
 import { clamp, lerp, normalizeAngle, smoothFollowGain } from './math_utils.js';
 
 export function createInterpolationManager(getCtx) {
+    const SNAPSHOT_ENTITY_PRUNE_INTERVAL = 12;
+
+    function pruneDisconnectedEntitiesFromSnapshots(serverUpdates, players, projectiles) {
+        if (!Array.isArray(serverUpdates) || serverUpdates.length === 0) return;
+
+        for (let i = 0; i < serverUpdates.length; i += 1) {
+            const snapshot = serverUpdates[i];
+            if (!snapshot) continue;
+
+            if (snapshot.players && snapshot.players.size > 0) {
+                snapshot.players.forEach((_state, playerId) => {
+                    if (!players.has(playerId)) {
+                        snapshot.players.delete(playerId);
+                    }
+                });
+            }
+
+            if (snapshot.projectiles && snapshot.projectiles.size > 0) {
+                snapshot.projectiles.forEach((_state, projectileId) => {
+                    if (!projectiles.has(projectileId)) {
+                        snapshot.projectiles.delete(projectileId);
+                    }
+                });
+            }
+        }
+    }
 
     function resolveAdaptiveSnapDistanceSq(isMobileDevice, app, fallbackDistanceSq, multiplier = 1) {
         if (!isMobileDevice) return fallbackDistanceSq;
@@ -453,6 +479,7 @@ export function createInterpolationManager(getCtx) {
 
         if (players.size > INTERPOLATION_PLAYER_LIMIT || projectiles.size > INTERPOLATION_PROJECTILE_LIMIT) {
             serverUpdates.length = 0;
+            _snapshotPruneTickCounter = 0;
             return;
         }
 
@@ -466,6 +493,15 @@ export function createInterpolationManager(getCtx) {
         const snapshotTimestamp = lastSnapshot ? Math.max(baseTs, lastSnapshot.timestamp + 1) : baseTs;
         _lastInterpolationSnapshotAt = snapshotTimestamp;
         updateAdaptiveInterpolationDelay(snapshotTimestamp);
+        _snapshotPruneTickCounter += 1;
+        if (
+            _snapshotPruneTickCounter >= SNAPSHOT_ENTITY_PRUNE_INTERVAL ||
+            players.size === 0 ||
+            projectiles.size === 0
+        ) {
+            pruneDisconnectedEntitiesFromSnapshots(serverUpdates, players, projectiles);
+            _snapshotPruneTickCounter = 0;
+        }
 
         const playersSnapshot = new Map();
         players.forEach((pState, playerId) => {
@@ -502,9 +538,11 @@ export function createInterpolationManager(getCtx) {
 
     // Internal mutable state
     let _lastInterpolationSnapshotAt = 0;
+    let _snapshotPruneTickCounter = 0;
 
     function resetSnapshotState() {
         _lastInterpolationSnapshotAt = 0;
+        _snapshotPruneTickCounter = 0;
     }
 
     return {

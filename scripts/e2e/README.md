@@ -30,6 +30,20 @@ E2E_SERVER_SKIP=1 E2E_BASE_URL=http://127.0.0.1:18080 E2E_WS_URL=ws://127.0.0.1:
   - connected settings
 - Outputs screenshots and `report.json` under `artifacts/ui_audit/<run-id>/`.
 
+## UI Coverage + Visual Flow (Playwright)
+```bash
+cd scripts/e2e
+E2E_BASE_URL=http://127.0.0.1:18080 npx playwright test tests/ui_coverage_visual.spec.js --workers=1 --reporter=list
+```
+
+- Validates interactive UI flow (menu, settings, connect, scoreboard).
+- Captures screenshots as test artifacts for visual inspection.
+- Computes execution coverage for key client modules:
+  - `client_logic/UIManager.js`
+  - `client_logic/InputManager.js`
+  - `client_logic/ConnectionManager.js`
+  - `client_logic/WorldRenderer.js`
+
 ## Notes
 - The test suite starts the Rust server by default using:
   `cargo run -p massive_game_server_core --bin massive_game_server_core`
