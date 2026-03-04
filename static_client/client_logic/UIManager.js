@@ -15,6 +15,17 @@ export function createUIManager(getCtx) {
     const POST_MATCH_RECORDS_KEY = 'mgs_post_match_records_v1';
     const POST_MATCH_PERF_HISTORY_KEY = 'mgs_post_match_perf_history_v1';
     const POST_MATCH_PERF_HISTORY_LIMIT = 20;
+    const CHAT_MUTED_IDS_KEY = 'mgs_chat_muted_ids_v1';
+    const CHAT_MUTED_NAMES_KEY = 'mgs_chat_muted_names_v1';
+    const CHAT_BLOCKED_IDS_KEY = 'mgs_chat_blocked_ids_v1';
+    const CHAT_BLOCKED_NAMES_KEY = 'mgs_chat_blocked_names_v1';
+    const CHAT_REPORT_LOG_KEY = 'mgs_chat_report_log_v1';
+    const CHAT_REPORT_LOG_LIMIT = 80;
+    let chatModerationRevision = 0;
+    const mutedPlayerIds = new Set();
+    const mutedNames = new Set();
+    const blockedPlayerIds = new Set();
+    const blockedNames = new Set();
 
     function escapeHtml(unsafe) {
         const raw = String(unsafe ?? '');
@@ -98,6 +109,95 @@ export function createUIManager(getCtx) {
             return fallbackValue;
         }
     }
+
+    function normalizeChatIdentity(rawValue) {
+        return String(rawValue ?? '').trim().toLowerCase();
+    }
+
+    function hydrateIdentitySet(targetSet, rawList, normalize = true) {
+        targetSet.clear();
+        if (!Array.isArray(rawList)) return;
+        for (let i = 0; i < rawList.length; i += 1) {
+            const rawItem = rawList[i];
+            const item = normalize ? normalizeChatIdentity(rawItem) : String(rawItem ?? '').trim();
+            if (!item) continue;
+            targetSet.add(item);
+        }
+    }
+
+    function persistIdentitySet(storageKey, targetSet) {
+        try {
+            localStorage.setItem(storageKey, JSON.stringify(Array.from(targetSet)));
+        } catch (_) {}
+    }
+
+    function bumpChatModerationRevision() {
+        chatModerationRevision = (chatModerationRevision + 1) % 1000000;
+    }
+
+    function loadChatModerationState() {
+        hydrateIdentitySet(
+            mutedPlayerIds,
+            loadStoredJson(CHAT_MUTED_IDS_KEY, []),
+            false
+        );
+        hydrateIdentitySet(
+            mutedNames,
+            loadStoredJson(CHAT_MUTED_NAMES_KEY, []),
+            true
+        );
+        hydrateIdentitySet(
+            blockedPlayerIds,
+            loadStoredJson(CHAT_BLOCKED_IDS_KEY, []),
+            false
+        );
+        hydrateIdentitySet(
+            blockedNames,
+            loadStoredJson(CHAT_BLOCKED_NAMES_KEY, []),
+            true
+        );
+        bumpChatModerationRevision();
+    }
+
+    function formatChatTimestamp(rawTimestamp) {
+        const timestamp = Number(rawTimestamp);
+        if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
+        const date = new Date(timestamp);
+        if (Number.isNaN(date.getTime())) return '';
+        const hh = String(date.getHours()).padStart(2, '0');
+        const mm = String(date.getMinutes()).padStart(2, '0');
+        const ss = String(date.getSeconds()).padStart(2, '0');
+        return `${hh}:${mm}:${ss}`;
+    }
+
+    function resolveChatMessageIdentity(msg) {
+        const playerId = String(msg?.player_id ?? '').trim();
+        const normalizedName = normalizeChatIdentity(msg?.username);
+        return {
+            playerId,
+            normalizedName,
+        };
+    }
+
+    function isChatMessageSuppressed(msg) {
+        const { playerId, normalizedName } = resolveChatMessageIdentity(msg);
+        if (playerId && (blockedPlayerIds.has(playerId) || mutedPlayerIds.has(playerId))) {
+            return true;
+        }
+        if (normalizedName && (blockedNames.has(normalizedName) || mutedNames.has(normalizedName))) {
+            return true;
+        }
+        return false;
+    }
+
+    function persistChatModerationState() {
+        persistIdentitySet(CHAT_MUTED_IDS_KEY, mutedPlayerIds);
+        persistIdentitySet(CHAT_MUTED_NAMES_KEY, mutedNames);
+        persistIdentitySet(CHAT_BLOCKED_IDS_KEY, blockedPlayerIds);
+        persistIdentitySet(CHAT_BLOCKED_NAMES_KEY, blockedNames);
+    }
+
+    loadChatModerationState();
 
     function playUiSound(soundName, volume = 0.24) {
         const ctx = getCtx();
@@ -909,12 +1009,82 @@ export function createUIManager(getCtx) {
         });
     }
 
+    function appendChatReportEntry(msg) {
+        const reportEntry = {
+            timestamp: Date.now(),
+            player_id: String(msg?.player_id ?? ''),
+            username: String(msg?.username ?? ''),
+            message: String(msg?.message ?? ''),
+        };
+        const reports = loadStoredJson(CHAT_REPORT_LOG_KEY, []);
+        const rows = Array.isArray(reports) ? reports : [];
+        rows.push(reportEntry);
+        const trimmed = rows.length > CHAT_REPORT_LOG_LIMIT
+            ? rows.slice(rows.length - CHAT_REPORT_LOG_LIMIT)
+            : rows;
+        try {
+            localStorage.setItem(CHAT_REPORT_LOG_KEY, JSON.stringify(trimmed));
+        } catch (_) {}
+    }
+
+    function setChatModerationStateForMessage(msg, mode, enabled) {
+        const ctx = getCtx();
+        const { playerId, normalizedName } = resolveChatMessageIdentity(msg);
+        const actionMode = mode === 'block' ? 'block' : 'mute';
+        const nextEnabled = !!enabled;
+        if (actionMode === 'block') {
+            if (playerId) {
+                if (nextEnabled) blockedPlayerIds.add(playerId);
+                else blockedPlayerIds.delete(playerId);
+            }
+            if (normalizedName) {
+                if (nextEnabled) blockedNames.add(normalizedName);
+                else blockedNames.delete(normalizedName);
+            }
+        } else {
+            if (playerId) {
+                if (nextEnabled) mutedPlayerIds.add(playerId);
+                else mutedPlayerIds.delete(playerId);
+            }
+            if (normalizedName) {
+                if (nextEnabled) mutedNames.add(normalizedName);
+                else mutedNames.delete(normalizedName);
+            }
+        }
+        persistChatModerationState();
+        bumpChatModerationRevision();
+        const actor = String(msg?.username || 'Player').trim() || 'Player';
+        const verb = nextEnabled
+            ? (actionMode === 'block' ? 'Blocked' : 'Muted')
+            : (actionMode === 'block' ? 'Unblocked' : 'Unmuted');
+        if (typeof ctx.setObjectiveUrgency === 'function') {
+            ctx.setObjectiveUrgency(`${verb} ${actor} in chat`, 'info', 1100);
+        }
+        if (typeof ctx.log === 'function') {
+            ctx.log(`${verb.toLowerCase()} chat messages from ${actor}.`, 'info');
+        }
+    }
+
+    function createChatActionButton(label, className, onClick) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `chat-entry__action ${className}`;
+        button.textContent = label;
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onClick();
+        });
+        return button;
+    }
+
     function updateChatDisplay() {
         const ctx = getCtx();
-        const visibleMessages = ctx.chatMessages.slice(-10);
-        const signature = visibleMessages
-            .map(msg => `${msg.seq || 0}:${msg.player_id}:${msg.username}:${msg.message}`)
-            .join('|');
+        const filteredMessages = ctx.chatMessages.filter((msg) => !isChatMessageSuppressed(msg));
+        const visibleMessages = filteredMessages.slice(-10);
+        const signature = `${chatModerationRevision}:${visibleMessages
+            .map(msg => `${msg.seq || 0}:${msg.player_id}:${msg.username}:${msg.message}:${msg.timestamp || 0}`)
+            .join('|')}`;
         if (ctx.uiCache.chatSignature === signature) {
             return;
         }
@@ -927,20 +1097,88 @@ export function createUIManager(getCtx) {
         }
 
         ctx.chatDisplayDiv.classList.remove('hidden');
-        visibleMessages.forEach(msg => {
+        visibleMessages.forEach((msg) => {
             const div = document.createElement('div');
             div.className = 'chat-entry';
+            const normalizedName = normalizeChatIdentity(msg?.username);
+            const isSystem = normalizedName === 'system';
+            const isLocalMessage = String(msg?.player_id ?? '') === String(ctx.myPlayerId ?? '');
+            if (isSystem) {
+                div.classList.add('chat-entry--system');
+            }
+
             const player = ctx.players.get(msg.player_id);
             const nameColor = player ? (ctx.teamColors[player.team_id] || ctx.teamColors[0]) : ctx.teamColors[0];
             const hexColor = '#' + nameColor.toString(16).padStart(6, '0');
+
+            const timestamp = document.createElement('span');
+            timestamp.className = 'chat-entry__ts';
+            const timestampText = formatChatTimestamp(msg?.timestamp);
+            timestamp.textContent = timestampText ? `[${timestampText}]` : '';
+
+            const content = document.createElement('span');
+            content.className = 'chat-entry__content';
+
             const username = document.createElement('span');
             username.className = 'username';
             username.style.color = hexColor;
             username.textContent = `${msg.username || 'System'}:`;
 
-            const messageText = document.createTextNode(` ${msg.message || ''}`);
-            div.appendChild(username);
-            div.appendChild(messageText);
+            const message = document.createElement('span');
+            message.className = 'chat-entry__msg';
+            message.textContent = String(msg.message || '');
+
+            content.appendChild(username);
+            content.appendChild(message);
+            div.appendChild(timestamp);
+            div.appendChild(content);
+
+            const actionable = !isSystem && !isLocalMessage;
+            if (actionable) {
+                const actions = document.createElement('span');
+                actions.className = 'chat-entry__actions';
+
+                const { playerId } = resolveChatMessageIdentity(msg);
+                const muted = (playerId && mutedPlayerIds.has(playerId)) || mutedNames.has(normalizedName);
+                const blocked = (playerId && blockedPlayerIds.has(playerId)) || blockedNames.has(normalizedName);
+
+                const muteBtn = createChatActionButton(
+                    muted ? 'Unmute' : 'Mute',
+                    'chat-entry__action--mute',
+                    () => {
+                        setChatModerationStateForMessage(msg, 'mute', !muted);
+                        updateChatDisplay();
+                    }
+                );
+                const blockBtn = createChatActionButton(
+                    blocked ? 'Unblock' : 'Block',
+                    'chat-entry__action--block',
+                    () => {
+                        setChatModerationStateForMessage(msg, 'block', !blocked);
+                        updateChatDisplay();
+                    }
+                );
+                const reportBtn = createChatActionButton(
+                    'Report',
+                    'chat-entry__action--report',
+                    () => {
+                        appendChatReportEntry(msg);
+                        if (typeof ctx.setObjectiveUrgency === 'function') {
+                            const actor = String(msg?.username || 'player').trim() || 'player';
+                            ctx.setObjectiveUrgency(`Reported ${actor}`, 'critical', 1200);
+                        }
+                        if (typeof ctx.log === 'function') {
+                            ctx.log(`Chat report logged for ${String(msg?.username || 'unknown')}.`, 'warn');
+                        }
+                    }
+                );
+
+                actions.appendChild(muteBtn);
+                actions.appendChild(blockBtn);
+                actions.appendChild(reportBtn);
+                div.appendChild(actions);
+            }
+
             ctx.chatDisplayDiv.appendChild(div);
         });
         ctx.chatDisplayDiv.scrollTop = ctx.chatDisplayDiv.scrollHeight;

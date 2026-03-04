@@ -13,8 +13,18 @@ export function createPerformanceBudget(getCtx) {
 
     // ── Performance interval tuning ─────────────────────────────────
 
+    function resolveEffectsUpdateIntervalMs(ctx) {
+        if (ctx.backgroundThrottleActive) return 320;
+        if (ctx.BENCH_MODE) return 66;
+        if (ctx.STABLE_MODE_FORCED) return 50;
+        if (ctx.TOURNAMENT_MODE_FORCED) return 40;
+        if (ctx.ultraPerformanceMode) return 90;
+        return 33;
+    }
+
     function refreshRuntimePerfIntervals() {
         const ctx = getCtx();
+        const effectsIntervalMs = resolveEffectsUpdateIntervalMs(ctx);
         if (ctx.backgroundThrottleActive) {
             ctx.setUI_UPDATE_INTERVAL_MS(400);
             ctx.setMINIMAP_UPDATE_INTERVAL_MS(1600);
@@ -22,7 +32,7 @@ export function createPerformanceBudget(getCtx) {
             ctx.setFOG_UPDATE_INTERVAL_MS(900);
             ctx.setPICKUP_ANIM_INTERVAL_MS(220);
             ctx.setFLAG_ANIM_INTERVAL_MS(280);
-            ctx.setEFFECTS_UPDATE_INTERVAL_MS(500);
+            ctx.setEFFECTS_UPDATE_INTERVAL_MS(effectsIntervalMs);
             return;
         }
         if (ctx.BENCH_MODE) {
@@ -32,7 +42,7 @@ export function createPerformanceBudget(getCtx) {
             ctx.setFOG_UPDATE_INTERVAL_MS(180);
             ctx.setPICKUP_ANIM_INTERVAL_MS(90);
             ctx.setFLAG_ANIM_INTERVAL_MS(100);
-            ctx.setEFFECTS_UPDATE_INTERVAL_MS(180);
+            ctx.setEFFECTS_UPDATE_INTERVAL_MS(effectsIntervalMs);
             return;
         }
         if (ctx.STABLE_MODE_FORCED) {
@@ -42,7 +52,7 @@ export function createPerformanceBudget(getCtx) {
             ctx.setFOG_UPDATE_INTERVAL_MS(220);
             ctx.setPICKUP_ANIM_INTERVAL_MS(90);
             ctx.setFLAG_ANIM_INTERVAL_MS(120);
-            ctx.setEFFECTS_UPDATE_INTERVAL_MS(180);
+            ctx.setEFFECTS_UPDATE_INTERVAL_MS(effectsIntervalMs);
             return;
         }
         if (ctx.TOURNAMENT_MODE_FORCED) {
@@ -52,7 +62,7 @@ export function createPerformanceBudget(getCtx) {
             ctx.setFOG_UPDATE_INTERVAL_MS(90);
             ctx.setPICKUP_ANIM_INTERVAL_MS(66);
             ctx.setFLAG_ANIM_INTERVAL_MS(66);
-            ctx.setEFFECTS_UPDATE_INTERVAL_MS(66);
+            ctx.setEFFECTS_UPDATE_INTERVAL_MS(effectsIntervalMs);
             return;
         }
         if (ctx.ultraPerformanceMode) {
@@ -62,7 +72,7 @@ export function createPerformanceBudget(getCtx) {
             ctx.setFOG_UPDATE_INTERVAL_MS(250);
             ctx.setPICKUP_ANIM_INTERVAL_MS(110);
             ctx.setFLAG_ANIM_INTERVAL_MS(140);
-            ctx.setEFFECTS_UPDATE_INTERVAL_MS(240);
+            ctx.setEFFECTS_UPDATE_INTERVAL_MS(effectsIntervalMs);
             return;
         }
         ctx.setUI_UPDATE_INTERVAL_MS(100);
@@ -71,7 +81,7 @@ export function createPerformanceBudget(getCtx) {
         ctx.setFOG_UPDATE_INTERVAL_MS(33);
         ctx.setPICKUP_ANIM_INTERVAL_MS(33);
         ctx.setFLAG_ANIM_INTERVAL_MS(33);
-        ctx.setEFFECTS_UPDATE_INTERVAL_MS(33);
+        ctx.setEFFECTS_UPDATE_INTERVAL_MS(effectsIntervalMs);
     }
 
     function getForegroundTickerMaxFps() {

@@ -2757,6 +2757,7 @@
         // ── Instantiate InterpolationManager ────────────────────────────
         const interpolationManager = createInterpolationManager(() => ({
             players, projectiles, myPlayerId, localPlayerState, inputState,
+            app,
             adaptiveInterpolationDelayMs, projectileRawModeActive,
             serverUpdates, isMobileDevice, applyRenderTarget,
             getProjectileInterpolationSet, forEachInterpolatedProjectile,

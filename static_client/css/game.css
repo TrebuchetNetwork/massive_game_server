@@ -1166,8 +1166,19 @@
         }
 
         .chat-display { position: absolute; bottom: 10px; left: 10px; width: 350px; background-color: rgba(31, 41, 55, 0.8); border-radius: 8px; padding: 10px; max-height: 180px; overflow-y: auto; box-shadow: 0 -2px 5px rgba(0,0,0,0.2); z-index: 30; }
-        .chat-entry { color: #D1D5DB; font-size: 12px; margin-bottom: 3px; }
+        .chat-entry { color: #D1D5DB; font-size: 12px; margin-bottom: 3px; display: flex; align-items: center; gap: 6px; line-height: 1.25; }
         .chat-entry .username { font-weight: bold; }
+        .chat-entry__ts { color: #9CA3AF; font-size: 10px; flex: 0 0 auto; min-width: 64px; }
+        .chat-entry__content { display: inline-flex; gap: 4px; align-items: baseline; flex: 1 1 auto; min-width: 0; }
+        .chat-entry__msg { overflow-wrap: anywhere; }
+        .chat-entry__actions { display: inline-flex; align-items: center; gap: 4px; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; flex: 0 0 auto; }
+        .chat-entry:hover .chat-entry__actions { opacity: 1; pointer-events: auto; }
+        .chat-entry--system .chat-entry__actions { display: none; }
+        .chat-entry__action { border: 1px solid rgba(148, 163, 184, 0.45); background: rgba(15, 23, 42, 0.7); color: #CBD5E1; border-radius: 6px; font-size: 10px; line-height: 1; padding: 3px 5px; cursor: pointer; }
+        .chat-entry__action:hover { filter: brightness(1.1); }
+        .chat-entry__action--mute { border-color: rgba(56, 189, 248, 0.5); color: #BAE6FD; }
+        .chat-entry__action--block { border-color: rgba(251, 146, 60, 0.5); color: #FED7AA; }
+        .chat-entry__action--report { border-color: rgba(248, 113, 113, 0.58); color: #FECACA; }
 
         .match-info { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background-color: rgba(31, 41, 55, 0.9); border-radius: 8px; padding: 8px 15px; text-align: center; color: #E5E7EB; box-shadow: 0 2px 4px rgba(0,0,0,0.2); font-size: 14px;}
         .team-scores { display: flex; gap: 20px; justify-content: center; margin-top: 5px; }
