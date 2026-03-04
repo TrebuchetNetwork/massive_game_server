@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build:ts-client": "tsc -p tsconfig.client.json",
-    "check:ts-client": "tsc -p tsconfig.client.json --noEmit"
+    "check:ts-client": "tsc -p tsconfig.client.json --noEmit",
+    "build:sfx-events": "bash ./sfx/generate_event_sfx.sh"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
