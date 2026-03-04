@@ -506,6 +506,43 @@ export function createCombatFeedback(getCtx) {
                     showCombatBanner('Headshot', 'headshot', 1100);
                     showStreakMedal('Headshot');
                     setObjectiveUrgency('CRIT +50', 'positive', 850);
+                    const victimX = Number(entry?.victim_position?.x);
+                    const victimY = Number(entry?.victim_position?.y);
+                    if (
+                        Number.isFinite(victimX) &&
+                        Number.isFinite(victimY) &&
+                        ctx.effectsManager &&
+                        typeof ctx.effectsManager.createEnhancedDamageNumbers === 'function'
+                    ) {
+                        ctx.effectsManager.createEnhancedDamageNumbers(
+                            { x: victimX, y: victimY },
+                            75,
+                            'enemyDealt',
+                            {
+                                immediate: true,
+                                targetId: entry?.victim_id,
+                            }
+                        );
+                        if (typeof ctx.effectsManager.createEnhancedBulletImpact === 'function') {
+                            const resolvedWeapon = Number(entry?.weapon);
+                            ctx.effectsManager.createEnhancedBulletImpact(
+                                { x: victimX, y: victimY },
+                                Number.isFinite(resolvedWeapon)
+                                    ? resolvedWeapon
+                                    : ctx.GP.WeaponType.Sniper
+                            );
+                        }
+                    }
+                    if (ctx.app && typeof ctx.createScreenFlash === 'function') {
+                        ctx.createScreenFlash(ctx.app, 0xFFE08A, 12, 0.16);
+                    }
+                    if (
+                        ctx.gameSettings?.screenShake &&
+                        ctx.gameScene &&
+                        typeof ctx.applyScreenShake === 'function'
+                    ) {
+                        ctx.applyScreenShake(ctx.gameScene, 2.2, 4);
+                    }
                 } else {
                     const streakAnnouncement = getStreakAnnouncement(ctx.combatUiState.localKillStreak);
                     showCombatBanner(streakAnnouncement?.label || 'Elimination', 'kill', streakAnnouncement ? 1450 : 900);
