@@ -102,10 +102,17 @@ export function createRenderAssetManager(getCtx) {
         }, 2.5);
 
         renderAssetCache.engineGlowTexture = buildRenderTexture((g) => {
-            g.beginFill(0xFFFFFF, 1);
-            g.drawCircle(0, 0, PLAYER_RADIUS * 0.3);
-            g.endFill();
-        });
+            // Shared soft radial glow used across engine glow, projectile halos, and flashes.
+            const rings = 6;
+            for (let i = 0; i < rings; i += 1) {
+                const t = i / (rings - 1);
+                const alpha = 0.34 * (1 - t);
+                const radius = PLAYER_RADIUS * (0.22 + t * 0.88);
+                g.beginFill(0xFFFFFF, alpha);
+                g.drawCircle(0, 0, radius);
+                g.endFill();
+            }
+        }, 2.5);
 
         renderAssetCache.localIndicatorTexture = buildRenderTexture((g) => {
             g.lineStyle(2, 0xFFFFFF, 1);

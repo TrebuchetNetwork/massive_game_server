@@ -6,12 +6,16 @@
  */
 
 export function createAimingSystem(getCtx) {
+    const FIRE_BLOOM_DECAY_MS = 120;
+    const FIRE_BLOOM_BUILD_MS = 45;
+    let fireBloom = 0;
+    let lastBloomUpdateMs = 0;
 
-    function drawLiteAimingSystem(playerX, playerY, aimX, aimY, currentWeapon, crosshairColor, distance) {
+    function drawLiteAimingSystem(playerX, playerY, aimX, aimY, currentWeapon, crosshairColor, distance, bloomScale = 0) {
         const ctx = getCtx();
         const { aimingGraphics, trajectoryGraphics, sniperRangeText, GP } = ctx;
 
-        const crosshairRadius = currentWeapon === GP.WeaponType.Sniper ? 11 : 8;
+        const crosshairRadius = (currentWeapon === GP.WeaponType.Sniper ? 11 : 8) + bloomScale * 2.5;
         aimingGraphics.lineStyle(2, crosshairColor, 0.9);
         aimingGraphics.drawCircle(aimX, aimY, crosshairRadius);
 
@@ -45,12 +49,21 @@ export function createAimingSystem(getCtx) {
             trajectoryGraphics, GP, weaponColors, weaponVelocities,
             ultraPerformanceMode, STABLE_MODE_FORCED, LOW_OVERHEAD_MODE,
             players, AIMING_LITE_PLAYER_THRESHOLD, smoothedFrameMs,
-            TARGET_FRAME_MS_60FPS,
+            TARGET_FRAME_MS_60FPS, inputState, frameNowMs,
         } = ctx;
 
         if (!localPlayerState || !localPlayerState.alive || !mouseWorldPos) {
+            fireBloom = 0;
             if (sniperRangeText) sniperRangeText.visible = false;
             return;
+        }
+
+        const nowMs = Number.isFinite(frameNowMs) ? frameNowMs : Date.now();
+        const deltaMs = lastBloomUpdateMs > 0 ? Math.min(80, Math.max(1, nowMs - lastBloomUpdateMs)) : 16.67;
+        lastBloomUpdateMs = nowMs;
+        fireBloom *= Math.max(0, 1 - (deltaMs / FIRE_BLOOM_DECAY_MS));
+        if (inputState && inputState.shooting) {
+            fireBloom = Math.min(1, fireBloom + (deltaMs / FIRE_BLOOM_BUILD_MS));
         }
 
         aimingGraphics.clear();
@@ -85,7 +98,8 @@ export function createAimingSystem(getCtx) {
                 mouseWorldPos.y,
                 currentWeapon,
                 crosshairColor,
-                distance
+                distance,
+                fireBloom
             );
             return;
         }
@@ -101,9 +115,9 @@ export function createAimingSystem(getCtx) {
         const aimAngle = Math.atan2(dy, dx);
 
         // Draw crosshair at mouse position
-        const crosshairSize = 15;
+        const crosshairSize = 15 + fireBloom * 5;
         const crosshairThickness = 2;
-        const crosshairGap = 5;
+        const crosshairGap = 5 + fireBloom * 3;
 
         // Outer circle
         aimingGraphics.lineStyle(crosshairThickness, crosshairColor, 0.8);

@@ -1729,6 +1729,7 @@
         const COMBAT_DAMAGE_INDICATOR_MS = 780;
         const COMBAT_HITMARKER_MS = 130;
         const COMBAT_HEADSHOT_MARKER_MS = 280;
+        const COMBAT_HITSTOP_MS = 32;
         const COMBAT_MEDAL_MS = 1250;
         const DEATH_RECAP_MS = 2500;
         const KILLCAM_MIN_DURATION_MS = 900;
@@ -1762,6 +1763,7 @@
             medalUntilMs: 0,
             markerUntilMs: 0,
             markerHeadshotUntilMs: 0,
+            hitstopUntilMs: 0,
             objectiveText: '',
             objectiveTone: 'critical',
             objectiveUntilMs: 0,
@@ -1821,7 +1823,7 @@
             EXCITEMENT_UI_ENABLED, RESPAWN_ANIMATION_LIGHTWEIGHT, COMBAT_VISIBLE_DAMAGE_INDICATORS,
             COMBAT_DAMAGE_INDICATOR_DENSE_UPDATE_MS, COMBAT_DAMAGE_INDICATOR_UPDATE_MS,
             COMBAT_DAMAGE_INDICATOR_MS, COMBAT_MAX_DAMAGE_INDICATORS, COMBAT_HITMARKER_MS,
-            COMBAT_HEADSHOT_MARKER_MS, COMBAT_MEDAL_MS, DEATH_RECAP_MS, COMBAT_COMBO_WINDOW_MS,
+            COMBAT_HEADSHOT_MARKER_MS, COMBAT_HITSTOP_MS, COMBAT_MEDAL_MS, DEATH_RECAP_MS, COMBAT_COMBO_WINDOW_MS,
             COMBAT_EVENT_RETENTION, COMBAT_MOMENTUM_DECAY_PER_SEC, COMBAT_SPEED_DECAY_PER_SEC,
             COMBAT_DAMAGE_DECAY_PER_SEC, COMBAT_SPEED_LINES_ENABLED, OBJECTIVE_URGENCY_REFRESH_MS,
             TACTICAL_PING_MS, streakMedalDiv, objectiveUrgencyDiv, deathRecapDiv, deathRecapMainDiv,
@@ -2199,7 +2201,7 @@
             trajectoryGraphics, GP, weaponColors, weaponVelocities,
             ultraPerformanceMode, STABLE_MODE_FORCED, LOW_OVERHEAD_MODE,
             players, AIMING_LITE_PLAYER_THRESHOLD, smoothedFrameMs,
-            TARGET_FRAME_MS_60FPS,
+            TARGET_FRAME_MS_60FPS, inputState, frameNowMs,
         }));
         const { drawAimingSystem, drawLiteAimingSystem } = aimingSystem;
 
@@ -2403,6 +2405,16 @@
             players, projectiles, serverUpdates, cullWorkerResult,
             projectileWorkerCullGraceUntil,
             localPlayerSprite,
+            emitPlayerDeathEffect: (x, y, _teamId, _isLocalSprite) => {
+                if (!effectsManager || typeof effectsManager.createEnhancedExplosion !== 'function') return;
+                if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+                effectsManager.createEnhancedExplosion({ x, y }, 24);
+            },
+            emitPlayerRespawnEffect: (x, y, _teamId, _isLocalSprite) => {
+                if (!effectsManager || typeof effectsManager.createEnhancedPowerupCollectEffect !== 'function') return;
+                if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+                effectsManager.createEnhancedPowerupCollectEffect({ x, y });
+            },
             setLocalPlayerSprite: (v) => { localPlayerSprite = v; },
         }));
         const {
@@ -2457,7 +2469,7 @@
             WALL_REDRAW_MIN_INTERVAL_MS, WALL_REDRAW_MIN_INTERVAL_ULTRA_MS,
             GLOBAL_LIGHT_DIR, gameSettings,
             app, gameScene, localPlayerState, overviewMode, overviewScale,
-            dynamicsTuning, cameraCombatImpulse,
+            dynamicsTuning, cameraCombatImpulse, mouseWorldPos,
             setCameraCombatImpulse: (v) => { cameraCombatImpulse = v; },
             setMinimapWallsCacheDirty: (v) => { minimapWallsCacheDirty = v; },
             setMinimapFlagsCacheDirty: (v) => { minimapFlagsCacheDirty = v; },
@@ -2549,11 +2561,12 @@
                     currentRenderResolution = Math.min(currentRenderResolution, mobileProfile.resolution);
                     pendingRenderResolutionTarget = currentRenderResolution;
                 }
+                const antialiasEnabled = !mobileProfile && !LOW_OVERHEAD_MODE && !STABLE_MODE_FORCED && !BENCH_MODE;
                 app = new PIXI.Application({
                     width: containerRect.width,
                     height: containerRect.height,
                     backgroundColor: 0x1a202c,
-                    antialias: false,
+                    antialias: antialiasEnabled,
                     resolution: currentRenderResolution,
                     autoDensity: true,
                     powerPreference: 'high-performance',
@@ -2779,6 +2792,8 @@
             applyDynamicEffectsCap();
             renderTimestamp = currentTime - adaptiveInterpolationDelayMs;
             const clientDeltaTime = app.ticker.deltaMS / 1000;
+            const hitstopActive = currentTime < Number(combatUiState.hitstopUntilMs || 0);
+            const presentationDeltaTime = hitstopActive ? 0 : clientDeltaTime;
             const perfStartTime = perfEnabled ? perfStart() : 0;
 
             // Update FPS
@@ -2884,24 +2899,24 @@
             if (localPlayerState && localPlayerState.alive) {
                 if (perfEnabled) {
                     const t = perfStart();
-                    updateLocalPlayerPrediction(clientDeltaTime);
+                    updateLocalPlayerPrediction(presentationDeltaTime);
                     perfEnd('prediction', t);
                 } else {
-                    updateLocalPlayerPrediction(clientDeltaTime);
+                    updateLocalPlayerPrediction(presentationDeltaTime);
                 }
             }
 
             if (perfEnabled) {
                 const t = perfStart();
-                interpolateEntities(clientDeltaTime);
+                interpolateEntities(presentationDeltaTime);
                 perfEnd('interpolate', t);
             } else {
-                interpolateEntities(clientDeltaTime);
+                interpolateEntities(presentationDeltaTime);
             }
 
             // Predict projectile motion between server updates so shots remain visibly in-flight.
             const updateProjectilePresentation = () => {
-                const smoothingGain = Math.min(1, Math.max(0.2, clientDeltaTime * 18));
+                const smoothingGain = Math.min(1, Math.max(0.2, presentationDeltaTime * 18));
                 projectiles.forEach((proj) => {
                     const baseX = Number(proj.x);
                     const baseY = Number(proj.y);
@@ -2935,9 +2950,9 @@
                     }
 
                     const nextX =
-                        (Number.isFinite(proj.render_x) ? proj.render_x : baseX) + vx * clientDeltaTime;
+                        (Number.isFinite(proj.render_x) ? proj.render_x : baseX) + vx * presentationDeltaTime;
                     const nextY =
-                        (Number.isFinite(proj.render_y) ? proj.render_y : baseY) + vy * clientDeltaTime;
+                        (Number.isFinite(proj.render_y) ? proj.render_y : baseY) + vy * presentationDeltaTime;
                     proj.render_x = nextX;
                     proj.render_y = nextY;
                 });
@@ -3015,7 +3030,7 @@
             updateVirtualCrosshair();
 
             // Animate zone pulse effects (damage zones)
-            updateZonePulse(clientDeltaTime);
+            updateZonePulse(presentationDeltaTime);
 
             if (!backgroundThrottleActive && !LOW_OVERHEAD_MODE && !ultraPerformanceMode && starfield && currentTime - lastStarfieldUpdateTime >= STARFIELD_UPDATE_INTERVAL_MS) {
                 lastStarfieldUpdateTime = currentTime;
@@ -3101,12 +3116,13 @@
                     tacticalPings.length = 0;
                     tacticalPings.push(...livePings);
                 }
+                const minimapContextObjectives = { pickups, zones };
                 if (perfEnabled) {
                     const t = perfStart();
-                    minimap.update(localPlayerState, players, cachedMinimapWalls, cachedMinimapFlags, livePings);
+                    minimap.update(localPlayerState, players, cachedMinimapWalls, cachedMinimapFlags, livePings, minimapContextObjectives);
                     perfEnd('minimap', t);
                 } else {
-                    minimap.update(localPlayerState, players, cachedMinimapWalls, cachedMinimapFlags, livePings);
+                    minimap.update(localPlayerState, players, cachedMinimapWalls, cachedMinimapFlags, livePings, minimapContextObjectives);
                 }
             }
             
@@ -3713,6 +3729,7 @@
             combatUiState.medalUntilMs = 0;
             combatUiState.markerUntilMs = 0;
             combatUiState.markerHeadshotUntilMs = 0;
+            combatUiState.hitstopUntilMs = 0;
             combatUiState.objectiveText = '';
             combatUiState.objectiveTone = 'critical';
             combatUiState.objectiveUntilMs = 0;

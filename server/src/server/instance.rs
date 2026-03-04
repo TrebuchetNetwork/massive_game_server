@@ -1546,11 +1546,13 @@ mod instance_tests {
             killer_name: "killer".to_string(),
             victim_name: "victim".to_string(),
             weapon: ServerWeaponType::Pistol,
+            is_headshot: true,
             timestamp: 1000,
         };
         assert_eq!(entry.killer_name, "killer");
         assert_eq!(entry.victim_name, "victim");
         assert_eq!(entry.weapon, ServerWeaponType::Pistol);
+        assert!(entry.is_headshot);
         assert_eq!(entry.timestamp, 1000);
     }
 

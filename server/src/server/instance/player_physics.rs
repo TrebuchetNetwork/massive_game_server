@@ -272,6 +272,7 @@ impl MassiveGameServer {
                     "Environment".to_string(),
                     victim_name,
                     ServerWeaponType::Melee,
+                    false,
                 );
 
                 // Losing team respawn reduction for zone deaths

@@ -331,6 +331,7 @@ impl MassiveGameServer {
                                 attacker_username.clone(),
                                 target_username,
                                 ServerWeaponType::Melee,
+                                false,
                             );
 
                             // Handle flag dropping if victim was carrying a flag

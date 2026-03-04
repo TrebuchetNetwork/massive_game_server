@@ -724,6 +724,7 @@ export function createUpdateSprites(getCtx) {
         const shouldRefreshPickupVisibility =
             !ultraPerformanceMode ||
             (frameCounter % PICKUP_VISIBILITY_UPDATE_STRIDE === 0);
+        const pickupAmbientFxEnabled = !ultraPerformanceMode && !STABLE_MODE_FORCED;
         for (const [pickupId, pickup] of pickups) {
             let sprite = pickupSprites.get(pickupId);
             let isNewSprite = false;
@@ -734,8 +735,12 @@ export function createUpdateSprites(getCtx) {
                 isNewSprite = true;
             }
 
-            if (isNewSprite || sprite._lastWorldX !== pickup.x || sprite._lastWorldY !== pickup.y) {
-                sprite.position.set(pickup.x, pickup.y);
+            const worldPositionChanged = sprite._lastWorldX !== pickup.x || sprite._lastWorldY !== pickup.y;
+            if (isNewSprite || worldPositionChanged || pickupAmbientFxEnabled) {
+                const bobOffset = pickupAmbientFxEnabled
+                    ? Math.sin(frameNowMs * 0.003 + (sprite.floatOffset || 0)) * 0.8
+                    : 0;
+                sprite.position.set(pickup.x, pickup.y + bobOffset);
                 sprite._lastWorldX = pickup.x;
                 sprite._lastWorldY = pickup.y;
             }
@@ -747,6 +752,15 @@ export function createUpdateSprites(getCtx) {
                     pickup.x <= pickupCullRight &&
                     pickup.y >= pickupCullTop &&
                     pickup.y <= pickupCullBottom;
+            }
+
+            if (sprite.outerGlow && pickupAmbientFxEnabled && sprite.visible) {
+                const pulse = 0.12 + 0.1 * (0.5 + 0.5 * Math.sin(frameNowMs * 0.006 + (sprite.pulseTime || 0)));
+                if (Math.abs((sprite.outerGlow.alpha || 0) - pulse) > ALPHA_EPSILON) {
+                    sprite.outerGlow.alpha = pulse;
+                }
+                const glowScale = 1 + 0.06 * Math.sin(frameNowMs * 0.004 + (sprite.floatOffset || 0));
+                sprite.outerGlow.scale.set(glowScale);
             }
         }
 

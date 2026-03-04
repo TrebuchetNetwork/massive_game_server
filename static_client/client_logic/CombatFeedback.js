@@ -122,6 +122,14 @@ export function createCombatFeedback(getCtx) {
         if (headshot) {
             ctx.combatUiState.markerHeadshotUntilMs = now + ctx.COMBAT_HEADSHOT_MARKER_MS;
         }
+        const hitstopWindowMs = Math.max(10, Number(ctx.COMBAT_HITSTOP_MS) || 0);
+        if (hitstopWindowMs > 0) {
+            const extraHeadshot = headshot ? 10 : 0;
+            ctx.combatUiState.hitstopUntilMs = Math.max(
+                Number(ctx.combatUiState.hitstopUntilMs) || 0,
+                now + hitstopWindowMs + extraHeadshot
+            );
+        }
         if (headshot) {
             if (ctx.audioManager && ctx.gameSettings.soundEnabled) {
                 ctx.audioManager.playSound('hitMarkerHeadshot', null, 0.3);

@@ -50,11 +50,13 @@ export class Minimap {
         this.gridGraphics = new PIXI.Graphics();
         this.wallsGraphics = new PIXI.Graphics();
         this.objectivesContainer = new PIXI.Container();
+        this.contextObjectivesGraphics = new PIXI.Graphics();
         this.objectivesGraphics = new PIXI.Graphics();
         this.playersContainer = new PIXI.Container();
         this.playersGraphics = new PIXI.Graphics();
         this.pingsGraphics = new PIXI.Graphics();
         this.overlayGraphics = new PIXI.Graphics();
+        this.objectivesContainer.addChild(this.contextObjectivesGraphics);
         this.objectivesContainer.addChild(this.objectivesGraphics);
         this.playersContainer.addChild(this.playersGraphics);
 
@@ -130,6 +132,7 @@ export class Minimap {
     clear() {
         this.wallsGraphics.clear();
         this.playersGraphics.clear();
+        this.contextObjectivesGraphics.clear();
         this.objectivesGraphics.clear();
         this.pingsGraphics.clear();
         this.wallsNeedUpdate = true;
@@ -147,7 +150,14 @@ export class Minimap {
         this.app = null;
     }
 
-    update(localPlayerData, allPlayersMap, allWallsArray, allFlagsArray, activePings = []) {
+    update(
+        localPlayerData,
+        allPlayersMap,
+        allWallsArray,
+        allFlagsArray,
+        activePings = [],
+        contextualObjectives = null
+    ) {
         if (!localPlayerData) return;
 
         if (this.wallsNeedUpdate && allWallsArray.length > 0) {
@@ -158,6 +168,7 @@ export class Minimap {
             this.drawObjectives(allFlagsArray);
             this.objectivesNeedUpdate = false;
         }
+        this.drawSupplementalObjectives(contextualObjectives);
 
         const playersGraphics = this.playersGraphics;
         playersGraphics.clear();
@@ -340,6 +351,78 @@ export class Minimap {
             this.objectivesGraphics.drawRect(dotX - 2, dotY - 3, 4, 6);
             this.objectivesGraphics.endFill();
         });
+    }
+
+    toArray(collection) {
+        if (!collection) return [];
+        if (Array.isArray(collection)) return collection;
+        if (typeof collection.values === "function") return Array.from(collection.values());
+        return [];
+    }
+
+    drawSupplementalObjectives(contextualObjectives) {
+        this.contextObjectivesGraphics.clear();
+        if (!contextualObjectives) return;
+
+        const zoneType = this.gameProtocol?.ZoneType || {};
+        const pickupType = this.gameProtocol?.PickupType || {};
+        const zoneRows = this.toArray(contextualObjectives.zones);
+        const pickupRows = this.toArray(contextualObjectives.pickups);
+        const zoneLimit = this.performanceMode === "normal" ? 32 : 16;
+        const pickupLimit = this.performanceMode === "normal" ? 48 : 20;
+
+        let zonesDrawn = 0;
+        for (let i = 0; i < zoneRows.length && zonesDrawn < zoneLimit; i += 1) {
+            const zone = zoneRows[i];
+            if (!zone) continue;
+            const zx = Number(zone.x) * this.mapScale + this.width / 2;
+            const zy = Number(zone.y) * this.mapScale + this.height / 2;
+            const zw = Math.max(1.0, Number(zone.width) * this.mapScale);
+            const zh = Math.max(1.0, Number(zone.height) * this.mapScale);
+            if (
+                !Number.isFinite(zx) || !Number.isFinite(zy) ||
+                !Number.isFinite(zw) || !Number.isFinite(zh)
+            ) {
+                continue;
+            }
+
+            const zt = Number(zone.zone_type);
+            let color = 0xFBBF24;
+            if (zt === zoneType.DamageZone || zt === 1) color = 0xEF4444;
+            if (zt === zoneType.BoostPad || zt === 2) color = 0x22D3EE;
+
+            this.contextObjectivesGraphics.lineStyle(1, color, 0.5);
+            this.contextObjectivesGraphics.beginFill(color, 0.08);
+            this.contextObjectivesGraphics.drawRect(zx, zy, zw, zh);
+            this.contextObjectivesGraphics.endFill();
+            zonesDrawn += 1;
+        }
+
+        let pickupsDrawn = 0;
+        for (let i = 0; i < pickupRows.length && pickupsDrawn < pickupLimit; i += 1) {
+            const pickup = pickupRows[i];
+            if (!pickup || pickup.is_active === false) continue;
+            let px = Number(pickup.x) * this.mapScale + this.width / 2;
+            let py = Number(pickup.y) * this.mapScale + this.height / 2;
+            if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+            if (px < -6 || px > this.width + 6 || py < -6 || py > this.height + 6) continue;
+            px = Math.max(3, Math.min(this.width - 3, px));
+            py = Math.max(3, Math.min(this.height - 3, py));
+
+            const pt = Number(pickup.pickup_type);
+            let color = 0xF59E0B;
+            if (pt === pickupType.Health || pt === 0) color = 0x4ADE80;
+            if (pt === pickupType.Ammo || pt === 1) color = 0xFCD34D;
+            if (pt === pickupType.WeaponCrate || pt === 2) color = 0x93C5FD;
+            if (pt === pickupType.SpeedBoost || pt === 3) color = 0x38BDF8;
+            if (pt === pickupType.DamageBoost || pt === 4) color = 0xFB7185;
+            if (pt === pickupType.Shield || pt === 5) color = 0xA78BFA;
+
+            this.contextObjectivesGraphics.beginFill(color, 0.58);
+            this.contextObjectivesGraphics.drawCircle(px, py, 1.8);
+            this.contextObjectivesGraphics.endFill();
+            pickupsDrawn += 1;
+        }
     }
 }
 

@@ -41,6 +41,48 @@ impl MassiveGameServer {
         *guard = kept_projectiles;
     }
 
+    #[inline]
+    fn is_projectile_headshot(
+        target_state: &crate::core::types::PlayerState,
+        hit_x: f32,
+        hit_y: f32,
+    ) -> bool {
+        if !target_state.alive {
+            return false;
+        }
+
+        let rel_x = hit_x - target_state.x;
+        let rel_y = hit_y - target_state.y;
+        if !rel_x.is_finite() || !rel_y.is_finite() {
+            return false;
+        }
+
+        let radius_limit =
+            crate::core::constants::PLAYER_RADIUS * crate::core::constants::HEADSHOT_RADIUS_FRAC;
+        let dist_sq = rel_x * rel_x + rel_y * rel_y;
+        if dist_sq > radius_limit * radius_limit {
+            return false;
+        }
+
+        let facing_x = target_state.rotation.cos();
+        let facing_y = target_state.rotation.sin();
+        if !facing_x.is_finite() || !facing_y.is_finite() {
+            return false;
+        }
+
+        let right_x = -facing_y;
+        let right_y = facing_x;
+        let forward_offset = rel_x * facing_x + rel_y * facing_y;
+        let lateral_offset = (rel_x * right_x + rel_y * right_y).abs();
+
+        forward_offset
+            >= crate::core::constants::PLAYER_RADIUS
+                * crate::core::constants::HEADSHOT_FORWARD_MIN_FRAC
+            && lateral_offset
+                <= crate::core::constants::PLAYER_RADIUS
+                    * crate::core::constants::HEADSHOT_LATERAL_MAX_FRAC
+    }
+
     pub(super) async fn process_projectiles_optimized(
         &self,
         _walls: &[Wall],
@@ -382,11 +424,17 @@ impl MassiveGameServer {
 
                 let distance =
                     ((hit_x - attacker_pos.x).powi(2) + (hit_y - attacker_pos.y).powi(2)).sqrt();
-                let damage = crate::systems::combat::weapons::apply_distance_falloff(
+                let is_headshot = Self::is_projectile_headshot(&target_state_entry, hit_x, hit_y);
+                let mut damage = crate::systems::combat::weapons::apply_distance_falloff(
                     weapon,
                     base_damage,
                     distance,
                 );
+                if is_headshot {
+                    damage = ((damage as f32) * crate::core::constants::HEADSHOT_DAMAGE_MULTIPLIER)
+                        .round()
+                        .max(1.0) as i32;
+                }
                 if damage <= 0 {
                     continue;
                 }
@@ -656,6 +704,7 @@ impl MassiveGameServer {
                         killer_username.clone(),
                         victim_username.clone(),
                         weapon,
+                        is_headshot,
                     );
 
                     // Handle flag dropping if victim was carrying a flag

@@ -378,7 +378,7 @@ export function createWorldRenderer(getCtx) {
         const ctx = getCtx();
         const {
             app, gameScene, localPlayerState, overviewMode, overviewScale,
-            dynamicsTuning, cameraCombatImpulse, setCameraCombatImpulse,
+            dynamicsTuning, cameraCombatImpulse, setCameraCombatImpulse, mouseWorldPos,
         } = ctx;
         if (!app || !gameScene) return;
 
@@ -421,8 +421,22 @@ export function createWorldRenderer(getCtx) {
 
             const lookAheadX = velocityX * dynamicsTuning.cameraLookAheadFactor;
             const lookAheadY = velocityY * dynamicsTuning.cameraLookAheadFactor;
-            const targetX = app.screen.width / 2 - (playerX + lookAheadX) * newScale;
-            const targetY = app.screen.height / 2 - (playerY + lookAheadY) * newScale;
+            let cursorLeadX = 0;
+            let cursorLeadY = 0;
+            if (mouseWorldPos && Number.isFinite(mouseWorldPos.x) && Number.isFinite(mouseWorldPos.y)) {
+                const cursorDx = mouseWorldPos.x - playerX;
+                const cursorDy = mouseWorldPos.y - playerY;
+                const cursorDist = Math.hypot(cursorDx, cursorDy);
+                if (cursorDist > 1) {
+                    const clampedLeadDistance = Math.min(180, cursorDist * 0.28);
+                    const invCursorDist = 1 / cursorDist;
+                    cursorLeadX = cursorDx * invCursorDist * clampedLeadDistance;
+                    cursorLeadY = cursorDy * invCursorDist * clampedLeadDistance;
+                }
+            }
+
+            const targetX = app.screen.width / 2 - (playerX + lookAheadX + cursorLeadX) * newScale;
+            const targetY = app.screen.height / 2 - (playerY + lookAheadY + cursorLeadY) * newScale;
 
             const smoothing = Math.min(
                 0.28,

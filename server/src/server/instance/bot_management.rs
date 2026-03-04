@@ -211,12 +211,14 @@ impl MassiveGameServer {
         killer_name: String,
         victim_name: String,
         weapon: ServerWeaponType,
+        is_headshot: bool,
     ) {
         let mut kill_feed_guard = self.kill_feed.write();
         kill_feed_guard.push_back(ServerKillFeedEntry {
             killer_name,
             victim_name,
             weapon,
+            is_headshot,
             timestamp: self.frame_counter.load(AtomicOrdering::Relaxed),
         });
         if kill_feed_guard.len() > MAX_KILL_FEED_HISTORY {
@@ -273,6 +275,7 @@ impl MassiveGameServer {
                 format!("Human {}", joiner_short),
                 bot_name,
                 ServerWeaponType::Melee,
+                false,
             );
         }
 

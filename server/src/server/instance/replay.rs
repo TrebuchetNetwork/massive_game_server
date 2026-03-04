@@ -68,6 +68,7 @@ impl MassiveGameServer {
                 killer_name: entry.killer_name.clone(),
                 victim_name: entry.victim_name.clone(),
                 weapon: format!("{:?}", entry.weapon),
+                is_headshot: entry.is_headshot,
                 timestamp: entry.timestamp,
             })
             .collect();

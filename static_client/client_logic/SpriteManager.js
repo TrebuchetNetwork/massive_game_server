@@ -109,6 +109,10 @@ export function createSpriteManager(getCtx) {
         container._lastDamageBoost = false;
         container._lastHealthPercent = null;
         container._lastHealthAlive = null;
+        container._lastHealthValue = Number.isFinite(player.health) ? Number(player.health) : null;
+        container._damageFlashUntilMs = 0;
+        container._lastDamageFlashActive = false;
+        container._lastAliveTransitionState = !!player.alive;
         container._lastShieldCurrent = null;
         container._lastShieldMax = null;
         container._lastCarryingFlagTeam = 0;
@@ -176,7 +180,8 @@ export function createSpriteManager(getCtx) {
                 HIGH_POPULATION_PLAYER_COUNT, ultraPerformanceMode, STABLE_MODE_FORCED,
                 frameNowMs, frameCounter, RESPAWN_WORLD_TEXT_ENABLED,
                 isWorldPointVisible, createSpeedBoostEffect, createDodgeGlowEffect,
-                createWeaponSwapEffect, buildCarriedFlagSprite } = ctx;
+                createWeaponSwapEffect, buildCarriedFlagSprite,
+                emitPlayerDeathEffect, emitPlayerRespawnEffect } = ctx;
 
         const targetX = player.render_x !== undefined ? player.render_x : player.x;
         const targetY = player.render_y !== undefined ? player.render_y : player.y;
@@ -187,6 +192,26 @@ export function createSpriteManager(getCtx) {
         if (sprite.rotation !== effectiveRotation) sprite.rotation = effectiveRotation;
 
         const isLocalSprite = sprite.playerId === myPlayerId;
+        if (sprite._lastAliveTransitionState !== player.alive) {
+            const transitionVisible = isLocalSprite || isWorldPointVisible(targetX, targetY, PLAYER_CULL_MARGIN_WORLD);
+            if (
+                transitionVisible &&
+                sprite._lastAliveTransitionState &&
+                !player.alive &&
+                typeof emitPlayerDeathEffect === 'function'
+            ) {
+                emitPlayerDeathEffect(targetX, targetY, player.team_id, isLocalSprite);
+            } else if (
+                transitionVisible &&
+                !sprite._lastAliveTransitionState &&
+                player.alive &&
+                typeof emitPlayerRespawnEffect === 'function'
+            ) {
+                emitPlayerRespawnEffect(targetX, targetY, player.team_id, isLocalSprite);
+            }
+            sprite._lastAliveTransitionState = !!player.alive;
+        }
+
         const totalPlayerCount = updateContext.totalPlayerCount;
         const denseVisualMode = updateContext.denseVisualMode;
         const detailTickDivisor = updateContext.detailTickDivisor;
@@ -224,11 +249,17 @@ export function createSpriteManager(getCtx) {
         }
 
         const playerTeamColor = teamColors[player.team_id] || teamColors[0];
-        const mainBodyColor = player.alive ? playerTeamColor : 0x6B7280;
-        if (sprite._lastTeamId !== player.team_id || sprite._lastAlive !== player.alive) {
+        const damageFlashActive = player.alive && sprite._damageFlashUntilMs > frameNowMs;
+        const mainBodyColor = damageFlashActive ? 0xFFFFFF : (player.alive ? playerTeamColor : 0x6B7280);
+        if (
+            sprite._lastTeamId !== player.team_id ||
+            sprite._lastAlive !== player.alive ||
+            sprite._lastDamageFlashActive !== damageFlashActive
+        ) {
             sprite.body.tint = mainBodyColor;
             sprite._lastTeamId = player.team_id;
             sprite._lastAlive = player.alive;
+            sprite._lastDamageFlashActive = damageFlashActive;
         }
 
         if (sprite.localIndicator) {
@@ -475,7 +506,21 @@ export function createSpriteManager(getCtx) {
         }
         if (!alive) {
             sprite._lastHealthAlive = false;
+            sprite._lastHealthValue = Number.isFinite(player.health) ? Number(player.health) : sprite._lastHealthValue;
             return;
+        }
+
+        const currentHealthValue = Number(player.health);
+        if (Number.isFinite(currentHealthValue)) {
+            const previousHealthValue = Number(sprite._lastHealthValue);
+            if (
+                Number.isFinite(previousHealthValue) &&
+                currentHealthValue < previousHealthValue &&
+                player.alive
+            ) {
+                sprite._damageFlashUntilMs = frameNowMs + 60;
+            }
+            sprite._lastHealthValue = currentHealthValue;
         }
 
         const healthPercent = Math.max(0, Math.min(1, player.health / Math.max(1, player.max_health)));
@@ -549,6 +594,43 @@ export function createSpriteManager(getCtx) {
         sprite.blendMode = weaponType === GP.WeaponType.Sniper ? PIXI.BLEND_MODES.ADD : PIXI.BLEND_MODES.NORMAL;
         sprite._lastVelX = Number.NaN;
         sprite._lastVelY = Number.NaN;
+        if (!Array.isArray(sprite._trailSprites) || sprite._trailSprites.length !== 2) {
+            sprite._trailSprites = [];
+            for (let i = 0; i < 2; i += 1) {
+                const trail = new PIXI.Sprite(texture);
+                trail.anchor.set(0.5);
+                trail.visible = false;
+                trail.alpha = i === 0 ? 0.4 : 0.2;
+                trail.blendMode = PIXI.BLEND_MODES.NORMAL;
+                trail.tint = sprite.tint;
+                trail._trailIndex = i;
+                sprite.addChild(trail);
+                sprite._trailSprites.push(trail);
+            }
+        } else {
+            for (const trail of sprite._trailSprites) {
+                if (trail.texture !== texture) {
+                    trail.texture = texture;
+                }
+                trail.tint = sprite.tint;
+                trail.visible = false;
+            }
+        }
+
+        if (!sprite._projectileHalo) {
+            const haloTexture = renderAssetCache.engineGlowTexture || texture;
+            const halo = new PIXI.Sprite(haloTexture);
+            halo.anchor.set(0.5);
+            halo.visible = false;
+            halo.alpha = 0.24;
+            halo.blendMode = PIXI.BLEND_MODES.ADD;
+            halo.tint = sprite.tint;
+            sprite.addChild(halo);
+            sprite._projectileHalo = halo;
+        } else if (renderAssetCache.engineGlowTexture && sprite._projectileHalo.texture !== renderAssetCache.engineGlowTexture) {
+            sprite._projectileHalo.texture = renderAssetCache.engineGlowTexture;
+            sprite._projectileHalo.visible = false;
+        }
         return sprite;
     }
 
@@ -568,6 +650,18 @@ export function createSpriteManager(getCtx) {
         sprite.blendMode = PIXI.BLEND_MODES.NORMAL;
         sprite._lastVelX = Number.NaN;
         sprite._lastVelY = Number.NaN;
+        if (Array.isArray(sprite._trailSprites)) {
+            for (const trail of sprite._trailSprites) {
+                trail.visible = false;
+                trail.position.set(0, 0);
+                trail.scale.set(1, 1);
+            }
+        }
+        if (sprite._projectileHalo) {
+            sprite._projectileHalo.visible = false;
+            sprite._projectileHalo.position.set(0, 0);
+            sprite._projectileHalo.scale.set(1, 1);
+        }
 
         if (projectileSpritePool.length < PROJECTILE_SPRITE_POOL_LIMIT) {
             projectileSpritePool.push(sprite);
@@ -679,6 +773,52 @@ export function createSpriteManager(getCtx) {
             Math.abs((sprite.scale.y || 1) - scaleY) > TRANSFORM_EPSILON
         ) {
             sprite.scale.set(scaleX, scaleY);
+        }
+
+        const fullVisualFx =
+            !dotLod &&
+            !lowLod &&
+            !mediumLod &&
+            !ultraPerformanceMode &&
+            !STABLE_MODE_FORCED &&
+            !denseVisualMode;
+
+        const showTrailFx = fullVisualFx && projectileSpeed > 40;
+        if (Array.isArray(sprite._trailSprites)) {
+            const trailStep = Math.min(18, Math.max(5, projectileSpeed * 0.018));
+            for (let i = 0; i < sprite._trailSprites.length; i += 1) {
+                const trail = sprite._trailSprites[i];
+                if (!showTrailFx) {
+                    if (trail.visible) trail.visible = false;
+                    continue;
+                }
+                if (!trail.visible) trail.visible = true;
+                trail.tint = sprite.tint;
+                const alpha = i === 0 ? 0.4 : 0.2;
+                if (Math.abs(trail.alpha - alpha) > ALPHA_EPSILON) {
+                    trail.alpha = alpha;
+                }
+                trail.position.set(-(i + 1) * trailStep, 0);
+                const trailScaleX = Math.max(0.55, scaleX * (0.82 - i * 0.2));
+                const trailScaleY = Math.max(0.48, scaleY * (0.74 - i * 0.16));
+                trail.scale.set(trailScaleX, trailScaleY);
+            }
+        }
+
+        const haloEnabledWeapon = sprite.weaponType === GP.WeaponType.Sniper || sprite.weaponType === GP.WeaponType.Rifle;
+        const showHaloFx = fullVisualFx && haloEnabledWeapon;
+        if (sprite._projectileHalo) {
+            if (!showHaloFx) {
+                if (sprite._projectileHalo.visible) sprite._projectileHalo.visible = false;
+            } else {
+                if (!sprite._projectileHalo.visible) sprite._projectileHalo.visible = true;
+                const idSeed = typeof sprite.projectileId === 'string' ? sprite.projectileId.length : (Number(sprite.projectileId) || 0);
+                const haloPulse = 0.18 + 0.12 * (0.5 + 0.5 * Math.sin(frameNowMs * 0.028 + idSeed));
+                sprite._projectileHalo.alpha = haloPulse;
+                sprite._projectileHalo.tint = sprite.tint;
+                const haloScale = Math.max(1.4, 1.6 + Math.min(0.9, projectileSpeed / 800));
+                sprite._projectileHalo.scale.set(haloScale);
+            }
         }
 
         if (ultraPerformanceMode || STABLE_MODE_FORCED || denseVisualMode) {

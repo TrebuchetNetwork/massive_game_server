@@ -506,7 +506,7 @@ impl MassiveGameServer {
                         timestamp: entry.timestamp as f32,
                         killer_position: None,
                         victim_position: None,
-                        is_headshot: false,
+                        is_headshot: entry.is_headshot,
                     },
                 )
             })

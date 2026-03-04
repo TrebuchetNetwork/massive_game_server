@@ -18,6 +18,38 @@ fn anti_cheat_kick_threshold() -> Option<u32> {
     })
 }
 
+#[inline]
+fn weapon_base_spread_angle_rad(weapon: ServerWeaponType) -> f32 {
+    match weapon {
+        ServerWeaponType::Pistol => PISTOL_BASE_SPREAD_ANGLE_RAD,
+        ServerWeaponType::Rifle => RIFLE_BASE_SPREAD_ANGLE_RAD,
+        ServerWeaponType::Sniper => SNIPER_BASE_SPREAD_ANGLE_RAD,
+        _ => 0.0,
+    }
+}
+
+#[inline]
+fn weapon_spread_bloom_per_shot_rad(weapon: ServerWeaponType) -> f32 {
+    match weapon {
+        ServerWeaponType::Pistol => PISTOL_SPREAD_BLOOM_PER_SHOT_RAD,
+        ServerWeaponType::Shotgun => RIFLE_SPREAD_BLOOM_PER_SHOT_RAD,
+        ServerWeaponType::Rifle => RIFLE_SPREAD_BLOOM_PER_SHOT_RAD,
+        ServerWeaponType::Sniper => SNIPER_SPREAD_BLOOM_PER_SHOT_RAD,
+        ServerWeaponType::Melee => 0.0,
+    }
+}
+
+#[inline]
+fn weapon_spread_bloom_cap_rad(weapon: ServerWeaponType) -> f32 {
+    match weapon {
+        ServerWeaponType::Pistol => PISTOL_SPREAD_BLOOM_MAX_RAD,
+        ServerWeaponType::Shotgun => RIFLE_SPREAD_BLOOM_MAX_RAD,
+        ServerWeaponType::Rifle => RIFLE_SPREAD_BLOOM_MAX_RAD,
+        ServerWeaponType::Sniper => SNIPER_SPREAD_BLOOM_MAX_RAD,
+        ServerWeaponType::Melee => 0.0,
+    }
+}
+
 impl MassiveGameServer {
     pub(super) fn prune_runtime_tracking_state(&self) {
         self.player_position_history
@@ -843,6 +875,29 @@ impl MassiveGameServer {
             && player_state.weapon != ServerWeaponType::Melee
             && player_state.can_shoot(current_server_time)
         {
+            if let Some(last_shot_time) = player_state.last_shot_time {
+                let elapsed = current_server_time
+                    .saturating_duration_since(last_shot_time)
+                    .as_secs_f32();
+                if elapsed.is_finite() && elapsed > 0.0 {
+                    player_state.weapon_spread_bloom = (player_state.weapon_spread_bloom
+                        - (elapsed * WEAPON_SPREAD_BLOOM_DECAY_PER_SEC))
+                        .max(0.0);
+                }
+            } else {
+                player_state.weapon_spread_bloom = 0.0;
+            }
+
+            let bloom_for_shot = player_state.weapon_spread_bloom.max(0.0);
+            let next_bloom = (bloom_for_shot
+                + weapon_spread_bloom_per_shot_rad(player_state.weapon))
+            .min(weapon_spread_bloom_cap_rad(player_state.weapon));
+            player_state.weapon_spread_bloom = if next_bloom.is_finite() {
+                next_bloom.max(0.0)
+            } else {
+                0.0
+            };
+
             player_state.last_shot_time = Some(current_server_time);
             player_state.ammo -= 1;
             player_state.sync_active_weapon_to_loadout_slot();
@@ -875,9 +930,10 @@ impl MassiveGameServer {
                         ^ (player_state.y.to_bits() as u64)
                         ^ ((player_state.rotation.to_bits() as u64) << 7);
                     let mut spread_rng = DeterministicRng::new(spread_seed);
+                    let spread_budget =
+                        SHOTGUN_SPREAD_ANGLE_RAD + (bloom_for_shot * SHOTGUN_BLOOM_SPREAD_SCALE);
                     for _ in 0..SHOTGUN_PELLET_COUNT {
-                        let angle_offset =
-                            SHOTGUN_SPREAD_ANGLE_RAD * spread_rng.gen_range_f32(-1.0, 1.0);
+                        let angle_offset = spread_budget * spread_rng.gen_range_f32(-1.0, 1.0);
                         let dir_x = player_state.rotation.cos() * angle_offset.cos()
                             - player_state.rotation.sin() * angle_offset.sin();
                         let dir_y = player_state.rotation.sin() * angle_offset.cos()
@@ -896,13 +952,26 @@ impl MassiveGameServer {
                 // ServerWeaponType::Melee is handled by the separate melee_attack check below
                 _ => {
                     // Pistol, Rifle, Sniper
+                    let spread_seed = self.frame_counter.load(AtomicOrdering::Relaxed)
+                        ^ (input.timestamp << 1)
+                        ^ ((input.sequence as u64) << 35)
+                        ^ ((player_state.x.to_bits() as u64) << 11)
+                        ^ ((player_state.y.to_bits() as u64) << 3)
+                        ^ ((player_state.rotation.to_bits() as u64) << 13)
+                        ^ 0xA11CE5_u64;
+                    let mut spread_rng = DeterministicRng::new(spread_seed);
+                    let spread_budget =
+                        weapon_base_spread_angle_rad(player_state.weapon) + bloom_for_shot;
+                    let spread_angle = spread_budget * spread_rng.gen_range_f32(-1.0, 1.0);
+                    let shot_rotation = player_state.rotation + spread_angle;
+
                     self.projectiles_to_add.push(Projectile::new(
                         player_state.id.clone(),
                         player_state.weapon,
                         proj_spawn_x,
                         proj_spawn_y,
-                        player_state.rotation.cos(),
-                        player_state.rotation.sin(),
+                        shot_rotation.cos(),
+                        shot_rotation.sin(),
                         damage_multiplier,
                     ));
                 }

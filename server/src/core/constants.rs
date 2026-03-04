@@ -83,6 +83,7 @@ pub const SHOTGUN_MAX_AMMO: i32 = 5;
 pub const SHOTGUN_RELOAD_SECS: f32 = 2.5;
 pub const SHOTGUN_PELLET_COUNT: i32 = 8;
 pub const SHOTGUN_SPREAD_ANGLE_RAD: f32 = 0.25;
+pub const SHOTGUN_BLOOM_SPREAD_SCALE: f32 = 0.22;
 pub const SHOTGUN_FALLOFF_START: f32 = 40.0;
 pub const SHOTGUN_MAX_RANGE: f32 = 160.0;
 pub const SHOTGUN_MIN_MULTIPLIER: f32 = 0.10;
@@ -117,6 +118,24 @@ pub const SPEED_BOOST_MULTIPLIER: f32 = 1.15; // Speed boost powerup multiplier 
 pub const DAMAGE_BOOST_MULTIPLIER: f32 = 1.5;
 
 pub const WEAPON_SWAP_DURATION_SECS: f32 = 0.3;
+
+// ── Weapon spread / recoil bloom tuning ────────────────────────────
+pub const WEAPON_SPREAD_BLOOM_DECAY_PER_SEC: f32 = 2.8;
+pub const PISTOL_BASE_SPREAD_ANGLE_RAD: f32 = 0.022;
+pub const RIFLE_BASE_SPREAD_ANGLE_RAD: f32 = 0.016;
+pub const SNIPER_BASE_SPREAD_ANGLE_RAD: f32 = 0.006;
+pub const PISTOL_SPREAD_BLOOM_PER_SHOT_RAD: f32 = 0.020;
+pub const RIFLE_SPREAD_BLOOM_PER_SHOT_RAD: f32 = 0.016;
+pub const SNIPER_SPREAD_BLOOM_PER_SHOT_RAD: f32 = 0.010;
+pub const PISTOL_SPREAD_BLOOM_MAX_RAD: f32 = 0.135;
+pub const RIFLE_SPREAD_BLOOM_MAX_RAD: f32 = 0.110;
+pub const SNIPER_SPREAD_BLOOM_MAX_RAD: f32 = 0.045;
+
+// ── Headshot tuning ────────────────────────────────────────────────
+pub const HEADSHOT_DAMAGE_MULTIPLIER: f32 = 2.0;
+pub const HEADSHOT_FORWARD_MIN_FRAC: f32 = 0.35;
+pub const HEADSHOT_LATERAL_MAX_FRAC: f32 = 0.72;
+pub const HEADSHOT_RADIUS_FRAC: f32 = 1.08;
 
 // ── Ability tuning ──────────────────────────────────────────────────
 pub const ABILITY_DASH_COOLDOWN_SECS: f32 = 6.0; // was 8 – more outplay moments

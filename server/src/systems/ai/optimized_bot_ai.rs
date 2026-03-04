@@ -1,7 +1,9 @@
 // Optimized Bot AI with CTF Support
 
 use crate::core::constants::*;
-use crate::core::types::{EntityId, PlayerID, PlayerInputData, ServerWeaponType, Vec2, Wall};
+use crate::core::types::{
+    CorePickupType, EntityId, PlayerID, PlayerInputData, PlayerState, ServerWeaponType, Vec2, Wall,
+};
 use crate::flatbuffers_generated::game_protocol as fb;
 use crate::server::instance::{BotBehaviorState, BotController, MassiveGameServer};
 use crate::systems::ai::commander::{
@@ -37,7 +39,6 @@ fn with_bot_rng<R>(f: impl FnOnce(&mut DeterministicRng) -> R) -> R {
 const BOT_SIMPLE_MOVEMENT_ONLY: bool = false; // Enable full AI with combat
 const BOT_TARGET_ACQUISITION_RANGE: f32 = 600.0; // Increased combat range
 const BOT_FLAG_DETECTION_RANGE: f32 = 2000.0; // See flags from far away
-const BOT_SHOOT_ACCURACY: f32 = 0.80; // 80% accuracy
 const BOT_FLAG_CHASE_PRIORITY: f32 = 3.0; // High priority for flag objectives
 const BOT_MOVEMENT_TOLERANCE: f32 = 50.0; // Distance to consider "at target"
 const BOT_STUCK_THRESHOLD: f32 = 10.0; // Min distance to move to not be considered stuck
@@ -45,6 +46,10 @@ const BOT_STUCK_TIME_THRESHOLD: f32 = 2.0; // Seconds before considering bot stu
 const BOT_STUCK_CHECK_INTERVAL: f32 = 0.5; // Check every half second
 const BOT_STUCK_TARGET_TOLERANCE: f32 = BOT_MOVEMENT_TOLERANCE + 20.0;
 const BOT_PREDICTIVE_MODEL_MAX_ENTRIES: usize = 4096;
+const BOT_PICKUP_INTEREST_RADIUS: f32 = 780.0;
+const BOT_PICKUP_EMERGENCY_HEALTH: i32 = 40;
+const BOT_PICKUP_LOW_HEALTH: i32 = 70;
+const BOT_PICKUP_LOW_AMMO_RATIO: f32 = 0.35;
 
 // ── A* pathfinding constants ─────────────────────────────────────────
 /// Cell size for the A* navigation grid (world units per cell).
@@ -233,6 +238,55 @@ impl BotPersonality {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BotDifficultyTier {
+    Easy,
+    Normal,
+    Hard,
+}
+
+impl BotDifficultyTier {
+    fn from_bot_id(bot_id: &PlayerID) -> Self {
+        let mut hash = 1469598103934665603u64;
+        for byte in bot_id.as_ref().as_bytes() {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(1099511628211u64);
+        }
+        match hash % 100 {
+            0..=29 => BotDifficultyTier::Easy,
+            30..=74 => BotDifficultyTier::Normal,
+            _ => BotDifficultyTier::Hard,
+        }
+    }
+
+    #[inline]
+    fn aim_accuracy(self) -> f32 {
+        match self {
+            BotDifficultyTier::Easy => 0.50,
+            BotDifficultyTier::Normal => 0.70,
+            BotDifficultyTier::Hard => 0.90,
+        }
+    }
+
+    #[inline]
+    fn reaction_time_ticks(self) -> u64 {
+        match self {
+            BotDifficultyTier::Easy => BOT_REACTION_TIME_TICKS.saturating_mul(2),
+            BotDifficultyTier::Normal => BOT_REACTION_TIME_TICKS,
+            BotDifficultyTier::Hard => BOT_REACTION_TIME_TICKS.saturating_sub(2).max(1),
+        }
+    }
+
+    #[inline]
+    fn shoot_probability(self) -> f32 {
+        match self {
+            BotDifficultyTier::Easy => 0.50,
+            BotDifficultyTier::Normal => 0.68,
+            BotDifficultyTier::Hard => 0.84,
+        }
+    }
+}
+
 pub struct OptimizedBotAI;
 
 #[derive(Clone)]
@@ -245,6 +299,13 @@ struct EnemySnapshot {
     team_id: u8,
     carries_flag_team_id: u8,
     weapon: ServerWeaponType,
+}
+
+#[derive(Clone)]
+struct PickupSnapshot {
+    x: f32,
+    y: f32,
+    pickup_type: CorePickupType,
 }
 
 #[derive(Clone)]
@@ -461,6 +522,19 @@ impl OptimizedBotAI {
                 }
             });
 
+        let active_pickups: Vec<PickupSnapshot> = {
+            let pickups_guard = server_instance.pickups.read();
+            pickups_guard
+                .iter()
+                .filter(|pickup| pickup.is_active)
+                .map(|pickup| PickupSnapshot {
+                    x: pickup.x,
+                    y: pickup.y,
+                    pickup_type: pickup.pickup_type.clone(),
+                })
+                .collect()
+        };
+
         // Process bots with LOD-based tick skipping
         for bot_id in bot_ids.iter() {
             // Build an owned snapshot first so any read guard is dropped before mutable access.
@@ -528,55 +602,69 @@ impl OptimizedBotAI {
 
                     // Remember old target so we can detect if the decision changed it.
                     let old_target = bot_controller.target_position;
+                    let pickup_override = lod_tier != BotAiLodTier::Far
+                        && Self::maybe_retarget_for_pickup(
+                            bot_controller,
+                            &bot_snapshot,
+                            &active_pickups,
+                        );
 
-                    match lod_tier {
-                        BotAiLodTier::Far => {
-                            // Far tier: basic wander only
-                            Self::make_far_wander_decision(bot_controller, &bot_snapshot);
-                        }
-                        BotAiLodTier::Medium => {
-                            // Medium tier: simplified decisions (no CTF objective, no commander)
-                            Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
-                        }
-                        BotAiLodTier::Near => {
-                            // Near tier: full AI
-                            if BOT_SIMPLE_MOVEMENT_ONLY {
-                                Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
-                            } else if game_mode == fb::GameModeType::CaptureTheFlag
-                                && match_state == fb::MatchStateType::Active
-                            {
-                                let enemies = if bot_snapshot.team_id == 1 {
-                                    &enemies_team1
-                                } else {
-                                    &enemies_team2
-                                };
-                                Self::make_ctf_decision(
-                                    bot_controller,
-                                    &bot_snapshot,
-                                    flag_states,
-                                    &live_players_by_id,
-                                    team_objectives,
-                                    enemies,
-                                    if bot_snapshot.team_id == 1 {
-                                        commander_attack_bias_team1
-                                    } else {
-                                        commander_attack_bias_team2
-                                    },
-                                );
-                            } else {
+                    if !pickup_override {
+                        match lod_tier {
+                            BotAiLodTier::Far => {
+                                // Far tier: basic wander only
+                                Self::make_far_wander_decision(bot_controller, &bot_snapshot);
+                            }
+                            BotAiLodTier::Medium => {
+                                // Medium tier: simplified decisions (no CTF objective, no commander)
                                 Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
                             }
+                            BotAiLodTier::Near => {
+                                // Near tier: full AI
+                                if BOT_SIMPLE_MOVEMENT_ONLY {
+                                    Self::make_simple_movement_decision(
+                                        bot_controller,
+                                        &bot_snapshot,
+                                    );
+                                } else if game_mode == fb::GameModeType::CaptureTheFlag
+                                    && match_state == fb::MatchStateType::Active
+                                {
+                                    let enemies = if bot_snapshot.team_id == 1 {
+                                        &enemies_team1
+                                    } else {
+                                        &enemies_team2
+                                    };
+                                    Self::make_ctf_decision(
+                                        bot_controller,
+                                        &bot_snapshot,
+                                        flag_states,
+                                        &live_players_by_id,
+                                        team_objectives,
+                                        enemies,
+                                        if bot_snapshot.team_id == 1 {
+                                            commander_attack_bias_team1
+                                        } else {
+                                            commander_attack_bias_team2
+                                        },
+                                    );
+                                } else {
+                                    Self::make_simple_movement_decision(
+                                        bot_controller,
+                                        &bot_snapshot,
+                                    );
+                                }
 
-                            let commander_waypoint = if bot_snapshot.team_id == 1 {
-                                commander_waypoint_team1
-                            } else {
-                                commander_waypoint_team2
-                            };
-                            Self::apply_commander_waypoint(
-                                bot_controller,
-                                &bot_snapshot,
-                                commander_waypoint,
-                            );
+                                let commander_waypoint = if bot_snapshot.team_id == 1 {
+                                    commander_waypoint_team1
+                                } else {
+                                    commander_waypoint_team2
+                                };
+                                Self::apply_commander_waypoint(
+                                    bot_controller,
+                                    &bot_snapshot,
+                                    commander_waypoint,
+                                );
+                            }
                         }
                     }
 
@@ -959,6 +1047,121 @@ impl OptimizedBotAI {
         nearest_enemy
     }
 
+    fn pickup_priority(bot_state: &BotSnapshotOwned, pickup_type: &CorePickupType) -> Option<f32> {
+        let carrying_flag = bot_state.is_carrying_flag_team_id != 0;
+        let max_ammo = PlayerState::get_max_ammo_for_weapon(bot_state.weapon).max(1) as f32;
+        let ammo_ratio = (bot_state.ammo.max(0) as f32 / max_ammo).clamp(0.0, 1.0);
+
+        match pickup_type {
+            CorePickupType::Health => {
+                if bot_state.health <= BOT_PICKUP_EMERGENCY_HEALTH {
+                    Some(160.0)
+                } else if bot_state.health <= BOT_PICKUP_LOW_HEALTH {
+                    Some(115.0)
+                } else if carrying_flag && bot_state.health < 95 {
+                    Some(90.0)
+                } else {
+                    None
+                }
+            }
+            CorePickupType::Ammo => {
+                if carrying_flag {
+                    None
+                } else if ammo_ratio <= 0.12 {
+                    Some(120.0)
+                } else if ammo_ratio <= BOT_PICKUP_LOW_AMMO_RATIO {
+                    Some(82.0)
+                } else {
+                    None
+                }
+            }
+            CorePickupType::Shield => {
+                if carrying_flag {
+                    Some(92.0)
+                } else if bot_state.health < 90 {
+                    Some(62.0)
+                } else {
+                    None
+                }
+            }
+            CorePickupType::SpeedBoost => {
+                if carrying_flag {
+                    Some(118.0)
+                } else {
+                    Some(42.0)
+                }
+            }
+            CorePickupType::DamageBoost => {
+                if carrying_flag {
+                    None
+                } else if bot_state.health >= 60 && ammo_ratio >= 0.25 {
+                    Some(48.0)
+                } else {
+                    None
+                }
+            }
+            CorePickupType::WeaponCrate(weapon) => {
+                if carrying_flag {
+                    None
+                } else if *weapon != bot_state.weapon {
+                    Some(34.0)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    fn maybe_retarget_for_pickup(
+        bot_controller: &mut BotController,
+        bot_state: &BotSnapshotOwned,
+        active_pickups: &[PickupSnapshot],
+    ) -> bool {
+        if active_pickups.is_empty() {
+            return false;
+        }
+
+        let critical_need = bot_state.health <= BOT_PICKUP_EMERGENCY_HEALTH;
+        let carrying_flag = bot_state.is_carrying_flag_team_id != 0;
+        let interest_radius = if critical_need || carrying_flag {
+            BOT_PICKUP_INTEREST_RADIUS * 1.55
+        } else {
+            BOT_PICKUP_INTEREST_RADIUS
+        };
+        let interest_radius_sq = interest_radius * interest_radius;
+
+        let mut best_target = None;
+        let mut best_score = f32::MIN;
+
+        for pickup in active_pickups {
+            let Some(priority) = Self::pickup_priority(bot_state, &pickup.pickup_type) else {
+                continue;
+            };
+
+            let dx = pickup.x - bot_state.x;
+            let dy = pickup.y - bot_state.y;
+            let dist_sq = dx * dx + dy * dy;
+            if dist_sq > interest_radius_sq {
+                continue;
+            }
+
+            let score = priority - dist_sq.sqrt() * 0.11;
+            if score > best_score {
+                best_score = score;
+                best_target = Some(Vec2::new(pickup.x, pickup.y));
+            }
+        }
+
+        if let Some(target_position) = best_target {
+            bot_controller.target_position = Some(target_position);
+            bot_controller.target_enemy_id = None;
+            bot_controller.behavior_state = BotBehaviorState::MovingToObjective;
+            return true;
+        }
+
+        false
+    }
+
     /// Enhanced movement decision with combat awareness, influenced by personality.
     fn make_simple_movement_decision(
         bot_controller: &mut BotController,
@@ -1232,6 +1435,7 @@ impl OptimizedBotAI {
             ping_y: 0.0,
         };
         let personality = bot_controller.personality;
+        let difficulty = BotDifficultyTier::from_bot_id(&bot_state.id);
 
         // Reload if low on ammo
         if bot_state.ammo == 0 {
@@ -1378,8 +1582,14 @@ impl OptimizedBotAI {
             }
 
             // Aim at enemy with some inaccuracy
+            let accuracy_bias = match personality {
+                BotPersonality::Aggressive => -0.05,
+                BotPersonality::Defensive => 0.04,
+                BotPersonality::Balanced => 0.0,
+            };
+            let effective_accuracy = (difficulty.aim_accuracy() + accuracy_bias).clamp(0.35, 0.95);
             let aim_offset =
-                with_bot_rng(|rng| rng.gen_range_f32(-0.2, 0.2)) * (1.0 - BOT_SHOOT_ACCURACY);
+                with_bot_rng(|rng| rng.gen_range_f32(-0.2, 0.2)) * (1.0 - effective_accuracy);
             input.rotation = nearest_enemy_angle + aim_offset;
             if let Some(target) = selected_target.as_ref() {
                 // Tighten movement vector around predicted enemy motion when engaging.
@@ -1409,8 +1619,15 @@ impl OptimizedBotAI {
                 // Apply reaction time (tick-based)
                 let ticks_since_decision =
                     frame_count.saturating_sub(bot_controller.last_decision_tick);
-                if ticks_since_decision >= BOT_REACTION_TIME_TICKS {
-                    input.shooting = with_bot_rng(|rng| rng.gen_bool(0.7)); // 70% chance to shoot when in range
+                let reaction_ticks = difficulty.reaction_time_ticks();
+                if ticks_since_decision >= reaction_ticks {
+                    let shoot_probability = match personality {
+                        BotPersonality::Aggressive => difficulty.shoot_probability() + 0.08,
+                        BotPersonality::Defensive => difficulty.shoot_probability() - 0.08,
+                        BotPersonality::Balanced => difficulty.shoot_probability(),
+                    }
+                    .clamp(0.30, 0.94);
+                    input.shooting = with_bot_rng(|rng| rng.gen_bool(f64::from(shoot_probability)));
 
                     // Aggressive bots prefer melee at very close range
                     let melee_chance = match personality {
@@ -1942,6 +2159,59 @@ mod tests {
             let r = p.engagement_range();
             assert!(r == 150.0 || r == 300.0 || r == 400.0);
         }
+    }
+
+    // ── Difficulty tier tests ────────────────────────────────────
+
+    #[test]
+    fn difficulty_from_bot_id_is_deterministic() {
+        let bot_id: PlayerID = std::sync::Arc::from("bot-difficulty-test".to_string());
+        let a = BotDifficultyTier::from_bot_id(&bot_id);
+        let b = BotDifficultyTier::from_bot_id(&bot_id);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn difficulty_accuracy_is_ordered() {
+        assert!(BotDifficultyTier::Easy.aim_accuracy() < BotDifficultyTier::Normal.aim_accuracy());
+        assert!(BotDifficultyTier::Normal.aim_accuracy() < BotDifficultyTier::Hard.aim_accuracy());
+    }
+
+    fn make_bot_snapshot_for_pickups(
+        health: i32,
+        ammo: i32,
+        weapon: ServerWeaponType,
+    ) -> BotSnapshotOwned {
+        BotSnapshotOwned {
+            id: std::sync::Arc::from("bot-pickup".to_string()),
+            username: "Bot".to_string(),
+            health,
+            x: 0.0,
+            y: 0.0,
+            velocity_x: 0.0,
+            velocity_y: 0.0,
+            rotation: 0.0,
+            ammo,
+            weapon,
+            team_id: 1,
+            is_carrying_flag_team_id: 0,
+            last_processed_input_sequence: 1,
+        }
+    }
+
+    #[test]
+    fn pickup_priority_prefers_health_when_critical() {
+        let bot = make_bot_snapshot_for_pickups(20, 10, ServerWeaponType::Rifle);
+        let health = OptimizedBotAI::pickup_priority(&bot, &CorePickupType::Health).unwrap_or(0.0);
+        let ammo = OptimizedBotAI::pickup_priority(&bot, &CorePickupType::Ammo).unwrap_or(0.0);
+        assert!(health > ammo);
+    }
+
+    #[test]
+    fn pickup_priority_ignores_ammo_when_full() {
+        let max_ammo = PlayerState::get_max_ammo_for_weapon(ServerWeaponType::Rifle);
+        let bot = make_bot_snapshot_for_pickups(90, max_ammo, ServerWeaponType::Rifle);
+        assert!(OptimizedBotAI::pickup_priority(&bot, &CorePickupType::Ammo).is_none());
     }
 
     // ── Stuck detection constants are consistent ────────────────

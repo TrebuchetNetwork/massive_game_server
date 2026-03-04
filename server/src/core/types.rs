@@ -142,6 +142,7 @@ pub struct PlayerState {
     pub respawn_timer: Option<f32>,
     pub reload_progress: Option<f32>,
     pub last_shot_time: Option<Instant>,
+    pub weapon_spread_bloom: f32,
     pub ability_1_cooldown_remaining: f32,
     pub ability_2_cooldown_remaining: f32,
     pub dash_remaining: f32,
@@ -225,6 +226,7 @@ impl PlayerState {
             respawn_timer: None,
             reload_progress: None,
             last_shot_time: None,
+            weapon_spread_bloom: 0.0,
             ability_1_cooldown_remaining: 0.0,
             ability_2_cooldown_remaining: 0.0,
             dash_remaining: 0.0,
@@ -484,6 +486,7 @@ impl PlayerState {
         self.velocity_y = 0.0;
         self.weapon_swap_progress = 0.0;
         self.pending_weapon_swap = None;
+        self.weapon_spread_bloom = 0.0;
         self.dash_remaining = 0.0;
         self.dodge_roll_remaining = 0.0;
         self.invulnerable_remaining = 0.0;
@@ -514,6 +517,7 @@ impl PlayerState {
         self.weapon_swap_progress = 0.0;
         self.pending_weapon_swap = None;
         self.reload_progress = None;
+        self.weapon_spread_bloom = 0.0;
         self.ability_1_cooldown_remaining = 0.0;
         self.ability_2_cooldown_remaining = 0.0;
         self.dash_remaining = 0.0;
@@ -608,6 +612,11 @@ impl PlayerState {
                     self.commit_pending_weapon_swap(next_weapon);
                 }
             }
+        }
+        if self.weapon_spread_bloom > 0.0 {
+            self.weapon_spread_bloom = (self.weapon_spread_bloom
+                - delta_time * crate::core::constants::WEAPON_SPREAD_BLOOM_DECAY_PER_SEC)
+                .max(0.0);
         }
 
         if changed_health_alive {
