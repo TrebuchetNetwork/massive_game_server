@@ -385,6 +385,9 @@ switch (kind) {
     case 'flag':
         stride = heavy ? 10 : 6;
         break;
+    case 'movement':
+        stride = heavy ? 6 : 3;
+        break;
     default:
         break;
 }
@@ -1069,6 +1072,78 @@ this.animateEffect(flashContainer, {
     },
     onComplete: () => flashContainer.destroy()
 });
+    }
+
+    triggerMovementAbilityBurst(payload = {}) {
+const type = payload.type === 'dodge' ? 'dodge' : 'dash';
+const position = payload.position;
+const isLocalPlayer = !!payload.isLocalPlayer;
+if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return;
+if (!this.shouldEmitEffect('movement')) return;
+
+const rotation = Number.isFinite(payload.rotation) ? payload.rotation : 0;
+const loadTier = this.getLoadTier();
+const effectColor = type === 'dash' ? 0x66DDFF : 0x77FFCC;
+const accentColor = type === 'dash' ? 0xC6F5FF : 0xD4FFE8;
+const ringStartRadius = type === 'dash' ? 18 : 14;
+const ringEndRadius = type === 'dash' ? 72 : 56;
+
+const ring = new PIXI.Graphics();
+ring.lineStyle(3, effectColor, 0.85);
+ring.drawCircle(0, 0, ringStartRadius);
+ring.position.set(position.x, position.y);
+this.effectsContainer.addChild(ring);
+this.animateEffect(ring, {
+    duration: this.scaleDuration(type === 'dash' ? 230 : 190, 90),
+    onUpdate: (progress) => {
+        const radius = ringStartRadius + (ringEndRadius - ringStartRadius) * progress;
+        ring.clear();
+        ring.lineStyle(3 - progress * 2, effectColor, (1 - progress) * 0.9);
+        ring.drawCircle(0, 0, radius);
+        ring.alpha = 1 - progress;
+    },
+    onComplete: () => ring.destroy()
+});
+
+const streakCount = this.scaleEffectCount(type === 'dash' ? 12 : 8, type === 'dash' ? 4 : 3);
+for (let i = 0; i < streakCount; i += 1) {
+    if (loadTier >= 2 && i % 2 === 1) continue;
+    const streak = new PIXI.Graphics();
+    const lateral = (Math.random() - 0.5) * (type === 'dash' ? 18 : 22);
+    const length = (type === 'dash' ? 34 : 24) + Math.random() * 18;
+    const startDist = (type === 'dash' ? 7 : 5) + Math.random() * 6;
+    const dirJitter = (Math.random() - 0.5) * (type === 'dash' ? 0.24 : 0.4);
+    const forward = rotation + dirJitter;
+    const right = forward + Math.PI * 0.5;
+    const originX = position.x + Math.cos(right) * lateral - Math.cos(forward) * startDist;
+    const originY = position.y + Math.sin(right) * lateral - Math.sin(forward) * startDist;
+    const endX = originX - Math.cos(forward) * length;
+    const endY = originY - Math.sin(forward) * length;
+    streak.lineStyle(2, accentColor, 0.65);
+    streak.moveTo(originX, originY);
+    streak.lineTo(endX, endY);
+    this.effectsContainer.addChild(streak);
+    this.animateEffect(streak, {
+        duration: this.scaleDuration(type === 'dash' ? 180 : 150, 75),
+        delay: i * 8,
+        onUpdate: (progress) => {
+            streak.alpha = 0.85 * (1 - progress);
+        },
+        onComplete: () => streak.destroy()
+    });
+}
+
+if (this.audioManager) {
+    this.audioManager.playSound(
+        type === 'dash' ? 'dashWhoosh' : 'dodgeWhoosh',
+        position,
+        isLocalPlayer ? 1.0 : 0.72
+    );
+}
+
+if (isLocalPlayer && gameSettings.screenShake && gameScene) {
+    applyScreenShake(gameScene, type === 'dash' ? 72 : 56, 2);
+}
     }
 
     getDamageNumberTextStyle(damageType, config, variant = 'full') {

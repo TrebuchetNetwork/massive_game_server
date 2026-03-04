@@ -163,6 +163,47 @@ export function createServerUpdateHandler(getCtx) {
         }
     }
 
+    function maybeTriggerMovementAbilityFeedback(effectsManager, playerId, myPlayerId, state, previousDashRemaining, previousDodgeRemaining, suppress) {
+        if (suppress || !effectsManager || typeof effectsManager.triggerMovementAbilityBurst !== 'function' || !state) {
+            return;
+        }
+        if (!state.alive || state.is_spectator) return;
+
+        const nextDash = Number(state.dash_remaining) || 0;
+        const nextDodge = Number(state.dodge_roll_remaining) || 0;
+        const prevDash = Number(previousDashRemaining) || 0;
+        const prevDodge = Number(previousDodgeRemaining) || 0;
+
+        const dashActivated = prevDash <= 0 && nextDash > 0;
+        const dodgeActivated = prevDodge <= 0 && nextDodge > 0;
+        if (!dashActivated && !dodgeActivated) return;
+
+        const x = Number(state.x);
+        const y = Number(state.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+        const rotation = Number.isFinite(state.rotation) ? state.rotation : 0;
+        const isLocalPlayer = playerId === myPlayerId;
+        if (dashActivated) {
+            effectsManager.triggerMovementAbilityBurst({
+                type: 'dash',
+                playerId,
+                position: { x, y },
+                rotation,
+                isLocalPlayer
+            });
+        }
+        if (dodgeActivated) {
+            effectsManager.triggerMovementAbilityBurst({
+                type: 'dodge',
+                playerId,
+                position: { x, y },
+                rotation,
+                isLocalPlayer
+            });
+        }
+    }
+
     function processServerUpdate(messageData, isInitial = false) {
         const ctx = getCtx();
         const {
@@ -358,6 +399,8 @@ export function createServerUpdateHandler(getCtx) {
                         localPlayerState = existingPlayer || {};
                         ctx.setLocalPlayerState(localPlayerState);
                     }
+                    const previousDashRemaining = Number(localPlayerState.dash_remaining) || 0;
+                    const previousDodgeRemaining = Number(localPlayerState.dodge_roll_remaining) || 0;
                     const previousPredictedX = Number.isFinite(localPlayerState.x) ? localPlayerState.x : (Number(pData.x) || 0);
                     const previousPredictedY = Number.isFinite(localPlayerState.y) ? localPlayerState.y : (Number(pData.y) || 0);
                     const previousPredictedRotation = Number.isFinite(localPlayerState.rotation)
@@ -392,8 +435,19 @@ export function createServerUpdateHandler(getCtx) {
                     localPlayerState.render_y = localPlayerState.y;
                     localPlayerState.render_rotation = localPlayerState.rotation;
                     players.set(pData.id, localPlayerState);
+                    maybeTriggerMovementAbilityFeedback(
+                        effectsManager,
+                        pData.id,
+                        myPlayerId,
+                        localPlayerState,
+                        previousDashRemaining,
+                        previousDodgeRemaining,
+                        forceFullState
+                    );
                 } else {
                     const remoteState = existingPlayer || {};
+                    const previousDashRemaining = Number(remoteState.dash_remaining) || 0;
+                    const previousDodgeRemaining = Number(remoteState.dodge_roll_remaining) || 0;
                     assignPlayerStateFromObject(
                         remoteState,
                         pData,
@@ -402,6 +456,15 @@ export function createServerUpdateHandler(getCtx) {
                         forceFullState
                     );
                     players.set(pData.id, remoteState);
+                    maybeTriggerMovementAbilityFeedback(
+                        effectsManager,
+                        pData.id,
+                        myPlayerId,
+                        remoteState,
+                        previousDashRemaining,
+                        previousDodgeRemaining,
+                        forceFullState
+                    );
                 }
             }
         }
@@ -650,6 +713,7 @@ export function createServerUpdateHandler(getCtx) {
             if (!player) continue;
             const playerId = player.id();
             const existingPlayer = players.get(playerId);
+            const isFirstObservation = !existingPlayer;
             const changedMask = i < changedPlayerFieldLength
                 ? delta.changedPlayerFields(i)
                 : PLAYER_DELTA_FULL_MASK;
@@ -665,6 +729,8 @@ export function createServerUpdateHandler(getCtx) {
                     localPlayerState = existingPlayer || {};
                     ctx.setLocalPlayerState(localPlayerState);
                 }
+                const previousDashRemaining = Number(localPlayerState.dash_remaining) || 0;
+                const previousDodgeRemaining = Number(localPlayerState.dodge_roll_remaining) || 0;
                 const previousPredictedX = Number.isFinite(localPlayerState.x) ? localPlayerState.x : player.x();
                 const previousPredictedY = Number.isFinite(localPlayerState.y) ? localPlayerState.y : player.y();
                 const previousPredictedRotation = Number.isFinite(localPlayerState.rotation)
@@ -697,16 +763,36 @@ export function createServerUpdateHandler(getCtx) {
                 localPlayerState.render_y = localPlayerState.y;
                 localPlayerState.render_rotation = localPlayerState.rotation;
                 players.set(playerId, localPlayerState);
+                maybeTriggerMovementAbilityFeedback(
+                    effectsManager,
+                    playerId,
+                    myPlayerId,
+                    localPlayerState,
+                    previousDashRemaining,
+                    previousDodgeRemaining,
+                    isFirstObservation
+                );
             } else {
                 const remoteState = existingPlayer || {};
+                const previousDashRemaining = Number(remoteState.dash_remaining) || 0;
+                const previousDodgeRemaining = Number(remoteState.dodge_roll_remaining) || 0;
                 assignPlayerStateFromTable(
                     remoteState,
                     player,
                     resolvedUsername,
                     changedMask,
-                    !existingPlayer
+                    isFirstObservation
                 );
                 players.set(playerId, remoteState);
+                maybeTriggerMovementAbilityFeedback(
+                    effectsManager,
+                    playerId,
+                    myPlayerId,
+                    remoteState,
+                    previousDashRemaining,
+                    previousDodgeRemaining,
+                    isFirstObservation
+                );
             }
         }
 
