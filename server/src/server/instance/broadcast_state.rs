@@ -80,18 +80,19 @@ impl MassiveGameServer {
             }
         }
 
-        for wall_id in p_aoi.visible_walls.iter().take(AOI_MAX_VISIBLE_WALLS) {
-            if let Some(wall_data) = shared_data.active_walls_by_id.get(wall_id) {
-                client_state
-                    .last_known_wall_states
-                    .insert(*wall_id, (wall_data.current_health, wall_data.max_health));
-            }
+        // Track only walls that were actually serialized in the initial snapshot.
+        // Marking all AOI walls as "known" here can suppress later delta syncs for
+        // walls that were never transmitted due snapshot caps.
+        for wall_data in Self::initial_walls_for_client_sync(shared_data, snapshot_caps.max_walls) {
+            client_state.last_known_wall_states.insert(
+                wall_data.id,
+                (wall_data.current_health, wall_data.max_health),
+            );
         }
         client_state.last_known_wall_ids = Some(
-            p_aoi
-                .visible_walls
-                .iter()
-                .take(AOI_MAX_VISIBLE_WALLS)
+            client_state
+                .last_known_wall_states
+                .keys()
                 .copied()
                 .collect(),
         );
@@ -150,20 +151,10 @@ impl MassiveGameServer {
                 .last_known_players
                 .insert(visible_player_id.clone());
         }
-
-        client_state.last_known_wall_states.clear();
-        for wall_id in player_aoi.visible_walls.iter().take(AOI_MAX_VISIBLE_WALLS) {
-            if let Some(wall_data) = shared_data.active_walls_by_id.get(wall_id) {
-                client_state
-                    .last_known_wall_states
-                    .insert(*wall_id, (wall_data.current_health, wall_data.max_health));
-            }
-        }
         client_state.last_known_wall_ids = Some(
-            player_aoi
-                .visible_walls
-                .iter()
-                .take(AOI_MAX_VISIBLE_WALLS)
+            client_state
+                .last_known_wall_states
+                .keys()
                 .copied()
                 .collect(),
         );
@@ -190,6 +181,12 @@ impl MassiveGameServer {
         client_state.last_kill_feed_count_sent = shared_data.kill_feed_snapshot.len();
         for wall_id in &shared_data.destroyed_wall_ids {
             client_state.known_destroyed_wall_ids.insert(*wall_id);
+        }
+        // Once a wall is active again, allow future destroy notifications for it.
+        for (wall_id, wall_data) in &shared_data.updated_walls {
+            if wall_data.current_health > 0 {
+                client_state.known_destroyed_wall_ids.remove(wall_id);
+            }
         }
     }
 
@@ -250,10 +247,79 @@ impl MassiveGameServer {
         }
     }
 
+    fn initial_walls_for_client_sync(
+        shared_data: &SharedBroadcastData,
+        max_walls: usize,
+    ) -> Vec<Wall> {
+        if !shared_data.active_walls_snapshot.is_empty() {
+            return shared_data
+                .active_walls_snapshot
+                .iter()
+                .take(max_walls)
+                .cloned()
+                .collect();
+        }
+
+        let mut fallback_walls: Vec<Wall> =
+            shared_data.active_walls_by_id.values().cloned().collect();
+        fallback_walls.sort_by_key(|wall| wall.id);
+        fallback_walls.truncate(max_walls);
+        fallback_walls
+    }
+
+    fn select_delta_wall_ids_for_client_sync(
+        shared_data: &SharedBroadcastData,
+        visible_walls: &HashSet<EntityId>,
+        client_state: &ClientState,
+    ) -> Vec<EntityId> {
+        let mut selected = Vec::new();
+        let mut sent_ids = HashSet::new();
+
+        for (wall_id, _) in shared_data.updated_walls.iter() {
+            if !visible_walls.contains(wall_id) {
+                continue;
+            }
+            selected.push(*wall_id);
+            sent_ids.insert(*wall_id);
+            if selected.len() >= AOI_MAX_VISIBLE_WALLS {
+                return selected;
+            }
+        }
+
+        for visible_wall_id in visible_walls {
+            if sent_ids.contains(visible_wall_id) {
+                continue;
+            }
+
+            let wall_data = match shared_data.active_walls_by_id.get(visible_wall_id) {
+                Some(wall) => wall,
+                None => continue,
+            };
+
+            let should_send = client_state
+                .last_known_wall_states
+                .get(visible_wall_id)
+                .is_none_or(|(known_health, known_max_health)| {
+                    *known_health != wall_data.current_health
+                        || *known_max_health != wall_data.max_health
+                });
+            if !should_send {
+                continue;
+            }
+
+            selected.push(*visible_wall_id);
+            if selected.len() >= AOI_MAX_VISIBLE_WALLS {
+                break;
+            }
+        }
+
+        selected
+    }
+
     pub(super) fn build_delta_state_optimized(
         &self,
         peer_id_str: &str,
-        client_state: &ClientState,
+        client_state: &mut ClientState,
         shared_data: &SharedBroadcastData,
     ) -> Result<Bytes, Box<dyn std::error::Error + Send + Sync>> {
         let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(16384);
@@ -603,76 +669,36 @@ impl MassiveGameServer {
             None
         };
 
-        let mut updated_walls_vec = Vec::new();
-        let mut updated_wall_ids_sent = HashSet::new();
-
-        for (wall_id, wall_data) in shared_data.updated_walls.iter() {
-            if player_aoi.visible_walls.contains(wall_id) {
-                let id_fb = fb_safe_entity_id(&mut builder, wall_data.id);
-                let wall_fb = fb::Wall::create(
-                    &mut builder,
-                    &fb::WallArgs {
-                        id: Some(id_fb),
-                        x: wall_data.x,
-                        y: wall_data.y,
-                        width: wall_data.width,
-                        height: wall_data.height,
-                        is_destructible: wall_data.is_destructible,
-                        current_health: wall_data.current_health,
-                        max_health: wall_data.max_health,
-                    },
-                );
-                updated_walls_vec.push(wall_fb);
-                updated_wall_ids_sent.insert(*wall_id);
-                if updated_walls_vec.len() >= AOI_MAX_VISIBLE_WALLS {
-                    break;
-                }
-            }
-        }
-
-        if updated_walls_vec.len() < AOI_MAX_VISIBLE_WALLS {
-            for visible_wall_id in &player_aoi.visible_walls {
-                if updated_wall_ids_sent.contains(visible_wall_id) {
-                    continue;
-                }
-
-                let wall_data = match shared_data.active_walls_by_id.get(visible_wall_id) {
-                    Some(wall) => wall,
-                    None => continue,
-                };
-
-                let should_send = client_state
-                    .last_known_wall_states
-                    .get(visible_wall_id)
-                    .is_none_or(|(known_health, known_max_health)| {
-                        *known_health != wall_data.current_health
-                            || *known_max_health != wall_data.max_health
-                    });
-
-                if !should_send {
-                    continue;
-                }
-
-                let id_fb = fb_safe_entity_id(&mut builder, wall_data.id);
-                let wall_fb = fb::Wall::create(
-                    &mut builder,
-                    &fb::WallArgs {
-                        id: Some(id_fb),
-                        x: wall_data.x,
-                        y: wall_data.y,
-                        width: wall_data.width,
-                        height: wall_data.height,
-                        is_destructible: wall_data.is_destructible,
-                        current_health: wall_data.current_health,
-                        max_health: wall_data.max_health,
-                    },
-                );
-                updated_walls_vec.push(wall_fb);
-                updated_wall_ids_sent.insert(*visible_wall_id);
-                if updated_walls_vec.len() >= AOI_MAX_VISIBLE_WALLS {
-                    break;
-                }
-            }
+        let selected_wall_ids = Self::select_delta_wall_ids_for_client_sync(
+            shared_data,
+            &player_aoi.visible_walls,
+            client_state,
+        );
+        let mut updated_walls_vec = Vec::with_capacity(selected_wall_ids.len());
+        for wall_id in &selected_wall_ids {
+            let wall_data = match shared_data
+                .active_walls_by_id
+                .get(wall_id)
+                .or_else(|| shared_data.updated_walls.get(wall_id))
+            {
+                Some(wall) => wall,
+                None => continue,
+            };
+            let id_fb = fb_safe_entity_id(&mut builder, wall_data.id);
+            let wall_fb = fb::Wall::create(
+                &mut builder,
+                &fb::WallArgs {
+                    id: Some(id_fb),
+                    x: wall_data.x,
+                    y: wall_data.y,
+                    width: wall_data.width,
+                    height: wall_data.height,
+                    is_destructible: wall_data.is_destructible,
+                    current_health: wall_data.current_health,
+                    max_health: wall_data.max_health,
+                },
+            );
+            updated_walls_vec.push(wall_fb);
         }
 
         let updated_walls_fb = if !updated_walls_vec.is_empty() {
@@ -680,6 +706,28 @@ impl MassiveGameServer {
         } else {
             None
         };
+
+        for wall_id in selected_wall_ids {
+            if let Some(wall_data) = shared_data
+                .active_walls_by_id
+                .get(&wall_id)
+                .or_else(|| shared_data.updated_walls.get(&wall_id))
+            {
+                client_state
+                    .last_known_wall_states
+                    .insert(wall_id, (wall_data.current_health, wall_data.max_health));
+                if wall_data.current_health > 0 {
+                    client_state.known_destroyed_wall_ids.remove(&wall_id);
+                }
+            }
+        }
+        client_state.last_known_wall_ids = Some(
+            client_state
+                .last_known_wall_states
+                .keys()
+                .copied()
+                .collect(),
+        );
 
         let delta_state_args = fb::DeltaStateMessageArgs {
             players: Some(players_fb),

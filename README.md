@@ -8,6 +8,8 @@ Public live links are temporarily disabled until the hosted deployment is back o
 
 ## Latest Gameplay & UI Showcase
 
+Captured from a local March 4, 2026 build. GIFs are compressed for fast loading; MP4 links preserve full motion clarity.
+
 ### Combat and Effects
 
 | Combat Push | FX Overload |
@@ -37,9 +39,6 @@ Public live links are temporarily disabled until the hosted deployment is back o
 - Gameplay and systems expanded with CTF improvements, spectator/replay flow refinements, progressive destructible terrain updates, and stronger anti-cheat/runtime correctness safeguards.
 - Performance and scale optimizations in hot paths (spatial indexing, bot/navigation logic, state sync, and server loops) to improve frame stability under heavy player+bot load.
 - CI and quality raised significantly with broader test coverage, automated security scanning (CodeQL/Trivy), and a coverage gate now enforced at 70%+ for core engine logic.
-
-
-
 
 ## Features
 

@@ -93,7 +93,7 @@ impl MassiveGameServer {
             }
         } else {
             trace!("[Frame {}] Building delta state for {}", frame, peer_id_str);
-            let client_state_snapshot = server
+            let mut client_state_snapshot = server
                 .client_states_map
                 .read()
                 .get(peer_id_str).cloned()
@@ -107,7 +107,7 @@ impl MassiveGameServer {
                 });
             let delta_result = server.build_delta_state_optimized(
                 peer_id_str,
-                &client_state_snapshot,
+                &mut client_state_snapshot,
                 shared_data,
             );
             last_chat_message_seq_sent = client_state_snapshot.last_chat_message_seq_sent;
@@ -359,7 +359,7 @@ impl MassiveGameServer {
                 }
             }
         } else {
-            let client_state_snapshot = server
+            let mut client_state_snapshot = server
                 .client_states_map
                 .read()
                 .get(peer_id_str)
@@ -367,7 +367,7 @@ impl MassiveGameServer {
                 .unwrap_or_default();
             let delta_result = server.build_delta_state_optimized(
                 peer_id_str,
-                &client_state_snapshot,
+                &mut client_state_snapshot,
                 shared_data,
             );
             last_chat_message_seq_sent = client_state_snapshot.last_chat_message_seq_sent;
