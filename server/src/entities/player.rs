@@ -157,6 +157,15 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     if original.invulnerable_remaining != updated.invulnerable_remaining {
         base.invulnerable_remaining = updated.invulnerable_remaining;
     }
+    if original.melee_windup_remaining != updated.melee_windup_remaining {
+        base.melee_windup_remaining = updated.melee_windup_remaining;
+    }
+    if original.melee_pending_attack != updated.melee_pending_attack {
+        base.melee_pending_attack = updated.melee_pending_attack;
+    }
+    if original.melee_windup_rotation != updated.melee_windup_rotation {
+        base.melee_windup_rotation = updated.melee_windup_rotation;
+    }
     if original.wall_slam_stun_remaining != updated.wall_slam_stun_remaining {
         base.wall_slam_stun_remaining = updated.wall_slam_stun_remaining;
     }

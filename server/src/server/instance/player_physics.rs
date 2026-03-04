@@ -27,6 +27,7 @@ impl MassiveGameServer {
                             self.player_manager.get_player_state_mut(player_id)
                         {
                             player_state.update_timers(delta_time);
+                            self.execute_pending_melee_attack(&mut player_state);
 
                             if player_state.is_spectator {
                                 self.process_player_movement_optimized(

@@ -114,6 +114,7 @@ pub const MELEE_MAX_RANGE: f32 = 30.0;
 pub const MELEE_MIN_MULTIPLIER: f32 = 1.0;
 pub const MELEE_CONE_HALF_ANGLE_RAD: f32 = std::f32::consts::FRAC_PI_6; // π/6 (60° cone)
 pub const MELEE_LUNGE_DISTANCE: f32 = 10.0; // extends effective reach to ~40u without widening the cone
+pub const MELEE_WINDUP_SECS: f32 = 0.09;
 pub const MELEE_PARRY_WINDOW_SECS: f32 = 0.22;
 pub const MELEE_PARRY_CONE_HALF_ANGLE_RAD: f32 = std::f32::consts::FRAC_PI_4;
 pub const MELEE_PARRY_COUNTER_DAMAGE: i32 = 14;

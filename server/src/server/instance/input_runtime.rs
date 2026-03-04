@@ -995,45 +995,22 @@ impl MassiveGameServer {
         if input.melee_attack && player_state.can_shoot(current_server_time) {
             // Using can_shoot for cooldown & alive check
             player_state.last_shot_time = Some(current_server_time); // Apply melee cooldown
+            player_state.start_melee_windup(player_state.rotation);
+            player_state.mark_field_changed(FIELD_POWERUPS | FIELD_POSITION_ROTATION);
 
-            // Apply a short forward lunge so melee isn't forced into point-blank only.
-            let lunge_distance = crate::core::constants::MELEE_LUNGE_DISTANCE;
-            if lunge_distance > 0.0 {
-                let start_x = player_state.x;
-                let start_y = player_state.y;
-                let target_x = (start_x + player_state.rotation.cos() * lunge_distance)
-                    .clamp(WORLD_MIN_X + PLAYER_RADIUS, WORLD_MAX_X - PLAYER_RADIUS);
-                let target_y = (start_y + player_state.rotation.sin() * lunge_distance)
-                    .clamp(WORLD_MIN_Y + PLAYER_RADIUS, WORLD_MAX_Y - PLAYER_RADIUS);
-                if self.has_clear_line_of_sight(start_x, start_y, target_x, target_y)
-                    && !self.position_overlaps_any_wall(target_x, target_y)
-                {
-                    player_state.x = target_x;
-                    player_state.y = target_y;
-                    player_state.mark_field_changed(FIELD_POSITION_ROTATION);
-                }
-            }
-
-            // Position for the melee event (e.g., slightly in front of the player)
-            let melee_event_pos_x =
-                player_state.x + player_state.rotation.cos() * (PLAYER_RADIUS + 1.0);
-            let melee_event_pos_y =
-                player_state.y + player_state.rotation.sin() * (PLAYER_RADIUS + 1.0);
-
-            debug!("[{}] initiated Melee Attack (V key).", player_state.id);
-            let melee_event = GameEvent::MeleeHit {
-                attacker_id: player_state.id.clone(),
-                target_id: None, // Target is resolved in game_logic_update's MeleeHit processing
-                position: Vec2 {
-                    x: melee_event_pos_x,
-                    y: melee_event_pos_y,
-                },
+            let telegraph_pos = Vec2 {
+                x: player_state.x + player_state.rotation.cos() * (PLAYER_RADIUS + 1.0),
+                y: player_state.y + player_state.rotation.sin() * (PLAYER_RADIUS + 1.0),
             };
-            // Keep for client broadcast.
-            self.global_game_events
-                .push(melee_event.clone(), EventPriority::Normal);
-            // Process melee hits without draining the global event queue.
-            self.melee_hit_events.push(melee_event);
+            self.global_game_events.push(
+                GameEvent::WeaponFired {
+                    player_id: player_state.id.clone(),
+                    weapon: ServerWeaponType::Melee,
+                    position: telegraph_pos,
+                },
+                EventPriority::Normal,
+            );
+            debug!("[{}] initiated melee windup.", player_state.id);
         }
 
         if input.reload {
@@ -1055,6 +1032,57 @@ impl MassiveGameServer {
                 }
             }
         }
+    }
+
+    pub(super) fn execute_pending_melee_attack(&self, player_state: &mut PlayerState) {
+        if !player_state.melee_pending_attack || player_state.melee_windup_remaining > 0.0 {
+            return;
+        }
+
+        player_state.melee_pending_attack = false;
+        let attack_rotation = if player_state.melee_windup_rotation.is_finite() {
+            player_state.melee_windup_rotation
+        } else if player_state.rotation.is_finite() {
+            player_state.rotation
+        } else {
+            0.0
+        };
+        player_state.melee_windup_rotation = 0.0;
+
+        if !player_state.alive || player_state.is_spectator {
+            player_state.mark_field_changed(FIELD_POWERUPS);
+            return;
+        }
+
+        // Apply a short forward lunge after windup for clearer melee intent and reach.
+        let lunge_distance = crate::core::constants::MELEE_LUNGE_DISTANCE.max(0.0);
+        if lunge_distance > 0.0 {
+            let start_x = player_state.x;
+            let start_y = player_state.y;
+            let target_x = (start_x + attack_rotation.cos() * lunge_distance)
+                .clamp(WORLD_MIN_X + PLAYER_RADIUS, WORLD_MAX_X - PLAYER_RADIUS);
+            let target_y = (start_y + attack_rotation.sin() * lunge_distance)
+                .clamp(WORLD_MIN_Y + PLAYER_RADIUS, WORLD_MAX_Y - PLAYER_RADIUS);
+            if self.has_clear_line_of_sight(start_x, start_y, target_x, target_y)
+                && !self.position_overlaps_any_wall(target_x, target_y)
+            {
+                player_state.x = target_x;
+                player_state.y = target_y;
+                player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+            }
+        }
+
+        let melee_event = GameEvent::MeleeHit {
+            attacker_id: player_state.id.clone(),
+            target_id: None,
+            position: Vec2 {
+                x: player_state.x + attack_rotation.cos() * (PLAYER_RADIUS + 1.0),
+                y: player_state.y + attack_rotation.sin() * (PLAYER_RADIUS + 1.0),
+            },
+        };
+        self.melee_hit_events.push(melee_event);
+        player_state.mark_field_changed(FIELD_POWERUPS | FIELD_POSITION_ROTATION);
+        debug!("[{}] resolved melee attack after windup.", player_state.id);
     }
 
     pub async fn process_network_input(&self) {

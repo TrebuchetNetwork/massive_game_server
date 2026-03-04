@@ -1830,6 +1830,7 @@ this.effectsContainer.addChild(container);
 const arcRadius = PLAYER_RADIUS + 40;
 const arcAngle = Math.PI * 0.75; // 135 degree arc for wider swing
 const startAngle = player.rotation - arcAngle / 2;
+const windupDelayMs = 90;
 
 // Create energy charge effect before swing
 const chargeEffect = new PIXI.Graphics();
@@ -1847,9 +1848,18 @@ for (let i = 0; i < 8; i++) {
 }
 container.addChild(chargeEffect);
 
+const windupGuide = new PIXI.Graphics();
+windupGuide.lineStyle(2, 0x66FFFF, 0.45);
+windupGuide.moveTo(0, 0);
+windupGuide.lineTo(
+    Math.cos(player.rotation) * (PLAYER_RADIUS + 28),
+    Math.sin(player.rotation) * (PLAYER_RADIUS + 28)
+);
+container.addChild(windupGuide);
+
 // Animate charge effect
 this.animateEffect(chargeEffect, {
-    duration: 150,
+    duration: windupDelayMs,
     onUpdate: (progress) => {
         chargeEffect.scale.set(1 + progress * 0.5);
         chargeEffect.alpha = 0.6 * (1 - progress);
@@ -1857,9 +1867,18 @@ this.animateEffect(chargeEffect, {
     },
     onComplete: () => chargeEffect.destroy()
 });
+this.animateEffect(windupGuide, {
+    duration: windupDelayMs,
+    onUpdate: (progress) => {
+        windupGuide.alpha = 0.45 * (1 - progress);
+        windupGuide.scale.set(1 + progress * 0.2);
+    },
+    onComplete: () => windupGuide.destroy()
+});
 
 // Motion blur container
 const blurContainer = new PIXI.Container();
+blurContainer.alpha = 0;
 container.addChild(blurContainer);
 
 // Create enhanced motion blur layers
@@ -1882,6 +1901,7 @@ for (let b = 0; b < blurLayerCount; b++) {
 
 // Main swing arc with multi-layer gradient
 const arcContainer = new PIXI.Container();
+arcContainer.alpha = 0;
 
 // Energy field layer
 const energyField = new PIXI.Graphics();
@@ -1939,13 +1959,14 @@ for (let i = 0; i < trailCount; i++) {
         Math.cos(trailAngle) * trailRadius,
         Math.sin(trailAngle) * trailRadius
     );
+    trailContainer.alpha = 0;
     
     container.addChild(trailContainer);
     
     // Animate trail with spiral motion
     this.animateEffect(trailContainer, {
         duration: 400,
-        delay: i * 10,
+        delay: windupDelayMs + i * 10,
         onUpdate: (progress) => {
             const spiralFactor = 1 + progress * 0.5;
             const currentRadius = trailRadius + progress * 30;
@@ -1974,11 +1995,13 @@ for (let i = 0; i <= 10; i++) {
     );
 }
 cuttingEdge.drawPolygon(edgePoints);
+cuttingEdge.alpha = 0;
 container.addChild(cuttingEdge);
 
 // Animate cutting edge
 this.animateEffect(cuttingEdge, {
     duration: 200,
+    delay: windupDelayMs,
     onUpdate: (progress) => {
         cuttingEdge.alpha = 1 - progress;
         cuttingEdge.scale.set(1 + progress * 0.2);
@@ -2026,7 +2049,7 @@ for (let i = 0; i < slashCount; i++) {
     slashContainer.alpha = 0;
     this.animateEffect(slashContainer, {
         duration: 250,
-        delay: i * 15,
+        delay: windupDelayMs + i * 15,
         onUpdate: (progress) => {
             slashContainer.alpha = (1 - progress) * (1 - i * 0.1);
             slashContainer.scale.set(1 + progress * 0.3);
@@ -2038,7 +2061,7 @@ for (let i = 0; i < slashCount; i++) {
 // Multiple impact shockwaves
 const shockwaveCount = this.scaleEffectCount(3, 1);
 for (let w = 0; w < shockwaveCount; w++) {
-    this.scheduleCallback(w * 50, () => {
+    this.scheduleCallback(windupDelayMs + w * 50, () => {
         const shockwave = new PIXI.Graphics();
         shockwave.lineStyle(4 - w, 0xFFFFFF, 0.8 - w * 0.2);
         shockwave.drawCircle(0, 0, arcRadius * (0.7 + w * 0.1));
@@ -2082,6 +2105,7 @@ for (let i = 0; i < sparkCount; i++) {
         Math.cos(sparkAngle) * sparkRadius,
         Math.sin(sparkAngle) * sparkRadius
     );
+    sparkContainer.alpha = 0;
     
     container.addChild(sparkContainer);
     
@@ -2092,6 +2116,7 @@ for (let i = 0; i < sparkCount; i++) {
     
     this.animateEffect(sparkContainer, {
         duration: 600 + Math.random() * 300,
+        delay: windupDelayMs,
         onUpdate: (progress) => {
             // Physics-based motion
             sparkContainer.x += velocity.x * (1 - progress * 0.8);
@@ -2107,6 +2132,7 @@ for (let i = 0; i < sparkCount; i++) {
 // Animate the main arc
 this.animateEffect(arcContainer, {
     duration: 300,
+    delay: windupDelayMs,
     onUpdate: (progress) => {
         arcContainer.scale.set(0.6 + progress * 0.6);
         arcContainer.alpha = 1 * (1 - progress * 0.8);
@@ -2120,6 +2146,7 @@ this.animateEffect(arcContainer, {
 // Animate motion blur
 this.animateEffect(blurContainer, {
     duration: 350,
+    delay: windupDelayMs,
     onUpdate: (progress) => {
         blurContainer.alpha = 1 - progress;
         blurContainer.scale.set(1 + progress * 0.3);
@@ -2135,12 +2162,13 @@ this.animateEffect(blurContainer, {
 
 // Enhanced screen effects for local player
 if (instigatorId === myPlayerId) {
-    if (gameSettings.screenShake) {
-        applyScreenShake(gameScene, 200, 8);
-    }
-    // Multiple screen flashes
-    createScreenFlash(app, 0xFFFFFF, 8, 0.5);
-    this.scheduleCallback(50, () => createScreenFlash(app, 0x88DDFF, 15, 0.3));
+    this.scheduleCallback(windupDelayMs, () => {
+        if (gameSettings.screenShake) {
+            applyScreenShake(gameScene, 200, 8);
+        }
+        createScreenFlash(app, 0xFFFFFF, 8, 0.5);
+    });
+    this.scheduleCallback(windupDelayMs + 50, () => createScreenFlash(app, 0x88DDFF, 15, 0.3));
 }
     }
 

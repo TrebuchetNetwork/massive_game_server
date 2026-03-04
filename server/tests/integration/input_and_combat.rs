@@ -4,7 +4,8 @@
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
 use massive_game_server_core::core::constants::{
-    MELEE_LUNGE_DISTANCE, PLAYER_BASE_SPEED, POINTS_PER_KILL, WORLD_MAX_X, WORLD_MIN_X,
+    MELEE_LUNGE_DISTANCE, MELEE_WINDUP_SECS, PLAYER_BASE_SPEED, POINTS_PER_KILL, WORLD_MAX_X,
+    WORLD_MIN_X,
 };
 use massive_game_server_core::core::types::{
     EntityId, KillstreakRewardPreference, PlayerAoIs, PlayerID, PlayerInputData, Projectile,
@@ -238,6 +239,15 @@ async fn melee_attack_applies_forward_lunge() {
     }
 
     server.process_network_input().await;
+
+    let ps = server.player_manager.get_player_state(&pid).unwrap();
+    assert!(
+        ps.x.abs() <= f32::EPSILON,
+        "Melee should not lunge immediately before windup resolves, got x={}",
+        ps.x
+    );
+
+    server.run_physics_update(MELEE_WINDUP_SECS + 0.01).await;
 
     let ps = server.player_manager.get_player_state(&pid).unwrap();
     assert!(

@@ -155,6 +155,9 @@ pub struct PlayerState {
     pub dash_remaining: f32,
     pub dodge_roll_remaining: f32,
     pub invulnerable_remaining: f32,
+    pub melee_windup_remaining: f32,
+    pub melee_pending_attack: bool,
+    pub melee_windup_rotation: f32,
     pub wall_slam_stun_remaining: f32,
     pub wall_slam_tumble_remaining: f32,
     pub dash_melee_chain_bonus_remaining: f32,
@@ -245,6 +248,9 @@ impl PlayerState {
             dash_remaining: 0.0,
             dodge_roll_remaining: 0.0,
             invulnerable_remaining: 0.0,
+            melee_windup_remaining: 0.0,
+            melee_pending_attack: false,
+            melee_windup_rotation: 0.0,
             wall_slam_stun_remaining: 0.0,
             wall_slam_tumble_remaining: 0.0,
             dash_melee_chain_bonus_remaining: 0.0,
@@ -390,6 +396,13 @@ impl PlayerState {
     }
 
     #[inline]
+    pub fn start_melee_windup(&mut self, rotation: f32) {
+        self.melee_pending_attack = true;
+        self.melee_windup_remaining = crate::core::constants::MELEE_WINDUP_SECS.max(0.0);
+        self.melee_windup_rotation = if rotation.is_finite() { rotation } else { 0.0 };
+    }
+
+    #[inline]
     pub fn apply_wall_slam_stun(&mut self) {
         self.wall_slam_stun_remaining = self
             .wall_slam_stun_remaining
@@ -397,6 +410,8 @@ impl PlayerState {
         self.wall_slam_tumble_remaining = self
             .wall_slam_tumble_remaining
             .max(crate::core::constants::WALL_SLAM_TUMBLE_DURATION_SECS);
+        self.melee_pending_attack = false;
+        self.melee_windup_remaining = 0.0;
     }
 
     #[inline]
@@ -615,6 +630,9 @@ impl PlayerState {
         self.dash_remaining = 0.0;
         self.dodge_roll_remaining = 0.0;
         self.invulnerable_remaining = 0.0;
+        self.melee_windup_remaining = 0.0;
+        self.melee_pending_attack = false;
+        self.melee_windup_rotation = 0.0;
         self.wall_slam_stun_remaining = 0.0;
         self.wall_slam_tumble_remaining = 0.0;
         self.dash_melee_chain_bonus_remaining = 0.0;
@@ -652,6 +670,9 @@ impl PlayerState {
         self.dash_remaining = 0.0;
         self.dodge_roll_remaining = 0.0;
         self.invulnerable_remaining = crate::core::constants::SPAWN_INVULNERABILITY_SECS;
+        self.melee_windup_remaining = 0.0;
+        self.melee_pending_attack = false;
+        self.melee_windup_rotation = 0.0;
         self.wall_slam_stun_remaining = 0.0;
         self.wall_slam_tumble_remaining = 0.0;
         self.dash_melee_chain_bonus_remaining = 0.0;
@@ -716,6 +737,10 @@ impl PlayerState {
         }
         if self.invulnerable_remaining > 0.0 {
             self.invulnerable_remaining = (self.invulnerable_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.melee_windup_remaining > 0.0 {
+            self.melee_windup_remaining = (self.melee_windup_remaining - delta_time).max(0.0);
             changed_powerups = true;
         }
         if self.wall_slam_stun_remaining > 0.0 {
@@ -886,6 +911,9 @@ impl PlayerState {
         self.peak_streak = 0;
         self.streak_damage_boost_remaining = 0.0;
         self.streak_speed_boost_remaining = 0.0;
+        self.melee_windup_remaining = 0.0;
+        self.melee_pending_attack = false;
+        self.melee_windup_rotation = 0.0;
         self.wall_slam_stun_remaining = 0.0;
         self.wall_slam_tumble_remaining = 0.0;
         self.dash_melee_chain_bonus_remaining = 0.0;
