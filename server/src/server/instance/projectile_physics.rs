@@ -446,6 +446,25 @@ impl MassiveGameServer {
                 continue;
             }
 
+            let mut effective_base_damage = base_damage;
+            if let Some(mut attacker_state_entry) =
+                self.player_manager.get_player_state_mut(&attacker_id)
+            {
+                if attacker_state_entry.consume_dodge_shot_chain_bonus() {
+                    effective_base_damage = ((effective_base_damage as f32)
+                        * crate::core::constants::DODGE_TO_SHOT_DAMAGE_MULTIPLIER)
+                        .round()
+                        .max(1.0) as i32;
+                    attacker_state_entry.mark_field_changed(FIELD_POWERUPS);
+                    info!(
+                        "Dodge->shot chain bonus: {} landed shot with +20% damage (base={} boosted={})",
+                        attacker_state_entry.username,
+                        base_damage,
+                        effective_base_damage
+                    );
+                }
+            }
+
             if let Some(mut target_state_entry) =
                 self.player_manager.get_player_state_mut(&target_id)
             {
@@ -469,7 +488,7 @@ impl MassiveGameServer {
                 let is_headshot = Self::is_projectile_headshot(&target_state_entry, hit_x, hit_y);
                 let mut damage = crate::systems::combat::weapons::apply_distance_falloff(
                     weapon,
-                    base_damage,
+                    effective_base_damage,
                     distance,
                 );
                 if is_headshot {

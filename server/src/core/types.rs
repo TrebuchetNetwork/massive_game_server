@@ -155,6 +155,8 @@ pub struct PlayerState {
     pub dash_remaining: f32,
     pub dodge_roll_remaining: f32,
     pub invulnerable_remaining: f32,
+    pub dash_melee_chain_bonus_remaining: f32,
+    pub dodge_shot_chain_bonus_remaining: f32,
     pub ping_cooldown_remaining: f32,
     pub zone_boost_cooldown_remaining: f32,
 
@@ -241,6 +243,8 @@ impl PlayerState {
             dash_remaining: 0.0,
             dodge_roll_remaining: 0.0,
             invulnerable_remaining: 0.0,
+            dash_melee_chain_bonus_remaining: 0.0,
+            dodge_shot_chain_bonus_remaining: 0.0,
             ping_cooldown_remaining: 0.0,
             zone_boost_cooldown_remaining: 0.0,
             speed_boost_remaining: 0.0,
@@ -369,6 +373,39 @@ impl PlayerState {
             mult *= KILLSTREAK_DAMAGE_BOOST_MULTIPLIER;
         }
         mult
+    }
+
+    #[inline]
+    pub fn activate_dash_melee_chain_window(&mut self) {
+        self.dash_melee_chain_bonus_remaining = crate::core::constants::CHAIN_COMBO_WINDOW_SECS;
+    }
+
+    #[inline]
+    pub fn activate_dodge_shot_chain_window(&mut self) {
+        self.dodge_shot_chain_bonus_remaining = crate::core::constants::CHAIN_COMBO_WINDOW_SECS;
+    }
+
+    #[inline]
+    pub fn has_dash_melee_chain_bonus(&self) -> bool {
+        self.dash_melee_chain_bonus_remaining > 0.0
+    }
+
+    #[inline]
+    pub fn consume_dash_melee_chain_bonus(&mut self) -> bool {
+        if self.dash_melee_chain_bonus_remaining <= 0.0 {
+            return false;
+        }
+        self.dash_melee_chain_bonus_remaining = 0.0;
+        true
+    }
+
+    #[inline]
+    pub fn consume_dodge_shot_chain_bonus(&mut self) -> bool {
+        if self.dodge_shot_chain_bonus_remaining <= 0.0 {
+            return false;
+        }
+        self.dodge_shot_chain_bonus_remaining = 0.0;
+        true
     }
 
     pub fn set_killstreak_reward_preference_from_input_slot(&mut self, input_slot: u8) -> bool {
@@ -559,6 +596,8 @@ impl PlayerState {
         self.dash_remaining = 0.0;
         self.dodge_roll_remaining = 0.0;
         self.invulnerable_remaining = 0.0;
+        self.dash_melee_chain_bonus_remaining = 0.0;
+        self.dodge_shot_chain_bonus_remaining = 0.0;
         self.ping_cooldown_remaining = 0.0;
         self.zone_boost_cooldown_remaining = 0.0;
         // Reset streak on death
@@ -592,6 +631,8 @@ impl PlayerState {
         self.dash_remaining = 0.0;
         self.dodge_roll_remaining = 0.0;
         self.invulnerable_remaining = crate::core::constants::SPAWN_INVULNERABILITY_SECS;
+        self.dash_melee_chain_bonus_remaining = 0.0;
+        self.dodge_shot_chain_bonus_remaining = 0.0;
         self.ping_cooldown_remaining = 0.0;
         self.zone_boost_cooldown_remaining = 0.0;
         self.shield_current = 0;
@@ -652,6 +693,16 @@ impl PlayerState {
         }
         if self.invulnerable_remaining > 0.0 {
             self.invulnerable_remaining = (self.invulnerable_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.dash_melee_chain_bonus_remaining > 0.0 {
+            self.dash_melee_chain_bonus_remaining =
+                (self.dash_melee_chain_bonus_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.dodge_shot_chain_bonus_remaining > 0.0 {
+            self.dodge_shot_chain_bonus_remaining =
+                (self.dodge_shot_chain_bonus_remaining - delta_time).max(0.0);
             changed_powerups = true;
         }
         if self.ping_cooldown_remaining > 0.0 {
@@ -803,6 +854,8 @@ impl PlayerState {
         self.peak_streak = 0;
         self.streak_damage_boost_remaining = 0.0;
         self.streak_speed_boost_remaining = 0.0;
+        self.dash_melee_chain_bonus_remaining = 0.0;
+        self.dodge_shot_chain_bonus_remaining = 0.0;
         self.recent_damage_sources.clear();
     }
 
@@ -1440,6 +1493,22 @@ mod tests {
     }
 
     #[test]
+    fn chain_windows_activate_consume_and_decay() {
+        let mut p = make_player("p1");
+        p.activate_dash_melee_chain_window();
+        p.activate_dodge_shot_chain_window();
+        assert!(p.has_dash_melee_chain_bonus());
+        assert!(p.dodge_shot_chain_bonus_remaining > 0.0);
+
+        assert!(p.consume_dash_melee_chain_bonus());
+        assert!(!p.consume_dash_melee_chain_bonus());
+        assert!(!p.has_dash_melee_chain_bonus());
+
+        p.update_timers(crate::core::constants::CHAIN_COMBO_WINDOW_SECS + 0.1);
+        assert_eq!(p.dodge_shot_chain_bonus_remaining, 0.0);
+    }
+
+    #[test]
     fn set_killstreak_reward_preference_from_input_slot_updates_preference() {
         let mut p = make_player("p1");
         assert_eq!(
@@ -1521,9 +1590,13 @@ mod tests {
         let mut p = make_player("p1");
         p.current_streak = 5;
         p.streak_damage_boost_remaining = 10.0;
+        p.activate_dash_melee_chain_window();
+        p.activate_dodge_shot_chain_window();
         p.apply_damage(100); // triggers die()
         assert_eq!(p.current_streak, 0);
         assert_eq!(p.streak_damage_boost_remaining, 0.0);
+        assert_eq!(p.dash_melee_chain_bonus_remaining, 0.0);
+        assert_eq!(p.dodge_shot_chain_bonus_remaining, 0.0);
         assert!(!p.alive);
         assert!(p.respawn_timer.is_some());
     }
@@ -1544,6 +1617,8 @@ mod tests {
             p.invulnerable_remaining,
             crate::core::constants::SPAWN_INVULNERABILITY_SECS
         );
+        assert_eq!(p.dash_melee_chain_bonus_remaining, 0.0);
+        assert_eq!(p.dodge_shot_chain_bonus_remaining, 0.0);
     }
 
     // ── fire rate jitter tolerance tests ──────────────────────────

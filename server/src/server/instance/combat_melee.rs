@@ -62,6 +62,7 @@ impl MassiveGameServer {
                     attacker_team_id,
                     attacker_username,
                     attacker_is_spectator,
+                    attacker_has_dash_chain_bonus,
                 ) = {
                     if let Some(attacker_state_guard) =
                         self.player_manager.get_player_state(&attacker_id)
@@ -73,6 +74,7 @@ impl MassiveGameServer {
                             attacker_state_guard.team_id,
                             attacker_state_guard.username.clone(),
                             attacker_state_guard.is_spectator,
+                            attacker_state_guard.has_dash_melee_chain_bonus(),
                         )
                     } else {
                         continue; // Attacker not found
@@ -93,6 +95,8 @@ impl MassiveGameServer {
                 enum MeleeResolution {
                     Hit {
                         died: bool,
+                        damage: i32,
+                        chain_bonus_applied: bool,
                         target_position: Vec2,
                         target_username: String,
                         victim_was_carrying_flag_id: u8,
@@ -103,6 +107,7 @@ impl MassiveGameServer {
                         defender_username: String,
                     },
                 }
+                let mut dash_chain_bonus_consumed = false;
 
                 // Process each potential target
                 for target_id_arc_nearby in nearby_player_ids {
@@ -184,8 +189,19 @@ impl MassiveGameServer {
                                 info!("[Melee] {} attempting to hit {} (dist_sq: {:.1}, angle_diff: {:.2} rad).",
                                       attacker_id.as_ref(), target_id_arc_nearby.as_ref(), dist_sq, angle_diff);
 
+                                let chain_bonus_applied =
+                                    attacker_has_dash_chain_bonus && !dash_chain_bonus_consumed;
+                                let effective_melee_damage = if chain_bonus_applied {
+                                    ((melee_damage as f32)
+                                        * crate::core::constants::DASH_TO_MELEE_DAMAGE_MULTIPLIER)
+                                        .round()
+                                        .max(1.0) as i32
+                                } else {
+                                    melee_damage
+                                };
+
                                 // Apply damage and collect necessary data
-                                let died = target_state.apply_damage(melee_damage);
+                                let died = target_state.apply_damage(effective_melee_damage);
                                 let target_position = Vec2::new(target_state.x, target_state.y);
                                 let target_username = target_state.username.clone();
                                 let victim_was_carrying_flag_id = if died {
@@ -202,6 +218,8 @@ impl MassiveGameServer {
 
                                 Some(MeleeResolution::Hit {
                                     died,
+                                    damage: effective_melee_damage,
+                                    chain_bonus_applied,
                                     target_position,
                                     target_username,
                                     victim_was_carrying_flag_id,
@@ -308,6 +326,8 @@ impl MassiveGameServer {
 
                         let MeleeResolution::Hit {
                             died,
+                            damage,
+                            chain_bonus_applied,
                             target_position,
                             target_username,
                             victim_was_carrying_flag_id,
@@ -319,8 +339,25 @@ impl MassiveGameServer {
                         if let Some(mut attacker_state_entry) =
                             self.player_manager.get_player_state_mut(&attacker_id)
                         {
-                            attacker_state_entry.record_damage_dealt(melee_damage);
+                            attacker_state_entry.record_damage_dealt(damage);
                             attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
+                        }
+
+                        if chain_bonus_applied && !dash_chain_bonus_consumed {
+                            if let Some(mut attacker_state_entry) =
+                                self.player_manager.get_player_state_mut(&attacker_id)
+                            {
+                                if attacker_state_entry.consume_dash_melee_chain_bonus() {
+                                    attacker_state_entry.mark_field_changed(FIELD_POWERUPS);
+                                    info!(
+                                        "Dash->melee chain bonus: {} landed melee with +50% damage (base={} boosted={})",
+                                        attacker_username,
+                                        melee_damage,
+                                        damage
+                                    );
+                                }
+                            }
+                            dash_chain_bonus_consumed = true;
                         }
 
                         // Push damage event
@@ -328,7 +365,7 @@ impl MassiveGameServer {
                             GameEvent::PlayerDamaged {
                                 target_id: target_id_arc_nearby.clone(),
                                 attacker_id: Some(attacker_id.clone()),
-                                damage: melee_damage,
+                                damage,
                                 weapon: ServerWeaponType::Melee,
                                 position: target_position,
                             },

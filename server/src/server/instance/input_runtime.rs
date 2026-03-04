@@ -757,12 +757,14 @@ impl MassiveGameServer {
                 1 if player_state.ability_1_cooldown_remaining <= 0.0 => {
                     player_state.ability_1_cooldown_remaining = ABILITY_DASH_COOLDOWN_SECS;
                     player_state.dash_remaining = ABILITY_DASH_DURATION_SECS;
+                    player_state.activate_dash_melee_chain_window();
                     player_state.mark_field_changed(FIELD_POWERUPS | FIELD_POSITION_ROTATION);
                 }
                 2 if player_state.ability_2_cooldown_remaining <= 0.0 => {
                     player_state.ability_2_cooldown_remaining = ABILITY_DODGE_COOLDOWN_SECS;
                     player_state.dodge_roll_remaining = ABILITY_DODGE_DURATION_SECS;
                     player_state.invulnerable_remaining = ABILITY_DODGE_DURATION_SECS;
+                    player_state.activate_dodge_shot_chain_window();
                     player_state.mark_field_changed(FIELD_POWERUPS | FIELD_POSITION_ROTATION);
                 }
                 _ => {}

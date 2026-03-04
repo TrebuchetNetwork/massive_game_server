@@ -157,6 +157,12 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     if original.invulnerable_remaining != updated.invulnerable_remaining {
         base.invulnerable_remaining = updated.invulnerable_remaining;
     }
+    if original.dash_melee_chain_bonus_remaining != updated.dash_melee_chain_bonus_remaining {
+        base.dash_melee_chain_bonus_remaining = updated.dash_melee_chain_bonus_remaining;
+    }
+    if original.dodge_shot_chain_bonus_remaining != updated.dodge_shot_chain_bonus_remaining {
+        base.dodge_shot_chain_bonus_remaining = updated.dodge_shot_chain_bonus_remaining;
+    }
     if original.ping_cooldown_remaining != updated.ping_cooldown_remaining {
         base.ping_cooldown_remaining = updated.ping_cooldown_remaining;
     }

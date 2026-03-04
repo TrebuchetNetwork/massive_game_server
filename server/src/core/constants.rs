@@ -150,6 +150,9 @@ pub const ABILITY_DODGE_COOLDOWN_SECS: f32 = 9.0; // was 12 – more outplay mom
 pub const ABILITY_DODGE_DURATION_SECS: f32 = 0.3;
 pub const ABILITY_DODGE_SPEED_MULTIPLIER: f32 = 1.6;
 pub const TEAM_PING_COOLDOWN_SECS: f32 = 3.0;
+pub const CHAIN_COMBO_WINDOW_SECS: f32 = 1.0;
+pub const DASH_TO_MELEE_DAMAGE_MULTIPLIER: f32 = 1.5;
+pub const DODGE_TO_SHOT_DAMAGE_MULTIPLIER: f32 = 1.2;
 
 // ── Zone tuning ─────────────────────────────────────────────────────
 pub const ZONE_SLOW_MULTIPLIER: f32 = 0.6;
