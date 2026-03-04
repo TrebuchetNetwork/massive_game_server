@@ -1505,6 +1505,7 @@ mod instance_tests {
         assert_eq!(info.match_state, fb::MatchStateType::Waiting);
         assert_eq!(info.game_mode, fb::GameModeType::CaptureTheFlag);
         assert!(info.team_scores.is_empty());
+        assert_eq!(info.ctf_overtime_round, 0);
         assert!(info.flag_states.is_empty());
     }
 

@@ -62,6 +62,18 @@ impl MassiveGameServer {
         }
     }
 
+    fn broadcast_ctf_overtime_event(&self, round: u8, duration_secs: f32) {
+        let payload = serde_json::json!({
+            "phase": "ctf_overtime",
+            "round": round,
+            "duration_secs": duration_secs.max(0.0),
+            "time_remaining": duration_secs.max(0.0),
+        });
+        if let Some(packet) = self.build_system_event_packet("ctf_overtime", Some(&payload)) {
+            self.enqueue_direct_packet_for_all_players(packet);
+        }
+    }
+
     pub(super) fn update_match_state_authoritative(&self, delta_time: f32) {
         let mut match_info_guard = self.match_info.write();
         let player_count = self.participant_count();
@@ -78,6 +90,7 @@ impl MassiveGameServer {
                     match_info_guard.match_state = fb::MatchStateType::Active;
                     match_info_guard.time_remaining = self.match_duration_secs;
                     match_info_guard.team_scores.clear();
+                    match_info_guard.ctf_overtime_round = 0;
                     if dynamic_mode_transitions {
                         match_info_guard.game_mode = fb::GameModeType::FreeForAll;
                     }
@@ -208,7 +221,40 @@ impl MassiveGameServer {
                         );
                     }
                 }
+                if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch {
+                    let team1_score = match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
+                    let team2_score = match_info_guard.team_scores.get(&2).cloned().unwrap_or(0);
+                    if team1_score >= TDM_KILL_LIMIT || team2_score >= TDM_KILL_LIMIT {
+                        match_info_guard.match_state = fb::MatchStateType::Ended;
+                        info!(
+                            "TDM kill limit reached (limit={}, team1={}, team2={}).",
+                            TDM_KILL_LIMIT, team1_score, team2_score
+                        );
+                        drop(match_info_guard);
+                        self.capture_match_end_summary("tdm_kill_limit");
+                        return;
+                    }
+                }
                 if match_info_guard.time_remaining <= 0.0 {
+                    if match_info_guard.game_mode == fb::GameModeType::CaptureTheFlag {
+                        let team1_score =
+                            match_info_guard.team_scores.get(&1).cloned().unwrap_or(0);
+                        let team2_score =
+                            match_info_guard.team_scores.get(&2).cloned().unwrap_or(0);
+                        if team1_score == team2_score && match_info_guard.ctf_overtime_round == 0 {
+                            match_info_guard.ctf_overtime_round = 1;
+                            match_info_guard.time_remaining = CTF_OVERTIME_DURATION_SECS;
+                            info!(
+                                "CTF overtime triggered ({}-{} tie). Extending by {:.1}s.",
+                                team1_score, team2_score, CTF_OVERTIME_DURATION_SECS
+                            );
+                            self.broadcast_ctf_overtime_event(
+                                match_info_guard.ctf_overtime_round,
+                                CTF_OVERTIME_DURATION_SECS,
+                            );
+                            return;
+                        }
+                    }
                     match_info_guard.match_state = fb::MatchStateType::Ended;
                     info!("Match ended! (Time up)");
                     if match_info_guard.game_mode == fb::GameModeType::TeamDeathmatch
@@ -459,14 +505,26 @@ impl MassiveGameServer {
                                 current_score
                             );
 
-                            if current_score >= 3 {
+                            let overtime_capture = match_info_write_guard.ctf_overtime_round > 0;
+                            if overtime_capture || current_score >= CTF_CAPTURE_LIMIT {
                                 match_info_write_guard.match_state = fb::MatchStateType::Ended;
-                                info!(
-                                    "Team {} wins by capturing {} flags!",
-                                    own_player_team_id, current_score
-                                );
+                                if overtime_capture {
+                                    info!(
+                                        "Team {} wins CTF in overtime with the decisive capture.",
+                                        own_player_team_id
+                                    );
+                                } else {
+                                    info!(
+                                        "Team {} wins by capturing {} flags!",
+                                        own_player_team_id, current_score
+                                    );
+                                }
                                 drop(match_info_write_guard);
-                                self.capture_match_end_summary("ctf_score_limit");
+                                self.capture_match_end_summary(if overtime_capture {
+                                    "ctf_overtime_capture"
+                                } else {
+                                    "ctf_score_limit"
+                                });
                                 return;
                             }
                         }
@@ -518,6 +576,7 @@ impl MassiveGameServer {
 
     fn reset_match_state(&self, match_info: &mut ServerMatchInfo) {
         match_info.time_remaining = self.match_duration_secs;
+        match_info.ctf_overtime_round = 0;
         match_info.flag_states.clear();
         if match_info.match_state == fb::MatchStateType::Waiting
             && match_info.game_mode == fb::GameModeType::CaptureTheFlag

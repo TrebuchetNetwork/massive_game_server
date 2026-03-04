@@ -3,7 +3,9 @@
 
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
-use massive_game_server_core::core::constants::{POINTS_FLAG_CAPTURE, POINTS_FLAG_RETURN};
+use massive_game_server_core::core::constants::{
+    CTF_OVERTIME_DURATION_SECS, POINTS_FLAG_CAPTURE, POINTS_FLAG_RETURN, TDM_KILL_LIMIT,
+};
 use massive_game_server_core::core::types::{PlayerAoIs, PlayerID, Vec2};
 use massive_game_server_core::flatbuffers_generated::game_protocol as fb;
 use massive_game_server_core::network::signaling::{
@@ -80,9 +82,64 @@ async fn active_to_ended_when_time_expires() {
     {
         let mut mi = server.match_info.write();
         assert_eq!(mi.match_state, fb::MatchStateType::Active);
+        mi.game_mode = fb::GameModeType::TeamDeathmatch;
         mi.time_remaining = 0.01;
     }
 
+    server.run_game_logic_update(0.1).await;
+    assert_eq!(
+        server.match_info.read().match_state,
+        fb::MatchStateType::Ended
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn team_deathmatch_ends_on_kill_limit() {
+    let server = setup_test_server();
+    add_player(&server, "player1", 1, 0.0, 0.0);
+    add_player(&server, "player2", 2, 10.0, 10.0);
+    server.run_game_logic_update(0.016).await;
+
+    {
+        let mut mi = server.match_info.write();
+        mi.game_mode = fb::GameModeType::TeamDeathmatch;
+        mi.team_scores.insert(1, TDM_KILL_LIMIT);
+        mi.team_scores.insert(2, TDM_KILL_LIMIT - 2);
+    }
+
+    server.run_game_logic_update(0.016).await;
+    assert_eq!(
+        server.match_info.read().match_state,
+        fb::MatchStateType::Ended
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ctf_tie_enters_overtime_then_times_out() {
+    let server = setup_test_server();
+    add_player(&server, "player1", 1, 0.0, 0.0);
+    add_player(&server, "player2", 2, 30.0, 30.0);
+    server.run_game_logic_update(0.016).await;
+
+    {
+        let mut mi = server.match_info.write();
+        mi.game_mode = fb::GameModeType::CaptureTheFlag;
+        mi.time_remaining = 0.01;
+        mi.team_scores.insert(1, 2);
+        mi.team_scores.insert(2, 2);
+    }
+    server.run_game_logic_update(0.1).await;
+    {
+        let mi = server.match_info.read();
+        assert_eq!(mi.match_state, fb::MatchStateType::Active);
+        assert_eq!(mi.ctf_overtime_round, 1);
+        assert!((mi.time_remaining - CTF_OVERTIME_DURATION_SECS).abs() < 0.001);
+    }
+
+    {
+        let mut mi = server.match_info.write();
+        mi.time_remaining = 0.01;
+    }
     server.run_game_logic_update(0.1).await;
     assert_eq!(
         server.match_info.read().match_state,
@@ -315,6 +372,45 @@ async fn ctf_three_captures_wins_match() {
     let mi = server.match_info.read();
     assert_eq!(mi.match_state, fb::MatchStateType::Ended);
     assert_eq!(mi.team_scores.get(&1).copied(), Some(3));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ctf_overtime_capture_ends_match_immediately() {
+    let server = setup_test_server();
+    {
+        let mut mi = server.match_info.write();
+        mi.game_mode = fb::GameModeType::CaptureTheFlag;
+    }
+
+    let runner_id = add_player(&server, "runner", 1, 0.0, 0.0);
+    add_player(&server, "defender", 2, -500.0, -500.0);
+    server.run_game_logic_update(0.016).await;
+
+    {
+        let mut mi = server.match_info.write();
+        mi.ctf_overtime_round = 1;
+        mi.team_scores.insert(1, 1);
+        mi.team_scores.insert(2, 1);
+    }
+
+    let enemy_base = MassiveGameServer::get_flag_base_position(2);
+    let own_base = MassiveGameServer::get_flag_base_position(1);
+
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&runner_id) {
+        ps.x = enemy_base.x;
+        ps.y = enemy_base.y;
+    }
+    server.run_game_logic_update(0.016).await;
+
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&runner_id) {
+        ps.x = own_base.x;
+        ps.y = own_base.y;
+    }
+    server.run_game_logic_update(0.016).await;
+
+    let mi = server.match_info.read();
+    assert_eq!(mi.match_state, fb::MatchStateType::Ended);
+    assert_eq!(mi.team_scores.get(&1).copied(), Some(2));
 }
 
 // ── Flag base positions ──────────────────────────────────────────────

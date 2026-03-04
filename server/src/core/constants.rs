@@ -168,6 +168,9 @@ pub const POINTS_FLAG_RETURN: i32 = 50;
 pub const POINTS_ASSIST: i32 = 3; // 25% of kill = ~2.5, round to 3
 pub const ASSIST_WINDOW_SECS: f32 = 5.0;
 pub const LOSING_TEAM_RESPAWN_REDUCTION_PER_5PTS: f32 = 0.5;
+pub const TDM_KILL_LIMIT: i32 = 50;
+pub const CTF_CAPTURE_LIMIT: i32 = 3;
+pub const CTF_OVERTIME_DURATION_SECS: f32 = 30.0;
 
 // ── Projectile knockback ────────────────────────────────────────────
 pub const KNOCKBACK_FORCE_PER_DAMAGE: f32 = 0.4; // reduced shove intensity for better close-range control
