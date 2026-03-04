@@ -20,6 +20,9 @@ impl ThreadPoolSystem {
     pub fn new(config: Arc<ServerConfig>) -> Result<Self, anyhow::Error> {
         let numa_aware = env_bool("MGS_NUMA_AWARE");
         let numa_topology = Arc::new(NumaTopology::from_env());
+        if Self::should_use_shared_pool(&config.thread_pools) {
+            return Self::new_with_shared_pool(numa_aware, Arc::clone(&numa_topology));
+        }
 
         let affinity_enabled = env_bool("MGS_CPU_AFFINITY");
         if !affinity_enabled {
@@ -293,6 +296,40 @@ impl ThreadPoolSystem {
             })
             .build()?)
     }
+
+    fn should_use_shared_pool(config: &crate::core::config::ThreadPoolConfig) -> bool {
+        config.physics_threads == 1
+            && config.networking_threads == 1
+            && config.game_logic_threads == 1
+            && config.ai_threads == 1
+            && config.io_threads == 1
+    }
+
+    fn new_with_shared_pool(
+        numa_aware: bool,
+        numa_topology: Arc<NumaTopology>,
+    ) -> Result<Self, anyhow::Error> {
+        let shared_threads = std::thread::available_parallelism()
+            .map(|parallelism| parallelism.get().clamp(1, 4))
+            .unwrap_or(2);
+        let shared = Arc::new(Self::create_pool_without_affinity(
+            "shared",
+            shared_threads,
+            numa_aware,
+            numa_topology,
+        )?);
+        info!(
+            "Using shared thread pool for low-core runtime (threads={}).",
+            shared_threads
+        );
+        Ok(Self {
+            physics_pool: Arc::clone(&shared),
+            network_pool: Arc::clone(&shared),
+            game_logic_pool: Arc::clone(&shared),
+            ai_pool: Arc::clone(&shared),
+            io_pool: shared,
+        })
+    }
 }
 
 fn env_bool(name: &str) -> bool {
@@ -381,7 +418,7 @@ impl MonitoredPool {
         }
         if self.warn_threshold > 0
             && current >= self.warn_threshold
-            && current.is_multiple_of(self.warn_threshold)
+            && current % self.warn_threshold == 0
         {
             warn!(
                 "[ThreadPool:{}] Queue depth warning: {} pending tasks (warn_threshold={})",
@@ -406,7 +443,7 @@ impl MonitoredPool {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.warn_threshold > 0
             && current >= self.warn_threshold
-            && current.is_multiple_of(self.warn_threshold)
+            && current % self.warn_threshold == 0
         {
             warn!(
                 "[ThreadPool:{}] Queue depth warning: {} pending tasks (warn_threshold={})",

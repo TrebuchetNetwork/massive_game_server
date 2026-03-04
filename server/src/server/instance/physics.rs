@@ -7,7 +7,7 @@ impl MassiveGameServer {
 
         // Stage 1: Wall Respawns (example)
         let respawn_stage_start = Instant::now();
-        let respawned_walls = if frame.is_multiple_of(30) {
+        let respawned_walls = if frame % 30 == 0 {
             //
             let templates = self.wall_respawn_manager.as_ref().check_respawns(); //
             if !templates.is_empty() {
@@ -29,7 +29,8 @@ impl MassiveGameServer {
         // Update wall spatial index if walls were respawned, destroyed, or if it needs periodic rebuild
         let destroyed_walls_count = self.destroyed_wall_ids_this_tick.read().len();
         let updated_walls_count = self.updated_walls_this_tick.read().len();
-        let needs_periodic_rebuild = self.wall_spatial_index.needs_rebuild(frame, 150); // Rebuild every 150 frames
+        // Keep collision data fresher under heavy destruction/rebuild churn.
+        let needs_periodic_rebuild = self.wall_spatial_index.needs_rebuild(frame, 30);
 
         if needs_periodic_rebuild {
             let index_rebuild_start = Instant::now();

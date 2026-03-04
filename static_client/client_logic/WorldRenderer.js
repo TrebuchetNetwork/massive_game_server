@@ -9,12 +9,27 @@
 export function createWorldRenderer(getCtx) {
 
     let zonePulsePhase = 0;
+    let zoneAmbientSpawnCursor = 0;
+    let zoneAmbientSpawnAccumulator = 0;
+    const zoneAmbientParticles = [];
+    const MAX_ZONE_AMBIENT_PARTICLES = 20;
+
+    function clearZoneAmbientParticles(zoneAmbientContainer) {
+        while (zoneAmbientParticles.length > 0) {
+            const particle = zoneAmbientParticles.pop();
+            particle?.sprite?.destroy?.();
+        }
+        if (zoneAmbientContainer && Array.isArray(zoneAmbientContainer.children)) {
+            zoneAmbientContainer.removeChildren().forEach((child) => child.destroy?.());
+        }
+    }
 
     function drawZones() {
         const ctx = getCtx();
-        const { zoneContainer, zones, PIXI, GP } = ctx;
+        const { zoneContainer, zoneAmbientContainer, zones, PIXI, GP } = ctx;
         if (!zoneContainer) return;
         zoneContainer.removeChildren();
+        clearZoneAmbientParticles(zoneAmbientContainer);
 
         for (const [zoneId, zone] of zones) {
             const g = new PIXI.Graphics();
@@ -73,6 +88,94 @@ export function createWorldRenderer(getCtx) {
                 }
             }
             childIdx++;
+        }
+    }
+
+    function updateZoneAmbientParticles(dt) {
+        const ctx = getCtx();
+        const {
+            zoneAmbientContainer,
+            zones,
+            GP,
+            PIXI,
+            ultraPerformanceMode,
+            STABLE_MODE_FORCED,
+            smoothedFrameMs,
+        } = ctx;
+        if (!zoneAmbientContainer || !PIXI) return;
+
+        const frameDtSec = Math.max(0.001, Math.min(0.05, Number(dt) || 0.016));
+        const candidateZones = [];
+        for (const [, zone] of zones) {
+            if (
+                zone.zone_type === GP.ZoneType.DamageZone ||
+                zone.zone_type === GP.ZoneType.BoostPad
+            ) {
+                candidateZones.push(zone);
+            }
+        }
+
+        const qualityPenalty = (ultraPerformanceMode || STABLE_MODE_FORCED || smoothedFrameMs > 22)
+            ? 0.55
+            : 1.0;
+        const spawnRatePerSec = 3.2 * qualityPenalty;
+        const maxParticles = Math.max(6, Math.round(MAX_ZONE_AMBIENT_PARTICLES * qualityPenalty));
+        if (candidateZones.length > 0 && zoneAmbientParticles.length < maxParticles) {
+            zoneAmbientSpawnAccumulator += frameDtSec * spawnRatePerSec;
+            while (zoneAmbientSpawnAccumulator >= 1 && zoneAmbientParticles.length < maxParticles) {
+                zoneAmbientSpawnAccumulator -= 1;
+                const zone = candidateZones[zoneAmbientSpawnCursor % candidateZones.length];
+                zoneAmbientSpawnCursor += 1;
+
+                const sprite = new PIXI.Graphics();
+                const isDamage = zone.zone_type === GP.ZoneType.DamageZone;
+                const particleSize = isDamage ? 1.8 : 2.2;
+                const color = isDamage ? 0xFF7744 : 0x44DDFF;
+                const alpha = isDamage ? 0.72 : 0.62;
+                sprite.beginFill(color, alpha);
+                sprite.drawCircle(0, 0, particleSize);
+                sprite.endFill();
+
+                sprite.x = zone.x + Math.random() * zone.width;
+                sprite.y = zone.y + Math.random() * zone.height;
+                zoneAmbientContainer.addChild(sprite);
+
+                const life = isDamage
+                    ? (0.8 + Math.random() * 0.9)
+                    : (0.55 + Math.random() * 0.55);
+                const driftX = isDamage
+                    ? ((Math.random() - 0.5) * 24)
+                    : Math.cos(zone.direction || 0) * (36 + Math.random() * 22);
+                const driftY = isDamage
+                    ? (-24 - Math.random() * 35)
+                    : Math.sin(zone.direction || 0) * (36 + Math.random() * 22);
+
+                zoneAmbientParticles.push({
+                    sprite,
+                    life,
+                    maxLife: life,
+                    driftX,
+                    driftY,
+                });
+            }
+        }
+
+        for (let i = zoneAmbientParticles.length - 1; i >= 0; i--) {
+            const particle = zoneAmbientParticles[i];
+            if (!particle || !particle.sprite) {
+                zoneAmbientParticles.splice(i, 1);
+                continue;
+            }
+            particle.life -= frameDtSec;
+            if (particle.life <= 0) {
+                particle.sprite.destroy?.();
+                zoneAmbientParticles.splice(i, 1);
+                continue;
+            }
+            particle.sprite.x += particle.driftX * frameDtSec;
+            particle.sprite.y += particle.driftY * frameDtSec;
+            const lifeAlpha = Math.max(0, particle.life / Math.max(0.001, particle.maxLife));
+            particle.sprite.alpha = lifeAlpha * lifeAlpha;
         }
     }
 
@@ -450,6 +553,7 @@ export function createWorldRenderer(getCtx) {
     return {
         drawZones,
         updateZonePulse,
+        updateZoneAmbientParticles,
         drawWalls,
         drawEnhancedWallCracks,
         drawSimplifiedWallCracks,

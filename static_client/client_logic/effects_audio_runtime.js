@@ -2568,6 +2568,34 @@ this.sounds = {
     announcerRampage: { freq: [360, 520, 760], duration: 0.55, type: 'sawtooth', vol: 0.44 },
 };
 
+this.soundSamples = Object.freeze({
+    pistolFire: 'sfx/pistol_fire.wav',
+    shotgunFire: 'sfx/shotgun_fire.wav',
+    rifleFire: 'sfx/rifle_fire.wav',
+    sniperFire: 'sfx/sniper_fire.wav',
+    meleeSwing: 'sfx/melee_swing.wav',
+    bulletImpact: 'sfx/bullet_impact.wav',
+    explosion: 'sfx/explosion.wav',
+    powerupCollect: 'sfx/powerup_collect.wav',
+    playerHit: 'sfx/player_hit.wav',
+    flagCapture: 'sfx/flag_capture.wav',
+    flagGrabbed: 'sfx/flag_grabbed.wav',
+    flagDropped: 'sfx/flag_dropped.wav',
+    flagReturned: 'sfx/flag_returned.wav',
+    hitMarker: 'sfx/hit_marker.wav',
+    hitMarkerHeadshot: 'sfx/hit_marker_headshot.wav',
+    announcerHeadshot: 'sfx/announcer_headshot.wav',
+    announcerDoubleKill: 'sfx/announcer_double_kill.wav',
+    announcerTripleKill: 'sfx/announcer_triple_kill.wav',
+    announcerRampage: 'sfx/announcer_rampage.wav',
+    outOfAmmo: 'sfx/out_of_ammo.wav',
+    reloadStart: 'sfx/reload_start.wav',
+    reloadNeeded: 'sfx/reload_needed.wav',
+    chatMessage: 'sfx/chat_message.wav',
+});
+this.sampleBuffers = new Map();
+this.sampleLoadPromises = new Map();
+
 this.resumeInFlight = false;
 this.soundActivity = new Map();
 this.voicePool = [];
@@ -2617,6 +2645,7 @@ this.recentPredictedWeaponSoundAt = new Map();
 this.maxVoices = this.mobileSoundBudget ? 8 : 20;
 this.initializeOutputChain();
 this.initializeVoicePool();
+this.preloadSoundSamples();
     }
 
     setGlobalVolume(volume) {
@@ -2654,6 +2683,136 @@ try {
     this.masterOutputNode = this.audioContext.destination;
     this.masterGainNode = null;
     this.compressorNode = null;
+}
+    }
+
+    decodeAudioData(arrayBuffer) {
+if (!this.audioContext || !(arrayBuffer instanceof ArrayBuffer)) {
+    return Promise.resolve(null);
+}
+
+const decodeInput = arrayBuffer.slice(0);
+try {
+    const maybePromise = this.audioContext.decodeAudioData(decodeInput);
+    if (maybePromise && typeof maybePromise.then === 'function') {
+        return maybePromise;
+    }
+} catch (_) {
+    // Fall back to callback-style decodeAudioData below.
+}
+
+return new Promise((resolve, reject) => {
+    try {
+        this.audioContext.decodeAudioData(decodeInput, resolve, reject);
+    } catch (error) {
+        reject(error);
+    }
+});
+    }
+
+    preloadSoundSamples() {
+if (!this.audioContext || typeof fetch !== 'function') return;
+Object.keys(this.soundSamples).forEach((soundName) => {
+    this.loadSampleBuffer(soundName).catch(() => {
+        // Errors are surfaced in loadSampleBuffer; keep preloading fire-and-forget.
+    });
+});
+    }
+
+    loadSampleBuffer(soundName) {
+const cached = this.sampleBuffers.get(soundName);
+if (cached) {
+    return Promise.resolve(cached);
+}
+if (!this.audioContext || typeof fetch !== 'function') {
+    return Promise.resolve(null);
+}
+
+const samplePath = this.soundSamples[soundName];
+if (!samplePath) {
+    return Promise.resolve(null);
+}
+
+const inFlight = this.sampleLoadPromises.get(soundName);
+if (inFlight) {
+    return inFlight;
+}
+
+const loadPromise = fetch(samplePath, { cache: 'force-cache' })
+    .then((response) => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return response.arrayBuffer();
+    })
+    .then((audioBytes) => this.decodeAudioData(audioBytes))
+    .then((buffer) => {
+        if (buffer) {
+            this.sampleBuffers.set(soundName, buffer);
+            return buffer;
+        }
+        return null;
+    })
+    .catch((error) => {
+        console.warn(`Failed to load sound sample '${soundName}' (${samplePath}):`, error);
+        return null;
+    })
+    .finally(() => {
+        this.sampleLoadPromises.delete(soundName);
+    });
+
+this.sampleLoadPromises.set(soundName, loadPromise);
+return loadPromise;
+    }
+
+    tryPlaySample(soundName, volume, panValue, nowMs, prioritizeLocal = false) {
+if (!this.audioContext) return false;
+const sampleBuffer = this.sampleBuffers.get(soundName);
+if (!sampleBuffer) return false;
+
+const sampleDurationSec = Math.max(0.015, Number(sampleBuffer.duration) || 0.015);
+const voice = this.acquireVoiceSlot(soundName, sampleDurationSec, nowMs, prioritizeLocal);
+if (!voice) {
+    return false;
+}
+
+const now = this.audioContext.currentTime;
+const gainNode = voice.gainNode;
+try {
+    const attackSec = Math.max(0.002, Math.min(0.02, sampleDurationSec * 0.18));
+    const releaseStartOffset = Math.max(attackSec, sampleDurationSec - 0.03);
+    gainNode.gain.cancelScheduledValues(now);
+    gainNode.gain.setValueAtTime(0.0001, now);
+    gainNode.gain.exponentialRampToValueAtTime(Math.max(0.001, volume), now + attackSec);
+    gainNode.gain.setValueAtTime(Math.max(0.001, volume), now + releaseStartOffset);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + sampleDurationSec);
+} catch (_) {
+    this.markVoiceReleased(voice);
+    return false;
+}
+
+if (voice.pannerNode) {
+    try {
+        voice.pannerNode.pan.cancelScheduledValues(now);
+        voice.pannerNode.pan.setValueAtTime(Math.max(-1, Math.min(1, Number(panValue) || 0)), now);
+    } catch (_) {}
+}
+
+const sourceNode = this.audioContext.createBufferSource();
+sourceNode.buffer = sampleBuffer;
+sourceNode.connect(gainNode);
+voice.sourceNode = sourceNode;
+sourceNode.onended = () => {
+    this.markVoiceReleased(voice, sourceNode);
+};
+
+try {
+    sourceNode.start(now);
+    sourceNode.stop(now + sampleDurationSec + 0.02);
+    return true;
+} catch (_) {
+    this.markVoiceReleased(voice, sourceNode);
+    return false;
 }
     }
 
@@ -2929,6 +3088,14 @@ const bypassLimiter = !!(options && options.bypassLimiter);
 this.sweepExpiredVoices(nowMs);
 if (!bypassLimiter && !this.shouldPlaySoundNow(soundName, nowMs)) {
     return;
+}
+if (this.tryPlaySample(soundName, finalVolume, panValue, nowMs, prioritizeLocal)) {
+    return;
+}
+if (this.soundSamples[soundName]) {
+    this.loadSampleBuffer(soundName).catch(() => {
+        // loadSampleBuffer already logs detailed failures.
+    });
 }
 this._playTone(
     soundName,

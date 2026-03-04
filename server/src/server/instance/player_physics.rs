@@ -1,47 +1,72 @@
 use super::*;
+use rayon::prelude::*;
 
 impl MassiveGameServer {
     pub(super) async fn process_player_physics_parallel(
         &self,
         delta_time: f32,
     ) -> PlayerPhysicsResults {
-        let mut all_to_respawn = Vec::new();
-        let mut total_alive = 0;
         let sample_timestamp_ms = self.get_server_timestamp_ms();
 
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-        if frame.is_multiple_of(120) {
+        if frame % 120 == 0 {
             self.prune_runtime_tracking_state();
         }
 
-        // Process all players using for_each_player_mut
-        self.player_manager
-            .for_each_player_mut(|player_id, player_state| {
-                // Update timers
-                player_state.update_timers(delta_time);
+        // Snapshot player IDs first, then process each shard item in parallel on the
+        // physics thread pool. This keeps mutations per-player while avoiding a
+        // single-threaded walk across all shards every tick.
+        let player_ids = self.player_manager.player_ids_snapshot();
+        let (all_to_respawn, total_alive) = self.thread_pools.physics_pool.install(|| {
+            player_ids
+                .par_iter()
+                .fold(
+                    || (Vec::<(PlayerID, u8)>::new(), 0usize),
+                    |mut acc, player_id| {
+                        if let Some(mut player_state) =
+                            self.player_manager.get_player_state_mut(player_id)
+                        {
+                            player_state.update_timers(delta_time);
 
-                if player_state.is_spectator {
-                    self.process_player_movement_optimized(player_state, delta_time);
-                    self.record_player_position_sample(
-                        player_id,
-                        sample_timestamp_ms,
-                        player_state.x,
-                        player_state.y,
-                    );
-                } else if player_state.alive {
-                    total_alive += 1;
-                    // Process movement with optimized collision
-                    self.process_player_movement_optimized(player_state, delta_time);
-                    self.record_player_position_sample(
-                        player_id,
-                        sample_timestamp_ms,
-                        player_state.x,
-                        player_state.y,
-                    );
-                } else if player_state.respawn_timer == Some(0.0) {
-                    all_to_respawn.push((player_id.clone(), player_state.team_id));
-                }
-            });
+                            if player_state.is_spectator {
+                                self.process_player_movement_optimized(
+                                    &mut player_state,
+                                    delta_time,
+                                );
+                                self.record_player_position_sample(
+                                    player_id,
+                                    sample_timestamp_ms,
+                                    player_state.x,
+                                    player_state.y,
+                                );
+                            } else if player_state.alive {
+                                acc.1 = acc.1.saturating_add(1);
+                                self.process_player_movement_optimized(
+                                    &mut player_state,
+                                    delta_time,
+                                );
+                                self.record_player_position_sample(
+                                    player_id,
+                                    sample_timestamp_ms,
+                                    player_state.x,
+                                    player_state.y,
+                                );
+                            } else if player_state.respawn_timer == Some(0.0) {
+                                acc.0.push((player_id.clone(), player_state.team_id));
+                            }
+                        }
+                        acc
+                    },
+                )
+                .reduce(
+                    || (Vec::<(PlayerID, u8)>::new(), 0usize),
+                    |mut left, mut right| {
+                        left.0.append(&mut right.0);
+                        left.1 = left.1.saturating_add(right.1);
+                        left
+                    },
+                )
+        });
 
         self.apply_player_soft_push_separation(delta_time);
 

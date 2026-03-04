@@ -127,6 +127,12 @@ struct UserRecord {
     best_score: i32,
     total_kills: u64,
     total_deaths: u64,
+    #[serde(default)]
+    total_flag_captures: u64,
+    #[serde(default)]
+    top_streak: u64,
+    #[serde(default)]
+    kills_per_weapon: [u64; 5],
     last_game_username: Option<String>,
     #[serde(default)]
     experience_points: u64,
@@ -187,6 +193,10 @@ pub struct AuthProfileView {
     pub best_score: i32,
     pub total_kills: u64,
     pub total_deaths: u64,
+    pub total_flag_captures: u64,
+    pub top_streak: u64,
+    pub favorite_weapon: String,
+    pub lifetime_kd: f32,
     pub last_game_username: Option<String>,
     pub experience_points: u64,
     pub credits: u64,
@@ -834,6 +844,9 @@ impl AuthService {
                 best_score: 0,
                 total_kills: 0,
                 total_deaths: 0,
+                total_flag_captures: 0,
+                top_streak: 0,
+                kills_per_weapon: [0; 5],
                 last_game_username: None,
                 experience_points: 0,
                 credits: 0,
@@ -1012,6 +1025,15 @@ impl AuthService {
             user.total_deaths = user
                 .total_deaths
                 .saturating_add(player_state.deaths.max(0) as u64);
+            user.total_flag_captures = user
+                .total_flag_captures
+                .saturating_add(player_state.flag_captures.max(0) as u64);
+            user.top_streak = user.top_streak.max(player_state.peak_streak as u64);
+            for (idx, kills) in player_state.kills_per_weapon.iter().enumerate() {
+                if let Some(total_slot) = user.kills_per_weapon.get_mut(idx) {
+                    *total_slot = total_slot.saturating_add((*kills).max(0) as u64);
+                }
+            }
             let (xp_gain, credits_gain) = progression_reward_from_match(player_state);
             user.experience_points = user.experience_points.saturating_add(xp_gain);
             user.credits = user.credits.saturating_add(credits_gain);
@@ -1761,6 +1783,8 @@ fn to_profile_view(user: &UserRecord) -> AuthProfileView {
         user.cumulative_score,
         user.matches_played,
     );
+    let favorite_weapon = favorite_weapon_from_kills(&user.kills_per_weapon).to_owned();
+    let lifetime_kd = user.total_kills as f32 / user.total_deaths.max(1) as f32;
     AuthProfileView {
         user_id: user.user_id.clone(),
         display_name: user.display_name.clone(),
@@ -1772,6 +1796,10 @@ fn to_profile_view(user: &UserRecord) -> AuthProfileView {
         best_score: user.best_score,
         total_kills: user.total_kills,
         total_deaths: user.total_deaths,
+        total_flag_captures: user.total_flag_captures,
+        top_streak: user.top_streak,
+        favorite_weapon,
+        lifetime_kd,
         last_game_username: user.last_game_username.clone(),
         experience_points: user.experience_points,
         credits: user.credits,
@@ -1779,6 +1807,25 @@ fn to_profile_view(user: &UserRecord) -> AuthProfileView {
         next_level_experience: experience_for_level(level.saturating_add(1)),
         mmr,
         mmr_band: classify_mmr_band(mmr).to_string(),
+    }
+}
+
+fn favorite_weapon_from_kills(kills_per_weapon: &[u64; 5]) -> &'static str {
+    let mut best_idx: Option<usize> = None;
+    let mut best_kills = 0u64;
+    for (idx, kills) in kills_per_weapon.iter().enumerate() {
+        if *kills > best_kills {
+            best_kills = *kills;
+            best_idx = Some(idx);
+        }
+    }
+    match best_idx {
+        Some(0) => "Pistol",
+        Some(1) => "Shotgun",
+        Some(2) => "Rifle",
+        Some(3) => "Sniper",
+        Some(4) => "Melee",
+        _ => "None",
     }
 }
 
@@ -2622,6 +2669,9 @@ mod tests {
             best_score: 80,
             total_kills: 30,
             total_deaths: 20,
+            total_flag_captures: 4,
+            top_streak: 6,
+            kills_per_weapon: [6, 5, 12, 4, 3],
             last_game_username: Some("TestPlayer".to_owned()),
             experience_points: 1000,
             credits: 200,
@@ -2665,6 +2715,9 @@ mod tests {
                 best_score: 10,
                 total_kills: 1,
                 total_deaths: 1,
+                total_flag_captures: 0,
+                top_streak: 1,
+                kills_per_weapon: [1, 0, 0, 0, 0],
                 last_game_username: None,
                 experience_points: 0,
                 credits: 0,
@@ -2686,6 +2739,9 @@ mod tests {
                 best_score: 10,
                 total_kills: 1,
                 total_deaths: 1,
+                total_flag_captures: 0,
+                top_streak: 0,
+                kills_per_weapon: [0; 5],
                 last_game_username: None,
                 experience_points: 0,
                 credits: 0,
@@ -2744,6 +2800,9 @@ mod tests {
             best_score: 0,
             total_kills: 0,
             total_deaths: 0,
+            total_flag_captures: 0,
+            top_streak: 0,
+            kills_per_weapon: [0; 5],
             last_game_username: None,
             experience_points: 0,
             credits: 0,

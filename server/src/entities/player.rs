@@ -205,6 +205,9 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     if original.current_streak != updated.current_streak {
         base.current_streak = updated.current_streak;
     }
+    if original.peak_streak != updated.peak_streak {
+        base.peak_streak = updated.peak_streak;
+    }
     if original.streak_damage_boost_remaining != updated.streak_damage_boost_remaining {
         base.streak_damage_boost_remaining = updated.streak_damage_boost_remaining;
     }
@@ -344,7 +347,8 @@ impl ImprovedPlayerManager {
         if self
             .next_balanced_team
             .fetch_add(1, AtomicOrdering::Relaxed)
-            .is_multiple_of(2)
+            % 2
+            == 0
         {
             1
         } else {
@@ -553,6 +557,17 @@ impl ImprovedPlayerManager {
                 func(&key_clone, &mut guard);
             }
         }
+    }
+
+    pub fn player_ids_snapshot(&self) -> Vec<PlayerID> {
+        let mut ids = Vec::new();
+        for shard in &self.shards {
+            ids.reserve(shard.len());
+            for entry in shard.iter() {
+                ids.push(entry.key().clone());
+            }
+        }
+        ids
     }
 
     // Method to count total players

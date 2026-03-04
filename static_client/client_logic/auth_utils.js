@@ -29,6 +29,10 @@ export function createAuthHelpers(options) {
         authPhoneMaskedSpan,
         authTotalScoreSpan,
         authBestScoreSpan,
+        authLifetimeKdSpan,
+        authTopStreakSpan,
+        authTotalCapturesSpan,
+        authFavoriteWeaponSpan,
         authStatusP,
         authRequestCodeButton,
         authVerifyCodeButton,
@@ -48,11 +52,19 @@ export function createAuthHelpers(options) {
             if (authPhoneMaskedSpan) authPhoneMaskedSpan.textContent = profile.phone_masked || "N/A";
             if (authTotalScoreSpan) authTotalScoreSpan.textContent = Number(profile.cumulative_score || 0).toString();
             if (authBestScoreSpan) authBestScoreSpan.textContent = Number(profile.best_score || 0).toString();
+            if (authLifetimeKdSpan) authLifetimeKdSpan.textContent = Number(profile.lifetime_kd || 0).toFixed(2);
+            if (authTopStreakSpan) authTopStreakSpan.textContent = Number(profile.top_streak || 0).toString();
+            if (authTotalCapturesSpan) authTotalCapturesSpan.textContent = Number(profile.total_flag_captures || 0).toString();
+            if (authFavoriteWeaponSpan) authFavoriteWeaponSpan.textContent = String(profile.favorite_weapon || "None");
         } else {
             if (authDisplayNameSpan) authDisplayNameSpan.textContent = "N/A";
             if (authPhoneMaskedSpan) authPhoneMaskedSpan.textContent = "N/A";
             if (authTotalScoreSpan) authTotalScoreSpan.textContent = "0";
             if (authBestScoreSpan) authBestScoreSpan.textContent = "0";
+            if (authLifetimeKdSpan) authLifetimeKdSpan.textContent = "0.00";
+            if (authTopStreakSpan) authTopStreakSpan.textContent = "0";
+            if (authTotalCapturesSpan) authTotalCapturesSpan.textContent = "0";
+            if (authFavoriteWeaponSpan) authFavoriteWeaponSpan.textContent = "None";
         }
     }
 

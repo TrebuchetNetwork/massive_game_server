@@ -172,6 +172,8 @@
                         <p>Signed in as: <span id="authDisplayName" class="text-indigo-300">N/A</span></p>
                         <p>Phone: <span id="authPhoneMasked" class="text-gray-200">N/A</span></p>
                         <p>Total/Best: <span id="authTotalScore" class="text-green-300">0</span> / <span id="authBestScore" class="text-blue-300">0</span></p>
+                        <p>K/D: <span id="authLifetimeKd" class="text-amber-300">0.00</span> · Streak: <span id="authTopStreak" class="text-red-300">0</span></p>
+                        <p>Captures: <span id="authTotalCaptures" class="text-cyan-300">0</span> · Favorite: <span id="authFavoriteWeapon" class="text-fuchsia-300">None</span></p>
                         <button id="authSignOutButton" class="w-full mt-2 bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-3 rounded-md text-sm">
                             Sign Out
                         </button>
@@ -613,6 +615,10 @@
         const authPhoneMaskedSpan = document.getElementById('authPhoneMasked');
         const authTotalScoreSpan = document.getElementById('authTotalScore');
         const authBestScoreSpan = document.getElementById('authBestScore');
+        const authLifetimeKdSpan = document.getElementById('authLifetimeKd');
+        const authTopStreakSpan = document.getElementById('authTopStreak');
+        const authTotalCapturesSpan = document.getElementById('authTotalCaptures');
+        const authFavoriteWeaponSpan = document.getElementById('authFavoriteWeapon');
         const authStatusP = document.getElementById('authStatus');
         if (combatOverlayDiv && !EXCITEMENT_UI_ENABLED) {
             combatOverlayDiv.style.display = 'none';
@@ -1305,6 +1311,10 @@
                 authPhoneMaskedSpan,
                 authTotalScoreSpan,
                 authBestScoreSpan,
+                authLifetimeKdSpan,
+                authTopStreakSpan,
+                authTotalCapturesSpan,
+                authFavoriteWeaponSpan,
                 authStatusP,
                 authRequestCodeButton,
                 authVerifyCodeButton,
@@ -1516,6 +1526,7 @@
         let hudContainer;
         let wallGraphics;
         let zoneContainer;
+        let zoneAmbientContainer;
         let pickupContainer;
         let projectileContainer;
         let playerContainer;
@@ -2465,7 +2476,7 @@
 
         // ── Instantiate WorldRenderer ────────────────────────────────
         const worldRenderer = createWorldRenderer(() => ({
-            PIXI, GP, wallGraphics, walls, zones, zoneContainer, flagContainer,
+            PIXI, GP, wallGraphics, walls, zones, zoneContainer, zoneAmbientContainer, flagContainer,
             flagStates, minimap, createFlagSprite, mixColors,
             ultraPerformanceMode, STABLE_MODE_FORCED, smoothedFrameMs,
             WALL_REDRAW_MIN_INTERVAL_MS, WALL_REDRAW_MIN_INTERVAL_ULTRA_MS,
@@ -2477,7 +2488,7 @@
             setMinimapFlagsCacheDirty: (v) => { minimapFlagsCacheDirty = v; },
         }));
         const {
-            drawZones, updateZonePulse,
+            drawZones, updateZonePulse, updateZoneAmbientParticles,
             drawWalls, drawEnhancedWallCracks, drawSimplifiedWallCracks,
             updateFlags, updateCamera,
             hasPendingWallRedraw,
@@ -2668,7 +2679,9 @@
                 flagContainer = new PIXI.Container();
 
                 zoneContainer = new PIXI.Container();
+                zoneAmbientContainer = new PIXI.Container();
                 worldContainer.addChild(zoneContainer);
+                worldContainer.addChild(zoneAmbientContainer);
                 worldContainer.addChild(wallGraphics);
                 worldContainer.addChild(pickupContainer);
                 worldContainer.addChild(projectileContainer);
@@ -3033,6 +3046,7 @@
 
             // Animate zone pulse effects (damage zones)
             updateZonePulse(presentationDeltaTime);
+            updateZoneAmbientParticles(presentationDeltaTime);
 
             if (!backgroundThrottleActive && !LOW_OVERHEAD_MODE && !ultraPerformanceMode && starfield && currentTime - lastStarfieldUpdateTime >= STARFIELD_UPDATE_INTERVAL_MS) {
                 lastStarfieldUpdateTime = currentTime;

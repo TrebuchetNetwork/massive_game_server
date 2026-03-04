@@ -22,7 +22,7 @@ pub const PARTITION_SIZE_Y: f32 = (WORLD_MAX_Y - WORLD_MIN_Y) / PARTITION_GRID_S
 pub const BOUNDARY_ZONE_WIDTH: f32 = 100.0;
 
 // Spatial Index constants
-pub const SPATIAL_INDEX_CELL_SIZE: f32 = 400.0;
+pub const SPATIAL_INDEX_CELL_SIZE: f32 = 200.0;
 
 // Player constants
 pub const PLAYER_SHARDS_COUNT: usize = 32; // Default, overridden by dev config

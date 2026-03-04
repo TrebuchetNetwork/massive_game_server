@@ -177,6 +177,7 @@ pub struct PlayerState {
 
     // Killstreak tracking
     pub current_streak: u32,
+    pub peak_streak: u32,
     pub streak_damage_boost_remaining: f32,
     pub streak_speed_boost_remaining: f32,
     pub killstreak_reward_preference: KillstreakRewardPreference,
@@ -256,6 +257,7 @@ impl PlayerState {
             violation_count: 0,
             changed_fields: 0xFFFF,
             current_streak: 0,
+            peak_streak: 0,
             streak_damage_boost_remaining: 0.0,
             streak_speed_boost_remaining: 0.0,
             killstreak_reward_preference: KillstreakRewardPreference::DamageFirst,
@@ -798,6 +800,7 @@ impl PlayerState {
         self.flag_returns = 0;
         self.kills_per_weapon = [0; 5];
         self.current_streak = 0;
+        self.peak_streak = 0;
         self.streak_damage_boost_remaining = 0.0;
         self.streak_speed_boost_remaining = 0.0;
         self.recent_damage_sources.clear();
