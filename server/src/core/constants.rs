@@ -200,6 +200,9 @@ pub const HOT_ZONE_SPAWN_MARGIN: f32 = 180.0;
 // ── Projectile knockback ────────────────────────────────────────────
 pub const KNOCKBACK_FORCE_PER_DAMAGE: f32 = 0.4; // reduced shove intensity for better close-range control
 pub const KNOCKBACK_MAX_VELOCITY: f32 = 350.0; // lower cap prevents exaggerated launch trajectories
+pub const WALL_SLAM_STUN_SPEED_THRESHOLD: f32 = 170.0;
+pub const WALL_SLAM_STUN_DURATION_SECS: f32 = 0.35;
+pub const WALL_SLAM_TUMBLE_DURATION_SECS: f32 = 0.45;
 
 // ── Commander constants ────────────────────────────────────────────
 pub const COMMANDER_MAX_WAYPOINTS_PER_TEAM: usize = 3;

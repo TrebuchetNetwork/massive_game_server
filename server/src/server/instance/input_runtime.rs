@@ -750,6 +750,18 @@ impl MassiveGameServer {
         );
         player_state.mark_field_changed(FIELD_POSITION_ROTATION);
 
+        if (input.rotation - player_state.rotation).abs() > 0.001 {
+            player_state.rotation = input.rotation;
+            player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+        }
+
+        if player_state.is_wall_slam_stunned() {
+            player_state.velocity_x = 0.0;
+            player_state.velocity_y = 0.0;
+            player_state.mark_field_changed(FIELD_POSITION_ROTATION | FIELD_POWERUPS);
+            return;
+        }
+
         if player_state.set_killstreak_reward_preference_from_input_slot(input.use_ability_slot) {
             player_state.mark_field_changed(FIELD_SCORE_STATS);
         } else if input.use_ability_slot != 0 {
@@ -769,11 +781,6 @@ impl MassiveGameServer {
                 }
                 _ => {}
             }
-        }
-
-        if (input.rotation - player_state.rotation).abs() > 0.001 {
-            player_state.rotation = input.rotation;
-            player_state.mark_field_changed(FIELD_POSITION_ROTATION);
         }
 
         // Calculate movement relative to the latest input rotation.

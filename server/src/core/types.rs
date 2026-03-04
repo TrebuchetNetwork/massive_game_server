@@ -155,6 +155,8 @@ pub struct PlayerState {
     pub dash_remaining: f32,
     pub dodge_roll_remaining: f32,
     pub invulnerable_remaining: f32,
+    pub wall_slam_stun_remaining: f32,
+    pub wall_slam_tumble_remaining: f32,
     pub dash_melee_chain_bonus_remaining: f32,
     pub dodge_shot_chain_bonus_remaining: f32,
     pub ping_cooldown_remaining: f32,
@@ -243,6 +245,8 @@ impl PlayerState {
             dash_remaining: 0.0,
             dodge_roll_remaining: 0.0,
             invulnerable_remaining: 0.0,
+            wall_slam_stun_remaining: 0.0,
+            wall_slam_tumble_remaining: 0.0,
             dash_melee_chain_bonus_remaining: 0.0,
             dodge_shot_chain_bonus_remaining: 0.0,
             ping_cooldown_remaining: 0.0,
@@ -383,6 +387,21 @@ impl PlayerState {
     #[inline]
     pub fn activate_dodge_shot_chain_window(&mut self) {
         self.dodge_shot_chain_bonus_remaining = crate::core::constants::CHAIN_COMBO_WINDOW_SECS;
+    }
+
+    #[inline]
+    pub fn apply_wall_slam_stun(&mut self) {
+        self.wall_slam_stun_remaining = self
+            .wall_slam_stun_remaining
+            .max(crate::core::constants::WALL_SLAM_STUN_DURATION_SECS);
+        self.wall_slam_tumble_remaining = self
+            .wall_slam_tumble_remaining
+            .max(crate::core::constants::WALL_SLAM_TUMBLE_DURATION_SECS);
+    }
+
+    #[inline]
+    pub fn is_wall_slam_stunned(&self) -> bool {
+        self.wall_slam_stun_remaining > 0.0
     }
 
     #[inline]
@@ -596,6 +615,8 @@ impl PlayerState {
         self.dash_remaining = 0.0;
         self.dodge_roll_remaining = 0.0;
         self.invulnerable_remaining = 0.0;
+        self.wall_slam_stun_remaining = 0.0;
+        self.wall_slam_tumble_remaining = 0.0;
         self.dash_melee_chain_bonus_remaining = 0.0;
         self.dodge_shot_chain_bonus_remaining = 0.0;
         self.ping_cooldown_remaining = 0.0;
@@ -631,6 +652,8 @@ impl PlayerState {
         self.dash_remaining = 0.0;
         self.dodge_roll_remaining = 0.0;
         self.invulnerable_remaining = crate::core::constants::SPAWN_INVULNERABILITY_SECS;
+        self.wall_slam_stun_remaining = 0.0;
+        self.wall_slam_tumble_remaining = 0.0;
         self.dash_melee_chain_bonus_remaining = 0.0;
         self.dodge_shot_chain_bonus_remaining = 0.0;
         self.ping_cooldown_remaining = 0.0;
@@ -693,6 +716,15 @@ impl PlayerState {
         }
         if self.invulnerable_remaining > 0.0 {
             self.invulnerable_remaining = (self.invulnerable_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.wall_slam_stun_remaining > 0.0 {
+            self.wall_slam_stun_remaining = (self.wall_slam_stun_remaining - delta_time).max(0.0);
+            changed_powerups = true;
+        }
+        if self.wall_slam_tumble_remaining > 0.0 {
+            self.wall_slam_tumble_remaining =
+                (self.wall_slam_tumble_remaining - delta_time).max(0.0);
             changed_powerups = true;
         }
         if self.dash_melee_chain_bonus_remaining > 0.0 {
@@ -854,6 +886,8 @@ impl PlayerState {
         self.peak_streak = 0;
         self.streak_damage_boost_remaining = 0.0;
         self.streak_speed_boost_remaining = 0.0;
+        self.wall_slam_stun_remaining = 0.0;
+        self.wall_slam_tumble_remaining = 0.0;
         self.dash_melee_chain_bonus_remaining = 0.0;
         self.dodge_shot_chain_bonus_remaining = 0.0;
         self.recent_damage_sources.clear();
@@ -1509,6 +1543,18 @@ mod tests {
     }
 
     #[test]
+    fn wall_slam_stun_applies_and_decays() {
+        let mut p = make_player("p1");
+        p.apply_wall_slam_stun();
+        assert!(p.is_wall_slam_stunned());
+        assert!(p.wall_slam_tumble_remaining > 0.0);
+        p.update_timers(crate::core::constants::WALL_SLAM_STUN_DURATION_SECS + 0.05);
+        assert!(!p.is_wall_slam_stunned());
+        p.update_timers(crate::core::constants::WALL_SLAM_TUMBLE_DURATION_SECS + 0.05);
+        assert_eq!(p.wall_slam_tumble_remaining, 0.0);
+    }
+
+    #[test]
     fn set_killstreak_reward_preference_from_input_slot_updates_preference() {
         let mut p = make_player("p1");
         assert_eq!(
@@ -1592,9 +1638,12 @@ mod tests {
         p.streak_damage_boost_remaining = 10.0;
         p.activate_dash_melee_chain_window();
         p.activate_dodge_shot_chain_window();
+        p.apply_wall_slam_stun();
         p.apply_damage(100); // triggers die()
         assert_eq!(p.current_streak, 0);
         assert_eq!(p.streak_damage_boost_remaining, 0.0);
+        assert_eq!(p.wall_slam_stun_remaining, 0.0);
+        assert_eq!(p.wall_slam_tumble_remaining, 0.0);
         assert_eq!(p.dash_melee_chain_bonus_remaining, 0.0);
         assert_eq!(p.dodge_shot_chain_bonus_remaining, 0.0);
         assert!(!p.alive);
@@ -1617,6 +1666,8 @@ mod tests {
             p.invulnerable_remaining,
             crate::core::constants::SPAWN_INVULNERABILITY_SECS
         );
+        assert_eq!(p.wall_slam_stun_remaining, 0.0);
+        assert_eq!(p.wall_slam_tumble_remaining, 0.0);
         assert_eq!(p.dash_melee_chain_bonus_remaining, 0.0);
         assert_eq!(p.dodge_shot_chain_bonus_remaining, 0.0);
     }

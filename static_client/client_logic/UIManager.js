@@ -627,6 +627,23 @@ export function createUIManager(getCtx) {
             return true;
         }
 
+        if (eventName === 'wall_slam' && payload && typeof payload === 'object') {
+            const stunSecs = Math.max(0, Number(payload.stun_secs ?? payload.stunSecs ?? 0));
+            const impactSpeed = Math.max(0, Number(payload.impact_speed ?? payload.impactSpeed ?? 0));
+            const stunMs = Math.round(stunSecs * 1000);
+            if (stunMs > 0) {
+                ctx.setObjectiveUrgency(`Wall slam! Stunned for ${stunMs}ms`, 'critical', 1400);
+            } else {
+                ctx.setObjectiveUrgency('Wall slam!', 'critical', 1100);
+            }
+            playUiSound('playerHit', 0.24);
+            if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+                try { navigator.vibrate([14, 12, 16]); } catch (_) {}
+            }
+            ctx.log(`Wall slam impact registered (speed=${impactSpeed.toFixed(1)}).`, 'warn');
+            return true;
+        }
+
         if (eventName === 'match_summary' && payload && typeof payload === 'object') {
             ctx.latestMatchSummary = payload;
             renderPostMatchSummary(payload);

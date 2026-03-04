@@ -189,6 +189,41 @@ impl MassiveGameServer {
             let dist_sq =
                 (player_state.x - closest_x).powi(2) + (player_state.y - closest_y).powi(2);
             if dist_sq < PLAYER_RADIUS.powi(2) {
+                let impact_speed =
+                    (player_state.velocity_x.powi(2) + player_state.velocity_y.powi(2)).sqrt();
+                if impact_speed >= crate::core::constants::WALL_SLAM_STUN_SPEED_THRESHOLD
+                    && !player_state.is_wall_slam_stunned()
+                {
+                    player_state.apply_wall_slam_stun();
+                    player_state.mark_field_changed(FIELD_POWERUPS);
+
+                    let impact_position = Vec2::new(player_state.x, player_state.y);
+                    let impact_damage =
+                        (impact_speed * 0.2).round().clamp(1.0, 250.0).round() as i32;
+                    self.global_game_events.push(
+                        GameEvent::WallImpact {
+                            wall_id: wall.id,
+                            position: impact_position,
+                            damage: impact_damage,
+                        },
+                        EventPriority::High,
+                    );
+
+                    let player_id = player_state.id.clone();
+                    let payload = serde_json::json!({
+                        "player_id": player_id.as_ref(),
+                        "x": impact_position.x,
+                        "y": impact_position.y,
+                        "stun_secs": crate::core::constants::WALL_SLAM_STUN_DURATION_SECS,
+                        "impact_speed": impact_speed,
+                    });
+                    if let Some(packet) =
+                        self.build_system_event_packet("wall_slam", Some(&payload))
+                    {
+                        self.enqueue_direct_packet_for_peer(player_id.as_ref(), packet);
+                    }
+                }
+
                 // Collision detected - revert position
                 player_state.x = old_x;
                 player_state.y = old_y;
