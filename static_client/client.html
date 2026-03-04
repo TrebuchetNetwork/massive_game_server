@@ -1814,6 +1814,7 @@
             medalUntilMs: 0,
             markerUntilMs: 0,
             markerHeadshotUntilMs: 0,
+            lastOptimisticHitAt: 0,
             hitstopUntilMs: 0,
             objectiveText: '',
             objectiveTone: 'critical',
@@ -1871,13 +1872,34 @@
         const NEAR_MISS_MIN_DISTANCE_SQ = 26 * 26;
         const NEAR_MISS_MAX_DISTANCE_SQ = 185 * 185;
         const NEAR_MISS_MAX_PROJECTILES_PER_SCAN = 80;
+        const OPTIMISTIC_HIT_SCAN_INTERVAL_MS = 40;
+        const OPTIMISTIC_HIT_CONFIRM_WINDOW_MS = 260;
+        const OPTIMISTIC_HIT_PROJECTILE_COOLDOWN_MS = 360;
+        const OPTIMISTIC_HIT_RADIUS_SQ = 23 * 23;
+        const OPTIMISTIC_HIT_MIN_PROJECTILE_SPEED_SQ = 45 * 45;
+        const OPTIMISTIC_HIT_MAX_PROJECTILES_SCAN = 72;
+        const OPTIMISTIC_HIT_MAX_TARGETS_SCAN = 96;
+        const OPTIMISTIC_HIT_TARGET_RANGE_SQ = 1700 * 1700;
         let prevLocalAliveState = null;
         let prevDashRemaining = 0;
         let prevDodgeRemaining = 0;
         let lastDashTrailAt = 0;
         let lastDodgeTrailAt = 0;
         let lastNearMissCheckAt = 0;
+        let lastOptimisticHitScanAt = 0;
         const projectileNearMissCooldownUntil = new Map();
+        const optimisticHitPredictions = new Map();
+        const optimisticProjectileHitCooldownUntil = new Map();
+        const optimisticConfirmedTargetAt = new Map();
+        let hotZoneState = {
+            active: false,
+            centerX: 0,
+            centerY: 0,
+            radius: 0,
+            bonusMultiplier: 1,
+            eventIndex: 0,
+            expiresAt: 0,
+        };
         updateMobileControlsVisibility();
 
         // ── Combat feedback module ─────────────────────────────────────
@@ -1921,6 +1943,8 @@
             processKillFeedCombatMoments,
             updateCombatPresentation,
         } = combatFeedback;
+        globalThis.registerCombatEventFeedback = registerCombatEventFeedback;
+        globalThis.onClientGameEvent = registerServerHitConfirmation;
 
         // Client-side prediction state
         let inputSequence = 0;
@@ -2496,6 +2520,7 @@
             mobileFireTouchActive, mobileAimActive,
             TACTICAL_PING_MS,
             get tacticalPings() { return tacticalPings; },
+            setHotZoneEvent,
             setObjectiveUrgency, setTextIfChanged, processKillFeedCombatMoments,
             getCommanderIdForTeam, getCommanderWaypointForTeam, isLocalTeamCommander,
             normalizeCombatUiQuality, applyMobilePresetSettings, applyTournamentPresetSettings,
@@ -2705,7 +2730,7 @@
             GLOBAL_LIGHT_DIR, gameSettings,
             app, gameScene, localPlayerState, overviewMode, overviewScale,
             dynamicsTuning, cameraCombatImpulse, mouseWorldPos,
-            players, myPlayerId, setObjectiveUrgency,
+            players, myPlayerId, setObjectiveUrgency, hotZoneState,
             setCameraCombatImpulse: (v) => { cameraCombatImpulse = v; },
             setMinimapWallsCacheDirty: (v) => { minimapWallsCacheDirty = v; },
             setMinimapFlagsCacheDirty: (v) => { minimapFlagsCacheDirty = v; },
@@ -3010,6 +3035,56 @@
             return { x, y };
         }
 
+        function setHotZoneEvent(payload) {
+            if (!payload || typeof payload !== 'object') {
+                hotZoneState = {
+                    active: false,
+                    centerX: 0,
+                    centerY: 0,
+                    radius: 0,
+                    bonusMultiplier: 1,
+                    eventIndex: 0,
+                    expiresAt: 0,
+                };
+                return;
+            }
+            const centerX = Number(payload.x);
+            const centerY = Number(payload.y);
+            const radius = Number(payload.radius);
+            if (!Number.isFinite(centerX) || !Number.isFinite(centerY) || !Number.isFinite(radius) || radius <= 0) {
+                return;
+            }
+            const nextEventSecs = Math.max(0, Number(payload.next_event_secs ?? payload.nextEventSecs ?? 45) || 45);
+            const bonusMultiplier = Math.max(1, Number(payload.bonus_multiplier ?? payload.bonusMultiplier ?? 1) || 1);
+            const eventIndex = Math.max(0, Math.trunc(Number(payload.event_index ?? payload.eventIndex ?? 0)));
+            hotZoneState = {
+                active: true,
+                centerX,
+                centerY,
+                radius,
+                bonusMultiplier,
+                eventIndex,
+                expiresAt: Date.now() + Math.round(nextEventSecs * 1000),
+            };
+        }
+
+        function registerServerHitConfirmation(event) {
+            if (!event || event.event_type !== GP.GameEventType.PlayerDamageEffect) return;
+            const instigatorId = String(event.instigator_id || '');
+            const targetId = String(event.target_id || '');
+            const localId = String(myPlayerId || '');
+            if (!localId || !instigatorId || !targetId) return;
+            if (instigatorId !== localId || targetId === localId) return;
+
+            const now = Date.now();
+            optimisticConfirmedTargetAt.set(targetId, now);
+            for (const [predictionKey, prediction] of optimisticHitPredictions.entries()) {
+                if (!prediction || prediction.targetId !== targetId) continue;
+                if ((now - (Number(prediction.createdAt) || 0)) > OPTIMISTIC_HIT_CONFIRM_WINDOW_MS) continue;
+                optimisticHitPredictions.delete(predictionKey);
+            }
+        }
+
         function maybeEmitMovementJuice(currentTime) {
             const alive = !!localPlayerState?.alive;
             if (!alive) {
@@ -3156,6 +3231,112 @@
                     if ((Number(cooldownUntil) || 0) <= currentTime) {
                         projectileNearMissCooldownUntil.delete(projectileId);
                     }
+                }
+            }
+        }
+
+        function maybeEmitOptimisticHitFeedback(currentTime) {
+            if (
+                !myPlayerId ||
+                !localPlayerState ||
+                !localPlayerState.alive ||
+                currentTime - lastOptimisticHitScanAt < OPTIMISTIC_HIT_SCAN_INTERVAL_MS
+            ) {
+                return;
+            }
+            lastOptimisticHitScanAt = currentTime;
+
+            const localId = String(myPlayerId);
+            const localTeamId = Number(localPlayerState.team_id) || 0;
+            const localPos = getEntityRenderPos(localPlayerState);
+            const candidateTargets = [];
+            for (const [playerId, player] of players.entries()) {
+                if (candidateTargets.length >= OPTIMISTIC_HIT_MAX_TARGETS_SCAN) break;
+                if (!player || String(playerId) === localId) continue;
+                if (!player.alive || player.is_spectator) continue;
+                if (localTeamId !== 0 && ((Number(player.team_id) || 0) === localTeamId)) continue;
+                if ((Number(player.invulnerable_remaining) || 0) > 0.001) continue;
+                const targetPos = getEntityRenderPos(player);
+                const dxLocal = targetPos.x - localPos.x;
+                const dyLocal = targetPos.y - localPos.y;
+                if ((dxLocal * dxLocal + dyLocal * dyLocal) > OPTIMISTIC_HIT_TARGET_RANGE_SQ) continue;
+                candidateTargets.push({
+                    id: String(playerId),
+                    player,
+                    x: targetPos.x,
+                    y: targetPos.y,
+                });
+            }
+            if (candidateTargets.length === 0) return;
+
+            let scannedProjectiles = 0;
+            for (const projectile of projectiles.values()) {
+                if (scannedProjectiles >= OPTIMISTIC_HIT_MAX_PROJECTILES_SCAN) break;
+                if (!projectile) continue;
+                scannedProjectiles += 1;
+
+                const projectileId = String(projectile.id || '');
+                if (!projectileId) continue;
+                if (String(projectile.owner_id || '') !== localId) continue;
+                const cooldownUntil = Number(optimisticProjectileHitCooldownUntil.get(projectileId)) || 0;
+                if (cooldownUntil > currentTime) continue;
+
+                const projectilePos = getEntityRenderPos(projectile);
+                const vx = Number(projectile.velocity_x) || 0;
+                const vy = Number(projectile.velocity_y) || 0;
+                const speedSq = vx * vx + vy * vy;
+                if (speedSq < OPTIMISTIC_HIT_MIN_PROJECTILE_SPEED_SQ) continue;
+
+                for (let i = 0; i < candidateTargets.length; i += 1) {
+                    const target = candidateTargets[i];
+                    const targetDx = target.x - projectilePos.x;
+                    const targetDy = target.y - projectilePos.y;
+                    const targetDistSq = targetDx * targetDx + targetDy * targetDy;
+                    if (targetDistSq > OPTIMISTIC_HIT_RADIUS_SQ) continue;
+                    if ((targetDx * vx + targetDy * vy) <= 0) continue;
+                    const recentConfirmationAt = Number(optimisticConfirmedTargetAt.get(target.id)) || 0;
+                    if (recentConfirmationAt > 0 && (currentTime - recentConfirmationAt) < 120) continue;
+
+                    const predictionKey = `${projectileId}:${target.id}`;
+                    if (optimisticHitPredictions.has(predictionKey)) continue;
+
+                    optimisticHitPredictions.set(predictionKey, {
+                        projectileId,
+                        targetId: target.id,
+                        createdAt: currentTime,
+                    });
+                    optimisticProjectileHitCooldownUntil.set(
+                        projectileId,
+                        currentTime + OPTIMISTIC_HIT_PROJECTILE_COOLDOWN_MS
+                    );
+                    triggerHitMarker(false, { optimistic: true });
+                    if (
+                        effectsManager &&
+                        gameSettings &&
+                        (gameSettings.particleEffects || gameSettings.graphicsQuality === 'high')
+                    ) {
+                        effectsManager.createEnhancedBulletImpact(
+                            { x: target.x, y: target.y },
+                            Number(projectile.weapon_type) || GP.WeaponType.Pistol
+                        );
+                    }
+                    break;
+                }
+            }
+
+            for (const [predictionKey, prediction] of optimisticHitPredictions.entries()) {
+                if ((currentTime - (Number(prediction?.createdAt) || 0)) > OPTIMISTIC_HIT_CONFIRM_WINDOW_MS) {
+                    optimisticHitPredictions.delete(predictionKey);
+                }
+            }
+            for (const [projectileId, cooldownUntil] of optimisticProjectileHitCooldownUntil.entries()) {
+                if ((Number(cooldownUntil) || 0) <= currentTime) {
+                    optimisticProjectileHitCooldownUntil.delete(projectileId);
+                }
+            }
+            for (const [targetId, confirmedAt] of optimisticConfirmedTargetAt.entries()) {
+                if ((currentTime - (Number(confirmedAt) || 0)) > 1200) {
+                    optimisticConfirmedTargetAt.delete(targetId);
                 }
             }
         }
@@ -3365,6 +3546,7 @@
 
             maybeEmitMovementJuice(currentTime);
             maybeEmitProjectileNearMissAudio(currentTime);
+            maybeEmitOptimisticHitFeedback(currentTime);
 
             updateWorldViewBounds();
             dispatchCullWorkerIfNeeded(currentTime);
@@ -4099,7 +4281,12 @@
             lastDashTrailAt = 0;
             lastDodgeTrailAt = 0;
             lastNearMissCheckAt = 0;
+            lastOptimisticHitScanAt = 0;
             projectileNearMissCooldownUntil.clear();
+            optimisticHitPredictions.clear();
+            optimisticProjectileHitCooldownUntil.clear();
+            optimisticConfirmedTargetAt.clear();
+            setHotZoneEvent(null);
             if (playerContainer) {
                 playerContainer.removeChildren().forEach(child => child.destroy?.({ children: true }));
             }
@@ -4253,13 +4440,19 @@
             combatUiState.radialHudCache.abilityColor = '';
             combatUiState.radialHudCache.abilityLabel = '';
             combatUiState.radialHudCache.hudVisible = false;
+            combatUiState.lastOptimisticHitAt = 0;
             prevLocalAliveState = null;
             prevDashRemaining = 0;
             prevDodgeRemaining = 0;
             lastDashTrailAt = 0;
             lastDodgeTrailAt = 0;
             lastNearMissCheckAt = 0;
+            lastOptimisticHitScanAt = 0;
             projectileNearMissCooldownUntil.clear();
+            optimisticHitPredictions.clear();
+            optimisticProjectileHitCooldownUntil.clear();
+            optimisticConfirmedTargetAt.clear();
+            setHotZoneEvent(null);
             if (damageFlashLayerDiv) damageFlashLayerDiv.style.opacity = '0';
             if (speedLinesLayerDiv) speedLinesLayerDiv.style.opacity = '0';
             if (deathRecapDiv) deathRecapDiv.classList.remove('death-recap--visible');

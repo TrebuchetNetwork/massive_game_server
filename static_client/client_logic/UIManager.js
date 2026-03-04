@@ -483,6 +483,16 @@ export function createUIManager(getCtx) {
             const bonusMultiplier = Number(payload.bonus_multiplier ?? payload.bonusMultiplier ?? 1);
             const hasHotZoneBonus = eventType === 'hot_zone' && Number.isFinite(bonusMultiplier) && bonusMultiplier > 1;
             const bonusPct = hasHotZoneBonus ? Math.round((bonusMultiplier - 1) * 100) : 0;
+            if (eventType === 'hot_zone' && typeof ctx.setHotZoneEvent === 'function') {
+                ctx.setHotZoneEvent({
+                    event_index: eventIndex,
+                    x: Number(payload.x),
+                    y: Number(payload.y),
+                    radius: Number(payload.radius),
+                    bonus_multiplier: Number(payload.bonus_multiplier ?? payload.bonusMultiplier ?? 1),
+                    next_event_secs: Number(payload.next_event_secs ?? payload.nextEventSecs ?? 0),
+                });
+            }
             if (eventType === 'hot_zone') {
                 if (Number.isFinite(nextEventSecs) && nextEventSecs > 0) {
                     ctx.setObjectiveUrgency(

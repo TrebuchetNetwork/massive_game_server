@@ -794,6 +794,12 @@ const registerCombatEventFeedback = globalThis.registerCombatEventFeedback;
 if (typeof registerCombatEventFeedback === 'function') {
     registerCombatEventFeedback(event);
 }
+const onClientGameEvent = globalThis.onClientGameEvent;
+if (typeof onClientGameEvent === 'function') {
+    try {
+        onClientGameEvent(event);
+    } catch (_) {}
+}
 
 const pos = {
     x: Number(event?.position?.x) || 0,

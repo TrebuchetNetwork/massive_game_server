@@ -17,6 +17,9 @@ export function createWorldRenderer(getCtx) {
     let respawnSpectateCycleIndex = 0;
     let lastRespawnSpectateSwitchAt = 0;
     let lastRespawnSpectateHintAt = 0;
+    let hotZoneOverlayGraphics = null;
+    let lastHotZoneOverlayDrawAt = 0;
+    let lastHotZoneOverlaySignature = '';
 
     function clearZoneAmbientParticles(zoneAmbientContainer) {
         while (zoneAmbientParticles.length > 0) {
@@ -26,6 +29,9 @@ export function createWorldRenderer(getCtx) {
         if (zoneAmbientContainer && Array.isArray(zoneAmbientContainer.children)) {
             zoneAmbientContainer.removeChildren().forEach((child) => child.destroy?.());
         }
+        hotZoneOverlayGraphics = null;
+        lastHotZoneOverlayDrawAt = 0;
+        lastHotZoneOverlaySignature = '';
     }
 
     function drawZones() {
@@ -80,19 +86,98 @@ export function createWorldRenderer(getCtx) {
     function updateZonePulse(dt) {
         const ctx = getCtx();
         const { zoneContainer, zones, GP } = ctx;
-        if (!zoneContainer || zones.size === 0) return;
+        if (!zoneContainer) return;
         zonePulsePhase += dt * 0.003;
         const pulse = 0.5 + 0.5 * Math.sin(zonePulsePhase * 3);
-        let childIdx = 0;
-        for (const [, zone] of zones) {
-            if (childIdx < zoneContainer.children.length) {
-                const g = zoneContainer.children[childIdx];
-                if (zone.zone_type === GP.ZoneType.DamageZone) {
-                    g.alpha = 0.6 + 0.4 * pulse;
+        if (zones.size > 0) {
+            let childIdx = 0;
+            for (const [, zone] of zones) {
+                if (childIdx < zoneContainer.children.length) {
+                    const g = zoneContainer.children[childIdx];
+                    if (zone.zone_type === GP.ZoneType.DamageZone) {
+                        g.alpha = 0.6 + 0.4 * pulse;
+                    }
                 }
+                childIdx++;
             }
-            childIdx++;
         }
+        updateHotZoneOverlay(dt);
+    }
+
+    function updateHotZoneOverlay(dt) {
+        const ctx = getCtx();
+        const { zoneAmbientContainer, hotZoneState, PIXI } = ctx;
+        if (!zoneAmbientContainer || !PIXI) return;
+
+        if (!hotZoneOverlayGraphics || hotZoneOverlayGraphics.destroyed) {
+            hotZoneOverlayGraphics = new PIXI.Graphics();
+            zoneAmbientContainer.addChildAt(hotZoneOverlayGraphics, 0);
+            lastHotZoneOverlaySignature = '';
+            lastHotZoneOverlayDrawAt = 0;
+        } else if (hotZoneOverlayGraphics.parent !== zoneAmbientContainer) {
+            zoneAmbientContainer.addChildAt(hotZoneOverlayGraphics, 0);
+            lastHotZoneOverlaySignature = '';
+            lastHotZoneOverlayDrawAt = 0;
+        }
+
+        const now = Date.now();
+        const active = !!hotZoneState?.active;
+        const centerX = Number(hotZoneState?.centerX);
+        const centerY = Number(hotZoneState?.centerY);
+        const radius = Number(hotZoneState?.radius);
+        const bonusMultiplier = Math.max(1, Number(hotZoneState?.bonusMultiplier) || 1);
+        const expiresAt = Number(hotZoneState?.expiresAt) || 0;
+        const isValid =
+            active &&
+            Number.isFinite(centerX) &&
+            Number.isFinite(centerY) &&
+            Number.isFinite(radius) &&
+            radius > 0 &&
+            (expiresAt <= 0 || expiresAt >= now);
+
+        if (!isValid) {
+            if (hotZoneOverlayGraphics.visible) {
+                hotZoneOverlayGraphics.visible = false;
+                hotZoneOverlayGraphics.clear();
+            }
+            return;
+        }
+
+        if ((now - lastHotZoneOverlayDrawAt) < Math.max(30, (Number(dt) || 0.016) * 1000 * 0.75)) {
+            return;
+        }
+        lastHotZoneOverlayDrawAt = now;
+
+        hotZoneOverlayGraphics.visible = true;
+        const pulse = 0.5 + 0.5 * Math.sin(zonePulsePhase * 2.2 + now * 0.0018);
+        const fillAlpha = 0.06 + pulse * 0.04;
+        const lineAlpha = 0.38 + pulse * 0.22;
+        const signature = [
+            centerX.toFixed(1),
+            centerY.toFixed(1),
+            radius.toFixed(1),
+            bonusMultiplier.toFixed(2),
+            fillAlpha.toFixed(3),
+            lineAlpha.toFixed(3),
+        ].join(':');
+        if (signature === lastHotZoneOverlaySignature) return;
+        lastHotZoneOverlaySignature = signature;
+
+        hotZoneOverlayGraphics.clear();
+        hotZoneOverlayGraphics.beginFill(0xFF8A1F, fillAlpha);
+        hotZoneOverlayGraphics.drawCircle(centerX, centerY, radius);
+        hotZoneOverlayGraphics.endFill();
+
+        hotZoneOverlayGraphics.lineStyle(3, 0xFFC14D, lineAlpha);
+        hotZoneOverlayGraphics.drawCircle(centerX, centerY, radius);
+
+        hotZoneOverlayGraphics.lineStyle(1.5, 0xFFE9B4, Math.max(0.12, lineAlpha * 0.55));
+        hotZoneOverlayGraphics.drawCircle(centerX, centerY, radius * 0.75);
+
+        const markerRadius = Math.max(3, radius * 0.05);
+        hotZoneOverlayGraphics.beginFill(0xFFF3D1, 0.7);
+        hotZoneOverlayGraphics.drawCircle(centerX, centerY, markerRadius);
+        hotZoneOverlayGraphics.endFill();
     }
 
     function updateZoneAmbientParticles(dt) {

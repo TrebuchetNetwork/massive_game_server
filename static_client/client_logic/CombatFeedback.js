@@ -115,14 +115,24 @@ export function createCombatFeedback(getCtx) {
         ctx.audioManager.playSound(cueSound, null, cueVolumeMap[cueType] || 0.4);
     }
 
-    function triggerHitMarker(headshot = false) {
+    function triggerHitMarker(headshot = false, options = {}) {
         const ctx = getCtx();
+        const optimistic = !!options.optimistic;
         const now = Date.now();
-        ctx.combatUiState.markerUntilMs = now + ctx.COMBAT_HITMARKER_MS;
+        const markerDurationMs = optimistic
+            ? Math.max(60, Math.round((Number(ctx.COMBAT_HITMARKER_MS) || 90) * 0.55))
+            : (Number(ctx.COMBAT_HITMARKER_MS) || 90);
+        ctx.combatUiState.markerUntilMs = Math.max(
+            Number(ctx.combatUiState.markerUntilMs) || 0,
+            now + markerDurationMs
+        );
+        if (optimistic) {
+            ctx.combatUiState.lastOptimisticHitAt = now;
+        }
         if (headshot) {
             ctx.combatUiState.markerHeadshotUntilMs = now + ctx.COMBAT_HEADSHOT_MARKER_MS;
         }
-        const hitstopWindowMs = Math.max(10, Number(ctx.COMBAT_HITSTOP_MS) || 0);
+        const hitstopWindowMs = optimistic ? 0 : Math.max(10, Number(ctx.COMBAT_HITSTOP_MS) || 0);
         if (hitstopWindowMs > 0) {
             const extraHeadshot = headshot ? 10 : 0;
             ctx.combatUiState.hitstopUntilMs = Math.max(
@@ -136,9 +146,17 @@ export function createCombatFeedback(getCtx) {
             }
             playAnnouncerCue('headshot');
         } else if (ctx.audioManager && ctx.gameSettings.soundEnabled) {
-            ctx.audioManager.playSound('hitMarker', null, 0.22);
+            const recentOptimisticHit =
+                !optimistic &&
+                now - (Number(ctx.combatUiState.lastOptimisticHitAt) || 0) < 220;
+            const markerVolume = optimistic
+                ? 0.11
+                : (recentOptimisticHit ? 0.15 : 0.22);
+            ctx.audioManager.playSound('hitMarker', null, markerVolume);
         }
-        triggerHaptic(headshot ? [12, 12, 20] : 8);
+        if (!optimistic) {
+            triggerHaptic(headshot ? [12, 12, 20] : 8);
+        }
     }
 
     function addDamageDirectionIndicator(sourceX, sourceY, intensity = 1) {
