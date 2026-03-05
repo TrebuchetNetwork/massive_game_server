@@ -156,6 +156,31 @@ jobs:
           name: criterion-bench-output
           path: target/criterion
 
+  client-ui:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Verify Node runtime
+        run: |
+          node --version
+          npm --version
+
+      - name: Install client dependencies
+        working-directory: static_client
+        run: npm ci
+
+      - name: Run UI unit tests
+        working-directory: static_client
+        run: npm run test:ui
+
+      - name: Run UI coverage gate
+        working-directory: static_client
+        run: npm run test:ui:coverage
+
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
