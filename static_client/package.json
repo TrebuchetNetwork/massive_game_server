@@ -7,8 +7,8 @@
     "build:ts-client": "tsc -p tsconfig.client.json",
     "check:ts-client": "tsc -p tsconfig.client.json --noEmit",
     "build:sfx-events": "bash ./sfx/generate_event_sfx.sh",
-    "test:ui": "node --test ./tests/**/*.test.js",
-    "test:ui:coverage": "node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-include=client_logic/math_utils.js --test-coverage-include=client_logic/networking_utils.js --test-coverage-include=client_logic/reconnect_utils.js --test-coverage-include=client_logic/connection_status.js --test-coverage-include=client_logic/runtime_config.js ./tests/**/*.test.js"
+    "test:ui": "node --test \"./tests/**/*.test.js\"",
+    "test:ui:coverage": "node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-include=client_logic/math_utils.js --test-coverage-include=client_logic/networking_utils.js --test-coverage-include=client_logic/reconnect_utils.js --test-coverage-include=client_logic/connection_status.js --test-coverage-include=client_logic/runtime_config.js \"./tests/**/*.test.js\""
   },
   "devDependencies": {
     "typescript": "^5.6.3"
