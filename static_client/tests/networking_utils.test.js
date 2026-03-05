@@ -103,7 +103,7 @@ test("splitNonEmptyValues and parseIceServerSpec parse flexible entries", () => 
     });
 });
 
-test("resolveTurnCredentials prefers runtime config and falls back to storage", () => {
+test("resolveTurnCredentials prefers runtime config and uses session storage only", () => {
     installBrowserEnv({
         turnConfig: { username: "runtime-user", credential: "runtime-secret" },
         sessionValues: {
@@ -126,6 +126,19 @@ test("resolveTurnCredentials prefers runtime config and falls back to storage", 
     assert.deepEqual(resolveTurnCredentials(), {
         username: "session-user",
         credential: "session-secret",
+    });
+
+    installBrowserEnv({
+        turnConfig: null,
+        sessionValues: {},
+        localValues: {
+            mgs_turn_username: "legacy-local-user",
+            mgs_turn_credential: "legacy-local-secret",
+        },
+    });
+    assert.deepEqual(resolveTurnCredentials(), {
+        username: "",
+        credential: "",
     });
 });
 

@@ -118,7 +118,7 @@ The client can also override ICE server URLs via URL params:
 
 For security, TURN credentials are not accepted from URL query params. Supply credentials using:
 * `window.__MGS_TURN_CONFIG = { username: "...", credential: "..." }`
-* Storage keys `mgs_turn_username` and `mgs_turn_credential`
+* `sessionStorage` keys `mgs_turn_username` and `mgs_turn_credential`
 
 ### Auth Store Redis Cache
 

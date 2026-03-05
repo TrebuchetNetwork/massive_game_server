@@ -1118,7 +1118,10 @@ mod tests {
 
         // Should not panic; entry is recent so it stays.
         limiters.cleanup_stale();
-        let map = limiters.limiters.lock().unwrap();
+        let map = match limiters.limiters.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         assert_eq!(map.len(), 1);
     }
 

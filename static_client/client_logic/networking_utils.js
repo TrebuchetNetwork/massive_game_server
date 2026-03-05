@@ -117,16 +117,8 @@ export function resolveTurnCredentials() {
     let username = "";
     let credential = "";
     try {
-        username = String(
-            sessionStorage.getItem("mgs_turn_username") ||
-                localStorage.getItem("mgs_turn_username") ||
-                ""
-        ).trim();
-        credential = String(
-            sessionStorage.getItem("mgs_turn_credential") ||
-                localStorage.getItem("mgs_turn_credential") ||
-                ""
-        ).trim();
+        username = String(sessionStorage.getItem("mgs_turn_username") || "").trim();
+        credential = String(sessionStorage.getItem("mgs_turn_credential") || "").trim();
     } catch (_err) {
         // Ignore storage access errors (e.g., privacy mode restrictions).
     }
@@ -173,7 +165,7 @@ export function buildPeerConnectionConfig(uiModeParams, logFn = () => {}) {
     });
     if (ignoredUrlIceCredentials) {
         logFn(
-            "Ignoring ICE credentials in URL query params for security. Use window.__MGS_TURN_CONFIG or storage keys instead.",
+            "Ignoring ICE credentials in URL query params for security. Use window.__MGS_TURN_CONFIG or sessionStorage keys instead.",
             "warn"
         );
     }
@@ -190,7 +182,7 @@ export function buildPeerConnectionConfig(uiModeParams, logFn = () => {}) {
             uiModeParams.has("turn_credential");
         if (hasLegacyTurnCredentialParams) {
             logFn(
-                "TURN credentials in URL query params are disabled for security. Use window.__MGS_TURN_CONFIG or storage keys instead.",
+                "TURN credentials in URL query params are disabled for security. Use window.__MGS_TURN_CONFIG or sessionStorage keys instead.",
                 "warn"
             );
         }

@@ -15,6 +15,7 @@ services:
       MGS_BEHIND_TLS_PROXY: "1"
       MGS_REQUIRE_AUTH: "${MGS_REQUIRE_AUTH:-1}"
       MGS_ALLOWED_ORIGINS: "${MGS_ALLOWED_ORIGINS:-https://game.trebuchet.network}"
+      MGS_REDIS_URL: "redis://:${MGS_REDIS_PASSWORD:-mgs_redis_dev_password}@redis:6379/"
       MGS_METRICS_ENABLED: "true"
       MGS_METRICS_BIND_ADDR: "${MGS_METRICS_BIND_ADDR:-127.0.0.1:9090}"
       RUST_LOG: "${RUST_LOG:-massive_game_server_core=info,warp=warn,webrtc=warn}"
@@ -49,7 +50,7 @@ services:
     image: redis:7-alpine
     container_name: massive-game-server-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy volatile-ttl
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy volatile-ttl --requirepass ${MGS_REDIS_PASSWORD:-mgs_redis_dev_password}
     volumes:
       - redis_data:/data
     deploy:

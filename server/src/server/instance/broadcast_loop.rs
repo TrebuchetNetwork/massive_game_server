@@ -81,10 +81,8 @@ impl MassiveGameServer {
             }
         }
 
-        let connected_clients_total = self
-            .data_channels_map
-            .len()
-            .saturating_add(quic_peer_ids.len());
+        let tracked_webrtc_clients = self.data_channels_map.len();
+        let connected_clients_total = tracked_webrtc_clients.saturating_add(quic_peer_ids.len());
         if connected_clients_total == 0 {
             if current_frame.is_multiple_of(30) {
                 // Log every 30 frames
@@ -122,30 +120,40 @@ impl MassiveGameServer {
         self.last_broadcast_frame
             .store(current_frame, AtomicOrdering::Relaxed);
 
-        let known_walls_sent_by_peer: std::collections::HashMap<String, bool> = self
-            .client_states_map
-            .read()
-            .iter()
-            .map(|(peer_id, client_state)| (peer_id.clone(), client_state.known_walls_sent))
-            .collect();
-        let client_entries: Vec<_> = self
-            .data_channels_map
-            .iter()
-            .map(|entry| {
+        let mut initial_entries_open: Vec<(String, Arc<crate::core::types::RTCDataChannel>, bool)> =
+            Vec::with_capacity(tracked_webrtc_clients);
+        let mut delta_entries: Vec<(String, Arc<crate::core::types::RTCDataChannel>, bool)> =
+            Vec::with_capacity(tracked_webrtc_clients);
+        let mut pending_initial_closed_count = 0usize;
+        let mut pending_delta_closed_count = 0usize;
+        let mut connected_clients_open = 0usize;
+        {
+            let client_states_guard = self.client_states_map.read();
+            for entry in self.data_channels_map.iter() {
                 let peer_id = entry.key().clone();
                 let data_channel = Arc::clone(entry.value());
-                let needs_initial = !known_walls_sent_by_peer
-                    .get(&peer_id)
-                    .copied()
-                    .unwrap_or(false);
+                let needs_initial = !client_states_guard
+                    .get(peer_id.as_str())
+                    .map(|client_state| client_state.known_walls_sent)
+                    .unwrap_or_default();
                 let channel_open = data_channel.is_open();
-                (peer_id, data_channel, needs_initial, channel_open)
-            })
-            .collect();
-        let connected_clients_open = client_entries
-            .iter()
-            .filter(|(_, _, _, channel_open)| *channel_open)
-            .count();
+                if channel_open {
+                    connected_clients_open = connected_clients_open.saturating_add(1);
+                }
+                if needs_initial {
+                    self.ensure_join_trace(&peer_id, channel_open);
+                    if channel_open {
+                        initial_entries_open.push((peer_id, data_channel, true));
+                    } else {
+                        pending_initial_closed_count += 1;
+                    }
+                } else if channel_open {
+                    delta_entries.push((peer_id, data_channel, false));
+                } else {
+                    pending_delta_closed_count += 1;
+                }
+            }
+        }
         if connected_clients_open == 0 && quic_peer_ids.is_empty() {
             trace!(
                 "[Frame {}] Skipping broadcast fanout because no data channels are open (tracked={}).",
@@ -153,28 +161,6 @@ impl MassiveGameServer {
                 connected_clients_total
             );
             return;
-        }
-
-        let mut initial_entries_open: Vec<(String, Arc<crate::core::types::RTCDataChannel>, bool)> =
-            Vec::new();
-        let mut delta_entries: Vec<(String, Arc<crate::core::types::RTCDataChannel>, bool)> =
-            Vec::new();
-        let mut pending_initial_closed_count = 0usize;
-        let mut pending_delta_closed_count = 0usize;
-
-        for (peer_id, data_channel, needs_initial, channel_open) in client_entries {
-            if needs_initial {
-                self.ensure_join_trace(&peer_id, channel_open);
-                if channel_open {
-                    initial_entries_open.push((peer_id, data_channel, true));
-                } else {
-                    pending_initial_closed_count += 1;
-                }
-            } else if channel_open {
-                delta_entries.push((peer_id, data_channel, false));
-            } else {
-                pending_delta_closed_count += 1;
-            }
         }
 
         let quic_entries: Vec<(String, bool)> = {
