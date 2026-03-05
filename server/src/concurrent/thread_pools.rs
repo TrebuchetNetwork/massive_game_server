@@ -418,7 +418,7 @@ impl MonitoredPool {
         }
         if self.warn_threshold > 0
             && current >= self.warn_threshold
-            && current.is_multiple_of(self.warn_threshold)
+            && current % self.warn_threshold == 0
         {
             warn!(
                 "[ThreadPool:{}] Queue depth warning: {} pending tasks (warn_threshold={})",
@@ -443,7 +443,7 @@ impl MonitoredPool {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.warn_threshold > 0
             && current >= self.warn_threshold
-            && current.is_multiple_of(self.warn_threshold)
+            && current % self.warn_threshold == 0
         {
             warn!(
                 "[ThreadPool:{}] Queue depth warning: {} pending tasks (warn_threshold={})",
