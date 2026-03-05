@@ -6,6 +6,7 @@ ARTIFACT_DIR="$ROOT_DIR/artifacts/arena"
 mkdir -p "$ARTIFACT_DIR"
 
 API_BASE="${ARENA_API_BASE:-http://127.0.0.1:18082}"
+ADMIN_BEARER_TOKEN="${ARENA_ADMIN_BEARER_TOKEN:-}"
 REQUIRE_REAL_PROVIDER="${ARENA_REQUIRE_REAL_PROVIDER:-1}"
 TEAM_SIZE="${ARENA_TEAM_SIZE:-10}"
 ROUNDS="${ARENA_ROUNDS:-3}"
@@ -54,8 +55,13 @@ post_json() {
   local payload="$2"
   local output="$3"
   local status
+  local -a auth_header=()
+  if [[ -n "$ADMIN_BEARER_TOKEN" ]]; then
+    auth_header=(-H "authorization: Bearer $ADMIN_BEARER_TOKEN")
+  fi
   status="$(curl -sS -o "$output" -w "%{http_code}" \
     -H "content-type: application/json" \
+    "${auth_header[@]}" \
     -X POST \
     "$API_BASE$path" \
     -d "$payload")"

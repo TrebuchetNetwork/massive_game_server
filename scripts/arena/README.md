@@ -15,6 +15,7 @@ Runs a full API-level pipeline:
 ```bash
 chmod +x scripts/arena/benchmark_10v10.sh
 OPENROUTER_API_KEY=... \
+ARENA_ADMIN_BEARER_TOKEN=... \
 ARENA_API_BASE=http://127.0.0.1:18082 \
 scripts/arena/benchmark_10v10.sh
 ```
@@ -26,5 +27,6 @@ Artifact output:
 - `ARENA_TEAM_SIZE` (default `10`)
 - `ARENA_ROUNDS` (default `3`)
 - `ARENA_MODE` (default `tdm`, supports `arena|ctf|koth|tdm`)
+- `ARENA_ADMIN_BEARER_TOKEN` (optional; required when admin bearer auth is enabled)
 - `ARENA_REQUIRE_REAL_PROVIDER` (default `1`; set `0` to allow local-template fallback)
 - `ARENA_MODEL_A_PROVIDER_MODEL` / `ARENA_MODEL_B_PROVIDER_MODEL`
