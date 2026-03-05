@@ -1,0 +1,191 @@
+{
+  "generated_at": "2026-03-05T04:15:54.309400+00:00",
+  "system_prompt": "You are an expert Rust gameplay programmer. Return only Rust source code. Never include markdown fences or prose.",
+  "submission_prompt": "Create a complete Rust source file for a game bot used in arena bot management and high-score play.\n\nHard requirements (must all be satisfied):\n1. Compile with: rustc --edition=2021 --crate-type=cdylib --target=wasm32-unknown-unknown\n2. Export exactly this function:\n   #[no_mangle]\n   pub extern \"C\" fn bot_tick(self_health: i32, enemy_health: i32, self_score: i32, tick: i32) -> i32\n3. Return only one of {-1, 0, 1} where:\n   -1 = retreat/defend, 0 = hold/reposition, 1 = push/attack\n4. Include coherent bot management + high-score strategy behavior:\n   - Preserve lead when self_score is high\n   - Take calculated risks when trailing\n   - Avoid reckless pushes at low health\n   - Use deterministic rhythm with tick to avoid static behavior\n5. Use safe, stable Rust only:\n   - no external crates\n   - no unsafe\n   - no file/network/process access\n   - no macros beyond #[no_mangle]\n   - no panic handler or no_std setup\n6. Output only raw Rust code for a single file.",
+  "max_turns": 5,
+  "total_models": 20,
+  "successes": 14,
+  "failures": 6,
+  "results": [
+    {
+      "rank": 1,
+      "model": "minimax/minimax-m2.5",
+      "model_id": "minimax-minimax-m2.5",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/minimax-minimax-m2.5.rs"
+    },
+    {
+      "rank": 2,
+      "model": "google/gemini-3-flash-preview",
+      "model_id": "google-gemini-3-flash-preview",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/google-gemini-3-flash-preview.rs"
+    },
+    {
+      "rank": 3,
+      "model": "moonshotai/kimi-k2.5",
+      "model_id": "moonshotai-kimi-k2.5",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/moonshotai-kimi-k2.5.rs"
+    },
+    {
+      "rank": 4,
+      "model": "deepseek/deepseek-v3.2",
+      "model_id": "deepseek-deepseek-v3.2",
+      "ok": true,
+      "turns_used": 2,
+      "error": "",
+      "source_file": "models/deepseek-deepseek-v3.2.rs"
+    },
+    {
+      "rank": 5,
+      "model": "anthropic/claude-opus-4.6",
+      "model_id": "anthropic-claude-opus-4.6",
+      "ok": false,
+      "turns_used": 5,
+      "error": "error: this file contains an unclosed delimiter\n  --> /Users/ivo/massive_game_server/docs/arena_bot_submissions/top20_uniform_prompt_20260305_040839/turns/anthropic-claude-opus-4.6.turn5.rs:76:24\n   |\n 2 | pub extern \"C\" fn bot_tick(self_health: i32, enemy_health: i32, self_score: i32, tick: i32) -> i32 {\n   |                                                                                                    - unclosed delimiter\n...\n75 |     if self_hp >= 70 && enemy_hp >= 70 {\n   |                                        - unclosed delimiter\n76 |         if phase < 20 {\n   |                       -^\n   |                       |\n   |                       unclosed delimiter\n\nerror: aborting due to 1 previous error\n\n",
+      "source_file": "models/anthropic-claude-opus-4.6.rs"
+    },
+    {
+      "rank": 6,
+      "model": "anthropic/claude-sonnet-4.6",
+      "model_id": "anthropic-claude-sonnet-4.6",
+      "ok": false,
+      "turns_used": 5,
+      "error": "error: this file contains an unclosed delimiter\n   --> /Users/ivo/massive_game_server/docs/arena_bot_submissions/top20_uniform_prompt_20260305_040839/turns/anthropic-claude-sonnet-4.6.turn5.rs:105:26\n    |\n  2 | pub extern \"C\" fn bot_tick(self_health: i32, enemy_health: i32, self_score: i32, tick: i32) -> i32 {\n    |                                                                                                    - unclosed delimiter\n...\n104 |     if health_advantage >= -15 {\n    |                                - unclosed delimiter\n105 |         if self_health >=\n    |                          ^\n\nerror: aborting due to 1 previous error\n\n",
+      "source_file": "models/anthropic-claude-sonnet-4.6.rs"
+    },
+    {
+      "rank": 7,
+      "model": "x-ai/grok-4.1-fast",
+      "model_id": "x-ai-grok-4.1-fast",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/x-ai-grok-4.1-fast.rs"
+    },
+    {
+      "rank": 8,
+      "model": "arcee-ai/trinity-large-preview:free",
+      "model_id": "arcee-ai-trinity-large-preview-free",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/arcee-ai-trinity-large-preview-free.rs"
+    },
+    {
+      "rank": 9,
+      "model": "anthropic/claude-sonnet-4.5",
+      "model_id": "anthropic-claude-sonnet-4.5",
+      "ok": false,
+      "turns_used": 5,
+      "error": "error: this file contains an unclosed delimiter\n  --> /Users/ivo/massive_game_server/docs/arena_bot_submissions/top20_uniform_prompt_20260305_040839/turns/anthropic-claude-sonnet-4.5.turn5.rs:89:25\n   |\n 2 | pub extern \"C\" fn bot_tick(self_health: i32, enemy_health: i32, self_score: i32, tick: i32) -> i32 {\n   |                                                                                                    - unclosed delimiter\n...\n60 |     if score_diff > small_lead {\n   |                                - unclosed delimiter\n...\n87 |         } else {\n   |                - unclosed delimiter\n88 |             if enemy_health < critical_health && health_diff > -10 {\n   |                                                                    - unclosed delimiter\n89 |                 return 1\n   |                         ^\n\nerror: aborting due to 1 previous error\n\n",
+      "source_file": "models/anthropic-claude-sonnet-4.5.rs"
+    },
+    {
+      "rank": 10,
+      "model": "google/gemini-2.5-flash",
+      "model_id": "google-gemini-2.5-flash",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/google-gemini-2.5-flash.rs"
+    },
+    {
+      "rank": 11,
+      "model": "stepfun/step-3.5-flash:free",
+      "model_id": "stepfun-step-3.5-flash-free",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/stepfun-step-3.5-flash-free.rs"
+    },
+    {
+      "rank": 12,
+      "model": "google/gemini-2.5-flash-lite",
+      "model_id": "google-gemini-2.5-flash-lite",
+      "ok": false,
+      "turns_used": 5,
+      "error": "error: this file contains an unclosed delimiter\n  --> /Users/ivo/massive_game_server/docs/arena_bot_submissions/top20_uniform_prompt_20260305_040839/turns/google-gemini-2.5-flash-lite.turn5.rs:56:13\n   |\n 2 | pub extern \"C\" fn bot_tick(self_health: i32, enemy_health: i32, self_score: i32, tick: i32) -> i32 {\n   |                                                                                                    - unclosed delimiter\n...\n55 |     if aggression_level > 0 {\n   |                             - unclosed delimiter\n56 |         1 //\n   |             ^\n\nerror: aborting due to 1 previous error\n\n",
+      "source_file": "models/google-gemini-2.5-flash-lite.rs"
+    },
+    {
+      "rank": 13,
+      "model": "openai/gpt-oss-120b",
+      "model_id": "openai-gpt-oss-120b",
+      "ok": true,
+      "turns_used": 3,
+      "error": "",
+      "source_file": "models/openai-gpt-oss-120b.rs"
+    },
+    {
+      "rank": 14,
+      "model": "minimax/minimax-m2.1",
+      "model_id": "minimax-minimax-m2.1",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/minimax-minimax-m2.1.rs"
+    },
+    {
+      "rank": 15,
+      "model": "z-ai/glm-5",
+      "model_id": "z-ai-glm-5",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/z-ai-glm-5.rs"
+    },
+    {
+      "rank": 16,
+      "model": "openai/gpt-5-nano",
+      "model_id": "openai-gpt-5-nano",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/openai-gpt-5-nano.rs"
+    },
+    {
+      "rank": 17,
+      "model": "anthropic/claude-haiku-4.5",
+      "model_id": "anthropic-claude-haiku-4.5",
+      "ok": false,
+      "turns_used": 5,
+      "error": "error: this file contains an unclosed delimiter\n  --> /Users/ivo/massive_game_server/docs/arena_bot_submissions/top20_uniform_prompt_20260305_040839/turns/anthropic-claude-haiku-4.5.turn5.rs:87:33\n   |\n 2 | pub extern \"C\" fn bot_tick(self_health: i32, enemy_health: i32, self_score: i32, tick: i32) -> i32 {\n   |                                                                                                    - unclosed delimiter\n...\n86 |     if self_health >= 55 && self_health <= 75 {\n   |                                               - unclosed delimiter\n87 |         if rhythm_pattern == 0 {\n   |                                -^\n   |                                |\n   |                                unclosed delimiter\n\nerror: aborting due to 1 previous error\n\n",
+      "source_file": "models/anthropic-claude-haiku-4.5.rs"
+    },
+    {
+      "rank": 18,
+      "model": "openai/gpt-5.2",
+      "model_id": "openai-gpt-5.2",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/openai-gpt-5.2.rs"
+    },
+    {
+      "rank": 19,
+      "model": "google/gemini-3.1-pro-preview",
+      "model_id": "google-gemini-3.1-pro-preview",
+      "ok": false,
+      "turns_used": 5,
+      "error": "error: this file contains an unclosed delimiter\n --> /Users/ivo/massive_game_server/docs/arena_bot_submissions/top20_uniform_prompt_20260305_040839/turns/google-gemini-3.1-pro-preview.turn5.rs:2:51\n  |\n2 | pub extern \"C\" fn bot_tick(self_health: i32, enemy\n  |                           - unclosed delimiter    ^\n\nerror: aborting due to 1 previous error\n\n",
+      "source_file": "models/google-gemini-3.1-pro-preview.rs"
+    },
+    {
+      "rank": 20,
+      "model": "google/gemini-2.0-flash-001",
+      "model_id": "google-gemini-2.0-flash-001",
+      "ok": true,
+      "turns_used": 1,
+      "error": "",
+      "source_file": "models/google-gemini-2.0-flash-001.rs"
+    }
+  ]
+}
