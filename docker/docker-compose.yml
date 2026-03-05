@@ -22,7 +22,7 @@ services:
       MGS_LOG_FORMAT: "${MGS_LOG_FORMAT:-json}"
       OPENROUTER_API_KEY_FILE: "/run/secrets/openrouter_api_key"
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${MGS_SERVER_BIND_PORT:-8080}:8080"
     volumes:
       - mgs_data:/app/data
       - mgs_artifacts:/app/artifacts

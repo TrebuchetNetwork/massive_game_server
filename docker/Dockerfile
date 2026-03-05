@@ -1,13 +1,26 @@
-FROM rust:1.86-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    flatbuffers-compiler \
+    git \
+    cmake \
+    ninja-build \
+    g++ \
     pkg-config \
     libssl-dev \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# Debian bookworm ships flatc 2.x which is incompatible with flatbuffers-rs 25.x.
+# Build flatc from the matching upstream tag so codegen matches Cargo.lock.
+RUN git clone --depth 1 --branch v25.12.19 https://github.com/google/flatbuffers.git /tmp/flatbuffers && \
+    cmake -G Ninja -S /tmp/flatbuffers -B /tmp/flatbuffers/build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DFLATBUFFERS_BUILD_TESTS=OFF && \
+    cmake --build /tmp/flatbuffers/build --target flatc --parallel && \
+    install /tmp/flatbuffers/build/flatc /usr/local/bin/flatc && \
+    rm -rf /tmp/flatbuffers
 
 COPY Cargo.toml Cargo.lock ./
 COPY server ./server
@@ -16,7 +29,7 @@ COPY stress-client ./stress-client
 COPY admin-tools ./admin-tools
 COPY static_client ./static_client
 
-RUN cargo build --release --features jemalloc -p massive_game_server_core --bin massive_game_server_core
+RUN cargo build --release --locked --features jemalloc -p massive_game_server_core --bin massive_game_server_core
 
 FROM debian:bookworm-slim AS runtime
 
