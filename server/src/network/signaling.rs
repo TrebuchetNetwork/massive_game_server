@@ -2314,14 +2314,6 @@ pub fn handle_dc_send_error(error_string: &str, peer_id_str: &str, message_type:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env test lock poisoned")
-    }
 
     #[test]
     fn datachannel_message_limit_is_reasonable() {
@@ -3021,28 +3013,26 @@ mod tests {
 
     #[test]
     fn turn_credential_type_from_env_defaults_to_password() {
-        let _guard = env_test_lock();
-        // When MGS_TURN_CREDENTIAL_TYPE is not set, it defaults to Password.
-        std::env::remove_var("MGS_TURN_CREDENTIAL_TYPE");
-        assert_eq!(TurnCredentialType::from_env(), TurnCredentialType::Password);
+        temp_env::with_var("MGS_TURN_CREDENTIAL_TYPE", None::<&str>, || {
+            // When MGS_TURN_CREDENTIAL_TYPE is not set, it defaults to Password.
+            assert_eq!(TurnCredentialType::from_env(), TurnCredentialType::Password);
+        });
     }
 
     #[test]
     fn turn_credential_type_from_env_supports_sha256_and_legacy_sha1() {
-        let _guard = env_test_lock();
-        std::env::set_var("MGS_TURN_CREDENTIAL_TYPE", "hmac");
-        assert_eq!(
-            TurnCredentialType::from_env(),
-            TurnCredentialType::HmacSha256
-        );
-
-        std::env::set_var("MGS_TURN_CREDENTIAL_TYPE", "hmac-sha1");
-        assert_eq!(
-            TurnCredentialType::from_env(),
-            TurnCredentialType::HmacSha1Legacy
-        );
-
-        std::env::remove_var("MGS_TURN_CREDENTIAL_TYPE");
+        temp_env::with_var("MGS_TURN_CREDENTIAL_TYPE", Some("hmac"), || {
+            assert_eq!(
+                TurnCredentialType::from_env(),
+                TurnCredentialType::HmacSha256
+            );
+        });
+        temp_env::with_var("MGS_TURN_CREDENTIAL_TYPE", Some("hmac-sha1"), || {
+            assert_eq!(
+                TurnCredentialType::from_env(),
+                TurnCredentialType::HmacSha1Legacy
+            );
+        });
     }
 
     #[test]

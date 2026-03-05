@@ -1,3 +1,4 @@
+use crate::operational::validation::sanitize_model_id;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -15,7 +16,6 @@ const DEFAULT_OPENROUTER_APP_TITLE: &str = "massive_game_server";
 const DEFAULT_ARENA_WASM_DIR: &str = "data/arena_bots";
 const DEFAULT_ARENA_SOURCE_DIR: &str = "data/arena_sources";
 const DEFAULT_OPENROUTER_MAX_TOKENS: u32 = 700;
-const MAX_MODEL_ID_LEN: usize = 128;
 const DEFAULT_RUSTC_TIMEOUT_SECS: u64 = 12;
 const MAX_RUSTC_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_RUSTC_CPU_LIMIT_SECS: u64 = 10;
@@ -731,25 +731,6 @@ fn validate_source_impl(
     }
 }
 
-fn sanitize_model_id(model_id: &str) -> Option<String> {
-    let trimmed = model_id.trim();
-    if trimmed.is_empty() || trimmed.len() > MAX_MODEL_ID_LEN {
-        return None;
-    }
-    // Disallow dot-path tricks and hidden-file style ids even though slashes are rejected.
-    if trimmed.starts_with('.') || trimmed.ends_with('.') || trimmed.contains("..") {
-        return None;
-    }
-    if trimmed
-        .bytes()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'-' || ch == b'.')
-    {
-        Some(trimmed.to_owned())
-    } else {
-        None
-    }
-}
-
 fn truncate_for_api(value: &str, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value.to_owned();
@@ -1059,17 +1040,7 @@ pub fn build_code_generation_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn with_env_lock<T>(f: impl FnOnce() -> T) -> T {
-        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let _guard = ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock poisoned");
-        f()
-    }
 
     #[test]
     fn validator_rejects_unsafe_source() {
@@ -1109,7 +1080,10 @@ mod tests {
         assert!(sanitize_model_id(".hidden").is_none());
         assert!(sanitize_model_id("bot..v2").is_none());
         assert!(sanitize_model_id("bot_alpha-1").is_some());
-        assert!(sanitize_model_id(&"a".repeat(MAX_MODEL_ID_LEN + 1)).is_none());
+        assert!(sanitize_model_id(
+            &"a".repeat(crate::operational::validation::MAX_MODEL_ID_LEN + 1)
+        )
+        .is_none());
     }
 
     #[test]
@@ -1145,86 +1119,38 @@ pub extern "C" fn bot_tick() -> i32 {
 
     #[test]
     fn read_env_secret_prefers_direct_env_value() {
-        with_env_lock(|| {
-            let key = "MGS_TEST_OPENROUTER_API_KEY";
-            let file_key = "MGS_TEST_OPENROUTER_API_KEY_FILE";
-
-            let prev_key = std::env::var(key).ok();
-            let prev_file_key = std::env::var(file_key).ok();
-            // SAFETY: Tests intentionally mutate process env under a global test lock.
-            unsafe { std::env::remove_var(file_key) };
-            // SAFETY: Tests intentionally mutate process env under a global test lock.
-            unsafe { std::env::set_var(key, "inline-secret") };
-
-            let value = read_env_secret(key);
-            assert_eq!(value.as_deref(), Some("inline-secret"));
-
-            match prev_key {
-                Some(raw) => {
-                    // SAFETY: Tests intentionally mutate process env under a global test lock.
-                    unsafe { std::env::set_var(key, raw) }
-                }
-                None => {
-                    // SAFETY: Tests intentionally mutate process env under a global test lock.
-                    unsafe { std::env::remove_var(key) }
-                }
-            }
-            match prev_file_key {
-                Some(raw) => {
-                    // SAFETY: Tests intentionally mutate process env under a global test lock.
-                    unsafe { std::env::set_var(file_key, raw) }
-                }
-                None => {
-                    // SAFETY: Tests intentionally mutate process env under a global test lock.
-                    unsafe { std::env::remove_var(file_key) }
-                }
-            }
-        });
+        let key = "MGS_TEST_OPENROUTER_API_KEY";
+        let file_key = "MGS_TEST_OPENROUTER_API_KEY_FILE";
+        temp_env::with_vars(
+            [(key, Some("inline-secret")), (file_key, None::<&str>)],
+            || {
+                let value = read_env_secret(key);
+                assert_eq!(value.as_deref(), Some("inline-secret"));
+            },
+        );
     }
 
     #[test]
     fn read_env_secret_uses_file_fallback() {
-        with_env_lock(|| {
-            let key = "MGS_TEST_OPENROUTER_FILE_ONLY";
-            let file_key = "MGS_TEST_OPENROUTER_FILE_ONLY_FILE";
-            let prev_key = std::env::var(key).ok();
-            let prev_file_key = std::env::var(file_key).ok();
-            // SAFETY: Tests intentionally mutate process env under a global test lock.
-            unsafe { std::env::remove_var(key) };
+        let key = "MGS_TEST_OPENROUTER_FILE_ONLY";
+        let file_key = "MGS_TEST_OPENROUTER_FILE_ONLY_FILE";
 
-            let stamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock should be monotonic")
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!("mgs_openrouter_secret_{stamp}.txt"));
-            std::fs::write(&path, "file-secret\n").expect("secret file should be written");
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("mgs_openrouter_secret_{stamp}.txt"));
+        std::fs::write(&path, "file-secret\n").expect("secret file should be written");
+        let path_raw = path.to_string_lossy().into_owned();
 
-            // SAFETY: Tests intentionally mutate process env under a global test lock.
-            unsafe { std::env::set_var(file_key, &path) };
-            let value = read_env_secret(key);
-            assert_eq!(value.as_deref(), Some("file-secret"));
+        temp_env::with_vars(
+            [(key, None::<&str>), (file_key, Some(path_raw.as_str()))],
+            || {
+                let value = read_env_secret(key);
+                assert_eq!(value.as_deref(), Some("file-secret"));
+            },
+        );
 
-            match prev_key {
-                Some(raw) => {
-                    // SAFETY: Tests intentionally mutate process env under a global test lock.
-                    unsafe { std::env::set_var(key, raw) }
-                }
-                None => {
-                    // SAFETY: Tests intentionally mutate process env under a global test lock.
-                    unsafe { std::env::remove_var(key) }
-                }
-            }
-            match prev_file_key {
-                Some(raw) => {
-                    // SAFETY: Tests intentionally mutate process env under a global test lock.
-                    unsafe { std::env::set_var(file_key, raw) }
-                }
-                None => {
-                    // SAFETY: Tests intentionally mutate process env under a global test lock.
-                    unsafe { std::env::remove_var(file_key) }
-                }
-            }
-            let _ = std::fs::remove_file(path);
-        });
+        let _ = std::fs::remove_file(path);
     }
 }

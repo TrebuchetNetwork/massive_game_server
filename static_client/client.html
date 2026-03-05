@@ -1411,7 +1411,7 @@
         function withAuthTokenInUrl(rawUrl) { return authHelpers.withAuthTokenInUrl(rawUrl); }
         async function requestPhoneCode() { return authHelpers.requestPhoneCode(); }
         async function verifyPhoneCode() { return authHelpers.verifyPhoneCode(); }
-        async function refreshAuthProfile() { return authHelpers.refreshAuthProfile(); }
+        async function refreshAuthProfile(options) { return authHelpers.refreshAuthProfile(options); }
         async function signOutAuthSession() { return authHelpers.signOutAuthSession(); }
         function clearReconnectTimer() { return reconnectHelpers.clearReconnectTimer(); }
         function resetReconnectState() { return reconnectHelpers.resetReconnectState(); }
@@ -5022,9 +5022,8 @@
             hydrateDefaultWsUrl();
             hydrateMatchTypeSelection();
             loadAuthToken();
-            if (authSessionToken) {
-                refreshAuthProfile();
-            } else {
+            const restoredSession = await refreshAuthProfile({ silentIfUnauth: true });
+            if (!restoredSession) {
                 updateAuthUi(null);
                 setAuthStatus('Sign in with phone to persist score stats.', 'info');
             }

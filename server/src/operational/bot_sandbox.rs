@@ -1,3 +1,4 @@
+use crate::operational::validation::sanitize_model_id;
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
@@ -15,7 +16,6 @@ const MAX_TEAM_BATTLE_ROUNDS: u32 = 32;
 const MAX_REPLAY_FRAMES: usize = 8_192;
 const BOT_TICK_EXPORT: &str = "bot_tick";
 const DEFAULT_RESPAWNS_NON_ARENA: i32 = 3;
-const MAX_MODEL_ID_LEN: usize = 128;
 
 #[derive(Clone)]
 pub struct BotSandbox {
@@ -1152,24 +1152,6 @@ fn validate_bot_tick_export(module: &Module) -> Result<(), String> {
         return Err(format!("'{}' return type must be i32", BOT_TICK_EXPORT));
     }
     Ok(())
-}
-
-fn sanitize_model_id(model_id: &str) -> Option<String> {
-    let trimmed = model_id.trim();
-    if trimmed.is_empty() || trimmed.len() > MAX_MODEL_ID_LEN {
-        return None;
-    }
-    if trimmed.starts_with('.') || trimmed.ends_with('.') || trimmed.contains("..") {
-        return None;
-    }
-    if trimmed
-        .bytes()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'-' || ch == b'.')
-    {
-        Some(trimmed.to_owned())
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]

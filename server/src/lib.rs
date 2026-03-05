@@ -24,6 +24,7 @@ pub mod entities;
 pub mod memory;
 pub mod network;
 pub mod operational;
+pub mod routes;
 pub mod scaling;
 pub mod server;
 pub mod state_sync;

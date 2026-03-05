@@ -1,8 +1,11 @@
 // massive_game_server/server/src/operational/backup.rs
 
+use crate::operational::config::env_registry::BackupEnv;
 use crate::operational::monitoring::metrics;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -55,6 +58,33 @@ pub struct BackupRestoredFile {
 }
 
 impl BackupManager {
+    pub fn from_env_config(env: &BackupEnv) -> Self {
+        let mut sources = vec![
+            PathBuf::from(env.auth_store_path.as_str()),
+            PathBuf::from(env.feature_flags_store_path.as_str()),
+            PathBuf::from(env.arena_store_path.as_str()),
+            PathBuf::from(env.live_replay_dispute_store_path.as_str()),
+        ];
+        for path in &env.extra_paths {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                sources.push(PathBuf::from(trimmed));
+            }
+        }
+        sources.sort();
+        sources.dedup();
+
+        Self {
+            inner: Arc::new(BackupConfig {
+                enabled: env.enabled,
+                interval_seconds: env.interval_seconds.max(1),
+                output_dir: PathBuf::from(env.output_dir.as_str()),
+                retention_count: env.retention_count.max(1),
+                sources,
+            }),
+        }
+    }
+
     pub fn from_env() -> Self {
         let enabled = parse_bool_env("MGS_BACKUP_ENABLED", false);
         let interval_seconds = std::env::var("MGS_BACKUP_INTERVAL_SECONDS")
@@ -160,11 +190,8 @@ impl BackupManager {
 
     async fn run_once_inner(&self, reason: &str) -> Result<(), String> {
         let created_at_unix = unix_now();
-        let backup_dir_name = format!("backup-{}", created_at_unix);
-        let backup_root = self.inner.output_dir.join(backup_dir_name);
-        fs::create_dir_all(&backup_root)
-            .await
-            .map_err(|err| format!("failed to create backup directory: {}", err))?;
+        let backup_root =
+            create_unique_backup_root(&self.inner.output_dir, created_at_unix).await?;
 
         let mut manifest = BackupManifest {
             created_at_unix,
@@ -501,12 +528,10 @@ fn backup_name_for_path(path: &Path) -> String {
         .and_then(|name| name.to_str())
         .filter(|name| !name.trim().is_empty())
         .unwrap_or("backup.bin");
-    let prefix = path
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .and_then(|name| name.to_str())
-        .unwrap_or("root");
-    format!("{}__{}", prefix, file_name)
+    let mut hasher = DefaultHasher::new();
+    path.to_string_lossy().hash(&mut hasher);
+    let path_hash = hasher.finish();
+    format!("{:016x}__{}", path_hash, file_name)
 }
 
 fn is_safe_backup_dir_name(value: &str) -> bool {
@@ -519,6 +544,39 @@ fn is_safe_backup_dir_name(value: &str) -> bool {
 
 fn resolve_backup_file_path(backup_root: &Path, copied_file: &BackupCopiedFile) -> PathBuf {
     backup_root.join(backup_name_for_path(Path::new(&copied_file.source)))
+}
+
+async fn create_unique_backup_root(
+    output_dir: &Path,
+    created_at_unix: u64,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(output_dir)
+        .await
+        .map_err(|err| format!("failed to create backup output directory: {}", err))?;
+
+    let epoch_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    for attempt in 0..32u8 {
+        let backup_dir_name = format!(
+            "backup-{}-{:x}-{:02x}",
+            created_at_unix, epoch_nanos, attempt
+        );
+        let backup_root = output_dir.join(backup_dir_name);
+        match fs::create_dir(&backup_root).await {
+            Ok(()) => return Ok(backup_root),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(format!(
+                    "failed to create unique backup directory '{}': {}",
+                    backup_root.display(),
+                    err
+                ));
+            }
+        }
+    }
+    Err("failed to allocate unique backup directory after multiple attempts".to_owned())
 }
 
 fn env_path_or_default(var_name: &str, default_value: &str) -> PathBuf {
@@ -554,7 +612,18 @@ mod tests {
     #[test]
     fn test_backup_name_for_path() {
         let path = Path::new("/var/data/users.json");
-        assert_eq!(backup_name_for_path(path), "data__users.json");
+        let name = backup_name_for_path(path);
+        assert!(name.ends_with("__users.json"));
+        assert_eq!(name.len(), 16 + "__users.json".len());
+    }
+
+    #[test]
+    fn backup_name_for_path_disambiguates_same_filename_different_paths() {
+        let left = backup_name_for_path(Path::new("/var/data/users.json"));
+        let right = backup_name_for_path(Path::new("/srv/data/users.json"));
+        assert_ne!(left, right);
+        assert!(left.ends_with("__users.json"));
+        assert!(right.ends_with("__users.json"));
     }
 
     #[test]
@@ -610,6 +679,50 @@ mod tests {
             .iter()
             .any(|file| file.source == source_path.to_string_lossy()));
         assert_eq!(restored_content, r#"{"v":"original"}"#);
+
+        let _ = stdfs::remove_dir_all(&test_root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn backup_runs_create_distinct_directories_even_in_same_second() {
+        let test_root = std::env::temp_dir().join(format!(
+            "mgs-backup-distinct-dirs-{}-{}",
+            std::process::id(),
+            unix_now()
+        ));
+        let source_path = test_root.join("data/auth_store.json");
+        let backup_dir = test_root.join("backups");
+        stdfs::create_dir_all(source_path.parent().expect("source parent"))
+            .expect("create source directory");
+        stdfs::write(&source_path, r#"{"v":"initial"}"#).expect("write source");
+
+        let manager = BackupManager {
+            inner: Arc::new(BackupConfig {
+                enabled: true,
+                interval_seconds: 1,
+                output_dir: backup_dir.clone(),
+                retention_count: 8,
+                sources: vec![source_path.clone()],
+            }),
+        };
+
+        manager.run_once("run-one").await.expect("first backup");
+        manager.run_once("run-two").await.expect("second backup");
+
+        let mut backup_dirs = stdfs::read_dir(&backup_dir)
+            .expect("read backup dir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.starts_with("backup-"))
+            .collect::<Vec<_>>();
+        backup_dirs.sort();
+        assert_eq!(
+            backup_dirs.len(),
+            2,
+            "expected two distinct backup directories"
+        );
+        assert_ne!(backup_dirs[0], backup_dirs[1]);
 
         let _ = stdfs::remove_dir_all(&test_root);
     }

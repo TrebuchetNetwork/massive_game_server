@@ -1,5 +1,6 @@
 use crate::core::types::PlayerState;
 use crate::network::rate_limiter::TokenBucket;
+use crate::operational::config::env_registry::{load_app_env_config, AuthEnv};
 use crate::operational::monitoring::metrics;
 use dashmap::DashMap;
 use parking_lot::{Mutex as ParkingLotMutex, RwLock};
@@ -215,7 +216,8 @@ pub struct RequestCodeResult {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct VerifyCodeResult {
-    pub token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
     pub token_expires_at: u64,
     pub profile: AuthProfileView,
 }
@@ -438,28 +440,29 @@ fn shared_token_validation_rate_limiters(
 }
 
 fn token_validation_rate_limit_config() -> TokenValidationRateLimitConfig {
-    *TOKEN_VALIDATION_RATE_LIMIT_CONFIG.get_or_init(|| {
-        let per_sec = std::env::var("MGS_AUTH_TOKEN_RATE_LIMIT_PER_SEC")
-            .ok()
-            .and_then(|raw| raw.parse::<u32>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_PER_SEC);
-        let burst = std::env::var("MGS_AUTH_TOKEN_RATE_LIMIT_BURST")
-            .ok()
-            .and_then(|raw| raw.parse::<u32>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_BURST);
-        TokenValidationRateLimitConfig { per_sec, burst }
+    *TOKEN_VALIDATION_RATE_LIMIT_CONFIG.get_or_init(|| TokenValidationRateLimitConfig {
+        per_sec: DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_PER_SEC,
+        burst: DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_BURST,
     })
+}
+
+fn configure_token_validation_rate_limit(per_sec: u32, burst: u32) {
+    let _ = TOKEN_VALIDATION_RATE_LIMIT_CONFIG.set(TokenValidationRateLimitConfig {
+        per_sec: per_sec.max(1),
+        burst: burst.max(1),
+    });
 }
 
 fn token_validation_rate_limit_key(remote_addr: Option<SocketAddr>) -> String {
     remote_addr
         .map(|addr| addr.ip().to_string())
-        .unwrap_or_else(|| "unknown".to_owned())
+        .unwrap_or_default()
 }
 
 fn try_acquire_token_validation_token(remote_addr: Option<SocketAddr>) -> bool {
+    if remote_addr.is_none() {
+        return true;
+    }
     let config = token_validation_rate_limit_config();
     let key = token_validation_rate_limit_key(remote_addr);
     let limiters = shared_token_validation_rate_limiters();
@@ -622,35 +625,61 @@ fn maybe_cleanup_otp_ip_rate_limiters(limiters: &DashMap<IpAddr, OtpIpRateState>
     cleanup_otp_ip_rate_limiters(now);
 }
 
+fn default_auth_env() -> AuthEnv {
+    AuthEnv {
+        store_path: "data/auth_store.json".to_owned(),
+        otp_ttl_seconds: DEFAULT_OTP_TTL_SECONDS,
+        session_ttl_seconds: DEFAULT_SESSION_TTL_SECONDS,
+        resend_interval_seconds: DEFAULT_RESEND_INTERVAL_SECONDS,
+        max_verify_attempts: DEFAULT_MAX_VERIFY_ATTEMPTS,
+        token_validation_rate_limit_per_sec: DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_PER_SEC,
+        token_validation_rate_limit_burst: DEFAULT_TOKEN_VALIDATION_RATE_LIMIT_BURST,
+        sms_command: None,
+        sms_dev_mode: false,
+        use_auth_cookies: false,
+        deletion_grace_period_hours: DEFAULT_ACCOUNT_DELETION_GRACE_PERIOD_HOURS,
+        redis_url: None,
+        redis_store_key: DEFAULT_REDIS_STORE_KEY.to_owned(),
+        gdpr_hash_salt: None,
+    }
+}
+
 impl AuthService {
     pub fn new_from_env() -> Self {
-        let store_path = std::env::var("MGS_AUTH_STORE_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("data/auth_store.json"));
-        let otp_ttl_seconds =
-            parse_u64_env("MGS_AUTH_OTP_TTL_SECONDS", DEFAULT_OTP_TTL_SECONDS).max(60);
-        let session_ttl_seconds =
-            parse_u64_env("MGS_AUTH_SESSION_TTL_SECONDS", DEFAULT_SESSION_TTL_SECONDS).max(300);
-        let resend_interval_seconds = parse_u64_env(
-            "MGS_AUTH_RESEND_INTERVAL_SECONDS",
-            DEFAULT_RESEND_INTERVAL_SECONDS,
-        )
-        .max(5);
-        let max_verify_attempts =
-            parse_u32_env("MGS_AUTH_MAX_VERIFY_ATTEMPTS", DEFAULT_MAX_VERIFY_ATTEMPTS).max(1);
+        match load_app_env_config() {
+            Ok(app_env) => Self::new_from_env_config(&app_env.auth),
+            Err(err) => {
+                warn!(
+                    "Falling back to default auth env config due to invalid environment: {}",
+                    err
+                );
+                let fallback = default_auth_env();
+                Self::new_from_env_config(&fallback)
+            }
+        }
+    }
 
-        let sms_command = std::env::var("MGS_SMS_COMMAND")
-            .ok()
+    pub fn new_from_env_config(env: &AuthEnv) -> Self {
+        let store_path = PathBuf::from(env.store_path.as_str());
+        let otp_ttl_seconds = env.otp_ttl_seconds.max(60);
+        let session_ttl_seconds = env.session_ttl_seconds.max(300);
+        let resend_interval_seconds = env.resend_interval_seconds.max(5);
+        let max_verify_attempts = env.max_verify_attempts.max(1);
+        let sms_command = env
+            .sms_command
+            .as_ref()
             .map(|raw| raw.trim().to_owned())
             .filter(|raw| !raw.is_empty());
-        let sms_dev_mode = parse_bool_env("MGS_SMS_DEV_MODE", false);
-        let use_auth_cookies = parse_bool_env("MGS_AUTH_USE_COOKIES", false);
-        let deletion_grace_period_hours = parse_u64_env(
-            "MGS_ACCOUNT_DELETION_GRACE_PERIOD_HOURS",
-            DEFAULT_ACCOUNT_DELETION_GRACE_PERIOD_HOURS,
-        )
-        .max(1);
-        let redis_cache = init_redis_cache_from_env();
+        let sms_dev_mode = env.sms_dev_mode;
+        let use_auth_cookies = env.use_auth_cookies;
+        let deletion_grace_period_hours = env.deletion_grace_period_hours.max(1);
+        configure_token_validation_rate_limit(
+            env.token_validation_rate_limit_per_sec,
+            env.token_validation_rate_limit_burst,
+        );
+        configure_gdpr_hash_salt(env.gdpr_hash_salt.as_deref());
+        let redis_cache =
+            init_redis_cache(env.redis_url.as_deref(), Some(env.redis_store_key.as_str()));
 
         let persistent_store = load_persistent_store(&store_path, redis_cache.as_ref());
         let deletion_queue = DashMap::new();
@@ -889,7 +918,7 @@ impl AuthService {
 
         metrics::record_auth_attempt("verify_code", "success");
         Ok(VerifyCodeResult {
-            token: session_token,
+            token: Some(session_token),
             token_expires_at,
             profile,
         })
@@ -1509,15 +1538,23 @@ async fn handle_verify_code(
     auth_service: AuthService,
 ) -> Result<warp::reply::Response, Infallible> {
     match auth_service.verify_phone_code(&body.phone_number, &body.code) {
-        Ok(result) => {
+        Ok(mut result) => {
             if auth_service.use_auth_cookies() {
+                let Some(session_token) = result.token.clone() else {
+                    return Ok(error_response(AuthError::Internal(
+                        "verify-code succeeded but session token was missing".to_owned(),
+                    ))
+                    .into_response());
+                };
                 // Set the session token as an HttpOnly, Secure, SameSite=Strict
                 // cookie so that JS never needs to touch it.
                 let max_age = auth_service.session_ttl_seconds();
                 let cookie_value = format!(
                     "mgs_session={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={}",
-                    result.token, max_age
+                    session_token, max_age
                 );
+                // Cookie mode must not expose bearer tokens in JSON payloads.
+                result.token = None;
                 let json_reply = ok_response(result);
                 Ok(
                     warp::reply::with_header(json_reply, "Set-Cookie", cookie_value)
@@ -2082,16 +2119,19 @@ fn redact_url_password(url: &str) -> String {
     url.to_owned()
 }
 
-fn init_redis_cache_from_env() -> Option<AuthRedisCache> {
-    let redis_url = std::env::var("MGS_REDIS_URL")
-        .ok()
-        .map(|raw| raw.trim().to_owned())
-        .filter(|raw| !raw.is_empty())?;
-    let safe_url = redact_url_password(&redis_url);
-    let store_key = std::env::var("MGS_REDIS_AUTH_STORE_KEY")
-        .ok()
-        .map(|raw| raw.trim().to_owned())
+fn init_redis_cache(
+    redis_url_raw: Option<&str>,
+    store_key_raw: Option<&str>,
+) -> Option<AuthRedisCache> {
+    let redis_url = redis_url_raw
+        .map(str::trim)
         .filter(|raw| !raw.is_empty())
+        .map(str::to_owned)?;
+    let safe_url = redact_url_password(&redis_url);
+    let store_key = store_key_raw
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(str::to_owned)
         .unwrap_or_else(|| DEFAULT_REDIS_STORE_KEY.to_owned());
 
     let client = match redis::Client::open(redis_url.clone()) {
@@ -2251,23 +2291,25 @@ fn phone_hash_from_stored_or_legacy_value(value: &str) -> String {
     hash_phone_for_anonymization(value)
 }
 
+fn configure_gdpr_hash_salt(configured: Option<&str>) {
+    let salt = configured
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(str::as_bytes)
+        .map(|bytes| bytes.to_vec())
+        .unwrap_or_else(|| {
+            warn!(
+                "MGS_GDPR_HASH_SALT is not set; using built-in compatibility salt. \
+                 Configure a deployment-specific salt for production."
+            );
+            b"mgs-gdpr-anonymization-salt".to_vec()
+        });
+    let _ = GDPR_HASH_SALT.set(salt);
+}
+
 fn gdpr_hash_salt_bytes() -> &'static [u8] {
     GDPR_HASH_SALT
-        .get_or_init(|| {
-            let configured = std::env::var("MGS_GDPR_HASH_SALT")
-                .ok()
-                .map(|raw| raw.trim().to_owned())
-                .filter(|raw| !raw.is_empty());
-            if let Some(raw) = configured {
-                raw.into_bytes()
-            } else {
-                warn!(
-                    "MGS_GDPR_HASH_SALT is not set; using built-in compatibility salt. \
-                     Configure a deployment-specific salt for production."
-                );
-                b"mgs-gdpr-anonymization-salt".to_vec()
-            }
-        })
+        .get_or_init(|| b"mgs-gdpr-anonymization-salt".to_vec())
         .as_slice()
 }
 
@@ -2298,30 +2340,6 @@ fn unix_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-fn parse_bool_env(name: &str, default: bool) -> bool {
-    std::env::var(name)
-        .ok()
-        .map(|raw| {
-            let normalized = raw.trim().to_ascii_lowercase();
-            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
-        })
-        .unwrap_or(default)
-}
-
-fn parse_u64_env(name: &str, default: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .unwrap_or(default)
-}
-
-fn parse_u32_env(name: &str, default: u32) -> u32 {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u32>().ok())
-        .unwrap_or(default)
 }
 
 #[cfg(test)]
@@ -2619,10 +2637,20 @@ mod tests {
         assert!(check_otp_ip_rate_limit(None).is_ok());
     }
 
+    #[test]
+    fn token_validation_rate_limit_allows_none_remote_addr() {
+        for _ in 0..256 {
+            assert!(
+                try_acquire_token_validation_token(None),
+                "missing remote address should bypass token validation limiter"
+            );
+        }
+    }
+
     // ── GDPR account deletion & anonymization tests ──────────────────────
 
     /// Create a test AuthService with an in-memory store (no Redis, no file).
-    fn make_test_auth_service() -> AuthService {
+    fn make_test_auth_service_with_cookie_mode(use_auth_cookies: bool) -> AuthService {
         let store_path = PathBuf::from(format!(
             "/tmp/mgs_test_auth_store_{}.json",
             Uuid::new_v4().simple()
@@ -2643,9 +2671,13 @@ mod tests {
                 deletion_grace_period_hours: 72,
                 sms_command: None,
                 sms_dev_mode: true,
-                use_auth_cookies: false,
+                use_auth_cookies,
             }),
         }
+    }
+
+    fn make_test_auth_service() -> AuthService {
+        make_test_auth_service_with_cookie_mode(false)
     }
 
     /// Insert a test user directly into the persistent store and create a session.
@@ -3068,6 +3100,60 @@ mod tests {
         auth.revoke_all_sessions_for_user("user1");
         assert_eq!(auth.inner.sessions.len(), 1);
         assert!(auth.inner.sessions.contains_key("other_token"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn verify_code_cookie_mode_sets_cookie_and_omits_json_token() {
+        let auth = make_test_auth_service_with_cookie_mode(true);
+        let phone = "+15551230111";
+        assert!(auth.request_phone_code(phone).is_ok());
+
+        let normalized_phone = normalize_phone_number(phone).expect("valid phone");
+        let issued_code = auth
+            .inner
+            .otp_challenges
+            .get(&normalized_phone)
+            .map(|entry| entry.code.clone())
+            .expect("issued otp code should exist");
+
+        let response = handle_verify_code(
+            VerifyCodeBody {
+                phone_number: phone.to_owned(),
+                code: issued_code,
+            },
+            auth.clone(),
+        )
+        .await
+        .expect("verify handler should not fail");
+
+        let cookie_header = response
+            .headers()
+            .get("Set-Cookie")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            cookie_header.contains("mgs_session="),
+            "expected Set-Cookie to include mgs_session"
+        );
+        assert!(
+            cookie_header.contains("HttpOnly"),
+            "expected cookie to be HttpOnly"
+        );
+
+        let body_bytes = warp::hyper::body::to_bytes(response.into_body())
+            .await
+            .expect("response body bytes");
+        let payload: serde_json::Value = serde_json::from_slice(&body_bytes).expect("json payload");
+        assert_eq!(payload.get("ok").and_then(|v| v.as_bool()), Some(true));
+        let data = payload.get("data").expect("data payload");
+        assert!(
+            data.get("token").is_none(),
+            "cookie mode must not expose token in JSON payload"
+        );
+        assert!(
+            data.get("token_expires_at").is_some(),
+            "token expiry should still be returned"
+        );
     }
 
     #[test]

@@ -176,6 +176,7 @@ export function createAuthHelpers(options) {
         try {
             const response = await fetchImpl("/auth/phone/request-code", {
                 method: "POST",
+                credentials: "same-origin",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ phone_number: phone }),
             });
@@ -211,6 +212,7 @@ export function createAuthHelpers(options) {
         try {
             const response = await fetchImpl("/auth/phone/verify-code", {
                 method: "POST",
+                credentials: "same-origin",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ phone_number: phone, code }),
             });
@@ -219,13 +221,16 @@ export function createAuthHelpers(options) {
                 setAuthStatus(parseApiError(payload, "Verification failed."), "error");
                 return false;
             }
-            const token = String(payload?.data?.token || "").trim();
+            const tokenRaw = payload?.data?.token;
+            const token = typeof tokenRaw === "string" ? tokenRaw.trim() : "";
             const tokenExpiresAt = payload?.data?.token_expires_at || null;
             const profile = payload?.data?.profile || null;
-            if (!token || !profile) {
-                setAuthStatus("Verification response missing token/profile.", "error");
+            if (!profile) {
+                setAuthStatus("Verification response missing profile.", "error");
                 return false;
             }
+            // In cookie-auth mode the server omits token from JSON and sets
+            // HttpOnly mgs_session instead.
             setAuthToken(token, tokenExpiresAt);
             updateAuthUi(profile);
             setAuthStatus("Phone verified. Your score will persist to this account.", "success");
@@ -238,46 +243,51 @@ export function createAuthHelpers(options) {
         }
     }
 
-    async function refreshAuthProfile() {
+    async function refreshAuthProfile(options = {}) {
+        const { silentIfUnauth = false } = options || {};
         const token = String(getAuthSessionToken() || "").trim();
-        if (!token) {
-            clearAuthSession();
-            return false;
+        const headers = {};
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
         }
         try {
             const response = await fetchImpl("/auth/me", {
                 method: "GET",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
+                credentials: "same-origin",
+                headers,
             });
             const payload = await response.json().catch(() => null);
             if (!response.ok || !payload || payload.ok !== true) {
                 clearAuthSession();
-                setAuthStatus("Session expired. Verify phone again.", "error");
+                if (!silentIfUnauth) {
+                    setAuthStatus("Session expired. Verify phone again.", "error");
+                }
                 return false;
             }
             updateAuthUi(payload.data?.profile || null);
             setAuthStatus("Signed in. Persistent score tracking enabled.", "success");
             return true;
         } catch (error) {
-            setAuthStatus(`Failed to load profile: ${error?.message || error}`, "error");
+            if (!silentIfUnauth) {
+                setAuthStatus(`Failed to load profile: ${error?.message || error}`, "error");
+            }
             return false;
         }
     }
 
     async function signOutAuthSession() {
         const token = String(getAuthSessionToken() || "").trim();
+        const headers = {};
         if (token) {
-            try {
-                await fetchImpl("/auth/logout", {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                    },
-                });
-            } catch (_) {}
+            headers.Authorization = `Bearer ${token}`;
         }
+        try {
+            await fetchImpl("/auth/logout", {
+                method: "POST",
+                credentials: "same-origin",
+                headers,
+            });
+        } catch (_) {}
         clearAuthSession();
         setAuthStatus("Signed out.", "info");
     }

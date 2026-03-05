@@ -2,4 +2,5 @@
 
 pub mod deadlock;
 pub mod heap_profiler;
+pub mod panic_log;
 pub mod profiler;

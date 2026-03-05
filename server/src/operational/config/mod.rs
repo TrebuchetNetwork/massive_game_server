@@ -1,5 +1,6 @@
 // massive_game_server/server/src/operational/config/mod.rs
 
+pub mod env_registry;
 pub mod loader;
 pub mod validation;
 

@@ -75,31 +75,31 @@ fn to_mb(bytes: u64) -> f64 {
 }
 
 fn setup_test_server() -> Arc<MassiveGameServer> {
-    // Prevent auto-spawning bots by setting the env var to 0
-    std::env::set_var("MGS_TARGET_BOT_COUNT", "0");
+    // Prevent auto-spawning bots while constructing the server instance.
+    temp_env::with_var("MGS_TARGET_BOT_COUNT", Some("0"), || {
+        let config = Arc::new(ServerConfig::default());
+        let thread_pool_system =
+            Arc::new(ThreadPoolSystem::new(config.clone()).expect("Failed to create thread pools"));
+        let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
+        let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
+        let chat_messages_queue: ChatMessagesQueue =
+            Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
+        let player_aois: PlayerAoIs = Arc::new(DashMap::new());
 
-    let config = Arc::new(ServerConfig::default());
-    let thread_pool_system =
-        Arc::new(ThreadPoolSystem::new(config.clone()).expect("Failed to create thread pools"));
-    let data_channels_map: DataChannelsMap = Arc::new(DashMap::new());
-    let client_states_map: ClientStatesMap = Arc::new(ParkingLotRwLock::new(HashMap::new()));
-    let chat_messages_queue: ChatMessagesQueue =
-        Arc::new(TokioRwLock::new(BoundedChatQueue::new(MAX_CHAT_QUEUE_SIZE)));
-    let player_aois: PlayerAoIs = Arc::new(DashMap::new());
+        let server = Arc::new(MassiveGameServer::new(
+            config,
+            thread_pool_system,
+            data_channels_map,
+            client_states_map,
+            chat_messages_queue,
+            player_aois,
+        ));
 
-    let server = Arc::new(MassiveGameServer::new(
-        config,
-        thread_pool_system,
-        data_channels_map,
-        client_states_map,
-        chat_messages_queue,
-        player_aois,
-    ));
+        // Ensure no automatic bot spawning during stress tests
+        server.target_bot_count.store(0, Ordering::Relaxed);
 
-    // Ensure no automatic bot spawning during stress tests
-    server.target_bot_count.store(0, Ordering::Relaxed);
-
-    server
+        server
+    })
 }
 
 fn add_player(server: &MassiveGameServer, peer_id: &str, team_id: u8, x: f32, y: f32) -> PlayerID {

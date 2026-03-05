@@ -503,14 +503,18 @@ mod tests {
 
     #[test]
     fn env_flags_parse_boolean_values() {
-        std::env::set_var("MGS_FEATURE_FLAGS", "a=1,b=0,c=true,d=false,e");
-        let entries = parse_flags_from_env();
-        let map: HashMap<String, bool> = entries.into_iter().collect();
-        assert_eq!(map.get("a"), Some(&true));
-        assert_eq!(map.get("b"), Some(&false));
-        assert_eq!(map.get("c"), Some(&true));
-        assert_eq!(map.get("d"), Some(&false));
-        assert_eq!(map.get("e"), Some(&true));
-        std::env::remove_var("MGS_FEATURE_FLAGS");
+        temp_env::with_var(
+            "MGS_FEATURE_FLAGS",
+            Some("a=1,b=0,c=true,d=false,e"),
+            || {
+                let entries = parse_flags_from_env();
+                let map: HashMap<String, bool> = entries.into_iter().collect();
+                assert_eq!(map.get("a"), Some(&true));
+                assert_eq!(map.get("b"), Some(&false));
+                assert_eq!(map.get("c"), Some(&true));
+                assert_eq!(map.get("d"), Some(&false));
+                assert_eq!(map.get("e"), Some(&true));
+            },
+        );
     }
 }

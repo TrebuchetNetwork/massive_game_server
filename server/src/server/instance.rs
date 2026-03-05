@@ -26,7 +26,6 @@ use crate::network::signaling::{
 use crate::operational::monitoring::metrics;
 use crate::operational::tuning::adaptive_quality::QualitySettings;
 use crate::operational::tuning::auto_tuner::{AutoTuner, TuningSample};
-use crate::server::ecs_bridge::EcsBridge;
 use crate::server::event_mapping::{
     event_instigator_id, event_position, event_target_id, event_value, event_weapon_type,
     map_game_event_type_to_fb,
@@ -321,7 +320,6 @@ pub struct MassiveGameServer {
     lag_compensation_ms: u64,
     auto_tuner: Arc<ParkingLotRwLock<AutoTuner>>,
     dynamic_quality_settings: Arc<ParkingLotRwLock<QualitySettings>>,
-    ecs_bridge: Arc<EcsBridge>,
     navmesh_enabled: bool,
     navmesh_rebuild_interval_frames: u64,
     navmesh_cell_wall_limit: usize,
@@ -757,7 +755,6 @@ impl MassiveGameServer {
             lag_compensation_ms,
             auto_tuner: Arc::new(ParkingLotRwLock::new(AutoTuner::new(auto_tuner_target_ms))),
             dynamic_quality_settings: Arc::new(ParkingLotRwLock::new(QualitySettings::default())),
-            ecs_bridge: Arc::new(EcsBridge::new_from_env()),
             navmesh_enabled,
             navmesh_rebuild_interval_frames,
             navmesh_cell_wall_limit,

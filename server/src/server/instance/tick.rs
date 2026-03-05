@@ -187,57 +187,6 @@ impl MassiveGameServer {
             );
         }
 
-        let should_rebuild_ecs = self.ecs_bridge.is_enabled()
-            && (self.ecs_bridge.is_authoritative()
-                || frame.is_multiple_of(self.ecs_bridge.rebuild_stride_frames()));
-        if should_rebuild_ecs {
-            let projectiles_snapshot = self.projectiles.read().clone();
-            let pickups_snapshot = self.pickups.read().clone();
-            let ecs_stats = self.ecs_bridge.rebuild_snapshot(
-                self.player_manager.as_ref(),
-                &projectiles_snapshot,
-                &pickups_snapshot,
-            );
-            if ecs_stats.skipped_contention {
-                trace!(
-                    "[Frame {}] ECS snapshot rebuild skipped due to lock contention.",
-                    frame
-                );
-            } else {
-                trace!(
-                    "[Frame {}] ECS snapshot rebuilt: players={}, projectiles={}, pickups={}",
-                    frame,
-                    ecs_stats.players,
-                    ecs_stats.projectiles,
-                    ecs_stats.pickups
-                );
-            }
-
-            if self.ecs_bridge.is_authoritative() {
-                let mut projectiles = self.projectiles.write();
-                let mut pickups = self.pickups.write();
-                let reconciled = self.ecs_bridge.apply_authoritative_reconciliation(
-                    self.player_manager.as_ref(),
-                    projectiles.as_mut_slice(),
-                    pickups.as_mut_slice(),
-                );
-                if reconciled.skipped_contention {
-                    trace!(
-                        "[Frame {}] ECS authoritative reconciliation skipped due to lock contention.",
-                        frame
-                    );
-                } else {
-                    trace!(
-                        "[Frame {}] ECS authoritative reconciliation applied: players={}, projectiles={}, pickups={}",
-                        frame,
-                        reconciled.players,
-                        reconciled.projectiles,
-                        reconciled.pickups
-                    );
-                }
-            }
-        }
-
         // Stage 3: State Sync & Broadcast
         let stage3_start = Instant::now();
 

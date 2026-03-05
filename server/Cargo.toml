@@ -96,7 +96,6 @@ idna = "1.0"
 # Spatial Indexing
 rstar = "0.12"
 aabb-quadtree = "0.2.0"
-hecs = "0.10"
 
 
 # NUMA (stubs for now, actual library might be different or need more setup)
@@ -117,6 +116,7 @@ tikv-jemallocator = { version = "0.5", features = ["stats", "profiling", "unpref
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.4" # Or your preferred version
+temp-env = { version = "0.3", features = ["async_closure"] }
 
 [build-dependencies]
 built = { version = "0.7", features = ["git2"] }

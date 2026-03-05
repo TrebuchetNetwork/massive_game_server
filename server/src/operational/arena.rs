@@ -2,6 +2,7 @@ use crate::operational::bot_sandbox::{
     ArenaMatchMode, BotMatchExecution, BotMatchOutcome, BotMatchReplay, BotSandbox,
     TeamBattleOutcome,
 };
+use crate::operational::validation::sanitize_model_id;
 use base64::Engine as _;
 use dashmap::DashMap;
 use futures_util::stream::{self, StreamExt};
@@ -36,7 +37,6 @@ const DEFAULT_ARENA_REPLAY_EVENTS_LIMIT: usize = 256;
 const DEFAULT_ARENA_REPLAY_STREAM_BACKLOG: usize = 64;
 const DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP: usize = 1_024;
 const MAX_ARENA_PENDING_MATCHES: usize = 10_000;
-const MAX_MODEL_ID_LEN: usize = 128;
 const MAX_ARENA_REPLAY_HISTORY_CAP: usize = 4096;
 const MAX_ARENA_REPLAY_EVENT_HISTORY_CAP: usize = 32_768;
 const MAX_ARENA_REPLAY_MATCH_HISTORY_CAP: usize = 4_096;
@@ -1909,24 +1909,6 @@ fn normalize_match_mode(raw_mode: Option<&str>) -> Result<String, ArenaError> {
         ));
     };
     Ok(mode.as_str().to_owned())
-}
-
-fn sanitize_model_id(model_id: &str) -> Option<String> {
-    let trimmed = model_id.trim();
-    if trimmed.is_empty() || trimmed.len() > MAX_MODEL_ID_LEN {
-        return None;
-    }
-    if trimmed.starts_with('.') || trimmed.ends_with('.') || trimmed.contains("..") {
-        return None;
-    }
-    if trimmed
-        .bytes()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'-' || ch == b'.')
-    {
-        Some(trimmed.to_owned())
-    } else {
-        None
-    }
 }
 
 fn unix_now() -> u64 {

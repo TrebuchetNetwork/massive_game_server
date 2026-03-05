@@ -1,5 +1,6 @@
 // massive_game_server/server/src/network/quic/mod.rs
 
+pub mod control;
 pub mod handler;
 
 pub use handler::{

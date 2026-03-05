@@ -1,5 +1,5 @@
 // massive_game_server/server/src/server/mod.rs
-pub mod ecs_bridge;
+pub mod background_tasks;
 pub(crate) mod event_mapping;
 pub mod game_loop;
 pub mod instance;

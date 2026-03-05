@@ -293,30 +293,7 @@ fn apply_env_overrides(config: &mut ServerConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn with_env_lock<T>(f: impl FnOnce() -> T) -> T {
-        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let _guard = ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock poisoned");
-        f()
-    }
-
-    fn set_env(var_name: &str, value: Option<&str>) {
-        match value {
-            Some(raw) => {
-                // SAFETY: test-only process environment mutation under global lock.
-                unsafe { std::env::set_var(var_name, raw) }
-            }
-            None => {
-                // SAFETY: test-only process environment mutation under global lock.
-                unsafe { std::env::remove_var(var_name) }
-            }
-        }
-    }
 
     #[test]
     fn test_apply_partial() {
@@ -352,89 +329,73 @@ mod tests {
 
     #[test]
     fn env_override_accepts_legacy_max_players_name() {
-        with_env_lock(|| {
-            let previous_new = std::env::var("MGS_MAX_PLAYERS_PER_MATCH").ok();
-            let previous_legacy = std::env::var("MGS_MAX_PLAYERS").ok();
-            set_env("MGS_MAX_PLAYERS_PER_MATCH", None);
-            set_env("MGS_MAX_PLAYERS", Some("321"));
-
-            let mut config = ServerConfig::default();
-            apply_env_overrides(&mut config);
-            assert_eq!(config.max_players_per_match, 321);
-
-            set_env("MGS_MAX_PLAYERS_PER_MATCH", previous_new.as_deref());
-            set_env("MGS_MAX_PLAYERS", previous_legacy.as_deref());
-        });
+        temp_env::with_vars(
+            [
+                ("MGS_MAX_PLAYERS_PER_MATCH", None::<&str>),
+                ("MGS_MAX_PLAYERS", Some("321")),
+            ],
+            || {
+                let mut config = ServerConfig::default();
+                apply_env_overrides(&mut config);
+                assert_eq!(config.max_players_per_match, 321);
+            },
+        );
     }
 
     #[test]
     fn load_nested_yaml_with_includes() {
-        with_env_lock(|| {
-            let temp_root = std::env::temp_dir().join(format!(
-                "mgs-config-loader-{}-{}",
-                std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos()
-            ));
-            std::fs::create_dir_all(&temp_root).expect("create temp config root");
+        let temp_root = std::env::temp_dir().join(format!(
+            "mgs-config-loader-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_root).expect("create temp config root");
 
-            let base_path = temp_root.join("base.yaml");
-            let production_path = temp_root.join("production.yaml");
+        let base_path = temp_root.join("base.yaml");
+        let production_path = temp_root.join("production.yaml");
+        let production_path_raw = production_path.to_string_lossy().into_owned();
 
-            std::fs::write(
-                &base_path,
-                "server:\n  tick_rate: 30\n  world_partition_grid_dim: 6\n  max_players: 120\n",
-            )
-            .expect("write base config");
-            std::fs::write(
-                &production_path,
-                "includes:\n  - base.yaml\nserver:\n  tick_rate: 144\n  max_players: 300\n  thread_pools:\n    physics_threads: 7\n",
-            )
-            .expect("write production config");
+        std::fs::write(
+            &base_path,
+            "server:\n  tick_rate: 30\n  world_partition_grid_dim: 6\n  max_players: 120\n",
+        )
+        .expect("write base config");
+        std::fs::write(
+            &production_path,
+            "includes:\n  - base.yaml\nserver:\n  tick_rate: 144\n  max_players: 300\n  thread_pools:\n    physics_threads: 7\n",
+        )
+        .expect("write production config");
 
-            let env_vars = [
-                "MGS_CONFIG_PATH",
-                "MGS_TICK_RATE",
-                "MGS_PLAYER_SHARDS",
-                "MGS_WORLD_GRID_DIM",
-                "MGS_CLUSTER_SHARDS",
-                "MGS_LOCAL_SHARD_ID",
-                "MGS_MAX_PLAYERS_PER_MATCH",
-                "MGS_MAX_PLAYERS",
-                "MGS_THREADS_PHYSICS",
-                "MGS_THREADS_NETWORK",
-                "MGS_THREADS_GAME",
-                "MGS_THREADS_AI",
-                "MGS_THREADS_IO",
-            ];
+        temp_env::with_vars(
+            vec![
+                ("MGS_CONFIG_PATH", Some(production_path_raw.as_str())),
+                ("MGS_TICK_RATE", None::<&str>),
+                ("MGS_PLAYER_SHARDS", None::<&str>),
+                ("MGS_WORLD_GRID_DIM", None::<&str>),
+                ("MGS_CLUSTER_SHARDS", None::<&str>),
+                ("MGS_LOCAL_SHARD_ID", None::<&str>),
+                ("MGS_MAX_PLAYERS_PER_MATCH", None::<&str>),
+                ("MGS_MAX_PLAYERS", None::<&str>),
+                ("MGS_THREADS_PHYSICS", None::<&str>),
+                ("MGS_THREADS_NETWORK", None::<&str>),
+                ("MGS_THREADS_GAME", None::<&str>),
+                ("MGS_THREADS_AI", None::<&str>),
+                ("MGS_THREADS_IO", None::<&str>),
+            ],
+            || {
+                let config =
+                    load_server_config_from_env_and_file().expect("load config with includes");
+                assert_eq!(config.tick_rate, 144);
+                assert_eq!(config.world_partition_grid_dim, 6);
+                assert_eq!(config.num_world_partitions, 36);
+                assert_eq!(config.max_players_per_match, 300);
+                assert_eq!(config.thread_pools.physics_threads, 7);
+            },
+        );
 
-            let previous_env: Vec<(&str, Option<String>)> = env_vars
-                .iter()
-                .map(|name| (*name, std::env::var(name).ok()))
-                .collect();
-
-            for name in env_vars {
-                set_env(name, None);
-            }
-            set_env(
-                "MGS_CONFIG_PATH",
-                Some(production_path.to_string_lossy().as_ref()),
-            );
-
-            let config = load_server_config_from_env_and_file().expect("load config with includes");
-            assert_eq!(config.tick_rate, 144);
-            assert_eq!(config.world_partition_grid_dim, 6);
-            assert_eq!(config.num_world_partitions, 36);
-            assert_eq!(config.max_players_per_match, 300);
-            assert_eq!(config.thread_pools.physics_threads, 7);
-
-            for (name, value) in previous_env {
-                set_env(name, value.as_deref());
-            }
-
-            let _ = std::fs::remove_dir_all(&temp_root);
-        });
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 }
