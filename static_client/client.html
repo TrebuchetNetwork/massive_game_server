@@ -4336,6 +4336,30 @@
             setupDataChannelEvents,
         } = connectionManager;
 
+        function invokeModuleLifecycleHook(moduleName, moduleRef, hookName, ...hookArgs) {
+            if (!moduleRef || typeof moduleRef[hookName] !== 'function') return;
+            try {
+                moduleRef[hookName](...hookArgs);
+            } catch (error) {
+                log(`Lifecycle hook ${moduleName}.${hookName} failed: ${error?.message || error}`, 'warn');
+            }
+        }
+
+        function notifyModuleConnectionReset(reason, destroyRenderer = false) {
+            const resetReason = String(reason || 'connection reset');
+            invokeModuleLifecycleHook('connectionManager', connectionManager, 'onConnectionReset', resetReason);
+            invokeModuleLifecycleHook('diagnosticsManager', diagnosticsManager, 'onConnectionReset', resetReason);
+            invokeModuleLifecycleHook('interpolationManager', interpolationManager, 'onConnectionReset', resetReason);
+            invokeModuleLifecycleHook('perfBudget', perfBudget, 'onConnectionReset', resetReason);
+            invokeModuleLifecycleHook('inputManager', inputManager, 'onConnectionReset', resetReason);
+            if (!destroyRenderer) return;
+            invokeModuleLifecycleHook('connectionManager', connectionManager, 'destroy', resetReason);
+            invokeModuleLifecycleHook('diagnosticsManager', diagnosticsManager, 'destroy', resetReason);
+            invokeModuleLifecycleHook('interpolationManager', interpolationManager, 'destroy', resetReason);
+            invokeModuleLifecycleHook('perfBudget', perfBudget, 'destroy', resetReason);
+            invokeModuleLifecycleHook('inputManager', inputManager, 'destroy', resetReason);
+        }
+
         function triggerPlayAgainFlow() {
             closePostMatchSummary();
             if (dataChannel && dataChannel.readyState === 'open') {
@@ -4407,7 +4431,9 @@
         window.addEventListener('beforeunload', () => {
             try {
                 resetConnectionUI({ allowReconnect: false, destroyRenderer: true });
-            } catch (_) {}
+            } catch (error) {
+                log(`beforeunload reset failed: ${error?.message || error}`, 'warn');
+            }
         });
 
         /**
@@ -4472,8 +4498,10 @@
             const allowReconnect = options.allowReconnect === true;
             const reconnectReason = String(options.reconnectReason || '').trim();
             const destroyRenderer = options.destroyRenderer === true;
+            const lifecycleReason = reconnectReason || connectionErrorDetail || 'connection reset';
             connectAttemptInFlight = false;
-            markJoinTimingAborted(reconnectReason || connectionErrorDetail || 'connection reset');
+            markJoinTimingAborted(lifecycleReason);
+            notifyModuleConnectionReset(lifecycleReason, destroyRenderer);
             connectButton.disabled = false;
             connectButton.textContent = 'Connect';
             connectButton.classList.replace('bg-gray-500', 'bg-indigo-600');
@@ -4496,7 +4524,9 @@
                     if (dataChannel.readyState !== 'closed') {
                         dataChannel.close();
                     }
-                } catch (_) {}
+                } catch (error) {
+                    log(`Data channel close during reset failed: ${error?.message || error}`, 'warn');
+                }
                 dataChannel = null;
             }
             if (signalingSocket) {
@@ -4508,7 +4538,9 @@
                     if (signalingSocket.readyState === WebSocket.CONNECTING || signalingSocket.readyState === WebSocket.OPEN) {
                         signalingSocket.close(1000, 'client reset');
                     }
-                } catch (_) {}
+                } catch (error) {
+                    log(`Signaling socket close during reset failed: ${error?.message || error}`, 'warn');
+                }
                 signalingSocket = null;
             }
             activeSignalingUrl = '';
@@ -4782,10 +4814,14 @@
             if (app) {
                 try {
                     app.ticker.remove(gameLoop);
-                } catch (_) {}
+                } catch (error) {
+                    log(`Failed to detach game loop ticker during reset: ${error?.message || error}`, 'warn');
+                }
                 try {
                     app.destroy(true, { children: true, texture: true, baseTexture: true });
-                } catch (_) {}
+                } catch (error) {
+                    log(`Failed to destroy PIXI app during reset: ${error?.message || error}`, 'warn');
+                }
                 if (window.app === app) {
                     window.app = null;
                 }

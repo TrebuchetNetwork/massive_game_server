@@ -415,6 +415,15 @@ export function createDiagnosticsManager(getCtx) {
         return joinTimingState;
     }
 
+    function onConnectionReset(reason = '') {
+        stopFxStress(true);
+        markJoinTimingAborted(reason || 'connection reset');
+    }
+
+    function destroy(reason = '') {
+        onConnectionReset(reason || 'diagnostics manager destroy');
+    }
+
     // Initialize
     joinTimingState = createJoinTimingState('idle');
     publishJoinTiming();
@@ -434,5 +443,7 @@ export function createDiagnosticsManager(getCtx) {
         markJoinTimingAborted,
         getJoinTimingState,
         publishJoinTiming,
+        onConnectionReset,
+        destroy,
     };
 }

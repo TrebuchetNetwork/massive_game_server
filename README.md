@@ -222,6 +222,7 @@ The static web client (`static_client/`) uses JavaScript code generated from the
 
 The primary server configuration can be found and modified in:
 * `server/src/core/config.rs`
+* `docs/environment_variables.md` (centralized runtime env var reference)
 
 Key parameters include:
 * `tick_rate`: The server's simulation frequency (e.g., 30 or 60 Hz).

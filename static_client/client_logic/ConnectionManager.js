@@ -29,6 +29,13 @@ export function createConnectionManager(getCtx) {
     /** Whether the peer connection has been initialized for the current attempt. */
     let peerConnectionInitialized = false;
 
+    function logSuppressedError(context, error, level = 'warn') {
+        const ctx = getCtx();
+        if (typeof ctx.log !== 'function') return;
+        const detail = error?.message || error || 'unknown error';
+        ctx.log(`${context}: ${detail}`, level);
+    }
+
     function clearConnectionTimeout() {
         if (connectionTimeoutId !== null) {
             clearTimeout(connectionTimeoutId);
@@ -123,7 +130,8 @@ export function createConnectionManager(getCtx) {
                     const urlObj = new URL(rawUrl);
                     urlObj.searchParams.set('match_type', selectedMatchType);
                     return urlObj.toString();
-                } catch (_) {
+                } catch (error) {
+                    logSuppressedError('Failed to apply match_type join param', error);
                     return rawUrl;
                 }
             }
@@ -134,7 +142,8 @@ export function createConnectionManager(getCtx) {
                     urlObj.searchParams.set('match_type', selectedMatchType);
                 }
                 return urlObj.toString();
-            } catch (_) {
+            } catch (error) {
+                logSuppressedError('Failed to apply username join param', error);
                 return rawUrl;
             }
         }
@@ -159,7 +168,8 @@ export function createConnectionManager(getCtx) {
                 urlObj.searchParams.set('match_type', selectedMatchType);
             }
             return urlObj.toString();
-        } catch (_) {
+        } catch (error) {
+            logSuppressedError('Failed to apply team/spectator join params', error);
             return rawUrl;
         }
     }
@@ -213,7 +223,9 @@ export function createConnectionManager(getCtx) {
                 const mobileUrl = new URL(wsConnectUrl);
                 mobileUrl.searchParams.set('is_mobile', 'true');
                 wsConnectUrl = mobileUrl.toString();
-            } catch (_) { /* ignore malformed URL */ }
+            } catch (error) {
+                logSuppressedError('Failed to append mobile signaling URL flag', error);
+            }
         }
         ctx.setActiveSignalingUrl(url);
         wsUrlInput.value = url;
@@ -639,12 +651,22 @@ export function createConnectionManager(getCtx) {
                         'info'
                     );
                 }
-            }).catch(() => {
-                // getStats() can fail in some browsers; ignore silently.
+            }).catch((error) => {
+                logFn(`ICE candidate pair stats unavailable: ${error?.message || error}`, 'warn');
             });
-        } catch (_) {
-            // Ignore errors in candidate pair detection.
+        } catch (error) {
+            logFn(`ICE candidate pair detection failed: ${error?.message || error}`, 'warn');
         }
+    }
+
+    function onConnectionReset() {
+        clearConnectionTimeout();
+        iceRestartAttempts = 0;
+        peerConnectionInitialized = false;
+    }
+
+    function destroy() {
+        onConnectionReset();
     }
 
     function resetConnectionUI(options = {}) {
@@ -661,5 +683,7 @@ export function createConnectionManager(getCtx) {
         initializePeerConnection,
         setupDataChannelEvents,
         resetConnectionUI,
+        onConnectionReset,
+        destroy,
     };
 }

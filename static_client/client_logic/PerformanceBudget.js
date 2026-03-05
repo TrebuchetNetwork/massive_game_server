@@ -11,6 +11,13 @@
 
 export function createPerformanceBudget(getCtx) {
 
+    function logSuppressedError(context, error, level = 'warn') {
+        const ctx = getCtx();
+        if (typeof ctx.log !== 'function') return;
+        const detail = error?.message || error || 'unknown error';
+        ctx.log(`${context}: ${detail}`, level);
+    }
+
     // ── Performance interval tuning ─────────────────────────────────
 
     function resolveEffectsUpdateIntervalMs(ctx) {
@@ -234,7 +241,8 @@ export function createPerformanceBudget(getCtx) {
         let resolvedWasmUrl = '';
         try {
             resolvedWasmUrl = new URL(requestedWasmUrl, window.location.href).toString();
-        } catch (_) {
+        } catch (error) {
+            logSuppressedError('Failed to resolve cull worker wasm URL', error);
             resolvedWasmUrl = '';
         }
         worker.postMessage({
@@ -260,7 +268,9 @@ export function createPerformanceBudget(getCtx) {
             ctx.cullWorker.onmessage = null;
             ctx.cullWorker.onerror = null;
             ctx.cullWorker.terminate();
-        } catch (_) {}
+        } catch (error) {
+            logSuppressedError('Failed to terminate cull worker cleanly', error);
+        }
         ctx.setCullWorker(null);
         ctx.setCullWorkerReady(false);
         ctx.setCullWorkerBusy(false);
@@ -1058,7 +1068,9 @@ export function createPerformanceBudget(getCtx) {
         } catch (error) {
             try {
                 layer?.destroy?.();
-            } catch (_) {}
+            } catch (cleanupError) {
+                logSuppressedError('Failed to destroy failed WebGPU projectile layer', cleanupError);
+            }
             ctx.setWebgpuProjectileLayer(null);
             ctx.log(`WebGPU projectile layer unavailable: ${error?.message || error}`, 'warn');
             if (ctx.WEBGL2_FALLBACK_ENABLED) {
@@ -1074,7 +1086,9 @@ export function createPerformanceBudget(getCtx) {
                     } catch (fallbackError) {
                         try {
                             fallbackLayer?.destroy?.();
-                        } catch (_) {}
+                        } catch (cleanupError) {
+                            logSuppressedError('Failed to destroy failed WebGL2 projectile fallback layer', cleanupError);
+                        }
                         ctx.setWebgpuProjectileLayer(null);
                         ctx.log(`WebGL2 projectile fallback unavailable: ${fallbackError?.message || fallbackError}`, 'warn');
                     }
@@ -1096,7 +1110,9 @@ export function createPerformanceBudget(getCtx) {
         const backend = ctx.getAcceleratedLayerBackend(ctx.webgpuProjectileLayer);
         try {
             ctx.webgpuProjectileLayer.destroy();
-        } catch (_) {}
+        } catch (error) {
+            logSuppressedError('Failed to destroy projectile accelerated layer', error);
+        }
         ctx.setWebgpuProjectileLayer(null);
         ctx.setWebgpuProjectileRenderPathActive(false);
         const detail = error?.message ? `${reason}: ${error.message}` : reason;
@@ -1125,7 +1141,9 @@ export function createPerformanceBudget(getCtx) {
         } catch (error) {
             try {
                 layer?.destroy?.();
-            } catch (_) {}
+            } catch (cleanupError) {
+                logSuppressedError('Failed to destroy failed WebGPU player layer', cleanupError);
+            }
             ctx.setWebgpuPlayerLayer(null);
             ctx.log(`WebGPU player layer unavailable: ${error?.message || error}`, 'warn');
             if (ctx.WEBGL2_FALLBACK_ENABLED) {
@@ -1141,7 +1159,9 @@ export function createPerformanceBudget(getCtx) {
                     } catch (fallbackError) {
                         try {
                             fallbackLayer?.destroy?.();
-                        } catch (_) {}
+                        } catch (cleanupError) {
+                            logSuppressedError('Failed to destroy failed WebGL2 player fallback layer', cleanupError);
+                        }
                         ctx.setWebgpuPlayerLayer(null);
                         ctx.log(`WebGL2 player fallback unavailable: ${fallbackError?.message || fallbackError}`, 'warn');
                     }
@@ -1163,7 +1183,9 @@ export function createPerformanceBudget(getCtx) {
         const backend = ctx.getAcceleratedLayerBackend(ctx.webgpuPlayerLayer);
         try {
             ctx.webgpuPlayerLayer.destroy();
-        } catch (_) {}
+        } catch (error) {
+            logSuppressedError('Failed to destroy player accelerated layer', error);
+        }
         ctx.setWebgpuPlayerLayer(null);
         ctx.setWebgpuPlayerRenderPathActive(false);
         const detail = error?.message ? `${reason}: ${error.message}` : reason;
@@ -1176,6 +1198,22 @@ export function createPerformanceBudget(getCtx) {
             window.__e2e.acceleratedPlayerBackend = 'none';
             window.__e2e.webgpuPlayerInstances = 0;
         }
+    }
+
+    function onConnectionReset() {
+        clearSyntheticProjectiles();
+        resetPerfStats();
+    }
+
+    function destroy() {
+        terminateCullWorker();
+        if (getCtx().webgpuProjectileLayer) {
+            disableWebGPUProjectileLayer('performance budget destroy');
+        }
+        if (getCtx().webgpuPlayerLayer) {
+            disableWebGPUPlayerLayer('performance budget destroy');
+        }
+        onConnectionReset();
     }
 
     // ── Public API ──────────────────────────────────────────────────
@@ -1197,5 +1235,6 @@ export function createPerformanceBudget(getCtx) {
         clearSyntheticProjectiles, setSyntheticProjectileCount,
         initWebGPUProjectileLayer, disableWebGPUProjectileLayer,
         initWebGPUPlayerLayer, disableWebGPUPlayerLayer,
+        onConnectionReset, destroy,
     };
 }

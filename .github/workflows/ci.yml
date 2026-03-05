@@ -227,8 +227,10 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
-      # Keep the line-coverage gate focused on deterministic engine logic.
-      COVERAGE_IGNORE_FILENAME_REGEX: '(^|.*/)src/(main\.rs|memory/|network/|operational/|scaling/|server/|state_sync/|world/boundary\.rs$)'
+      # Focused gate for deterministic core engine logic.
+      COVERAGE_CORE_IGNORE_FILENAME_REGEX: '(^|.*/)src/(main\.rs|memory/|network/|operational/|scaling/|server/|state_sync/|world/boundary\.rs$)'
+      # Broad gate keeps network/memory/server code in scope at a lower floor.
+      COVERAGE_BROAD_IGNORE_FILENAME_REGEX: '(^|.*/)src/main\.rs$'
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -253,18 +255,24 @@ jobs:
       - name: Run coverage test pass
         run: |
           cargo llvm-cov -p massive_game_server_core --locked --no-report \
-            --ignore-filename-regex "${COVERAGE_IGNORE_FILENAME_REGEX}"
+            --ignore-filename-regex "${COVERAGE_CORE_IGNORE_FILENAME_REGEX}"
 
-      - name: Enforce coverage floor
+      - name: Enforce core coverage floor
         run: |
           cargo llvm-cov report -p massive_game_server_core --locked --summary-only \
-            --ignore-filename-regex "${COVERAGE_IGNORE_FILENAME_REGEX}" \
+            --ignore-filename-regex "${COVERAGE_CORE_IGNORE_FILENAME_REGEX}" \
             --fail-under-lines 70
+
+      - name: Enforce broad coverage floor
+        run: |
+          cargo llvm-cov report -p massive_game_server_core --locked --summary-only \
+            --ignore-filename-regex "${COVERAGE_BROAD_IGNORE_FILENAME_REGEX}" \
+            --fail-under-lines 40
 
       - name: Generate LCOV report
         run: |
           cargo llvm-cov report -p massive_game_server_core --locked --lcov \
-            --ignore-filename-regex "${COVERAGE_IGNORE_FILENAME_REGEX}" \
+            --ignore-filename-regex "${COVERAGE_CORE_IGNORE_FILENAME_REGEX}" \
             --output-path lcov.info
 
       - name: Upload coverage artifact

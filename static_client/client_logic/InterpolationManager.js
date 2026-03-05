@@ -545,10 +545,24 @@ export function createInterpolationManager(getCtx) {
         _snapshotPruneTickCounter = 0;
     }
 
+    function onConnectionReset() {
+        const ctx = getCtx();
+        if (Array.isArray(ctx.serverUpdates)) {
+            ctx.serverUpdates.length = 0;
+        }
+        resetSnapshotState();
+    }
+
+    function destroy() {
+        onConnectionReset();
+    }
+
     return {
         updateLocalPlayerPrediction,
         interpolateEntities,
         maybeRecordInterpolationSnapshot,
         resetSnapshotState,
+        onConnectionReset,
+        destroy,
     };
 }

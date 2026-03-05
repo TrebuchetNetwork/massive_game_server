@@ -1254,9 +1254,26 @@ export function createInputManager({
         });
     }
 
+    function onConnectionReset() {
+        teardownInputHandlers();
+        closePingWheel();
+        mobileAimActive = false;
+        mobileFireTouchActive = false;
+        mobileStickyFireArmed = false;
+        pendingInputs.length = 0;
+        tacticalPings.length = 0;
+        inputSequence = 0;
+    }
+
+    function destroy() {
+        onConnectionReset();
+    }
+
     return {
         setupInputHandlers,
         teardownInputHandlers,
+        onConnectionReset,
+        destroy,
         sendInputsToServer,
         handleKeyInput,
         handleMouseMove,
