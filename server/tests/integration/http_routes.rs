@@ -1,6 +1,7 @@
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::redirect::Policy;
 use serde_json::Value;
+use std::fs;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -50,6 +51,12 @@ async fn spawn_server_with_env(
 ) -> ServerProcess {
     let port = reserve_free_port();
     let base_url = format!("http://127.0.0.1:{port}");
+    let data_root = std::env::temp_dir().join(format!("mgs_http_routes_{port}"));
+    let arena_wasm_dir = data_root.join("arena_wasm");
+    let arena_source_dir = data_root.join("arena_sources");
+    let _ = fs::create_dir_all(&arena_wasm_dir);
+    let _ = fs::create_dir_all(&arena_source_dir);
+
     let mut command = Command::new(env!("CARGO_BIN_EXE_massive_game_server_core"));
     command
         .env("MGS_HOST", "127.0.0.1")
@@ -58,6 +65,14 @@ async fn spawn_server_with_env(
         .env("MGS_TARGET_BOT_COUNT", "0")
         .env("MGS_DIAGNOSTICS_ENABLED", "0")
         .env("MGS_QUIC_PRIMARY", "0")
+        .env("MGS_AUTH_STORE_PATH", data_root.join("auth_store.json"))
+        .env(
+            "MGS_FEATURE_FLAG_STORE_PATH",
+            data_root.join("feature_flags_store.json"),
+        )
+        .env("MGS_ARENA_STORE_PATH", data_root.join("arena_store.json"))
+        .env("MGS_ARENA_WASM_DIR", &arena_wasm_dir)
+        .env("MGS_ARENA_SOURCE_DIR", &arena_source_dir)
         .env("RUST_LOG", "warn")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -71,6 +86,15 @@ async fn spawn_server_with_env(
     let proc = ServerProcess { child, base_url };
     wait_until_ready(&proc.base_url).await;
     proc
+}
+
+async fn assert_admin_auth_required(response: reqwest::Response) {
+    let body: Value = response.json().await.expect("admin unauthorized json body");
+    assert_eq!(body["ok"], Value::Bool(false));
+    assert_eq!(
+        body["error"]["code"],
+        Value::String("admin_auth_required".to_owned())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -238,6 +262,170 @@ async fn inline_admin_checks_apply_to_feature_flags_and_codegen() {
         .expect("codegen authorized json");
     assert_eq!(codegen_authorized_json["ok"], Value::Bool(true));
     assert!(codegen_authorized_json["data"]["valid"].is_boolean());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inline_admin_checks_apply_to_feature_flags_set_and_list() {
+    let admin_token = "integration-feature-flags-admin-token";
+    let proc = spawn_server(Some(admin_token)).await;
+    let client = reqwest::Client::new();
+
+    let list_unauthorized = client
+        .get(format!("{}/api/ops/feature-flags", proc.base_url))
+        .send()
+        .await
+        .expect("GET /api/ops/feature-flags without token");
+    assert_admin_auth_required(list_unauthorized).await;
+
+    let list_authorized = client
+        .get(format!("{}/api/ops/feature-flags", proc.base_url))
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .send()
+        .await
+        .expect("GET /api/ops/feature-flags with token");
+    let list_authorized_json: Value = list_authorized
+        .json()
+        .await
+        .expect("feature-flags list json");
+    assert_eq!(list_authorized_json["ok"], Value::Bool(true));
+    assert!(list_authorized_json["data"].is_array());
+
+    let set_unauthorized = client
+        .post(format!("{}/api/ops/feature-flags/set", proc.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .body(
+            r#"{"key":"integration.new_ui","enabled":true,"rollout_percentage":25,"description":"integration test flag"}"#,
+        )
+        .send()
+        .await
+        .expect("POST /api/ops/feature-flags/set without token");
+    assert_admin_auth_required(set_unauthorized).await;
+
+    let set_authorized = client
+        .post(format!("{}/api/ops/feature-flags/set", proc.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .body(
+            r#"{"key":"integration.new_ui","enabled":true,"rollout_percentage":25,"description":"integration test flag"}"#,
+        )
+        .send()
+        .await
+        .expect("POST /api/ops/feature-flags/set with token");
+    let set_authorized_json: Value = set_authorized.json().await.expect("feature-flags set json");
+    assert_eq!(set_authorized_json["ok"], Value::Bool(true));
+    assert_eq!(
+        set_authorized_json["data"]["key"],
+        Value::String("integration.new_ui".to_owned())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inline_admin_checks_apply_to_arena_mutation_routes() {
+    let admin_token = "integration-arena-admin-token";
+    let proc = spawn_server(Some(admin_token)).await;
+    let client = reqwest::Client::new();
+
+    let register_unauthorized = client
+        .post(format!("{}/api/arena/models/register", proc.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .body(r#"{"model_name":"bot-alpha"}"#)
+        .send()
+        .await
+        .expect("POST /api/arena/models/register without token");
+    assert_admin_auth_required(register_unauthorized).await;
+
+    let register_alpha = client
+        .post(format!("{}/api/arena/models/register", proc.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .body(r#"{"model_name":"bot-alpha"}"#)
+        .send()
+        .await
+        .expect("POST /api/arena/models/register alpha with token");
+    let register_alpha_json: Value = register_alpha
+        .json()
+        .await
+        .expect("register alpha response json");
+    assert_eq!(register_alpha_json["ok"], Value::Bool(true));
+    let model_alpha_id = register_alpha_json["data"]["model_id"]
+        .as_str()
+        .expect("model alpha id")
+        .to_owned();
+
+    let register_beta = client
+        .post(format!("{}/api/arena/models/register", proc.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .body(r#"{"model_name":"bot-beta"}"#)
+        .send()
+        .await
+        .expect("POST /api/arena/models/register beta with token");
+    let register_beta_json: Value = register_beta
+        .json()
+        .await
+        .expect("register beta response json");
+    assert_eq!(register_beta_json["ok"], Value::Bool(true));
+    let model_beta_id = register_beta_json["data"]["model_id"]
+        .as_str()
+        .expect("model beta id")
+        .to_owned();
+
+    let queue_unauthorized = client
+        .post(format!("{}/api/arena/matches/queue", proc.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .body(format!(
+            r#"{{"model_a_id":"{model_alpha_id}","model_b_id":"{model_beta_id}"}}"#
+        ))
+        .send()
+        .await
+        .expect("POST /api/arena/matches/queue without token");
+    assert_admin_auth_required(queue_unauthorized).await;
+
+    let queue_authorized = client
+        .post(format!("{}/api/arena/matches/queue", proc.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .body(format!(
+            r#"{{"model_a_id":"{model_alpha_id}","model_b_id":"{model_beta_id}"}}"#
+        ))
+        .send()
+        .await
+        .expect("POST /api/arena/matches/queue with token");
+    let queue_authorized_json: Value = queue_authorized.json().await.expect("queue match json");
+    assert_eq!(queue_authorized_json["ok"], Value::Bool(true));
+    let queued_match_id = queue_authorized_json["data"]["queued_matches"][0]["match_id"]
+        .as_str()
+        .expect("queued match id")
+        .to_owned();
+
+    let claim_unauthorized = client
+        .post(format!("{}/api/arena/matches/claim_next", proc.base_url))
+        .send()
+        .await
+        .expect("POST /api/arena/matches/claim_next without token");
+    assert_admin_auth_required(claim_unauthorized).await;
+
+    let claim_authorized = client
+        .post(format!("{}/api/arena/matches/claim_next", proc.base_url))
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .send()
+        .await
+        .expect("POST /api/arena/matches/claim_next with token");
+    let claim_authorized_json: Value = claim_authorized.json().await.expect("claim next json");
+    assert_eq!(claim_authorized_json["ok"], Value::Bool(true));
+    assert_eq!(
+        claim_authorized_json["data"]["claimed"]["match_id"],
+        Value::String(queued_match_id.clone())
+    );
+
+    let report_unauthorized = client
+        .post(format!("{}/api/arena/matches/report", proc.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .body(format!(r#"{{"match_id":"{queued_match_id}","draw":true}}"#))
+        .send()
+        .await
+        .expect("POST /api/arena/matches/report without token");
+    assert_admin_auth_required(report_unauthorized).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
