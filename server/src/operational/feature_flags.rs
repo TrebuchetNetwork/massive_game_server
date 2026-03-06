@@ -1,3 +1,4 @@
+use crate::operational::config::env_registry::{AdminAuthEnv, FeatureFlagsEnv};
 use parking_lot::RwLock;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,8 @@ use subtle::ConstantTimeEq;
 use tracing::{info, warn};
 use uuid::Uuid;
 use warp::{Filter, Reply};
+
+static FEATURE_FLAG_ADMIN_TOKEN_OVERRIDE: OnceLock<Option<String>> = OnceLock::new();
 
 #[derive(Clone)]
 pub struct FeatureFlagService {
@@ -127,6 +130,47 @@ impl FeatureFlagService {
             entry.enabled = enabled;
             entry.rollout_percentage = if enabled { 100 } else { 0 };
             entry.updated_at = now;
+        }
+
+        info!(
+            "Feature flag service initialized. store_path='{}', flags={}",
+            store_path.display(),
+            flags.len()
+        );
+
+        Self {
+            inner: Arc::new(FeatureFlagInner {
+                store_path,
+                flags: RwLock::new(flags),
+            }),
+        }
+    }
+
+    pub fn new_from_env_config(env: &FeatureFlagsEnv) -> Self {
+        let store_path_raw = env.store_path.trim();
+        let store_path = if store_path_raw.is_empty() {
+            PathBuf::from("data/feature_flags.json")
+        } else {
+            PathBuf::from(store_path_raw)
+        };
+        let mut flags = load_store(&store_path);
+
+        if let Some(raw) = env.bootstrap_flags.as_deref() {
+            for (key, enabled) in parse_flags_from_raw(raw) {
+                let now = unix_now();
+                let entry = flags
+                    .entry(key.clone())
+                    .or_insert_with(|| FeatureFlagRecord {
+                        key: key.clone(),
+                        enabled,
+                        rollout_percentage: if enabled { 100 } else { 0 },
+                        description: Some("Loaded from MGS_FEATURE_FLAGS".to_owned()),
+                        updated_at: now,
+                    });
+                entry.enabled = enabled;
+                entry.rollout_percentage = if enabled { 100 } else { 0 };
+                entry.updated_at = now;
+            }
         }
 
         info!(
@@ -333,7 +377,10 @@ fn parse_flags_from_env() -> Vec<(String, bool)> {
         Ok(raw) => raw,
         Err(_) => return Vec::new(),
     };
+    parse_flags_from_raw(&raw)
+}
 
+fn parse_flags_from_raw(raw: &str) -> Vec<(String, bool)> {
     raw.split(',')
         .filter_map(|entry| {
             let trimmed = entry.trim();
@@ -386,8 +433,10 @@ fn with_service(
 }
 
 fn inline_admin_expected_token() -> Option<&'static String> {
-    static TOKEN: OnceLock<Option<String>> = OnceLock::new();
-    TOKEN
+    if let Some(token) = FEATURE_FLAG_ADMIN_TOKEN_OVERRIDE.get() {
+        return token.as_ref();
+    }
+    FEATURE_FLAG_ADMIN_TOKEN_OVERRIDE
         .get_or_init(|| {
             std::env::var("MGS_ADMIN_BEARER_TOKEN")
                 .or_else(|_| std::env::var("MGS_ADMIN_TOKEN"))
@@ -396,6 +445,16 @@ fn inline_admin_expected_token() -> Option<&'static String> {
                 .filter(|raw| !raw.is_empty())
         })
         .as_ref()
+}
+
+pub fn configure_feature_flags_runtime(admin_env: &AdminAuthEnv) {
+    let normalized = admin_env
+        .bearer_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(str::to_owned);
+    let _ = FEATURE_FLAG_ADMIN_TOKEN_OVERRIDE.set(normalized);
 }
 
 fn parse_bearer_token(authorization_header: Option<&str>) -> Option<&str> {

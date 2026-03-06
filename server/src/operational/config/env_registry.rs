@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 pub struct AppEnvConfig {
     pub map_path: Option<String>,
     pub instance: InstanceEnv,
+    pub feature_flags: FeatureFlagsEnv,
     pub diagnostics: DiagnosticsEnv,
     pub live_replay_enabled: bool,
     pub quic_primary_only: bool,
@@ -18,6 +19,12 @@ pub struct AppEnvConfig {
     pub shutdown_drain_timeout_secs: u64,
     pub allowed_cors_origins: Vec<String>,
     pub ws_security: WsSecurityEnv,
+}
+
+#[derive(Debug, Clone)]
+pub struct FeatureFlagsEnv {
+    pub store_path: String,
+    pub bootstrap_flags: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +163,9 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
         parse_optional_usize("MGS_MAP_TARGET_PLAYERS", &mut errors).filter(|value| *value > 0);
     let map_seed = parse_optional_u64("MGS_MAP_SEED", &mut errors);
     let map_template = get_optional_trimmed("MGS_MAP_TEMPLATE");
+    let feature_flag_store_path = get_optional_trimmed("MGS_FEATURE_FLAG_STORE_PATH")
+        .unwrap_or_else(|| "data/feature_flags.json".to_owned());
+    let feature_flag_bootstrap_flags = get_optional_trimmed("MGS_FEATURE_FLAGS");
     let target_bot_count = parse_optional_u64("MGS_TARGET_BOT_COUNT", &mut errors);
     let human_priority_enabled =
         parse_bool_with_default("MGS_HUMAN_PRIORITY_ENABLED", true, &mut errors);
@@ -424,6 +434,10 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
             join_initial_state_chunking_enabled,
             join_authoritative_aoi_snapshot_enabled,
             dynamic_mode_transitions_enabled,
+        },
+        feature_flags: FeatureFlagsEnv {
+            store_path: feature_flag_store_path,
+            bootstrap_flags: feature_flag_bootstrap_flags,
         },
         diagnostics: DiagnosticsEnv {
             enabled: diagnostics_enabled,

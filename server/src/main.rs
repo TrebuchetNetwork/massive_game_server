@@ -27,7 +27,7 @@ use massive_game_server_core::operational::config::env_registry::load_app_env_co
 use massive_game_server_core::operational::config::load_validated_server_config;
 use massive_game_server_core::operational::diagnostics::{deadlock, heap_profiler, panic_log};
 use massive_game_server_core::operational::feature_flags::{
-    build_feature_flag_routes, FeatureFlagService,
+    build_feature_flag_routes, configure_feature_flags_runtime, FeatureFlagService,
 };
 use massive_game_server_core::operational::monitoring::{
     metrics as monitoring_metrics, tracing as monitoring_tracing,
@@ -80,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|err| anyhow::anyhow!("invalid environment configuration: {}", err))?;
     configure_signaling_runtime(&app_env.signaling);
     configure_instance_runtime(&app_env.instance);
+    configure_feature_flags_runtime(&app_env.admin_auth);
 
     let config = Arc::new(
         load_validated_server_config()
@@ -152,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
     let arena_service = ArenaService::new_from_env();
     let arena_service_for_worker = arena_service.clone();
     let code_generation_service = CodeGenerationService::new_from_env();
-    let feature_flag_service = FeatureFlagService::new_from_env();
+    let feature_flag_service = FeatureFlagService::new_from_env_config(&app_env.feature_flags);
     let auth_routes = build_auth_routes(auth_service.clone());
     // Start the background GDPR deletion processor (runs hourly)
     auth_service.clone().start_deletion_processor();
