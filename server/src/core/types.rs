@@ -990,6 +990,27 @@ impl Projectile {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KillContext {
+    Normal,
+    Revenge,
+    FirstBlood,
+    Shutdown,
+    LongRange,
+}
+
+impl KillContext {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            KillContext::Normal => "normal",
+            KillContext::Revenge => "revenge",
+            KillContext::FirstBlood => "first_blood",
+            KillContext::Shutdown => "shutdown",
+            KillContext::LongRange => "long_range",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum GameEvent {
     PlayerJoined {
@@ -1004,6 +1025,7 @@ pub enum GameEvent {
         damage: i32,
         weapon: ServerWeaponType,
         position: Vec2,
+        falloff_multiplier: f32,
     },
     PlayerKilled {
         victim_id: PlayerID,
@@ -1081,6 +1103,16 @@ pub enum GameEvent {
         assister_id: PlayerID,
         victim_id: PlayerID,
         points: i32,
+    },
+    ShieldBroken {
+        player_id: PlayerID,
+        position: Vec2,
+    },
+    PowerupExpiring {
+        player_id: PlayerID,
+        powerup: String,
+        seconds_remaining: f32,
+        position: Vec2,
     },
 }
 

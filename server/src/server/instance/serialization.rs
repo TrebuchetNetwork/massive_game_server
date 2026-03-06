@@ -10,6 +10,16 @@ pub(super) fn map_server_weapon_to_fb(server_weapon: ServerWeaponType) -> fb::We
     }
 }
 
+pub(super) fn map_kill_context_to_fb(kill_context: KillContext) -> fb::KillContext {
+    match kill_context {
+        KillContext::Normal => fb::KillContext::Normal,
+        KillContext::Revenge => fb::KillContext::Revenge,
+        KillContext::FirstBlood => fb::KillContext::FirstBlood,
+        KillContext::Shutdown => fb::KillContext::Shutdown,
+        KillContext::LongRange => fb::KillContext::LongRange,
+    }
+}
+
 pub(super) fn map_core_pickup_to_fb(
     core_type: &CorePickupType,
 ) -> (fb::PickupType, Option<fb::WeaponType>) {
@@ -278,6 +288,7 @@ pub(super) fn build_game_event_fb<'a>(
             target_id: target_id_fb,
             weapon_type: weapon_type_fb,
             value: event_value(event).unwrap_or(0.0),
+            falloff_multiplier: crate::server::event_mapping::event_falloff_multiplier(event),
         },
     ))
 }

@@ -8,6 +8,7 @@ pub fn build_damage_effect(
     damage: i32,
     weapon: ServerWeaponType,
     position: Vec2,
+    falloff_multiplier: f32,
 ) -> GameEvent {
     GameEvent::PlayerDamaged {
         target_id,
@@ -15,6 +16,7 @@ pub fn build_damage_effect(
         damage,
         weapon,
         position,
+        falloff_multiplier,
     }
 }
 

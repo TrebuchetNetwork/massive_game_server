@@ -16,6 +16,7 @@ export declare class GameEvent {
     targetId(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
     weaponType(): WeaponType;
     value(): number;
+    falloffMultiplier(): number;
     static startGameEvent(builder: flatbuffers.Builder): void;
     static addEventType(builder: flatbuffers.Builder, eventType: GameEventType): void;
     static addPosition(builder: flatbuffers.Builder, positionOffset: flatbuffers.Offset): void;
@@ -23,6 +24,7 @@ export declare class GameEvent {
     static addTargetId(builder: flatbuffers.Builder, targetIdOffset: flatbuffers.Offset): void;
     static addWeaponType(builder: flatbuffers.Builder, weaponType: WeaponType): void;
     static addValue(builder: flatbuffers.Builder, value: number): void;
+    static addFalloffMultiplier(builder: flatbuffers.Builder, falloffMultiplier: number): void;
     static endGameEvent(builder: flatbuffers.Builder): flatbuffers.Offset;
 }
 //# sourceMappingURL=game-event.d.ts.map

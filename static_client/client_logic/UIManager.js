@@ -1396,6 +1396,14 @@ export function createUIManager(getCtx) {
             const entryKey = feedEntryKey(entry);
             const streakCount = Math.max(0, Number(streakByEntryKey.get(entryKey)) || 0);
             const weaponIcon = entry.is_headshot ? '\uD83C\uDFAF' : '';
+            const killContextCode = Number(entry.kill_context);
+            const killContextLabel = (() => {
+                if (killContextCode === 1 || entry.kill_context === 'revenge') return 'REVENGE';
+                if (killContextCode === 2 || entry.kill_context === 'first_blood') return 'FIRST BLOOD';
+                if (killContextCode === 3 || entry.kill_context === 'shutdown') return 'SHUTDOWN';
+                if (killContextCode === 4 || entry.kill_context === 'long_range') return 'LONG RANGE';
+                return '';
+            })();
             const killerColor = ctx.teamColors[ctx.players.get(entry.killer_id)?.team_id] || ctx.teamColors[0];
             const victimColor = ctx.teamColors[ctx.players.get(entry.victim_id)?.team_id] || ctx.teamColors[0];
             const localName = String(ctx.localPlayerState?.username || '').trim();
@@ -1432,6 +1440,12 @@ export function createUIManager(getCtx) {
             div.appendChild(victimSpan);
             if (weaponIcon) {
                 div.appendChild(document.createTextNode(` ${weaponIcon}`));
+            }
+            if (killContextLabel) {
+                const contextBadge = document.createElement('span');
+                contextBadge.className = 'kill-entry__context';
+                contextBadge.textContent = killContextLabel;
+                div.appendChild(contextBadge);
             }
             if (streakCount >= 5) {
                 const streakBadge = document.createElement('span');

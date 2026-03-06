@@ -573,6 +573,7 @@ impl MassiveGameServer {
                         killer_position: None,
                         victim_position: None,
                         is_headshot: entry.is_headshot,
+                        kill_context: map_kill_context_to_fb(entry.kill_context),
                     },
                 )
             })

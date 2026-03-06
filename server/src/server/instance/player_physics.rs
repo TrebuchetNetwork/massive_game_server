@@ -58,7 +58,14 @@ impl MassiveGameServer {
                         if let Some(mut player_state) =
                             self.player_manager.get_player_state_mut(player_id)
                         {
+                            let prev_speed_boost_remaining = player_state.speed_boost_remaining;
+                            let prev_damage_boost_remaining = player_state.damage_boost_remaining;
                             player_state.update_timers(delta_time);
+                            self.emit_powerup_expiring_events(
+                                &player_state,
+                                prev_speed_boost_remaining,
+                                prev_damage_boost_remaining,
+                            );
                             self.execute_pending_melee_attack(&mut player_state);
 
                             if player_state.is_spectator {
@@ -106,6 +113,66 @@ impl MassiveGameServer {
         PlayerPhysicsResults {
             players_to_respawn: all_to_respawn,
             alive_count: total_alive,
+        }
+    }
+
+    fn emit_powerup_expiring_events(
+        &self,
+        player_state: &PlayerState,
+        prev_speed_boost_remaining: f32,
+        prev_damage_boost_remaining: f32,
+    ) {
+        if !player_state.alive || player_state.is_spectator {
+            return;
+        }
+        let position = Vec2::new(player_state.x, player_state.y);
+        self.emit_powerup_expiring_if_crossed(
+            &player_state.id,
+            "speed_boost",
+            prev_speed_boost_remaining,
+            player_state.speed_boost_remaining,
+            position,
+        );
+        self.emit_powerup_expiring_if_crossed(
+            &player_state.id,
+            "damage_boost",
+            prev_damage_boost_remaining,
+            player_state.damage_boost_remaining,
+            position,
+        );
+    }
+
+    fn emit_powerup_expiring_if_crossed(
+        &self,
+        player_id: &PlayerID,
+        powerup: &str,
+        previous_seconds: f32,
+        current_seconds: f32,
+        position: Vec2,
+    ) {
+        if !previous_seconds.is_finite() || !current_seconds.is_finite() {
+            return;
+        }
+        if previous_seconds <= 0.0 || current_seconds <= 0.0 {
+            return;
+        }
+
+        let crossed_threshold = if previous_seconds > 1.0 && current_seconds <= 1.0 {
+            true
+        } else {
+            previous_seconds > 3.0 && current_seconds <= 3.0
+        };
+
+        if crossed_threshold {
+            self.global_game_events.push(
+                GameEvent::PowerupExpiring {
+                    player_id: player_id.clone(),
+                    powerup: powerup.to_string(),
+                    seconds_remaining: current_seconds.max(0.0),
+                    position,
+                },
+                EventPriority::Normal,
+            );
         }
     }
 
@@ -363,6 +430,7 @@ impl MassiveGameServer {
             }
         }
         if zone_damage > 0 {
+            let prev_shield = player_state.shield_current;
             let died = player_state.apply_damage(zone_damage);
             let pos = Vec2::new(player_state.x, player_state.y);
             self.global_game_events.push(
@@ -372,9 +440,19 @@ impl MassiveGameServer {
                     damage: zone_damage,
                     weapon: ServerWeaponType::Melee,
                     position: pos,
+                    falloff_multiplier: 1.0,
                 },
                 EventPriority::Low,
             );
+            if prev_shield > 0 && player_state.shield_current <= 0 {
+                self.global_game_events.push(
+                    GameEvent::ShieldBroken {
+                        player_id: player_state.id.clone(),
+                        position: pos,
+                    },
+                    EventPriority::Normal,
+                );
+            }
 
             if died {
                 let victim_name = player_state.username.clone();

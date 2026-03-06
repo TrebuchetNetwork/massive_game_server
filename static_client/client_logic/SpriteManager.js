@@ -88,6 +88,56 @@ export function createSpriteManager(getCtx) {
             container.addChildAt(shieldVisual, 1);
             container.shieldVisual = shieldVisual;
 
+            const shieldImpactRing = new PIXI.Graphics();
+            shieldImpactRing.visible = false;
+            shieldImpactRing.zIndex = 3;
+            container.addChild(shieldImpactRing);
+            container.shieldImpactRing = shieldImpactRing;
+
+            const shieldCrackOverlay = new PIXI.Graphics();
+            shieldCrackOverlay.visible = false;
+            shieldCrackOverlay.zIndex = 4;
+            container.addChild(shieldCrackOverlay);
+            container.shieldCrackOverlay = shieldCrackOverlay;
+
+            const reloadArc = new PIXI.Graphics();
+            reloadArc.visible = false;
+            reloadArc.position.set(0, -PLAYER_RADIUS - 27);
+            reloadArc.zIndex = 5;
+            container.addChild(reloadArc);
+            container.reloadArc = reloadArc;
+
+            const statusIconContainer = new PIXI.Container();
+            statusIconContainer.visible = false;
+            statusIconContainer.position.set(0, -PLAYER_RADIUS - 42);
+            statusIconContainer.zIndex = 6;
+            const iconStyle = new PIXI.TextStyle({
+                fontSize: 10,
+                fontWeight: 'bold',
+                fill: 0xE2E8F0,
+                stroke: 0x0F172A,
+                strokeThickness: 3,
+                align: 'center',
+            });
+            const speedIcon = new PIXI.Text('SPD', iconStyle);
+            speedIcon.anchor.set(0.5);
+            speedIcon.visible = false;
+            speedIcon.x = -18;
+            const damageIcon = new PIXI.Text('DMG', iconStyle);
+            damageIcon.anchor.set(0.5);
+            damageIcon.visible = false;
+            damageIcon.x = 0;
+            const shieldIcon = new PIXI.Text('SHD', iconStyle);
+            shieldIcon.anchor.set(0.5);
+            shieldIcon.visible = false;
+            shieldIcon.x = 18;
+            statusIconContainer.addChild(speedIcon, damageIcon, shieldIcon);
+            container.addChild(statusIconContainer);
+            container.statusIconContainer = statusIconContainer;
+            container.speedStatusIcon = speedIcon;
+            container.damageStatusIcon = damageIcon;
+            container.shieldStatusIcon = shieldIcon;
+
             const usernameText = new PIXI.BitmapText(player.username || 'Player', {
                 fontName: renderAssetCache.bitmapFontName,
                 fontSize: 12,
@@ -117,6 +167,9 @@ export function createSpriteManager(getCtx) {
         container._lastAliveTransitionState = !!player.alive;
         container._lastShieldCurrent = null;
         container._lastShieldMax = null;
+        container._shieldImpactUntilMs = 0;
+        container._shieldImpactStrength = 0;
+        container._shieldBreakFlashUntilMs = 0;
         container._lastCarryingFlagTeam = 0;
         container._lastFarDetail = null;
         container._lastDenseVisualMode = null;
@@ -142,6 +195,10 @@ export function createSpriteManager(getCtx) {
         if (sprite.weaponSwapEffect) sprite.weaponSwapEffect.visible = false;
         if (sprite.carriedFlagSprite) sprite.carriedFlagSprite.visible = false;
         if (sprite.respawnText) sprite.respawnText.visible = false;
+        if (sprite.reloadArc) sprite.reloadArc.visible = false;
+        if (sprite.statusIconContainer) sprite.statusIconContainer.visible = false;
+        if (sprite.shieldImpactRing) sprite.shieldImpactRing.visible = false;
+        if (sprite.shieldCrackOverlay) sprite.shieldCrackOverlay.visible = false;
     }
 
     function destroyPlayerSprite(playerId) {
@@ -363,6 +420,8 @@ export function createSpriteManager(getCtx) {
             updatePlayerGun(sprite, player);
             updatePlayerHealthBar(sprite, player);
             updateShieldVisual(sprite, player.shield_current || 0, player.shield_max || 0);
+            updatePlayerReloadArc(sprite, player, hideRemoteFxByDensity, farDetailMode);
+            updateStatusEffectIcons(sprite, player, hideRemoteFxByDensity, farDetailMode);
         }
 
         if (!shouldSkipDetailTick && sprite.usernameText && sprite.usernameText.text !== (player.username || 'Player')) {
@@ -537,6 +596,14 @@ export function createSpriteManager(getCtx) {
         const swapPunch = punchRemaining > 0
             ? Math.sin(Math.max(0, Math.min(1, punchProgress)) * Math.PI)
             : 0;
+        const reloadProgress = Math.max(0, Math.min(1, Number(player.reload_progress) || 0));
+        const reloadTilt = reloadProgress > 0 && reloadProgress <= 1
+            ? Math.sin(reloadProgress * Math.PI) * 0.26
+            : 0;
+        const targetGunRotation = (-Math.PI / 2) + reloadTilt;
+        if (Math.abs((Number(gun.rotation) || 0) - targetGunRotation) > 0.001) {
+            gun.rotation = targetGunRotation;
+        }
         const targetScaleX = 1 + swapPunch * 0.2;
         const targetScaleY = 1 - swapPunch * 0.09;
         if (
@@ -552,6 +619,62 @@ export function createSpriteManager(getCtx) {
             }
         }
         sprite._lastDamageBoost = hasDamageBoost;
+    }
+
+    function updatePlayerReloadArc(sprite, player, hideRemoteFxByDensity, farDetailMode) {
+        const ctx = getCtx();
+        const { myPlayerId, frameNowMs } = ctx;
+        const arc = sprite.reloadArc;
+        if (!arc) return;
+        const isLocal = sprite.playerId === myPlayerId;
+        const reloadProgress = Number(player.reload_progress);
+        const active = player.alive && Number.isFinite(reloadProgress) && reloadProgress >= 0 && reloadProgress <= 1;
+        const visible = active && !hideRemoteFxByDensity && !farDetailMode;
+        if (!visible) {
+            if (arc.visible) arc.visible = false;
+            return;
+        }
+        const progress = Math.max(0, Math.min(1, reloadProgress));
+        const pulse = 0.72 + 0.28 * Math.sin(frameNowMs * 0.018);
+        const start = -Math.PI / 2;
+        const end = start + (Math.PI * 2 * progress);
+        arc.visible = true;
+        arc.clear();
+        arc.lineStyle(2.1, isLocal ? 0x67E8F9 : 0xC4B5FD, 0.92 * pulse);
+        arc.arc(0, 0, 14, start, end);
+    }
+
+    function updateStatusEffectIcons(sprite, player, hideRemoteFxByDensity, farDetailMode) {
+        const ctx = getCtx();
+        const { frameNowMs } = ctx;
+        const iconContainer = sprite.statusIconContainer;
+        if (!iconContainer) return;
+        const speedIcon = sprite.speedStatusIcon;
+        const damageIcon = sprite.damageStatusIcon;
+        const shieldIcon = sprite.shieldStatusIcon;
+        if (!speedIcon || !damageIcon || !shieldIcon) return;
+
+        const hasSpeed = Number(player.speed_boost_remaining) > 0.01;
+        const hasDamage = Number(player.damage_boost_remaining) > 0.01;
+        const hasShield = Number(player.invulnerable_remaining) > 0.01;
+        const anyActive = player.alive && (hasSpeed || hasDamage || hasShield);
+        const show = anyActive && !hideRemoteFxByDensity && !farDetailMode;
+        if (!show) {
+            if (iconContainer.visible) iconContainer.visible = false;
+            return;
+        }
+
+        const pulse = 0.72 + 0.28 * Math.sin(frameNowMs * 0.014);
+        iconContainer.visible = true;
+        speedIcon.visible = hasSpeed;
+        damageIcon.visible = hasDamage;
+        shieldIcon.visible = hasShield;
+        speedIcon.tint = 0x22D3EE;
+        damageIcon.tint = 0xF87171;
+        shieldIcon.tint = 0xFDE047;
+        speedIcon.alpha = hasSpeed ? pulse : 0;
+        damageIcon.alpha = hasDamage ? pulse : 0;
+        shieldIcon.alpha = hasShield ? pulse : 0;
     }
 
     function updatePlayerHealthBar(sprite, player) {
@@ -613,9 +736,22 @@ export function createSpriteManager(getCtx) {
 
         if (current <= 0 || max <= 0 || hideByDensity) {
             sprite.shieldVisual.visible = false;
+            if (sprite.shieldImpactRing) sprite.shieldImpactRing.visible = false;
+            if (sprite.shieldCrackOverlay) sprite.shieldCrackOverlay.visible = false;
             sprite._lastShieldCurrent = current;
             sprite._lastShieldMax = max;
             return;
+        }
+
+        const prevShieldCurrent = Number(sprite._lastShieldCurrent);
+        if (Number.isFinite(prevShieldCurrent) && current < prevShieldCurrent) {
+            const maxShield = Math.max(1, Number(max) || 1);
+            const hitStrength = Math.max(0.15, Math.min(1.35, (prevShieldCurrent - current) / maxShield * 5));
+            sprite._shieldImpactUntilMs = frameNowMs + 220;
+            sprite._shieldImpactStrength = hitStrength;
+            if (current <= 0 && prevShieldCurrent > 0) {
+                sprite._shieldBreakFlashUntilMs = frameNowMs + 320;
+            }
         }
 
         const shieldPercent = Math.max(0, Math.min(1, current / max));
@@ -624,6 +760,50 @@ export function createSpriteManager(getCtx) {
         const shimmer = Math.sin(frameNowMs * 0.003) * 0.08;
         sprite.shieldVisual.alpha = 0.18 + shieldPercent * 0.35 + shimmer;
         sprite.shieldVisual.tint = shieldPercent > 0.5 ? 0x00BFFF : 0x60A5FA;
+
+        if (sprite.shieldCrackOverlay) {
+            const crackAlpha = Math.max(0, (1 - shieldPercent) * 0.7);
+            if (crackAlpha > 0.05) {
+                const crack = sprite.shieldCrackOverlay;
+                crack.visible = true;
+                crack.clear();
+                crack.lineStyle(1.2, 0xE0F2FE, crackAlpha);
+                crack.drawCircle(0, 0, PLAYER_RADIUS + 5);
+                for (let i = 0; i < 4; i += 1) {
+                    const angle = ((i * Math.PI * 2) / 4) + (i * 0.35);
+                    const inner = PLAYER_RADIUS - 2;
+                    const outer = PLAYER_RADIUS + 9 + (i % 2) * 3;
+                    crack.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
+                    crack.lineTo(Math.cos(angle + 0.25) * outer, Math.sin(angle + 0.25) * outer);
+                }
+            } else {
+                sprite.shieldCrackOverlay.visible = false;
+            }
+        }
+
+        if (sprite.shieldImpactRing) {
+            const ring = sprite.shieldImpactRing;
+            const remainingMs = Math.max(
+                0,
+                Math.max(
+                    Number(sprite._shieldImpactUntilMs) || 0,
+                    Number(sprite._shieldBreakFlashUntilMs) || 0
+                ) - frameNowMs
+            );
+            if (remainingMs <= 0) {
+                ring.visible = false;
+            } else {
+                const durationMs = (Number(sprite._shieldBreakFlashUntilMs) || 0) > frameNowMs ? 320 : 220;
+                const progress = 1 - (remainingMs / durationMs);
+                const impactStrength = Math.max(0.15, Number(sprite._shieldImpactStrength) || 0.3);
+                const radius = PLAYER_RADIUS + 8 + progress * (18 + impactStrength * 10);
+                const alpha = Math.max(0, (1 - progress) * (0.45 + impactStrength * 0.45));
+                ring.visible = true;
+                ring.clear();
+                ring.lineStyle(2.2 + impactStrength * 1.8, 0xE0F2FE, alpha);
+                ring.drawCircle(0, 0, radius);
+            }
+        }
 
         sprite._lastShieldCurrent = current;
         sprite._lastShieldMax = max;

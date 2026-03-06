@@ -45,8 +45,12 @@ export class GameEvent {
         const offset = this.bb.__offset(this.bb_pos, 14);
         return offset ? this.bb.readFloat32(this.bb_pos + offset) : 0.0;
     }
+    falloffMultiplier() {
+        const offset = this.bb.__offset(this.bb_pos, 16);
+        return offset ? this.bb.readFloat32(this.bb_pos + offset) : 1.0;
+    }
     static startGameEvent(builder) {
-        builder.startObject(6);
+        builder.startObject(7);
     }
     static addEventType(builder, eventType) {
         builder.addFieldInt8(0, eventType, GameEventType.BulletImpact);
@@ -65,6 +69,9 @@ export class GameEvent {
     }
     static addValue(builder, value) {
         builder.addFieldFloat32(5, value, 0.0);
+    }
+    static addFalloffMultiplier(builder, falloffMultiplier) {
+        builder.addFieldFloat32(6, falloffMultiplier, 1.0);
     }
     static endGameEvent(builder) {
         const offset = builder.endObject();

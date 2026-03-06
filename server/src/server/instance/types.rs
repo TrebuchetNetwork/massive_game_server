@@ -185,6 +185,7 @@ pub struct ServerKillFeedEntry {
     pub victim_name: String,
     pub weapon: ServerWeaponType,
     pub is_headshot: bool,
+    pub kill_context: KillContext,
     pub timestamp: u64,
 }
 
@@ -471,6 +472,7 @@ pub struct LiveReplayKillFeedEntry {
     pub victim_name: String,
     pub weapon: String,
     pub is_headshot: bool,
+    pub kill_context: String,
     pub timestamp: u64,
 }
 

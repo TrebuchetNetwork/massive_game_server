@@ -58,7 +58,9 @@ enum GameEventType : byte {
     FlagCaptured = 10,
     TeamPing = 11,
     Killstreak = 12,   // value = streak count (3/5/7+)
-    AssistKill = 13    // value = assist points awarded
+    AssistKill = 13,   // value = assist points awarded
+    ShieldBroken = 14, // shield depleted to zero
+    PowerupExpiring = 15 // value = seconds remaining (typically 3 or 1)
 }
 
 enum ZoneType : byte {
@@ -77,6 +79,14 @@ enum Team : byte {
     Spectator = 0,
     Team1 = 1,
     Team2 = 2
+}
+
+enum KillContext : byte {
+    Normal = 0,
+    Revenge = 1,
+    FirstBlood = 2,
+    Shutdown = 3,
+    LongRange = 4
 }
 
 table MatchStatus {
@@ -201,6 +211,7 @@ table GameEvent {
     target_id: string;     // Player or entity affected by the event (e.g., wall_id for WallDestroyed)
     weapon_type: WeaponType; // Relevant for WeaponFire, BulletImpact
     value: float;          // E.g., damage amount for floating text, radius for explosion
+    falloff_multiplier: float = 1.0; // 1.0 for melee/zone, <1.0 when ranged damage falloff applies
 }
 
 table KillFeedEntry {
@@ -211,6 +222,7 @@ table KillFeedEntry {
     killer_position: Vec2; // For kill cam context
     victim_position: Vec2; // For kill cam context
     is_headshot: bool = false; // Example: if you add headshot mechanics
+    kill_context: KillContext = Normal;
 }
 
 table PlayerInput {

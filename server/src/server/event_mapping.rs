@@ -17,6 +17,8 @@ pub(crate) fn event_position(event: &GameEvent) -> Vec2 {
         GameEvent::FlagReturned { position, .. } => *position,
         GameEvent::FlagCaptured { position, .. } => *position,
         GameEvent::TeamPing { position, .. } => *position,
+        GameEvent::ShieldBroken { position, .. } => *position,
+        GameEvent::PowerupExpiring { position, .. } => *position,
         _ => Vec2::zero(),
     }
 }
@@ -33,6 +35,8 @@ pub(crate) fn event_instigator_id(event: &GameEvent) -> Option<PlayerID> {
         GameEvent::TeamPing { player_id, .. } => Some(player_id.clone()),
         GameEvent::Killstreak { player_id, .. } => Some(player_id.clone()),
         GameEvent::AssistKill { assister_id, .. } => Some(assister_id.clone()),
+        GameEvent::ShieldBroken { player_id, .. } => Some(player_id.clone()),
+        GameEvent::PowerupExpiring { player_id, .. } => Some(player_id.clone()),
         _ => None,
     }
 }
@@ -50,6 +54,7 @@ pub(crate) fn event_target_id(event: &GameEvent) -> Option<String> {
         GameEvent::FlagReturned { flag_team_id, .. } => Some(flag_team_id.to_string()),
         GameEvent::TeamPing { team_id, .. } => Some(team_id.to_string()),
         GameEvent::AssistKill { victim_id, .. } => Some(victim_id.to_string()),
+        GameEvent::PowerupExpiring { powerup, .. } => Some(powerup.clone()),
         _ => None,
     }
 }
@@ -70,7 +75,19 @@ pub(crate) fn event_value(event: &GameEvent) -> Option<f32> {
         GameEvent::WallImpact { damage, .. } => Some(*damage as f32),
         GameEvent::Killstreak { streak, .. } => Some(*streak as f32),
         GameEvent::AssistKill { points, .. } => Some(*points as f32),
+        GameEvent::PowerupExpiring {
+            seconds_remaining, ..
+        } => Some(*seconds_remaining),
         _ => None,
+    }
+}
+
+pub(crate) fn event_falloff_multiplier(event: &GameEvent) -> f32 {
+    match event {
+        GameEvent::PlayerDamaged {
+            falloff_multiplier, ..
+        } => (*falloff_multiplier).clamp(0.0, 1.0),
+        _ => 1.0,
     }
 }
 
@@ -95,6 +112,8 @@ pub(crate) fn map_game_event_type_to_fb(event: &GameEvent) -> Option<fb::GameEve
         GameEvent::TeamPing { .. } => Some(fb::GameEventType::TeamPing),
         GameEvent::Killstreak { .. } => Some(fb::GameEventType::Killstreak),
         GameEvent::AssistKill { .. } => Some(fb::GameEventType::AssistKill),
+        GameEvent::ShieldBroken { .. } => Some(fb::GameEventType::ShieldBroken),
+        GameEvent::PowerupExpiring { .. } => Some(fb::GameEventType::PowerupExpiring),
         // These events currently do not have explicit FlatBuffer variants in game.fbs.
         // Skip serialization rather than misclassifying them as BulletImpact.
         GameEvent::PlayerJoined { .. }

@@ -933,7 +933,8 @@ export function createServerUpdateHandler(getCtx) {
                     timestamp: killFeedRow.timestamp(),
                     killer_position: killerPosition ? { x: killerPosition.x(), y: killerPosition.y() } : null,
                     victim_position: victimPosition ? { x: victimPosition.x(), y: victimPosition.y() } : null,
-                    is_headshot: killFeedRow.isHeadshot()
+                    is_headshot: killFeedRow.isHeadshot(),
+                    kill_context: typeof killFeedRow.killContext === 'function' ? killFeedRow.killContext() : 0,
                 };
             }
             if (writeIdx > 0) {
@@ -997,7 +998,10 @@ export function createServerUpdateHandler(getCtx) {
                     instigator_id: gameEvent.instigatorId(),
                     target_id: gameEvent.targetId(),
                     weapon_type: gameEvent.weaponType(),
-                    value: gameEvent.value()
+                    value: gameEvent.value(),
+                    falloff_multiplier: typeof gameEvent.falloffMultiplier === 'function'
+                        ? gameEvent.falloffMultiplier()
+                        : 1.0,
                 });
             }
         }

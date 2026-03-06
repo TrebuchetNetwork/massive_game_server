@@ -486,11 +486,17 @@ impl MassiveGameServer {
                 let distance =
                     ((hit_x - attacker_pos.x).powi(2) + (hit_y - attacker_pos.y).powi(2)).sqrt();
                 let is_headshot = Self::is_projectile_headshot(&target_state_entry, hit_x, hit_y);
-                let mut damage = crate::systems::combat::weapons::apply_distance_falloff(
+                let damage_after_falloff = crate::systems::combat::weapons::apply_distance_falloff(
                     weapon,
                     effective_base_damage,
                     distance,
                 );
+                let falloff_multiplier = if effective_base_damage > 0 {
+                    (damage_after_falloff as f32 / effective_base_damage as f32).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                let mut damage = damage_after_falloff;
                 if is_headshot {
                     damage = ((damage as f32) * crate::core::constants::HEADSHOT_DAMAGE_MULTIPLIER)
                         .round()
@@ -503,11 +509,13 @@ impl MassiveGameServer {
                 // Apply damage to local tracker first to determine if this hit
                 // causes death, preventing duplicate kill events.
                 let mut remaining_damage = damage;
+                let shield_before = tracker.1;
                 if tracker.1 > 0 {
                     let shield_absorbed = remaining_damage.min(tracker.1);
                     tracker.1 -= shield_absorbed;
                     remaining_damage -= shield_absorbed;
                 }
+                let shield_broken = shield_before > 0 && tracker.1 <= 0;
                 tracker.0 = (tracker.0 - remaining_damage).max(0);
                 let died_from_this_hit = tracker.0 == 0;
                 if died_from_this_hit {
@@ -559,9 +567,19 @@ impl MassiveGameServer {
                         damage,
                         weapon,
                         position: target_pos,
+                        falloff_multiplier,
                     },
                     EventPriority::Normal,
                 );
+                if shield_broken {
+                    self.global_game_events.push(
+                        GameEvent::ShieldBroken {
+                            player_id: target_id.clone(),
+                            position: target_pos,
+                        },
+                        EventPriority::Normal,
+                    );
+                }
 
                 // Only process kill logic if the local tracker determined this
                 // specific hit caused the death. This prevents duplicate kills
@@ -570,6 +588,7 @@ impl MassiveGameServer {
                     // Store flag carry state before clearing it
                     let victim_was_carrying_flag_id = target_state_entry.is_carrying_flag_team_id;
                     let victim_username = target_state_entry.username.clone();
+                    let victim_streak = target_state_entry.current_streak;
 
                     // Clear flag carry state on the victim
                     if victim_was_carrying_flag_id != 0 {
@@ -765,11 +784,21 @@ impl MassiveGameServer {
                         weapon,
                     );
 
-                    self.push_kill_feed_entry(
+                    let kill_context = if self.kill_feed.read().is_empty() {
+                        KillContext::FirstBlood
+                    } else if victim_streak >= 5 {
+                        KillContext::Shutdown
+                    } else if distance >= 520.0 {
+                        KillContext::LongRange
+                    } else {
+                        KillContext::Normal
+                    };
+                    self.push_kill_feed_entry_with_context(
                         killer_username.clone(),
                         victim_username.clone(),
                         weapon,
                         is_headshot,
+                        kill_context,
                     );
 
                     // Handle flag dropping if victim was carrying a flag

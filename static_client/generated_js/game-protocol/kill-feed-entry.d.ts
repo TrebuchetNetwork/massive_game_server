@@ -1,4 +1,5 @@
 import * as flatbuffers from 'flatbuffers';
+import { KillContext } from '../game-protocol/kill-context.js';
 import { Vec2 } from '../game-protocol/vec2.js';
 import { WeaponType } from '../game-protocol/weapon-type.js';
 export declare class KillFeedEntry {
@@ -16,6 +17,7 @@ export declare class KillFeedEntry {
     killerPosition(obj?: Vec2): Vec2 | null;
     victimPosition(obj?: Vec2): Vec2 | null;
     isHeadshot(): boolean;
+    killContext(): KillContext;
     static startKillFeedEntry(builder: flatbuffers.Builder): void;
     static addKillerName(builder: flatbuffers.Builder, killerNameOffset: flatbuffers.Offset): void;
     static addVictimName(builder: flatbuffers.Builder, victimNameOffset: flatbuffers.Offset): void;
@@ -24,6 +26,7 @@ export declare class KillFeedEntry {
     static addKillerPosition(builder: flatbuffers.Builder, killerPositionOffset: flatbuffers.Offset): void;
     static addVictimPosition(builder: flatbuffers.Builder, victimPositionOffset: flatbuffers.Offset): void;
     static addIsHeadshot(builder: flatbuffers.Builder, isHeadshot: boolean): void;
+    static addKillContext(builder: flatbuffers.Builder, killContext: KillContext): void;
     static endKillFeedEntry(builder: flatbuffers.Builder): flatbuffers.Offset;
 }
 //# sourceMappingURL=kill-feed-entry.d.ts.map

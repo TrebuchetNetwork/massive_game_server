@@ -118,6 +118,7 @@ impl MassiveGameServer {
                         died: bool,
                         damage: i32,
                         chain_bonus_applied: bool,
+                        shield_broken: bool,
                         target_position: Vec2,
                         target_username: String,
                         victim_was_carrying_flag_id: u8,
@@ -219,7 +220,10 @@ impl MassiveGameServer {
                                 );
 
                                 // Apply damage and collect necessary data
+                                let prev_shield = target_state.shield_current;
                                 let died = target_state.apply_damage(effective_melee_damage);
+                                let shield_broken =
+                                    prev_shield > 0 && target_state.shield_current <= 0;
                                 let target_position = Vec2::new(target_state.x, target_state.y);
                                 let target_username = target_state.username.clone();
                                 let victim_was_carrying_flag_id = if died {
@@ -238,6 +242,7 @@ impl MassiveGameServer {
                                     died,
                                     damage: effective_melee_damage,
                                     chain_bonus_applied,
+                                    shield_broken,
                                     target_position,
                                     target_username,
                                     victim_was_carrying_flag_id,
@@ -259,6 +264,7 @@ impl MassiveGameServer {
                             let mut counter_damage_applied = 0;
                             let mut parry_impact_position =
                                 Vec2::new(attacker_pos_x, attacker_pos_y);
+                            let mut counter_broke_shield = false;
                             if let Some(mut attacker_state_entry) =
                                 self.player_manager.get_player_state_mut(&attacker_id)
                             {
@@ -271,8 +277,11 @@ impl MassiveGameServer {
                                     && attacker_state.alive
                                     && attacker_state.invulnerable_remaining <= 0.0
                                 {
+                                    let prev_shield = attacker_state.shield_current;
                                     let _ = attacker_state.apply_damage(counter_damage);
                                     counter_damage_applied = counter_damage;
+                                    counter_broke_shield =
+                                        prev_shield > 0 && attacker_state.shield_current <= 0;
                                 }
 
                                 let away_dx = attacker_state.x - defender_position.x;
@@ -322,9 +331,19 @@ impl MassiveGameServer {
                                         damage: counter_damage_applied,
                                         weapon: ServerWeaponType::Melee,
                                         position: parry_impact_position,
+                                        falloff_multiplier: 1.0,
                                     },
                                     EventPriority::Normal,
                                 );
+                                if counter_broke_shield {
+                                    self.global_game_events.push(
+                                        GameEvent::ShieldBroken {
+                                            player_id: attacker_id.clone(),
+                                            position: parry_impact_position,
+                                        },
+                                        EventPriority::Normal,
+                                    );
+                                }
                             }
 
                             self.global_game_events.push(
@@ -346,6 +365,7 @@ impl MassiveGameServer {
                             died,
                             damage,
                             chain_bonus_applied,
+                            shield_broken,
                             target_position,
                             target_username,
                             victim_was_carrying_flag_id,
@@ -385,9 +405,19 @@ impl MassiveGameServer {
                                 damage,
                                 weapon: ServerWeaponType::Melee,
                                 position: target_position,
+                                falloff_multiplier: 1.0,
                             },
                             EventPriority::Normal,
                         );
+                        if shield_broken {
+                            self.global_game_events.push(
+                                GameEvent::ShieldBroken {
+                                    player_id: target_id_arc_nearby.clone(),
+                                    position: target_position,
+                                },
+                                EventPriority::Normal,
+                            );
+                        }
 
                         if died {
                             // Update attacker stats

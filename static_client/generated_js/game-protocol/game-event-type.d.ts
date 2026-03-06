@@ -12,6 +12,8 @@ export declare enum GameEventType {
     FlagCaptured = 10,
     TeamPing = 11,
     Killstreak = 12,
-    AssistKill = 13
+    AssistKill = 13,
+    ShieldBroken = 14,
+    PowerupExpiring = 15
 }
 //# sourceMappingURL=game-event-type.d.ts.map

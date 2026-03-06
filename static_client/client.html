@@ -46,6 +46,10 @@
             <div id="streakAnnouncer" class="streak-announcer"></div>
             <div id="streakMedal" class="streak-medal"></div>
             <div id="objectiveUrgency" class="objective-urgency"></div>
+            <div id="objectiveArrowLayer" class="objective-arrow-layer"></div>
+            <div id="tipsToast" class="tips-toast"></div>
+            <div id="gameModeIntro" class="mode-intro"></div>
+            <div id="boundaryWarning" class="boundary-warning">MAP BOUNDARY</div>
             <div id="combatRadialHud" class="radial-hud">
                 <div id="abilityRadial" class="radial-widget radial-widget--ability">
                     <span id="abilityRadialLabel" class="radial-widget__label">Ability</span>
@@ -602,6 +606,10 @@
         const streakAnnouncerDiv = document.getElementById('streakAnnouncer');
         const streakMedalDiv = document.getElementById('streakMedal');
         const objectiveUrgencyDiv = document.getElementById('objectiveUrgency');
+        const objectiveArrowLayerDiv = document.getElementById('objectiveArrowLayer');
+        const tipsToastDiv = document.getElementById('tipsToast');
+        const gameModeIntroDiv = document.getElementById('gameModeIntro');
+        const boundaryWarningDiv = document.getElementById('boundaryWarning');
         const combatRadialHudDiv = document.getElementById('combatRadialHud');
         const abilityRadialDiv = document.getElementById('abilityRadial');
         const abilityRadialLabelSpan = document.getElementById('abilityRadialLabel');
@@ -1836,8 +1844,12 @@
             streakAnnouncerUntilMs: 0,
             markerUntilMs: 0,
             markerHeadshotUntilMs: 0,
+            markerKillUntilMs: 0,
             lastOptimisticHitAt: 0,
             hitstopUntilMs: 0,
+            tipUntilMs: 0,
+            modeIntroUntilMs: 0,
+            lastBoundaryTipAt: 0,
             objectiveText: '',
             objectiveTone: 'critical',
             objectiveUntilMs: 0,
@@ -1932,6 +1944,14 @@
             eventIndex: 0,
             expiresAt: 0,
         };
+        let worldBoundsState = {
+            minX: 0,
+            minY: 0,
+            maxX: 0,
+            maxY: 0,
+            valid: false,
+            updatedAt: 0,
+        };
         updateMobileControlsVisibility();
 
         // ── Combat feedback module ─────────────────────────────────────
@@ -1945,7 +1965,8 @@
             COMBAT_HEADSHOT_MARKER_MS, COMBAT_HITSTOP_MS, COMBAT_MEDAL_MS, DEATH_RECAP_MS, COMBAT_COMBO_WINDOW_MS,
             COMBAT_EVENT_RETENTION, COMBAT_MOMENTUM_DECAY_PER_SEC, COMBAT_SPEED_DECAY_PER_SEC,
             COMBAT_DAMAGE_DECAY_PER_SEC, COMBAT_SPEED_LINES_ENABLED, OBJECTIVE_URGENCY_REFRESH_MS,
-            TACTICAL_PING_MS, streakAnnouncerDiv, streakMedalDiv, objectiveUrgencyDiv, deathRecapDiv, deathRecapMainDiv,
+            TACTICAL_PING_MS, streakAnnouncerDiv, streakMedalDiv, objectiveUrgencyDiv, objectiveArrowLayerDiv,
+            tipsToastDiv, gameModeIntroDiv, boundaryWarningDiv, deathRecapDiv, deathRecapMainDiv,
             deathRecapDistanceDiv, deathRecapListDiv, combatBannerDiv, combatBannerTextSpan,
             combatOverlayDiv, damageFlashLayerDiv, speedLinesLayerDiv, hitMarkerDiv,
             combatRadialHudDiv, combatMomentumDiv, combatMomentumFillDiv, combatMomentumValueDiv,
@@ -1955,7 +1976,7 @@
             applyScreenShake, createScreenFlash,
             COMBAT_RADIAL_LOW_UPDATE_MS, COMBAT_RADIAL_DENSE_UPDATE_MS, COMBAT_RADIAL_UPDATE_MS,
             COMBAT_RADIAL_LOW_PROGRESS_STEP_DEG, COMBAT_RADIAL_DENSE_PROGRESS_STEP_DEG,
-            COMBAT_RADIAL_PROGRESS_STEP_DEG, tacticalPings, escapeHtml,
+            COMBAT_RADIAL_PROGRESS_STEP_DEG, tacticalPings, hotZoneState, zones, worldBoundsState, escapeHtml,
             getCommanderIdForTeam,
         }));
         const {
@@ -2765,6 +2786,18 @@
             dynamicsTuning, cameraCombatImpulse, mouseWorldPos,
             players, myPlayerId, setObjectiveUrgency, hotZoneState, tacticalPings,
             tacticalPingLabelContainer,
+            setWorldBounds: (bounds) => {
+                if (!bounds || !Number.isFinite(bounds.minX) || !Number.isFinite(bounds.minY) || !Number.isFinite(bounds.maxX) || !Number.isFinite(bounds.maxY)) {
+                    worldBoundsState.valid = false;
+                    return;
+                }
+                worldBoundsState.minX = bounds.minX;
+                worldBoundsState.minY = bounds.minY;
+                worldBoundsState.maxX = bounds.maxX;
+                worldBoundsState.maxY = bounds.maxY;
+                worldBoundsState.valid = bounds.maxX > bounds.minX && bounds.maxY > bounds.minY;
+                worldBoundsState.updatedAt = Date.now();
+            },
             setCameraCombatImpulse: (v) => { cameraCombatImpulse = v; },
             setMinimapWallsCacheDirty: (v) => { minimapWallsCacheDirty = v; },
             setMinimapFlagsCacheDirty: (v) => { minimapFlagsCacheDirty = v; },
@@ -4601,7 +4634,11 @@
             combatUiState.streakAnnouncerUntilMs = 0;
             combatUiState.markerUntilMs = 0;
             combatUiState.markerHeadshotUntilMs = 0;
+            combatUiState.markerKillUntilMs = 0;
             combatUiState.hitstopUntilMs = 0;
+            combatUiState.tipUntilMs = 0;
+            combatUiState.modeIntroUntilMs = 0;
+            combatUiState.lastBoundaryTipAt = 0;
             combatUiState.objectiveText = '';
             combatUiState.objectiveTone = 'critical';
             combatUiState.objectiveUntilMs = 0;
@@ -4623,7 +4660,25 @@
             }
             if (streakMedalDiv) streakMedalDiv.classList.remove('streak-medal--visible');
             if (objectiveUrgencyDiv) objectiveUrgencyDiv.classList.remove('objective-urgency--visible');
-            if (hitMarkerDiv) hitMarkerDiv.classList.remove('hit-marker--visible', 'hit-marker--headshot');
+            if (hitMarkerDiv) hitMarkerDiv.classList.remove('hit-marker--visible', 'hit-marker--headshot', 'hit-marker--kill');
+            if (objectiveArrowLayerDiv) {
+                const nodes = objectiveArrowLayerDiv.children;
+                for (let i = 0; i < nodes.length; i += 1) {
+                    nodes[i].style.display = 'none';
+                }
+            }
+            if (tipsToastDiv) {
+                tipsToastDiv.classList.remove('tips-toast--visible');
+                tipsToastDiv.textContent = '';
+            }
+            if (gameModeIntroDiv) {
+                gameModeIntroDiv.classList.remove('mode-intro--visible');
+                gameModeIntroDiv.textContent = '';
+            }
+            if (boundaryWarningDiv) {
+                boundaryWarningDiv.classList.remove('boundary-warning--visible');
+                boundaryWarningDiv.style.opacity = '';
+            }
             clearDamageDirectionIndicators();
             if (combatMomentumFillDiv) combatMomentumFillDiv.style.transform = 'scaleX(0)';
             if (combatMomentumValueDiv) combatMomentumValueDiv.textContent = 'Momentum 0%';

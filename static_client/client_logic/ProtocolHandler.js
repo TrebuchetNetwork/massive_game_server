@@ -696,7 +696,8 @@ export function createProtocolHandler({
                                 weapon: kf.weapon(), timestamp: kf.timestamp(),
                                 killer_position: killerPosition ? { x: killerPosition.x(), y: killerPosition.y() } : null,
                                 victim_position: victimPosition ? { x: victimPosition.x(), y: victimPosition.y() } : null,
-                                is_headshot: kf.isHeadshot()
+                                is_headshot: kf.isHeadshot(),
+                                kill_context: typeof kf.killContext === 'function' ? kf.killContext() : 0,
                             };
                         }
                         if (writeIdx > 0) { rows.length = writeIdx; deltaStateData.kill_feed = rows; }
@@ -733,7 +734,10 @@ export function createProtocolHandler({
                                 event_type: gameEvent.eventType(),
                                 position: position ? { x: position.x(), y: position.y() } : { x: 0, y: 0 },
                                 instigator_id: gameEvent.instigatorId(), target_id: gameEvent.targetId(),
-                                weapon_type: gameEvent.weaponType(), value: gameEvent.value()
+                                weapon_type: gameEvent.weaponType(), value: gameEvent.value(),
+                                falloff_multiplier: typeof gameEvent.falloffMultiplier === 'function'
+                                    ? gameEvent.falloffMultiplier()
+                                    : 1.0,
                             };
                         }
                         if (writeIdx > 0) { rows.length = writeIdx; deltaStateData.game_events = rows; }

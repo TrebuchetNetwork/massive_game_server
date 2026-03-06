@@ -9,6 +9,297 @@
 export function createCombatFeedback(getCtx) {
     let lastLocalDamageImpactAt = 0;
     const streakPingCooldownByPlayer = new Map();
+    const TIP_STORAGE_KEY = 'mgs_first_time_tips_v1';
+    const tipFlags = (() => {
+        try {
+            const raw = sessionStorage.getItem(TIP_STORAGE_KEY);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return new Set(Array.isArray(parsed) ? parsed : []);
+        } catch (_) {
+            return new Set();
+        }
+    })();
+    let lastModeIntroActive = false;
+    const objectiveArrowPool = [];
+
+    function persistTipFlags() {
+        try {
+            sessionStorage.setItem(TIP_STORAGE_KEY, JSON.stringify(Array.from(tipFlags.values()).slice(-24)));
+        } catch (_) {}
+    }
+
+    function showTipOnce(tipKey, message, durationMs = 5000) {
+        const ctx = getCtx();
+        if (!tipKey || !message) return;
+        if (tipFlags.has(tipKey)) return;
+        tipFlags.add(tipKey);
+        persistTipFlags();
+        if (!ctx.tipsToastDiv) return;
+        if (!ctx.combatUiState.tipDismissBound) {
+            ctx.tipsToastDiv.addEventListener('click', () => {
+                const liveCtx = getCtx();
+                liveCtx.combatUiState.tipUntilMs = 0;
+                if (liveCtx.tipsToastDiv) {
+                    liveCtx.tipsToastDiv.classList.remove('tips-toast--visible');
+                }
+            });
+            ctx.combatUiState.tipDismissBound = true;
+        }
+        ctx.tipsToastDiv.textContent = String(message);
+        ctx.combatUiState.tipUntilMs = Date.now() + Math.max(1800, Number(durationMs) || 5000);
+        ctx.tipsToastDiv.classList.add('tips-toast--visible');
+    }
+
+    function ensureObjectiveArrowPool(size) {
+        const ctx = getCtx();
+        if (!ctx.objectiveArrowLayerDiv) return;
+        while (objectiveArrowPool.length < size) {
+            const arrow = document.createElement('div');
+            arrow.className = 'objective-arrow';
+            const glyph = document.createElement('span');
+            glyph.className = 'objective-arrow__glyph';
+            glyph.textContent = '▲';
+            const label = document.createElement('span');
+            label.className = 'objective-arrow__label';
+            const distance = document.createElement('span');
+            distance.className = 'objective-arrow__distance';
+            arrow.appendChild(glyph);
+            arrow.appendChild(label);
+            arrow.appendChild(distance);
+            ctx.objectiveArrowLayerDiv.appendChild(arrow);
+            objectiveArrowPool.push({ el: arrow, glyph, label, distance });
+        }
+    }
+
+    function hideObjectiveArrows() {
+        for (let i = 0; i < objectiveArrowPool.length; i += 1) {
+            const item = objectiveArrowPool[i];
+            if (item?.el) item.el.style.display = 'none';
+        }
+    }
+
+    function worldToScreenPoint(x, y) {
+        const ctx = getCtx();
+        if (!ctx.gameScene || !ctx.app || !ctx.PIXI) return null;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        const point = ctx.gameScene.toGlobal(new ctx.PIXI.Point(x, y));
+        if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+        return point;
+    }
+
+    function updateObjectiveArrows(compactMode = false) {
+        const ctx = getCtx();
+        if (!ctx.objectiveArrowLayerDiv || !ctx.localPlayerState || !ctx.app) return;
+        const localX = Number(ctx.localPlayerState.render_x ?? ctx.localPlayerState.x);
+        const localY = Number(ctx.localPlayerState.render_y ?? ctx.localPlayerState.y);
+        if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
+            hideObjectiveArrows();
+            return;
+        }
+
+        const maxTargets = compactMode ? 2 : 3;
+        const targets = [];
+        const gameMode = Number(ctx.matchInfo?.game_mode);
+        if (gameMode === ctx.GP.GameModeType.CaptureTheFlag) {
+            const myTeamId = Number(ctx.localPlayerState.team_id) || 0;
+            const enemyTeamId = myTeamId === 1 ? 2 : (myTeamId === 2 ? 1 : 0);
+            const myFlag = myTeamId ? ctx.flagStates.get(myTeamId) : null;
+            const enemyFlag = enemyTeamId ? ctx.flagStates.get(enemyTeamId) : null;
+            if (enemyFlag?.position) {
+                targets.push({
+                    x: Number(enemyFlag.position.x),
+                    y: Number(enemyFlag.position.y),
+                    label: enemyFlag.status === ctx.GP.FlagStatus.Carried ? 'ENEMY FLAG (C)' : 'ENEMY FLAG',
+                    tone: 'critical',
+                });
+            }
+            if (myFlag?.status === ctx.GP.FlagStatus.Dropped && myFlag.position) {
+                targets.push({
+                    x: Number(myFlag.position.x),
+                    y: Number(myFlag.position.y),
+                    label: 'RECOVER FLAG',
+                    tone: 'positive',
+                });
+            }
+        }
+        if (ctx.hotZoneState?.active) {
+            targets.push({
+                x: Number(ctx.hotZoneState.centerX),
+                y: Number(ctx.hotZoneState.centerY),
+                label: 'HOT ZONE',
+                tone: 'critical',
+            });
+        }
+
+        if (targets.length === 0) {
+            hideObjectiveArrows();
+            return;
+        }
+
+        const selected = targets
+            .filter((t) => Number.isFinite(t.x) && Number.isFinite(t.y))
+            .map((t) => {
+                const dx = t.x - localX;
+                const dy = t.y - localY;
+                return { ...t, distance: Math.hypot(dx, dy) };
+            })
+            .sort((a, b) => a.distance - b.distance)
+            .slice(0, maxTargets);
+
+        ensureObjectiveArrowPool(selected.length);
+        const centerX = ctx.app.screen.width * 0.5;
+        const centerY = ctx.app.screen.height * 0.5;
+        const margin = compactMode ? 44 : 54;
+        const maxX = ctx.app.screen.width - margin;
+        const maxY = ctx.app.screen.height - margin;
+        const minX = margin;
+        const minY = margin;
+
+        let visibleCount = 0;
+        for (let i = 0; i < selected.length; i += 1) {
+            const target = selected[i];
+            const item = objectiveArrowPool[i];
+            if (!item?.el || !item.glyph || !item.label || !item.distance) continue;
+            const projected = worldToScreenPoint(target.x, target.y);
+            if (!projected) {
+                item.el.style.display = 'none';
+                continue;
+            }
+            const onScreen =
+                projected.x >= minX &&
+                projected.x <= maxX &&
+                projected.y >= minY &&
+                projected.y <= maxY;
+            if (onScreen) {
+                item.el.style.display = 'none';
+                continue;
+            }
+            const dx = projected.x - centerX;
+            const dy = projected.y - centerY;
+            const angle = Math.atan2(dy, dx);
+            const radiusX = Math.max(30, centerX - margin);
+            const radiusY = Math.max(30, centerY - margin);
+            const t = 1 / Math.max(
+                Math.abs(dx) / radiusX || 1e-5,
+                Math.abs(dy) / radiusY || 1e-5
+            );
+            const px = centerX + dx * t;
+            const py = centerY + dy * t;
+            item.el.style.display = 'flex';
+            item.el.style.transform = `translate(${Math.round(px)}px, ${Math.round(py)}px)`;
+            item.glyph.style.transform = `rotate(${((angle * 180 / Math.PI) + 90).toFixed(1)}deg)`;
+            item.el.classList.toggle('objective-arrow--critical', target.tone === 'critical');
+            item.el.classList.toggle('objective-arrow--positive', target.tone !== 'critical');
+            item.label.textContent = target.label;
+            item.distance.textContent = `${Math.round(target.distance)}u`;
+            visibleCount += 1;
+        }
+        for (let i = visibleCount; i < objectiveArrowPool.length; i += 1) {
+            if (objectiveArrowPool[i]?.el) objectiveArrowPool[i].el.style.display = 'none';
+        }
+    }
+
+    function updateBoundaryWarning(currentTime) {
+        const ctx = getCtx();
+        if (!ctx.boundaryWarningDiv || !ctx.worldBoundsState?.valid || !ctx.localPlayerState) return;
+        const px = Number(ctx.localPlayerState.render_x ?? ctx.localPlayerState.x);
+        const py = Number(ctx.localPlayerState.render_y ?? ctx.localPlayerState.y);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) {
+            ctx.boundaryWarningDiv.classList.remove('boundary-warning--visible');
+            return;
+        }
+        const minX = Number(ctx.worldBoundsState.minX);
+        const minY = Number(ctx.worldBoundsState.minY);
+        const maxX = Number(ctx.worldBoundsState.maxX);
+        const maxY = Number(ctx.worldBoundsState.maxY);
+        if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+            ctx.boundaryWarningDiv.classList.remove('boundary-warning--visible');
+            return;
+        }
+        const distance = Math.min(
+            Math.abs(px - minX),
+            Math.abs(maxX - px),
+            Math.abs(py - minY),
+            Math.abs(maxY - py),
+        );
+        if (distance <= 80) {
+            const urgency = ctx.clamp(1 - (distance / 80), 0, 1);
+            ctx.boundaryWarningDiv.classList.add('boundary-warning--visible');
+            ctx.boundaryWarningDiv.style.opacity = String((0.45 + urgency * 0.55).toFixed(3));
+            ctx.boundaryWarningDiv.textContent = distance <= 26 ? 'TURN BACK' : 'MAP BOUNDARY';
+            if (distance <= 18 && (currentTime - (ctx.combatUiState.lastBoundaryTipAt || 0)) > 5000) {
+                ctx.combatUiState.lastBoundaryTipAt = currentTime;
+                showTipOnce('boundary_warning', 'Map edge reached. Turn back to avoid getting trapped.');
+            }
+        } else {
+            ctx.boundaryWarningDiv.classList.remove('boundary-warning--visible');
+        }
+    }
+
+    function updateFirstTimeTips(currentTime) {
+        const ctx = getCtx();
+        if (!ctx.localPlayerState) return;
+        if (ctx.tipsToastDiv) {
+            const visible = Number(ctx.combatUiState.tipUntilMs) > currentTime;
+            ctx.tipsToastDiv.classList.toggle('tips-toast--visible', visible);
+        }
+
+        if (Number(ctx.localPlayerState.reload_progress) > 0.01) {
+            showTipOnce('reload_manual', 'Reloading: press R to top up before re-engaging.');
+        }
+
+        if (Array.isArray(ctx.zones) || ctx.zones?.size) {
+            const zoneValues = Array.isArray(ctx.zones) ? ctx.zones : Array.from(ctx.zones.values());
+            const px = Number(ctx.localPlayerState.render_x ?? ctx.localPlayerState.x);
+            const py = Number(ctx.localPlayerState.render_y ?? ctx.localPlayerState.y);
+            for (let i = 0; i < zoneValues.length; i += 1) {
+                const z = zoneValues[i];
+                if (!z) continue;
+                const zx = Number(z.x);
+                const zy = Number(z.y);
+                const zw = Number(z.width);
+                const zh = Number(z.height);
+                if (!Number.isFinite(zx) || !Number.isFinite(zy) || !Number.isFinite(zw) || !Number.isFinite(zh)) continue;
+                const inside = px >= zx && px <= (zx + zw) && py >= zy && py <= (zy + zh);
+                if (!inside) continue;
+                if (Number(z.zone_type) === ctx.GP.ZoneType.SlowZone) {
+                    showTipOnce('zone_slow', 'Slow Zone: movement is reduced while inside.');
+                } else if (Number(z.zone_type) === ctx.GP.ZoneType.DamageZone) {
+                    showTipOnce('zone_damage', 'Damage Zone: leave quickly to avoid constant damage.');
+                } else if (Number(z.zone_type) === ctx.GP.ZoneType.BoostPad) {
+                    showTipOnce('zone_boost', 'Boost Pad: step through it for a burst of speed.');
+                }
+                break;
+            }
+        }
+    }
+
+    function updateModeIntroOverlay(currentTime) {
+        const ctx = getCtx();
+        if (!ctx.gameModeIntroDiv || !ctx.matchInfo) return;
+        const isActive = Number(ctx.matchInfo.match_state) === Number(ctx.GP.MatchStateType.Active);
+        if (isActive && !lastModeIntroActive) {
+            let introText = '';
+            if (ctx.matchInfo.game_mode === ctx.GP.GameModeType.FreeForAll) {
+                introText = 'FFA: Eliminate opponents. Highest score wins.';
+            } else if (ctx.matchInfo.game_mode === ctx.GP.GameModeType.TeamDeathmatch) {
+                introText = 'TDM: Coordinate with your team and outscore the enemy.';
+            } else if (ctx.matchInfo.game_mode === ctx.GP.GameModeType.CaptureTheFlag) {
+                introText = 'CTF: Steal the enemy flag and return it to base (+100).';
+            }
+            if (introText) {
+                ctx.gameModeIntroDiv.textContent = introText;
+                ctx.combatUiState.modeIntroUntilMs = currentTime + 3000;
+                ctx.gameModeIntroDiv.classList.add('mode-intro--visible');
+            }
+        }
+        lastModeIntroActive = isActive;
+        if (Number(ctx.combatUiState.modeIntroUntilMs) > currentTime) {
+            ctx.gameModeIntroDiv.classList.add('mode-intro--visible');
+        } else {
+            ctx.gameModeIntroDiv.classList.remove('mode-intro--visible');
+        }
+    }
 
     function getCombatUiQualityMode() {
         const ctx = getCtx();
@@ -399,8 +690,13 @@ export function createCombatFeedback(getCtx) {
     function registerCombatEventFeedback(event) {
         const ctx = getCtx();
         if (!ctx.EXCITEMENT_UI_ENABLED || !event) return;
+        const EVENT_SHIELD_BROKEN = ctx.GP?.GameEventType?.ShieldBroken ?? 14;
+        const EVENT_POWERUP_EXPIRING = ctx.GP?.GameEventType?.PowerupExpiring ?? 15;
         if (event.event_type === ctx.GP.GameEventType.FlagGrabbed) {
             setObjectiveUrgency('Flag stolen - collapse now', 'critical', 1100);
+            if (event.instigator_id === ctx.myPlayerId) {
+                showTipOnce('flag_capture_flow', 'You grabbed the flag. Return to your base to score.');
+            }
             return;
         }
         if (event.event_type === ctx.GP.GameEventType.FlagCaptured) {
@@ -527,12 +823,26 @@ export function createCombatFeedback(getCtx) {
             }
             return;
         }
+        if (event.event_type === EVENT_SHIELD_BROKEN) {
+            if (event.target_id === ctx.myPlayerId || event.instigator_id === ctx.myPlayerId) {
+                setObjectiveUrgency('Shield broken!', 'critical', 900);
+            }
+            return;
+        }
+        if (event.event_type === EVENT_POWERUP_EXPIRING) {
+            if (event.instigator_id === ctx.myPlayerId) {
+                const seconds = Math.max(0, Number(event.value) || 0);
+                setObjectiveUrgency(`Powerup ending in ${Math.max(1, Math.ceil(seconds))}s`, 'critical', 900);
+            }
+            return;
+        }
         if (event.event_type !== ctx.GP.GameEventType.PlayerDamageEffect) return;
 
         const sourcePlayer = event.instigator_id ? ctx.players.get(event.instigator_id) : null;
         const targetPlayer = event.target_id ? ctx.players.get(event.target_id) : null;
 
         if (event.target_id === ctx.myPlayerId) {
+            showTipOnce('damage_direction', 'Incoming damage arrows point to the attacker.');
             const sourceX = sourcePlayer?.x ?? Number(event.position?.x);
             const sourceY = sourcePlayer?.y ?? Number(event.position?.y);
             addDamageDirectionIndicator(sourceX, sourceY, 1);
@@ -582,6 +892,10 @@ export function createCombatFeedback(getCtx) {
         }
         if (event.instigator_id === ctx.myPlayerId && event.target_id && event.target_id !== ctx.myPlayerId) {
             triggerHitMarker(false);
+            const falloffMultiplier = Number(event.falloff_multiplier);
+            if (Number.isFinite(falloffMultiplier) && falloffMultiplier < 0.8) {
+                setObjectiveUrgency(`LONG RANGE x${falloffMultiplier.toFixed(2)}`, 'positive', 820);
+            }
             if (targetPlayer && targetPlayer.position) {
                 ctx.combatUiState.speedPulse = Math.min(1, ctx.combatUiState.speedPulse + 0.03);
             }
@@ -636,13 +950,33 @@ export function createCombatFeedback(getCtx) {
                 ctx.combatUiState.comboExpiresAt = now + ctx.COMBAT_COMBO_WINDOW_MS;
                 ctx.combatUiState.momentum = Math.min(1, ctx.combatUiState.momentum + 0.18 + Math.min(0.14, ctx.combatUiState.localKillStreak * 0.02));
                 ctx.combatUiState.speedPulse = Math.min(1, ctx.combatUiState.speedPulse + 0.22);
+                ctx.combatUiState.markerKillUntilMs = now + 170;
+                showTipOnce('first_kill', 'Eliminations build streak momentum and bonus points.');
+                if (ctx.audioManager && ctx.gameSettings?.soundEnabled) {
+                    ctx.audioManager.playSound('killConfirm', null, entry.is_headshot ? 0.46 : 0.38, {
+                        prioritizeLocal: true,
+                        bypassLimiter: true,
+                        pitchJitter: 0.03,
+                    });
+                }
+                const victimX = Number(entry?.victim_position?.x);
+                const victimY = Number(entry?.victim_position?.y);
+                if (
+                    Number.isFinite(victimX) &&
+                    Number.isFinite(victimY) &&
+                    ctx.effectsManager &&
+                    typeof ctx.effectsManager.createKillConfirmationMarker === 'function'
+                ) {
+                    ctx.effectsManager.createKillConfirmationMarker(
+                        { x: victimX, y: victimY },
+                        { isHeadshot: !!entry.is_headshot }
+                    );
+                }
                 if (entry.is_headshot) {
                     triggerHitMarker(true);
                     showCombatBanner('Headshot', 'headshot', 1100);
                     showStreakMedal('Headshot');
                     setObjectiveUrgency('CRIT +50', 'positive', 850);
-                    const victimX = Number(entry?.victim_position?.x);
-                    const victimY = Number(entry?.victim_position?.y);
                     if (
                         Number.isFinite(victimX) &&
                         Number.isFinite(victimY) &&
@@ -726,8 +1060,12 @@ export function createCombatFeedback(getCtx) {
             ctx.streakAnnouncerDiv.classList.remove('streak-announcer--visible');
             ctx.streakMedalDiv.classList.remove('streak-medal--visible');
             ctx.objectiveUrgencyDiv.classList.remove('objective-urgency--visible');
-            ctx.hitMarkerDiv.classList.remove('hit-marker--visible', 'hit-marker--headshot');
+            ctx.hitMarkerDiv.classList.remove('hit-marker--visible', 'hit-marker--headshot', 'hit-marker--kill');
             clearDamageDirectionIndicators();
+            hideObjectiveArrows();
+            if (ctx.tipsToastDiv) ctx.tipsToastDiv.classList.remove('tips-toast--visible');
+            if (ctx.gameModeIntroDiv) ctx.gameModeIntroDiv.classList.remove('mode-intro--visible');
+            if (ctx.boundaryWarningDiv) ctx.boundaryWarningDiv.classList.remove('boundary-warning--visible');
             if (ctx.combatRadialHudDiv) ctx.combatRadialHudDiv.style.opacity = '0';
             if (ctx.combatUiState.radialHudCache) {
                 const c = ctx.combatUiState.radialHudCache;
@@ -820,6 +1158,7 @@ export function createCombatFeedback(getCtx) {
         const hitMarkerVisible = ctx.combatUiState.markerUntilMs > currentTime;
         ctx.hitMarkerDiv.classList.toggle('hit-marker--visible', hitMarkerVisible);
         ctx.hitMarkerDiv.classList.toggle('hit-marker--headshot', ctx.combatUiState.markerHeadshotUntilMs > currentTime);
+        ctx.hitMarkerDiv.classList.toggle('hit-marker--kill', ctx.combatUiState.markerKillUntilMs > currentTime);
 
         const medalVisible = ctx.combatUiState.medalUntilMs > currentTime && !!ctx.combatUiState.medalText;
         if (medalVisible) ctx.streakMedalDiv.textContent = ctx.combatUiState.medalText;
@@ -830,6 +1169,10 @@ export function createCombatFeedback(getCtx) {
         renderDamageDirectionIndicators(activeIndicators, currentTime, compactCombatUi);
 
         updateObjectiveUrgency(currentTime);
+        updateObjectiveArrows(compactCombatUi);
+        updateBoundaryWarning(currentTime);
+        updateModeIntroOverlay(currentTime);
+        updateFirstTimeTips(currentTime);
 
         if (ctx.deathRecapDiv) {
             ctx.deathRecapDiv.classList.toggle('death-recap--visible', ctx.combatUiState.deathRecapUntilMs > currentTime);

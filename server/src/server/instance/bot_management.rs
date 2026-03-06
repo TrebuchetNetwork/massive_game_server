@@ -213,12 +213,30 @@ impl MassiveGameServer {
         weapon: ServerWeaponType,
         is_headshot: bool,
     ) {
+        self.push_kill_feed_entry_with_context(
+            killer_name,
+            victim_name,
+            weapon,
+            is_headshot,
+            KillContext::Normal,
+        );
+    }
+
+    pub(super) fn push_kill_feed_entry_with_context(
+        &self,
+        killer_name: String,
+        victim_name: String,
+        weapon: ServerWeaponType,
+        is_headshot: bool,
+        kill_context: KillContext,
+    ) {
         let mut kill_feed_guard = self.kill_feed.write();
         kill_feed_guard.push_back(ServerKillFeedEntry {
             killer_name,
             victim_name,
             weapon,
             is_headshot,
+            kill_context,
             timestamp: self.frame_counter.load(AtomicOrdering::Relaxed),
         });
         if kill_feed_guard.len() > MAX_KILL_FEED_HISTORY {

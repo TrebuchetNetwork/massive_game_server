@@ -4,6 +4,7 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { KillContext } from '../game-protocol/kill-context.js';
 import { Vec2 } from '../game-protocol/vec2.js';
 import { WeaponType } from '../game-protocol/weapon-type.js';
 
@@ -65,8 +66,13 @@ isHeadshot():boolean {
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
+killContext():KillContext {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readInt8(this.bb_pos + offset) : KillContext.Normal;
+}
+
 static startKillFeedEntry(builder:flatbuffers.Builder) {
-  builder.startObject(7);
+  builder.startObject(8);
 }
 
 static addKillerName(builder:flatbuffers.Builder, killerNameOffset:flatbuffers.Offset) {
@@ -95,6 +101,10 @@ static addVictimPosition(builder:flatbuffers.Builder, victimPositionOffset:flatb
 
 static addIsHeadshot(builder:flatbuffers.Builder, isHeadshot:boolean) {
   builder.addFieldInt8(6, +isHeadshot, +false);
+}
+
+static addKillContext(builder:flatbuffers.Builder, killContext:KillContext) {
+  builder.addFieldInt8(7, killContext, KillContext.Normal);
 }
 
 static endKillFeedEntry(builder:flatbuffers.Builder):flatbuffers.Offset {

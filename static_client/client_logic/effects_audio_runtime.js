@@ -812,12 +812,15 @@ const pos = {
     x: Number(event?.position?.x) || 0,
     y: Number(event?.position?.y) || 0
 };
+const GAME_EVENT_SHIELD_BROKEN = GP?.GameEventType?.ShieldBroken ?? 14;
+const GAME_EVENT_POWERUP_EXPIRING = GP?.GameEventType?.PowerupExpiring ?? 15;
 switch (event.event_type) {
     case GP.GameEventType.BulletImpact:
         if (!this.shouldEmitEffect('impact')) break;
         this.createEnhancedBulletImpact(pos, event.weapon_type);
         if (this.audioManager) {
             this.audioManager.playSound('bulletImpact', pos, 0.5);
+            this.audioManager.registerCombatEventIntensity(0.12);
         }
         break;
     case GP.GameEventType.WallImpact:
@@ -825,6 +828,7 @@ switch (event.event_type) {
         this.createEnhancedBulletImpact(pos, event.weapon_type);
         if (this.audioManager) {
             this.audioManager.playSound('bulletImpact', pos, 0.5);
+            this.audioManager.registerCombatEventIntensity(0.1);
         }
         break;
     case GP.GameEventType.Explosion:
@@ -832,6 +836,7 @@ switch (event.event_type) {
         this.createEnhancedExplosion(pos, event.value);
         if (this.audioManager) {
             this.audioManager.playSound('explosion', pos);
+            this.audioManager.registerCombatEventIntensity(0.45);
         }
         break;
     case GP.GameEventType.WeaponFire:
@@ -860,14 +865,18 @@ switch (event.event_type) {
         } else {
             if (!this.shouldEmitEffect('muzzle')) break;
             this.createEnhancedMuzzleFlash(pos, event.weapon_type, event.instigator_id);
+            if (event.weapon_type === GP.WeaponType.Sniper) {
+                this.createSniperTrailEffect(pos, event.instigator_id);
+            }
         }
         if (this.audioManager) {
             this.audioManager.playWeaponSound(event.weapon_type, pos, event.instigator_id === myPlayerId);
+            this.audioManager.registerCombatEventIntensity(event.weapon_type === GP.WeaponType.Sniper ? 0.36 : 0.24);
         }
         break;
     case GP.GameEventType.PlayerDamageEffect:
         // Determine damage type based on event context
-        let damageType = 'enemy'; // default
+        let damageType = 'enemy';
         const targetIdString = event.target_id != null ? String(event.target_id) : '';
         const localIdString = myPlayerId != null ? String(myPlayerId) : '';
         if (event.instigator_id && event.target_id) {
@@ -875,16 +884,12 @@ switch (event.event_type) {
             const target = players.get(event.target_id);
             if (instigator && target && localPlayerState) {
                 if (target.id === myPlayerId) {
-                    // Damage received by local player
                     damageType = (instigator.team_id === target.team_id && instigator.team_id !== 0) ? 'friendlyFireReceived' : 'enemyReceived';
                 } else if (instigator.id === myPlayerId) {
-                    // Damage dealt by local player
                     damageType = (instigator.team_id === target.team_id && instigator.team_id !== 0) ? 'friendlyFireDealt' : 'enemyDealt';
                 } else if (localPlayerState.team_id !== 0 && instigator.team_id === localPlayerState.team_id && target.team_id !== localPlayerState.team_id) {
-                    // Teammate damaging enemy - also green (beneficial for our team)
                     damageType = 'enemyDealt';
                 } else if (instigator.team_id === target.team_id && instigator.team_id !== 0 && instigator.team_id !== localPlayerState.team_id) {
-                    // Enemy team friendly fire (their team damaging their own teammates)
                     damageType = 'enemyFriendlyFire';
                 }
             }
@@ -896,7 +901,6 @@ switch (event.event_type) {
             localIdString &&
             targetIdString === localIdString
         ) {
-            // Local damage should feel punchy but remain bounded for readability.
             const incomingDamage = Number(event.value);
             const effectiveDamage =
                 Number.isFinite(incomingDamage) && incomingDamage > 0
@@ -906,10 +910,35 @@ switch (event.event_type) {
                 const shakeIntensity = Math.min(140, 18 + effectiveDamage * 2.2);
                 const shakeFrames = Math.min(9, 2 + Math.round(effectiveDamage / 14));
                 applyScreenShake(gameScene, shakeIntensity, shakeFrames);
+                const attacker = event.instigator_id ? players.get(event.instigator_id) : null;
+                this.createKnockbackImpactEffect(
+                    pos,
+                    {
+                        sourceX: Number(attacker?.x),
+                        sourceY: Number(attacker?.y),
+                        strength: Math.min(1.3, 0.3 + effectiveDamage / 80),
+                    }
+                );
+            }
+        }
+        if (
+            event.weapon_type === GP.WeaponType.Sniper &&
+            event.instigator_id &&
+            event.target_id &&
+            event.instigator_id !== event.target_id
+        ) {
+            const attacker = players.get(event.instigator_id);
+            if (attacker && Number.isFinite(attacker.x) && Number.isFinite(attacker.y)) {
+                this.createSniperTrailEffect(
+                    { x: Number(attacker.x), y: Number(attacker.y) },
+                    event.instigator_id,
+                    pos
+                );
             }
         }
         if (this.audioManager) {
             this.audioManager.playSound('playerHit', pos);
+            this.audioManager.registerCombatEventIntensity(0.28);
         }
         break;
     case GP.GameEventType.WallDestroyed:
@@ -917,6 +946,7 @@ switch (event.event_type) {
         this.createEnhancedWallDestructionEffect(pos);
         if (this.audioManager) {
             this.audioManager.playSound('explosion', pos, 0.7);
+            this.audioManager.registerCombatEventIntensity(0.3);
         }
         break;
     case GP.GameEventType.PowerupActivated:
@@ -924,6 +954,18 @@ switch (event.event_type) {
         this.createEnhancedPowerupCollectEffect(pos);
         if (this.audioManager) {
             this.audioManager.playSound('powerupCollect', pos);
+        }
+        break;
+    case GAME_EVENT_SHIELD_BROKEN:
+        this.createShieldBreakEffect(pos);
+        if (this.audioManager) {
+            this.audioManager.playSound('shieldBreak', pos, 0.78);
+        }
+        break;
+    case GAME_EVENT_POWERUP_EXPIRING:
+        this.createPowerupExpiringEffect(pos, event);
+        if (this.audioManager) {
+            this.audioManager.playSound('powerupWarning', pos, 0.42, { prioritizeLocal: event.instigator_id === myPlayerId });
         }
         break;
     case GP.GameEventType.FlagCaptured:
@@ -937,12 +979,163 @@ switch (event.event_type) {
         if (this.audioManager) this.audioManager.playSound('flagGrabbed', pos, 0.6);
         break;
     case GP.GameEventType.FlagDropped:
-         if (this.audioManager) this.audioManager.playSound('flagDropped', pos, 0.5);
+        if (this.audioManager) this.audioManager.playSound('flagDropped', pos, 0.5);
         break;
     case GP.GameEventType.FlagReturned:
         if (this.audioManager) this.audioManager.playSound('flagReturned', pos, 0.7);
         break;
 }
+    }
+
+    createShieldBreakEffect(position) {
+if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return;
+const loadTier = this.getLoadTier();
+const ring = new PIXI.Graphics();
+ring.position.set(position.x, position.y);
+ring.lineStyle(3.2, 0x7DD3FC, 0.95);
+ring.drawCircle(0, 0, 14);
+this.effectsContainer.addChild(ring);
+this.animateEffect(ring, {
+    duration: this.scaleDuration(280, 130),
+    onUpdate: (progress) => {
+        ring.clear();
+        ring.lineStyle(3 - progress * 2.2, 0xBAE6FD, 0.9 * (1 - progress));
+        ring.drawCircle(0, 0, 14 + progress * 36);
+    },
+    onComplete: () => ring.destroy()
+});
+
+let shardCount = this.scaleEffectCount(10, 4);
+if (loadTier >= 2) shardCount = Math.max(4, Math.floor(shardCount * 0.6));
+for (let i = 0; i < shardCount; i += 1) {
+    const shard = new PIXI.Sprite(this.particleTextures.spark);
+    shard.anchor.set(0.5);
+    shard.position.set(position.x, position.y);
+    shard.tint = i % 2 === 0 ? 0xE0F2FE : 0x7DD3FC;
+    shard.scale.set(0.4 + Math.random() * 0.4);
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2.5 + Math.random() * 4.2;
+    const vx = Math.cos(angle) * speed;
+    const vy = Math.sin(angle) * speed;
+    this.effectsContainer.addChild(shard);
+    this.animateEffect(shard, {
+        duration: this.scaleDuration(280 + Math.random() * 120, 120),
+        onUpdate: (progress) => {
+            shard.x += vx * (1 - progress * 0.4);
+            shard.y += vy * (1 - progress * 0.4);
+            shard.alpha = 0.9 * (1 - progress);
+        },
+        onComplete: () => shard.destroy()
+    });
+}
+    }
+
+    createPowerupExpiringEffect(position, event = null) {
+if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return;
+const seconds = Math.max(0, Number(event?.value) || 0);
+const warningColor = seconds <= 1.1 ? 0xF87171 : 0xFBBF24;
+const pulse = new PIXI.Graphics();
+pulse.position.set(position.x, position.y);
+pulse.beginFill(warningColor, 0.22);
+pulse.drawCircle(0, 0, 16);
+pulse.endFill();
+this.effectsContainer.addChild(pulse);
+this.animateEffect(pulse, {
+    duration: this.scaleDuration(360, 180),
+    onUpdate: (progress) => {
+        pulse.scale.set(1 + progress * 2.3);
+        pulse.alpha = 0.42 * (1 - progress);
+    },
+    onComplete: () => pulse.destroy()
+});
+    }
+
+    createKillConfirmationMarker(position, options = null) {
+if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return;
+if (!this.shouldEmitEffect('impact')) return;
+const isHeadshot = !!options?.isHeadshot;
+const mark = new PIXI.Text(isHeadshot ? 'CRIT' : 'ELIM', {
+    fontFamily: 'Arial',
+    fontSize: isHeadshot ? 16 : 14,
+    fill: isHeadshot ? 0xFDE68A : 0xF8FAFC,
+    fontWeight: '700',
+    stroke: isHeadshot ? 0x92400E : 0x111827,
+    strokeThickness: 3,
+    dropShadow: true,
+    dropShadowColor: isHeadshot ? 0xF59E0B : 0x38BDF8,
+    dropShadowBlur: 6,
+    dropShadowDistance: 0,
+});
+mark.anchor.set(0.5);
+mark.position.set(position.x, position.y - 10);
+mark.alpha = 0.96;
+this.effectsContainer.addChild(mark);
+this.animateEffect(mark, {
+    duration: this.scaleDuration(260, 130),
+    onUpdate: (progress) => {
+        mark.y = position.y - 10 - progress * 18;
+        mark.alpha = 0.96 * (1 - progress);
+        mark.scale.set(1 + progress * 0.14);
+    },
+    onComplete: () => mark.destroy()
+});
+    }
+
+    createKnockbackImpactEffect(position, options = {}) {
+if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return;
+if (!this.shouldEmitEffect('impact')) return;
+const sourceX = Number(options.sourceX);
+const sourceY = Number(options.sourceY);
+const strength = Math.max(0.12, Math.min(1.4, Number(options.strength) || 0.45));
+const baseAngle = (Number.isFinite(sourceX) && Number.isFinite(sourceY))
+    ? Math.atan2(position.y - sourceY, position.x - sourceX)
+    : (Math.random() * Math.PI * 2);
+const streakCount = this.scaleEffectCount(8, 3);
+for (let i = 0; i < streakCount; i += 1) {
+    const streak = new PIXI.Graphics();
+    const angle = baseAngle + (Math.random() - 0.5) * 0.8;
+    const length = 16 + Math.random() * 34 * strength;
+    streak.lineStyle(1.4 + Math.random() * 1.1, 0xFCA5A5, 0.62);
+    streak.moveTo(position.x, position.y);
+    streak.lineTo(
+        position.x + Math.cos(angle) * length,
+        position.y + Math.sin(angle) * length
+    );
+    this.effectsContainer.addChild(streak);
+    this.animateEffect(streak, {
+        duration: this.scaleDuration(140 + Math.random() * 70, 70),
+        onUpdate: (progress) => {
+            streak.alpha = 0.74 * (1 - progress);
+        },
+        onComplete: () => streak.destroy()
+    });
+}
+    }
+
+    createSniperTrailEffect(origin, instigatorId = null, impact = null) {
+if (!origin || !Number.isFinite(origin.x) || !Number.isFinite(origin.y)) return;
+if (!this.shouldEmitEffect('impact')) return;
+
+let endX = Number(impact?.x);
+let endY = Number(impact?.y);
+if (!Number.isFinite(endX) || !Number.isFinite(endY)) {
+    const shooter = instigatorId ? players.get(instigatorId) : null;
+    const rotation = Number.isFinite(shooter?.rotation) ? Number(shooter.rotation) : 0;
+    endX = origin.x + Math.cos(rotation) * 220;
+    endY = origin.y + Math.sin(rotation) * 220;
+}
+const beam = new PIXI.Graphics();
+beam.lineStyle(2.2, 0xFF6BFF, 0.62);
+beam.moveTo(origin.x, origin.y);
+beam.lineTo(endX, endY);
+this.effectsContainer.addChild(beam);
+this.animateEffect(beam, {
+    duration: this.scaleDuration(210, 110),
+    onUpdate: (progress) => {
+        beam.alpha = 0.66 * (1 - progress);
+    },
+    onComplete: () => beam.destroy()
+});
     }
 
     createEnhancedBulletImpact(position, weaponType) {
@@ -2240,6 +2433,11 @@ if (this.activeEffects.length > this.maxActiveEffects) {
     this.dropOverflowEffects(0);
 }
 this.processProjectileNearMissFeedback(deltaMS);
+if (this.audioManager && localPlayerState) {
+    const maxHealth = Math.max(1, Number(localPlayerState.max_health) || 100);
+    const healthNow = Math.max(0, Number(localPlayerState.health) || 0);
+    this.audioManager.updateLowHealthWarning(healthNow / maxHealth);
+}
 const loadTier = this.getLoadTier();
 this.lastLoadTier = loadTier;
 this.flushQueuedDamageNumbers(false, loadTier);
@@ -3090,6 +3288,11 @@ this.sounds = {
     dashWhoosh: { freq: [220, 520], duration: 0.18, type: 'sawtooth', vol: 0.3 },
     dodgeWhoosh: { freq: [280, 640], duration: 0.16, type: 'triangle', vol: 0.28 },
     weaponSwap: { freq: [1400, 980], duration: 0.08, type: 'triangle', vol: 0.22 },
+    killConfirm: { freq: [260, 540, 860], duration: 0.16, type: 'triangle', vol: 0.36 },
+    shieldBreak: { freq: [920, 640, 420], duration: 0.22, type: 'sawtooth', vol: 0.4 },
+    powerupWarning: { freq: [640, 860], duration: 0.12, type: 'square', vol: 0.24 },
+    heartbeatPulse: { freq: [110, 82], duration: 0.12, type: 'sine', vol: 0.16 },
+    ambientCombat: { freq: [380, 180], duration: 0.28, type: 'noise', vol: 0.12 },
     countdownBeep: { freq: [920, 780], duration: 0.12, type: 'square', vol: 0.24 },
     victorySting: { freq: [720, 980, 1320], duration: 0.58, type: 'triangle', vol: 0.46 },
     defeatSting: { freq: [560, 420, 280], duration: 0.62, type: 'sawtooth', vol: 0.44 },
@@ -3161,6 +3364,11 @@ this.soundLimits = Object.freeze({
     bulletWhiz: { minIntervalMs: 130, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
     dashWhoosh: { minIntervalMs: 220, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
     dodgeWhoosh: { minIntervalMs: 220, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
+    killConfirm: { minIntervalMs: 90, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
+    shieldBreak: { minIntervalMs: 150, windowMs: 1000, maxPerWindow: 5, maxConcurrent: 2 },
+    powerupWarning: { minIntervalMs: 180, windowMs: 1000, maxPerWindow: 5, maxConcurrent: 1 },
+    heartbeatPulse: { minIntervalMs: 240, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
+    ambientCombat: { minIntervalMs: 320, windowMs: 1000, maxPerWindow: 5, maxConcurrent: 1 },
     spawnChime: { minIntervalMs: 400, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
     flagFanfare: { minIntervalMs: 1200, windowMs: 2000, maxPerWindow: 1, maxConcurrent: 1 },
     weaponSwap: { minIntervalMs: 80, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
@@ -3182,6 +3390,11 @@ this.mobileSoundLimits = Object.freeze({
     bulletWhiz: { minIntervalMs: 180, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
     dashWhoosh: { minIntervalMs: 320, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
     dodgeWhoosh: { minIntervalMs: 320, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
+    killConfirm: { minIntervalMs: 160, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
+    shieldBreak: { minIntervalMs: 220, windowMs: 1000, maxPerWindow: 3, maxConcurrent: 1 },
+    powerupWarning: { minIntervalMs: 280, windowMs: 1000, maxPerWindow: 3, maxConcurrent: 1 },
+    heartbeatPulse: { minIntervalMs: 340, windowMs: 1000, maxPerWindow: 3, maxConcurrent: 1 },
+    ambientCombat: { minIntervalMs: 420, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
     spawnChime: { minIntervalMs: 600, windowMs: 1000, maxPerWindow: 1, maxConcurrent: 1 },
     flagFanfare: { minIntervalMs: 1400, windowMs: 2000, maxPerWindow: 1, maxConcurrent: 1 },
     weaponSwap: { minIntervalMs: 140, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
@@ -3199,6 +3412,12 @@ this.mobileSoundLimits = Object.freeze({
 this.localWeaponEchoSuppressMs = 110;
 this.recentPredictedWeaponSoundAt = new Map();
 this.maxVoices = this.mobileSoundBudget ? 8 : 20;
+this.lowHealthWarningActive = false;
+this.lowHealthHeartbeatNextAt = 0;
+this.lowHealthFilterNode = null;
+this.ambientCombatEnergy = 0;
+this.lastAmbientEnergyAt = 0;
+this.nextAmbientCombatAt = 0;
 this.initializeOutputChain();
 this.initializeVoicePool();
 this.preloadSoundSamples();
@@ -3217,7 +3436,15 @@ if (!this.audioContext) return;
 try {
     const masterGain = this.audioContext.createGain();
     masterGain.gain.value = 0.84;
-    let outputNode = masterGain;
+    const lowHealthFilter = typeof this.audioContext.createBiquadFilter === 'function'
+        ? this.audioContext.createBiquadFilter()
+        : null;
+    if (lowHealthFilter) {
+        lowHealthFilter.type = 'lowpass';
+        lowHealthFilter.frequency.value = 20000;
+        lowHealthFilter.Q.value = 0.5;
+    }
+    let outputNode = lowHealthFilter || masterGain;
     if (typeof this.audioContext.createDynamicsCompressor === 'function') {
         const compressor = this.audioContext.createDynamicsCompressor();
         compressor.threshold.value = -22;
@@ -3225,20 +3452,32 @@ try {
         compressor.ratio.value = 9;
         compressor.attack.value = 0.003;
         compressor.release.value = 0.22;
-        masterGain.connect(compressor);
+        if (lowHealthFilter) {
+            masterGain.connect(lowHealthFilter);
+            lowHealthFilter.connect(compressor);
+        } else {
+            masterGain.connect(compressor);
+        }
         compressor.connect(this.audioContext.destination);
-        outputNode = masterGain;
+        outputNode = lowHealthFilter || masterGain;
         this.compressorNode = compressor;
     } else {
-        masterGain.connect(this.audioContext.destination);
+        if (lowHealthFilter) {
+            masterGain.connect(lowHealthFilter);
+            lowHealthFilter.connect(this.audioContext.destination);
+        } else {
+            masterGain.connect(this.audioContext.destination);
+        }
     }
     this.masterGainNode = masterGain;
     this.masterOutputNode = outputNode;
+    this.lowHealthFilterNode = lowHealthFilter;
 } catch (error) {
     console.warn('Audio output chain init failed, using direct destination:', error);
     this.masterOutputNode = this.audioContext.destination;
     this.masterGainNode = null;
     this.compressorNode = null;
+    this.lowHealthFilterNode = null;
 }
     }
 
@@ -3324,27 +3563,40 @@ this.sampleLoadPromises.set(soundName, loadPromise);
 return loadPromise;
     }
 
-    tryPlaySample(soundName, volume, panValue, nowMs, prioritizeLocal = false) {
+    tryPlaySample(soundName, volume, panValue, nowMs, prioritizeLocal = false, options = null) {
 if (!this.audioContext) return false;
 const sampleBuffer = this.sampleBuffers.get(soundName);
 if (!sampleBuffer) return false;
 
+const basePitchScale = Number(options?.pitchScale);
+const pitchJitter = Number(options?.pitchJitter);
+let playbackRate = Number.isFinite(basePitchScale) && basePitchScale > 0
+    ? basePitchScale
+    : 1;
+if (Number.isFinite(pitchJitter) && pitchJitter > 0) {
+    playbackRate *= 1 + ((Math.random() * 2 - 1) * Math.min(0.4, pitchJitter));
+}
+if (!Number.isFinite(playbackRate) || playbackRate <= 0.05) playbackRate = 1;
+playbackRate = Math.max(0.55, Math.min(1.75, playbackRate));
+
 const sampleDurationSec = Math.max(0.015, Number(sampleBuffer.duration) || 0.015);
-const voice = this.acquireVoiceSlot(soundName, sampleDurationSec, nowMs, prioritizeLocal);
+const adjustedDurationSec = Math.max(0.015, sampleDurationSec / playbackRate);
+const voice = this.acquireVoiceSlot(soundName, adjustedDurationSec, nowMs, prioritizeLocal);
 if (!voice) {
     return false;
 }
 
 const now = this.audioContext.currentTime;
 const gainNode = voice.gainNode;
+let effectNode = null;
 try {
-    const attackSec = Math.max(0.002, Math.min(0.02, sampleDurationSec * 0.18));
-    const releaseStartOffset = Math.max(attackSec, sampleDurationSec - 0.03);
+    const attackSec = Math.max(0.002, Math.min(0.02, adjustedDurationSec * 0.18));
+    const releaseStartOffset = Math.max(attackSec, adjustedDurationSec - 0.03);
     gainNode.gain.cancelScheduledValues(now);
     gainNode.gain.setValueAtTime(0.0001, now);
     gainNode.gain.exponentialRampToValueAtTime(Math.max(0.001, volume), now + attackSec);
     gainNode.gain.setValueAtTime(Math.max(0.001, volume), now + releaseStartOffset);
-    gainNode.gain.exponentialRampToValueAtTime(0.001, now + sampleDurationSec);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + adjustedDurationSec);
 } catch (_) {
     this.markVoiceReleased(voice);
     return false;
@@ -3359,17 +3611,45 @@ if (voice.pannerNode) {
 
 const sourceNode = this.audioContext.createBufferSource();
 sourceNode.buffer = sampleBuffer;
-sourceNode.connect(gainNode);
+try {
+    sourceNode.playbackRate.setValueAtTime(playbackRate, now);
+} catch (_) {}
+const lowpassHz = Number(options?.lowpassHz);
+if (
+    Number.isFinite(lowpassHz) &&
+    lowpassHz > 40 &&
+    lowpassHz < 18000 &&
+    typeof this.audioContext.createBiquadFilter === 'function'
+) {
+    effectNode = this.audioContext.createBiquadFilter();
+    effectNode.type = 'lowpass';
+    effectNode.frequency.value = lowpassHz;
+    effectNode.Q.value = 0.35;
+    sourceNode.connect(effectNode);
+    effectNode.connect(gainNode);
+} else {
+    sourceNode.connect(gainNode);
+}
 voice.sourceNode = sourceNode;
 sourceNode.onended = () => {
+    if (effectNode) {
+        try {
+            effectNode.disconnect();
+        } catch (_) {}
+    }
     this.markVoiceReleased(voice, sourceNode);
 };
 
 try {
     sourceNode.start(now);
-    sourceNode.stop(now + sampleDurationSec + 0.02);
+    sourceNode.stop(now + adjustedDurationSec + 0.02);
     return true;
 } catch (_) {
+    if (effectNode) {
+        try {
+            effectNode.disconnect();
+        } catch (_) {}
+    }
     this.markVoiceReleased(voice, sourceNode);
     return false;
 }
@@ -3417,10 +3697,89 @@ if (!isLocalPlayer) {
         return;
     }
 }
-this.playSound(soundName, position, adjustedVolumeScale, {
+const pitchJitter = (weaponType === GP.WeaponType.Shotgun || weaponType === GP.WeaponType.Sniper) ? 0.05 : 0.08;
+const volumeJitter = 0.1;
+const randomizedScale = adjustedVolumeScale * (1 + ((Math.random() * 2 - 1) * volumeJitter));
+const finalScale = Math.max(0.04, randomizedScale);
+this.playSound(soundName, position, finalScale, {
     prioritizeLocal: !!isLocalPlayer,
     bypassLimiter: !!(options && options.bypassLimiter),
+    pitchJitter,
 });
+if (weaponType === GP.WeaponType.Rifle || weaponType === GP.WeaponType.Sniper) {
+    const clickVolume = Math.max(0.05, finalScale * (weaponType === GP.WeaponType.Sniper ? 0.16 : 0.12));
+    const clickDelayMs = 20;
+    setTimeout(() => {
+        this.playSound('weaponSwap', position, clickVolume, {
+            bypassLimiter: true,
+            prioritizeLocal: !!isLocalPlayer,
+            pitchScale: 0.74 + Math.random() * 0.12,
+        });
+    }, clickDelayMs);
+}
+    }
+
+    registerCombatEventIntensity(weight = 0.18) {
+const nowMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
+const elapsedMs = Math.max(0, nowMs - (this.lastAmbientEnergyAt || nowMs));
+this.lastAmbientEnergyAt = nowMs;
+if (elapsedMs > 0) {
+    this.ambientCombatEnergy = Math.max(0, this.ambientCombatEnergy - elapsedMs * 0.00045);
+}
+this.ambientCombatEnergy = Math.min(1.8, this.ambientCombatEnergy + Math.max(0, Number(weight) || 0));
+if (!this.soundEnabled || !this.audioContext) return;
+if (this.ambientCombatEnergy < 0.28) return;
+if (nowMs < this.nextAmbientCombatAt) return;
+const energyNorm = Math.max(0, Math.min(1, this.ambientCombatEnergy / 1.5));
+const intervalMs = 1400 - energyNorm * 820;
+const volume = 0.08 + energyNorm * 0.12;
+this.nextAmbientCombatAt = nowMs + intervalMs;
+this.playSound('ambientCombat', null, volume, {
+    bypassLimiter: true,
+    skipAmbientEnergy: true,
+    pitchScale: 0.84 + Math.random() * 0.28,
+});
+    }
+
+    updateLowHealthWarning(healthRatio) {
+if (!this.audioContext || !this.soundEnabled) return;
+const ratio = Math.max(0, Math.min(1, Number(healthRatio) || 0));
+const nowMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
+
+if (ratio <= 0.3) {
+    const urgency = Math.max(0, Math.min(1, (0.3 - ratio) / 0.2));
+    const bpm = 60 + urgency * 60;
+    const intervalMs = 60000 / Math.max(30, bpm);
+    if (nowMs >= this.lowHealthHeartbeatNextAt) {
+        const pitchScale = 0.72 + urgency * 0.55;
+        const volume = 0.12 + urgency * 0.18;
+        this.playSound('heartbeatPulse', null, volume, {
+            bypassLimiter: true,
+            pitchScale,
+        });
+        this.lowHealthHeartbeatNextAt = nowMs + intervalMs;
+    }
+    this.lowHealthWarningActive = true;
+} else if (this.lowHealthWarningActive) {
+    this.lowHealthWarningActive = false;
+}
+
+if (this.lowHealthFilterNode) {
+    const targetCutoffHz = ratio < 0.15
+        ? 900 + (ratio / 0.15) * 2800
+        : 20000;
+    try {
+        this.lowHealthFilterNode.frequency.setTargetAtTime(
+            targetCutoffHz,
+            this.audioContext.currentTime,
+            0.08
+        );
+    } catch (_) {}
+}
     }
 
     getSoundLimiterConfig(soundName) {
@@ -3625,18 +3984,24 @@ if (baseVolume <= 0.001) return;
 
 let finalVolume = baseVolume;
 let panValue = 0;
+let lowpassHz = null;
 if (position && localPlayerState && app && gameScene) {
     const viewCenter = { x: app.screen.width / 2, y: app.screen.height / 2 };
     const soundWorldPos = gameScene.toGlobal(position);
     const dx = soundWorldPos.x - viewCenter.x;
     const dy = soundWorldPos.y - viewCenter.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    const maxAudibleDistance = 800;
+    const maxAudibleDistance = 900;
 
     if (distance > maxAudibleDistance) return;
-    finalVolume *= Math.max(0, 1 - (distance / maxAudibleDistance));
+    const attenuation = 1 / (1 + Math.pow(distance / 400, 2));
+    finalVolume *= attenuation;
     if (finalVolume <= 0.001) return;
     panValue = Math.max(-1, Math.min(1, dx / (app.screen.width / 2)));
+    if (distance > 500) {
+        const farRatio = Math.max(0, Math.min(1, (distance - 500) / 400));
+        lowpassHz = 8200 - farRatio * 6600;
+    }
 }
 
 const nowMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
@@ -3648,7 +4013,11 @@ this.sweepExpiredVoices(nowMs);
 if (!bypassLimiter && !this.shouldPlaySoundNow(soundName, nowMs)) {
     return;
 }
-if (this.tryPlaySample(soundName, finalVolume, panValue, nowMs, prioritizeLocal)) {
+if (this.tryPlaySample(soundName, finalVolume, panValue, nowMs, prioritizeLocal, {
+    pitchScale: options?.pitchScale,
+    pitchJitter: options?.pitchJitter,
+    lowpassHz: Number.isFinite(Number(options?.lowpassHz)) ? Number(options.lowpassHz) : lowpassHz,
+})) {
     return;
 }
 const hasSampleMapping = !!this.soundSamples[soundName];
@@ -3670,13 +4039,29 @@ this._playTone(
     panValue,
     durationSec,
     nowMs,
-    prioritizeLocal
+    prioritizeLocal,
+    {
+        pitchScale: options?.pitchScale,
+        pitchJitter: options?.pitchJitter,
+        lowpassHz: Number.isFinite(Number(options?.lowpassHz)) ? Number(options.lowpassHz) : lowpassHz,
+    }
 );
     }
 
-    _playTone(soundName, profile, volume, panValue, durationSec, nowMs, prioritizeLocal = false) {
+    _playTone(soundName, profile, volume, panValue, durationSec, nowMs, prioritizeLocal = false, options = null) {
 if (!this.audioContext) return;
-const voice = this.acquireVoiceSlot(soundName, durationSec, nowMs, prioritizeLocal);
+const basePitchScale = Number(options?.pitchScale);
+const pitchJitter = Number(options?.pitchJitter);
+let pitchScale = Number.isFinite(basePitchScale) && basePitchScale > 0
+    ? basePitchScale
+    : 1;
+if (Number.isFinite(pitchJitter) && pitchJitter > 0) {
+    pitchScale *= 1 + ((Math.random() * 2 - 1) * Math.min(0.35, pitchJitter));
+}
+if (!Number.isFinite(pitchScale) || pitchScale <= 0.05) pitchScale = 1;
+pitchScale = Math.max(0.55, Math.min(1.7, pitchScale));
+const adjustedDurationSec = Math.max(0.015, durationSec / pitchScale);
+const voice = this.acquireVoiceSlot(soundName, adjustedDurationSec, nowMs, prioritizeLocal);
 if (!voice) {
     return;
 }
@@ -3685,10 +4070,10 @@ const now = this.audioContext.currentTime;
 const gainNode = voice.gainNode;
 try {
     gainNode.gain.cancelScheduledValues(now);
-    const attackSec = Math.max(0.002, Math.min(0.01, durationSec * 0.22));
+    const attackSec = Math.max(0.002, Math.min(0.01, adjustedDurationSec * 0.22));
     gainNode.gain.setValueAtTime(0.0001, now);
     gainNode.gain.exponentialRampToValueAtTime(Math.max(0.001, volume), now + attackSec);
-    gainNode.gain.exponentialRampToValueAtTime(0.001, now + durationSec);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + adjustedDurationSec);
 } catch (_) {
     this.markVoiceReleased(voice);
     return;
@@ -3702,14 +4087,19 @@ if (voice.pannerNode) {
 }
 
 let sourceNode = null;
+const lowpassHz = Number(options?.lowpassHz);
+let filterNode = null;
 if (profile.type === 'noise') {
-    const buffer = this.getNoiseBuffer(durationSec);
+    const buffer = this.getNoiseBuffer(adjustedDurationSec);
     if (!buffer) {
         this.markVoiceReleased(voice);
         return;
     }
     sourceNode = this.audioContext.createBufferSource();
     sourceNode.buffer = buffer;
+    try {
+        sourceNode.playbackRate.setValueAtTime(pitchScale, now);
+    } catch (_) {}
 } else {
     const oscillator = this.audioContext.createOscillator();
     oscillator.type = profile.type || 'sine';
@@ -3719,15 +4109,15 @@ if (profile.type === 'noise') {
             this.markVoiceReleased(voice);
             return;
         }
-        oscillator.frequency.setValueAtTime(profile.freq[0], now);
+        oscillator.frequency.setValueAtTime(profile.freq[0] * pitchScale, now);
         if (profile.freq.length > 1 && Number.isFinite(profile.freq[1])) {
-            oscillator.frequency.linearRampToValueAtTime(profile.freq[1], now + durationSec * 0.8);
+            oscillator.frequency.linearRampToValueAtTime(profile.freq[1] * pitchScale, now + adjustedDurationSec * 0.8);
         }
         if (profile.freq.length > 2 && Number.isFinite(profile.freq[2])) {
-            oscillator.frequency.linearRampToValueAtTime(profile.freq[2], now + durationSec);
+            oscillator.frequency.linearRampToValueAtTime(profile.freq[2] * pitchScale, now + adjustedDurationSec);
         }
     } else if (Number.isFinite(profile.freq)) {
-        oscillator.frequency.setValueAtTime(profile.freq, now);
+        oscillator.frequency.setValueAtTime(profile.freq * pitchScale, now);
     } else {
         console.warn("Invalid profile.freq", profile);
         this.markVoiceReleased(voice);
@@ -3736,16 +4126,40 @@ if (profile.type === 'noise') {
     sourceNode = oscillator;
 }
 
-sourceNode.connect(gainNode);
+if (
+    Number.isFinite(lowpassHz) &&
+    lowpassHz > 40 &&
+    lowpassHz < 18000 &&
+    typeof this.audioContext.createBiquadFilter === 'function'
+) {
+    filterNode = this.audioContext.createBiquadFilter();
+    filterNode.type = 'lowpass';
+    filterNode.frequency.value = lowpassHz;
+    filterNode.Q.value = 0.35;
+    sourceNode.connect(filterNode);
+    filterNode.connect(gainNode);
+} else {
+    sourceNode.connect(gainNode);
+}
 voice.sourceNode = sourceNode;
 sourceNode.onended = () => {
+    if (filterNode) {
+        try {
+            filterNode.disconnect();
+        } catch (_) {}
+    }
     this.markVoiceReleased(voice, sourceNode);
 };
 
 try {
     sourceNode.start(now);
-    sourceNode.stop(now + durationSec);
+    sourceNode.stop(now + adjustedDurationSec);
 } catch (_) {
+    if (filterNode) {
+        try {
+            filterNode.disconnect();
+        } catch (_) {}
+    }
     this.markVoiceReleased(voice, sourceNode);
 }
     }

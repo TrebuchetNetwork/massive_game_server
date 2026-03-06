@@ -23,6 +23,10 @@ export function createWorldRenderer(getCtx) {
     let tacticalPingLabelContainerRef = null;
     const tacticalPingLabelPool = [];
     const tacticalPingLabelsActive = [];
+    let worldBounds = null;
+    let boundaryFogGraphics = null;
+    let lastBoundaryFogDrawAt = 0;
+    let lastBoundaryFogSignature = '';
 
     function releaseAllTacticalPingLabels() {
         for (let i = 0; i < tacticalPingLabelsActive.length; i += 1) {
@@ -81,6 +85,123 @@ export function createWorldRenderer(getCtx) {
         lastHotZoneOverlaySignature = '';
         releaseAllTacticalPingLabels();
         tacticalPingLabelContainerRef = null;
+        boundaryFogGraphics = null;
+        lastBoundaryFogDrawAt = 0;
+        lastBoundaryFogSignature = '';
+    }
+
+    function deriveWorldBounds(walls) {
+        if (!walls || typeof walls.forEach !== 'function' || walls.size <= 0) {
+            return null;
+        }
+        let minX = Number.POSITIVE_INFINITY;
+        let minY = Number.POSITIVE_INFINITY;
+        let maxX = Number.NEGATIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+        walls.forEach((wall) => {
+            if (!wall) return;
+            const x = Number(wall.x);
+            const y = Number(wall.y);
+            const w = Number(wall.width);
+            const h = Number(wall.height);
+            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) {
+                return;
+            }
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x + Math.max(0, w));
+            maxY = Math.max(maxY, y + Math.max(0, h));
+        });
+        if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+            return null;
+        }
+        if (maxX <= minX || maxY <= minY) return null;
+        return { minX, minY, maxX, maxY };
+    }
+
+    function updateBoundaryHazeOverlay(nowMs) {
+        const ctx = getCtx();
+        const {
+            zoneAmbientContainer,
+            PIXI,
+            localPlayerState,
+            setObjectiveUrgency,
+        } = ctx;
+        if (!zoneAmbientContainer || !PIXI) return;
+        if (!boundaryFogGraphics || boundaryFogGraphics.destroyed) {
+            boundaryFogGraphics = new PIXI.Graphics();
+            boundaryFogGraphics.zIndex = -1;
+            zoneAmbientContainer.addChildAt(boundaryFogGraphics, 0);
+            lastBoundaryFogDrawAt = 0;
+            lastBoundaryFogSignature = '';
+        } else if (boundaryFogGraphics.parent !== zoneAmbientContainer) {
+            zoneAmbientContainer.addChildAt(boundaryFogGraphics, 0);
+            lastBoundaryFogDrawAt = 0;
+            lastBoundaryFogSignature = '';
+        }
+
+        if (!worldBounds || !localPlayerState) {
+            if (boundaryFogGraphics.visible) {
+                boundaryFogGraphics.clear();
+                boundaryFogGraphics.visible = false;
+            }
+            return;
+        }
+
+        const playerX = Number.isFinite(localPlayerState.render_x)
+            ? Number(localPlayerState.render_x)
+            : Number(localPlayerState.x);
+        const playerY = Number.isFinite(localPlayerState.render_y)
+            ? Number(localPlayerState.render_y)
+            : Number(localPlayerState.y);
+        if (!Number.isFinite(playerX) || !Number.isFinite(playerY)) return;
+
+        const EDGE_WARN_DISTANCE = 180;
+        const leftDist = playerX - worldBounds.minX;
+        const rightDist = worldBounds.maxX - playerX;
+        const topDist = playerY - worldBounds.minY;
+        const bottomDist = worldBounds.maxY - playerY;
+        const nearest = Math.min(leftDist, rightDist, topDist, bottomDist);
+        const nearBoundary = nearest <= EDGE_WARN_DISTANCE;
+        if (!nearBoundary) {
+            if (boundaryFogGraphics.visible) {
+                boundaryFogGraphics.clear();
+                boundaryFogGraphics.visible = false;
+            }
+            return;
+        }
+
+        const urgency = Math.max(0, 1 - (nearest / EDGE_WARN_DISTANCE));
+        const drawIntervalMs = 45;
+        if ((nowMs - lastBoundaryFogDrawAt) < drawIntervalMs) return;
+        lastBoundaryFogDrawAt = nowMs;
+
+        const thickness = 26 + urgency * 60;
+        const pulse = 0.55 + 0.45 * Math.sin(nowMs * 0.008);
+        const alpha = 0.08 + urgency * 0.18 * pulse;
+        const signature = [
+            worldBounds.minX.toFixed(1),
+            worldBounds.minY.toFixed(1),
+            worldBounds.maxX.toFixed(1),
+            worldBounds.maxY.toFixed(1),
+            thickness.toFixed(1),
+            alpha.toFixed(3),
+        ].join(':');
+        if (signature === lastBoundaryFogSignature) return;
+        lastBoundaryFogSignature = signature;
+
+        boundaryFogGraphics.clear();
+        boundaryFogGraphics.visible = true;
+        boundaryFogGraphics.beginFill(0xD9464E, alpha);
+        boundaryFogGraphics.drawRect(worldBounds.minX, worldBounds.minY, worldBounds.maxX - worldBounds.minX, thickness);
+        boundaryFogGraphics.drawRect(worldBounds.minX, worldBounds.maxY - thickness, worldBounds.maxX - worldBounds.minX, thickness);
+        boundaryFogGraphics.drawRect(worldBounds.minX, worldBounds.minY, thickness, worldBounds.maxY - worldBounds.minY);
+        boundaryFogGraphics.drawRect(worldBounds.maxX - thickness, worldBounds.minY, thickness, worldBounds.maxY - worldBounds.minY);
+        boundaryFogGraphics.endFill();
+
+        if (typeof setObjectiveUrgency === 'function') {
+            setObjectiveUrgency('MAP BOUNDARY', 'critical', 620);
+        }
     }
 
     function drawZones() {
@@ -508,7 +629,7 @@ export function createWorldRenderer(getCtx) {
             wallGraphics, walls, PIXI, mixColors, minimap,
             ultraPerformanceMode, STABLE_MODE_FORCED, smoothedFrameMs,
             WALL_REDRAW_MIN_INTERVAL_MS, WALL_REDRAW_MIN_INTERVAL_ULTRA_MS,
-            GLOBAL_LIGHT_DIR, gameSettings,
+            GLOBAL_LIGHT_DIR, gameSettings, setWorldBounds,
         } = ctx;
         if (!wallGraphics) return;
 
@@ -586,6 +707,10 @@ export function createWorldRenderer(getCtx) {
 
             ctx.setMinimapWallsCacheDirty(true);
             if (minimap) minimap.wallsNeedUpdate = true;
+            worldBounds = deriveWorldBounds(walls);
+            if (typeof setWorldBounds === 'function') {
+                setWorldBounds(worldBounds);
+            }
             return;
         }
 
@@ -669,6 +794,10 @@ export function createWorldRenderer(getCtx) {
 
         ctx.setMinimapWallsCacheDirty(true);
         if (minimap) minimap.wallsNeedUpdate = true;
+        worldBounds = deriveWorldBounds(walls);
+        if (typeof setWorldBounds === 'function') {
+            setWorldBounds(worldBounds);
+        }
     }
 
     // Mutable state for wall throttle
@@ -882,6 +1011,7 @@ export function createWorldRenderer(getCtx) {
             gameScene.position.x += (targetX - gameScene.position.x) * smoothing;
             gameScene.position.y += (targetY - gameScene.position.y) * smoothing;
         }
+        updateBoundaryHazeOverlay(currentTimeMs);
     }
 
     return {

@@ -11,6 +11,7 @@ export { GameEventType } from './game-protocol/game-event-type.js';
 export { GameMessage } from './game-protocol/game-message.js';
 export { GameModeType } from './game-protocol/game-mode-type.js';
 export { InitialStateMessage } from './game-protocol/initial-state-message.js';
+export { KillContext } from './game-protocol/kill-context.js';
 export { KillFeedEntry } from './game-protocol/kill-feed-entry.js';
 export { MatchInfo } from './game-protocol/match-info.js';
 export { MatchStateType } from './game-protocol/match-state-type.js';

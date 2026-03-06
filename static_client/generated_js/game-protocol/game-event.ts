@@ -61,8 +61,13 @@ value():number {
   return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
 }
 
+falloffMultiplier():number {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 1.0;
+}
+
 static startGameEvent(builder:flatbuffers.Builder) {
-  builder.startObject(6);
+  builder.startObject(7);
 }
 
 static addEventType(builder:flatbuffers.Builder, eventType:GameEventType) {
@@ -87,6 +92,10 @@ static addWeaponType(builder:flatbuffers.Builder, weaponType:WeaponType) {
 
 static addValue(builder:flatbuffers.Builder, value:number) {
   builder.addFieldFloat32(5, value, 0.0);
+}
+
+static addFalloffMultiplier(builder:flatbuffers.Builder, falloffMultiplier:number) {
+  builder.addFieldFloat32(6, falloffMultiplier, 1.0);
 }
 
 static endGameEvent(builder:flatbuffers.Builder):flatbuffers.Offset {
