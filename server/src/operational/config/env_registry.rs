@@ -1,8 +1,10 @@
+use crate::core::constants::DEFAULT_LAG_COMPENSATION_MS;
 use anyhow::{anyhow, Result};
 
 #[derive(Debug, Clone)]
 pub struct AppEnvConfig {
     pub map_path: Option<String>,
+    pub instance: InstanceEnv,
     pub diagnostics: DiagnosticsEnv,
     pub live_replay_enabled: bool,
     pub quic_primary_only: bool,
@@ -16,6 +18,47 @@ pub struct AppEnvConfig {
     pub shutdown_drain_timeout_secs: u64,
     pub allowed_cors_origins: Vec<String>,
     pub ws_security: WsSecurityEnv,
+}
+
+#[derive(Debug, Clone)]
+pub struct InstanceEnv {
+    pub map_path: Option<String>,
+    pub match_type: Option<String>,
+    pub force_10v10_map: bool,
+    pub map_target_players: Option<usize>,
+    pub map_seed: Option<u64>,
+    pub map_template: Option<String>,
+    pub target_bot_count: Option<u64>,
+    pub human_priority_enabled: bool,
+    pub reserved_human_slots: usize,
+    pub spectator_slot_cap: usize,
+    pub lag_compensation_ms: u64,
+    pub live_replay_enabled: bool,
+    pub live_replay_capacity: usize,
+    pub live_replay_player_cap: usize,
+    pub live_replay_dispute_persist_enabled: bool,
+    pub live_replay_dispute_store_path: String,
+    pub live_replay_dispute_signing_key: Option<String>,
+    pub live_replay_dispute_audit_capacity: usize,
+    pub live_replay_match_persist_enabled: bool,
+    pub live_replay_match_store_dir: String,
+    pub live_replay_match_retention: usize,
+    pub direct_packet_queue_cap: usize,
+    pub navmesh_enabled: bool,
+    pub navmesh_rebuild_interval_frames: u64,
+    pub navmesh_cell_wall_limit: usize,
+    pub progressive_destructible_enabled: bool,
+    pub commander_mode_enabled: bool,
+    pub single_machine_opt: bool,
+    pub single_machine_mode: bool,
+    pub join_tail_policy_enabled: bool,
+    pub join_packet_batching_enabled: bool,
+    pub join_soa_snapshot_enabled: bool,
+    pub join_soa_adaptive_fallback_enabled: bool,
+    pub join_entity_soa_snapshot_enabled: bool,
+    pub join_initial_state_chunking_enabled: bool,
+    pub join_authoritative_aoi_snapshot_enabled: bool,
+    pub dynamic_mode_transitions_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +150,24 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
     let mut errors = Vec::new();
 
     let map_path = get_optional_trimmed("MGS_MAP_PATH");
+    let match_type = get_optional_trimmed("MGS_MATCH_TYPE");
+    let force_10v10_map = parse_bool_with_default("MGS_FORCE_10V10_MAP", false, &mut errors);
+    let map_target_players =
+        parse_optional_usize("MGS_MAP_TARGET_PLAYERS", &mut errors).filter(|value| *value > 0);
+    let map_seed = parse_optional_u64("MGS_MAP_SEED", &mut errors);
+    let map_template = get_optional_trimmed("MGS_MAP_TEMPLATE");
+    let target_bot_count = parse_optional_u64("MGS_TARGET_BOT_COUNT", &mut errors);
+    let human_priority_enabled =
+        parse_bool_with_default("MGS_HUMAN_PRIORITY_ENABLED", true, &mut errors);
+    let reserved_human_slots = parse_usize_with_default("MGS_RESERVED_HUMAN_SLOTS", 2, &mut errors);
+    let spectator_slot_cap =
+        parse_usize_with_default("MGS_SPECTATOR_CAP", 20, &mut errors).clamp(0, 256);
+    let lag_compensation_ms = parse_u64_with_default(
+        "MGS_LAG_COMPENSATION_MS",
+        DEFAULT_LAG_COMPENSATION_MS,
+        &mut errors,
+    )
+    .min(250);
 
     let diagnostics_enabled =
         parse_bool_with_default("MGS_DIAGNOSTICS_ENABLED", false, &mut errors);
@@ -117,6 +178,69 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
 
     let live_replay_enabled =
         parse_bool_with_default("MGS_LIVE_REPLAY_ENABLED", false, &mut errors);
+    let live_replay_capacity =
+        parse_usize_with_default("MGS_LIVE_REPLAY_CAPACITY", 3600, &mut errors).clamp(120, 100_000);
+    let live_replay_player_cap =
+        parse_usize_with_default("MGS_LIVE_REPLAY_PLAYER_CAP", 64, &mut errors).clamp(8, 512);
+    let live_replay_dispute_persist_enabled = parse_bool_with_default(
+        "MGS_LIVE_REPLAY_DISPUTE_PERSIST",
+        live_replay_enabled,
+        &mut errors,
+    );
+    let live_replay_dispute_store_path = get_optional_trimmed("MGS_LIVE_REPLAY_DISPUTE_STORE_PATH")
+        .unwrap_or_else(|| "data/live_replay/disputes.jsonl".to_owned());
+    let live_replay_dispute_signing_key =
+        get_optional_trimmed("MGS_LIVE_REPLAY_DISPUTE_SIGNING_KEY");
+    let live_replay_dispute_audit_capacity =
+        parse_usize_with_default("MGS_LIVE_REPLAY_DISPUTE_AUDIT_CAPACITY", 512, &mut errors)
+            .clamp(16, 4096);
+    let live_replay_match_persist_enabled = parse_bool_with_default(
+        "MGS_LIVE_REPLAY_MATCH_PERSIST",
+        live_replay_enabled,
+        &mut errors,
+    );
+    let live_replay_match_store_dir = get_optional_trimmed("MGS_LIVE_REPLAY_MATCH_STORE_DIR")
+        .unwrap_or_else(|| "data/live_replay/matches".to_owned());
+    let live_replay_match_retention =
+        parse_usize_with_default("MGS_LIVE_REPLAY_MATCH_RETENTION", 100, &mut errors)
+            .clamp(1, 2_000);
+    let direct_packet_queue_cap =
+        parse_usize_with_default("MGS_DIRECT_PACKET_QUEUE_CAP", 64, &mut errors).clamp(8, 512);
+    let navmesh_enabled = parse_bool_with_default("MGS_NAVMESH_ENABLED", false, &mut errors);
+    let navmesh_rebuild_interval_frames =
+        parse_u64_with_default("MGS_NAVMESH_REBUILD_INTERVAL_FRAMES", 180, &mut errors).max(1);
+    let navmesh_cell_wall_limit =
+        parse_usize_with_default("MGS_NAVMESH_CELL_WALL_LIMIT", 16, &mut errors).clamp(0, 2048);
+    let progressive_destructible_enabled =
+        !parse_bool_with_default("MGS_DISABLE_PROGRESSIVE_DESTRUCTIBLE", false, &mut errors);
+    let commander_mode_enabled =
+        !parse_bool_with_default("MGS_DISABLE_COMMANDER_MODE", false, &mut errors);
+    let single_machine_opt = parse_bool_with_default("MGS_SINGLE_MACHINE_OPT", false, &mut errors);
+    let single_machine_mode =
+        parse_bool_with_default("MGS_SINGLE_MACHINE_MODE", false, &mut errors);
+    let join_tail_policy_enabled =
+        !parse_bool_with_default("MGS_JOIN_DISABLE_TAIL_POLICY", false, &mut errors);
+    let join_packet_batching_enabled =
+        !parse_bool_with_default("MGS_JOIN_DISABLE_PACKET_BATCHING", false, &mut errors);
+    let join_soa_snapshot_enabled =
+        !parse_bool_with_default("MGS_JOIN_DISABLE_SOA_SNAPSHOT", false, &mut errors);
+    let join_soa_adaptive_fallback_enabled =
+        !parse_bool_with_default("MGS_JOIN_DISABLE_SOA_ADAPTIVE_FALLBACK", false, &mut errors);
+    let join_entity_soa_snapshot_enabled =
+        !parse_bool_with_default("MGS_JOIN_DISABLE_ENTITY_SOA_SNAPSHOT", false, &mut errors);
+    let join_initial_state_chunking_enabled =
+        !parse_bool_with_default("MGS_JOIN_DISABLE_INITIAL_CHUNKING", false, &mut errors);
+    let join_authoritative_aoi_snapshot_enabled = !parse_bool_with_default(
+        "MGS_JOIN_DISABLE_AUTHORITATIVE_AOI_SNAPSHOT",
+        false,
+        &mut errors,
+    ) || parse_bool_with_default(
+        "MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT",
+        false,
+        &mut errors,
+    );
+    let dynamic_mode_transitions_enabled =
+        parse_bool_with_default("MGS_DYNAMIC_MODE_TRANSITIONS", false, &mut errors);
     let quic_primary = parse_bool_with_default("MGS_QUIC_PRIMARY", false, &mut errors);
     let quic_primary_only_flag =
         parse_bool_with_default("MGS_QUIC_PRIMARY_ONLY", false, &mut errors);
@@ -261,7 +385,46 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
     }
 
     Ok(AppEnvConfig {
-        map_path,
+        map_path: map_path.clone(),
+        instance: InstanceEnv {
+            map_path,
+            match_type,
+            force_10v10_map,
+            map_target_players,
+            map_seed,
+            map_template,
+            target_bot_count,
+            human_priority_enabled,
+            reserved_human_slots,
+            spectator_slot_cap,
+            lag_compensation_ms,
+            live_replay_enabled,
+            live_replay_capacity,
+            live_replay_player_cap,
+            live_replay_dispute_persist_enabled,
+            live_replay_dispute_store_path,
+            live_replay_dispute_signing_key,
+            live_replay_dispute_audit_capacity,
+            live_replay_match_persist_enabled,
+            live_replay_match_store_dir,
+            live_replay_match_retention,
+            direct_packet_queue_cap,
+            navmesh_enabled,
+            navmesh_rebuild_interval_frames,
+            navmesh_cell_wall_limit,
+            progressive_destructible_enabled,
+            commander_mode_enabled,
+            single_machine_opt,
+            single_machine_mode,
+            join_tail_policy_enabled,
+            join_packet_batching_enabled,
+            join_soa_snapshot_enabled,
+            join_soa_adaptive_fallback_enabled,
+            join_entity_soa_snapshot_enabled,
+            join_initial_state_chunking_enabled,
+            join_authoritative_aoi_snapshot_enabled,
+            dynamic_mode_transitions_enabled,
+        },
         diagnostics: DiagnosticsEnv {
             enabled: diagnostics_enabled,
             frame_watchdog_check_ms,
@@ -441,6 +604,20 @@ fn parse_usize_with_default(
 fn parse_optional_u32(var_name: &str, errors: &mut Vec<String>) -> Option<u32> {
     let raw = std::env::var(var_name).ok()?;
     match raw.trim().parse::<u32>() {
+        Ok(value) => Some(value),
+        Err(_) => {
+            errors.push(format!(
+                "{} has invalid unsigned integer value '{}'",
+                var_name, raw
+            ));
+            None
+        }
+    }
+}
+
+fn parse_optional_usize(var_name: &str, errors: &mut Vec<String>) -> Option<usize> {
+    let raw = std::env::var(var_name).ok()?;
+    match raw.trim().parse::<usize>() {
         Ok(value) => Some(value),
         Err(_) => {
             errors.push(format!(

@@ -43,7 +43,7 @@ use massive_game_server_core::scaling::HorizontalScalingCoordinator;
 use massive_game_server_core::server::background_tasks::{
     spawn_alert_evaluator, spawn_arena_worker, spawn_backup_worker, spawn_idle_connection_cleanup,
 };
-use massive_game_server_core::server::instance::MassiveGameServer;
+use massive_game_server_core::server::instance::{configure_instance_runtime, MassiveGameServer};
 use massive_game_server_core::server::lifecycle;
 
 use parking_lot::RwLock as ParkingLotRwLock;
@@ -79,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
     let app_env = load_app_env_config()
         .map_err(|err| anyhow::anyhow!("invalid environment configuration: {}", err))?;
     configure_signaling_runtime(&app_env.signaling);
+    configure_instance_runtime(&app_env.instance);
 
     let config = Arc::new(
         load_validated_server_config()

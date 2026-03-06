@@ -483,7 +483,7 @@ impl MassiveGameServer {
         let effective_participant_count = player_count;
         let fortress_attack_defend_mode = self.fortress_attack_defend_map();
         let dynamic_mode_transitions =
-            env_bool_value("MGS_DYNAMIC_MODE_TRANSITIONS") && !fortress_attack_defend_mode;
+            dynamic_mode_transitions_enabled() && !fortress_attack_defend_mode;
 
         match match_info_guard.match_state {
             fb::MatchStateType::Waiting => {

@@ -23,6 +23,7 @@ use crate::network::signaling::PickupState;
 use crate::network::signaling::{
     next_chat_message_seq, ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap,
 };
+use crate::operational::config::env_registry::InstanceEnv;
 use crate::operational::monitoring::metrics;
 use crate::operational::tuning::adaptive_quality::QualitySettings;
 use crate::operational::tuning::auto_tuner::{AutoTuner, TuningSample};
@@ -179,59 +180,93 @@ fn segment_first_hit_fraction_with_aabb(
 // Commander & progressive-wall constants now live in core::constants
 // (imported via the wildcard `use crate::core::constants::*` above).
 
-fn env_bool_value(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .map(|raw| {
-            let normalized = raw.trim().to_ascii_lowercase();
-            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
-        })
-        .unwrap_or(false)
+static INSTANCE_RUNTIME_CONFIG: OnceCell<InstanceEnv> = OnceCell::new();
+
+fn default_instance_env_config() -> InstanceEnv {
+    InstanceEnv {
+        map_path: None,
+        match_type: None,
+        force_10v10_map: false,
+        map_target_players: None,
+        map_seed: None,
+        map_template: None,
+        target_bot_count: None,
+        human_priority_enabled: true,
+        reserved_human_slots: 2,
+        spectator_slot_cap: 20,
+        lag_compensation_ms: DEFAULT_LAG_COMPENSATION_MS,
+        live_replay_enabled: false,
+        live_replay_capacity: 3600,
+        live_replay_player_cap: 64,
+        live_replay_dispute_persist_enabled: false,
+        live_replay_dispute_store_path: "data/live_replay/disputes.jsonl".to_owned(),
+        live_replay_dispute_signing_key: None,
+        live_replay_dispute_audit_capacity: 512,
+        live_replay_match_persist_enabled: false,
+        live_replay_match_store_dir: "data/live_replay/matches".to_owned(),
+        live_replay_match_retention: 100,
+        direct_packet_queue_cap: 64,
+        navmesh_enabled: false,
+        navmesh_rebuild_interval_frames: 180,
+        navmesh_cell_wall_limit: 16,
+        progressive_destructible_enabled: true,
+        commander_mode_enabled: true,
+        single_machine_opt: false,
+        single_machine_mode: false,
+        join_tail_policy_enabled: true,
+        join_packet_batching_enabled: true,
+        join_soa_snapshot_enabled: true,
+        join_soa_adaptive_fallback_enabled: true,
+        join_entity_soa_snapshot_enabled: true,
+        join_initial_state_chunking_enabled: true,
+        join_authoritative_aoi_snapshot_enabled: false,
+        dynamic_mode_transitions_enabled: false,
+    }
+}
+
+fn instance_env_config() -> &'static InstanceEnv {
+    INSTANCE_RUNTIME_CONFIG.get_or_init(default_instance_env_config)
+}
+
+pub fn configure_instance_runtime(config: &InstanceEnv) {
+    let _ = INSTANCE_RUNTIME_CONFIG.set(config.clone());
 }
 
 fn single_machine_optimization_enabled() -> bool {
-    static SINGLE_MACHINE_OPT: OnceCell<bool> = OnceCell::new();
-    *SINGLE_MACHINE_OPT.get_or_init(|| {
-        env_bool_value("MGS_SINGLE_MACHINE_OPT") || env_bool_value("MGS_SINGLE_MACHINE_MODE")
-    })
+    let config = instance_env_config();
+    config.single_machine_opt || config.single_machine_mode
 }
 
 fn join_tail_policy_enabled() -> bool {
-    static ENABLED: OnceCell<bool> = OnceCell::new();
-    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_TAIL_POLICY"))
+    instance_env_config().join_tail_policy_enabled
 }
 
 fn join_packet_batching_enabled() -> bool {
-    static ENABLED: OnceCell<bool> = OnceCell::new();
-    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_PACKET_BATCHING"))
+    instance_env_config().join_packet_batching_enabled
 }
 
 fn join_soa_snapshot_enabled() -> bool {
-    static ENABLED: OnceCell<bool> = OnceCell::new();
-    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_SOA_SNAPSHOT"))
+    instance_env_config().join_soa_snapshot_enabled
 }
 
 fn join_soa_adaptive_fallback_enabled() -> bool {
-    static ENABLED: OnceCell<bool> = OnceCell::new();
-    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_SOA_ADAPTIVE_FALLBACK"))
+    instance_env_config().join_soa_adaptive_fallback_enabled
 }
 
 fn join_entity_soa_snapshot_enabled() -> bool {
-    static ENABLED: OnceCell<bool> = OnceCell::new();
-    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_ENTITY_SOA_SNAPSHOT"))
+    instance_env_config().join_entity_soa_snapshot_enabled
 }
 
 fn join_initial_state_chunking_enabled() -> bool {
-    static ENABLED: OnceCell<bool> = OnceCell::new();
-    *ENABLED.get_or_init(|| !env_bool_value("MGS_JOIN_DISABLE_INITIAL_CHUNKING"))
+    instance_env_config().join_initial_state_chunking_enabled
 }
 
 fn join_authoritative_aoi_snapshot_enabled() -> bool {
-    static ENABLED: OnceCell<bool> = OnceCell::new();
-    *ENABLED.get_or_init(|| {
-        !env_bool_value("MGS_JOIN_DISABLE_AUTHORITATIVE_AOI_SNAPSHOT")
-            || env_bool_value("MGS_JOIN_ENABLE_AUTHORITATIVE_AOI_SNAPSHOT")
-    })
+    instance_env_config().join_authoritative_aoi_snapshot_enabled
+}
+
+fn dynamic_mode_transitions_enabled() -> bool {
+    instance_env_config().dynamic_mode_transitions_enabled
 }
 
 async fn send_packet_batch_over_channel(
@@ -368,11 +403,13 @@ impl MassiveGameServer {
         player_aois: PlayerAoIs,
     ) -> Self {
         info!("Initializing MassiveGameServer...");
+        let runtime = instance_env_config();
 
         // ── Match type & sizing ───────────────────────────────────────
-        let match_type = std::env::var("MGS_MATCH_TYPE")
-            .ok()
-            .map(|raw| MatchType::from_query_str(&raw))
+        let match_type = runtime
+            .match_type
+            .as_deref()
+            .map(MatchType::from_query_str)
             .unwrap_or_default();
         let match_duration_secs = match_type.duration_secs();
         let effective_max_players = match match_type {
@@ -402,33 +439,21 @@ impl MassiveGameServer {
             config.num_player_shards
         );
 
-        let force_10v10_map = std::env::var("MGS_FORCE_10V10_MAP")
-            .ok()
-            .map(|raw| {
-                let normalized = raw.trim().to_ascii_lowercase();
-                normalized == "1"
-                    || normalized == "true"
-                    || normalized == "yes"
-                    || normalized == "on"
-            })
-            .unwrap_or(false);
-        let map_target_players = std::env::var("MGS_MAP_TARGET_PLAYERS")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
+        let force_10v10_map = runtime.force_10v10_map;
+        let map_target_players = runtime
+            .map_target_players
             .unwrap_or(effective_max_players.max(20));
-        let map_seed = std::env::var("MGS_MAP_SEED")
-            .ok()
-            .and_then(|raw| raw.parse::<u64>().ok())
-            .unwrap_or_else(|| {
-                if force_10v10_map {
-                    10_010
-                } else {
-                    100_000u64.wrapping_add(map_target_players.max(10) as u64)
-                }
-            });
+        let map_seed = runtime.map_seed.unwrap_or_else(|| {
+            if force_10v10_map {
+                10_010
+            } else {
+                100_000u64.wrapping_add(map_target_players.max(10) as u64)
+            }
+        });
 
         // Check for custom map JSON before falling back to procedural generation
-        let custom_map_path = std::env::var("MGS_MAP_PATH").ok();
+        let custom_map_path = runtime.map_path.clone();
+        let map_template = runtime.map_template.clone().unwrap_or_default();
         let (all_map_walls, zones, map_name) = if let Some(ref map_path) = custom_map_path {
             match map_loader::load_map_from_json(map_path) {
                 Ok(loaded) => {
@@ -446,7 +471,6 @@ impl MassiveGameServer {
                         "Failed to load custom map '{}': {:#}. Falling back to procedural generation.",
                         map_path, err
                     );
-                    let map_template = std::env::var("MGS_MAP_TEMPLATE").ok().unwrap_or_default();
                     let (walls, name) = match map_template.to_ascii_lowercase().as_str() {
                         "corridors" => MapGenerator::generate_corridors_map(map_seed),
                         "arena" => MapGenerator::generate_arena_map(map_seed),
@@ -462,7 +486,6 @@ impl MassiveGameServer {
                 }
             }
         } else {
-            let map_template = std::env::var("MGS_MAP_TEMPLATE").ok().unwrap_or_default();
             let (walls, name) = if force_10v10_map {
                 (
                     MapGenerator::generate_10v10_map_with_seed(map_seed),
@@ -579,119 +602,45 @@ impl MassiveGameServer {
             wall_spatial_index.size()
         );
 
-        let initial_target_bot_count = std::env::var("MGS_TARGET_BOT_COUNT")
-            .ok()
-            .and_then(|raw| raw.parse::<u64>().ok())
+        let initial_target_bot_count = runtime
+            .target_bot_count
             .unwrap_or(if cfg!(debug_assertions) { 8 } else { 20 });
-        let human_priority_enabled = std::env::var("MGS_HUMAN_PRIORITY_ENABLED")
-            .ok()
-            .map(|raw| {
-                let normalized = raw.trim().to_ascii_lowercase();
-                normalized == "1"
-                    || normalized == "true"
-                    || normalized == "yes"
-                    || normalized == "on"
-            })
-            .unwrap_or(true);
+        let human_priority_enabled = runtime.human_priority_enabled;
         let reserved_human_slots = if human_priority_enabled {
-            std::env::var("MGS_RESERVED_HUMAN_SLOTS")
-                .ok()
-                .and_then(|raw| raw.parse::<usize>().ok())
-                .unwrap_or(2)
-                .min(effective_max_players)
+            runtime.reserved_human_slots.min(effective_max_players)
         } else {
             0
         };
-        let spectator_slot_cap = std::env::var("MGS_SPECTATOR_CAP")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(20)
-            .clamp(0, 256);
-        let lag_compensation_ms = std::env::var("MGS_LAG_COMPENSATION_MS")
-            .ok()
-            .and_then(|raw| raw.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_LAG_COMPENSATION_MS)
-            .min(250);
+        let spectator_slot_cap = runtime.spectator_slot_cap.clamp(0, 256);
+        let lag_compensation_ms = runtime.lag_compensation_ms.min(250);
         let auto_tuner_target_ms = (1000.0f32 / config.tick_rate.max(1) as f32).max(1.0);
-        let live_replay_enabled = env_bool_value("MGS_LIVE_REPLAY_ENABLED");
-        let live_replay_capacity = std::env::var("MGS_LIVE_REPLAY_CAPACITY")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(3600)
-            .clamp(120, 100_000);
-        let live_replay_player_cap = std::env::var("MGS_LIVE_REPLAY_PLAYER_CAP")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(64)
-            .clamp(8, 512);
-        let live_replay_dispute_persist_enabled = std::env::var("MGS_LIVE_REPLAY_DISPUTE_PERSIST")
-            .ok()
-            .map(|raw| {
-                let normalized = raw.trim().to_ascii_lowercase();
-                normalized == "1"
-                    || normalized == "true"
-                    || normalized == "yes"
-                    || normalized == "on"
-            })
-            .unwrap_or(live_replay_enabled);
-        let live_replay_dispute_store_path = std::env::var("MGS_LIVE_REPLAY_DISPUTE_STORE_PATH")
-            .ok()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("data/live_replay/disputes.jsonl"));
-        let live_replay_dispute_signing_key = std::env::var("MGS_LIVE_REPLAY_DISPUTE_SIGNING_KEY")
-            .ok()
+        let live_replay_enabled = runtime.live_replay_enabled;
+        let live_replay_capacity = runtime.live_replay_capacity.clamp(120, 100_000);
+        let live_replay_player_cap = runtime.live_replay_player_cap.clamp(8, 512);
+        let live_replay_dispute_persist_enabled = runtime.live_replay_dispute_persist_enabled;
+        let live_replay_dispute_store_path = PathBuf::from(&runtime.live_replay_dispute_store_path);
+        let live_replay_dispute_signing_key = runtime
+            .live_replay_dispute_signing_key
+            .clone()
             .map(|raw| raw.into_bytes())
             .filter(|bytes| !bytes.is_empty())
             .map(Arc::new);
         let live_replay_dispute_audit_capacity =
-            std::env::var("MGS_LIVE_REPLAY_DISPUTE_AUDIT_CAPACITY")
-                .ok()
-                .and_then(|raw| raw.parse::<usize>().ok())
-                .unwrap_or(512)
-                .clamp(16, 4096);
-        let live_replay_match_persist_enabled = std::env::var("MGS_LIVE_REPLAY_MATCH_PERSIST")
-            .ok()
-            .map(|raw| {
-                let normalized = raw.trim().to_ascii_lowercase();
-                normalized == "1"
-                    || normalized == "true"
-                    || normalized == "yes"
-                    || normalized == "on"
-            })
-            .unwrap_or(live_replay_enabled);
-        let live_replay_match_store_dir = std::env::var("MGS_LIVE_REPLAY_MATCH_STORE_DIR")
-            .ok()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("data/live_replay/matches"));
-        let live_replay_match_retention = std::env::var("MGS_LIVE_REPLAY_MATCH_RETENTION")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(100)
-            .clamp(1, 2_000);
-        let direct_packet_queue_cap = std::env::var("MGS_DIRECT_PACKET_QUEUE_CAP")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(64)
-            .clamp(8, 512);
+            runtime.live_replay_dispute_audit_capacity.clamp(16, 4096);
+        let live_replay_match_persist_enabled = runtime.live_replay_match_persist_enabled;
+        let live_replay_match_store_dir = PathBuf::from(&runtime.live_replay_match_store_dir);
+        let live_replay_match_retention = runtime.live_replay_match_retention.clamp(1, 2_000);
+        let direct_packet_queue_cap = runtime.direct_packet_queue_cap.clamp(8, 512);
         let live_replay_dispute_chain_head = if live_replay_dispute_persist_enabled {
             load_dispute_chain_head(live_replay_dispute_store_path.as_path())
         } else {
             None
         };
-        let navmesh_enabled = env_bool_value("MGS_NAVMESH_ENABLED");
-        let navmesh_rebuild_interval_frames = std::env::var("MGS_NAVMESH_REBUILD_INTERVAL_FRAMES")
-            .ok()
-            .and_then(|raw| raw.parse::<u64>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(180);
-        let navmesh_cell_wall_limit = std::env::var("MGS_NAVMESH_CELL_WALL_LIMIT")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(16)
-            .clamp(0, 2048);
-        let progressive_destructible_enabled =
-            !env_bool_value("MGS_DISABLE_PROGRESSIVE_DESTRUCTIBLE");
-        let commander_mode_enabled = !env_bool_value("MGS_DISABLE_COMMANDER_MODE");
+        let navmesh_enabled = runtime.navmesh_enabled;
+        let navmesh_rebuild_interval_frames = runtime.navmesh_rebuild_interval_frames.max(1);
+        let navmesh_cell_wall_limit = runtime.navmesh_cell_wall_limit.clamp(0, 2048);
+        let progressive_destructible_enabled = runtime.progressive_destructible_enabled;
+        let commander_mode_enabled = runtime.commander_mode_enabled;
 
         info!(
             "Human-priority slots: enabled={}, reserved_human_slots={}",
@@ -1293,15 +1242,6 @@ mod instance_tests {
         // Box is behind the segment direction
         let hit = segment_first_hit_fraction_with_aabb(10.0, 0.0, 20.0, 0.0, 4.0, 6.0, -1.0, 1.0);
         assert!(hit.is_none());
-    }
-
-    // ── env_bool_value tests ────────────────────────────────────────
-
-    #[test]
-    fn env_bool_value_returns_false_for_unset() {
-        assert!(!env_bool_value(
-            "MGS_TEST_VERY_UNLIKELY_VAR_NEVER_SET_12345"
-        ));
     }
 
     // ── collect_pending_chat_packets tests ───────────────────────────
