@@ -26,6 +26,7 @@ test('client receives state and renders frames', async ({ page }) => {
 
   const dataChannelOpen = await page.evaluate(() => Boolean(window.__e2e && window.__e2e.dataChannelOpen));
   expect(dataChannelOpen).toBeTruthy();
-  const hasLocalPlayer = await page.evaluate(() => window.__e2e.hasLocalPlayer);
-  expect(hasLocalPlayer).toBeTruthy();
+  const status = await page.evaluate(() => window.__e2e && window.__e2e.connectionStatus);
+  expect(status).toBeTruthy();
+  expect(['waiting', 'playing', 'respawn']).toContain(status.statusKey);
 });

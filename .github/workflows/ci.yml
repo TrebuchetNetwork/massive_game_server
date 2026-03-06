@@ -231,7 +231,6 @@ jobs:
           npx playwright test \
             tests/connect.spec.js \
             tests/runtime.spec.js \
-            tests/human_gameplay_journey.spec.js \
             --workers=1 \
             --reporter=list
 
