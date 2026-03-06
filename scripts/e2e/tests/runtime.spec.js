@@ -4,6 +4,11 @@ const { registerServerLifecycle, resolveWsUrl } = require('./helpers/serverLifec
 registerServerLifecycle(test);
 
 test('client receives state and renders frames', async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('mgs_player_name', 'E2EPlayer');
+    } catch (_) {}
+  });
   await page.goto('/client.html', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#connectButton', { state: 'attached' });
   const wsInput = page.locator('#wsUrl');

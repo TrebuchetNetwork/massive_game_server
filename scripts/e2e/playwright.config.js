@@ -10,7 +10,10 @@ module.exports = defineConfig({
   use: {
     baseURL: process.env.E2E_BASE_URL || 'http://127.0.0.1:8080',
     headless: true,
-    viewport: { width: 1280, height: 720 }
+    viewport: { width: 1280, height: 720 },
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure'
   },
   reporter: [['list']]
 });

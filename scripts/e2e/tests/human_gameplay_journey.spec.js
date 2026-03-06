@@ -67,6 +67,11 @@ test('human gameplay journey remains stable and responsive', async ({ page }) =>
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
 
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('mgs_player_name', 'E2EPlayer');
+    } catch (_) {}
+  });
   await page.goto('/client.html?auto_reconnect=1', { waitUntil: 'domcontentloaded' });
   await dismissUsernameModalIfVisible(page);
 
