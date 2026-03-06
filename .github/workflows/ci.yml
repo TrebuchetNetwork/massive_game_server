@@ -228,7 +228,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       # Focused gate for deterministic core engine logic.
-      COVERAGE_CORE_IGNORE_FILENAME_REGEX: '(^|.*/)src/(main\.rs|memory/|network/|operational/|scaling/|server/|state_sync/|world/boundary\.rs$)'
+      COVERAGE_CORE_IGNORE_FILENAME_REGEX: '(^|.*/)src/(main\.rs|memory/|network/|operational/|routes/|scaling/|server/|state_sync/|world/boundary\.rs$)'
       # Broad gate keeps network/memory/server code in scope at a lower floor.
       COVERAGE_BROAD_IGNORE_FILENAME_REGEX: '(^|.*/)src/main\.rs$'
     steps:
