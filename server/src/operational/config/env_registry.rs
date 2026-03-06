@@ -677,7 +677,7 @@ mod tests {
         let key = "MGS_PORT";
         let result = temp_env::with_var(key, Some("not-a-port"), load_app_env_config);
         assert!(result.is_err());
-        let message = format!("{}", result.err().expect("expected error"));
+        let message = format!("{}", result.expect_err("expected error"));
         assert!(message.contains("MGS_PORT"));
     }
 }
