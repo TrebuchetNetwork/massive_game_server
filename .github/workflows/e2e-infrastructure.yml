@@ -21,6 +21,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
+      - name: Prepare docker secret placeholders
+        run: |
+          mkdir -p docker/secrets
+          printf 'ci-openrouter-placeholder\n' > docker/secrets/openrouter_api_key
+
       - name: Start docker-compose smoke stack
         run: docker compose -f docker/docker-compose.yml up -d --build redis massive-game-server
 
