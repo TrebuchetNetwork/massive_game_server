@@ -4,6 +4,8 @@ use tracing::info;
 use warp::http::{HeaderName, HeaderValue};
 use warp::Filter;
 
+const DEFAULT_CSP_HEADER_VALUE: &str = "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+
 pub fn compose_http_routes(
     protected_routes: warp::filters::BoxedFilter<(warp::reply::Response,)>,
     public_api_routes: warp::filters::BoxedFilter<(warp::reply::Response,)>,
@@ -48,14 +50,16 @@ pub fn compose_http_routes(
         .map(warp::reply::Reply::into_response)
         .boxed();
 
-    if behind_tls_proxy {
-        recovered_routes
-            .map(|mut response: warp::http::Response<warp::hyper::Body>| {
+    recovered_routes
+        .map(
+            move |mut response: warp::http::Response<warp::hyper::Body>| {
                 let headers = response.headers_mut();
-                headers.insert(
-                    HeaderName::from_static("strict-transport-security"),
-                    HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"),
-                );
+                if behind_tls_proxy {
+                    headers.insert(
+                        HeaderName::from_static("strict-transport-security"),
+                        HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"),
+                    );
+                }
                 headers.insert(
                     HeaderName::from_static("x-content-type-options"),
                     HeaderValue::from_static("nosniff"),
@@ -68,10 +72,12 @@ pub fn compose_http_routes(
                     HeaderName::from_static("referrer-policy"),
                     HeaderValue::from_static("strict-origin-when-cross-origin"),
                 );
+                headers.insert(
+                    HeaderName::from_static("content-security-policy"),
+                    HeaderValue::from_static(DEFAULT_CSP_HEADER_VALUE),
+                );
                 response
-            })
-            .boxed()
-    } else {
-        recovered_routes
-    }
+            },
+        )
+        .boxed()
 }

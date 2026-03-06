@@ -164,6 +164,8 @@ const MAX_CHAT_USERNAME_CHARS: usize = 32;
 const DEFAULT_CHAT_COOLDOWN_MS: u64 = 450;
 const MIN_CHAT_COOLDOWN_MS: u64 = 0;
 const MAX_CHAT_COOLDOWN_MS: u64 = 5_000;
+const CHAT_COOLDOWN_CLEANUP_INTERVAL_MS: u64 = 10 * 60 * 1000;
+const CHAT_COOLDOWN_ENTRY_TTL_MS: u64 = 20 * 60 * 1000;
 const WEBRTC_STATE_LABELS: [&str; 7] = [
     "new",
     "connecting",
@@ -175,6 +177,8 @@ const WEBRTC_STATE_LABELS: [&str; 7] = [
 ];
 
 static SIGNALING_RUNTIME_CONFIG: OnceLock<SignalingEnv> = OnceLock::new();
+static LAST_CHAT_COOLDOWN_CLEANUP_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 fn default_signaling_env_config() -> SignalingEnv {
     SignalingEnv {
@@ -229,6 +233,7 @@ fn try_consume_chat_cooldown_with_map(
     if cooldown_ms == 0 {
         return true;
     }
+    maybe_cleanup_chat_cooldowns(now_timestamp_ms, cooldowns);
     match cooldowns.entry(peer_id.to_owned()) {
         dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
             let last_sent = *occupied.get();
@@ -242,6 +247,27 @@ fn try_consume_chat_cooldown_with_map(
             vacant.insert(now_timestamp_ms);
             true
         }
+    }
+}
+
+fn maybe_cleanup_chat_cooldowns(now_timestamp_ms: u64, cooldowns: &DashMap<String, u64>) {
+    let previous = LAST_CHAT_COOLDOWN_CLEANUP_MS.load(std::sync::atomic::Ordering::Relaxed);
+    if now_timestamp_ms.saturating_sub(previous) < CHAT_COOLDOWN_CLEANUP_INTERVAL_MS {
+        return;
+    }
+
+    if LAST_CHAT_COOLDOWN_CLEANUP_MS
+        .compare_exchange(
+            previous,
+            now_timestamp_ms,
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+        )
+        .is_ok()
+    {
+        cooldowns.retain(|_peer_id, last_sent_ms| {
+            now_timestamp_ms.saturating_sub(*last_sent_ms) <= CHAT_COOLDOWN_ENTRY_TTL_MS
+        });
     }
 }
 
@@ -1682,11 +1708,14 @@ pub async fn handle_signaling_connection(
     let player_manager_for_dc_event = player_manager.clone();
     let data_channels_map_for_dc_event = data_channels_map.clone();
     let client_states_map_for_dc_event = client_states_map.clone();
+    let signaling_peers_for_dc_event = signaling_peers.clone();
+    let player_aois_for_dc_event = player_aois.clone();
     let chat_messages_queue_for_dc_event = chat_messages_queue.clone();
     let config_for_dc_event = config.clone();
     let server_instance_for_dc_event = server_instance.clone(); // Clone server instance for DC event
     let auth_service_for_dc_event = auth_service.clone();
     let auth_user_id_for_dc_event = auth_user_id.clone();
+    let cleanup_once_for_dc_event = Arc::clone(&cleanup_once);
 
     pc_for_datachannel_event.on_data_channel(Box::new(move |dc: Arc<RTCDataChannel>| {
         let dc_label_owned = dc.label().to_owned();
@@ -2109,24 +2138,74 @@ pub async fn handle_signaling_connection(
         let dc_on_close_arc = Arc::clone(&dc);
         let peer_id_on_close = current_peer_id_on_dc.clone();
         let dc_label_for_on_close = dc_label_owned.clone();
+        let signaling_peers_on_close = signaling_peers_for_dc_event.clone();
+        let player_manager_on_close = player_manager_for_dc_event.clone();
+        let data_channels_map_on_close = data_channels_map_for_dc_event.clone();
+        let client_states_map_on_close = client_states_map_for_dc_event.clone();
+        let player_aois_on_close = player_aois_for_dc_event.clone();
+        let auth_service_on_close = auth_service_for_dc_event.clone();
+        let server_instance_on_close = server_instance_for_dc_event.clone();
+        let cleanup_once_on_close = Arc::clone(&cleanup_once_for_dc_event);
 
         dc_on_close_arc.on_close(Box::new(move || {
             info!(
                 "[{}]: DataChannel '{}' CLOSED.",
                 peer_id_on_close, dc_label_for_on_close
             );
+            if begin_cleanup_once(cleanup_once_on_close.as_ref()) {
+                cleanup_connection(
+                    &peer_id_on_close,
+                    &signaling_peers_on_close,
+                    &player_manager_on_close,
+                    &data_channels_map_on_close,
+                    &client_states_map_on_close,
+                    &player_aois_on_close,
+                    &auth_service_on_close,
+                );
+                server_instance_on_close.cleanup_player_tracking_state(&peer_id_on_close);
+            } else {
+                debug!(
+                    "[{}]: Cleanup already performed before data channel close callback.",
+                    peer_id_on_close
+                );
+            }
             Box::pin(async {})
         }));
 
         let dc_on_error_arc = Arc::clone(&dc);
         let peer_id_on_error = current_peer_id_on_dc.clone();
         let dc_label_for_on_error = dc_label_owned.clone();
+        let signaling_peers_on_error = signaling_peers_for_dc_event.clone();
+        let player_manager_on_error = player_manager_for_dc_event.clone();
+        let data_channels_map_on_error = data_channels_map_for_dc_event.clone();
+        let client_states_map_on_error = client_states_map_for_dc_event.clone();
+        let player_aois_on_error = player_aois_for_dc_event.clone();
+        let auth_service_on_error = auth_service_for_dc_event.clone();
+        let server_instance_on_error = server_instance_for_dc_event.clone();
+        let cleanup_once_on_error = Arc::clone(&cleanup_once_for_dc_event);
 
         dc_on_error_arc.on_error(Box::new(move |err| {
             error!(
                 "[{}]: DataChannel '{}' ERROR: {}",
                 peer_id_on_error, dc_label_for_on_error, err
             );
+            if begin_cleanup_once(cleanup_once_on_error.as_ref()) {
+                cleanup_connection(
+                    &peer_id_on_error,
+                    &signaling_peers_on_error,
+                    &player_manager_on_error,
+                    &data_channels_map_on_error,
+                    &client_states_map_on_error,
+                    &player_aois_on_error,
+                    &auth_service_on_error,
+                );
+                server_instance_on_error.cleanup_player_tracking_state(&peer_id_on_error);
+            } else {
+                debug!(
+                    "[{}]: Cleanup already performed before data channel error callback.",
+                    peer_id_on_error
+                );
+            }
             Box::pin(async {})
         }));
 

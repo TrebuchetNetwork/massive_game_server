@@ -160,4 +160,24 @@ mod tests {
         let after = predictor.predict_threat_score(sample);
         assert!(after >= before);
     }
+
+    #[test]
+    fn threat_predictor_prioritizes_near_targets_over_far_targets() {
+        let predictor = ThreatPredictor::default();
+        let near = ThreatSample {
+            distance: 80.0,
+            relative_speed: 0.0,
+            recent_damage_taken: 0.0,
+            target_visibility: 1.0,
+        };
+        let far = ThreatSample {
+            distance: 900.0,
+            ..near
+        };
+
+        assert!(
+            predictor.predict_threat_score(near) > predictor.predict_threat_score(far),
+            "near targets should score as higher threat than far targets"
+        );
+    }
 }

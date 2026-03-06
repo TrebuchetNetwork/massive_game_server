@@ -131,9 +131,13 @@ pub const PISTOL_BASE_SPREAD_ANGLE_RAD: f32 = 0.022;
 pub const RIFLE_BASE_SPREAD_ANGLE_RAD: f32 = 0.016;
 pub const SNIPER_BASE_SPREAD_ANGLE_RAD: f32 = 0.006;
 pub const PISTOL_SPREAD_BLOOM_PER_SHOT_RAD: f32 = 0.020;
+// Kept separate from rifle so shotgun tuning can evolve independently.
+pub const SHOTGUN_SPREAD_BLOOM_PER_SHOT_RAD: f32 = 0.016;
 pub const RIFLE_SPREAD_BLOOM_PER_SHOT_RAD: f32 = 0.016;
 pub const SNIPER_SPREAD_BLOOM_PER_SHOT_RAD: f32 = 0.010;
 pub const PISTOL_SPREAD_BLOOM_MAX_RAD: f32 = 0.135;
+// Kept separate from rifle so shotgun tuning can evolve independently.
+pub const SHOTGUN_SPREAD_BLOOM_MAX_RAD: f32 = 0.110;
 pub const RIFLE_SPREAD_BLOOM_MAX_RAD: f32 = 0.110;
 pub const SNIPER_SPREAD_BLOOM_MAX_RAD: f32 = 0.045;
 

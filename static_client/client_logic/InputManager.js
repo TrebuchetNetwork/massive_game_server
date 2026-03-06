@@ -94,6 +94,7 @@ export function createInputManager({
     let inputContextMenuHandler = null;
     let inputUiKeyDownHandler = null;
     let inputUiKeyUpHandler = null;
+    let inputWindowResizeHandler = null;
     let managedTouchListeners = [];
     let appViewRectCache = null;
     let appViewRectCachedAt = 0;
@@ -806,6 +807,9 @@ export function createInputManager({
         if (inputUiKeyUpHandler) {
             document.removeEventListener('keyup', inputUiKeyUpHandler);
         }
+        if (inputWindowResizeHandler) {
+            window.removeEventListener('resize', inputWindowResizeHandler);
+        }
         const view = app?.view || null;
         if (view && inputMouseMoveHandler) {
             view.removeEventListener('mousemove', inputMouseMoveHandler);
@@ -827,6 +831,7 @@ export function createInputManager({
         inputContextMenuHandler = null;
         inputUiKeyDownHandler = null;
         inputUiKeyUpHandler = null;
+        inputWindowResizeHandler = null;
         if (outOfAmmoSoundResetTimer) {
             clearTimeout(outOfAmmoSoundResetTimer);
             outOfAmmoSoundResetTimer = null;
@@ -919,6 +924,15 @@ export function createInputManager({
         document.addEventListener('keyup', inputGameplayKeyUpHandler);
         document.addEventListener('keydown', inputUiKeyDownHandler);
         document.addEventListener('keyup', inputUiKeyUpHandler);
+        inputWindowResizeHandler = () => {
+            invalidateAppViewRectCache();
+            pingWheelTouchBoundsRect = minimapContainerDiv?.getBoundingClientRect() || null;
+            if (touchControlsInitialized) {
+                updateMobileControlsVisibility();
+                updateMobileButtonSizing();
+            }
+        };
+        window.addEventListener('resize', inputWindowResizeHandler);
         app.view.addEventListener('mousemove', inputMouseMoveHandler);
         app.view.addEventListener('mousedown', inputMouseDownHandler);
         app.view.addEventListener('mouseup', inputMouseUpHandler);
@@ -1246,12 +1260,7 @@ export function createInputManager({
             if (event.key === 'Escape' && pingWheelOpen) closePingWheel();
         });
 
-        addManagedTouchListener(window, 'resize', () => {
-            invalidateAppViewRectCache();
-            pingWheelTouchBoundsRect = minimapContainerDiv?.getBoundingClientRect() || null;
-            updateMobileControlsVisibility();
-            updateMobileButtonSizing();
-        });
+        inputWindowResizeHandler?.();
     }
 
     function onConnectionReset() {

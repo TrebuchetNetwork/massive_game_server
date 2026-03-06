@@ -11,6 +11,9 @@ fn anti_cheat_kick_threshold() -> Option<u32> {
             .and_then(|raw| raw.trim().parse::<u32>().ok())
             .unwrap_or(DEFAULT_ANTI_CHEAT_KICK_THRESHOLD);
         if parsed == 0 {
+            tracing::warn!(
+                "MGS_ANTI_CHEAT_KICK_THRESHOLD=0 disables speed-hack auto-kicks. Use only for local debugging."
+            );
             None
         } else {
             Some(parsed.max(1))
@@ -32,7 +35,7 @@ fn weapon_base_spread_angle_rad(weapon: ServerWeaponType) -> f32 {
 fn weapon_spread_bloom_per_shot_rad(weapon: ServerWeaponType) -> f32 {
     match weapon {
         ServerWeaponType::Pistol => PISTOL_SPREAD_BLOOM_PER_SHOT_RAD,
-        ServerWeaponType::Shotgun => RIFLE_SPREAD_BLOOM_PER_SHOT_RAD,
+        ServerWeaponType::Shotgun => SHOTGUN_SPREAD_BLOOM_PER_SHOT_RAD,
         ServerWeaponType::Rifle => RIFLE_SPREAD_BLOOM_PER_SHOT_RAD,
         ServerWeaponType::Sniper => SNIPER_SPREAD_BLOOM_PER_SHOT_RAD,
         ServerWeaponType::Melee => 0.0,
@@ -43,7 +46,7 @@ fn weapon_spread_bloom_per_shot_rad(weapon: ServerWeaponType) -> f32 {
 fn weapon_spread_bloom_cap_rad(weapon: ServerWeaponType) -> f32 {
     match weapon {
         ServerWeaponType::Pistol => PISTOL_SPREAD_BLOOM_MAX_RAD,
-        ServerWeaponType::Shotgun => RIFLE_SPREAD_BLOOM_MAX_RAD,
+        ServerWeaponType::Shotgun => SHOTGUN_SPREAD_BLOOM_MAX_RAD,
         ServerWeaponType::Rifle => RIFLE_SPREAD_BLOOM_MAX_RAD,
         ServerWeaponType::Sniper => SNIPER_SPREAD_BLOOM_MAX_RAD,
         ServerWeaponType::Melee => 0.0,

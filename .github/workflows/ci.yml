@@ -81,8 +81,7 @@ jobs:
           RUSTFLAGS: -D warnings
         run: cargo build -p massive_game_server_core --release --features jemalloc --bin massive_game_server_core --locked
 
-      - name: Docker build validation (best-effort)
-        continue-on-error: true
+      - name: Docker build validation
         run: docker build -f docker/Dockerfile -t massive-game-server:ci-build .
 
       - name: Website route smoke test
@@ -180,6 +179,65 @@ jobs:
       - name: Run UI coverage gate
         working-directory: static_client
         run: npm run test:ui:coverage
+
+  playwright-e2e:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: always
+      E2E_BASE_URL: http://127.0.0.1:18080
+      E2E_WS_URL: ws://127.0.0.1:18080/ws
+      MGS_HOST: 0.0.0.0
+      MGS_PORT: 18080
+      MGS_DISABLE_STUN: "1"
+      MGS_TARGET_BOT_COUNT: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Install FlatBuffers compiler
+        run: scripts/install_flatc.sh
+
+      - name: Verify Node runtime
+        run: |
+          node --version
+          npm --version
+
+      - name: Install Playwright dependencies
+        working-directory: scripts/e2e
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: scripts/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright E2E smoke suite
+        working-directory: scripts/e2e
+        run: |
+          npx playwright test \
+            tests/connect.spec.js \
+            tests/runtime.spec.js \
+            tests/human_gameplay_journey.spec.js \
+            --workers=1 \
+            --reporter=list
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: playwright-e2e-artifacts
+          path: |
+            scripts/e2e/test-results
+            scripts/e2e/playwright-report
 
   dependency-review:
     if: github.event_name == 'pull_request'
