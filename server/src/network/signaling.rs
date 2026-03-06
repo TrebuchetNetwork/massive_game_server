@@ -14,6 +14,7 @@ use crate::network::connection_manager::{
 };
 use crate::network::rate_limiter::TokenBucket;
 use crate::operational::auth::AuthService;
+use crate::operational::config::env_registry::SignalingEnv;
 use crate::operational::monitoring::metrics;
 use crate::server::instance::MassiveGameServer; // Added for server access for initial spawn
 use crate::world::partition::WorldPartitionManager;
@@ -38,10 +39,12 @@ use tokio::time::MissedTickBehavior;
 use tracing::{debug, error, info, trace, warn};
 use warp::ws::{Message, WebSocket};
 use webrtc::{
-    api::{media_engine::MediaEngine, APIBuilder, API},
+    api::{media_engine::MediaEngine, setting_engine::SettingEngine, APIBuilder, API},
     data_channel::{data_channel_message::DataChannelMessage, RTCDataChannel},
+    ice::udp_network::{EphemeralUDP, UDPNetwork},
     ice_transport::{
         ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
+        ice_candidate_type::RTCIceCandidateType,
         ice_server::RTCIceServer,
     },
     peer_connection::{
@@ -171,6 +174,34 @@ const WEBRTC_STATE_LABELS: [&str; 7] = [
     "other",
 ];
 
+static SIGNALING_RUNTIME_CONFIG: OnceLock<SignalingEnv> = OnceLock::new();
+
+fn default_signaling_env_config() -> SignalingEnv {
+    SignalingEnv {
+        chat_cooldown_ms: DEFAULT_CHAT_COOLDOWN_MS,
+        disable_stun: false,
+        stun_urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+        turn_urls: Vec::new(),
+        turn_credential_type: None,
+        turn_username: None,
+        turn_credential: None,
+        extra_ice_servers: None,
+        sdp_concurrency: DEFAULT_SDP_ADMISSION_CONCURRENCY,
+        webrtc_nat_1to1_ips: Vec::new(),
+        webrtc_nat_1to1_candidate_type: None,
+        webrtc_udp_port_min: None,
+        webrtc_udp_port_max: None,
+    }
+}
+
+fn signaling_env_config() -> &'static SignalingEnv {
+    SIGNALING_RUNTIME_CONFIG.get_or_init(default_signaling_env_config)
+}
+
+pub fn configure_signaling_runtime(config: &SignalingEnv) {
+    let _ = SIGNALING_RUNTIME_CONFIG.set(config.clone());
+}
+
 pub fn next_chat_message_seq() -> u64 {
     NEXT_CHAT_MESSAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
@@ -178,10 +209,8 @@ pub fn next_chat_message_seq() -> u64 {
 fn chat_cooldown_ms() -> u64 {
     static CHAT_COOLDOWN_MS: OnceLock<u64> = OnceLock::new();
     *CHAT_COOLDOWN_MS.get_or_init(|| {
-        std::env::var("MGS_CHAT_COOLDOWN_MS")
-            .ok()
-            .and_then(|raw| raw.trim().parse::<u64>().ok())
-            .unwrap_or(DEFAULT_CHAT_COOLDOWN_MS)
+        signaling_env_config()
+            .chat_cooldown_ms
             .clamp(MIN_CHAT_COOLDOWN_MS, MAX_CHAT_COOLDOWN_MS)
     })
 }
@@ -246,8 +275,43 @@ fn shared_webrtc_api() -> Result<Arc<API>, String> {
         media_engine
             .register_default_codecs()
             .map_err(|e| format!("register_default_codecs failed: {e}"))?;
+        let runtime = signaling_env_config();
+        let mut setting_engine = SettingEngine::default();
+
+        if let (Some(port_min), Some(port_max)) =
+            (runtime.webrtc_udp_port_min, runtime.webrtc_udp_port_max)
+        {
+            let udp = EphemeralUDP::new(port_min, port_max).map_err(|e| {
+                format!(
+                    "invalid WebRTC UDP port range {}-{}: {}",
+                    port_min, port_max, e
+                )
+            })?;
+            setting_engine.set_udp_network(UDPNetwork::Ephemeral(udp));
+            info!(
+                "WebRTC UDP candidate port range constrained to {}-{}.",
+                port_min, port_max
+            );
+        }
+
+        if !runtime.webrtc_nat_1to1_ips.is_empty() {
+            let candidate_type = match runtime.webrtc_nat_1to1_candidate_type.as_deref() {
+                Some("srflx") => RTCIceCandidateType::Srflx,
+                _ => RTCIceCandidateType::Host,
+            };
+            setting_engine.set_nat_1to1_ips(runtime.webrtc_nat_1to1_ips.clone(), candidate_type);
+            info!(
+                "WebRTC NAT 1:1 candidate rewriting enabled for {} IP(s) as {:?} candidates.",
+                runtime.webrtc_nat_1to1_ips.len(),
+                candidate_type
+            );
+        }
+
         Ok(Arc::new(
-            APIBuilder::new().with_media_engine(media_engine).build(),
+            APIBuilder::new()
+                .with_media_engine(media_engine)
+                .with_setting_engine(setting_engine)
+                .build(),
         ))
     }) {
         Ok(api) => Ok(Arc::clone(api)),
@@ -367,6 +431,7 @@ struct SignalingMessageJson {
     ice: Option<RTCIceCandidateInitSerde>,
 }
 
+#[cfg(test)]
 fn env_bool(name: &str) -> bool {
     std::env::var(name)
         .ok()
@@ -543,16 +608,17 @@ enum TurnCredentialType {
 }
 
 impl TurnCredentialType {
-    fn from_env() -> Self {
-        match std::env::var("MGS_TURN_CREDENTIAL_TYPE")
-            .ok()
-            .map(|v| v.trim().to_ascii_lowercase())
-            .as_deref()
-        {
+    fn from_raw(raw: Option<&str>) -> Self {
+        match raw.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
             Some("hmac-sha1") | Some("sha1") => Self::HmacSha1Legacy,
             Some("hmac") | Some("hmac-sha256") | Some("sha256") => Self::HmacSha256,
             _ => Self::Password,
         }
+    }
+
+    #[cfg(test)]
+    fn from_env() -> Self {
+        Self::from_raw(std::env::var("MGS_TURN_CREDENTIAL_TYPE").ok().as_deref())
     }
 }
 
@@ -652,28 +718,22 @@ struct CachedIceConfig {
 }
 
 fn load_cached_ice_config() -> CachedIceConfig {
-    let disable_stun = env_bool("MGS_DISABLE_STUN");
-    let stun_urls = std::env::var("MGS_STUN_URLS")
-        .ok()
-        .map(|raw| parse_csv(&raw))
-        .filter(|urls| !urls.is_empty())
-        .unwrap_or_else(|| vec!["stun:stun.l.google.com:19302".to_owned()]);
-    let turn_urls = std::env::var("MGS_TURN_URLS")
-        .ok()
-        .map(|raw| parse_csv(&raw))
-        .unwrap_or_default();
-    let turn_credential_type = TurnCredentialType::from_env();
-    let turn_username = std::env::var("MGS_TURN_USERNAME")
-        .ok()
-        .map(|raw| raw.trim().to_owned())
-        .filter(|raw| !raw.is_empty());
-    let turn_credential = std::env::var("MGS_TURN_CREDENTIAL")
-        .ok()
-        .map(|raw| raw.trim().to_owned())
-        .filter(|raw| !raw.is_empty());
-    let extra_ice_servers = std::env::var("MGS_ICE_SERVERS")
-        .ok()
-        .map(|raw| parse_ice_servers_env(&raw))
+    let runtime = signaling_env_config();
+    let disable_stun = runtime.disable_stun;
+    let stun_urls = if runtime.stun_urls.is_empty() {
+        vec!["stun:stun.l.google.com:19302".to_owned()]
+    } else {
+        runtime.stun_urls.clone()
+    };
+    let turn_urls = runtime.turn_urls.clone();
+    let turn_credential_type =
+        TurnCredentialType::from_raw(runtime.turn_credential_type.as_deref());
+    let turn_username = runtime.turn_username.clone();
+    let turn_credential = runtime.turn_credential.clone();
+    let extra_ice_servers = runtime
+        .extra_ice_servers
+        .as_ref()
+        .map(|raw| parse_ice_servers_env(raw))
         .unwrap_or_default();
 
     CachedIceConfig {
@@ -1089,10 +1149,7 @@ fn sdp_admission_semaphore() -> Option<&'static Arc<Semaphore>> {
     static SDP_ADMISSION_SEMAPHORE: OnceLock<Option<Arc<Semaphore>>> = OnceLock::new();
     SDP_ADMISSION_SEMAPHORE
         .get_or_init(|| {
-            let limit = std::env::var("MGS_SIGNALING_SDP_CONCURRENCY")
-                .ok()
-                .and_then(|raw| raw.parse::<usize>().ok())
-                .unwrap_or(DEFAULT_SDP_ADMISSION_CONCURRENCY);
+            let limit = signaling_env_config().sdp_concurrency;
             if limit == 0 {
                 info!("SDP admission gate disabled (MGS_SIGNALING_SDP_CONCURRENCY=0).");
                 None

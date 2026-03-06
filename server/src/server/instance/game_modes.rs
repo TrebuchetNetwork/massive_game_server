@@ -65,6 +65,49 @@ fn hot_zone_center_from_seed(seed: u64) -> Vec2 {
     )
 }
 
+#[inline]
+fn pickup_distance_sq(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    let dx = ax - bx;
+    let dy = ay - by;
+    dx * dx + dy * dy
+}
+
+fn collect_supply_drop_density(
+    pickups: &[Pickup],
+    center: Vec2,
+) -> (usize, usize, Vec<(f32, f32)>) {
+    let mut active_total = 0usize;
+    let mut active_speed_boosts = 0usize;
+    let mut nearby_positions = Vec::new();
+    let cluster_radius_sq =
+        MAP_EVENT_SUPPLY_DROP_CLUSTER_RADIUS * MAP_EVENT_SUPPLY_DROP_CLUSTER_RADIUS;
+
+    for pickup in pickups {
+        if !pickup.is_active {
+            continue;
+        }
+        if pickup_distance_sq(pickup.x, pickup.y, center.x, center.y) > cluster_radius_sq {
+            continue;
+        }
+        active_total = active_total.saturating_add(1);
+        if pickup.pickup_type == CorePickupType::SpeedBoost {
+            active_speed_boosts = active_speed_boosts.saturating_add(1);
+        }
+        nearby_positions.push((pickup.x, pickup.y));
+    }
+
+    (active_total, active_speed_boosts, nearby_positions)
+}
+
+#[inline]
+fn supply_drop_spacing_conflict(x: f32, y: f32, nearby_positions: &[(f32, f32)]) -> bool {
+    let min_spacing_sq =
+        MAP_EVENT_SUPPLY_DROP_MIN_PICKUP_SPACING * MAP_EVENT_SUPPLY_DROP_MIN_PICKUP_SPACING;
+    nearby_positions
+        .iter()
+        .any(|(px, py)| pickup_distance_sq(*px, *py, x, y) < min_spacing_sq)
+}
+
 #[derive(Debug, Clone, Copy)]
 enum LatePhaseEvent {
     SupplyWarning {
@@ -195,39 +238,73 @@ impl MassiveGameServer {
         let mut spawned = Vec::with_capacity(MAP_EVENT_SUPPLY_DROP_PICKUPS);
         {
             let mut pickups = self.pickups.write();
-            for idx in 0..MAP_EVENT_SUPPLY_DROP_PICKUPS {
-                let angle = rng.gen_range_f32(0.0, 2.0 * std::f32::consts::PI);
-                let radius = rng.gen_range_f32(
-                    MAP_EVENT_SUPPLY_DROP_INNER_RADIUS,
-                    MAP_EVENT_SUPPLY_DROP_OUTER_RADIUS,
+            let (active_nearby, mut speed_boosts_nearby, mut nearby_positions) =
+                collect_supply_drop_density(pickups.as_slice(), center);
+            if active_nearby >= MAP_EVENT_SUPPLY_DROP_MAX_ACTIVE_NEARBY {
+                debug!(
+                    "Skipping supply drop at ({:.1}, {:.1}) due to nearby pickup density ({}/{}).",
+                    center.x, center.y, active_nearby, MAP_EVENT_SUPPLY_DROP_MAX_ACTIVE_NEARBY
                 );
-                let spawn_x =
-                    (center.x + radius * angle.cos()).clamp(WORLD_MIN_X + 40.0, WORLD_MAX_X - 40.0);
-                let spawn_y =
-                    (center.y + radius * angle.sin()).clamp(WORLD_MIN_Y + 40.0, WORLD_MAX_Y - 40.0);
-                let overlaps_wall = self
-                    .wall_spatial_index
-                    .query_radius(spawn_x, spawn_y, PLAYER_RADIUS + 8.0)
-                    .iter()
-                    .any(|wall| {
-                        let closest_x = spawn_x.clamp(wall.x, wall.x + wall.width);
-                        let closest_y = spawn_y.clamp(wall.y, wall.y + wall.height);
-                        let dx = spawn_x - closest_x;
-                        let dy = spawn_y - closest_y;
-                        dx * dx + dy * dy < PLAYER_RADIUS * PLAYER_RADIUS
-                    });
-                if overlaps_wall {
-                    continue;
+                return 0;
+            }
+
+            for idx in 0..MAP_EVENT_SUPPLY_DROP_PICKUPS {
+                let mut pickup_type = pickup_types[idx % pickup_types.len()].clone();
+                if pickup_type == CorePickupType::SpeedBoost
+                    && speed_boosts_nearby >= MAP_EVENT_SUPPLY_DROP_MAX_SPEED_BOOSTS_NEARBY
+                {
+                    pickup_type = CorePickupType::Health;
                 }
 
-                let pickup = Pickup::new(
-                    generate_entity_id(),
-                    spawn_x,
-                    spawn_y,
-                    pickup_types[idx % pickup_types.len()].clone(),
-                );
-                pickups.push(pickup.clone());
-                spawned.push(pickup);
+                let mut placed = false;
+                for _attempt in 0..18 {
+                    let angle = rng.gen_range_f32(0.0, 2.0 * std::f32::consts::PI);
+                    let radius = rng.gen_range_f32(
+                        MAP_EVENT_SUPPLY_DROP_INNER_RADIUS,
+                        MAP_EVENT_SUPPLY_DROP_OUTER_RADIUS,
+                    );
+                    let spawn_x = (center.x + radius * angle.cos())
+                        .clamp(WORLD_MIN_X + 40.0, WORLD_MAX_X - 40.0);
+                    let spawn_y = (center.y + radius * angle.sin())
+                        .clamp(WORLD_MIN_Y + 40.0, WORLD_MAX_Y - 40.0);
+
+                    if supply_drop_spacing_conflict(spawn_x, spawn_y, &nearby_positions) {
+                        continue;
+                    }
+
+                    let overlaps_wall = self
+                        .wall_spatial_index
+                        .query_radius(spawn_x, spawn_y, PLAYER_RADIUS + 8.0)
+                        .iter()
+                        .any(|wall| {
+                            let closest_x = spawn_x.clamp(wall.x, wall.x + wall.width);
+                            let closest_y = spawn_y.clamp(wall.y, wall.y + wall.height);
+                            let dx = spawn_x - closest_x;
+                            let dy = spawn_y - closest_y;
+                            dx * dx + dy * dy < PLAYER_RADIUS * PLAYER_RADIUS
+                        });
+                    if overlaps_wall {
+                        continue;
+                    }
+
+                    let pickup =
+                        Pickup::new(generate_entity_id(), spawn_x, spawn_y, pickup_type.clone());
+                    pickups.push(pickup.clone());
+                    spawned.push(pickup);
+                    nearby_positions.push((spawn_x, spawn_y));
+                    if pickup_type == CorePickupType::SpeedBoost {
+                        speed_boosts_nearby = speed_boosts_nearby.saturating_add(1);
+                    }
+                    placed = true;
+                    break;
+                }
+
+                if !placed {
+                    debug!(
+                        "Could not place supply-drop pickup {} near ({:.1}, {:.1}) after retries.",
+                        idx, center.x, center.y
+                    );
+                }
             }
         }
 
@@ -1220,5 +1297,43 @@ mod tests {
             ));
         }
         assert!(distinct.len() > 1);
+    }
+
+    #[test]
+    fn collect_supply_drop_density_counts_nearby_pickups_and_speed_boosts() {
+        let center = Vec2::new(0.0, 0.0);
+        let pickups = vec![
+            Pickup::new(1, 10.0, 10.0, CorePickupType::Health),
+            Pickup::new(2, 15.0, 15.0, CorePickupType::SpeedBoost),
+            Pickup {
+                id: 3,
+                x: 900.0,
+                y: 900.0,
+                pickup_type: CorePickupType::SpeedBoost,
+                is_active: true,
+                respawn_timer: None,
+            },
+            Pickup {
+                id: 4,
+                x: 12.0,
+                y: 14.0,
+                pickup_type: CorePickupType::SpeedBoost,
+                is_active: false,
+                respawn_timer: Some(3.0),
+            },
+        ];
+
+        let (active_total, speed_boosts, nearby_positions) =
+            collect_supply_drop_density(&pickups, center);
+        assert_eq!(active_total, 2);
+        assert_eq!(speed_boosts, 1);
+        assert_eq!(nearby_positions.len(), 2);
+    }
+
+    #[test]
+    fn supply_drop_spacing_conflict_detects_nearby_overlap() {
+        let nearby = vec![(100.0, 100.0), (-20.0, 40.0)];
+        assert!(supply_drop_spacing_conflict(100.0 + 20.0, 100.0, &nearby));
+        assert!(!supply_drop_spacing_conflict(260.0, 260.0, &nearby));
     }
 }

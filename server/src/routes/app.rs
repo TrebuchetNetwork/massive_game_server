@@ -6,25 +6,23 @@ use warp::Filter;
 
 pub fn compose_http_routes(
     protected_routes: warp::filters::BoxedFilter<(warp::reply::Response,)>,
-    public_routes: warp::filters::BoxedFilter<(warp::reply::Response,)>,
+    public_api_routes: warp::filters::BoxedFilter<(warp::reply::Response,)>,
+    static_routes: warp::filters::BoxedFilter<(warp::reply::Response,)>,
     allowed_cors_origins: Vec<String>,
     behind_tls_proxy: bool,
 ) -> warp::filters::BoxedFilter<(warp::reply::Response,)> {
-    let base_routes = protected_routes.or(public_routes).boxed();
-    let recovered_routes = base_routes.recover(handle_route_rejection);
+    let api_routes = protected_routes.or(public_api_routes).boxed();
 
-    let routes = if allowed_cors_origins.is_empty() {
+    let api_routes = if allowed_cors_origins.is_empty() {
         info!(
             "No cross-origin API origins configured (set MGS_ALLOWED_ORIGINS for explicit allowlist)."
         );
-        recovered_routes
-            .map(warp::reply::Reply::into_response)
-            .boxed()
+        api_routes.map(warp::reply::Reply::into_response).boxed()
     } else {
         for origin in &allowed_cors_origins {
             info!("Allowing API CORS origin: {}", origin);
         }
-        recovered_routes
+        api_routes
             .with(
                 warp::cors()
                     .allow_origins(allowed_cors_origins.iter().map(String::as_str))
@@ -44,8 +42,14 @@ pub fn compose_http_routes(
             .boxed()
     };
 
+    let recovered_routes = static_routes
+        .or(api_routes)
+        .recover(handle_route_rejection)
+        .map(warp::reply::Reply::into_response)
+        .boxed();
+
     if behind_tls_proxy {
-        routes
+        recovered_routes
             .map(|mut response: warp::http::Response<warp::hyper::Body>| {
                 let headers = response.headers_mut();
                 headers.insert(
@@ -68,6 +72,6 @@ pub fn compose_http_routes(
             })
             .boxed()
     } else {
-        routes
+        recovered_routes
     }
 }

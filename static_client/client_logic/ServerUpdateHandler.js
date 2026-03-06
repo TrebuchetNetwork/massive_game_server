@@ -253,7 +253,7 @@ export function createServerUpdateHandler(getCtx) {
         }
     }
 
-    function processServerUpdate(messageData, isInitial = false) {
+    function processServerUpdate(messageData, isInitial = false, options = {}) {
         const ctx = getCtx();
         const {
             log, GP, normalizeAngle, walls, players, projectiles, pickups, zones,
@@ -274,6 +274,7 @@ export function createServerUpdateHandler(getCtx) {
             console.error("[processServerUpdate] messageData:", messageData, "isInitial:", isInitial);
             return;
         }
+        const replaceInitialState = options?.replaceInitialState !== false;
 
         let localPlayerState = ctx.localPlayerState;
         let killFeed = ctx.killFeed;
@@ -295,7 +296,9 @@ export function createServerUpdateHandler(getCtx) {
         const wallDebugEnabled = isWallDebugEnabled();
 
         if (isInitial) {
-            walls.clear();
+            if (replaceInitialState) {
+                walls.clear();
+            }
             if (messageData.walls) {
                 const initialWalls = messageData.walls;
                 for (let i = 0; i < initialWalls.length; i += 1) {
@@ -310,7 +313,9 @@ export function createServerUpdateHandler(getCtx) {
             }
             drawWalls();
             if (messageData.zones && messageData.zones.length > 0) {
-                zones.clear();
+                if (replaceInitialState) {
+                    zones.clear();
+                }
                 for (const zoneData of messageData.zones) {
                     zones.set(zoneData.id, zoneData);
                 }

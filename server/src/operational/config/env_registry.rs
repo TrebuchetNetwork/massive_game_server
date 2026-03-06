@@ -11,6 +11,7 @@ pub struct AppEnvConfig {
     pub auth: AuthEnv,
     pub admin_auth: AdminAuthEnv,
     pub backup: BackupEnv,
+    pub signaling: SignalingEnv,
     pub network_bind: NetworkBindEnv,
     pub shutdown_drain_timeout_secs: u64,
     pub allowed_cors_origins: Vec<String>,
@@ -66,6 +67,23 @@ pub struct BackupEnv {
     pub arena_store_path: String,
     pub live_replay_dispute_store_path: String,
     pub extra_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SignalingEnv {
+    pub chat_cooldown_ms: u64,
+    pub disable_stun: bool,
+    pub stun_urls: Vec<String>,
+    pub turn_urls: Vec<String>,
+    pub turn_credential_type: Option<String>,
+    pub turn_username: Option<String>,
+    pub turn_credential: Option<String>,
+    pub extra_ice_servers: Option<String>,
+    pub sdp_concurrency: usize,
+    pub webrtc_nat_1to1_ips: Vec<String>,
+    pub webrtc_nat_1to1_candidate_type: Option<String>,
+    pub webrtc_udp_port_min: Option<u16>,
+    pub webrtc_udp_port_max: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +185,47 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
         get_optional_trimmed("MGS_LIVE_REPLAY_DISPUTE_STORE_PATH")
             .unwrap_or_else(|| "data/live_replay_disputes.jsonl".to_owned());
     let backup_extra_paths = parse_list("MGS_BACKUP_EXTRA_PATHS");
+    let signaling_chat_cooldown_ms =
+        parse_u64_with_default("MGS_CHAT_COOLDOWN_MS", 450, &mut errors).clamp(0, 5_000);
+    let signaling_disable_stun = parse_bool_with_default("MGS_DISABLE_STUN", false, &mut errors);
+    let signaling_stun_urls = parse_list("MGS_STUN_URLS");
+    let signaling_turn_urls = parse_list("MGS_TURN_URLS");
+    let signaling_turn_credential_type =
+        get_optional_trimmed("MGS_TURN_CREDENTIAL_TYPE").map(|raw| raw.to_ascii_lowercase());
+    let signaling_turn_username = get_optional_trimmed("MGS_TURN_USERNAME");
+    let signaling_turn_credential = get_optional_trimmed("MGS_TURN_CREDENTIAL");
+    let signaling_extra_ice_servers = get_optional_trimmed("MGS_ICE_SERVERS");
+    let signaling_sdp_concurrency =
+        parse_usize_with_default("MGS_SIGNALING_SDP_CONCURRENCY", 64, &mut errors);
+    let signaling_webrtc_nat_1to1_ips = parse_list("MGS_WEBRTC_NAT_1TO1_IPS");
+    let signaling_webrtc_nat_1to1_candidate_type =
+        get_optional_trimmed("MGS_WEBRTC_NAT_1TO1_CANDIDATE_TYPE")
+            .map(|raw| raw.to_ascii_lowercase());
+    let signaling_webrtc_udp_port_min = parse_optional_u16("MGS_WEBRTC_UDP_PORT_MIN", &mut errors);
+    let signaling_webrtc_udp_port_max = parse_optional_u16("MGS_WEBRTC_UDP_PORT_MAX", &mut errors);
+    if signaling_webrtc_udp_port_min.is_some() ^ signaling_webrtc_udp_port_max.is_some() {
+        errors.push(
+            "MGS_WEBRTC_UDP_PORT_MIN and MGS_WEBRTC_UDP_PORT_MAX must be set together".to_owned(),
+        );
+    }
+    if let (Some(min_port), Some(max_port)) =
+        (signaling_webrtc_udp_port_min, signaling_webrtc_udp_port_max)
+    {
+        if min_port > max_port {
+            errors.push(format!(
+                "MGS_WEBRTC_UDP_PORT_MIN ({}) must be <= MGS_WEBRTC_UDP_PORT_MAX ({})",
+                min_port, max_port
+            ));
+        }
+    }
+    if let Some(raw_candidate_type) = signaling_webrtc_nat_1to1_candidate_type.as_deref() {
+        if raw_candidate_type != "host" && raw_candidate_type != "srflx" {
+            errors.push(format!(
+                "MGS_WEBRTC_NAT_1TO1_CANDIDATE_TYPE must be 'host' or 'srflx' (got '{}')",
+                raw_candidate_type
+            ));
+        }
+    }
 
     let host = get_optional_trimmed("MGS_HOST").unwrap_or_else(|| "0.0.0.0".to_owned());
     let port = parse_u16_with_default("MGS_PORT", 8080, &mut errors);
@@ -246,6 +305,21 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
             arena_store_path: backup_arena_store_path,
             live_replay_dispute_store_path: backup_live_replay_dispute_store_path,
             extra_paths: backup_extra_paths,
+        },
+        signaling: SignalingEnv {
+            chat_cooldown_ms: signaling_chat_cooldown_ms,
+            disable_stun: signaling_disable_stun,
+            stun_urls: signaling_stun_urls,
+            turn_urls: signaling_turn_urls,
+            turn_credential_type: signaling_turn_credential_type,
+            turn_username: signaling_turn_username,
+            turn_credential: signaling_turn_credential,
+            extra_ice_servers: signaling_extra_ice_servers,
+            sdp_concurrency: signaling_sdp_concurrency,
+            webrtc_nat_1to1_ips: signaling_webrtc_nat_1to1_ips,
+            webrtc_nat_1to1_candidate_type: signaling_webrtc_nat_1to1_candidate_type,
+            webrtc_udp_port_min: signaling_webrtc_udp_port_min,
+            webrtc_udp_port_max: signaling_webrtc_udp_port_max,
         },
         network_bind: NetworkBindEnv { host, port },
         shutdown_drain_timeout_secs,
@@ -387,6 +461,17 @@ fn parse_optional_u64(var_name: &str, errors: &mut Vec<String>) -> Option<u64> {
                 "{} has invalid unsigned integer value '{}'",
                 var_name, raw
             ));
+            None
+        }
+    }
+}
+
+fn parse_optional_u16(var_name: &str, errors: &mut Vec<String>) -> Option<u16> {
+    let raw = std::env::var(var_name).ok()?;
+    match raw.trim().parse::<u16>() {
+        Ok(value) => Some(value),
+        Err(_) => {
+            errors.push(format!("{} has invalid port value '{}'", var_name, raw));
             None
         }
     }

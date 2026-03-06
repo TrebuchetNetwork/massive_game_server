@@ -1,6 +1,38 @@
 use super::*;
 use rayon::prelude::*;
 
+fn expected_validation_speed(player_state: &PlayerState, movement_multiplier: f32) -> f32 {
+    let mut expected_speed = PLAYER_BASE_SPEED;
+    if player_state.speed_boost_remaining > 0.0 || player_state.streak_speed_boost_remaining > 0.0 {
+        expected_speed *= SPEED_BOOST_MULTIPLIER;
+    }
+    if player_state.dash_remaining > 0.0 {
+        expected_speed *= ABILITY_DASH_SPEED_MULTIPLIER;
+    }
+    if player_state.dodge_roll_remaining > 0.0 {
+        expected_speed *= ABILITY_DODGE_SPEED_MULTIPLIER;
+    }
+    if player_state.zone_boost_cooldown_remaining > 0.0 {
+        expected_speed = expected_speed.max(PLAYER_BASE_SPEED * ZONE_BOOST_SPEED_MULTIPLIER);
+    }
+    expected_speed *= movement_multiplier.max(0.2);
+
+    let observed_speed = player_state.velocity_x.hypot(player_state.velocity_y).max(
+        player_state
+            .prev_velocity
+            .0
+            .hypot(player_state.prev_velocity.1),
+    );
+    expected_speed
+        .max(observed_speed)
+        .max(PLAYER_BASE_SPEED * 0.5)
+}
+
+#[inline]
+fn max_acceleration_for_player(expected_speed: f32) -> f32 {
+    MAX_ACCELERATION_PER_TICK.max(expected_speed * 2.4)
+}
+
 impl MassiveGameServer {
     pub(super) async fn process_player_physics_parallel(
         &self,
@@ -184,8 +216,33 @@ impl MassiveGameServer {
 
         // Check collision with nearby walls only
         for wall in nearby_walls.iter() {
-            let closest_x = player_state.x.clamp(wall.x, wall.x + wall.width);
-            let closest_y = player_state.y.clamp(wall.y, wall.y + wall.height);
+            let (wall_x, wall_y, wall_width, wall_height) = if wall.is_destructible {
+                let partition_idx = self.world_partition_manager.get_partition_index_for_point(
+                    wall.x + wall.width * 0.5,
+                    wall.y + wall.height * 0.5,
+                );
+                let Some(partition) = self.world_partition_manager.get_partition(partition_idx)
+                else {
+                    continue;
+                };
+                let Some(authoritative_wall) = partition.get_wall(wall.id) else {
+                    continue;
+                };
+                if authoritative_wall.current_health <= 0 {
+                    continue;
+                }
+                (
+                    authoritative_wall.x,
+                    authoritative_wall.y,
+                    authoritative_wall.width,
+                    authoritative_wall.height,
+                )
+            } else {
+                (wall.x, wall.y, wall.width, wall.height)
+            };
+
+            let closest_x = player_state.x.clamp(wall_x, wall_x + wall_width);
+            let closest_y = player_state.y.clamp(wall_y, wall_y + wall_height);
 
             let dist_sq =
                 (player_state.x - closest_x).powi(2) + (player_state.y - closest_y).powi(2);
@@ -238,7 +295,8 @@ impl MassiveGameServer {
 
         // Anti-cheat validation – position-based
         let tolerance = crate::core::constants::speed_hack_tolerance();
-        let max_speed_dist = PLAYER_BASE_SPEED * tolerance * delta_time;
+        let expected_speed = expected_validation_speed(player_state, movement_multiplier);
+        let max_speed_dist = expected_speed * tolerance * delta_time;
         // Fixed slack per tick allowed excessive burst distance; scale with expected movement instead.
         let adaptive_slack = (max_speed_dist * 0.15).clamp(1.0, MAX_POSITION_DELTA_SLACK);
         let max_dist = max_speed_dist + adaptive_slack;
@@ -265,20 +323,21 @@ impl MassiveGameServer {
         let dvx = player_state.velocity_x - player_state.prev_velocity.0;
         let dvy = player_state.velocity_y - player_state.prev_velocity.1;
         let accel_magnitude = (dvx * dvx + dvy * dvy).sqrt();
+        let max_allowed_accel = max_acceleration_for_player(expected_speed);
 
-        if accel_magnitude > MAX_ACCELERATION_PER_TICK {
+        if accel_magnitude > max_allowed_accel {
             player_state.acceleration_violation_count += 1;
             if player_state.acceleration_violation_count > ACCELERATION_VIOLATION_THRESHOLD {
                 warn!(
                     "[{}]: Acceleration anomaly (accel={:.1}, threshold={:.1}, count={}).",
                     player_state.id.as_ref(),
                     accel_magnitude,
-                    MAX_ACCELERATION_PER_TICK,
+                    max_allowed_accel,
                     player_state.acceleration_violation_count
                 );
                 player_state.violation_count = player_state.violation_count.saturating_add(1);
                 // Clamp to the maximum allowed acceleration instead of snapping to zero-like motion.
-                let clamp_scale = (MAX_ACCELERATION_PER_TICK / accel_magnitude).clamp(0.0, 1.0);
+                let clamp_scale = (max_allowed_accel / accel_magnitude).clamp(0.0, 1.0);
                 player_state.velocity_x = player_state.prev_velocity.0 + dvx * clamp_scale;
                 player_state.velocity_y = player_state.prev_velocity.1 + dvy * clamp_scale;
                 player_state.mark_field_changed(FIELD_POSITION_ROTATION);
@@ -547,5 +606,41 @@ impl MassiveGameServer {
             }
         });
         enemies
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_player() -> PlayerState {
+        PlayerState::new("p1".to_string(), "test".to_string(), 0.0, 0.0)
+    }
+
+    #[test]
+    fn expected_validation_speed_respects_ability_and_powerup_bonuses() {
+        let mut player = make_player();
+        player.speed_boost_remaining = 1.0;
+        player.dash_remaining = 0.2;
+        let expected = expected_validation_speed(&player, 1.0);
+        let baseline = PLAYER_BASE_SPEED * SPEED_BOOST_MULTIPLIER * ABILITY_DASH_SPEED_MULTIPLIER;
+        assert!(expected >= baseline - 0.01);
+    }
+
+    #[test]
+    fn expected_validation_speed_allows_zone_boost_bursts() {
+        let mut player = make_player();
+        player.zone_boost_cooldown_remaining = 0.5;
+        let expected = expected_validation_speed(&player, 1.0);
+        assert!(expected >= PLAYER_BASE_SPEED * ZONE_BOOST_SPEED_MULTIPLIER - 0.01);
+    }
+
+    #[test]
+    fn max_acceleration_for_player_scales_for_boosted_states() {
+        assert_eq!(
+            max_acceleration_for_player(100.0),
+            MAX_ACCELERATION_PER_TICK
+        );
+        assert!(max_acceleration_for_player(350.0) > MAX_ACCELERATION_PER_TICK);
     }
 }

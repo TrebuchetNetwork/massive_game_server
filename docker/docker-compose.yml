@@ -13,17 +13,22 @@ services:
       MGS_DISABLE_STUN: "${MGS_DISABLE_STUN:-1}"
       MGS_TARGET_BOT_COUNT: "${MGS_TARGET_BOT_COUNT:-0}"
       MGS_MAX_PLAYERS_PER_MATCH: "${MGS_MAX_PLAYERS_PER_MATCH:-200}"
-      MGS_BEHIND_TLS_PROXY: "1"
-      MGS_REQUIRE_AUTH: "${MGS_REQUIRE_AUTH:-1}"
-      MGS_ALLOWED_ORIGINS: "${MGS_ALLOWED_ORIGINS:-https://game.trebuchet.network}"
+      MGS_BEHIND_TLS_PROXY: "${MGS_BEHIND_TLS_PROXY:-0}"
+      MGS_REQUIRE_AUTH: "${MGS_REQUIRE_AUTH:-0}"
+      MGS_ALLOWED_ORIGINS: "${MGS_ALLOWED_ORIGINS:-https://game.trebuchet.network,http://127.0.0.1:18080,http://localhost:18080,http://127.0.0.1:8080,http://localhost:8080}"
       MGS_REDIS_URL: "redis://:${MGS_REDIS_PASSWORD:-mgs_redis_dev_password}@redis:6379/"
       MGS_METRICS_ENABLED: "true"
       MGS_METRICS_BIND_ADDR: "${MGS_METRICS_BIND_ADDR:-127.0.0.1:9090}"
       RUST_LOG: "${RUST_LOG:-massive_game_server_core=info,warp=warn,webrtc=warn}"
       MGS_LOG_FORMAT: "${MGS_LOG_FORMAT:-json}"
+      MGS_WEBRTC_UDP_PORT_MIN: "${MGS_WEBRTC_UDP_PORT_MIN:-50000}"
+      MGS_WEBRTC_UDP_PORT_MAX: "${MGS_WEBRTC_UDP_PORT_MAX:-50100}"
+      MGS_WEBRTC_NAT_1TO1_IPS: "${MGS_WEBRTC_NAT_1TO1_IPS:-127.0.0.1}"
+      MGS_WEBRTC_NAT_1TO1_CANDIDATE_TYPE: "${MGS_WEBRTC_NAT_1TO1_CANDIDATE_TYPE:-host}"
       OPENROUTER_API_KEY_FILE: "/run/secrets/openrouter_api_key"
     ports:
       - "127.0.0.1:${MGS_SERVER_BIND_PORT:-8080}:8080"
+      - "127.0.0.1:${MGS_WEBRTC_UDP_PORT_MIN:-50000}-${MGS_WEBRTC_UDP_PORT_MAX:-50100}:${MGS_WEBRTC_UDP_PORT_MIN:-50000}-${MGS_WEBRTC_UDP_PORT_MAX:-50100}/udp"
     volumes:
       - mgs_data:/app/data
       - mgs_artifacts:/app/artifacts

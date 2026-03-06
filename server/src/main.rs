@@ -7,6 +7,7 @@ use massive_game_server_core::network::quic::{
     register_quic_disconnect_hook, start_quic_runtime_from_env_with_handler,
 };
 use massive_game_server_core::network::signaling::{
+    configure_signaling_runtime,
     BoundedChatQueue,
     ChatMessagesQueue,
     ClientStatesMap,
@@ -77,6 +78,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Massive Game Server starting up...");
     let app_env = load_app_env_config()
         .map_err(|err| anyhow::anyhow!("invalid environment configuration: {}", err))?;
+    configure_signaling_runtime(&app_env.signaling);
 
     let config = Arc::new(
         load_validated_server_config()
@@ -217,8 +219,11 @@ async fn main() -> anyhow::Result<()> {
         .map(|(), reply| reply)
         .boxed();
 
-    let public_routes = auth_routes
-        .or(signaling_route)
+    let public_routes = auth_routes.map(warp::reply::Reply::into_response).boxed();
+    // Routes that should not be subject to HTTP CORS middleware:
+    // - WebSocket signaling has explicit origin/transport guards.
+    // - Static/root/health routes should be reachable directly in local mode.
+    let static_routes = signaling_route
         .or(root_route)
         .or(healthz_route)
         .or(readyz_route)
@@ -230,6 +235,7 @@ async fn main() -> anyhow::Result<()> {
     let routes = compose_http_routes(
         protected_routes,
         public_routes,
+        static_routes,
         allowed_cors_origins,
         behind_tls_proxy,
     );

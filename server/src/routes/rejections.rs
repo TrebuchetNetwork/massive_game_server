@@ -56,6 +56,17 @@ pub async fn handle_route_rejection(rejection: Rejection) -> Result<impl Reply, 
         return Ok(warp::reply::with_status(body, admin_rejection.status));
     }
 
+    if let Some(cors_rejection) = rejection.find::<warp::cors::CorsForbidden>() {
+        let body = warp::reply::json(&serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "cors_origin_not_allowed",
+                "message": cors_rejection.to_string()
+            }
+        }));
+        return Ok(warp::reply::with_status(body, StatusCode::FORBIDDEN));
+    }
+
     if rejection.is_not_found() {
         let body = warp::reply::json(&serde_json::json!({
             "ok": false,
