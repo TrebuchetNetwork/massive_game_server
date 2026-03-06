@@ -330,11 +330,17 @@ export function createRenderAssetManager(getCtx) {
         return container;
     }
 
+    function onConnectionReset() {}
+
+    function destroy() {}
+
     return {
         buildRenderTexture,
         createGunTextureForWeapon,
         createProjectileTextureForWeapon,
         initRenderAssetCache,
         buildCarriedFlagSprite,
+        onConnectionReset,
+        destroy,
     };
 }

@@ -48,8 +48,17 @@ function computeEntryCoverage(entry) {
 }
 
 async function connectClient(page) {
-  await page.goto("/client.html", { waitUntil: "domcontentloaded" });
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('mgs_player_name', 'E2EPlayer');
+    } catch (_) {}
+  });
+  await page.goto("/client.html?disable_stun=1&match_type=quick", { waitUntil: "domcontentloaded" });
   await page.waitForSelector("#connectButton", { state: "attached" });
+  const matchTypeSelect = page.locator('#matchTypeSelect');
+  if (await matchTypeSelect.count()) {
+    await matchTypeSelect.selectOption('quick');
+  }
   const wsInput = page.locator("#wsUrl");
   if (await wsInput.count()) {
     await wsInput.fill(resolveWsUrl());
@@ -81,7 +90,12 @@ test("UI coverage and visual states stay healthy", async ({ page }, testInfo) =>
 
   await page.coverage.startJSCoverage({ reportAnonymousScripts: false, resetOnNavigation: false });
 
-  await page.goto("/client.html", { waitUntil: "domcontentloaded" });
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('mgs_player_name', 'E2EPlayer');
+    } catch (_) {}
+  });
+  await page.goto("/client.html?disable_stun=1&match_type=quick", { waitUntil: "domcontentloaded" });
   await page.waitForSelector("#connectButton", { state: "visible" });
 
   const menuShot = testInfo.outputPath("menu-idle.png");
@@ -108,6 +122,10 @@ test("UI coverage and visual states stay healthy", async ({ page }, testInfo) =>
     return panel && !panel.classList.contains("is-hidden");
   });
 
+  const matchTypeSelect = page.locator('#matchTypeSelect');
+  if (await matchTypeSelect.count()) {
+    await matchTypeSelect.selectOption('quick');
+  }
   const wsInput = page.locator("#wsUrl");
   if (await wsInput.count()) {
     await wsInput.fill(resolveWsUrl());

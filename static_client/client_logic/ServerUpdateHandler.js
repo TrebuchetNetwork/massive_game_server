@@ -1047,9 +1047,17 @@ export function createServerUpdateHandler(getCtx) {
         }
     }
 
+    function onConnectionReset() {}
+
+    function destroy() {
+        onConnectionReset();
+    }
+
     return {
         processServerUpdate,
         processDeltaStateFast,
         tryProcessDeltaMessageFast,
+        onConnectionReset,
+        destroy,
     };
 }

@@ -61,13 +61,11 @@ impl MassiveGameServer {
                 .batch_update_projectiles(&spatial_updates);
         }
 
-        let mut projectiles_guard = self.projectiles.write();
-        projectiles_guard.extend(queued_projectiles);
+        self.projectiles.extend(queued_projectiles);
     }
 
     fn take_authoritative_projectiles_for_processing(&self) -> Vec<Projectile> {
-        let mut guard = self.projectiles.write();
-        std::mem::take(&mut *guard)
+        self.projectiles.take_all()
     }
 
     fn commit_authoritative_projectile_state(
@@ -79,8 +77,7 @@ impl MassiveGameServer {
             self.spatial_index.remove_projectile(proj_id);
         }
 
-        let mut guard = self.projectiles.write();
-        *guard = kept_projectiles;
+        self.projectiles.replace_all(kept_projectiles);
     }
 
     #[inline]

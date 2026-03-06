@@ -216,13 +216,11 @@ pub async fn persist_shutdown_state_if_configured(
             .then_with(|| left.username.cmp(&right.username))
     });
 
-    let projectiles_total = server.projectiles.read().len();
-    let (pickups_total, pickups_active) = {
-        let pickups = server.pickups.read();
-        let total = pickups.len();
-        let active = pickups.iter().filter(|pickup| pickup.is_active).count();
-        (total, active)
-    };
+    let projectile_snapshot = server.snapshots.projectile_soa_snapshot.load();
+    let pickup_snapshot = server.snapshots.pickup_soa_snapshot.load();
+    let projectiles_total = projectile_snapshot.len();
+    let pickups_total = pickup_snapshot.len();
+    let pickups_active = pickup_snapshot.active_count();
 
     let snapshot = ShutdownStateSnapshot {
         recorded_at_unix_ms,

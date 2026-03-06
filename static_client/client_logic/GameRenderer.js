@@ -15,6 +15,32 @@ export function createGameRenderer({
     weaponColors,
     pickupColors,
 }) {
+    const pendingAnimationFrames = new Set();
+    const activeFlashGraphics = new Set();
+
+    function scheduleAnimationFrame(callback) {
+        const id = requestAnimationFrame(() => {
+            pendingAnimationFrames.delete(id);
+            callback();
+        });
+        pendingAnimationFrames.add(id);
+        return id;
+    }
+
+    function clearTransientEffects() {
+        for (const id of pendingAnimationFrames) {
+            cancelAnimationFrame(id);
+        }
+        pendingAnimationFrames.clear();
+        for (const flash of activeFlashGraphics) {
+            try {
+                flash.parent?.removeChild?.(flash);
+                flash.destroy?.();
+            } catch (_) {}
+        }
+        activeFlashGraphics.clear();
+    }
+
     // ── Drawing helpers ──────────────────────────────────────────────
 
     function drawRegularPolygon(graphics, x, y, radius, sides) {
@@ -474,7 +500,7 @@ export function createGameRenderer({
             gameScene.position.x = originalX + (Math.random() - 0.5) * intensity * decay;
             gameScene.position.y = originalY + (Math.random() - 0.5) * intensity * decay;
             frame++;
-            requestAnimationFrame(doShake);
+            scheduleAnimationFrame(doShake);
         };
         doShake();
     }
@@ -485,18 +511,28 @@ export function createGameRenderer({
         flash.drawRect(0, 0, app.screen.width, app.screen.height);
         flash.endFill();
         app.stage.addChild(flash);
+        activeFlashGraphics.add(flash);
         let frame = 0;
         const doFlash = () => {
             if (frame >= durationFrames) {
                 app.stage.removeChild(flash);
+                activeFlashGraphics.delete(flash);
                 flash.destroy();
                 return;
             }
             flash.alpha = maxAlpha * (1 - frame / durationFrames);
             frame++;
-            requestAnimationFrame(doFlash);
+            scheduleAnimationFrame(doFlash);
         };
         doFlash();
+    }
+
+    function onConnectionReset() {
+        clearTransientEffects();
+    }
+
+    function destroy() {
+        clearTransientEffects();
     }
 
     return {
@@ -518,5 +554,7 @@ export function createGameRenderer({
         getMaxAmmoForWeaponClient,
         applyScreenShake,
         createScreenFlash,
+        onConnectionReset,
+        destroy,
     };
 }

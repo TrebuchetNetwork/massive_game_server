@@ -59,7 +59,10 @@ impl BroadcastThrottleConfig {
 impl MassiveGameServer {
     pub async fn broadcast_world_updates_optimized(self: Arc<Self>) {
         let current_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-        let last_broadcast = self.last_broadcast_frame.load(AtomicOrdering::Relaxed);
+        let last_broadcast = self
+            .snapshots
+            .last_broadcast_frame
+            .load(AtomicOrdering::Relaxed);
         let single_machine_opt = single_machine_optimization_enabled();
 
         if current_frame < last_broadcast + BroadcastThrottleConfig::BROADCAST_INTERVAL_FRAMES
@@ -117,7 +120,8 @@ impl MassiveGameServer {
             "[Frame {}] Starting broadcast to {} clients. Last broadcast frame: {}",
             current_frame, connected_clients_total, last_broadcast
         );
-        self.last_broadcast_frame
+        self.snapshots
+            .last_broadcast_frame
             .store(current_frame, AtomicOrdering::Relaxed);
 
         let mut initial_entries_open: Vec<(String, Arc<crate::core::types::RTCDataChannel>, bool)> =

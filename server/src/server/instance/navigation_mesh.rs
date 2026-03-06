@@ -2,19 +2,20 @@ use super::*;
 
 impl MassiveGameServer {
     pub fn maybe_refresh_navigation_mesh(&self) {
-        if !self.navmesh_enabled {
+        if !self.navmesh_state.enabled {
             return;
         }
 
         let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
         let should_rebuild = {
-            if self.navmesh.load().is_none() {
+            if self.navmesh_state.current.load().is_none() {
                 true
             } else {
                 let last = self
-                    .navmesh_last_rebuild_frame
+                    .navmesh_state
+                    .last_rebuild_frame
                     .load(AtomicOrdering::Relaxed);
-                frame.saturating_sub(last) >= self.navmesh_rebuild_interval_frames
+                frame.saturating_sub(last) >= self.navmesh_state.rebuild_interval_frames
             }
         };
 
@@ -37,7 +38,7 @@ impl MassiveGameServer {
                     !(wall.is_destructible && wall.current_health <= 0)
                 })
                 .count();
-            if active_wall_count > self.navmesh_cell_wall_limit {
+            if active_wall_count > self.navmesh_state.cell_wall_limit {
                 continue;
             }
 
@@ -62,25 +63,26 @@ impl MassiveGameServer {
             Some(NavMesh::from_convex_polygons(polygons))
         };
         let polygon_count = navmesh.as_ref().map_or(0, NavMesh::polygon_count);
-        self.navmesh.store(navmesh.map(Arc::new));
-        self.navmesh_last_rebuild_frame
+        self.navmesh_state.current.store(navmesh.map(Arc::new));
+        self.navmesh_state
+            .last_rebuild_frame
             .store(frame, AtomicOrdering::Relaxed);
 
         trace!(
             "[Frame {}] NavMesh rebuilt (enabled={}, polygons={}, cell_wall_limit={})",
             frame,
-            self.navmesh_enabled,
+            self.navmesh_state.enabled,
             polygon_count,
-            self.navmesh_cell_wall_limit
+            self.navmesh_state.cell_wall_limit
         );
     }
 
     pub fn navigation_waypoint_towards(&self, start: Vec2, goal: Vec2) -> Vec2 {
-        if !self.navmesh_enabled {
+        if !self.navmesh_state.enabled {
             return goal;
         }
 
-        let navmesh_guard = self.navmesh.load();
+        let navmesh_guard = self.navmesh_state.current.load();
         let Some(navmesh) = navmesh_guard.as_deref() else {
             return goal;
         };

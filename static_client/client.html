@@ -2789,6 +2789,9 @@
             setWorldBounds: (bounds) => {
                 if (!bounds || !Number.isFinite(bounds.minX) || !Number.isFinite(bounds.minY) || !Number.isFinite(bounds.maxX) || !Number.isFinite(bounds.maxY)) {
                     worldBoundsState.valid = false;
+                    if (window.__e2e) {
+                        window.__e2e.worldBounds = null;
+                    }
                     return;
                 }
                 worldBoundsState.minX = bounds.minX;
@@ -2797,6 +2800,14 @@
                 worldBoundsState.maxY = bounds.maxY;
                 worldBoundsState.valid = bounds.maxX > bounds.minX && bounds.maxY > bounds.minY;
                 worldBoundsState.updatedAt = Date.now();
+                if (window.__e2e) {
+                    window.__e2e.worldBounds = {
+                        minX: bounds.minX,
+                        minY: bounds.minY,
+                        maxX: bounds.maxX,
+                        maxY: bounds.maxY,
+                    };
+                }
             },
             setCameraCombatImpulse: (v) => { cameraCombatImpulse = v; },
             setMinimapWallsCacheDirty: (v) => { minimapWallsCacheDirty = v; },
@@ -4380,6 +4391,26 @@
             setupDataChannelEvents,
         } = connectionManager;
 
+        function getLifecycleModules() {
+            return [
+                ['connectionManager', connectionManager],
+                ['diagnosticsManager', diagnosticsManager],
+                ['interpolationManager', interpolationManager],
+                ['perfBudget', perfBudget],
+                ['inputManager', inputManager],
+                ['gameRenderer', gameRenderer],
+                ['protocolHandler', protocolHandler],
+                ['combatFeedback', combatFeedback],
+                ['aimingSystem', aimingSystem],
+                ['uiManager', uiManager],
+                ['spriteManager', spriteManager],
+                ['serverUpdateHandler', serverUpdateHandler],
+                ['worldRenderer', worldRenderer],
+                ['renderAssetManager', renderAssetManager],
+                ['updateSpritesModule', updateSpritesModule],
+            ];
+        }
+
         function invokeModuleLifecycleHook(moduleName, moduleRef, hookName, ...hookArgs) {
             if (!moduleRef || typeof moduleRef[hookName] !== 'function') return;
             try {
@@ -4391,17 +4422,13 @@
 
         function notifyModuleConnectionReset(reason, destroyRenderer = false) {
             const resetReason = String(reason || 'connection reset');
-            invokeModuleLifecycleHook('connectionManager', connectionManager, 'onConnectionReset', resetReason);
-            invokeModuleLifecycleHook('diagnosticsManager', diagnosticsManager, 'onConnectionReset', resetReason);
-            invokeModuleLifecycleHook('interpolationManager', interpolationManager, 'onConnectionReset', resetReason);
-            invokeModuleLifecycleHook('perfBudget', perfBudget, 'onConnectionReset', resetReason);
-            invokeModuleLifecycleHook('inputManager', inputManager, 'onConnectionReset', resetReason);
+            for (const [moduleName, moduleRef] of getLifecycleModules()) {
+                invokeModuleLifecycleHook(moduleName, moduleRef, 'onConnectionReset', resetReason);
+            }
             if (!destroyRenderer) return;
-            invokeModuleLifecycleHook('connectionManager', connectionManager, 'destroy', resetReason);
-            invokeModuleLifecycleHook('diagnosticsManager', diagnosticsManager, 'destroy', resetReason);
-            invokeModuleLifecycleHook('interpolationManager', interpolationManager, 'destroy', resetReason);
-            invokeModuleLifecycleHook('perfBudget', perfBudget, 'destroy', resetReason);
-            invokeModuleLifecycleHook('inputManager', inputManager, 'destroy', resetReason);
+            for (const [moduleName, moduleRef] of getLifecycleModules()) {
+                invokeModuleLifecycleHook(moduleName, moduleRef, 'destroy', resetReason);
+            }
         }
 
         function triggerPlayAgainFlow() {

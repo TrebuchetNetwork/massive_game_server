@@ -55,7 +55,7 @@ impl MassiveGameServer {
         let player_aois_snapshot = if use_aoi_snapshot {
             // Resolve AoI from authoritative lock-free snapshot and only keep entries
             // for peers scheduled this frame.
-            let authoritative_aoi_snapshot = self.player_aoi_snapshot.load();
+            let authoritative_aoi_snapshot = self.snapshots.player_aoi_snapshot.load();
             if authoritative_aoi_snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
                 debug!(
                     "[Frame {}] Authoritative AoI snapshot is empty while {} peers are scheduled.",
@@ -80,7 +80,7 @@ impl MassiveGameServer {
         let use_soa_snapshot = configured_soa_snapshot;
         let mut soa_fallback_active = false;
         let (player_soa_snapshot, player_states_snapshot) = if use_soa_snapshot {
-            let mut snapshot = self.player_soa_snapshot.load();
+            let mut snapshot = self.snapshots.player_soa_snapshot.load();
             if snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
                 debug!(
                     "[Frame {}] Player SoA snapshot is empty while {} peers are scheduled.",
@@ -88,7 +88,9 @@ impl MassiveGameServer {
                     scheduled_peer_ids.len()
                 );
                 snapshot = self.rebuild_player_soa_snapshot_from_authoritative_state();
-                self.player_soa_snapshot.publish_arc(Arc::clone(&snapshot));
+                self.snapshots
+                    .player_soa_snapshot
+                    .publish_arc(Arc::clone(&snapshot));
                 soa_fallback_active = true;
             }
             (snapshot, HashMap::new())
@@ -107,7 +109,7 @@ impl MassiveGameServer {
 
         let (projectiles_soa_snapshot, projectiles_snapshot) = {
             if use_entity_soa_snapshot {
-                let mut snapshot = self.projectile_soa_snapshot.load();
+                let mut snapshot = self.snapshots.projectile_soa_snapshot.load();
                 if snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
                     debug!(
                         "[Frame {}] Projectile SoA snapshot is empty while {} peers are scheduled.",
@@ -115,7 +117,8 @@ impl MassiveGameServer {
                         scheduled_peer_ids.len()
                     );
                     snapshot = self.rebuild_projectile_soa_snapshot_from_authoritative_state();
-                    self.projectile_soa_snapshot
+                    self.snapshots
+                        .projectile_soa_snapshot
                         .publish_arc(Arc::clone(&snapshot));
                     soa_fallback_active = true;
                 }
@@ -132,7 +135,7 @@ impl MassiveGameServer {
 
         let (pickups_soa_snapshot, pickups_snapshot) = {
             if use_entity_soa_snapshot {
-                let mut snapshot = self.pickup_soa_snapshot.load();
+                let mut snapshot = self.snapshots.pickup_soa_snapshot.load();
                 if snapshot.is_empty() && !scheduled_peer_ids.is_empty() {
                     debug!(
                         "[Frame {}] Pickup SoA snapshot is empty while {} peers are scheduled.",
@@ -140,7 +143,9 @@ impl MassiveGameServer {
                         scheduled_peer_ids.len()
                     );
                     snapshot = self.rebuild_pickup_soa_snapshot_from_authoritative_state();
-                    self.pickup_soa_snapshot.publish_arc(Arc::clone(&snapshot));
+                    self.snapshots
+                        .pickup_soa_snapshot
+                        .publish_arc(Arc::clone(&snapshot));
                     soa_fallback_active = true;
                 }
                 (snapshot, Arc::new(HashMap::new()))

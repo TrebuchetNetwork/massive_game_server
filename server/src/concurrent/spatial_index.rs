@@ -10,11 +10,10 @@ use crate::core::simd;
 use crate::core::types::{EntityId, PlayerID};
 use arc_swap::ArcSwap;
 use dashmap::{DashMap, DashSet};
-use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::debug;
 
@@ -229,6 +228,20 @@ thread_local! {
     static PROJECTILE_QUERY_DEDUPE_SCRATCH: RefCell<HashSet<EntityId>> = RefCell::new(HashSet::new());
 }
 
+#[inline]
+fn spatial_clock_origin() -> &'static Instant {
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    ORIGIN.get_or_init(Instant::now)
+}
+
+#[inline]
+fn monotonic_now_ms() -> u64 {
+    spatial_clock_origin()
+        .elapsed()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
+
 pub struct ImprovedSpatialIndex {
     player_cell_members: Vec<DashSet<PlayerID>>,
     projectile_cell_members: Vec<DashSet<EntityId>>,
@@ -251,7 +264,7 @@ pub struct ImprovedSpatialIndex {
     query_mode: SpatialQueryMode,
     quadtree_min_entities: usize,
     quadtree_rebuild_interval: Duration,
-    quadtree_last_rebuild: RwLock<Instant>,
+    quadtree_last_rebuild_ms: AtomicU64,
     /// Flag to prevent concurrent rebuilds.  Only one thread should build at a
     /// time; others skip if a rebuild is already in progress.
     quadtree_rebuilding: AtomicBool,
@@ -267,6 +280,10 @@ impl ImprovedSpatialIndex {
         world_min_y: f32,
         cell_size: f32,
     ) -> Self {
+        assert!(
+            cell_size.is_finite() && cell_size > 0.0,
+            "cell_size must be finite and > 0.0"
+        );
         let grid_width = ((world_width / cell_size).ceil() as usize).max(1);
         let grid_height = ((world_height / cell_size).ceil() as usize).max(1);
         let total_cells = grid_width * grid_height;
@@ -289,6 +306,7 @@ impl ImprovedSpatialIndex {
             .and_then(|raw| raw.parse::<u64>().ok())
             .unwrap_or(33)
             .max(8);
+        let initial_rebuild_ms = monotonic_now_ms().saturating_sub(quadtree_rebuild_interval_ms);
 
         debug!(
             "Spatial index initialized: {}x{} grid, {} total cells, cell size: {}, mode={:?}, quadtree_min_entities={}, quadtree_rebuild_ms={}",
@@ -316,9 +334,7 @@ impl ImprovedSpatialIndex {
             query_mode,
             quadtree_min_entities,
             quadtree_rebuild_interval: Duration::from_millis(quadtree_rebuild_interval_ms),
-            quadtree_last_rebuild: RwLock::new(
-                Instant::now() - Duration::from_millis(quadtree_rebuild_interval_ms),
-            ),
+            quadtree_last_rebuild_ms: AtomicU64::new(initial_rebuild_ms),
             quadtree_rebuilding: AtomicBool::new(false),
             quadtree_indices: ArcSwap::from_pointee(QuadtreeIndices::default()),
             world_bounds: Aabb {
@@ -347,12 +363,14 @@ impl ImprovedSpatialIndex {
             return;
         }
 
-        let now = Instant::now();
-        {
-            let last_rebuild = self.quadtree_last_rebuild.read();
-            if now.duration_since(*last_rebuild) < self.quadtree_rebuild_interval {
-                return;
-            }
+        let rebuild_interval_ms = self
+            .quadtree_rebuild_interval
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        let now_ms = monotonic_now_ms();
+        let last_rebuild_ms = self.quadtree_last_rebuild_ms.load(Ordering::Acquire);
+        if now_ms.saturating_sub(last_rebuild_ms) < rebuild_interval_ms {
+            return;
         }
 
         // Try to claim the rebuild slot.  If another thread is already
@@ -368,14 +386,13 @@ impl ImprovedSpatialIndex {
 
         // Double-check the timestamp under the flag (another thread may have
         // finished a rebuild between the first check and our CAS).
-        {
-            let mut last_rebuild = self.quadtree_last_rebuild.write();
-            if now.duration_since(*last_rebuild) < self.quadtree_rebuild_interval {
-                self.quadtree_rebuilding.store(false, Ordering::Release);
-                return;
-            }
-            *last_rebuild = now;
+        let refreshed_last_rebuild_ms = self.quadtree_last_rebuild_ms.load(Ordering::Acquire);
+        if now_ms.saturating_sub(refreshed_last_rebuild_ms) < rebuild_interval_ms {
+            self.quadtree_rebuilding.store(false, Ordering::Release);
+            return;
         }
+        self.quadtree_last_rebuild_ms
+            .store(now_ms, Ordering::Release);
 
         // Build new trees in local memory (no locks held by readers).
         let mut player_points = Vec::with_capacity(self.player_positions.len());
@@ -904,5 +921,11 @@ mod tests {
             .filter(|id| **id == projectile_id)
             .count();
         assert_eq!(matches, 1, "projectile should exist exactly once");
+    }
+
+    #[test]
+    #[should_panic(expected = "cell_size must be finite and > 0.0")]
+    fn new_panics_for_zero_cell_size() {
+        let _ = ImprovedSpatialIndex::new(512.0, 512.0, 0.0, 0.0, 0.0);
     }
 }

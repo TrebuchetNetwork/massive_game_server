@@ -1269,6 +1269,116 @@ export function createCombatFeedback(getCtx) {
         }
     }
 
+    function onConnectionReset() {
+        const ctx = getCtx();
+        lastLocalDamageImpactAt = 0;
+        lastModeIntroActive = false;
+        streakPingCooldownByPlayer.clear();
+        hideObjectiveArrows();
+        clearDamageDirectionIndicators();
+
+        if (ctx.tipsToastDiv) {
+            ctx.tipsToastDiv.classList.remove('tips-toast--visible');
+            ctx.tipsToastDiv.textContent = '';
+        }
+        if (ctx.gameModeIntroDiv) {
+            ctx.gameModeIntroDiv.classList.remove('mode-intro--visible');
+        }
+        if (ctx.boundaryWarningDiv) {
+            ctx.boundaryWarningDiv.classList.remove('boundary-warning--visible');
+        }
+        if (ctx.objectiveUrgencyDiv) {
+            ctx.objectiveUrgencyDiv.classList.remove(
+                'objective-urgency--visible',
+                'objective-urgency--critical',
+                'objective-urgency--positive'
+            );
+            ctx.objectiveUrgencyDiv.textContent = '';
+        }
+        ctx.combatBannerDiv?.classList.remove(
+            'combat-banner--visible',
+            'combat-banner--kill',
+            'combat-banner--headshot',
+            'combat-banner--death',
+            'combat-banner--shutdown',
+            'combat-banner--revenge',
+            'combat-banner--momentum'
+        );
+        ctx.streakAnnouncerDiv?.classList.remove(
+            'streak-announcer--visible',
+            'streak-announcer--critical',
+            'streak-announcer--positive'
+        );
+        ctx.streakMedalDiv?.classList.remove('streak-medal--visible');
+        ctx.hitMarkerDiv?.classList.remove('hit-marker--visible', 'hit-marker--headshot', 'hit-marker--kill');
+        ctx.deathRecapDiv?.classList.remove('death-recap--visible');
+        if (ctx.combatRadialHudDiv) {
+            ctx.combatRadialHudDiv.style.opacity = '0';
+        }
+
+        ctx.combatUiState.momentum = 0;
+        ctx.combatUiState.speedPulse = 0;
+        ctx.combatUiState.damagePulse = 0;
+        ctx.combatUiState.localKillStreak = 0;
+        ctx.combatUiState.comboCount = 0;
+        ctx.combatUiState.comboExpiresAt = 0;
+        ctx.combatUiState.bannerUntilMs = 0;
+        ctx.combatUiState.bannerTone = 'kill';
+        ctx.combatUiState.medalText = '';
+        ctx.combatUiState.medalUntilMs = 0;
+        ctx.combatUiState.streakAnnouncerText = '';
+        ctx.combatUiState.streakAnnouncerTone = 'critical';
+        ctx.combatUiState.streakAnnouncerUntilMs = 0;
+        ctx.combatUiState.markerUntilMs = 0;
+        ctx.combatUiState.markerHeadshotUntilMs = 0;
+        ctx.combatUiState.markerKillUntilMs = 0;
+        ctx.combatUiState.lastOptimisticHitAt = 0;
+        ctx.combatUiState.hitstopUntilMs = 0;
+        ctx.combatUiState.tipUntilMs = 0;
+        ctx.combatUiState.modeIntroUntilMs = 0;
+        ctx.combatUiState.lastBoundaryTipAt = 0;
+        ctx.combatUiState.objectiveText = '';
+        ctx.combatUiState.objectiveTone = 'critical';
+        ctx.combatUiState.objectiveUntilMs = 0;
+        ctx.combatUiState.lastObjectiveEvalAt = 0;
+        ctx.combatUiState.damageIndicators.length = 0;
+        ctx.combatUiState.recentDamageSources.length = 0;
+        ctx.combatUiState.deathRecapUntilMs = 0;
+        ctx.combatUiState.deathRecapText = '';
+        ctx.combatUiState.deathRecapDistanceText = '';
+        ctx.combatUiState.deathRecapRows = [];
+        ctx.combatUiState.trackedSpeedBoostMaxSec = 0;
+        ctx.combatUiState.trackedDamageBoostMaxSec = 0;
+        ctx.combatUiState.lastKnownHealth = null;
+        ctx.combatUiState.processedKillFeedKeys.clear();
+        ctx.combatUiState.processedKillFeedQueue.length = 0;
+        const radialCache = ctx.combatUiState.radialHudCache;
+        radialCache.lastPaintAt = 0;
+        radialCache.positionMode = '';
+        radialCache.left = '';
+        radialCache.top = '';
+        radialCache.transform = '';
+        radialCache.reloadVisible = false;
+        radialCache.reloadDeg = -1;
+        radialCache.reloadLabel = '';
+        radialCache.abilityVisible = false;
+        radialCache.abilityDeg = -1;
+        radialCache.abilityColor = '';
+        radialCache.abilityLabel = '';
+        radialCache.hudVisible = false;
+    }
+
+    function destroy() {
+        onConnectionReset();
+        const ctx = getCtx();
+        if (ctx.objectiveArrowLayerDiv) {
+            for (let i = 0; i < objectiveArrowPool.length; i += 1) {
+                objectiveArrowPool[i]?.el?.remove?.();
+            }
+        }
+        objectiveArrowPool.length = 0;
+    }
+
     return {
         getCombatUiQualityMode,
         getCombatUiPerfTier,
@@ -1290,5 +1400,7 @@ export function createCombatFeedback(getCtx) {
         showCombatBanner,
         processKillFeedCombatMoments,
         updateCombatPresentation,
+        onConnectionReset,
+        destroy,
     };
 }

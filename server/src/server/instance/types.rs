@@ -151,6 +151,57 @@ pub(super) struct ClientInfo {
     pub(super) needs_initial_state: bool,
 }
 
+pub(crate) struct SnapshotState {
+    pub(crate) last_broadcast_frame: Arc<AtomicU64>,
+    pub(crate) player_last_sync_positions: Arc<DashMap<PlayerID, (f32, f32)>>,
+    pub(crate) player_soa_snapshot: Arc<AtomicPlayerSnapshot>,
+    pub(crate) player_aoi_snapshot: Arc<AtomicPlayerAoISnapshot>,
+    pub(crate) projectile_soa_snapshot: Arc<AtomicProjectileSnapshot>,
+    pub(crate) pickup_soa_snapshot: Arc<AtomicPickupSnapshot>,
+}
+
+pub(super) struct RuntimeTrackingState {
+    pub(super) join_stage_traces: Arc<DashMap<String, JoinStageTrace>>,
+    pub(super) join_sequence_counter: Arc<AtomicU64>,
+    pub(super) player_position_history: Arc<DashMap<PlayerID, InterpolationBuffer<Vec2>>>,
+    pub(super) aim_anomaly_states: Arc<DashMap<PlayerID, AimAnomalyState>>,
+    pub(super) auto_tuner: Arc<ParkingLotRwLock<AutoTuner>>,
+    pub(super) dynamic_quality_settings: Arc<ParkingLotRwLock<QualitySettings>>,
+    pub(super) match_degraded: Arc<AtomicBool>,
+}
+
+pub(super) struct NavMeshState {
+    pub(super) enabled: bool,
+    pub(super) rebuild_interval_frames: u64,
+    pub(super) cell_wall_limit: usize,
+    pub(super) current: Arc<ArcSwapOption<NavMesh>>,
+    pub(super) last_rebuild_frame: Arc<AtomicU64>,
+}
+
+pub(super) struct ReplayState {
+    pub(super) enabled: bool,
+    pub(super) frames: Arc<ParkingLotRwLock<VecDeque<LiveReplayFrame>>>,
+    pub(super) capacity: usize,
+    pub(super) player_cap: usize,
+    pub(super) dispute_persist_enabled: bool,
+    pub(super) dispute_store_path: Arc<PathBuf>,
+    pub(super) dispute_signing_key: Option<Arc<Vec<u8>>>,
+    pub(super) dispute_chain_head: Arc<ParkingLotRwLock<Option<String>>>,
+    pub(super) dispute_audits: Arc<ParkingLotRwLock<VecDeque<LiveReplayDisputeAuditProof>>>,
+    pub(super) dispute_audit_capacity: usize,
+    pub(super) match_persist_enabled: bool,
+    pub(super) match_store_dir: Arc<PathBuf>,
+    pub(super) match_retention: usize,
+    pub(super) latest_match_end_summary: Arc<ParkingLotRwLock<Option<MatchEndSummary>>>,
+    pub(super) recent_killcams: Arc<DashMap<PlayerID, KillCamData>>,
+}
+
+pub(super) struct QueueState {
+    pub(super) direct_packets: Arc<DashMap<String, VecDeque<Bytes>>>,
+    pub(super) direct_packet_queue_cap: usize,
+    pub(super) quick_match_queue_start: Arc<ParkingLotRwLock<Option<Instant>>>,
+}
+
 #[derive(Clone, Debug)]
 pub struct BotController {
     pub player_id: PlayerID,

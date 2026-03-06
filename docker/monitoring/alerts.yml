@@ -24,3 +24,59 @@ groups:
           severity: warning
         annotations:
           summary: "Game server RSS is above 3GB"
+
+      - alert: HighPlayerCount
+        expr: game_players_connected > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Player count is above 300"
+
+      - alert: HighCpuUsage
+        expr: game_cpu_usage_percent > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Game server CPU usage is above 85%"
+
+      - alert: ElevatedAuthFailures
+        expr: sum(rate(game_auth_attempts_total{result="failure"}[10m])) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Authentication failures are elevated"
+
+      - alert: HighConnectionRttP95
+        expr: histogram_quantile(0.95, sum(rate(game_connection_rtt_ms_bucket[5m])) by (le)) > 250
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 connection RTT is above 250ms"
+
+      - alert: WebRtcPeerFailures
+        expr: increase(game_webrtc_peer_state_transitions_total{state="failed"}[10m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WebRTC peers are entering failed state"
+
+      - alert: QuicOutboundDrops
+        expr: increase(game_quic_outbound_dropped_packets_total[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "QUIC outbound packet drops exceeded 100 in 5 minutes"
+
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}) < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host disk space is below 15%"

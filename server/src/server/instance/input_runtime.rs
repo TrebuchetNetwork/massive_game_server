@@ -55,11 +55,13 @@ fn weapon_spread_bloom_cap_rad(weapon: ServerWeaponType) -> f32 {
 
 impl MassiveGameServer {
     pub(super) fn prune_runtime_tracking_state(&self) {
-        self.player_position_history
+        self.runtime_tracking
+            .player_position_history
             .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
-        self.aim_anomaly_states
+        self.runtime_tracking
+            .aim_anomaly_states
             .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
-        self.direct_packets.retain(|peer_id, _| {
+        self.queue_state.direct_packets.retain(|peer_id, _| {
             let player_id = self.player_manager.id_pool.get_or_create(peer_id.as_ref());
             self.player_manager.get_player_state(&player_id).is_some()
         });
@@ -357,6 +359,7 @@ impl MassiveGameServer {
         y: f32,
     ) {
         let mut history = self
+            .runtime_tracking
             .player_position_history
             .entry(player_id.clone())
             .or_insert_with(|| InterpolationBuffer::new(MAX_POSITION_HISTORY_SAMPLES));
@@ -367,7 +370,10 @@ impl MassiveGameServer {
         player_id: &PlayerID,
         target_timestamp_ms: u64,
     ) -> Option<(f32, f32)> {
-        let history = self.player_position_history.get(player_id)?;
+        let history = self
+            .runtime_tracking
+            .player_position_history
+            .get(player_id)?;
         let sample = history.sample_at(target_timestamp_ms)?;
         Some((sample.x, sample.y))
     }
@@ -380,6 +386,7 @@ impl MassiveGameServer {
         now: Instant,
     ) {
         let mut entry = self
+            .runtime_tracking
             .aim_anomaly_states
             .entry(player_id.clone())
             .or_insert_with(|| AimAnomalyState {

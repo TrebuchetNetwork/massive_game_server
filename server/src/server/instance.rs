@@ -76,6 +76,7 @@ mod broadcast_state;
 mod collision_utils;
 mod combat_melee;
 mod constants;
+mod entity_store;
 mod game_modes;
 mod input_runtime;
 mod join_stage;
@@ -87,7 +88,9 @@ mod physics;
 mod player_physics;
 mod projectile_physics;
 mod replay;
+mod runtime_metrics;
 mod serialization;
+mod session_queue;
 mod snapshot_publish;
 mod tick;
 mod types;
@@ -95,6 +98,7 @@ mod util;
 mod wall_lifecycle;
 
 use self::constants::*;
+use self::entity_store::AuthoritativeEntityStore;
 use self::serialization::*;
 use self::types::*;
 pub use self::types::{
@@ -311,8 +315,8 @@ pub struct MassiveGameServer {
     /// Epoch millis of the most recent completed game tick (0 = no tick yet).
     pub last_tick_epoch_ms: Arc<AtomicU64>,
     pub tick_durations_history: Arc<ParkingLotRwLock<VecDeque<Duration>>>,
-    pub projectiles: Arc<ParkingLotRwLock<Vec<Projectile>>>,
-    pub pickups: Arc<ParkingLotRwLock<Vec<Pickup>>>,
+    pub projectiles: Arc<AuthoritativeEntityStore<Projectile>>,
+    pub pickups: Arc<AuthoritativeEntityStore<Pickup>>,
     pub zones: Arc<Vec<Zone>>,
 
     pub data_channels_map: DataChannelsMap,
@@ -342,55 +346,19 @@ pub struct MassiveGameServer {
     spectator_slot_cap: usize,
     pub map_name: String,
 
-    pub last_broadcast_frame: Arc<AtomicU64>,
-    pub player_last_sync_positions: Arc<DashMap<PlayerID, (f32, f32)>>,
-    pub player_soa_snapshot: Arc<AtomicPlayerSnapshot>,
-    pub player_aoi_snapshot: Arc<AtomicPlayerAoISnapshot>,
-    pub projectile_soa_snapshot: Arc<AtomicProjectileSnapshot>,
-    pub pickup_soa_snapshot: Arc<AtomicPickupSnapshot>,
-    join_stage_traces: Arc<DashMap<String, JoinStageTrace>>,
-    join_sequence_counter: Arc<AtomicU64>,
-    player_position_history: Arc<DashMap<PlayerID, InterpolationBuffer<Vec2>>>,
-    aim_anomaly_states: Arc<DashMap<PlayerID, AimAnomalyState>>,
+    pub(crate) snapshots: SnapshotState,
+    runtime_tracking: RuntimeTrackingState,
     lag_compensation_ms: u64,
-    auto_tuner: Arc<ParkingLotRwLock<AutoTuner>>,
-    dynamic_quality_settings: Arc<ParkingLotRwLock<QualitySettings>>,
-    navmesh_enabled: bool,
-    navmesh_rebuild_interval_frames: u64,
-    navmesh_cell_wall_limit: usize,
-    navmesh: Arc<ArcSwapOption<NavMesh>>,
-    navmesh_last_rebuild_frame: Arc<AtomicU64>,
-    live_replay_enabled: bool,
-    live_replay_frames: Arc<ParkingLotRwLock<VecDeque<LiveReplayFrame>>>,
-    live_replay_capacity: usize,
-    live_replay_player_cap: usize,
-    live_replay_dispute_persist_enabled: bool,
-    live_replay_dispute_store_path: Arc<PathBuf>,
-    live_replay_dispute_signing_key: Option<Arc<Vec<u8>>>,
-    live_replay_dispute_chain_head: Arc<ParkingLotRwLock<Option<String>>>,
-    live_replay_dispute_audits: Arc<ParkingLotRwLock<VecDeque<LiveReplayDisputeAuditProof>>>,
-    live_replay_dispute_audit_capacity: usize,
-    live_replay_match_persist_enabled: bool,
-    live_replay_match_store_dir: Arc<PathBuf>,
-    live_replay_match_retention: usize,
-    latest_match_end_summary: Arc<ParkingLotRwLock<Option<MatchEndSummary>>>,
-    recent_killcams: Arc<DashMap<PlayerID, KillCamData>>,
-    direct_packets: Arc<DashMap<String, VecDeque<Bytes>>>,
-    direct_packet_queue_cap: usize,
+    navmesh_state: NavMeshState,
+    replay: ReplayState,
+    queue_state: QueueState,
     commander_mode_enabled: bool,
     commander_runtime_state: Arc<ParkingLotRwLock<CommanderRuntimeState>>,
-    /// Set to `true` when a critical task panics inside a game tick.
-    /// The match continues but monitoring/health-check endpoints can report
-    /// the degraded state so operators can investigate.
-    pub match_degraded: Arc<AtomicBool>,
 
     // ── Match sizing ──────────────────────────────────────────────────
     pub match_type: MatchType,
     /// Duration of a single round in seconds (derived from match_type).
     pub match_duration_secs: f32,
-    /// For QuickMatch: tracks when the queue started so we can auto-fill bots
-    /// after the bot-fill delay elapses.  `None` until the first human joins.
-    quick_match_queue_start: Arc<ParkingLotRwLock<Option<Instant>>>,
 }
 
 impl MassiveGameServer {
@@ -664,8 +632,8 @@ impl MassiveGameServer {
             frame_counter: Arc::new(AtomicU64::new(0)),
             last_tick_epoch_ms: Arc::new(AtomicU64::new(0)),
             tick_durations_history: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(1000))),
-            projectiles: Arc::new(ParkingLotRwLock::new(Vec::new())),
-            pickups: Arc::new(ParkingLotRwLock::new(initial_pickups)),
+            projectiles: Arc::new(AuthoritativeEntityStore::new(Vec::new())),
+            pickups: Arc::new(AuthoritativeEntityStore::new(initial_pickups)),
             zones: Arc::new(zones),
             data_channels_map,
             client_states_map,
@@ -691,57 +659,68 @@ impl MassiveGameServer {
             reserved_human_slots,
             spectator_slot_cap,
             map_name,
-            last_broadcast_frame: Arc::new(AtomicU64::new(0)),
-            player_last_sync_positions: Arc::new(DashMap::new()),
-            player_soa_snapshot: Arc::new(AtomicPlayerSnapshot::new()),
-            player_aoi_snapshot: Arc::new(AtomicPlayerAoISnapshot::new()),
-            projectile_soa_snapshot: Arc::new(AtomicProjectileSnapshot::new()),
-            pickup_soa_snapshot: Arc::new(AtomicPickupSnapshot::new()),
-            join_stage_traces: Arc::new(DashMap::new()),
-            join_sequence_counter: Arc::new(AtomicU64::new(0)),
-            player_position_history: Arc::new(DashMap::new()),
-            aim_anomaly_states: Arc::new(DashMap::new()),
+            snapshots: SnapshotState {
+                last_broadcast_frame: Arc::new(AtomicU64::new(0)),
+                player_last_sync_positions: Arc::new(DashMap::new()),
+                player_soa_snapshot: Arc::new(AtomicPlayerSnapshot::new()),
+                player_aoi_snapshot: Arc::new(AtomicPlayerAoISnapshot::new()),
+                projectile_soa_snapshot: Arc::new(AtomicProjectileSnapshot::new()),
+                pickup_soa_snapshot: Arc::new(AtomicPickupSnapshot::new()),
+            },
+            runtime_tracking: RuntimeTrackingState {
+                join_stage_traces: Arc::new(DashMap::new()),
+                join_sequence_counter: Arc::new(AtomicU64::new(0)),
+                player_position_history: Arc::new(DashMap::new()),
+                aim_anomaly_states: Arc::new(DashMap::new()),
+                auto_tuner: Arc::new(ParkingLotRwLock::new(AutoTuner::new(auto_tuner_target_ms))),
+                dynamic_quality_settings: Arc::new(ParkingLotRwLock::new(
+                    QualitySettings::default(),
+                )),
+                match_degraded: Arc::new(AtomicBool::new(false)),
+            },
             lag_compensation_ms,
-            auto_tuner: Arc::new(ParkingLotRwLock::new(AutoTuner::new(auto_tuner_target_ms))),
-            dynamic_quality_settings: Arc::new(ParkingLotRwLock::new(QualitySettings::default())),
-            navmesh_enabled,
-            navmesh_rebuild_interval_frames,
-            navmesh_cell_wall_limit,
-            navmesh: Arc::new(ArcSwapOption::empty()),
-            navmesh_last_rebuild_frame: Arc::new(AtomicU64::new(0)),
-            live_replay_enabled,
-            live_replay_frames: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(
-                live_replay_capacity,
-            ))),
-            live_replay_capacity,
-            live_replay_player_cap,
-            live_replay_dispute_persist_enabled,
-            live_replay_dispute_store_path: Arc::new(live_replay_dispute_store_path),
-            live_replay_dispute_signing_key,
-            live_replay_dispute_chain_head: Arc::new(ParkingLotRwLock::new(
-                live_replay_dispute_chain_head,
-            )),
-            live_replay_dispute_audits: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(
-                live_replay_dispute_audit_capacity,
-            ))),
-            live_replay_dispute_audit_capacity,
-            live_replay_match_persist_enabled,
-            live_replay_match_store_dir: Arc::new(live_replay_match_store_dir),
-            live_replay_match_retention,
-            latest_match_end_summary: Arc::new(ParkingLotRwLock::new(None)),
-            recent_killcams: Arc::new(DashMap::new()),
-            direct_packets: Arc::new(DashMap::new()),
-            direct_packet_queue_cap,
+            navmesh_state: NavMeshState {
+                enabled: navmesh_enabled,
+                rebuild_interval_frames: navmesh_rebuild_interval_frames,
+                cell_wall_limit: navmesh_cell_wall_limit,
+                current: Arc::new(ArcSwapOption::empty()),
+                last_rebuild_frame: Arc::new(AtomicU64::new(0)),
+            },
+            replay: ReplayState {
+                enabled: live_replay_enabled,
+                frames: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(
+                    live_replay_capacity,
+                ))),
+                capacity: live_replay_capacity,
+                player_cap: live_replay_player_cap,
+                dispute_persist_enabled: live_replay_dispute_persist_enabled,
+                dispute_store_path: Arc::new(live_replay_dispute_store_path),
+                dispute_signing_key: live_replay_dispute_signing_key,
+                dispute_chain_head: Arc::new(ParkingLotRwLock::new(live_replay_dispute_chain_head)),
+                dispute_audits: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(
+                    live_replay_dispute_audit_capacity,
+                ))),
+                dispute_audit_capacity: live_replay_dispute_audit_capacity,
+                match_persist_enabled: live_replay_match_persist_enabled,
+                match_store_dir: Arc::new(live_replay_match_store_dir),
+                match_retention: live_replay_match_retention,
+                latest_match_end_summary: Arc::new(ParkingLotRwLock::new(None)),
+                recent_killcams: Arc::new(DashMap::new()),
+            },
+            queue_state: QueueState {
+                direct_packets: Arc::new(DashMap::new()),
+                direct_packet_queue_cap,
+                quick_match_queue_start: Arc::new(ParkingLotRwLock::new(None)),
+            },
             commander_mode_enabled,
             commander_runtime_state: Arc::new(ParkingLotRwLock::new(
                 CommanderRuntimeState::default(),
             )),
-            match_degraded: Arc::new(AtomicBool::new(false)),
             match_type,
             match_duration_secs,
-            quick_match_queue_start: Arc::new(ParkingLotRwLock::new(None)),
         };
 
+        server.publish_authoritative_lock_free_snapshots();
         server.maybe_refresh_navigation_mesh();
         info!("MassiveGameServer initialized successfully.");
         server
@@ -753,16 +732,6 @@ impl MassiveGameServer {
 
     pub fn is_shutdown_requested(&self) -> bool {
         self.is_shutting_down.load(AtomicOrdering::Acquire)
-    }
-
-    /// Returns `true` if a critical task has panicked during a game tick,
-    /// indicating the match state may be corrupted.
-    pub fn is_match_degraded(&self) -> bool {
-        self.match_degraded.load(AtomicOrdering::Acquire)
-    }
-
-    pub fn current_quality_settings(&self) -> QualitySettings {
-        *self.dynamic_quality_settings.read()
     }
 
     pub fn spectator_count(&self) -> usize {
@@ -804,113 +773,6 @@ impl MassiveGameServer {
             MatchType::FullMatch => self.config.max_players_per_match,
             other => other.max_players().min(self.config.max_players_per_match),
         }
-    }
-
-    /// Record that a human player has entered the queue (for quick match
-    /// bot-fill delay tracking).
-    pub fn note_human_queue_arrival(&self) {
-        let mut guard = self.quick_match_queue_start.write();
-        if guard.is_none() {
-            *guard = Some(Instant::now());
-        }
-    }
-
-    /// Returns `true` when the quick-match bot-fill delay has elapsed and the
-    /// lobby has fewer than the minimum required human players.
-    pub fn should_quick_match_bot_fill(&self) -> bool {
-        if self.match_type != MatchType::QuickMatch {
-            return false;
-        }
-        let Some(delay_secs) = self.match_type.bot_fill_delay_secs() else {
-            return false;
-        };
-        let Some(min_humans) = self.match_type.min_humans_for_bot_fill() else {
-            return false;
-        };
-        let guard = self.quick_match_queue_start.read();
-        let Some(queue_start) = *guard else {
-            return false;
-        };
-        let elapsed = queue_start.elapsed().as_secs_f32();
-        if elapsed < delay_secs {
-            return false;
-        }
-        // Count current human players
-        let mut human_count = 0usize;
-        self.player_manager
-            .for_each_player(|player_id, player_state| {
-                if !self.bot_players.contains_key(player_id) && !player_state.is_spectator {
-                    human_count += 1;
-                }
-            });
-        human_count < min_humans
-    }
-
-    pub(super) fn enqueue_direct_packet_for_peer(&self, peer_id: &str, packet: Bytes) {
-        let mut queue = self.direct_packets.entry(peer_id.to_owned()).or_default();
-        while queue.len() >= self.direct_packet_queue_cap {
-            let _ = queue.pop_front();
-        }
-        queue.push_back(packet);
-    }
-
-    pub(super) fn drain_direct_packets_for_peer(
-        &self,
-        peer_id: &str,
-        max_packets: usize,
-    ) -> Vec<Bytes> {
-        if max_packets == 0 {
-            return Vec::new();
-        }
-        let mut drained = Vec::new();
-        if let Some(mut queue_entry) = self.direct_packets.get_mut(peer_id) {
-            for _ in 0..max_packets {
-                let Some(packet) = queue_entry.pop_front() else {
-                    break;
-                };
-                drained.push(packet);
-            }
-            if queue_entry.is_empty() {
-                drop(queue_entry);
-                self.direct_packets.remove(peer_id);
-            }
-        }
-        drained
-    }
-
-    pub(super) fn enqueue_direct_packet_for_all_players(&self, packet: Bytes) {
-        let mut peers = std::collections::HashSet::new();
-        for entry in self.data_channels_map.iter() {
-            peers.insert(entry.key().clone());
-        }
-        for peer_id in connected_quic_peer_ids() {
-            peers.insert(peer_id);
-        }
-        for peer_id in peers {
-            self.enqueue_direct_packet_for_peer(&peer_id, packet.clone());
-        }
-    }
-
-    pub fn record_tick_metrics(&self, frame_duration: Duration) {
-        {
-            let mut history = self.tick_durations_history.write();
-            history.push_back(frame_duration);
-            while history.len() > 1000 {
-                let _ = history.pop_front();
-            }
-        }
-
-        let connected_players = self
-            .data_channels_map
-            .len()
-            .saturating_add(connected_quic_peer_count());
-        metrics::record_frame_metrics(frame_duration.as_secs_f64(), connected_players);
-        let mut tuner = self.auto_tuner.write();
-        let quality = tuner.ingest_sample(TuningSample {
-            frame_time_ms: frame_duration.as_secs_f32() * 1000.0,
-            connected_players,
-        });
-        *self.dynamic_quality_settings.write() = quality;
     }
 
     pub fn register_quic_player(
@@ -1035,26 +897,6 @@ impl MassiveGameServer {
             return true;
         }
         false
-    }
-
-    pub fn remove_quic_player(&self, peer_id: &str) {
-        self.player_manager.remove_player(peer_id);
-        self.client_states_map.write().remove(peer_id);
-        self.player_aois.remove(peer_id);
-        self.data_channels_map.remove(peer_id);
-        self.direct_packets.remove(peer_id);
-        // Clean up per-player tracking state to prevent unbounded growth
-        self.cleanup_player_tracking_state(peer_id);
-    }
-
-    /// Remove per-player tracking data (position history, aim anomaly state, etc.)
-    /// to prevent unbounded memory growth after a player disconnects.
-    /// Called from both QUIC and WebRTC disconnect paths.
-    pub fn cleanup_player_tracking_state(&self, peer_id: &str) {
-        let player_id: PlayerID = Arc::from(peer_id.to_owned());
-        self.player_position_history.remove(&player_id);
-        self.aim_anomaly_states.remove(&player_id);
-        self.player_last_sync_positions.remove(&player_id);
     }
 
     pub async fn run_game_logic_update(&self, delta_time: f32) {

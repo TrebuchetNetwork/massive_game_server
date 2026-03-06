@@ -225,12 +225,11 @@ jobs:
         working-directory: scripts/e2e
         run: npx playwright install --with-deps chromium
 
-      - name: Run Playwright E2E smoke suite
+      - name: Run Playwright E2E suite
         working-directory: scripts/e2e
         run: |
           npx playwright test \
-            tests/connect.spec.js \
-            tests/runtime.spec.js \
+            tests \
             --workers=1 \
             --reporter=list
 

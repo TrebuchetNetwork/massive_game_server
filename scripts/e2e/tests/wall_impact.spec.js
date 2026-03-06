@@ -2,8 +2,17 @@ const { test, expect } = require('@playwright/test');
 const { registerServerLifecycle, resolveWsUrl } = require('./helpers/serverLifecycle');
 
 async function connectClient(page) {
-  await page.goto('/client.html', { waitUntil: 'domcontentloaded' });
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('mgs_player_name', 'E2EPlayer');
+    } catch (_) {}
+  });
+  await page.goto('/client.html?disable_stun=1&match_type=quick', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#connectButton', { state: 'attached' });
+  const matchTypeSelect = page.locator('#matchTypeSelect');
+  if (await matchTypeSelect.count()) {
+    await matchTypeSelect.selectOption('quick');
+  }
 
   const wsInput = page.locator('#wsUrl');
   if (await wsInput.count()) {
@@ -88,10 +97,11 @@ test('shots generate wall impact events', async ({ page }) => {
 
     const x = Number(localSprite.x) || 0;
     const y = Number(localSprite.y) || 0;
-    const worldMinX = -800;
-    const worldMaxX = 800;
-    const worldMinY = -600;
-    const worldMaxY = 600;
+    const worldBounds = window.__e2e?.worldBounds;
+    const worldMinX = Number(worldBounds?.minX ?? -800);
+    const worldMaxX = Number(worldBounds?.maxX ?? 800);
+    const worldMinY = Number(worldBounds?.minY ?? -600);
+    const worldMaxY = Number(worldBounds?.maxY ?? 600);
 
     const borderTargets = [
       { distance: Math.abs(worldMinX - x), x: worldMinX + 4, y },

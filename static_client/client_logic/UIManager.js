@@ -2154,6 +2154,33 @@ export function createUIManager(getCtx) {
         ctx.settingsMenuDiv.classList.toggle('hidden');
     }
 
+    function onConnectionReset() {
+        const ctx = getCtx();
+        lastCountdownBeepSecond = null;
+        lastMatchOutcomeAudioSignature = '';
+        closePostMatchSummary();
+        clearKillcamPlayback();
+        ctx.postMatchSummarySignature = '';
+        if (ctx.killFeedDiv) {
+            ctx.killFeedDiv.replaceChildren();
+            ctx.killFeedDiv.classList.add('hidden');
+        }
+        if (ctx.chatDisplayDiv) {
+            ctx.chatDisplayDiv.replaceChildren();
+            ctx.chatDisplayDiv.classList.add('hidden');
+        }
+        if (ctx.matchInfoDiv) {
+            ctx.matchInfoDiv.replaceChildren();
+            ctx.matchInfoDiv.classList.add('hidden');
+        }
+        ctx.scoreboardDiv?.classList.add('hidden');
+        ctx.settingsMenuDiv?.classList.add('hidden');
+    }
+
+    function destroy() {
+        onConnectionReset();
+    }
+
     return {
         escapeHtml,
         formatModeName,
@@ -2175,5 +2202,7 @@ export function createUIManager(getCtx) {
         saveAndApplySettings,
         loadSettings,
         toggleSettings,
+        onConnectionReset,
+        destroy,
     };
 }

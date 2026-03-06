@@ -1101,6 +1101,12 @@ export function createSpriteManager(getCtx) {
         return true;
     }
 
+    function onConnectionReset() {}
+
+    function destroy() {
+        onConnectionReset();
+    }
+
     return {
         createPlayerSprite,
         hidePlayerSprite,
@@ -1114,5 +1120,7 @@ export function createSpriteManager(getCtx) {
         releaseProjectileSprite,
         removeProjectileClientState,
         updateProjectileSprite,
+        onConnectionReset,
+        destroy,
     };
 }

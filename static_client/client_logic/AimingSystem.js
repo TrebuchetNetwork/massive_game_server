@@ -11,6 +11,21 @@ export function createAimingSystem(getCtx) {
     let fireBloom = 0;
     let lastBloomUpdateMs = 0;
 
+    function onConnectionReset() {
+        fireBloom = 0;
+        lastBloomUpdateMs = 0;
+        const { aimingGraphics, trajectoryGraphics, sniperRangeText } = getCtx();
+        aimingGraphics?.clear?.();
+        trajectoryGraphics?.clear?.();
+        if (sniperRangeText) {
+            sniperRangeText.visible = false;
+        }
+    }
+
+    function destroy() {
+        onConnectionReset();
+    }
+
     function drawLiteAimingSystem(playerX, playerY, aimX, aimY, currentWeapon, crosshairColor, distance, bloomScale = 0) {
         const ctx = getCtx();
         const { aimingGraphics, trajectoryGraphics, sniperRangeText, GP } = ctx;
@@ -299,5 +314,7 @@ export function createAimingSystem(getCtx) {
     return {
         drawLiteAimingSystem,
         drawAimingSystem,
+        onConnectionReset,
+        destroy,
     };
 }

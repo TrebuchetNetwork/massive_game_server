@@ -772,5 +772,11 @@ export function createUpdateSprites(getCtx) {
         }
     }
 
-    return { updateSprites };
+    function onConnectionReset() {}
+
+    function destroy() {
+        onConnectionReset();
+    }
+
+    return { updateSprites, onConnectionReset, destroy };
 }

@@ -2,8 +2,8 @@ use super::*;
 
 impl MassiveGameServer {
     pub fn recent_live_replay_frames(&self, limit: usize) -> Vec<LiveReplayFrame> {
-        let replay = self.live_replay_frames.read();
-        let bounded = limit.clamp(1, self.live_replay_capacity.max(1));
+        let replay = self.replay.frames.read();
+        let bounded = limit.clamp(1, self.replay.capacity.max(1));
         replay.iter().rev().take(bounded).cloned().collect()
     }
 
@@ -11,8 +11,8 @@ impl MassiveGameServer {
         &self,
         limit: usize,
     ) -> Vec<LiveReplayDisputeAuditProof> {
-        let audits = self.live_replay_dispute_audits.read();
-        let bounded = limit.clamp(1, self.live_replay_dispute_audit_capacity.max(1));
+        let audits = self.replay.dispute_audits.read();
+        let bounded = limit.clamp(1, self.replay.dispute_audit_capacity.max(1));
         audits.iter().rev().take(bounded).cloned().collect()
     }
 
@@ -20,11 +20,11 @@ impl MassiveGameServer {
         &self,
         request: LiveReplayDisputeRequest,
     ) -> LiveReplayDisputeReport {
-        let replay = self.live_replay_frames.read();
+        let replay = self.replay.frames.read();
         let limit = request
             .limit
             .unwrap_or(256)
-            .clamp(1, self.live_replay_capacity.max(1));
+            .clamp(1, self.replay.capacity.max(1));
         let player_filter = request
             .player_id
             .as_ref()
@@ -93,14 +93,14 @@ impl MassiveGameServer {
     }
 
     pub(super) fn capture_live_replay_frame(&self, frame: u64) {
-        if !self.live_replay_enabled {
+        if !self.replay.enabled {
             return;
         }
 
-        let mut sampled_players = Vec::with_capacity(self.live_replay_player_cap);
+        let mut sampled_players = Vec::with_capacity(self.replay.player_cap);
         self.player_manager
             .for_each_player(|player_id, player_state| {
-                if sampled_players.len() >= self.live_replay_player_cap {
+                if sampled_players.len() >= self.replay.player_cap {
                     return;
                 }
                 sampled_players.push(LiveReplayPlayerSample {
@@ -116,30 +116,32 @@ impl MassiveGameServer {
                 });
             });
 
+        let projectile_snapshot = self.snapshots.projectile_soa_snapshot.load();
+        let pickup_snapshot = self.snapshots.pickup_soa_snapshot.load();
         let frame_sample = LiveReplayFrame {
             frame,
             timestamp_ms: self.get_server_timestamp_ms(),
             players: self.player_manager.player_count(),
-            projectiles: self.projectiles.read().len(),
-            pickups: self.pickups.read().len(),
+            projectiles: projectile_snapshot.len(),
+            pickups: pickup_snapshot.len(),
             events: self.global_game_events.len(),
             sampled_players,
             kill_feed_size: self.kill_feed.read().len(),
         };
 
-        let mut replay = self.live_replay_frames.write();
-        while replay.len() >= self.live_replay_capacity {
+        let mut replay = self.replay.frames.write();
+        while replay.len() >= self.replay.capacity {
             let _ = replay.pop_front();
         }
         replay.push_back(frame_sample);
     }
 
     pub(super) fn persist_match_replay_snapshot(&self, reason: &str) {
-        if !self.live_replay_match_persist_enabled {
+        if !self.replay.match_persist_enabled {
             return;
         }
 
-        let frames: Vec<LiveReplayFrame> = self.live_replay_frames.read().iter().cloned().collect();
+        let frames: Vec<LiveReplayFrame> = self.replay.frames.read().iter().cloned().collect();
         if frames.is_empty() {
             return;
         }
@@ -180,8 +182,8 @@ impl MassiveGameServer {
         // Offload blocking file I/O to a dedicated thread to avoid blocking the
         // async / game-loop runtime.  The compressed payload and path data are
         // moved into the closure so no references to `self` are needed.
-        let store_dir = Arc::clone(&self.live_replay_match_store_dir);
-        let retention = self.live_replay_match_retention;
+        let store_dir = Arc::clone(&self.replay.match_store_dir);
+        let retention = self.replay.match_retention;
         let file_name = format!("replay_{}_{}.json.zst", now_ms, safe_reason);
 
         tokio::task::spawn_blocking(move || {
@@ -245,7 +247,7 @@ impl MassiveGameServer {
         let dispute_id = format!("dispute_{}", Uuid::new_v4());
         let payload = serde_json::to_vec(report).unwrap_or_default();
         let payload_sha256 = sha256_hex(&payload);
-        let previous_chain_hash = self.live_replay_dispute_chain_head.read().clone();
+        let previous_chain_hash = self.replay.dispute_chain_head.read().clone();
 
         let mut chain_material = String::new();
         if let Some(previous) = previous_chain_hash.as_deref() {
@@ -257,19 +259,16 @@ impl MassiveGameServer {
         chain_material.push_str(&report.generated_at_ms.to_string());
         let chain_hash_sha256 = sha256_hex(chain_material.as_bytes());
         let signature_hmac_sha256 = self
-            .live_replay_dispute_signing_key
+            .replay
+            .dispute_signing_key
             .as_ref()
             .and_then(|key| hmac_sha256_hex(key.as_slice(), chain_hash_sha256.as_bytes()));
 
         let mut audit = LiveReplayDisputeAuditProof {
             dispute_id: dispute_id.clone(),
             persisted: false,
-            storage_path: if self.live_replay_dispute_persist_enabled {
-                Some(
-                    self.live_replay_dispute_store_path
-                        .to_string_lossy()
-                        .to_string(),
-                )
+            storage_path: if self.replay.dispute_persist_enabled {
+                Some(self.replay.dispute_store_path.to_string_lossy().to_string())
             } else {
                 None
             },
@@ -279,7 +278,7 @@ impl MassiveGameServer {
             signature_hmac_sha256: signature_hmac_sha256.clone(),
         };
 
-        if self.live_replay_dispute_persist_enabled {
+        if self.replay.dispute_persist_enabled {
             let persisted_record = PersistedLiveReplayDisputeRecord {
                 dispute_id: dispute_id.clone(),
                 generated_at_ms: report.generated_at_ms,
@@ -295,12 +294,10 @@ impl MassiveGameServer {
                 signature_hmac_sha256: signature_hmac_sha256.clone(),
             };
 
-            match append_dispute_record(
-                self.live_replay_dispute_store_path.as_path(),
-                &persisted_record,
-            ) {
+            match append_dispute_record(self.replay.dispute_store_path.as_path(), &persisted_record)
+            {
                 Ok(()) => {
-                    *self.live_replay_dispute_chain_head.write() = Some(chain_hash_sha256.clone());
+                    *self.replay.dispute_chain_head.write() = Some(chain_hash_sha256.clone());
                     audit.persisted = true;
                 }
                 Err(err) => {
@@ -313,8 +310,8 @@ impl MassiveGameServer {
         }
 
         {
-            let mut audits = self.live_replay_dispute_audits.write();
-            while audits.len() >= self.live_replay_dispute_audit_capacity {
+            let mut audits = self.replay.dispute_audits.write();
+            while audits.len() >= self.replay.dispute_audit_capacity {
                 let _ = audits.pop_front();
             }
             audits.push_back(audit.clone());

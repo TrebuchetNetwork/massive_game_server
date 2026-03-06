@@ -7,9 +7,18 @@ test('local player cannot move through world boundary walls', async ({ page }) =
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
 
-  await page.goto('/client.html', { waitUntil: 'domcontentloaded' });
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('mgs_player_name', 'E2EPlayer');
+    } catch (_) {}
+  });
+  await page.goto('/client.html?disable_stun=1&match_type=quick', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#connectButton', { state: 'attached' });
 
+  const matchTypeSelect = page.locator('#matchTypeSelect');
+  if (await matchTypeSelect.count()) {
+    await matchTypeSelect.selectOption('quick');
+  }
   const wsInput = page.locator('#wsUrl');
   if (await wsInput.count()) {
     await wsInput.fill(resolveWsUrl());
@@ -51,10 +60,11 @@ test('local player cannot move through world boundary walls', async ({ page }) =
 
     const x = Number(localSprite.x) || 0;
     const y = Number(localSprite.y) || 0;
-    const worldMinX = -800;
-    const worldMaxX = 800;
-    const worldMinY = -600;
-    const worldMaxY = 600;
+    const worldBounds = window.__e2e?.worldBounds;
+    const worldMinX = Number(worldBounds?.minX ?? -800);
+    const worldMaxX = Number(worldBounds?.maxX ?? 800);
+    const worldMinY = Number(worldBounds?.minY ?? -600);
+    const worldMaxY = Number(worldBounds?.maxY ?? 600);
     const boundaries = [
       { axis: 'x', direction: -1, targetX: worldMinX + 4, targetY: y, distance: Math.abs(x - worldMinX) },
       { axis: 'x', direction: 1, targetX: worldMaxX - 4, targetY: y, distance: Math.abs(worldMaxX - x) },
@@ -115,10 +125,11 @@ test('local player cannot move through world boundary walls', async ({ page }) =
     return { x: Number(local?.x) || 0, y: Number(local?.y) || 0 };
   });
 
-  const worldMinX = -800;
-  const worldMaxX = 800;
-  const worldMinY = -600;
-  const worldMaxY = 600;
+  const bounds = await page.evaluate(() => window.__e2e?.worldBounds || null);
+  const worldMinX = Number(bounds?.minX ?? -800);
+  const worldMaxX = Number(bounds?.maxX ?? 800);
+  const worldMinY = Number(bounds?.minY ?? -600);
+  const worldMaxY = Number(bounds?.maxY ?? 600);
   const boundaryEpsilon = 1.5;
   expect(after.x).toBeGreaterThanOrEqual(worldMinX - boundaryEpsilon);
   expect(after.x).toBeLessThanOrEqual(worldMaxX + boundaryEpsilon);

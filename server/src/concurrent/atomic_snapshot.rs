@@ -354,6 +354,11 @@ impl ProjectileSoASnapshot {
     }
 
     #[inline]
+    pub fn states(&self) -> &[Projectile] {
+        &self.states
+    }
+
+    #[inline]
     fn with_capacity(capacity: usize) -> Self {
         Self {
             xs: Vec::with_capacity(capacity),
@@ -476,6 +481,16 @@ impl PickupSoASnapshot {
     }
 
     #[inline]
+    pub fn states(&self) -> &[Pickup] {
+        &self.states
+    }
+
+    #[inline]
+    pub fn active_count(&self) -> usize {
+        self.active.iter().filter(|is_active| **is_active).count()
+    }
+
+    #[inline]
     fn with_capacity(capacity: usize) -> Self {
         Self {
             xs: Vec::with_capacity(capacity),
@@ -539,7 +554,7 @@ impl Default for AtomicPickupSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::types::PlayerState;
+    use crate::core::types::{CorePickupType, Pickup, PlayerState};
     use std::sync::Arc;
 
     fn pid(raw: &str) -> PlayerID {
@@ -649,5 +664,20 @@ mod tests {
         assert!(snap.is_empty());
         assert!(snap.get_state(&pid("any")).is_none());
         assert!(snap.get_position(&pid("any")).is_none());
+    }
+
+    #[test]
+    fn pickup_snapshot_exposes_states_and_active_count() {
+        let mut inactive_pickup = Pickup::new(2, 30.0, 40.0, CorePickupType::Ammo);
+        inactive_pickup.is_active = false;
+        let snap = PickupSoASnapshot::from_pickups_slice(&[
+            Pickup::new(1, 10.0, 20.0, CorePickupType::Health),
+            inactive_pickup,
+        ]);
+
+        assert_eq!(snap.len(), 2);
+        assert_eq!(snap.active_count(), 1);
+        assert_eq!(snap.states()[0].id, 1);
+        assert_eq!(snap.states()[1].id, 2);
     }
 }

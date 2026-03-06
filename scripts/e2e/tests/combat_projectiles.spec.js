@@ -7,9 +7,18 @@ test('firing produces visible projectile updates', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
 
-  await page.goto('/client.html', { waitUntil: 'domcontentloaded' });
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('mgs_player_name', 'E2EPlayer');
+    } catch (_) {}
+  });
+  await page.goto('/client.html?disable_stun=1&match_type=quick', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#connectButton', { state: 'attached' });
 
+  const matchTypeSelect = page.locator('#matchTypeSelect');
+  if (await matchTypeSelect.count()) {
+    await matchTypeSelect.selectOption('quick');
+  }
   const wsInput = page.locator('#wsUrl');
   if (await wsInput.count()) {
     await wsInput.fill(resolveWsUrl());

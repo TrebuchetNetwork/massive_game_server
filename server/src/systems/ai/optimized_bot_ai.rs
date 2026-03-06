@@ -542,8 +542,9 @@ impl OptimizedBotAI {
             });
 
         let active_pickups: Vec<PickupSnapshot> = {
-            let pickups_guard = server_instance.pickups.read();
-            pickups_guard
+            let pickups_snapshot = server_instance.snapshots.pickup_soa_snapshot.load();
+            pickups_snapshot
+                .states()
                 .iter()
                 .filter(|pickup| pickup.is_active)
                 .map(|pickup| PickupSnapshot {

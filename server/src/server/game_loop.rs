@@ -277,7 +277,8 @@ impl MassiveGameServer {
 
             if is_connected_client {
                 self.update_player_aoi(&player_id, x, y);
-                self.player_last_sync_positions
+                self.snapshots
+                    .player_last_sync_positions
                     .insert(player_id.clone(), (x, y));
             }
         }
@@ -350,18 +351,18 @@ impl MassiveGameServer {
                     next_aoi.visible_players.insert(other_id.clone());
                 }
             });
+            let projectile_snapshot = self.snapshots.projectile_soa_snapshot.load();
+            for projectile in projectile_snapshot
+                .states()
+                .iter()
+                .take(max_visible_projectiles)
             {
-                let projectiles = self.projectiles.read();
-                for projectile in projectiles.iter().take(max_visible_projectiles) {
-                    next_aoi.visible_projectiles.insert(projectile.id);
-                }
+                next_aoi.visible_projectiles.insert(projectile.id);
             }
-            {
-                let pickups = self.pickups.read();
-                for pickup in pickups.iter().take(max_visible_pickups) {
-                    if pickup.is_active {
-                        next_aoi.visible_pickups.insert(pickup.id);
-                    }
+            let pickup_snapshot = self.snapshots.pickup_soa_snapshot.load();
+            for pickup in pickup_snapshot.states().iter().take(max_visible_pickups) {
+                if pickup.is_active {
+                    next_aoi.visible_pickups.insert(pickup.id);
                 }
             }
             let active_walls = self.wall_spatial_index.query_aabb(

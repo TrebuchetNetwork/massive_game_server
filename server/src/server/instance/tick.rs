@@ -82,7 +82,9 @@ impl MassiveGameServer {
                         "[Frame {}] CRITICAL: Task panicked in Stage 1: {}. Match flagged as degraded.",
                         frame, e
                     );
-                    self.match_degraded.store(true, AtomicOrdering::Release);
+                    self.runtime_tracking
+                        .match_degraded
+                        .store(true, AtomicOrdering::Release);
                 } else {
                     // Task was cancelled (not a panic) -- less severe but still log.
                     error!("[Frame {}] Task join error in Stage 1: {}", frame, e);
@@ -114,7 +116,9 @@ impl MassiveGameServer {
             {
                 Ok(elapsed) => elapsed,
                 Err(join_err) => {
-                    self.match_degraded.store(true, AtomicOrdering::Release);
+                    self.runtime_tracking
+                        .match_degraded
+                        .store(true, AtomicOrdering::Release);
                     return Err(ServerError::ThreadingError(format!(
                         "Stage 2 physics offload join failed: {}",
                         join_err
@@ -141,7 +145,9 @@ impl MassiveGameServer {
             {
                 Ok(elapsed) => elapsed,
                 Err(join_err) => {
-                    self.match_degraded.store(true, AtomicOrdering::Release);
+                    self.runtime_tracking
+                        .match_degraded
+                        .store(true, AtomicOrdering::Release);
                     return Err(ServerError::ThreadingError(format!(
                         "Stage 2 game-logic offload join failed: {}",
                         join_err

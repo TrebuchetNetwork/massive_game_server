@@ -99,15 +99,19 @@ pub fn build_quic_control_handler(
         let op = request.op.unwrap_or_else(|| "echo".to_string());
 
         let response = match op.as_str() {
-            "healthz" => serde_json::json!({
-                "ok": true,
-                "op": "healthz",
-                "frame": server.frame_counter.load(Ordering::Relaxed),
-                "players": server.player_manager.player_count(),
-                "projectiles": server.projectiles.read().len(),
-                "pickups": server.pickups.read().len(),
-                "ts_ms": server.get_server_timestamp_ms(),
-            }),
+            "healthz" => {
+                let projectile_snapshot = server.snapshots.projectile_soa_snapshot.load();
+                let pickup_snapshot = server.snapshots.pickup_soa_snapshot.load();
+                serde_json::json!({
+                    "ok": true,
+                    "op": "healthz",
+                    "frame": server.frame_counter.load(Ordering::Relaxed),
+                    "players": server.player_manager.player_count(),
+                    "projectiles": projectile_snapshot.len(),
+                    "pickups": pickup_snapshot.len(),
+                    "ts_ms": server.get_server_timestamp_ms(),
+                })
+            }
             "live_replay_recent" => {
                 if bound_peer_id.is_none() {
                     serde_json::json!({ "ok": false, "op": "live_replay_recent", "error": "unauthorized" })

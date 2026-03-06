@@ -41,18 +41,15 @@ impl MassiveGameServer {
             return Ok(());
         }
 
+        let existing_client_state = server.client_states_map.read().get(peer_id_str).cloned();
         let mut client_state_for_delta: Option<ClientState> = None;
-        let mut last_chat_message_seq_sent = server
-            .client_states_map
-            .read()
-            .get(peer_id_str)
+        let mut last_chat_message_seq_sent = existing_client_state
+            .as_ref()
             .map(|state| state.last_chat_message_seq_sent)
             .unwrap_or_default();
         let state_result = if client_info.needs_initial_state {
-            let cached_initial_state = server
-                .client_states_map
-                .read()
-                .get(peer_id_str)
+            let cached_initial_state = existing_client_state
+                .as_ref()
                 .and_then(|state| state.pending_initial_state_chunks.front().cloned());
 
             if let Some(cached_bytes) = cached_initial_state {
@@ -93,18 +90,14 @@ impl MassiveGameServer {
             }
         } else {
             trace!("[Frame {}] Building delta state for {}", frame, peer_id_str);
-            let mut client_state_snapshot = server
-                .client_states_map
-                .read()
-                .get(peer_id_str).cloned()
-                .unwrap_or_else(|| {
-                    debug!(
-                        "[Frame {}] ClientState not found for {} during delta build, using default.",
-                        server.frame_counter.load(AtomicOrdering::Relaxed),
-                        peer_id_str
-                    );
-                    ClientState::default()
-                });
+            let mut client_state_snapshot = existing_client_state.unwrap_or_else(|| {
+                debug!(
+                    "[Frame {}] ClientState not found for {} during delta build, using default.",
+                    server.frame_counter.load(AtomicOrdering::Relaxed),
+                    peer_id_str
+                );
+                ClientState::default()
+            });
             let delta_result = server.build_delta_state_optimized(
                 peer_id_str,
                 &mut client_state_snapshot,
@@ -321,18 +314,15 @@ impl MassiveGameServer {
             return Ok(());
         }
 
+        let existing_client_state = server.client_states_map.read().get(peer_id_str).cloned();
         let mut client_state_for_delta: Option<ClientState> = None;
-        let mut last_chat_message_seq_sent = server
-            .client_states_map
-            .read()
-            .get(peer_id_str)
+        let mut last_chat_message_seq_sent = existing_client_state
+            .as_ref()
             .map(|state| state.last_chat_message_seq_sent)
             .unwrap_or_default();
         let state_result = if needs_initial_state {
-            let cached_initial_state = server
-                .client_states_map
-                .read()
-                .get(peer_id_str)
+            let cached_initial_state = existing_client_state
+                .as_ref()
                 .and_then(|state| state.pending_initial_state_chunks.front().cloned());
 
             if let Some(cached_bytes) = cached_initial_state {
@@ -359,12 +349,7 @@ impl MassiveGameServer {
                 }
             }
         } else {
-            let mut client_state_snapshot = server
-                .client_states_map
-                .read()
-                .get(peer_id_str)
-                .cloned()
-                .unwrap_or_default();
+            let mut client_state_snapshot = existing_client_state.unwrap_or_default();
             let delta_result = server.build_delta_state_optimized(
                 peer_id_str,
                 &mut client_state_snapshot,

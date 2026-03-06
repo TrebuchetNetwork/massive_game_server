@@ -2,11 +2,12 @@ use super::*;
 
 impl MassiveGameServer {
     pub fn latest_match_end_summary(&self) -> Option<MatchEndSummary> {
-        self.latest_match_end_summary.read().clone()
+        self.replay.latest_match_end_summary.read().clone()
     }
 
     pub fn latest_killcam_for_player(&self, player_id: &str) -> Option<KillCamData> {
-        self.recent_killcams
+        self.replay
+            .recent_killcams
             .iter()
             .find(|entry| entry.key().as_ref() == player_id)
             .map(|entry| entry.value().clone())
@@ -95,7 +96,7 @@ impl MassiveGameServer {
             mvp_objectives,
         };
 
-        *self.latest_match_end_summary.write() = Some(summary);
+        *self.replay.latest_match_end_summary.write() = Some(summary);
         let latest_summary = self.latest_match_end_summary();
         if let Some(summary_event_packet) =
             self.build_system_event_packet("match_summary", latest_summary.as_ref())
@@ -123,7 +124,7 @@ impl MassiveGameServer {
             .map(|state| state.rotation)
             .unwrap_or(0.0);
 
-        let Some(history) = self.player_position_history.get(killer_id) else {
+        let Some(history) = self.runtime_tracking.player_position_history.get(killer_id) else {
             return;
         };
 
@@ -160,7 +161,7 @@ impl MassiveGameServer {
             last.shooting = true;
         }
 
-        self.recent_killcams.insert(
+        self.replay.recent_killcams.insert(
             victim_id.clone(),
             KillCamData {
                 victim_id: victim_id.as_ref().to_string(),
@@ -182,7 +183,8 @@ impl MassiveGameServer {
     }
 
     pub(super) fn prune_match_runtime_state(&self) {
-        self.recent_killcams
+        self.replay
+            .recent_killcams
             .retain(|player_id, _| self.player_manager.get_player_state(player_id).is_some());
     }
 

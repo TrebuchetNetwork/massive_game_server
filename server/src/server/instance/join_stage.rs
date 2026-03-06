@@ -4,10 +4,12 @@ impl MassiveGameServer {
     pub(super) fn ensure_join_trace(&self, peer_id: &str, channel_open: bool) {
         let now_ms = self.get_server_timestamp_us();
         let mut trace = self
+            .runtime_tracking
             .join_stage_traces
             .entry(peer_id.to_owned())
             .or_insert_with(|| JoinStageTrace {
                 join_sequence: self
+                    .runtime_tracking
                     .join_sequence_counter
                     .fetch_add(1, AtomicOrdering::Relaxed)
                     + 1,
@@ -30,7 +32,7 @@ impl MassiveGameServer {
     pub(super) fn mark_join_build_start(&self, peer_id: &str) {
         self.ensure_join_trace(peer_id, false);
         let now_ms = self.get_server_timestamp_us();
-        if let Some(mut trace) = self.join_stage_traces.get_mut(peer_id) {
+        if let Some(mut trace) = self.runtime_tracking.join_stage_traces.get_mut(peer_id) {
             if trace.first_build_start_ms.is_none() {
                 trace.first_build_start_ms = Some(now_ms);
             }
@@ -40,7 +42,7 @@ impl MassiveGameServer {
 
     pub(super) fn mark_join_build_done(&self, peer_id: &str) {
         let now_ms = self.get_server_timestamp_us();
-        if let Some(mut trace) = self.join_stage_traces.get_mut(peer_id) {
+        if let Some(mut trace) = self.runtime_tracking.join_stage_traces.get_mut(peer_id) {
             if trace.first_build_done_ms.is_none() {
                 trace.first_build_done_ms = Some(now_ms);
             }
@@ -50,7 +52,7 @@ impl MassiveGameServer {
     pub(super) fn mark_join_send_start(&self, peer_id: &str) {
         self.ensure_join_trace(peer_id, true);
         let now_ms = self.get_server_timestamp_us();
-        if let Some(mut trace) = self.join_stage_traces.get_mut(peer_id) {
+        if let Some(mut trace) = self.runtime_tracking.join_stage_traces.get_mut(peer_id) {
             if trace.first_send_start_ms.is_none() {
                 trace.first_send_start_ms = Some(now_ms);
             }
@@ -60,7 +62,7 @@ impl MassiveGameServer {
 
     pub(super) fn mark_join_send_failure(&self, peer_id: &str) {
         let now_ms = self.get_server_timestamp_us();
-        if let Some(mut trace) = self.join_stage_traces.get_mut(peer_id) {
+        if let Some(mut trace) = self.runtime_tracking.join_stage_traces.get_mut(peer_id) {
             if trace.first_send_failure_ms.is_none() {
                 trace.first_send_failure_ms = Some(now_ms);
             }
@@ -82,7 +84,7 @@ impl MassiveGameServer {
 
     pub(super) fn mark_join_send_done(&self, peer_id: &str) {
         let now_ms = self.get_server_timestamp_us();
-        if let Some(mut trace) = self.join_stage_traces.get_mut(peer_id) {
+        if let Some(mut trace) = self.runtime_tracking.join_stage_traces.get_mut(peer_id) {
             if trace.first_send_done_ms.is_none() {
                 trace.first_send_done_ms = Some(now_ms);
             }
@@ -96,12 +98,15 @@ impl MassiveGameServer {
     }
 
     pub fn reset_join_stage_report(&self) {
-        self.join_stage_traces.clear();
-        self.join_sequence_counter.store(0, AtomicOrdering::Relaxed);
+        self.runtime_tracking.join_stage_traces.clear();
+        self.runtime_tracking
+            .join_sequence_counter
+            .store(0, AtomicOrdering::Relaxed);
     }
 
     pub fn join_stage_report(&self) -> JoinStageReport {
         let traces: Vec<JoinStageTrace> = self
+            .runtime_tracking
             .join_stage_traces
             .iter()
             .map(|entry| entry.value().clone())

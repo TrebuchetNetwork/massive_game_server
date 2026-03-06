@@ -5,6 +5,7 @@ use crate::memory::numa::NumaTopology;
 use core_affinity::CoreId;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::env;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -427,8 +428,11 @@ impl MonitoredPool {
         }
         let pending_clone = Arc::clone(&self.pending);
         self.pool.spawn(move || {
-            work();
+            let panic_result = catch_unwind(AssertUnwindSafe(work));
             pending_clone.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            if let Err(payload) = panic_result {
+                resume_unwind(payload);
+            }
         });
         true
     }
@@ -452,8 +456,11 @@ impl MonitoredPool {
         }
         let pending_clone = Arc::clone(&self.pending);
         self.pool.spawn(move || {
-            work();
+            let panic_result = catch_unwind(AssertUnwindSafe(work));
             pending_clone.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            if let Err(payload) = panic_result {
+                resume_unwind(payload);
+            }
         });
     }
 }
@@ -464,6 +471,20 @@ mod tests {
 
     fn test_pool() -> Arc<ThreadPool> {
         Arc::new(ThreadPoolBuilder::new().num_threads(2).build().unwrap())
+    }
+
+    fn test_pool_with_panic_handler(
+        panic_seen: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Arc<ThreadPool> {
+        Arc::new(
+            ThreadPoolBuilder::new()
+                .num_threads(1)
+                .panic_handler(move |_| {
+                    panic_seen.store(true, std::sync::atomic::Ordering::Relaxed);
+                })
+                .build()
+                .unwrap(),
+        )
     }
 
     #[test]
@@ -513,6 +534,19 @@ mod tests {
         // Cleanup
         let _ = tx1.send(());
         let _ = tx2.send(());
+    }
+
+    #[test]
+    fn monitored_pool_decrements_pending_after_panic() {
+        let panic_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pool = test_pool_with_panic_handler(Arc::clone(&panic_seen));
+        let monitored = MonitoredPool::new(pool, "test_panic");
+
+        monitored.submit(|| panic!("expected test panic"));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        assert!(panic_seen.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(monitored.pending_count(), 0);
     }
 
     #[test]

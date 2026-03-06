@@ -1014,6 +1014,32 @@ export function createWorldRenderer(getCtx) {
         updateBoundaryHazeOverlay(currentTimeMs);
     }
 
+    function onConnectionReset() {
+        const ctx = getCtx();
+        zonePulsePhase = 0;
+        zoneAmbientSpawnCursor = 0;
+        zoneAmbientSpawnAccumulator = 0;
+        respawnSpectateTargetId = '';
+        respawnSpectateCycleIndex = 0;
+        lastRespawnSpectateSwitchAt = 0;
+        lastRespawnSpectateHintAt = 0;
+        worldBounds = null;
+        _lastWallRedrawAt = 0;
+        _pendingWallRedraw = false;
+        clearZoneAmbientParticles(ctx.zoneAmbientContainer);
+        if (ctx.zoneContainer) {
+            ctx.zoneContainer.removeChildren().forEach((child) => child.destroy?.());
+        }
+        if (ctx.flagContainer) {
+            ctx.flagContainer.removeChildren().forEach((child) => child.destroy?.({ children: true }));
+        }
+        ctx.wallGraphics?.clear?.();
+    }
+
+    function destroy() {
+        onConnectionReset();
+    }
+
     return {
         drawZones,
         updateZonePulse,
@@ -1025,5 +1051,7 @@ export function createWorldRenderer(getCtx) {
         updateFlags,
         updateCamera,
         hasPendingWallRedraw,
+        onConnectionReset,
+        destroy,
     };
 }

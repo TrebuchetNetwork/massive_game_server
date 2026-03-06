@@ -906,6 +906,15 @@ export function createProtocolHandler({
         return builder.asUint8Array();
     }
 
+    function onConnectionReset() {
+        fastDeltaPathEnabled = true;
+        fastDeltaPathErrorCount = 0;
+    }
+
+    function destroy() {
+        onConnectionReset();
+    }
+
     return {
         // Constants
         PLAYER_DELTA_FULL_MASK,
@@ -947,5 +956,7 @@ export function createProtocolHandler({
         parseFlatBufferMessage,
         createInputMessage,
         createChatMessage,
+        onConnectionReset,
+        destroy,
     };
 }
