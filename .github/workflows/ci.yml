@@ -188,6 +188,8 @@ jobs:
       CARGO_TERM_COLOR: always
       E2E_BASE_URL: http://127.0.0.1:18080
       E2E_WS_URL: ws://127.0.0.1:18080/ws
+      E2E_SERVER_CMD: ./target/debug/massive_game_server_core
+      E2E_SERVER_START_TIMEOUT_MS: "480000"
       MGS_HOST: 0.0.0.0
       MGS_PORT: 18080
       MGS_DISABLE_STUN: "1"
@@ -206,6 +208,9 @@ jobs:
 
       - name: Install FlatBuffers compiler
         run: scripts/install_flatc.sh
+
+      - name: Build debug server binary
+        run: cargo build -p massive_game_server_core --bin massive_game_server_core --locked
 
       - name: Verify Node runtime
         run: |

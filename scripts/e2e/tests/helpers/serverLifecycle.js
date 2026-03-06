@@ -19,7 +19,7 @@ function resolveWsUrl() {
 }
 
 function waitForHttpReady(url) {
-  const timeoutMs = 180000;
+  const timeoutMs = Number.parseInt(process.env.E2E_SERVER_START_TIMEOUT_MS || '180000', 10) || 180000;
   const start = Date.now();
   const client = url.startsWith('https') ? https : http;
 
