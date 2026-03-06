@@ -9,11 +9,15 @@ test('connects and receives match state', async ({ page }) => {
       localStorage.setItem('mgs_player_name', 'E2EPlayer');
     } catch (_) {}
   });
-  const response = await page.goto('/client.html', { waitUntil: 'domcontentloaded' });
+  const response = await page.goto('/client.html?disable_stun=1&match_type=quick', { waitUntil: 'domcontentloaded' });
   if (!response || !response.ok()) {
     throw new Error(`Failed to load /client.html. Status: ${response ? response.status() : 'no response'}`);
   }
   await page.waitForSelector('#connectButton', { state: 'attached' });
+  const matchTypeSelect = page.locator('#matchTypeSelect');
+  if (await matchTypeSelect.count()) {
+    await matchTypeSelect.selectOption('quick');
+  }
   const wsInput = page.locator('#wsUrl');
   if (await wsInput.count()) {
     await wsInput.fill(resolveWsUrl());

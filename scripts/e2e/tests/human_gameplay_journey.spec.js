@@ -72,10 +72,14 @@ test('human gameplay journey remains stable and responsive', async ({ page }) =>
       localStorage.setItem('mgs_player_name', 'E2EPlayer');
     } catch (_) {}
   });
-  await page.goto('/client.html?auto_reconnect=1', { waitUntil: 'domcontentloaded' });
+  await page.goto('/client.html?auto_reconnect=1&disable_stun=1&match_type=quick', { waitUntil: 'domcontentloaded' });
   await dismissUsernameModalIfVisible(page);
 
   await page.waitForSelector('#connectButton', { state: 'attached' });
+  const matchTypeSelect = page.locator('#matchTypeSelect');
+  if (await matchTypeSelect.count()) {
+    await matchTypeSelect.selectOption('quick');
+  }
   const wsInput = page.locator('#wsUrl');
   if (await wsInput.count()) {
     await wsInput.fill(resolveWsUrl());
