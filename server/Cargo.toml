@@ -179,6 +179,10 @@ path = "tests/integration/http_routes.rs"
 name = "quic_transport"
 path = "tests/integration/quic_transport.rs"
 
+[[test]]
+name = "auth_e2e"
+path = "tests/integration/auth_e2e.rs"
+
 [[bench]]
 name = "physics"
 harness = false

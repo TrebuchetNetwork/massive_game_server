@@ -14,6 +14,14 @@ on:
         description: "Number of game ticks to simulate"
         required: false
         default: "120"
+      live_stress_bots:
+        description: "Number of real WebRTC bots for the live stress run"
+        required: false
+        default: "120"
+      live_stress_duration_secs:
+        description: "How long the live WebRTC stress run should last"
+        required: false
+        default: "60"
 
 concurrency:
   group: stress-tests-${{ github.ref }}
@@ -47,10 +55,70 @@ jobs:
           RUSTFLAGS: -D warnings
         run: cargo build --release -p massive_game_server_stress_client --locked
 
+      - name: Build release server binary
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo build --release -p massive_game_server_core --bin massive_game_server_core --locked
+
       - name: Stress-client dry-run validation
         run: |
           ./target/release/massive_game_server_stress_client \
             --dry-run --scenario ramp120 -n 20 -d 3
+
+      - name: Run live WebRTC stress scenario
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          LIVE_STRESS_BOTS: ${{ github.event.inputs.live_stress_bots || '120' }}
+          LIVE_STRESS_DURATION_SECS: ${{ github.event.inputs.live_stress_duration_secs || '60' }}
+        run: |
+          set -euo pipefail
+          MGS_HOST=0.0.0.0 \
+          MGS_PORT=18080 \
+          MGS_DISABLE_STUN=1 \
+          MGS_TARGET_BOT_COUNT=0 \
+          MGS_METRICS_ENABLED=true \
+          MGS_METRICS_BIND_ADDR=127.0.0.1:19090 \
+          RUST_LOG=massive_game_server_core=warn,warp=warn,webrtc=warn \
+            ./target/release/massive_game_server_core > /tmp/mgs_live_stress_server.log 2>&1 &
+          server_pid=$!
+          trap 'kill ${server_pid} >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1 \
+              && curl -fsS http://127.0.0.1:18080/readyz >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+          ./target/release/massive_game_server_stress_client \
+            -u ws://127.0.0.1:18080/ws \
+            --scenario ramp120 \
+            -n "${LIVE_STRESS_BOTS}" \
+            -d "${LIVE_STRESS_DURATION_SECS}"
+
+          curl -fsS http://127.0.0.1:18080/healthz > /tmp/mgs_live_stress_health.json
+          python3 - <<'PY'
+          import json
+          import re
+          import time
+          import urllib.request
+
+          with open("/tmp/mgs_live_stress_health.json", "r", encoding="utf-8") as fh:
+              health = json.load(fh)
+          assert health.get("ok") is True, health
+          assert health.get("match_degraded") is False, health
+
+          for _ in range(30):
+              metrics = urllib.request.urlopen("http://127.0.0.1:19090/metrics", timeout=5).read().decode("utf-8")
+              match = re.search(r"^game_ws_connections_active\\s+([0-9.]+)$", metrics, re.MULTILINE)
+              if match and float(match.group(1)) == 0.0:
+                  break
+              time.sleep(1)
+          else:
+              raise AssertionError("game_ws_connections_active did not drain to zero after live stress run")
+          PY
 
       - name: Run boundary stress tests (release mode)
         env:
@@ -77,4 +145,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: stress-test-logs
-          path: /tmp/mgs_stress_*.log
+          path: |
+            /tmp/mgs_stress_*.log
+            /tmp/mgs_live_stress_server.log
+            /tmp/mgs_live_stress_health.json

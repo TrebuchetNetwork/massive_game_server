@@ -581,6 +581,18 @@ fn shared_otp_ip_rate_limiters() -> &'static DashMap<IpAddr, OtpIpRateState> {
 /// Check (and record) whether this IP is allowed to make another OTP request.
 /// Returns Ok(()) if allowed, Err(retry_after_seconds) if rate-limited.
 fn check_otp_ip_rate_limit(client_ip: Option<IpAddr>) -> Result<(), u64> {
+    if std::env::var("MGS_TEST_DISABLE_OTP_IP_RATE_LIMIT")
+        .ok()
+        .map(|raw| {
+            matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
     let Some(ip) = client_ip else {
         // If we cannot determine the IP, allow the request but do not track.
         return Ok(());
@@ -844,6 +856,11 @@ impl AuthService {
 
         let mut persistent_guard = self.inner.persistent_store.write();
         let phone_lookup_key = active_phone_lookup_key(&phone_number);
+        let deleted_phone_lookup_key = format!(
+            "{}{}",
+            DELETED_PHONE_HASH_PREFIX,
+            hash_phone_for_anonymization(&phone_number)
+        );
         let user_id = if let Some(existing_user_id) =
             persistent_guard.phone_to_user_id.get(&phone_lookup_key)
         {
@@ -856,6 +873,12 @@ impl AuthService {
                 .phone_to_user_id
                 .insert(phone_lookup_key.clone(), existing_user_id.clone());
             existing_user_id
+        } else if persistent_guard
+            .phone_to_user_id
+            .contains_key(&deleted_phone_lookup_key)
+        {
+            metrics::record_auth_attempt("verify_code", "account_deleted");
+            return Err(AuthError::AccountDeleted);
         } else {
             let new_user_id = Uuid::new_v4().to_string();
             let last4 = phone_last4(&phone_number);
@@ -889,6 +912,10 @@ impl AuthService {
         };
 
         let profile = if let Some(user) = persistent_guard.users.get_mut(&user_id) {
+            if user.deleted {
+                metrics::record_auth_attempt("verify_code", "account_deleted");
+                return Err(AuthError::AccountDeleted);
+            }
             user.updated_at = now;
             user.last_seen_at = now;
             to_profile_view(user)
@@ -2976,6 +3003,30 @@ mod tests {
         auth.anonymize_user_data("user1");
 
         let err = auth.request_account_deletion("user1").unwrap_err();
+        match err {
+            AuthError::AccountDeleted => {}
+            other => panic!("Expected AccountDeleted, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn verify_phone_code_rejects_re_registration_for_deleted_phone() {
+        let auth = make_test_auth_service();
+        let phone = "+15551234567";
+        insert_test_user(&auth, "user1", phone, "Alice");
+        auth.anonymize_user_data("user1");
+
+        auth.inner.otp_challenges.insert(
+            phone.to_owned(),
+            OtpChallenge {
+                code: "123456".to_owned(),
+                expires_at: unix_now() + 300,
+                last_sent_at: unix_now(),
+                attempts: 0,
+            },
+        );
+
+        let err = auth.verify_phone_code(phone, "123456").unwrap_err();
         match err {
             AuthError::AccountDeleted => {}
             other => panic!("Expected AccountDeleted, got {:?}", other),

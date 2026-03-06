@@ -44,12 +44,21 @@ E2E_BASE_URL=http://127.0.0.1:18080 npx playwright test tests/ui_coverage_visual
   - `client_logic/ConnectionManager.js`
   - `client_logic/WorldRenderer.js`
 
+## Auth + Reconnect E2E
+```bash
+cd scripts/e2e
+npx playwright test tests/auth_flow.spec.js tests/reconnect_flow.spec.js --workers=1 --reporter=list
+```
+
+- `auth_flow.spec.js` verifies OTP request, verify-code, authenticated gameplay join, and logout revocation.
+- `reconnect_flow.spec.js` forces a disconnect and verifies the client reconnects without ghost entities or duplicate player sprites.
+
 ## Notes
 - The test suite starts the Rust server by default using:
   `cargo run -p massive_game_server_core --bin massive_game_server_core`
 - The client is loaded from `/client.html` (served from `static_client/`).
 - To use an existing server, run with:
-  `E2E_SERVER_SKIP=1 E2E_BASE_URL=http://127.0.0.1:8080 npm run test`
+  `E2E_SERVER_SKIP=1 E2E_BASE_URL=http://127.0.0.1:18080 npm run test`
 - To override the server command:
   `E2E_SERVER_CMD="path/to/server_binary" npm run test`
 - For one-command audit + e2e from repo root, use:

@@ -8,7 +8,7 @@ module.exports = defineConfig({
   fullyParallel: false,
   workers: 1,
   use: {
-    baseURL: process.env.E2E_BASE_URL || 'http://127.0.0.1:8080',
+    baseURL: process.env.E2E_BASE_URL || 'http://127.0.0.1:19080',
     headless: true,
     viewport: { width: 1280, height: 720 },
     trace: 'retain-on-failure',

@@ -6,7 +6,7 @@ const https = require('https');
 let serverProcess;
 
 function resolveBaseUrl() {
-  return process.env.E2E_BASE_URL || 'http://127.0.0.1:8080';
+  return process.env.E2E_BASE_URL || 'http://127.0.0.1:19080';
 }
 
 function resolveWsUrl() {
@@ -49,9 +49,11 @@ function waitForHttpReady(url) {
   });
 }
 
-async function startServer() {
+async function startServer(options = {}) {
   if (process.env.E2E_SERVER_SKIP === '1') return;
   if (serverProcess) return;
+
+  const { env: envOverrides = {}, baseUrl: overrideBaseUrl } = options;
 
   const cwd = path.resolve(__dirname, '..', '..', '..', '..');
   const cmd = process.env.E2E_SERVER_CMD || 'cargo';
@@ -59,8 +61,15 @@ async function startServer() {
     ? process.env.E2E_SERVER_CMD.split(' ').slice(1)
     : ['run', '-p', 'massive_game_server_core', '--bin', 'massive_game_server_core'];
 
-  const base = new URL(resolveBaseUrl());
+  const baseUrl = overrideBaseUrl || resolveBaseUrl();
+  const base = new URL(baseUrl);
   const childEnv = { ...process.env };
+  for (const key of Object.keys(childEnv)) {
+    if (key.startsWith('MGS_') || key.startsWith('E2E_')) {
+      delete childEnv[key];
+    }
+  }
+  Object.assign(childEnv, envOverrides);
   if (!childEnv.MGS_PORT) {
     childEnv.MGS_PORT = base.port || (base.protocol === 'https:' ? '443' : '80');
   }
@@ -80,7 +89,6 @@ async function startServer() {
   serverProcess.stdout.on('data', (data) => process.stdout.write(data.toString()));
   serverProcess.stderr.on('data', (data) => process.stderr.write(data.toString()));
 
-  const baseUrl = resolveBaseUrl();
   const exitPromise = new Promise((_, reject) => {
     serverProcess.on('exit', (code) => {
       serverProcess = undefined;
@@ -88,6 +96,8 @@ async function startServer() {
     });
   });
 
+  await Promise.race([waitForHttpReady(`${baseUrl}/healthz`), exitPromise]);
+  await Promise.race([waitForHttpReady(`${baseUrl}/readyz`), exitPromise]);
   await Promise.race([waitForHttpReady(`${baseUrl}/client.html`), exitPromise]);
 }
 
@@ -109,9 +119,9 @@ async function stopServer() {
   }
 }
 
-function registerServerLifecycle(test) {
+function registerServerLifecycle(test, options = {}) {
   test.beforeAll(async () => {
-    await startServer();
+    await startServer(options);
   });
 
   test.afterAll(async () => {
