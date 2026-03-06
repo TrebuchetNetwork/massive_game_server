@@ -4,7 +4,7 @@ use tracing::info;
 use warp::http::{HeaderName, HeaderValue};
 use warp::Filter;
 
-const DEFAULT_CSP_HEADER_VALUE: &str = "default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+const DEFAULT_CSP_HEADER_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' blob:; worker-src 'self' blob:; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 
 pub fn compose_http_routes(
     protected_routes: warp::filters::BoxedFilter<(warp::reply::Response,)>,
