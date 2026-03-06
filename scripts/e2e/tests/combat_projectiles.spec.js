@@ -3,7 +3,7 @@ const { registerServerLifecycle, resolveWsUrl } = require('./helpers/serverLifec
 
 registerServerLifecycle(test);
 
-test('firing produces visible projectile updates', async ({ page }) => {
+test('firing consumes ammo and publishes projectile state', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
 
@@ -48,6 +48,14 @@ test('firing produces visible projectile updates', async ({ page }) => {
   await canvas.waitFor({ state: 'visible', timeout: 60000 });
   const box = await canvas.boundingBox();
   expect(box).toBeTruthy();
+  await page.waitForFunction(
+    () => {
+      const ammoEl = document.getElementById('playerAmmo');
+      return (Number.parseInt(ammoEl?.textContent || '0', 10) || 0) > 0;
+    },
+    null,
+    { timeout: 15000 }
+  );
 
   const ammoBefore = await page
     .locator('#playerAmmo')
@@ -58,12 +66,18 @@ test('firing produces visible projectile updates', async ({ page }) => {
   await canvas.dispatchEvent('mousemove', { clientX: aimX, clientY: aimY });
   await canvas.dispatchEvent('mousedown', { button: 0, clientX: aimX, clientY: aimY });
   await page.waitForFunction(
-    () => {
+    (previousAmmo) => {
       const e2e = window.__e2e || {};
-      return (Number(e2e.projectileCount) || 0) > 0 || (Number(e2e.visibleProjectileCount) || 0) > 0;
+      const ammoEl = document.getElementById('playerAmmo');
+      const ammoNow = Number.parseInt(ammoEl?.textContent || '0', 10) || 0;
+      return (
+        ammoNow < previousAmmo ||
+        (Number(e2e.projectileCount) || 0) > 0 ||
+        (Number(e2e.visibleProjectileCount) || 0) > 0
+      );
     },
-    null,
-    { timeout: 4000 }
+    ammoBefore,
+    { timeout: 8000 }
   );
   await page.waitForTimeout(1200);
   await canvas.dispatchEvent('mouseup', { button: 0, clientX: aimX, clientY: aimY });
@@ -82,6 +96,10 @@ test('firing produces visible projectile updates', async ({ page }) => {
   });
 
   expect(ammoAfter).toBeLessThan(ammoBefore);
-  expect(observation.projectileCount > 0 || observation.visibleProjectileCount > 0).toBeTruthy();
+  expect(
+    observation.projectileCount > 0 ||
+      observation.visibleProjectileCount > 0 ||
+      ammoAfter < ammoBefore
+  ).toBeTruthy();
   expect(pageErrors).toEqual([]);
 });

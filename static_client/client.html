@@ -1055,6 +1055,7 @@
         window.__e2e.playerCount = 0;
         window.__e2e.wallCount = 0;
         window.__e2e.visiblePlayerCount = 0;
+        window.__e2e.localPlayerSnapshot = null;
         window.__e2e.playerRenderCap = 220;
         window.__e2e.projectileCount = 0;
         window.__e2e.visibleProjectileCount = 0;
@@ -3605,6 +3606,15 @@
                     e2e.playerCount = players.size;
                     e2e.wallCount = walls.size;
                     e2e.visiblePlayerCount = lastVisiblePlayers;
+                    e2e.localPlayerSnapshot = localPlayerState ? {
+                        x: Number(localPlayerState.x) || 0,
+                        y: Number(localPlayerState.y) || 0,
+                        velocityX: Number(localPlayerState.velocity_x) || 0,
+                        velocityY: Number(localPlayerState.velocity_y) || 0,
+                        alive: !!localPlayerState.alive,
+                        weapon: Number(localPlayerState.weapon) || 0,
+                        ammo: Number(localPlayerState.ammo) || 0
+                    } : null;
                     e2e.playerRenderCap = lastPlayerRenderCap;
                     if ((currentTime - lastRendererBackendSummaryAt) >= 1000) {
                         e2e.rendererBackend = getRendererBackendSummary(window.app || null, PIXI);
@@ -4770,6 +4780,7 @@
                 window.__e2e.playerCount = 0;
                 window.__e2e.wallCount = 0;
                 window.__e2e.visiblePlayerCount = 0;
+                window.__e2e.localPlayerSnapshot = null;
                 window.__e2e.playerRenderCap = PLAYER_RENDER_CAP_DEFAULT;
                 window.__e2e.projectileCount = 0;
                 window.__e2e.visibleProjectileCount = 0;
