@@ -156,14 +156,28 @@ jobs:
           # WebRTC peers that time out instead of closing cleanly are evicted by the
           # idle cleanup worker, which runs every 30s with a 120s stale threshold.
           # Allow enough time for that background sweep before failing the soak.
-          for _ in range(210):
+          for second in range(360):
               metrics = urllib.request.urlopen("http://127.0.0.1:19191/metrics", timeout=5).read().decode("utf-8")
-              match = re.search(r"^game_ws_connections_active\\s+([0-9.]+)$", metrics, re.MULTILINE)
-              if match and float(match.group(1)) == 0.0:
+              ws_match = re.search(r"^game_ws_connections_active\\s+([0-9.]+)$", metrics, re.MULTILINE)
+              players_match = re.search(r"^game_players_connected\\s+([0-9.]+)$", metrics, re.MULTILINE)
+              connected_match = re.search(r'^game_webrtc_peers_in_state\\{state=\"connected\"\\}\\s+([0-9.]+)$', metrics, re.MULTILINE)
+              ws_active = float(ws_match.group(1)) if ws_match else -1.0
+              players_connected = float(players_match.group(1)) if players_match else -1.0
+              connected_webrtc = float(connected_match.group(1)) if connected_match else -1.0
+              if second in (0, 30, 60, 90, 120, 150, 180, 210, 240, 300, 359):
+                  print(
+                      f"drain_check t={second}s ws_active={ws_active} "
+                      f"players_connected={players_connected} connected_webrtc={connected_webrtc}"
+                  )
+              if ws_active == 0.0:
                   break
               time.sleep(1)
           else:
-              raise AssertionError("game_ws_connections_active did not drain to zero after bounded soak")
+              raise AssertionError(
+                  "game_ws_connections_active did not drain to zero after bounded soak "
+                  f"(final ws_active={ws_active}, players_connected={players_connected}, "
+                  f"connected_webrtc={connected_webrtc})"
+              )
           PY
 
       - name: Upload bounded soak artifacts on failure

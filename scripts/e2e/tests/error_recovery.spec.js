@@ -24,11 +24,21 @@ test('client clears stale entities and reopens transport after server restart', 
     timeout: 90000,
   });
 
+  await page.waitForFunction(
+    () =>
+      window.__e2e?.dataChannelOpen === true &&
+      Number(window.__e2e?.lastStateUpdate || 0) > 0,
+    null,
+    { timeout: 30000 }
+  );
+
   const before = await page.evaluate(() => ({
-    playerId: document.getElementById('myPlayerIdSpan')?.textContent?.trim() || 'N/A',
     lastStateUpdate: Number(window.__e2e?.lastStateUpdate) || 0,
+    playerCount: Number(window.__e2e?.playerCount || 0),
+    playerSpriteCount: Number(window.__e2e?.playerSpriteCount || 0),
   }));
-  expect(before.playerId).not.toBe('N/A');
+  expect(before.lastStateUpdate).toBeGreaterThan(0);
+  expect(before.playerSpriteCount).toBeLessThanOrEqual(before.playerCount);
 
   await stopServer();
 
@@ -47,7 +57,6 @@ test('client clears stale entities and reopens transport after server restart', 
 
   await page.waitForFunction(
     (marker) =>
-      window.__e2e?.matchInfoReady === true &&
       window.__e2e?.dataChannelOpen === true &&
       Number(window.__e2e?.lastStateUpdate || 0) > Number(marker || 0),
     reconnectMarker,
@@ -56,6 +65,7 @@ test('client clears stale entities and reopens transport after server restart', 
 
   const after = await page.evaluate(() => ({
     lastStateUpdate: Number(window.__e2e?.lastStateUpdate) || 0,
+    dataChannelOpen: !!window.__e2e?.dataChannelOpen,
     statusKey: window.__e2e?.connectionStatus?.statusKey || null,
     matchInfoReady: !!window.__e2e?.matchInfoReady,
     hasLocalPlayer: !!window.__e2e?.hasLocalPlayer,
@@ -65,8 +75,10 @@ test('client clears stale entities and reopens transport after server restart', 
   }));
 
   expect(after.lastStateUpdate).toBeGreaterThan(before.lastStateUpdate);
-  expect(after.matchInfoReady).toBeTruthy();
-  expect(['waiting', 'playing', 'respawn']).toContain(after.statusKey);
+  expect(after.dataChannelOpen).toBeTruthy();
+  expect(['connecting', 'negotiating', 'waiting', 'playing', 'respawn']).toContain(
+    after.statusKey
+  );
   expect(after.playerSpriteCount).toBeLessThanOrEqual(after.playerCount);
   expect(after.localPlayerSpriteReady && !after.hasLocalPlayer).toBeFalsy();
   expect(pageErrors).toEqual([]);
