@@ -77,8 +77,10 @@ fn visible_player_ids(server: &MassiveGameServer, player_id: &PlayerID) -> HashS
 
 fn mark_connected_client(server: &MassiveGameServer, player_id: &PlayerID, is_mobile: bool) {
     let mut client_states = server.client_states_map.write();
-    let mut client_state = ClientState::default();
-    client_state.is_mobile = is_mobile;
+    let client_state = ClientState {
+        is_mobile,
+        ..ClientState::default()
+    };
     client_states.insert(player_id.as_ref().to_string(), client_state);
 }
 
