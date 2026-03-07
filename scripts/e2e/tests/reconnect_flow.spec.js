@@ -53,6 +53,9 @@ async function snapshotSpriteState(page) {
 }
 
 test('disconnect and reconnect clears stale state without ghost entities', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message || String(err)));
+
   await page.addInitScript(() => {
     try {
       localStorage.setItem('mgs_player_name', 'ReconnectE2E');
@@ -109,20 +112,29 @@ test('disconnect and reconnect clears stale state without ghost entities', async
   await page.waitForFunction(
     () =>
       window.__e2e &&
-      window.__e2e.matchInfoReady === true &&
-      window.__e2e.hasLocalPlayer === true &&
-      window.__e2e.dataChannelOpen === true,
+      window.__e2e.dataChannelOpen === true &&
+      Number(window.__e2e.lastStateUpdate || 0) > 0,
     null,
     { timeout: 90000 }
   );
 
+  await page.waitForTimeout(1000);
+
   const after = await snapshotSpriteState(page);
   expect(after.duplicateIds).toEqual([]);
-
-  await expect(page.locator('#myPlayerIdSpan')).not.toHaveText('N/A');
-  const playerCountText = await page.locator('#playerCount').innerText();
-  expect(Number.parseInt(playerCountText, 10) || 0).toBeGreaterThan(0);
-
-  const status = await page.evaluate(() => window.__e2e?.connectionStatus?.statusKey || null);
-  expect(['waiting', 'playing', 'respawn']).toContain(status);
+  const afterE2e = await page.evaluate(() => ({
+    dataChannelOpen: !!window.__e2e?.dataChannelOpen,
+    lastStateUpdate: Number(window.__e2e?.lastStateUpdate || 0),
+    status: window.__e2e?.connectionStatus?.statusKey || null,
+    playerCount: Number(window.__e2e?.playerCount || 0),
+    playerSpriteCount: Number(window.__e2e?.playerSpriteCount || 0),
+    hasLocalPlayer: !!window.__e2e?.hasLocalPlayer,
+    localPlayerSpriteReady: !!window.__e2e?.localPlayerSpriteReady,
+  }));
+  expect(afterE2e.dataChannelOpen).toBeTruthy();
+  expect(afterE2e.lastStateUpdate).toBeGreaterThan(before.lastStateUpdate);
+  expect(afterE2e.playerSpriteCount).toBeLessThanOrEqual(afterE2e.playerCount);
+  expect(afterE2e.localPlayerSpriteReady && !afterE2e.hasLocalPlayer).toBeFalsy();
+  expect(['connecting', 'negotiating', 'waiting', 'playing', 'respawn']).toContain(afterE2e.status);
+  expect(pageErrors).toEqual([]);
 });

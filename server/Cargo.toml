@@ -204,6 +204,10 @@ path = "tests/integration/security_auth.rs"
 name = "match_lifecycle"
 path = "tests/integration/match_lifecycle.rs"
 
+[[test]]
+name = "pickup_zone_interactions"
+path = "tests/integration/pickup_zone_interactions.rs"
+
 [[bench]]
 name = "physics"
 harness = false
