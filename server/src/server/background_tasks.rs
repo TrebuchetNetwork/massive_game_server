@@ -204,55 +204,6 @@ pub fn spawn_idle_connection_cleanup(
     });
 }
 
-#[cfg(test)]
-mod tests {
-    use super::should_evict_signaling_peer;
-    use std::time::Duration;
-
-    #[test]
-    fn evicts_signaling_peer_without_connection_record() {
-        assert!(should_evict_signaling_peer(
-            false, None, true, true, true, true
-        ));
-    }
-
-    #[test]
-    fn evicts_runtime_orphan_after_grace_period() {
-        assert!(should_evict_signaling_peer(
-            true,
-            Some(Duration::from_secs(20)),
-            false,
-            false,
-            false,
-            false
-        ));
-    }
-
-    #[test]
-    fn preserves_recent_handshakes_without_runtime_state() {
-        assert!(!should_evict_signaling_peer(
-            true,
-            Some(Duration::from_secs(5)),
-            false,
-            false,
-            false,
-            false
-        ));
-    }
-
-    #[test]
-    fn preserves_active_signaling_peer_with_runtime_state() {
-        assert!(!should_evict_signaling_peer(
-            true,
-            Some(Duration::from_secs(60)),
-            true,
-            false,
-            false,
-            false
-        ));
-    }
-}
-
 pub fn spawn_arena_worker(
     server: Arc<MassiveGameServer>,
     arena_service: ArenaService,
@@ -300,4 +251,53 @@ pub fn spawn_arena_worker(
         }
         info!("Arena worker stopped.");
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_evict_signaling_peer;
+    use std::time::Duration;
+
+    #[test]
+    fn evicts_signaling_peer_without_connection_record() {
+        assert!(should_evict_signaling_peer(
+            false, None, true, true, true, true
+        ));
+    }
+
+    #[test]
+    fn evicts_runtime_orphan_after_grace_period() {
+        assert!(should_evict_signaling_peer(
+            true,
+            Some(Duration::from_secs(20)),
+            false,
+            false,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn preserves_recent_handshakes_without_runtime_state() {
+        assert!(!should_evict_signaling_peer(
+            true,
+            Some(Duration::from_secs(5)),
+            false,
+            false,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn preserves_active_signaling_peer_with_runtime_state() {
+        assert!(!should_evict_signaling_peer(
+            true,
+            Some(Duration::from_secs(60)),
+            true,
+            false,
+            false,
+            false
+        ));
+    }
 }
