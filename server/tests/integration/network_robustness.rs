@@ -626,9 +626,8 @@ async fn quic_connection_rate_limit_rejects_immediate_burst() -> Result<()> {
             })
             .await;
 
-            match second_attempt {
-                Ok(Ok(_)) => anyhow::bail!("second QUIC connection unexpectedly succeeded"),
-                Ok(Err(_)) | Err(_) => {}
+            if let Ok(Ok(_)) = second_attempt {
+                anyhow::bail!("second QUIC connection unexpectedly succeeded");
             }
 
             connection.close(0u32.into(), b"done");
