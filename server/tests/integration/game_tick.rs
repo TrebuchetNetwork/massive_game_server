@@ -51,6 +51,19 @@ fn add_player(server: &MassiveGameServer, peer_id: &str, team_id: u8, x: f32, y:
     player_id
 }
 
+fn queue_input(server: &MassiveGameServer, player_id: &PlayerID, input: PlayerInputData) {
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(player_id) {
+        ps.input_queue.push_back(input);
+    }
+}
+
+async fn run_ticks(server: &Arc<MassiveGameServer>, ticks: usize) {
+    for _ in 0..ticks {
+        let _ = server.clone().process_game_tick(0.016).await;
+        server.frame_counter.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 // ── Full tick pipeline ──────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread")]
@@ -323,4 +336,170 @@ async fn tick_with_bots_processes_cleanly() {
         assert!(result.is_ok(), "Tick with bots should not error");
         server.frame_counter.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn melee_kill_flow_updates_kills_deaths_and_score() {
+    let server = setup_test_server();
+    let attacker = add_player(&server, "attacker", 1, -10.0, 0.0);
+    let victim = add_player(&server, "victim", 2, 10.0, 0.0);
+
+    server.match_info.write().match_state = fb::MatchStateType::Active;
+
+    if let Some(mut attacker_state) = server.player_manager.get_player_state_mut(&attacker) {
+        attacker_state.rotation = 0.0;
+        attacker_state.weapon = massive_game_server_core::core::types::ServerWeaponType::Melee;
+    }
+    if let Some(mut victim_state) = server.player_manager.get_player_state_mut(&victim) {
+        victim_state.health = 20;
+        victim_state.shield_current = 0;
+    }
+
+    queue_input(
+        &server,
+        &attacker,
+        PlayerInputData {
+            timestamp: 1,
+            sequence: 1,
+            move_forward: false,
+            move_backward: false,
+            move_left: false,
+            move_right: false,
+            shooting: false,
+            reload: false,
+            rotation: 0.0,
+            melee_attack: true,
+            use_ability_slot: 0,
+            change_weapon_slot: 0,
+            ping_x: 0.0,
+            ping_y: 0.0,
+        },
+    );
+
+    run_ticks(&server, 8).await;
+
+    let attacker_state = server
+        .player_manager
+        .get_player_state(&attacker)
+        .expect("attacker state");
+    let victim_state = server
+        .player_manager
+        .get_player_state(&victim)
+        .expect("victim state");
+
+    assert_eq!(attacker_state.kills, 1);
+    assert_eq!(attacker_state.current_streak, 1);
+    assert!(attacker_state.score >= 10);
+    assert_eq!(attacker_state.kills_per_weapon[4], 1);
+    assert!(!victim_state.alive);
+    assert_eq!(victim_state.deaths, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn melee_kill_advances_existing_streak_to_damage_boost_threshold() {
+    let server = setup_test_server();
+    let attacker = add_player(&server, "streak_attacker", 1, -10.0, 0.0);
+    let victim = add_player(&server, "streak_victim", 2, 10.0, 0.0);
+
+    server.match_info.write().match_state = fb::MatchStateType::Active;
+
+    if let Some(mut attacker_state) = server.player_manager.get_player_state_mut(&attacker) {
+        attacker_state.rotation = 0.0;
+        attacker_state.weapon = massive_game_server_core::core::types::ServerWeaponType::Melee;
+        attacker_state.current_streak = 2;
+    }
+    if let Some(mut victim_state) = server.player_manager.get_player_state_mut(&victim) {
+        victim_state.health = 20;
+        victim_state.shield_current = 0;
+    }
+
+    queue_input(
+        &server,
+        &attacker,
+        PlayerInputData {
+            timestamp: 2,
+            sequence: 1,
+            move_forward: false,
+            move_backward: false,
+            move_left: false,
+            move_right: false,
+            shooting: false,
+            reload: false,
+            rotation: 0.0,
+            melee_attack: true,
+            use_ability_slot: 0,
+            change_weapon_slot: 0,
+            ping_x: 0.0,
+            ping_y: 0.0,
+        },
+    );
+
+    run_ticks(&server, 8).await;
+
+    let attacker_state = server
+        .player_manager
+        .get_player_state(&attacker)
+        .expect("attacker state");
+    assert_eq!(attacker_state.kills, 1);
+    assert_eq!(attacker_state.current_streak, 3);
+    assert!(attacker_state.streak_damage_boost_remaining > 0.0);
+    assert!(
+        attacker_state.effective_damage_multiplier() > 1.0,
+        "streak reward should increase damage output after the threshold kill"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hot_zone_tick_and_kill_flow_update_personal_hot_zone_stats() {
+    let server = setup_test_server();
+    let attacker = add_player(&server, "zone_attacker", 1, -10.0, 0.0);
+    let victim = add_player(&server, "zone_victim", 2, 10.0, 0.0);
+
+    {
+        let mut match_info = server.match_info.write();
+        match_info.match_state = fb::MatchStateType::Active;
+        match_info.hot_zone_active = true;
+        match_info.hot_zone_center = massive_game_server_core::core::types::Vec2::new(0.0, 0.0);
+        match_info.hot_zone_radius = 100.0;
+    }
+
+    if let Some(mut attacker_state) = server.player_manager.get_player_state_mut(&attacker) {
+        attacker_state.rotation = 0.0;
+        attacker_state.weapon = massive_game_server_core::core::types::ServerWeaponType::Melee;
+    }
+    if let Some(mut victim_state) = server.player_manager.get_player_state_mut(&victim) {
+        victim_state.health = 20;
+        victim_state.shield_current = 0;
+    }
+
+    queue_input(
+        &server,
+        &attacker,
+        PlayerInputData {
+            timestamp: 3,
+            sequence: 1,
+            move_forward: false,
+            move_backward: false,
+            move_left: false,
+            move_right: false,
+            shooting: false,
+            reload: false,
+            rotation: 0.0,
+            melee_attack: true,
+            use_ability_slot: 0,
+            change_weapon_slot: 0,
+            ping_x: 0.0,
+            ping_y: 0.0,
+        },
+    );
+
+    run_ticks(&server, 8).await;
+
+    let attacker_state = server
+        .player_manager
+        .get_player_state(&attacker)
+        .expect("attacker state");
+    assert!(attacker_state.hot_zone_time_ticks > 0);
+    assert_eq!(attacker_state.hot_zone_kills, 1);
+    assert!(attacker_state.score > 10);
 }

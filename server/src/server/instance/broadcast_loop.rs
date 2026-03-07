@@ -56,6 +56,268 @@ impl BroadcastThrottleConfig {
     const MAX_DELTA_EVENTS_SINGLE_MACHINE_BACKLOG: usize = 12;
 }
 
+#[derive(Clone, Copy, Debug)]
+struct BroadcastPolicy {
+    initial_snapshot_caps: InitialSnapshotCaps,
+    max_delta_events_per_client: usize,
+    soa_adaptive_fallback_active: bool,
+    max_initial_per_frame: usize,
+    throttle_delta_broadcasts: bool,
+    max_delta_per_frame: usize,
+    delta_skip_modulus: u64,
+    broadcast_concurrency: usize,
+    tail_join_mode: bool,
+    aggressive_tail_join_mode: bool,
+    tail_wave_70_plus_mode: bool,
+    extreme_tail_join_mode: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BroadcastPolicyInputs {
+    connected_clients_total: usize,
+    pending_initial_total_count: usize,
+    pending_initial_open_count: usize,
+    single_machine_opt: bool,
+    tail_policy_enabled: bool,
+    quality_max_projectiles_scale: f32,
+    quality_delta_skip_modulus: u64,
+    networking_threads: usize,
+}
+
+fn select_broadcast_policy(inputs: BroadcastPolicyInputs) -> BroadcastPolicy {
+    let BroadcastPolicyInputs {
+        connected_clients_total,
+        pending_initial_total_count,
+        pending_initial_open_count,
+        single_machine_opt,
+        tail_policy_enabled,
+        quality_max_projectiles_scale,
+        quality_delta_skip_modulus,
+        networking_threads,
+    } = inputs;
+    let tail_connected_clients_min = if single_machine_opt {
+        BroadcastThrottleConfig::SINGLE_MACHINE_TAIL_CONNECTED_CLIENTS_MIN
+    } else {
+        BroadcastThrottleConfig::TAIL_JOIN_CONNECTED_CLIENTS_MIN
+    };
+    let tail_pending_initial_open_min = if single_machine_opt {
+        BroadcastThrottleConfig::SINGLE_MACHINE_TAIL_PENDING_INITIAL_OPEN_MIN
+    } else {
+        BroadcastThrottleConfig::TAIL_JOIN_PENDING_INITIAL_OPEN_MIN
+    };
+    let aggressive_connected_clients_min = if single_machine_opt {
+        BroadcastThrottleConfig::SINGLE_MACHINE_AGGRESSIVE_CONNECTED_CLIENTS_MIN
+    } else {
+        BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_CONNECTED_CLIENTS_MIN
+    };
+    let aggressive_pending_initial_open_min = if single_machine_opt {
+        BroadcastThrottleConfig::SINGLE_MACHINE_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN
+    } else {
+        BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN
+    };
+
+    let tail_join_mode = tail_policy_enabled
+        && connected_clients_total >= tail_connected_clients_min
+        && pending_initial_open_count >= tail_pending_initial_open_min;
+    let aggressive_tail_join_mode = tail_policy_enabled
+        && connected_clients_total >= aggressive_connected_clients_min
+        && pending_initial_open_count >= aggressive_pending_initial_open_min;
+    let tail_wave_70_plus_mode = tail_policy_enabled
+        && connected_clients_total >= BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_CLIENTS_MIN
+        && pending_initial_open_count
+            >= BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_PENDING_INITIAL_OPEN_MIN;
+    let extreme_tail_join_mode = tail_policy_enabled
+        && connected_clients_total >= BroadcastThrottleConfig::EXTREME_TAIL_WAVE_CLIENTS_MIN
+        && pending_initial_open_count
+            >= BroadcastThrottleConfig::EXTREME_TAIL_WAVE_PENDING_INITIAL_OPEN_MIN;
+
+    let initial_snapshot_caps = if extreme_tail_join_mode {
+        InitialSnapshotCaps::EXTREME_TAIL
+    } else if aggressive_tail_join_mode {
+        InitialSnapshotCaps::TAIL_AGGRESSIVE
+    } else if tail_join_mode {
+        InitialSnapshotCaps::TAIL
+    } else if single_machine_opt
+        && pending_initial_total_count
+            >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+    {
+        InitialSnapshotCaps::SINGLE_MACHINE_BACKLOG
+    } else {
+        InitialSnapshotCaps::DEFAULT
+    };
+
+    let mut max_delta_events_per_client = if extreme_tail_join_mode {
+        BroadcastThrottleConfig::MAX_DELTA_EVENTS_EXTREME_TAIL
+    } else if aggressive_tail_join_mode {
+        BroadcastThrottleConfig::MAX_DELTA_EVENTS_AGGRESSIVE
+    } else if tail_join_mode {
+        BroadcastThrottleConfig::MAX_DELTA_EVENTS_TAIL
+    } else if single_machine_opt
+        && pending_initial_total_count
+            >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+    {
+        BroadcastThrottleConfig::MAX_DELTA_EVENTS_SINGLE_MACHINE_BACKLOG
+    } else {
+        BroadcastThrottleConfig::MAX_DELTA_EVENTS_DEFAULT
+    };
+
+    let soa_adaptive_fallback_active = join_soa_adaptive_fallback_enabled()
+        && connected_clients_total >= BroadcastThrottleConfig::MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN
+        && (pending_initial_total_count
+            >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+            || aggressive_tail_join_mode
+            || tail_join_mode);
+
+    let mut max_initial_per_frame = if pending_initial_total_count
+        >= BroadcastThrottleConfig::MASS_JOIN_HEAVY_PENDING_INITIAL_MIN
+    {
+        BroadcastThrottleConfig::MASS_JOIN_INITIAL_PER_FRAME_HEAVY
+    } else if pending_initial_total_count
+        >= BroadcastThrottleConfig::MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN
+    {
+        BroadcastThrottleConfig::MASS_JOIN_INITIAL_PER_FRAME_MEDIUM
+    } else {
+        BroadcastThrottleConfig::MASS_JOIN_INITIAL_PER_FRAME_LIGHT
+    };
+    if tail_join_mode {
+        max_initial_per_frame =
+            max_initial_per_frame.max(BroadcastThrottleConfig::TAIL_JOIN_INITIAL_PER_FRAME_BOOST);
+    }
+    if aggressive_tail_join_mode {
+        max_initial_per_frame = max_initial_per_frame
+            .max(BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_INITIAL_PER_FRAME_BOOST);
+    }
+    if tail_wave_70_plus_mode {
+        max_initial_per_frame = max_initial_per_frame
+            .max(BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_INITIAL_PER_FRAME_BOOST);
+    }
+    if extreme_tail_join_mode {
+        max_initial_per_frame = max_initial_per_frame
+            .max(BroadcastThrottleConfig::EXTREME_TAIL_WAVE_INITIAL_PER_FRAME_BOOST);
+    }
+    if single_machine_opt
+        && pending_initial_total_count
+            >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+    {
+        max_initial_per_frame = max_initial_per_frame
+            .max(BroadcastThrottleConfig::SINGLE_MACHINE_INITIAL_PER_FRAME_BOOST);
+    }
+
+    let throttle_delta_broadcasts = tail_join_mode
+        || tail_wave_70_plus_mode
+        || pending_initial_total_count
+            >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN;
+    let mut max_delta_per_frame = if pending_initial_total_count
+        >= BroadcastThrottleConfig::MASS_JOIN_HEAVY_PENDING_INITIAL_MIN
+    {
+        BroadcastThrottleConfig::MASS_JOIN_MAX_DELTA_PER_FRAME_HEAVY
+    } else if pending_initial_total_count
+        >= BroadcastThrottleConfig::MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN
+    {
+        BroadcastThrottleConfig::MASS_JOIN_MAX_DELTA_PER_FRAME_MEDIUM
+    } else {
+        usize::MAX
+    };
+    if tail_join_mode {
+        max_delta_per_frame =
+            max_delta_per_frame.min(BroadcastThrottleConfig::TAIL_JOIN_MAX_DELTA_PER_FRAME);
+    }
+    if aggressive_tail_join_mode {
+        max_delta_per_frame = max_delta_per_frame
+            .min(BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME);
+    }
+    if tail_wave_70_plus_mode {
+        max_delta_per_frame =
+            max_delta_per_frame.min(BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_MAX_DELTA_PER_FRAME);
+    }
+    if extreme_tail_join_mode {
+        max_delta_per_frame =
+            max_delta_per_frame.min(BroadcastThrottleConfig::EXTREME_TAIL_WAVE_MAX_DELTA_PER_FRAME);
+    }
+    if single_machine_opt
+        && pending_initial_total_count
+            >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+    {
+        max_delta_per_frame =
+            max_delta_per_frame.min(BroadcastThrottleConfig::SINGLE_MACHINE_MAX_DELTA_PER_FRAME);
+    }
+
+    let mut delta_skip_modulus = if extreme_tail_join_mode {
+        BroadcastThrottleConfig::EXTREME_TAIL_WAVE_DELTA_SKIP_MODULUS
+    } else if tail_wave_70_plus_mode {
+        BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_DELTA_SKIP_MODULUS
+    } else if aggressive_tail_join_mode {
+        BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_DELTA_SKIP_MODULUS
+    } else if tail_join_mode {
+        BroadcastThrottleConfig::TAIL_JOIN_DELTA_SKIP_MODULUS
+    } else if single_machine_opt
+        && pending_initial_total_count
+            >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+    {
+        BroadcastThrottleConfig::SINGLE_MACHINE_DELTA_SKIP_MODULUS
+    } else {
+        BroadcastThrottleConfig::MASS_JOIN_DELTA_SKIP_MODULUS
+    };
+
+    max_delta_events_per_client = ((max_delta_events_per_client as f32)
+        * quality_max_projectiles_scale)
+        .round()
+        .clamp(
+            1.0,
+            BroadcastThrottleConfig::MAX_DELTA_EVENTS_DEFAULT as f32,
+        ) as usize;
+    delta_skip_modulus = delta_skip_modulus.max(quality_delta_skip_modulus.max(1));
+
+    let mut broadcast_concurrency = (networking_threads.saturating_mul(4)).clamp(
+        BroadcastThrottleConfig::MIN_BROADCAST_CONCURRENCY,
+        BroadcastThrottleConfig::MAX_BROADCAST_CONCURRENCY,
+    );
+    if pending_initial_total_count
+        >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+    {
+        broadcast_concurrency =
+            broadcast_concurrency.min(BroadcastThrottleConfig::MASS_JOIN_CONCURRENCY_CAP);
+    }
+    if tail_join_mode {
+        broadcast_concurrency =
+            broadcast_concurrency.min(BroadcastThrottleConfig::TAIL_JOIN_CONCURRENCY_CAP);
+    }
+    if aggressive_tail_join_mode {
+        broadcast_concurrency = broadcast_concurrency
+            .min(BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP);
+    }
+    if tail_wave_70_plus_mode {
+        broadcast_concurrency =
+            broadcast_concurrency.min(BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_CONCURRENCY_CAP);
+    }
+    if extreme_tail_join_mode {
+        broadcast_concurrency =
+            broadcast_concurrency.min(BroadcastThrottleConfig::EXTREME_TAIL_WAVE_CONCURRENCY_CAP);
+    }
+    if single_machine_opt
+        && pending_initial_total_count
+            >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+    {
+        broadcast_concurrency =
+            broadcast_concurrency.min(BroadcastThrottleConfig::SINGLE_MACHINE_CONCURRENCY_CAP);
+    }
+
+    BroadcastPolicy {
+        initial_snapshot_caps,
+        max_delta_events_per_client,
+        soa_adaptive_fallback_active,
+        max_initial_per_frame,
+        throttle_delta_broadcasts,
+        max_delta_per_frame,
+        delta_skip_modulus,
+        broadcast_concurrency,
+        tail_join_mode,
+        aggressive_tail_join_mode,
+        tail_wave_70_plus_mode,
+        extreme_tail_join_mode,
+    }
+}
+
 impl MassiveGameServer {
     pub async fn broadcast_world_updates_optimized(self: Arc<Self>) {
         let current_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
@@ -183,205 +445,45 @@ impl MassiveGameServer {
 
         let pending_initial_open_count = initial_entries_open.len();
         let pending_initial_total_count = pending_initial_open_count + pending_initial_closed_count;
-        let tail_connected_clients_min = if single_machine_opt {
-            BroadcastThrottleConfig::SINGLE_MACHINE_TAIL_CONNECTED_CLIENTS_MIN
-        } else {
-            BroadcastThrottleConfig::TAIL_JOIN_CONNECTED_CLIENTS_MIN
-        };
-        let tail_pending_initial_open_min = if single_machine_opt {
-            BroadcastThrottleConfig::SINGLE_MACHINE_TAIL_PENDING_INITIAL_OPEN_MIN
-        } else {
-            BroadcastThrottleConfig::TAIL_JOIN_PENDING_INITIAL_OPEN_MIN
-        };
-        let aggressive_connected_clients_min = if single_machine_opt {
-            BroadcastThrottleConfig::SINGLE_MACHINE_AGGRESSIVE_CONNECTED_CLIENTS_MIN
-        } else {
-            BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_CONNECTED_CLIENTS_MIN
-        };
-        let aggressive_pending_initial_open_min = if single_machine_opt {
-            BroadcastThrottleConfig::SINGLE_MACHINE_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN
-        } else {
-            BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_PENDING_INITIAL_OPEN_MIN
-        };
-
         let tail_policy_enabled = join_tail_policy_enabled();
-        let tail_join_mode = tail_policy_enabled
-            && connected_clients_total >= tail_connected_clients_min
-            && pending_initial_open_count >= tail_pending_initial_open_min;
-        let aggressive_tail_join_mode = tail_policy_enabled
-            && connected_clients_total >= aggressive_connected_clients_min
-            && pending_initial_open_count >= aggressive_pending_initial_open_min;
-        let tail_wave_70_plus_mode = tail_policy_enabled
-            && connected_clients_total >= BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_CLIENTS_MIN
-            && pending_initial_open_count
-                >= BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_PENDING_INITIAL_OPEN_MIN;
-        let extreme_tail_join_mode = tail_policy_enabled
-            && connected_clients_total >= BroadcastThrottleConfig::EXTREME_TAIL_WAVE_CLIENTS_MIN
-            && pending_initial_open_count
-                >= BroadcastThrottleConfig::EXTREME_TAIL_WAVE_PENDING_INITIAL_OPEN_MIN;
-        let initial_snapshot_caps = if extreme_tail_join_mode {
-            InitialSnapshotCaps::EXTREME_TAIL
-        } else if aggressive_tail_join_mode {
-            InitialSnapshotCaps::TAIL_AGGRESSIVE
-        } else if tail_join_mode {
-            InitialSnapshotCaps::TAIL
-        } else if single_machine_opt
-            && pending_initial_total_count
-                >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
-        {
-            InitialSnapshotCaps::SINGLE_MACHINE_BACKLOG
-        } else {
-            InitialSnapshotCaps::DEFAULT
-        };
+        let quality = self.current_quality_settings();
+        let policy = select_broadcast_policy(BroadcastPolicyInputs {
+            connected_clients_total,
+            pending_initial_total_count,
+            pending_initial_open_count,
+            single_machine_opt,
+            tail_policy_enabled,
+            quality_max_projectiles_scale: quality.max_projectiles_scale,
+            quality_delta_skip_modulus: quality.delta_skip_modulus,
+            networking_threads: self.config.thread_pools.networking_threads,
+        });
 
-        let mut max_delta_events_per_client = if extreme_tail_join_mode {
-            BroadcastThrottleConfig::MAX_DELTA_EVENTS_EXTREME_TAIL
-        } else if aggressive_tail_join_mode {
-            BroadcastThrottleConfig::MAX_DELTA_EVENTS_AGGRESSIVE
-        } else if tail_join_mode {
-            BroadcastThrottleConfig::MAX_DELTA_EVENTS_TAIL
-        } else if single_machine_opt
-            && pending_initial_total_count
-                >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
+        let scheduled_initial_entries = if pending_initial_open_count > policy.max_initial_per_frame
+            && policy.max_initial_per_frame > 0
         {
-            BroadcastThrottleConfig::MAX_DELTA_EVENTS_SINGLE_MACHINE_BACKLOG
-        } else {
-            BroadcastThrottleConfig::MAX_DELTA_EVENTS_DEFAULT
-        };
-        let soa_adaptive_fallback_active = join_soa_adaptive_fallback_enabled()
-            && connected_clients_total
-                >= BroadcastThrottleConfig::MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN
-            && (pending_initial_total_count
-                >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
-                || aggressive_tail_join_mode
-                || tail_join_mode);
-
-        // Keep budget decisions tied to total backlog, but only schedule actionable
-        // initial sends (open data channels).
-        let mut max_initial_per_frame = if pending_initial_total_count
-            >= BroadcastThrottleConfig::MASS_JOIN_HEAVY_PENDING_INITIAL_MIN
-        {
-            BroadcastThrottleConfig::MASS_JOIN_INITIAL_PER_FRAME_HEAVY
-        } else if pending_initial_total_count
-            >= BroadcastThrottleConfig::MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN
-        {
-            BroadcastThrottleConfig::MASS_JOIN_INITIAL_PER_FRAME_MEDIUM
-        } else {
-            BroadcastThrottleConfig::MASS_JOIN_INITIAL_PER_FRAME_LIGHT
-        };
-        if tail_join_mode {
-            // 70+ client wave: allocate more slots to initial delivery to drain backlog sooner.
-            max_initial_per_frame = max_initial_per_frame
-                .max(BroadcastThrottleConfig::TAIL_JOIN_INITIAL_PER_FRAME_BOOST);
-        }
-        if aggressive_tail_join_mode {
-            max_initial_per_frame = max_initial_per_frame
-                .max(BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_INITIAL_PER_FRAME_BOOST);
-        }
-        if tail_wave_70_plus_mode {
-            max_initial_per_frame = max_initial_per_frame
-                .max(BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_INITIAL_PER_FRAME_BOOST);
-        }
-        if extreme_tail_join_mode {
-            max_initial_per_frame = max_initial_per_frame
-                .max(BroadcastThrottleConfig::EXTREME_TAIL_WAVE_INITIAL_PER_FRAME_BOOST);
-        }
-        if single_machine_opt
-            && pending_initial_total_count
-                >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
-        {
-            max_initial_per_frame = max_initial_per_frame
-                .max(BroadcastThrottleConfig::SINGLE_MACHINE_INITIAL_PER_FRAME_BOOST);
-        }
-
-        let scheduled_initial_entries =
-            if pending_initial_open_count > max_initial_per_frame && max_initial_per_frame > 0 {
-                let start_index = if pending_initial_open_count == 0 {
-                    0
-                } else {
-                    (current_frame as usize) % pending_initial_open_count
-                };
-                let mut selected = Vec::with_capacity(max_initial_per_frame);
-                for offset in 0..max_initial_per_frame {
-                    let idx = (start_index + offset) % pending_initial_open_count;
-                    selected.push(initial_entries_open[idx].clone());
-                }
-                selected
+            let start_index = if pending_initial_open_count == 0 {
+                0
             } else {
-                initial_entries_open
+                (current_frame as usize) % pending_initial_open_count
             };
+            let mut selected = Vec::with_capacity(policy.max_initial_per_frame);
+            for offset in 0..policy.max_initial_per_frame {
+                let idx = (start_index + offset) % pending_initial_open_count;
+                selected.push(initial_entries_open[idx].clone());
+            }
+            selected
+        } else {
+            initial_entries_open
+        };
 
         let include_active_walls_snapshot = !scheduled_initial_entries.is_empty();
-        let throttle_delta_broadcasts = tail_join_mode
-            || tail_wave_70_plus_mode
-            || pending_initial_total_count
-                >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN;
-        let mut max_delta_per_frame = if pending_initial_total_count
-            >= BroadcastThrottleConfig::MASS_JOIN_HEAVY_PENDING_INITIAL_MIN
-        {
-            BroadcastThrottleConfig::MASS_JOIN_MAX_DELTA_PER_FRAME_HEAVY
-        } else if pending_initial_total_count
-            >= BroadcastThrottleConfig::MASS_JOIN_MEDIUM_PENDING_INITIAL_MIN
-        {
-            BroadcastThrottleConfig::MASS_JOIN_MAX_DELTA_PER_FRAME_MEDIUM
-        } else {
-            usize::MAX
-        };
-        if tail_join_mode {
-            max_delta_per_frame =
-                max_delta_per_frame.min(BroadcastThrottleConfig::TAIL_JOIN_MAX_DELTA_PER_FRAME);
-        }
-        if aggressive_tail_join_mode {
-            max_delta_per_frame = max_delta_per_frame
-                .min(BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_MAX_DELTA_PER_FRAME);
-        }
-        if tail_wave_70_plus_mode {
-            max_delta_per_frame = max_delta_per_frame
-                .min(BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_MAX_DELTA_PER_FRAME);
-        }
-        if extreme_tail_join_mode {
-            max_delta_per_frame = max_delta_per_frame
-                .min(BroadcastThrottleConfig::EXTREME_TAIL_WAVE_MAX_DELTA_PER_FRAME);
-        }
-        if single_machine_opt
-            && pending_initial_total_count
-                >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
-        {
-            max_delta_per_frame = max_delta_per_frame
-                .min(BroadcastThrottleConfig::SINGLE_MACHINE_MAX_DELTA_PER_FRAME);
-        }
-        let mut delta_skip_modulus = if extreme_tail_join_mode {
-            BroadcastThrottleConfig::EXTREME_TAIL_WAVE_DELTA_SKIP_MODULUS
-        } else if tail_wave_70_plus_mode {
-            BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_DELTA_SKIP_MODULUS
-        } else if aggressive_tail_join_mode {
-            BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_DELTA_SKIP_MODULUS
-        } else if tail_join_mode {
-            BroadcastThrottleConfig::TAIL_JOIN_DELTA_SKIP_MODULUS
-        } else if single_machine_opt
-            && pending_initial_total_count
-                >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
-        {
-            BroadcastThrottleConfig::SINGLE_MACHINE_DELTA_SKIP_MODULUS
-        } else {
-            BroadcastThrottleConfig::MASS_JOIN_DELTA_SKIP_MODULUS
-        };
-
-        let quality = self.current_quality_settings();
-        max_delta_events_per_client = ((max_delta_events_per_client as f32)
-            * quality.max_projectiles_scale)
-            .round()
-            .clamp(
-                1.0,
-                BroadcastThrottleConfig::MAX_DELTA_EVENTS_DEFAULT as f32,
-            ) as usize;
-        // Defensive clamp: a zero modulus would panic in `is_multiple_of`.
-        delta_skip_modulus = delta_skip_modulus.max(quality.delta_skip_modulus.max(1));
 
         let mut scheduled_client_entries = scheduled_initial_entries;
         let mut scheduled_delta_count = 0usize;
         for (peer_id, data_channel, needs_initial) in delta_entries {
-            if throttle_delta_broadcasts && !current_frame.is_multiple_of(delta_skip_modulus) {
+            if policy.throttle_delta_broadcasts
+                && !current_frame.is_multiple_of(policy.delta_skip_modulus)
+            {
                 continue;
             }
             // Mobile clients: additional frame skipping for reduced update rate (~20 Hz)
@@ -396,7 +498,7 @@ impl MassiveGameServer {
             {
                 continue;
             }
-            if scheduled_delta_count >= max_delta_per_frame {
+            if scheduled_delta_count >= policy.max_delta_per_frame {
                 continue;
             }
             scheduled_client_entries.push((peer_id, data_channel, needs_initial));
@@ -413,20 +515,20 @@ impl MassiveGameServer {
             pending_initial_closed_count,
             pending_delta_closed_count,
             tail_policy_enabled,
-            tail_join_mode,
-            aggressive_tail_join_mode,
-            tail_wave_70_plus_mode,
-            extreme_tail_join_mode,
+            policy.tail_join_mode,
+            policy.aggressive_tail_join_mode,
+            policy.tail_wave_70_plus_mode,
+            policy.extreme_tail_join_mode,
             single_machine_opt,
-            soa_adaptive_fallback_active,
-            max_initial_per_frame,
-            max_delta_per_frame,
-            delta_skip_modulus,
-            max_delta_events_per_client,
-            initial_snapshot_caps.max_players,
-            initial_snapshot_caps.max_walls,
-            initial_snapshot_caps.max_projectiles,
-            initial_snapshot_caps.max_pickups,
+            policy.soa_adaptive_fallback_active,
+            policy.max_initial_per_frame,
+            policy.max_delta_per_frame,
+            policy.delta_skip_modulus,
+            policy.max_delta_events_per_client,
+            policy.initial_snapshot_caps.max_players,
+            policy.initial_snapshot_caps.max_walls,
+            policy.initial_snapshot_caps.max_projectiles,
+            policy.initial_snapshot_caps.max_pickups,
             scheduled_client_entries
                 .iter()
                 .filter(|(_, _, needs_initial)| *needs_initial)
@@ -447,12 +549,12 @@ impl MassiveGameServer {
         let shared_broadcast_data = Arc::new(
             self.prepare_shared_broadcast_data(
                 include_active_walls_snapshot,
-                initial_snapshot_caps,
-                tail_join_mode,
-                aggressive_tail_join_mode,
-                extreme_tail_join_mode,
-                soa_adaptive_fallback_active,
-                max_delta_events_per_client,
+                policy.initial_snapshot_caps,
+                policy.tail_join_mode,
+                policy.aggressive_tail_join_mode,
+                policy.extreme_tail_join_mode,
+                policy.soa_adaptive_fallback_active,
+                policy.max_delta_events_per_client,
                 &scheduled_peer_ids,
             )
             .await,
@@ -461,45 +563,6 @@ impl MassiveGameServer {
             current_frame, shared_broadcast_data.events.len(), shared_broadcast_data.destroyed_wall_ids.len(),
             shared_broadcast_data.chat_packets.len(), shared_broadcast_data.kill_feed_snapshot.len(),
             shared_broadcast_data.use_soa_snapshot, shared_broadcast_data.use_entity_soa_snapshot, shared_broadcast_data.soa_fallback_active);
-
-        let mut broadcast_concurrency = (self
-            .config
-            .thread_pools
-            .networking_threads
-            .saturating_mul(4))
-        .clamp(
-            BroadcastThrottleConfig::MIN_BROADCAST_CONCURRENCY,
-            BroadcastThrottleConfig::MAX_BROADCAST_CONCURRENCY,
-        );
-        if pending_initial_total_count
-            >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
-        {
-            broadcast_concurrency =
-                broadcast_concurrency.min(BroadcastThrottleConfig::MASS_JOIN_CONCURRENCY_CAP);
-        }
-        if tail_join_mode {
-            broadcast_concurrency =
-                broadcast_concurrency.min(BroadcastThrottleConfig::TAIL_JOIN_CONCURRENCY_CAP);
-        }
-        if aggressive_tail_join_mode {
-            broadcast_concurrency = broadcast_concurrency
-                .min(BroadcastThrottleConfig::TAIL_JOIN_AGGRESSIVE_CONCURRENCY_CAP);
-        }
-        if tail_wave_70_plus_mode {
-            broadcast_concurrency = broadcast_concurrency
-                .min(BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_CONCURRENCY_CAP);
-        }
-        if extreme_tail_join_mode {
-            broadcast_concurrency = broadcast_concurrency
-                .min(BroadcastThrottleConfig::EXTREME_TAIL_WAVE_CONCURRENCY_CAP);
-        }
-        if single_machine_opt
-            && pending_initial_total_count
-                >= BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN
-        {
-            broadcast_concurrency =
-                broadcast_concurrency.min(BroadcastThrottleConfig::SINGLE_MACHINE_CONCURRENCY_CAP);
-        }
 
         let mut fanout_tasks = JoinSet::new();
         for (peer_id_str, data_channel_arc, needs_initial) in scheduled_client_entries {
@@ -534,7 +597,7 @@ impl MassiveGameServer {
                 }
             });
 
-            if fanout_tasks.len() >= broadcast_concurrency {
+            if fanout_tasks.len() >= policy.broadcast_concurrency {
                 if let Some(Err(join_err)) = fanout_tasks.join_next().await {
                     error!(
                         "[Frame {}] Broadcast fanout task join error: {}",
@@ -575,7 +638,7 @@ impl MassiveGameServer {
                     }
                 });
 
-                if quic_tasks.len() >= broadcast_concurrency {
+                if quic_tasks.len() >= policy.broadcast_concurrency {
                     if let Some(Err(join_err)) = quic_tasks.join_next().await {
                         error!(
                             "[Frame {}] QUIC broadcast task join error: {}",
@@ -599,5 +662,149 @@ impl MassiveGameServer {
             "[Frame {}] Broadcast processing loop complete.",
             current_frame
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn select_broadcast_policy_defaults_without_backlog() {
+        let policy = select_broadcast_policy(BroadcastPolicyInputs {
+            connected_clients_total: 12,
+            pending_initial_total_count: 0,
+            pending_initial_open_count: 0,
+            single_machine_opt: false,
+            tail_policy_enabled: true,
+            quality_max_projectiles_scale: 1.0,
+            quality_delta_skip_modulus: 1,
+            networking_threads: 8,
+        });
+        assert!(!policy.tail_join_mode);
+        assert!(!policy.aggressive_tail_join_mode);
+        assert!(!policy.extreme_tail_join_mode);
+        assert_eq!(
+            policy.initial_snapshot_caps.max_players,
+            InitialSnapshotCaps::DEFAULT.max_players
+        );
+        assert_eq!(
+            policy.max_delta_events_per_client,
+            BroadcastThrottleConfig::MAX_DELTA_EVENTS_DEFAULT
+        );
+        assert_eq!(
+            policy.delta_skip_modulus,
+            BroadcastThrottleConfig::MASS_JOIN_DELTA_SKIP_MODULUS
+        );
+    }
+
+    #[test]
+    fn select_broadcast_policy_enters_tail_modes_in_order() {
+        let tail = select_broadcast_policy(BroadcastPolicyInputs {
+            connected_clients_total: 70,
+            pending_initial_total_count: 12,
+            pending_initial_open_count: 3,
+            single_machine_opt: false,
+            tail_policy_enabled: true,
+            quality_max_projectiles_scale: 1.0,
+            quality_delta_skip_modulus: 1,
+            networking_threads: 8,
+        });
+        assert!(tail.tail_join_mode);
+        assert!(!tail.aggressive_tail_join_mode);
+        assert!(tail.tail_wave_70_plus_mode);
+        assert_eq!(
+            tail.initial_snapshot_caps.max_players,
+            InitialSnapshotCaps::TAIL.max_players
+        );
+
+        let aggressive = select_broadcast_policy(BroadcastPolicyInputs {
+            connected_clients_total: 70,
+            pending_initial_total_count: 12,
+            pending_initial_open_count: 6,
+            single_machine_opt: false,
+            tail_policy_enabled: true,
+            quality_max_projectiles_scale: 1.0,
+            quality_delta_skip_modulus: 1,
+            networking_threads: 8,
+        });
+        assert!(aggressive.tail_join_mode);
+        assert!(aggressive.aggressive_tail_join_mode);
+        assert!(aggressive.tail_wave_70_plus_mode);
+        assert!(!aggressive.extreme_tail_join_mode);
+        assert_eq!(
+            aggressive.initial_snapshot_caps.max_players,
+            InitialSnapshotCaps::TAIL_AGGRESSIVE.max_players
+        );
+
+        let extreme = select_broadcast_policy(BroadcastPolicyInputs {
+            connected_clients_total: 90,
+            pending_initial_total_count: 16,
+            pending_initial_open_count: 6,
+            single_machine_opt: false,
+            tail_policy_enabled: true,
+            quality_max_projectiles_scale: 1.0,
+            quality_delta_skip_modulus: 1,
+            networking_threads: 8,
+        });
+        assert!(extreme.tail_join_mode);
+        assert!(extreme.aggressive_tail_join_mode);
+        assert!(extreme.tail_wave_70_plus_mode);
+        assert!(extreme.extreme_tail_join_mode);
+        assert_eq!(
+            extreme.initial_snapshot_caps.max_players,
+            InitialSnapshotCaps::EXTREME_TAIL.max_players
+        );
+        assert_eq!(
+            extreme.max_delta_per_frame,
+            BroadcastThrottleConfig::EXTREME_TAIL_WAVE_MAX_DELTA_PER_FRAME
+        );
+    }
+
+    #[test]
+    fn select_broadcast_policy_applies_single_machine_backlog_caps() {
+        let policy = select_broadcast_policy(BroadcastPolicyInputs {
+            connected_clients_total: 40,
+            pending_initial_total_count:
+                BroadcastThrottleConfig::MASS_JOIN_THROTTLE_PENDING_INITIAL_MIN,
+            pending_initial_open_count: 2,
+            single_machine_opt: true,
+            tail_policy_enabled: true,
+            quality_max_projectiles_scale: 1.0,
+            quality_delta_skip_modulus: 1,
+            networking_threads: 8,
+        });
+        assert_eq!(
+            policy.initial_snapshot_caps.max_players,
+            InitialSnapshotCaps::SINGLE_MACHINE_BACKLOG.max_players
+        );
+        assert_eq!(
+            policy.max_delta_per_frame,
+            BroadcastThrottleConfig::SINGLE_MACHINE_MAX_DELTA_PER_FRAME
+        );
+        assert_eq!(
+            policy.delta_skip_modulus,
+            BroadcastThrottleConfig::SINGLE_MACHINE_DELTA_SKIP_MODULUS
+        );
+    }
+
+    #[test]
+    fn select_broadcast_policy_respects_quality_scaling_and_minimum_modulus() {
+        let policy = select_broadcast_policy(BroadcastPolicyInputs {
+            connected_clients_total: 70,
+            pending_initial_total_count: 12,
+            pending_initial_open_count: 6,
+            single_machine_opt: false,
+            tail_policy_enabled: true,
+            quality_max_projectiles_scale: 0.4,
+            quality_delta_skip_modulus: 0,
+            networking_threads: 2,
+        });
+        assert_eq!(policy.max_delta_events_per_client, 2);
+        assert_eq!(
+            policy.delta_skip_modulus,
+            BroadcastThrottleConfig::TAIL_WAVE_70_PLUS_DELTA_SKIP_MODULUS
+        );
+        assert!(policy.broadcast_concurrency >= BroadcastThrottleConfig::MIN_BROADCAST_CONCURRENCY);
     }
 }

@@ -536,3 +536,170 @@ async fn auth_me_applies_token_validation_rate_limits() {
         Value::String("token_rate_limited".to_owned())
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inline_admin_checks_apply_to_ops_report_routes() {
+    let admin_token = "integration-ops-admin-token";
+    let proc = spawn_server(Some(admin_token)).await;
+    let client = reqwest::Client::new();
+
+    let join_stages_unauthorized = client
+        .get(format!("{}/api/ops/join-stages", proc.base_url))
+        .send()
+        .await
+        .expect("GET /api/ops/join-stages without token");
+    assert_admin_auth_required(join_stages_unauthorized).await;
+
+    let join_stages_authorized = client
+        .get(format!("{}/api/ops/join-stages", proc.base_url))
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .send()
+        .await
+        .expect("GET /api/ops/join-stages with token");
+    let join_stages_json: Value = join_stages_authorized
+        .json()
+        .await
+        .expect("join stages json");
+    assert_eq!(join_stages_json["total_tracked_clients"], Value::from(0));
+    assert!(join_stages_json["waves"].is_object());
+
+    let join_stages_reset_unauthorized = client
+        .post(format!("{}/api/ops/join-stages/reset", proc.base_url))
+        .send()
+        .await
+        .expect("POST /api/ops/join-stages/reset without token");
+    assert_admin_auth_required(join_stages_reset_unauthorized).await;
+
+    let join_stages_reset_authorized = client
+        .post(format!("{}/api/ops/join-stages/reset", proc.base_url))
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .send()
+        .await
+        .expect("POST /api/ops/join-stages/reset with token");
+    let join_stages_reset_json: Value = join_stages_reset_authorized
+        .json()
+        .await
+        .expect("join stages reset json");
+    assert_eq!(join_stages_reset_json["ok"], Value::Bool(true));
+
+    let live_replay_recent_unauthorized = client
+        .get(format!(
+            "{}/api/ops/live-replay/recent?limit=5",
+            proc.base_url
+        ))
+        .send()
+        .await
+        .expect("GET /api/ops/live-replay/recent without token");
+    assert_admin_auth_required(live_replay_recent_unauthorized).await;
+
+    let live_replay_recent_authorized = client
+        .get(format!(
+            "{}/api/ops/live-replay/recent?limit=5",
+            proc.base_url
+        ))
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .send()
+        .await
+        .expect("GET /api/ops/live-replay/recent with token");
+    let live_replay_recent_json: Value = live_replay_recent_authorized
+        .json()
+        .await
+        .expect("live replay recent json");
+    assert!(live_replay_recent_json["enabled"].is_boolean());
+    assert!(live_replay_recent_json["frames"].is_array());
+    assert_eq!(live_replay_recent_json["limit"], Value::from(5));
+
+    let live_replay_dispute_unauthorized = client
+        .post(format!("{}/api/ops/live-replay/dispute", proc.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .body(r#"{"limit":4}"#)
+        .send()
+        .await
+        .expect("POST /api/ops/live-replay/dispute without token");
+    assert_admin_auth_required(live_replay_dispute_unauthorized).await;
+
+    let live_replay_dispute_authorized = client
+        .post(format!("{}/api/ops/live-replay/dispute", proc.base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .body(r#"{"limit":4}"#)
+        .send()
+        .await
+        .expect("POST /api/ops/live-replay/dispute with token");
+    let live_replay_dispute_json: Value = live_replay_dispute_authorized
+        .json()
+        .await
+        .expect("live replay dispute json");
+    assert!(live_replay_dispute_json["generated_at_ms"].is_number());
+    assert!(live_replay_dispute_json["selected_frames"].is_array());
+    assert!(live_replay_dispute_json["relevant_kill_feed"].is_array());
+    assert!(live_replay_dispute_json["audit"].is_object());
+
+    let live_replay_disputes_recent_unauthorized = client
+        .get(format!(
+            "{}/api/ops/live-replay/disputes/recent?limit=3",
+            proc.base_url
+        ))
+        .send()
+        .await
+        .expect("GET /api/ops/live-replay/disputes/recent without token");
+    assert_admin_auth_required(live_replay_disputes_recent_unauthorized).await;
+
+    let live_replay_disputes_recent_authorized = client
+        .get(format!(
+            "{}/api/ops/live-replay/disputes/recent?limit=3",
+            proc.base_url
+        ))
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .send()
+        .await
+        .expect("GET /api/ops/live-replay/disputes/recent with token");
+    let live_replay_disputes_recent_json: Value = live_replay_disputes_recent_authorized
+        .json()
+        .await
+        .expect("live replay disputes recent json");
+    assert_eq!(live_replay_disputes_recent_json["ok"], Value::Bool(true));
+    assert!(live_replay_disputes_recent_json["audits"].is_array());
+    assert_eq!(live_replay_disputes_recent_json["limit"], Value::from(3));
+
+    let match_summary_unauthorized = client
+        .get(format!("{}/api/ops/match-summary/latest", proc.base_url))
+        .send()
+        .await
+        .expect("GET /api/ops/match-summary/latest without token");
+    assert_admin_auth_required(match_summary_unauthorized).await;
+
+    let match_summary_authorized = client
+        .get(format!("{}/api/ops/match-summary/latest", proc.base_url))
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .send()
+        .await
+        .expect("GET /api/ops/match-summary/latest with token");
+    let match_summary_json: Value = match_summary_authorized
+        .json()
+        .await
+        .expect("match summary json");
+    assert_eq!(match_summary_json["ok"], Value::Bool(true));
+    assert!(match_summary_json["summary"].is_null() || match_summary_json["summary"].is_object());
+
+    let killcam_unauthorized = client
+        .get(format!("{}/api/ops/killcam/test-player", proc.base_url))
+        .send()
+        .await
+        .expect("GET /api/ops/killcam/:player without token");
+    assert_admin_auth_required(killcam_unauthorized).await;
+
+    let killcam_authorized = client
+        .get(format!("{}/api/ops/killcam/test-player", proc.base_url))
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .send()
+        .await
+        .expect("GET /api/ops/killcam/:player with token");
+    let killcam_json: Value = killcam_authorized.json().await.expect("killcam json");
+    assert_eq!(killcam_json["ok"], Value::Bool(true));
+    assert_eq!(
+        killcam_json["player_id"],
+        Value::String("test-player".to_owned())
+    );
+    assert!(killcam_json["killcam"].is_null() || killcam_json["killcam"].is_object());
+}
