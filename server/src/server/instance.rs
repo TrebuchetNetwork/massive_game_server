@@ -198,6 +198,7 @@ fn default_instance_env_config() -> InstanceEnv {
         human_priority_enabled: true,
         reserved_human_slots: 2,
         spectator_slot_cap: 20,
+        match_duration_override_secs: None,
         lag_compensation_ms: DEFAULT_LAG_COMPENSATION_MS,
         live_replay_enabled: false,
         live_replay_capacity: 3600,
@@ -234,6 +235,13 @@ fn instance_env_config() -> &'static InstanceEnv {
 
 pub fn configure_instance_runtime(config: &InstanceEnv) {
     let _ = INSTANCE_RUNTIME_CONFIG.set(config.clone());
+}
+
+fn effective_match_duration_secs(runtime: &InstanceEnv, match_type: MatchType) -> f32 {
+    runtime
+        .match_duration_override_secs
+        .unwrap_or_else(|| match_type.duration_secs())
+        .clamp(10.0, 3600.0)
 }
 
 fn single_machine_optimization_enabled() -> bool {
@@ -379,7 +387,7 @@ impl MassiveGameServer {
             .as_deref()
             .map(MatchType::from_query_str)
             .unwrap_or_default();
-        let match_duration_secs = match_type.duration_secs();
+        let match_duration_secs = effective_match_duration_secs(runtime, match_type);
         let effective_max_players = match match_type {
             MatchType::FullMatch => config.max_players_per_match,
             other => other.max_players().min(config.max_players_per_match),
@@ -1236,6 +1244,32 @@ mod instance_tests {
         assert_eq!(
             MatchType::MobileStandard.duration_secs(),
             MOBILE_STANDARD_DURATION_SECS
+        );
+    }
+
+    #[test]
+    fn match_duration_override_secs_applies_when_present() {
+        let mut runtime = default_instance_env_config();
+        runtime.match_duration_override_secs = Some(36.0);
+        assert_eq!(
+            effective_match_duration_secs(&runtime, MatchType::FullMatch),
+            36.0
+        );
+    }
+
+    #[test]
+    fn match_duration_override_secs_is_bounded() {
+        let mut runtime = default_instance_env_config();
+        runtime.match_duration_override_secs = Some(1.0);
+        assert_eq!(
+            effective_match_duration_secs(&runtime, MatchType::QuickMatch),
+            10.0
+        );
+
+        runtime.match_duration_override_secs = Some(9999.0);
+        assert_eq!(
+            effective_match_duration_secs(&runtime, MatchType::QuickMatch),
+            3600.0
         );
     }
 

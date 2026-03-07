@@ -31,6 +31,7 @@ pub struct FeatureFlagsEnv {
 pub struct InstanceEnv {
     pub map_path: Option<String>,
     pub match_type: Option<String>,
+    pub match_duration_override_secs: Option<f32>,
     pub force_10v10_map: bool,
     pub map_target_players: Option<usize>,
     pub map_seed: Option<u64>,
@@ -158,6 +159,9 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
 
     let map_path = get_optional_trimmed("MGS_MAP_PATH");
     let match_type = get_optional_trimmed("MGS_MATCH_TYPE");
+    let match_duration_override_secs =
+        parse_optional_f32("MGS_MATCH_DURATION_OVERRIDE_SECS", &mut errors)
+            .map(|value| value.clamp(10.0, 3600.0));
     let force_10v10_map = parse_bool_with_default("MGS_FORCE_10V10_MAP", false, &mut errors);
     let map_target_players =
         parse_optional_usize("MGS_MAP_TARGET_PLAYERS", &mut errors).filter(|value| *value > 0);
@@ -399,6 +403,7 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
         instance: InstanceEnv {
             map_path,
             match_type,
+            match_duration_override_secs,
             force_10v10_map,
             map_target_players,
             map_seed,
@@ -650,6 +655,20 @@ fn parse_optional_u64(var_name: &str, errors: &mut Vec<String>) -> Option<u64> {
         Err(_) => {
             errors.push(format!(
                 "{} has invalid unsigned integer value '{}'",
+                var_name, raw
+            ));
+            None
+        }
+    }
+}
+
+fn parse_optional_f32(var_name: &str, errors: &mut Vec<String>) -> Option<f32> {
+    let raw = std::env::var(var_name).ok()?;
+    match raw.trim().parse::<f32>() {
+        Ok(value) if value.is_finite() => Some(value),
+        Ok(_) | Err(_) => {
+            errors.push(format!(
+                "{} has invalid finite float value '{}'",
                 var_name, raw
             ));
             None

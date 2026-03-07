@@ -1001,6 +1001,8 @@
             window.__e2e = {
                 matchInfoReady: false,
                 connectionStatus: null,
+                dataChannelOpen: false,
+                dataChannelLabel: '',
                 renderFrames: 0,
                 lastRenderTime: 0,
                 lastStateUpdate: 0,
@@ -1055,6 +1057,8 @@
         window.__e2e.playerCount = 0;
         window.__e2e.wallCount = 0;
         window.__e2e.visiblePlayerCount = 0;
+        window.__e2e.playerSpriteCount = 0;
+        window.__e2e.localPlayerSpriteReady = false;
         window.__e2e.localPlayerSnapshot = null;
         window.__e2e.playerRenderCap = 220;
         window.__e2e.projectileCount = 0;
@@ -1081,6 +1085,16 @@
         window.__e2e.lastSyntheticFxBurstAt = 0;
         window.__e2e.perfReport = null;
         window.__e2e.perfReportGeneratedAt = 0;
+        window.__e2e.matchInfoSnapshot = null;
+        window.__e2e.modeIntroText = '';
+        window.__e2e.modeIntroVisible = false;
+        window.__e2e.objectiveUrgencyText = '';
+        window.__e2e.objectiveUrgencyVisible = false;
+        window.__e2e.tipsToastText = '';
+        window.__e2e.tipsToastVisible = false;
+        window.__e2e.mobileAimActive = false;
+        window.__e2e.mobileFireTouchActive = false;
+        window.__e2e.bodyMobileMode = false;
         if (E2E_HOOKS_ENABLED) {
             window.__e2e.resetPerfStats = () => {
                 resetPerfStats();
@@ -1123,6 +1137,10 @@
             };
             window.__e2e.forceReconnectNow = () => {
                 resetReconnectState();
+                resetConnectionUI({
+                    allowReconnect: false,
+                    reconnectReason: 'e2e immediate reconnect'
+                });
                 return startConnectionAttempt({ isRetry: true });
             };
         } else {
@@ -3606,6 +3624,8 @@
                     e2e.playerCount = players.size;
                     e2e.wallCount = walls.size;
                     e2e.visiblePlayerCount = lastVisiblePlayers;
+                    e2e.playerSpriteCount = playerSprites.size;
+                    e2e.localPlayerSpriteReady = !!localPlayerSprite;
                     e2e.localPlayerSnapshot = localPlayerState ? {
                         x: Number(localPlayerState.x) || 0,
                         y: Number(localPlayerState.y) || 0,
@@ -3662,6 +3682,22 @@
                     e2e.damageBatchEnabled = DAMAGE_BATCH_ENABLED;
                     e2e.pendingDamageBatchCount = effectsManager?.pendingDamageBatchCount || 0;
                     e2e.activeDamageMergeCount = effectsManager?.activeDamageNumberEffectsByKey?.size || 0;
+                    e2e.matchInfoSnapshot = matchInfo ? {
+                        gameMode: Number(matchInfo.game_mode) || 0,
+                        matchState: Number(matchInfo.match_state) || 0,
+                        matchType: Number(matchInfo.match_type) || 0,
+                        timeRemaining: Number(matchInfo.time_remaining) || 0,
+                        hotZoneActive: !!matchInfo.hot_zone_active,
+                    } : null;
+                    e2e.modeIntroText = gameModeIntroDiv?.textContent || '';
+                    e2e.modeIntroVisible = !!gameModeIntroDiv?.classList.contains('mode-intro--visible');
+                    e2e.objectiveUrgencyText = objectiveUrgencyDiv?.textContent || '';
+                    e2e.objectiveUrgencyVisible = !!objectiveUrgencyDiv?.classList.contains('objective-urgency--visible');
+                    e2e.tipsToastText = tipsToastDiv?.textContent || '';
+                    e2e.tipsToastVisible = !!tipsToastDiv?.classList.contains('tips-toast--visible');
+                    e2e.mobileAimActive = !!mobileAimActive;
+                    e2e.mobileFireTouchActive = !!mobileFireTouchActive;
+                    e2e.bodyMobileMode = !!document.body.classList.contains('mobile-mode');
                     e2e.fxStressActive = diagnosticsManager.isFxStressActive();
                     e2e.effectsProfile = activeEffectsProfileName;
                     e2e.effectsLoadTier = Number(effectsManager?.lastLoadTier ?? 0);
@@ -4573,6 +4609,15 @@
             cachedMinimapFlags = [];
             minimapWallsCacheDirty = true;
             minimapFlagsCacheDirty = true;
+            if (window.__e2e) {
+                window.__e2e.matchInfoReady = false;
+                window.__e2e.hasLocalPlayer = false;
+                window.__e2e.playerCount = 0;
+                window.__e2e.visiblePlayerCount = 0;
+                window.__e2e.playerSpriteCount = 0;
+                window.__e2e.localPlayerSpriteReady = false;
+                window.__e2e.localPlayerSnapshot = null;
+            }
             log('Game state cleared for reconnect.', 'info');
         }
 
@@ -4777,9 +4822,13 @@
             ultraModeEnteredAt = 0;
             if (window.__e2e) {
                 window.__e2e.matchInfoReady = false;
+                window.__e2e.dataChannelOpen = false;
+                window.__e2e.dataChannelLabel = '';
                 window.__e2e.playerCount = 0;
                 window.__e2e.wallCount = 0;
                 window.__e2e.visiblePlayerCount = 0;
+                window.__e2e.playerSpriteCount = 0;
+                window.__e2e.localPlayerSpriteReady = false;
                 window.__e2e.localPlayerSnapshot = null;
                 window.__e2e.playerRenderCap = PLAYER_RENDER_CAP_DEFAULT;
                 window.__e2e.projectileCount = 0;
@@ -4813,6 +4862,16 @@
                 window.__e2e.syntheticFxBursts = 0;
                 window.__e2e.syntheticFxEvents = 0;
                 window.__e2e.lastSyntheticFxBurstAt = 0;
+                window.__e2e.matchInfoSnapshot = null;
+                window.__e2e.modeIntroText = '';
+                window.__e2e.modeIntroVisible = false;
+                window.__e2e.objectiveUrgencyText = '';
+                window.__e2e.objectiveUrgencyVisible = false;
+                window.__e2e.tipsToastText = '';
+                window.__e2e.tipsToastVisible = false;
+                window.__e2e.mobileAimActive = false;
+                window.__e2e.mobileFireTouchActive = false;
+                window.__e2e.bodyMobileMode = !!document.body.classList.contains('mobile-mode');
                 window.__e2e.workerCullReady = cullWorkerReady;
                 window.__e2e.workerCullBusy = false;
                 window.__e2e.workerCullKernel = cullWorkerStats.wasmKernelLabel;
