@@ -50,6 +50,109 @@ export function createCombatFeedback(getCtx) {
         ctx.tipsToastDiv.classList.add('tips-toast--visible');
     }
 
+    function clearDeathRecapMinimap() {
+        const ctx = getCtx();
+        const canvas = ctx.deathRecapMinimapCanvas;
+        if (!canvas || typeof canvas.getContext !== 'function') return;
+        const context2d = canvas.getContext('2d');
+        if (!context2d) return;
+        context2d.clearRect(0, 0, canvas.width, canvas.height);
+        canvas.style.display = 'none';
+    }
+
+    function drawDeathRecapMinimap(entry) {
+        const ctx = getCtx();
+        const canvas = ctx.deathRecapMinimapCanvas;
+        if (!canvas || typeof canvas.getContext !== 'function') return;
+        const context2d = canvas.getContext('2d');
+        if (!context2d) return;
+
+        const killerPosition = entry?.killer_position;
+        const victimPosition = entry?.victim_position;
+        const hasPositions =
+            Number.isFinite(Number(killerPosition?.x)) &&
+            Number.isFinite(Number(killerPosition?.y)) &&
+            Number.isFinite(Number(victimPosition?.x)) &&
+            Number.isFinite(Number(victimPosition?.y));
+        const wallEntries = ctx.walls instanceof Map ? Array.from(ctx.walls.values()) : [];
+        if (!hasPositions && wallEntries.length === 0) {
+            clearDeathRecapMinimap();
+            return;
+        }
+
+        const mapScale = 0.05;
+        const padding = 8;
+        const width = canvas.width;
+        const height = canvas.height;
+        let centerX = 0;
+        let centerY = 0;
+        if (ctx.worldBoundsState?.valid) {
+            centerX = (Number(ctx.worldBoundsState.minX) + Number(ctx.worldBoundsState.maxX)) * 0.5;
+            centerY = (Number(ctx.worldBoundsState.minY) + Number(ctx.worldBoundsState.maxY)) * 0.5;
+        } else if (hasPositions) {
+            centerX = (Number(killerPosition.x) + Number(victimPosition.x)) * 0.5;
+            centerY = (Number(killerPosition.y) + Number(victimPosition.y)) * 0.5;
+        }
+
+        const projectPoint = (worldX, worldY) => ({
+            x: width * 0.5 + (Number(worldX) - centerX) * mapScale,
+            y: height * 0.5 + (Number(worldY) - centerY) * mapScale,
+        });
+
+        context2d.clearRect(0, 0, width, height);
+        context2d.fillStyle = 'rgba(2, 6, 23, 0.92)';
+        context2d.fillRect(0, 0, width, height);
+        context2d.strokeStyle = 'rgba(148, 163, 184, 0.28)';
+        context2d.strokeRect(0.5, 0.5, width - 1, height - 1);
+
+        context2d.save();
+        context2d.beginPath();
+        context2d.rect(padding, padding, width - padding * 2, height - padding * 2);
+        context2d.clip();
+
+        context2d.fillStyle = 'rgba(148, 163, 184, 0.45)';
+        for (let i = 0; i < wallEntries.length; i += 1) {
+            const wall = wallEntries[i];
+            if (!wall) continue;
+            const topLeft = projectPoint(Number(wall.x) || 0, Number(wall.y) || 0);
+            const wallWidth = (Number(wall.width) || 0) * mapScale;
+            const wallHeight = (Number(wall.height) || 0) * mapScale;
+            if (wallWidth <= 0 || wallHeight <= 0) continue;
+            context2d.fillRect(topLeft.x, topLeft.y, wallWidth, wallHeight);
+        }
+
+        if (hasPositions) {
+            const killerPoint = projectPoint(killerPosition.x, killerPosition.y);
+            const victimPoint = projectPoint(victimPosition.x, victimPosition.y);
+
+            context2d.setLineDash([4, 3]);
+            context2d.strokeStyle = 'rgba(248, 113, 113, 0.9)';
+            context2d.lineWidth = 1.5;
+            context2d.beginPath();
+            context2d.moveTo(killerPoint.x, killerPoint.y);
+            context2d.lineTo(victimPoint.x, victimPoint.y);
+            context2d.stroke();
+            context2d.setLineDash([]);
+
+            context2d.fillStyle = '#EF4444';
+            context2d.beginPath();
+            context2d.arc(killerPoint.x, killerPoint.y, 4, 0, Math.PI * 2);
+            context2d.fill();
+
+            context2d.strokeStyle = '#F8FAFC';
+            context2d.lineWidth = 2;
+            context2d.beginPath();
+            context2d.moveTo(victimPoint.x - 5, victimPoint.y - 5);
+            context2d.lineTo(victimPoint.x + 5, victimPoint.y + 5);
+            context2d.moveTo(victimPoint.x + 5, victimPoint.y - 5);
+            context2d.lineTo(victimPoint.x - 5, victimPoint.y + 5);
+            context2d.stroke();
+        }
+
+        context2d.restore();
+        canvas.style.display = 'block';
+    }
+
     function ensureObjectiveArrowPool(size) {
         const ctx = getCtx();
         if (!ctx.objectiveArrowLayerDiv) return;
@@ -644,6 +747,7 @@ export function createCombatFeedback(getCtx) {
             }
         }
         ctx.deathRecapDistanceDiv.textContent = distanceText;
+        drawDeathRecapMinimap(entry);
 
         const recent = ctx.combatUiState.recentDamageSources
             .filter((row) => (Date.now() - row.at) <= 10000)
@@ -1075,6 +1179,7 @@ export function createCombatFeedback(getCtx) {
                 c.hudVisible = false;
             }
             if (ctx.deathRecapDiv) ctx.deathRecapDiv.classList.remove('death-recap--visible');
+            clearDeathRecapMinimap();
             return;
         }
 
@@ -1312,6 +1417,7 @@ export function createCombatFeedback(getCtx) {
         ctx.streakMedalDiv?.classList.remove('streak-medal--visible');
         ctx.hitMarkerDiv?.classList.remove('hit-marker--visible', 'hit-marker--headshot', 'hit-marker--kill');
         ctx.deathRecapDiv?.classList.remove('death-recap--visible');
+        clearDeathRecapMinimap();
         if (ctx.combatRadialHudDiv) {
             ctx.combatRadialHudDiv.style.opacity = '0';
         }

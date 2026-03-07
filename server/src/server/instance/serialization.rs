@@ -289,6 +289,7 @@ pub(super) fn build_game_event_fb<'a>(
             weapon_type: weapon_type_fb,
             value: event_value(event).unwrap_or(0.0),
             falloff_multiplier: crate::server::event_mapping::event_falloff_multiplier(event),
+            surface_type: crate::server::event_mapping::event_surface_type(event),
         },
     ))
 }

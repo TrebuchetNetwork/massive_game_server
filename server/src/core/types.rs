@@ -81,6 +81,22 @@ pub enum ZoneType {
     BoostPad,
 }
 
+#[repr(u8)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+pub enum SurfaceType {
+    Concrete = 0,
+    Metal = 1,
+    Wood = 2,
+    Glass = 3,
+}
+
+impl SurfaceType {
+    #[inline]
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Zone {
     pub id: EntityId,
@@ -200,6 +216,7 @@ pub struct PlayerState {
     // and violation counter (separate from position-based violation_count).
     pub prev_velocity: (f32, f32),
     pub acceleration_violation_count: u32,
+    pub last_footstep_frame: u64,
 }
 
 impl PlayerState {
@@ -279,6 +296,7 @@ impl PlayerState {
             last_queued_input_sequence: 0,
             prev_velocity: (0.0, 0.0),
             acceleration_violation_count: 0,
+            last_footstep_frame: 0,
         }
     }
 
@@ -1057,6 +1075,7 @@ pub enum GameEvent {
         wall_id: EntityId,
         position: Vec2,
         damage: i32,
+        surface_type: u8,
     },
     MeleeHit {
         attacker_id: PlayerID,
@@ -1126,6 +1145,25 @@ pub struct Wall {
     pub is_destructible: bool,
     pub current_health: i32,
     pub max_health: i32,
+}
+
+impl Wall {
+    #[inline]
+    pub fn inferred_surface_type(&self) -> SurfaceType {
+        use crate::core::constants::{WORLD_MAX_X, WORLD_MAX_Y, WORLD_MIN_X, WORLD_MIN_Y};
+
+        if self.is_destructible {
+            SurfaceType::Wood
+        } else if self.x <= WORLD_MIN_X + 1.0
+            || self.y <= WORLD_MIN_Y + 1.0
+            || (self.x + self.width) >= WORLD_MAX_X - 1.0
+            || (self.y + self.height) >= WORLD_MAX_Y - 1.0
+        {
+            SurfaceType::Metal
+        } else {
+            SurfaceType::Concrete
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1926,5 +1964,35 @@ mod tests {
         // function returns a value in the valid range.)
         let tol = crate::core::constants::speed_hack_tolerance();
         assert!((1.0..2.0).contains(&tol));
+    }
+
+    #[test]
+    fn inferred_surface_type_prefers_wood_for_destructible_walls() {
+        let wall = Wall {
+            id: 1,
+            x: 0.0,
+            y: 0.0,
+            width: 64.0,
+            height: 64.0,
+            is_destructible: true,
+            current_health: 100,
+            max_health: 100,
+        };
+        assert_eq!(wall.inferred_surface_type(), SurfaceType::Wood);
+    }
+
+    #[test]
+    fn inferred_surface_type_marks_boundary_walls_as_metal() {
+        let wall = Wall {
+            id: 1,
+            x: crate::core::constants::WORLD_MIN_X,
+            y: 0.0,
+            width: 32.0,
+            height: 240.0,
+            is_destructible: false,
+            current_health: 100,
+            max_health: 100,
+        };
+        assert_eq!(wall.inferred_surface_type(), SurfaceType::Metal);
     }
 }

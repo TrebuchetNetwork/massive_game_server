@@ -697,6 +697,9 @@ impl MassiveGameServer {
                     is_destructible: wall_data.is_destructible,
                     current_health: wall_data.current_health,
                     max_health: wall_data.max_health,
+                    surface_type: crate::server::event_mapping::map_surface_type_to_fb(
+                        wall_data.inferred_surface_type().as_u8(),
+                    ),
                 },
             );
             updated_walls_vec.push(wall_fb);
@@ -894,6 +897,9 @@ impl MassiveGameServer {
                         is_destructible: wall_data.is_destructible,
                         current_health: wall_data.current_health,
                         max_health: wall_data.max_health,
+                        surface_type: crate::server::event_mapping::map_surface_type_to_fb(
+                            wall_data.inferred_surface_type().as_u8(),
+                        ),
                     },
                 ));
             }

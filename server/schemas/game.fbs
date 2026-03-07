@@ -60,7 +60,15 @@ enum GameEventType : byte {
     Killstreak = 12,   // value = streak count (3/5/7+)
     AssistKill = 13,   // value = assist points awarded
     ShieldBroken = 14, // shield depleted to zero
-    PowerupExpiring = 15 // value = seconds remaining (typically 3 or 1)
+    PowerupExpiring = 15, // value = seconds remaining (typically 3 or 1)
+    Footstep = 16
+}
+
+enum SurfaceType : byte {
+    Concrete = 0,
+    Metal = 1,
+    Wood = 2,
+    Glass = 3
 }
 
 enum ZoneType : byte {
@@ -182,6 +190,7 @@ table Wall {
     is_destructible: bool = false;
     current_health: int = 100;
     max_health: int = 100;
+    surface_type: SurfaceType = Concrete;
 }
 
 table Pickup {
@@ -212,6 +221,7 @@ table GameEvent {
     weapon_type: WeaponType; // Relevant for WeaponFire, BulletImpact
     value: float;          // E.g., damage amount for floating text, radius for explosion
     falloff_multiplier: float = 1.0; // 1.0 for melee/zone, <1.0 when ranged damage falloff applies
+    surface_type: SurfaceType = Concrete;
 }
 
 table KillFeedEntry {

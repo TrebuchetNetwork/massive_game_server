@@ -80,6 +80,7 @@ pub fn handle_projectile_wall_collision(
                     wall_mut_ref.y + wall_mut_ref.height / 2.0,
                 ),
                 damage: damage_to_apply,
+                surface_type: wall_mut_ref.inferred_surface_type().as_u8(),
                 // instigator_id: Some(projectile.owner_id.clone()), // Optional
             });
         }
@@ -94,6 +95,7 @@ pub fn handle_projectile_wall_collision(
                 wall_mut_ref.y + wall_mut_ref.height / 2.0,
             ),
             damage: 0, // No damage to indestructible wall
+            surface_type: wall_mut_ref.inferred_surface_type().as_u8(),
         });
     }
     // Projectile hit an already destroyed wall or a non-destructible wall with no impact event configured.

@@ -5,6 +5,7 @@
 import * as flatbuffers from 'flatbuffers';
 
 import { GameEventType } from '../game-protocol/game-event-type.js';
+import { SurfaceType } from '../game-protocol/surface-type.js';
 import { Vec2 } from '../game-protocol/vec2.js';
 import { WeaponType } from '../game-protocol/weapon-type.js';
 
@@ -66,8 +67,13 @@ falloffMultiplier():number {
   return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 1.0;
 }
 
+surfaceType():SurfaceType {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readInt8(this.bb_pos + offset) : SurfaceType.Concrete;
+}
+
 static startGameEvent(builder:flatbuffers.Builder) {
-  builder.startObject(7);
+  builder.startObject(8);
 }
 
 static addEventType(builder:flatbuffers.Builder, eventType:GameEventType) {
@@ -96,6 +102,10 @@ static addValue(builder:flatbuffers.Builder, value:number) {
 
 static addFalloffMultiplier(builder:flatbuffers.Builder, falloffMultiplier:number) {
   builder.addFieldFloat32(6, falloffMultiplier, 1.0);
+}
+
+static addSurfaceType(builder:flatbuffers.Builder, surfaceType:SurfaceType) {
+  builder.addFieldInt8(7, surfaceType, SurfaceType.Concrete);
 }
 
 static endGameEvent(builder:flatbuffers.Builder):flatbuffers.Offset {

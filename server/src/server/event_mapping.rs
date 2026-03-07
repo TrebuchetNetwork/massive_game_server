@@ -1,4 +1,4 @@
-use crate::core::types::{GameEvent, PlayerID, ServerWeaponType, Vec2};
+use crate::core::types::{GameEvent, PlayerID, ServerWeaponType, SurfaceType, Vec2};
 use crate::flatbuffers_generated::game_protocol as fb;
 
 pub(crate) fn event_position(event: &GameEvent) -> Vec2 {
@@ -29,6 +29,7 @@ pub(crate) fn event_instigator_id(event: &GameEvent) -> Option<PlayerID> {
         GameEvent::PlayerKilled { killer_id, .. } => Some(killer_id.clone()),
         GameEvent::WeaponFired { player_id, .. } => Some(player_id.clone()),
         GameEvent::MeleeHit { attacker_id, .. } => Some(attacker_id.clone()),
+        GameEvent::Footstep { player_id, .. } => Some(player_id.clone()),
         GameEvent::PowerupCollected { player_id, .. } => Some(player_id.clone()),
         GameEvent::FlagGrabbed { player_id, .. } => Some(player_id.clone()),
         GameEvent::FlagCaptured { capturer_id, .. } => Some(capturer_id.clone()),
@@ -91,6 +92,24 @@ pub(crate) fn event_falloff_multiplier(event: &GameEvent) -> f32 {
     }
 }
 
+pub(crate) fn map_surface_type_to_fb(surface_type: u8) -> fb::SurfaceType {
+    match surface_type {
+        x if x == SurfaceType::Metal.as_u8() => fb::SurfaceType::Metal,
+        x if x == SurfaceType::Wood.as_u8() => fb::SurfaceType::Wood,
+        x if x == SurfaceType::Glass.as_u8() => fb::SurfaceType::Glass,
+        _ => fb::SurfaceType::Concrete,
+    }
+}
+
+pub(crate) fn event_surface_type(event: &GameEvent) -> fb::SurfaceType {
+    match event {
+        GameEvent::WallImpact { surface_type, .. } | GameEvent::Footstep { surface_type, .. } => {
+            map_surface_type_to_fb(*surface_type)
+        }
+        _ => fb::SurfaceType::Concrete,
+    }
+}
+
 pub(crate) fn should_serialize_game_event(event: &GameEvent) -> bool {
     map_game_event_type_to_fb(event).is_some()
 }
@@ -114,10 +133,40 @@ pub(crate) fn map_game_event_type_to_fb(event: &GameEvent) -> Option<fb::GameEve
         GameEvent::AssistKill { .. } => Some(fb::GameEventType::AssistKill),
         GameEvent::ShieldBroken { .. } => Some(fb::GameEventType::ShieldBroken),
         GameEvent::PowerupExpiring { .. } => Some(fb::GameEventType::PowerupExpiring),
+        GameEvent::Footstep { .. } => Some(fb::GameEventType::Footstep),
         // These events currently do not have explicit FlatBuffer variants in game.fbs.
         // Skip serialization rather than misclassifying them as BulletImpact.
-        GameEvent::PlayerJoined { .. }
-        | GameEvent::PlayerLeft { .. }
-        | GameEvent::Footstep { .. } => None,
+        GameEvent::PlayerJoined { .. } | GameEvent::PlayerLeft { .. } => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::types::SurfaceType;
+    use std::sync::Arc;
+
+    #[test]
+    fn footstep_events_serialize_to_footstep_type() {
+        let event = GameEvent::Footstep {
+            player_id: Arc::from("p1"),
+            position: Vec2::new(10.0, 20.0),
+            surface_type: SurfaceType::Metal.as_u8(),
+        };
+        assert_eq!(
+            map_game_event_type_to_fb(&event),
+            Some(fb::GameEventType::Footstep)
+        );
+    }
+
+    #[test]
+    fn wall_impact_surface_type_maps_to_flatbuffer_enum() {
+        let event = GameEvent::WallImpact {
+            wall_id: 7,
+            position: Vec2::new(0.0, 0.0),
+            damage: 12,
+            surface_type: SurfaceType::Wood.as_u8(),
+        };
+        assert_eq!(event_surface_type(&event), fb::SurfaceType::Wood);
     }
 }

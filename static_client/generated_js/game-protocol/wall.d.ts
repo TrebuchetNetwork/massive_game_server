@@ -1,4 +1,5 @@
 import * as flatbuffers from 'flatbuffers';
+import { SurfaceType } from '../game-protocol/surface-type.js';
 export declare class Wall {
     bb: flatbuffers.ByteBuffer | null;
     bb_pos: number;
@@ -14,6 +15,7 @@ export declare class Wall {
     isDestructible(): boolean;
     currentHealth(): number;
     maxHealth(): number;
+    surfaceType(): SurfaceType;
     static startWall(builder: flatbuffers.Builder): void;
     static addId(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset): void;
     static addX(builder: flatbuffers.Builder, x: number): void;
@@ -23,7 +25,8 @@ export declare class Wall {
     static addIsDestructible(builder: flatbuffers.Builder, isDestructible: boolean): void;
     static addCurrentHealth(builder: flatbuffers.Builder, currentHealth: number): void;
     static addMaxHealth(builder: flatbuffers.Builder, maxHealth: number): void;
+    static addSurfaceType(builder: flatbuffers.Builder, surfaceType: SurfaceType): void;
     static endWall(builder: flatbuffers.Builder): flatbuffers.Offset;
-    static createWall(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset, x: number, y: number, width: number, height: number, isDestructible: boolean, currentHealth: number, maxHealth: number): flatbuffers.Offset;
+    static createWall(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset, x: number, y: number, width: number, height: number, isDestructible: boolean, currentHealth: number, maxHealth: number, surfaceType: SurfaceType): flatbuffers.Offset;
 }
 //# sourceMappingURL=wall.d.ts.map

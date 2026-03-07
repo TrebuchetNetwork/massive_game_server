@@ -33,6 +33,26 @@ fn max_acceleration_for_player(expected_speed: f32) -> f32 {
     MAX_ACCELERATION_PER_TICK.max(expected_speed * 2.4)
 }
 
+fn infer_surface_type_from_nearby_walls(x: f32, y: f32, nearby_walls: &[Wall]) -> SurfaceType {
+    let mut best_match: Option<(f32, SurfaceType)> = None;
+    for wall in nearby_walls {
+        let closest_x = x.clamp(wall.x, wall.x + wall.width);
+        let closest_y = y.clamp(wall.y, wall.y + wall.height);
+        let dist_sq = (x - closest_x).powi(2) + (y - closest_y).powi(2);
+        let candidate = (dist_sq, wall.inferred_surface_type());
+        if best_match
+            .as_ref()
+            .map(|(best_dist_sq, _)| dist_sq < *best_dist_sq)
+            .unwrap_or(true)
+        {
+            best_match = Some(candidate);
+        }
+    }
+    best_match
+        .map(|(_, surface_type)| surface_type)
+        .unwrap_or(SurfaceType::Concrete)
+}
+
 impl MassiveGameServer {
     pub(super) async fn process_player_physics_parallel(
         &self,
@@ -330,6 +350,7 @@ impl MassiveGameServer {
                             wall_id: wall.id,
                             position: impact_position,
                             damage: impact_damage,
+                            surface_type: wall.inferred_surface_type().as_u8(),
                         },
                         EventPriority::High,
                     );
@@ -416,8 +437,29 @@ impl MassiveGameServer {
         player_state.prev_velocity = (player_state.velocity_x, player_state.velocity_y);
 
         // Mark as changed if moved
-        if (old_x - player_state.x).abs() > 0.01 || (old_y - player_state.y).abs() > 0.01 {
+        let moved_distance = (player_state.x - old_x).hypot(player_state.y - old_y);
+        if moved_distance > 0.01 {
             player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+        }
+
+        let movement_speed =
+            player_state.velocity_x.hypot(player_state.velocity_y) * movement_multiplier;
+        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+        if moved_distance > 1.0
+            && movement_speed > 30.0
+            && frame.saturating_sub(player_state.last_footstep_frame) >= 12
+        {
+            let surface_type =
+                infer_surface_type_from_nearby_walls(player_state.x, player_state.y, &nearby_walls);
+            self.global_game_events.push(
+                GameEvent::Footstep {
+                    player_id: player_state.id.clone(),
+                    position: Vec2::new(player_state.x, player_state.y),
+                    surface_type: surface_type.as_u8(),
+                },
+                EventPriority::Low,
+            );
+            player_state.last_footstep_frame = frame;
         }
 
         let mut zone_damage = 0i32;

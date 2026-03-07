@@ -18,5 +18,6 @@ export enum GameEventType {
   Killstreak = 12,
   AssistKill = 13,
   ShieldBroken = 14,
-  PowerupExpiring = 15
+  PowerupExpiring = 15,
+  Footstep = 16
 }

@@ -23,6 +23,7 @@ export { PickupType } from './game-protocol/pickup-type.js';
 export { PlayerInput } from './game-protocol/player-input.js';
 export { PlayerState } from './game-protocol/player-state.js';
 export { ProjectileState } from './game-protocol/projectile-state.js';
+export { SurfaceType } from './game-protocol/surface-type.js';
 export { Team } from './game-protocol/team.js';
 export { TeamScoreEntry } from './game-protocol/team-score-entry.js';
 export { Vec2 } from './game-protocol/vec2.js';

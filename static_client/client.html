@@ -100,6 +100,7 @@
             <div class="death-recap__title">Elimination Recap</div>
             <div id="deathRecapMain" class="death-recap__line"></div>
             <div id="deathRecapDistance" class="death-recap__line"></div>
+            <canvas id="deathRecapMinimap" class="death-recap__canvas" width="100" height="100"></canvas>
             <ul id="deathRecapList" class="death-recap__list"></ul>
         </div>
         <div id="killcamPanel" class="killcam-panel">
@@ -635,6 +636,7 @@
         const deathRecapDiv = document.getElementById('deathRecap');
         const deathRecapMainDiv = document.getElementById('deathRecapMain');
         const deathRecapDistanceDiv = document.getElementById('deathRecapDistance');
+        const deathRecapMinimapCanvas = document.getElementById('deathRecapMinimap');
         const deathRecapListDiv = document.getElementById('deathRecapList');
         const killcamPanelDiv = document.getElementById('killcamPanel');
         const killcamMetaDiv = document.getElementById('killcamMeta');
@@ -1626,6 +1628,7 @@
         let aimingGraphics;
         let trajectoryGraphics;
         let sniperRangeText;
+        let ammoCounterText;
         let mouseWorldPos = { x: 0, y: 0 };
         let showAiming = true;
 
@@ -1992,7 +1995,7 @@
             COMBAT_DAMAGE_DECAY_PER_SEC, COMBAT_SPEED_LINES_ENABLED, OBJECTIVE_URGENCY_REFRESH_MS,
             TACTICAL_PING_MS, streakAnnouncerDiv, streakMedalDiv, objectiveUrgencyDiv, objectiveArrowLayerDiv,
             tipsToastDiv, gameModeIntroDiv, boundaryWarningDiv, deathRecapDiv, deathRecapMainDiv,
-            deathRecapDistanceDiv, deathRecapListDiv, combatBannerDiv, combatBannerTextSpan,
+            deathRecapDistanceDiv, deathRecapMinimapCanvas, deathRecapListDiv, combatBannerDiv, combatBannerTextSpan,
             combatOverlayDiv, damageFlashLayerDiv, speedLinesLayerDiv, hitMarkerDiv,
             combatRadialHudDiv, combatMomentumDiv, combatMomentumFillDiv, combatMomentumValueDiv,
             combatStreakChipSpan, combatComboChipSpan, abilityRadialDiv, reloadRadialDiv,
@@ -2001,7 +2004,7 @@
             applyScreenShake, createScreenFlash,
             COMBAT_RADIAL_LOW_UPDATE_MS, COMBAT_RADIAL_DENSE_UPDATE_MS, COMBAT_RADIAL_UPDATE_MS,
             COMBAT_RADIAL_LOW_PROGRESS_STEP_DEG, COMBAT_RADIAL_DENSE_PROGRESS_STEP_DEG,
-            COMBAT_RADIAL_PROGRESS_STEP_DEG, tacticalPings, hotZoneState, zones, worldBoundsState, escapeHtml,
+            COMBAT_RADIAL_PROGRESS_STEP_DEG, tacticalPings, hotZoneState, zones, walls, worldBoundsState, escapeHtml,
             getCommanderIdForTeam,
         }));
         const {
@@ -2525,11 +2528,14 @@
 
         // ── Instantiate AimingSystem ─────────────────────────────────────
         const aimingSystem = createAimingSystem(() => ({
-            localPlayerState, mouseWorldPos, sniperRangeText, aimingGraphics,
+            localPlayerState, mouseWorldPos, sniperRangeText, ammoCounterText, aimingGraphics,
             trajectoryGraphics, GP, weaponColors, weaponVelocities,
             ultraPerformanceMode, STABLE_MODE_FORCED, LOW_OVERHEAD_MODE,
             players, AIMING_LITE_PLAYER_THRESHOLD, smoothedFrameMs,
             TARGET_FRAME_MS_60FPS, inputState, frameNowMs,
+            getMaxAmmoForWeaponClient,
+            getAimAssistTarget: (baseRotation) => inputManager?.getAimAssistTarget?.(baseRotation) || null,
+            isTouchDevice,
         }));
         const { drawAimingSystem, drawLiteAimingSystem } = aimingSystem;
 
@@ -3062,6 +3068,26 @@
                 sniperRangeText.anchor.set(0.5);
                 sniperRangeText.visible = false;
                 worldContainer.addChild(sniperRangeText);
+
+                try {
+                    ammoCounterText = new PIXI.BitmapText('', {
+                        fontName: 'mgs_damage_bitmap_lite',
+                        fontSize: 16,
+                        align: 'left'
+                    });
+                } catch (_) {
+                    ammoCounterText = new PIXI.Text('', {
+                        fontSize: 12,
+                        fill: 0xCBD5E1,
+                        stroke: 0x000000,
+                        strokeThickness: 2
+                    });
+                }
+                if (ammoCounterText.anchor && typeof ammoCounterText.anchor.set === 'function') {
+                    ammoCounterText.anchor.set(0, 0.5);
+                }
+                ammoCounterText.visible = false;
+                worldContainer.addChild(ammoCounterText);
 
                 // Create virtual crosshair for mobile touch aiming
                 createVirtualCrosshair();
@@ -3900,6 +3926,9 @@
                 if (sniperRangeText) {
                     sniperRangeText.visible = false;
                 }
+                if (ammoCounterText) {
+                    ammoCounterText.visible = false;
+                }
             }
 
             // Update virtual crosshair position for mobile touch aiming
@@ -4118,6 +4147,7 @@
                 }
                 if (aimingGraphics) aimingGraphics.clear();
                 if (trajectoryGraphics) trajectoryGraphics.clear();
+                if (ammoCounterText) ammoCounterText.visible = false;
                 if (effectsManager) effectsManager.clearAllEffects();
             }
         }
@@ -5058,6 +5088,7 @@
                 aimingGraphics = null;
                 trajectoryGraphics = null;
                 sniperRangeText = null;
+                ammoCounterText = null;
                 teardownInputHandlers();
             }
 

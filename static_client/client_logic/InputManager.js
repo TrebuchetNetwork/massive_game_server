@@ -232,7 +232,7 @@ export function createInputManager({
         return bestAngle;
     }
 
-    function getAimAssistRotation(baseRotation) {
+    function resolveAimAssistTarget(baseRotation) {
         const localPlayerState = getLocalPlayerState();
         const players = getPlayers();
         const myPlayerId = getMyPlayerId();
@@ -240,7 +240,7 @@ export function createInputManager({
         const mobileBoost = (isTouchDevice && aimAssistEnabled) ? 1.5 : 1.0;
         const effectiveStrength = dynamicsTuning.aimAssistStrength * mobileBoost;
         if (effectiveStrength <= 0 || !localPlayerState || !localPlayerState.alive) {
-            return baseRotation;
+            return null;
         }
 
         const fromX = localPlayerState.render_x !== undefined ? localPlayerState.render_x : localPlayerState.x;
@@ -248,7 +248,7 @@ export function createInputManager({
         const maxDistance = isTouchDevice ? Math.max(dynamicsTuning.aimAssistRange, AIM_ASSIST_MAX_DISTANCE) : dynamicsTuning.aimAssistRange;
         const maxDistanceSq = maxDistance * maxDistance;
         const coneLimit = isTouchDevice ? Math.max(dynamicsTuning.aimAssistConeRad, AIM_ASSIST_MAGNETISM) : dynamicsTuning.aimAssistConeRad;
-        let bestDiff = null;
+        let bestTarget = null;
         let bestScore = Number.POSITIVE_INFINITY;
 
         players.forEach((player, playerId) => {
@@ -267,15 +267,39 @@ export function createInputManager({
             const absDiff = Math.abs(diff);
             if (absDiff > coneLimit) return;
 
-            const score = absDiff + Math.sqrt(distanceSq) / maxDistance;
+            const distance = Math.sqrt(distanceSq);
+            const score = absDiff + distance / maxDistance;
             if (score < bestScore) {
                 bestScore = score;
-                bestDiff = diff;
+                const angleFactor = 1 - Math.min(1, absDiff / Math.max(coneLimit, 0.0001));
+                const distanceFactor = 1 - Math.min(1, distance / Math.max(maxDistance, 1));
+                bestTarget = {
+                    targetId: playerId,
+                    diff,
+                    distance,
+                    strength: clamp(angleFactor * 0.7 + distanceFactor * 0.3, 0, 1),
+                    rotationStrength: effectiveStrength,
+                };
             }
         });
 
-        if (bestDiff === null) return baseRotation;
-        return normalizeAngle(baseRotation + bestDiff * effectiveStrength);
+        return bestTarget;
+    }
+
+    function getAimAssistRotation(baseRotation) {
+        const target = resolveAimAssistTarget(baseRotation);
+        if (!target) return baseRotation;
+        return normalizeAngle(baseRotation + target.diff * target.rotationStrength);
+    }
+
+    function getAimAssistTarget(baseRotation = Number(getLocalPlayerState()?.rotation) || 0) {
+        if (!Number.isFinite(baseRotation)) return null;
+        const target = resolveAimAssistTarget(baseRotation);
+        if (!target) return null;
+        return {
+            targetId: target.targetId,
+            strength: target.strength,
+        };
     }
 
     // ── Mobile helper functions ───────────────────────────────────────
@@ -1291,6 +1315,7 @@ export function createInputManager({
         getVirtualCrosshairSprite,
         applyAimAssist,
         getAimAssistRotation,
+        getAimAssistTarget,
         closePingWheel,
         openPingWheel,
         sendTacticalPing,

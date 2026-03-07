@@ -1,5 +1,6 @@
 import * as flatbuffers from 'flatbuffers';
 import { GameEventType } from '../game-protocol/game-event-type.js';
+import { SurfaceType } from '../game-protocol/surface-type.js';
 import { Vec2 } from '../game-protocol/vec2.js';
 import { WeaponType } from '../game-protocol/weapon-type.js';
 export declare class GameEvent {
@@ -17,6 +18,7 @@ export declare class GameEvent {
     weaponType(): WeaponType;
     value(): number;
     falloffMultiplier(): number;
+    surfaceType(): SurfaceType;
     static startGameEvent(builder: flatbuffers.Builder): void;
     static addEventType(builder: flatbuffers.Builder, eventType: GameEventType): void;
     static addPosition(builder: flatbuffers.Builder, positionOffset: flatbuffers.Offset): void;
@@ -25,6 +27,7 @@ export declare class GameEvent {
     static addWeaponType(builder: flatbuffers.Builder, weaponType: WeaponType): void;
     static addValue(builder: flatbuffers.Builder, value: number): void;
     static addFalloffMultiplier(builder: flatbuffers.Builder, falloffMultiplier: number): void;
+    static addSurfaceType(builder: flatbuffers.Builder, surfaceType: SurfaceType): void;
     static endGameEvent(builder: flatbuffers.Builder): flatbuffers.Offset;
 }
 //# sourceMappingURL=game-event.d.ts.map

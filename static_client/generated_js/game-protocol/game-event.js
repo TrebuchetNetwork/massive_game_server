@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 import * as flatbuffers from 'flatbuffers';
 import { GameEventType } from '../game-protocol/game-event-type.js';
+import { SurfaceType } from '../game-protocol/surface-type.js';
 import { Vec2 } from '../game-protocol/vec2.js';
 import { WeaponType } from '../game-protocol/weapon-type.js';
 export class GameEvent {
@@ -49,8 +50,12 @@ export class GameEvent {
         const offset = this.bb.__offset(this.bb_pos, 16);
         return offset ? this.bb.readFloat32(this.bb_pos + offset) : 1.0;
     }
+    surfaceType() {
+        const offset = this.bb.__offset(this.bb_pos, 18);
+        return offset ? this.bb.readInt8(this.bb_pos + offset) : SurfaceType.Concrete;
+    }
     static startGameEvent(builder) {
-        builder.startObject(7);
+        builder.startObject(8);
     }
     static addEventType(builder, eventType) {
         builder.addFieldInt8(0, eventType, GameEventType.BulletImpact);
@@ -72,6 +77,9 @@ export class GameEvent {
     }
     static addFalloffMultiplier(builder, falloffMultiplier) {
         builder.addFieldFloat32(6, falloffMultiplier, 1.0);
+    }
+    static addSurfaceType(builder, surfaceType) {
+        builder.addFieldInt8(7, surfaceType, SurfaceType.Concrete);
     }
     static endGameEvent(builder) {
         const offset = builder.endObject();

@@ -18,5 +18,6 @@ export var GameEventType;
     GameEventType[GameEventType["AssistKill"] = 13] = "AssistKill";
     GameEventType[GameEventType["ShieldBroken"] = 14] = "ShieldBroken";
     GameEventType[GameEventType["PowerupExpiring"] = 15] = "PowerupExpiring";
+    GameEventType[GameEventType["Footstep"] = 16] = "Footstep";
 })(GameEventType || (GameEventType = {}));
 //# sourceMappingURL=game-event-type.js.map

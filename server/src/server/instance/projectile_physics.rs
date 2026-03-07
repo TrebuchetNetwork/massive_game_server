@@ -213,6 +213,7 @@ impl MassiveGameServer {
                     let mut earliest_wall_hit_t: Option<f32> = None;
                     let mut earliest_wall_id: EntityId = 0;
                     let mut earliest_wall_destructible = false;
+                    let mut earliest_wall_surface_type = SurfaceType::Concrete.as_u8();
                     let candidate_walls = self
                         .wall_spatial_index
                         .query_line_segment(old_x, old_y, proj.x, proj.y);
@@ -238,6 +239,7 @@ impl MassiveGameServer {
                             earliest_wall_hit_t = Some(hit_t);
                             earliest_wall_id = wall.id;
                             earliest_wall_destructible = wall.is_destructible;
+                            earliest_wall_surface_type = wall.inferred_surface_type().as_u8();
                         }
                     }
 
@@ -255,6 +257,7 @@ impl MassiveGameServer {
                             } else {
                                 0
                             },
+                            surface_type: earliest_wall_surface_type,
                         });
 
                         if earliest_wall_destructible {

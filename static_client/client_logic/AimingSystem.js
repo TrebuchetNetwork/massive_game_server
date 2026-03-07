@@ -14,11 +14,14 @@ export function createAimingSystem(getCtx) {
     function onConnectionReset() {
         fireBloom = 0;
         lastBloomUpdateMs = 0;
-        const { aimingGraphics, trajectoryGraphics, sniperRangeText } = getCtx();
+        const { aimingGraphics, trajectoryGraphics, sniperRangeText, ammoCounterText } = getCtx();
         aimingGraphics?.clear?.();
         trajectoryGraphics?.clear?.();
         if (sniperRangeText) {
             sniperRangeText.visible = false;
+        }
+        if (ammoCounterText) {
+            ammoCounterText.visible = false;
         }
     }
 
@@ -29,10 +32,12 @@ export function createAimingSystem(getCtx) {
     function drawLiteAimingSystem(playerX, playerY, aimX, aimY, currentWeapon, crosshairColor, distance, bloomScale = 0) {
         const ctx = getCtx();
         const { aimingGraphics, trajectoryGraphics, sniperRangeText, GP } = ctx;
+        const aimAngle = Math.atan2(aimY - playerY, aimX - playerX);
 
         const crosshairRadius = (currentWeapon === GP.WeaponType.Sniper ? 11 : 8) + bloomScale * 2.5;
         aimingGraphics.lineStyle(2, crosshairColor, 0.9);
         aimingGraphics.drawCircle(aimX, aimY, crosshairRadius);
+        drawAimAssistIndicator(ctx, aimAngle, aimX, aimY, crosshairRadius);
 
         aimingGraphics.lineStyle(1.5, crosshairColor, 0.9);
         aimingGraphics.moveTo(aimX - crosshairRadius, aimY);
@@ -54,13 +59,45 @@ export function createAimingSystem(getCtx) {
         } else if (sniperRangeText) {
             sniperRangeText.visible = false;
         }
+        updateAmmoCounterText(ctx, currentWeapon, crosshairRadius, aimX, aimY);
         aimingGraphics.position.set(0, 0);
+    }
+
+    function updateAmmoCounterText(ctx, currentWeapon, crosshairRadius, aimX, aimY) {
+        const { ammoCounterText, localPlayerState, GP, getMaxAmmoForWeaponClient } = ctx;
+        if (!ammoCounterText || !localPlayerState || currentWeapon === GP.WeaponType.Melee) {
+            if (ammoCounterText) ammoCounterText.visible = false;
+            return;
+        }
+
+        const ammo = Math.max(0, Math.round(Number(localPlayerState.ammo) || 0));
+        const maxAmmo = Math.max(1, Math.round(Number(getMaxAmmoForWeaponClient?.(currentWeapon)) || ammo || 1));
+        ammoCounterText.text = `${ammo}/${maxAmmo}`;
+        ammoCounterText.tint = ammo <= Math.ceil(maxAmmo * 0.25) ? 0xF87171 : 0xCBD5E1;
+        ammoCounterText.position.set(aimX + crosshairRadius + 8, aimY + crosshairRadius + 4);
+        ammoCounterText.visible = true;
+    }
+
+    function drawAimAssistIndicator(ctx, baseRotation, aimX, aimY, crosshairRadius) {
+        const { aimingGraphics, getAimAssistTarget, isTouchDevice } = ctx;
+        const assistTarget = typeof getAimAssistTarget === 'function'
+            ? getAimAssistTarget(baseRotation)
+            : null;
+        if (!assistTarget || !Number.isFinite(assistTarget.strength) || assistTarget.strength <= 0) {
+            return;
+        }
+
+        const pulse = 0.3 + Math.sin(Date.now() * 0.01) * 0.1;
+        const thickness = isTouchDevice ? 3.4 : 2.4;
+        const radius = crosshairRadius + 6 + assistTarget.strength * 6;
+        aimingGraphics.lineStyle(thickness, 0x00FF88, pulse);
+        aimingGraphics.drawCircle(aimX, aimY, radius);
     }
 
     function drawAimingSystem() {
         const ctx = getCtx();
         const {
-            localPlayerState, mouseWorldPos, sniperRangeText, aimingGraphics,
+            localPlayerState, mouseWorldPos, sniperRangeText, ammoCounterText, aimingGraphics,
             trajectoryGraphics, GP, weaponColors, weaponVelocities,
             ultraPerformanceMode, STABLE_MODE_FORCED, LOW_OVERHEAD_MODE,
             players, AIMING_LITE_PLAYER_THRESHOLD, smoothedFrameMs,
@@ -70,6 +107,7 @@ export function createAimingSystem(getCtx) {
         if (!localPlayerState || !localPlayerState.alive || !mouseWorldPos) {
             fireBloom = 0;
             if (sniperRangeText) sniperRangeText.visible = false;
+            if (ammoCounterText) ammoCounterText.visible = false;
             return;
         }
 
@@ -91,6 +129,7 @@ export function createAimingSystem(getCtx) {
         // Skip for melee weapons
         if (currentWeapon === GP.WeaponType.Melee) {
             if (sniperRangeText) sniperRangeText.visible = false;
+            if (ammoCounterText) ammoCounterText.visible = false;
             aimingGraphics.position.set(0, 0);
             return;
         }
@@ -137,6 +176,7 @@ export function createAimingSystem(getCtx) {
         // Outer circle
         aimingGraphics.lineStyle(crosshairThickness, crosshairColor, 0.8);
         aimingGraphics.drawCircle(mouseWorldPos.x, mouseWorldPos.y, crosshairSize);
+        drawAimAssistIndicator(ctx, aimAngle, mouseWorldPos.x, mouseWorldPos.y, crosshairSize);
 
         // Crosshair lines with gap
         aimingGraphics.lineStyle(crosshairThickness, crosshairColor, 1);
@@ -295,6 +335,7 @@ export function createAimingSystem(getCtx) {
         } else if (sniperRangeText) {
             sniperRangeText.visible = false;
         }
+        updateAmmoCounterText(ctx, currentWeapon, crosshairSize, mouseWorldPos.x, mouseWorldPos.y);
 
         // Draw aim line from player to crosshair
         trajectoryGraphics.lineStyle(1, crosshairColor, 0.2);

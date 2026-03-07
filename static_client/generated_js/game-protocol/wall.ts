@@ -4,6 +4,9 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { SurfaceType } from '../game-protocol/surface-type.js';
+
+
 export class Wall {
   bb: flatbuffers.ByteBuffer|null = null;
   bb_pos = 0;
@@ -64,8 +67,13 @@ maxHealth():number {
   return offset ? this.bb!.readInt32(this.bb_pos + offset) : 100;
 }
 
+surfaceType():SurfaceType {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readInt8(this.bb_pos + offset) : SurfaceType.Concrete;
+}
+
 static startWall(builder:flatbuffers.Builder) {
-  builder.startObject(8);
+  builder.startObject(9);
 }
 
 static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
@@ -100,12 +108,16 @@ static addMaxHealth(builder:flatbuffers.Builder, maxHealth:number) {
   builder.addFieldInt32(7, maxHealth, 100);
 }
 
+static addSurfaceType(builder:flatbuffers.Builder, surfaceType:SurfaceType) {
+  builder.addFieldInt8(8, surfaceType, SurfaceType.Concrete);
+}
+
 static endWall(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createWall(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, x:number, y:number, width:number, height:number, isDestructible:boolean, currentHealth:number, maxHealth:number):flatbuffers.Offset {
+static createWall(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, x:number, y:number, width:number, height:number, isDestructible:boolean, currentHealth:number, maxHealth:number, surfaceType:SurfaceType):flatbuffers.Offset {
   Wall.startWall(builder);
   Wall.addId(builder, idOffset);
   Wall.addX(builder, x);
@@ -115,6 +127,7 @@ static createWall(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, x:nu
   Wall.addIsDestructible(builder, isDestructible);
   Wall.addCurrentHealth(builder, currentHealth);
   Wall.addMaxHealth(builder, maxHealth);
+  Wall.addSurfaceType(builder, surfaceType);
   return Wall.endWall(builder);
 }
 }

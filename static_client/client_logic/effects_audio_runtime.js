@@ -258,37 +258,59 @@ const renderer = this.app && this.app.renderer && typeof this.app.renderer.gener
 if (!renderer) {
     const fallbackTexture = PIXI.Texture?.WHITE || PIXI.Texture?.EMPTY;
     textures.spark = fallbackTexture;
+    textures.sparkRed = fallbackTexture;
+    textures.sparkOrange = fallbackTexture;
+    textures.sparkBlue = fallbackTexture;
+    textures.sparkWhite = fallbackTexture;
     textures.smoke = fallbackTexture;
+    textures.smokeLight = fallbackTexture;
+    textures.smokeDark = fallbackTexture;
     textures.debris = fallbackTexture;
+    textures.debrisBrown = fallbackTexture;
+    textures.debrisGray = fallbackTexture;
     return textures;
 }
 
-// Spark particle
-const sparkGraphics = new PIXI.Graphics();
-sparkGraphics.beginFill(0xFFFFFF);
-sparkGraphics.drawCircle(0, 0, 2);
-sparkGraphics.endFill();
-textures.spark = renderer.generateTexture(sparkGraphics);
+const buildSparkTexture = (color) => {
+    const graphics = new PIXI.Graphics();
+    graphics.beginFill(color, 1);
+    graphics.drawCircle(0, 0, 2);
+    graphics.endFill();
+    const texture = renderer.generateTexture(graphics);
+    graphics.destroy();
+    return texture;
+};
+const buildSmokeTexture = (color, alpha) => {
+    const graphics = new PIXI.Graphics();
+    graphics.beginFill(color, alpha);
+    graphics.drawCircle(0, 0, 8);
+    graphics.endFill();
+    graphics.filters = [getSharedBlurFilter(3)];
+    const texture = renderer.generateTexture(graphics);
+    graphics.destroy();
+    return texture;
+};
+const buildDebrisTexture = (color) => {
+    const graphics = new PIXI.Graphics();
+    graphics.beginFill(color, 1);
+    graphics.drawRect(-3, -3, 6, 6);
+    graphics.endFill();
+    const texture = renderer.generateTexture(graphics);
+    graphics.destroy();
+    return texture;
+};
 
-// Smoke particle
-const smokeGraphics = new PIXI.Graphics();
-smokeGraphics.beginFill(0x888888, 0.5);
-smokeGraphics.drawCircle(0, 0, 8);
-smokeGraphics.endFill();
-smokeGraphics.filters = [getSharedBlurFilter(3)];
-textures.smoke = renderer.generateTexture(smokeGraphics);
-
-// Debris particle
-const debrisGraphics = new PIXI.Graphics();
-debrisGraphics.beginFill(0x444444);
-debrisGraphics.drawRect(-3, -3, 6, 6);
-debrisGraphics.endFill();
-textures.debris = renderer.generateTexture(debrisGraphics);
-
-// Clean up
-sparkGraphics.destroy();
-smokeGraphics.destroy();
-debrisGraphics.destroy();
+textures.spark = buildSparkTexture(0xFFFFFF);
+textures.sparkRed = buildSparkTexture(0xF87171);
+textures.sparkOrange = buildSparkTexture(0xFB923C);
+textures.sparkBlue = buildSparkTexture(0x60A5FA);
+textures.sparkWhite = buildSparkTexture(0xF8FAFC);
+textures.smoke = buildSmokeTexture(0x888888, 0.5);
+textures.smokeLight = buildSmokeTexture(0xCBD5E1, 0.38);
+textures.smokeDark = buildSmokeTexture(0x475569, 0.52);
+textures.debris = buildDebrisTexture(0x444444);
+textures.debrisBrown = buildDebrisTexture(0x8B5E3C);
+textures.debrisGray = buildDebrisTexture(0x6B7280);
 
 return textures;
     }
@@ -795,8 +817,45 @@ while (overflow > 0 && survivors.length > 0) {
 this.activeEffects = survivors;
     }
 
+    getSurfaceImpactSoundName(surfaceType) {
+const surface = Number(surfaceType) || 0;
+const surfaceEnum = GP?.SurfaceType || {};
+switch (surface) {
+    case (surfaceEnum.Metal ?? 1):
+        return 'impactMetal';
+    case (surfaceEnum.Wood ?? 2):
+        return 'impactWood';
+    case (surfaceEnum.Glass ?? 3):
+        return 'impactGlass';
+    default:
+        return 'impactConcrete';
+}
+    }
+
+    getFootstepSoundName(surfaceType) {
+const surface = Number(surfaceType) || 0;
+const surfaceEnum = GP?.SurfaceType || {};
+switch (surface) {
+    case (surfaceEnum.Metal ?? 1):
+        return 'footstepMetal';
+    case (surfaceEnum.Wood ?? 2):
+        return 'footstepWood';
+    case (surfaceEnum.Glass ?? 3):
+        return 'footstepGlass';
+    default:
+        return 'footstepConcrete';
+}
+    }
+
     processGameEvent(event) {
-if (!this.particlesEnabled && (event.event_type !== GP.GameEventType.PlayerDamageEffect)) return;
+const GAME_EVENT_FOOTSTEP = GP?.GameEventType?.Footstep ?? 16;
+if (
+    !this.particlesEnabled &&
+    event.event_type !== GP.GameEventType.PlayerDamageEffect &&
+    event.event_type !== GP.GameEventType.WallImpact &&
+    event.event_type !== GP.GameEventType.WeaponFire &&
+    event.event_type !== GAME_EVENT_FOOTSTEP
+) return;
 const registerCombatEventFeedback = globalThis.registerCombatEventFeedback;
 if (typeof registerCombatEventFeedback === 'function') {
     registerCombatEventFeedback(event);
@@ -827,8 +886,17 @@ switch (event.event_type) {
         if (!this.shouldEmitEffect('impact')) break;
         this.createEnhancedBulletImpact(pos, event.weapon_type);
         if (this.audioManager) {
-            this.audioManager.playSound('bulletImpact', pos, 0.5);
+            this.audioManager.playSound(this.getSurfaceImpactSoundName(event.surface_type), pos, 0.5);
             this.audioManager.registerCombatEventIntensity(0.1);
+        }
+        break;
+    case GAME_EVENT_FOOTSTEP:
+        if (this.audioManager) {
+            const instigatorId = event.instigator_id != null ? String(event.instigator_id) : '';
+            const localId = myPlayerId != null ? String(myPlayerId) : '';
+            if (!instigatorId || !localId || instigatorId !== localId) {
+                this.audioManager.playSound(this.getFootstepSoundName(event.surface_type), pos, 0.24);
+            }
         }
         break;
     case GP.GameEventType.Explosion:
@@ -1008,10 +1076,9 @@ this.animateEffect(ring, {
 let shardCount = this.scaleEffectCount(10, 4);
 if (loadTier >= 2) shardCount = Math.max(4, Math.floor(shardCount * 0.6));
 for (let i = 0; i < shardCount; i += 1) {
-    const shard = new PIXI.Sprite(this.particleTextures.spark);
+    const shard = new PIXI.Sprite(i % 2 === 0 ? this.particleTextures.sparkWhite : this.particleTextures.sparkBlue);
     shard.anchor.set(0.5);
     shard.position.set(position.x, position.y);
-    shard.tint = i % 2 === 0 ? 0xE0F2FE : 0x7DD3FC;
     shard.scale.set(0.4 + Math.random() * 0.4);
     const angle = Math.random() * Math.PI * 2;
     const speed = 2.5 + Math.random() * 4.2;
@@ -1694,7 +1761,12 @@ if (loadTier === 1) {
     particleCount = Math.max(2, Math.floor(particleCount * 0.35));
 }
 for (let i = 0; i < particleCount; i++) {
-    const particle = new PIXI.Sprite(this.particleTextures.spark);
+    const particleTexturePool = [
+        this.particleTextures.sparkWhite,
+        this.particleTextures.sparkOrange,
+        this.particleTextures.sparkRed,
+    ];
+    const particle = new PIXI.Sprite(particleTexturePool[Math.floor(Math.random() * particleTexturePool.length)] || this.particleTextures.spark);
     particle.anchor.set(0.5);
     particle.position.set(0, 0);
     
@@ -1706,7 +1778,6 @@ for (let i = 0; i < particleCount; i++) {
     };
     particle.angularVelocity = (Math.random() - 0.5) * 0.3;
     
-    particle.tint = [0xFFFF00, 0xFF6600, 0xFF0000][Math.floor(Math.random() * 3)];
     particle.scale.set(0.5 + Math.random());
     
     explosionContainer.addChild(particle);
@@ -1764,10 +1835,9 @@ this.effectsContainer.addChild(dustCloud);
 // Debris pieces
 const debrisCount = this.scaleEffectCount(15, 5);
 for (let i = 0; i < debrisCount; i++) {
-    const debris = new PIXI.Sprite(this.particleTextures.debris);
+    const debris = new PIXI.Sprite(Math.random() > 0.45 ? this.particleTextures.debrisGray : this.particleTextures.debrisBrown);
     debris.anchor.set(0.5);
     debris.position.set(position.x, position.y);
-    debris.tint = [0x374151, 0x4B5563, 0x6B7280][Math.floor(Math.random() * 3)];
     
     const angle = Math.random() * Math.PI * 2;
     const speed = Math.random() * 6 + 2;
@@ -1795,7 +1865,7 @@ for (let i = 0; i < debrisCount; i++) {
 // Dust particles
 const dustCount = this.scaleEffectCount(10, 3);
 for (let i = 0; i < dustCount; i++) {
-    const dust = new PIXI.Sprite(this.particleTextures.smoke);
+    const dust = new PIXI.Sprite(Math.random() > 0.5 ? this.particleTextures.smokeDark : this.particleTextures.smokeLight);
     dust.anchor.set(0.5);
     dust.position.set(
         position.x + (Math.random() - 0.5) * 30,
@@ -3265,6 +3335,14 @@ this.sounds = {
     sniperFire: { freq: [1000, 300], duration: 0.2, type: 'sine', vol: 0.6 },
     meleeSwing: { freq: [300, 500], duration: 0.1, type: 'sine', vol: 0.2 },
     bulletImpact: { freq: [200, 100], duration: 0.08, type: 'noise', vol: 0.25 },
+    impactConcrete: { freq: [220, 120], duration: 0.08, type: 'noise', vol: 0.24 },
+    impactMetal: { freq: [1200, 760], duration: 0.08, type: 'triangle', vol: 0.22 },
+    impactWood: { freq: [320, 180], duration: 0.09, type: 'noise', vol: 0.2 },
+    impactGlass: { freq: [2000, 1400], duration: 0.07, type: 'sine', vol: 0.18 },
+    footstepConcrete: { freq: [180, 140], duration: 0.04, type: 'noise', vol: 0.08 },
+    footstepMetal: { freq: [540, 380], duration: 0.04, type: 'triangle', vol: 0.08 },
+    footstepWood: { freq: [240, 180], duration: 0.04, type: 'noise', vol: 0.08 },
+    footstepGlass: { freq: [900, 620], duration: 0.035, type: 'sine', vol: 0.06 },
     explosion: { freq: [300, 50], duration: 0.5, type: 'noise', vol: 0.7 },
     powerupCollect: { freq: [600, 1200], duration: 0.2, type: 'sine', vol: 0.4 },
     playerHit: { freq: [250, 150], duration: 0.1, type: 'sawtooth', vol: 0.3 },
@@ -3357,6 +3435,14 @@ this.soundLimits = Object.freeze({
     sniperFire: { minIntervalMs: 72, windowMs: 1000, maxPerWindow: 12, maxConcurrent: 2 },
     meleeSwing: { minIntervalMs: 48, windowMs: 1000, maxPerWindow: 14, maxConcurrent: 2 },
     bulletImpact: { minIntervalMs: 48, windowMs: 1000, maxPerWindow: 18, maxConcurrent: 3 },
+    impactConcrete: { minIntervalMs: 48, windowMs: 1000, maxPerWindow: 18, maxConcurrent: 3 },
+    impactMetal: { minIntervalMs: 56, windowMs: 1000, maxPerWindow: 16, maxConcurrent: 3 },
+    impactWood: { minIntervalMs: 52, windowMs: 1000, maxPerWindow: 16, maxConcurrent: 3 },
+    impactGlass: { minIntervalMs: 64, windowMs: 1000, maxPerWindow: 12, maxConcurrent: 2 },
+    footstepConcrete: { minIntervalMs: 85, windowMs: 1000, maxPerWindow: 12, maxConcurrent: 2 },
+    footstepMetal: { minIntervalMs: 85, windowMs: 1000, maxPerWindow: 12, maxConcurrent: 2 },
+    footstepWood: { minIntervalMs: 85, windowMs: 1000, maxPerWindow: 12, maxConcurrent: 2 },
+    footstepGlass: { minIntervalMs: 95, windowMs: 1000, maxPerWindow: 10, maxConcurrent: 2 },
     playerHit: { minIntervalMs: 52, windowMs: 1000, maxPerWindow: 16, maxConcurrent: 3 },
     explosion: { minIntervalMs: 120, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
     hitMarker: { minIntervalMs: 55, windowMs: 1000, maxPerWindow: 14, maxConcurrent: 2 },
@@ -3385,6 +3471,14 @@ this.mobileSoundLimits = Object.freeze({
     rifleFire: { minIntervalMs: 22, windowMs: 1000, maxPerWindow: 28, maxConcurrent: 3 },
     shotgunFire: { minIntervalMs: 40, windowMs: 1000, maxPerWindow: 14, maxConcurrent: 2 },
     bulletImpact: { minIntervalMs: 80, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
+    impactConcrete: { minIntervalMs: 110, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
+    impactMetal: { minIntervalMs: 110, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
+    impactWood: { minIntervalMs: 110, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
+    impactGlass: { minIntervalMs: 140, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
+    footstepConcrete: { minIntervalMs: 150, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
+    footstepMetal: { minIntervalMs: 150, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
+    footstepWood: { minIntervalMs: 150, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
+    footstepGlass: { minIntervalMs: 180, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
     playerHit: { minIntervalMs: 88, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
     explosion: { minIntervalMs: 180, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
     bulletWhiz: { minIntervalMs: 180, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },

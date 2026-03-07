@@ -130,6 +130,7 @@ export function createProtocolHandler({
         target.is_destructible = wall.isDestructible();
         target.current_health = wall.currentHealth();
         target.max_health = wall.maxHealth();
+        target.surface_type = typeof wall.surfaceType === 'function' ? wall.surfaceType() : 0;
         return target;
     }
 
@@ -413,7 +414,8 @@ export function createProtocolHandler({
                                 width: wall.width(), height: wall.height(),
                                 is_destructible: wall.isDestructible(),
                                 current_health: wall.currentHealth(),
-                                max_health: wall.maxHealth()
+                                max_health: wall.maxHealth(),
+                                surface_type: typeof wall.surfaceType === 'function' ? wall.surfaceType() : 0
                             };
                         }
                         if (writeIdx > 0) { rows.length = writeIdx; initialStateData.walls = rows; }
@@ -735,6 +737,9 @@ export function createProtocolHandler({
                                 position: position ? { x: position.x(), y: position.y() } : { x: 0, y: 0 },
                                 instigator_id: gameEvent.instigatorId(), target_id: gameEvent.targetId(),
                                 weapon_type: gameEvent.weaponType(), value: gameEvent.value(),
+                                surface_type: typeof gameEvent.surfaceType === 'function'
+                                    ? gameEvent.surfaceType()
+                                    : 0,
                                 falloff_multiplier: typeof gameEvent.falloffMultiplier === 'function'
                                     ? gameEvent.falloffMultiplier()
                                     : 1.0,
@@ -759,7 +764,8 @@ export function createProtocolHandler({
                                     id: wall.id(), x: wall.x(), y: wall.y(),
                                     width: wall.width(), height: wall.height(),
                                     is_destructible: wall.isDestructible(),
-                                    current_health: wall.currentHealth(), max_health: wall.maxHealth()
+                                    current_health: wall.currentHealth(), max_health: wall.maxHealth(),
+                                    surface_type: typeof wall.surfaceType === 'function' ? wall.surfaceType() : 0
                                 };
                             }
                             if (writeIdx > 0) { rows.length = writeIdx; deltaStateData.updated_walls = rows; }
@@ -782,7 +788,8 @@ export function createProtocolHandler({
                                     id: wall.id(), x: wall.x(), y: wall.y(),
                                     width: wall.width(), height: wall.height(),
                                     is_destructible: wall.isDestructible(),
-                                    current_health: wall.currentHealth(), max_health: wall.maxHealth()
+                                    current_health: wall.currentHealth(), max_health: wall.maxHealth(),
+                                    surface_type: typeof wall.surfaceType === 'function' ? wall.surfaceType() : 0
                                 };
                             }
                             if (writeIdx > 0) { rows.length = writeIdx; deltaStateData.walls = rows; }
