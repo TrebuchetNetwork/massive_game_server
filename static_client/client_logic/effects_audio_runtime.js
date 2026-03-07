@@ -40,6 +40,8 @@ export function createEffectsAudioRuntime({
   PLAYER_RADIUS = 15,
   getProjectiles = () => new Map(),
   getPlayers = () => new Map(),
+  getWalls = () => new Map(),
+  getZones = () => new Map(),
   getLocalPlayerState = () => null,
   getMyPlayerId = () => null,
   getGameSettings = () => ({}),
@@ -62,6 +64,8 @@ export function createEffectsAudioRuntime({
 
   let projectiles = getProjectiles() || new Map();
   let players = getPlayers() || new Map();
+  let walls = getWalls() || new Map();
+  let zones = getZones() || new Map();
   let localPlayerState = getLocalPlayerState() || null;
   let myPlayerId = getMyPlayerId() || null;
   let gameSettings = getGameSettings() || {};
@@ -82,6 +86,8 @@ export function createEffectsAudioRuntime({
   const refreshRuntimeRefs = () => {
     projectiles = safeRefresh(getProjectiles, projectiles) || new Map();
     players = safeRefresh(getPlayers, players) || new Map();
+    walls = safeRefresh(getWalls, walls) || new Map();
+    zones = safeRefresh(getZones, zones) || new Map();
     localPlayerState = safeRefresh(getLocalPlayerState, localPlayerState) || null;
     myPlayerId = safeRefresh(getMyPlayerId, myPlayerId) || null;
     gameSettings = safeRefresh(getGameSettings, gameSettings) || {};
@@ -89,6 +95,145 @@ export function createEffectsAudioRuntime({
     gameScene = safeRefresh(getGameScene, gameScene) || null;
     ultraPerformanceMode = !!safeRefresh(getUltraPerformanceMode, ultraPerformanceMode);
     smoothedFrameMs = Number(safeRefresh(getSmoothedFrameMs, smoothedFrameMs)) || 16;
+  };
+
+  const getEntityWorldPosition = (entity) => {
+    if (!entity) return null;
+    const x = Number.isFinite(Number(entity.render_x))
+      ? Number(entity.render_x)
+      : Number(entity.x);
+    const y = Number.isFinite(Number(entity.render_y))
+      ? Number(entity.render_y)
+      : Number(entity.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x, y };
+  };
+
+  const pointInRect = (x, y, rect) => {
+    if (!rect) return false;
+    const rectX = Number(rect.x);
+    const rectY = Number(rect.y);
+    const rectW = Number(rect.width);
+    const rectH = Number(rect.height);
+    if (!Number.isFinite(rectX) || !Number.isFinite(rectY) || !Number.isFinite(rectW) || !Number.isFinite(rectH)) {
+      return false;
+    }
+    return x >= rectX && x <= (rectX + rectW) && y >= rectY && y <= (rectY + rectH);
+  };
+
+  const distancePointToRect = (x, y, rect) => {
+    const rectX = Number(rect?.x);
+    const rectY = Number(rect?.y);
+    const rectW = Number(rect?.width);
+    const rectH = Number(rect?.height);
+    if (!Number.isFinite(rectX) || !Number.isFinite(rectY) || !Number.isFinite(rectW) || !Number.isFinite(rectH)) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const dx = Math.max(rectX - x, 0, x - (rectX + rectW));
+    const dy = Math.max(rectY - y, 0, y - (rectY + rectH));
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const segmentIntersectsAABB = (start, end, rect) => {
+    const rectX = Number(rect?.x);
+    const rectY = Number(rect?.y);
+    const rectW = Number(rect?.width);
+    const rectH = Number(rect?.height);
+    if (!Number.isFinite(rectX) || !Number.isFinite(rectY) || !Number.isFinite(rectW) || !Number.isFinite(rectH)) {
+      return false;
+    }
+
+    const minX = rectX;
+    const minY = rectY;
+    const maxX = rectX + rectW;
+    const maxY = rectY + rectH;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    let tMin = 0;
+    let tMax = 1;
+
+    if (Math.abs(dx) < 1e-5) {
+      if (start.x < minX || start.x > maxX) return false;
+    } else {
+      const invDx = 1 / dx;
+      let t1 = (minX - start.x) * invDx;
+      let t2 = (maxX - start.x) * invDx;
+      if (t1 > t2) [t1, t2] = [t2, t1];
+      tMin = Math.max(tMin, t1);
+      tMax = Math.min(tMax, t2);
+      if (tMin > tMax) return false;
+    }
+
+    if (Math.abs(dy) < 1e-5) {
+      if (start.y < minY || start.y > maxY) return false;
+    } else {
+      const invDy = 1 / dy;
+      let t1 = (minY - start.y) * invDy;
+      let t2 = (maxY - start.y) * invDy;
+      if (t1 > t2) [t1, t2] = [t2, t1];
+      tMin = Math.max(tMin, t1);
+      tMax = Math.min(tMax, t2);
+      if (tMin > tMax) return false;
+    }
+
+    return true;
+  };
+
+  const countWallIntersections = (listenerPos, soundPos, wallMap, maxIntersections = 3) => {
+    if (!listenerPos || !soundPos || !wallMap || typeof wallMap.values !== 'function') {
+      return 0;
+    }
+    const minSegX = Math.min(listenerPos.x, soundPos.x);
+    const maxSegX = Math.max(listenerPos.x, soundPos.x);
+    const minSegY = Math.min(listenerPos.y, soundPos.y);
+    const maxSegY = Math.max(listenerPos.y, soundPos.y);
+    let intersections = 0;
+
+    for (const wall of wallMap.values()) {
+      const wallX = Number(wall?.x);
+      const wallY = Number(wall?.y);
+      const wallW = Number(wall?.width);
+      const wallH = Number(wall?.height);
+      if (!Number.isFinite(wallX) || !Number.isFinite(wallY) || !Number.isFinite(wallW) || !Number.isFinite(wallH)) {
+        continue;
+      }
+      if ((wallX + wallW) < minSegX || wallX > maxSegX || (wallY + wallH) < minSegY || wallY > maxSegY) {
+        continue;
+      }
+      if (distancePointToRect(listenerPos.x, listenerPos.y, wall) < 20 || distancePointToRect(soundPos.x, soundPos.y, wall) < 20) {
+        continue;
+      }
+      if (!segmentIntersectsAABB(listenerPos, soundPos, wall)) {
+        continue;
+      }
+      intersections += 1;
+      if (intersections >= maxIntersections) {
+        return intersections;
+      }
+    }
+    return intersections;
+  };
+
+  const getZoneReverbProfileKey = (zoneMap, playerState) => {
+    const position = getEntityWorldPosition(playerState);
+    if (!position || !zoneMap || typeof zoneMap.values !== 'function') {
+      return null;
+    }
+
+    let matchedKey = null;
+    for (const zone of zoneMap.values()) {
+      if (!pointInRect(position.x, position.y, zone)) continue;
+      const zoneType = Number(zone?.zone_type);
+      if (zoneType === GP.ZoneType.DamageZone || zoneType === 1) {
+        return 'damage';
+      }
+      if (zoneType === GP.ZoneType.BoostPad || zoneType === 2) {
+        matchedKey = matchedKey || 'boost';
+      } else if (zoneType === GP.ZoneType.SlowZone || zoneType === 0) {
+        matchedKey = matchedKey || 'slow';
+      }
+    }
+    return matchedKey;
   };
 
   const blurFilterCache = new Map();
@@ -3512,6 +3657,12 @@ this.lowHealthFilterNode = null;
 this.ambientCombatEnergy = 0;
 this.lastAmbientEnergyAt = 0;
 this.nextAmbientCombatAt = 0;
+this.zoneDryGainNode = null;
+this.zoneWetGainNode = null;
+this.zoneConvolverNode = null;
+this.zoneImpulseBuffers = new Map();
+this.zoneReverbKey = null;
+this.lastZoneReverbCheckAt = 0;
 this.initializeOutputChain();
 this.initializeVoicePool();
 this.preloadSoundSamples();
@@ -3538,7 +3689,8 @@ try {
         lowHealthFilter.frequency.value = 20000;
         lowHealthFilter.Q.value = 0.5;
     }
-    let outputNode = lowHealthFilter || masterGain;
+    const routeInputNode = lowHealthFilter || masterGain;
+    let outputNode = this.audioContext.destination;
     if (typeof this.audioContext.createDynamicsCompressor === 'function') {
         const compressor = this.audioContext.createDynamicsCompressor();
         compressor.threshold.value = -22;
@@ -3546,33 +3698,107 @@ try {
         compressor.ratio.value = 9;
         compressor.attack.value = 0.003;
         compressor.release.value = 0.22;
-        if (lowHealthFilter) {
-            masterGain.connect(lowHealthFilter);
-            lowHealthFilter.connect(compressor);
-        } else {
-            masterGain.connect(compressor);
-        }
         compressor.connect(this.audioContext.destination);
-        outputNode = lowHealthFilter || masterGain;
+        outputNode = compressor;
         this.compressorNode = compressor;
-    } else {
-        if (lowHealthFilter) {
-            masterGain.connect(lowHealthFilter);
-            lowHealthFilter.connect(this.audioContext.destination);
-        } else {
-            masterGain.connect(this.audioContext.destination);
-        }
     }
+    if (lowHealthFilter) {
+        masterGain.connect(lowHealthFilter);
+    }
+
+    const dryGain = this.audioContext.createGain();
+    dryGain.gain.value = 1;
+    routeInputNode.connect(dryGain);
+    dryGain.connect(outputNode);
+
+    let wetGain = null;
+    let convolver = null;
+    if (!this.mobileSoundBudget && !ultraPerformanceMode && typeof this.audioContext.createConvolver === 'function') {
+        wetGain = this.audioContext.createGain();
+        wetGain.gain.value = 0.0001;
+        convolver = this.audioContext.createConvolver();
+        convolver.normalize = true;
+        routeInputNode.connect(wetGain);
+        wetGain.connect(convolver);
+        convolver.connect(outputNode);
+        this.zoneImpulseBuffers = new Map([
+            ['slow', this.createZoneImpulseResponse(2.2, 2.6, 0.65)],
+            ['damage', this.createZoneImpulseResponse(1.35, 3.2, 0.32)],
+            ['boost', this.createZoneImpulseResponse(0.9, 1.8, 0.85)],
+        ]);
+    }
+
     this.masterGainNode = masterGain;
     this.masterOutputNode = outputNode;
     this.lowHealthFilterNode = lowHealthFilter;
+    this.zoneDryGainNode = dryGain;
+    this.zoneWetGainNode = wetGain;
+    this.zoneConvolverNode = convolver;
 } catch (error) {
     console.warn('Audio output chain init failed, using direct destination:', error);
     this.masterOutputNode = this.audioContext.destination;
     this.masterGainNode = null;
     this.compressorNode = null;
     this.lowHealthFilterNode = null;
+    this.zoneDryGainNode = null;
+    this.zoneWetGainNode = null;
+    this.zoneConvolverNode = null;
+    this.zoneImpulseBuffers = new Map();
 }
+    }
+
+    createZoneImpulseResponse(durationSec, decayPower, shimmerAmount = 0.5) {
+if (!this.audioContext) return null;
+const length = Math.max(1, Math.floor(this.audioContext.sampleRate * Math.max(0.2, durationSec)));
+const buffer = this.audioContext.createBuffer(2, length, this.audioContext.sampleRate);
+for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+    const data = buffer.getChannelData(channel);
+    for (let i = 0; i < length; i += 1) {
+        const timeNorm = i / Math.max(1, length - 1);
+        const decay = Math.pow(1 - timeNorm, Math.max(1.1, decayPower));
+        const noise = (Math.random() * 2) - 1;
+        const shimmer = Math.sin(i * (0.014 + shimmerAmount * 0.01) + channel * 0.7) * shimmerAmount;
+        data[i] = (noise * (1 - shimmerAmount * 0.45) + shimmer * 0.35) * decay;
+    }
+}
+return buffer;
+    }
+
+    syncEnvironmentalReverb(nowMs = 0) {
+if (
+    !this.audioContext ||
+    !this.zoneDryGainNode ||
+    !this.zoneConvolverNode ||
+    !this.zoneWetGainNode ||
+    this.mobileSoundBudget ||
+    ultraPerformanceMode
+) {
+    return;
+}
+if ((nowMs - this.lastZoneReverbCheckAt) < 220) {
+    return;
+}
+this.lastZoneReverbCheckAt = nowMs;
+
+const zoneKey = getZoneReverbProfileKey(zones, localPlayerState);
+if (zoneKey !== this.zoneReverbKey) {
+    this.zoneReverbKey = zoneKey;
+    this.zoneConvolverNode.buffer = zoneKey ? (this.zoneImpulseBuffers.get(zoneKey) || null) : null;
+}
+
+const wetTarget = zoneKey === 'damage'
+    ? 0.34
+    : zoneKey === 'slow'
+        ? 0.24
+        : zoneKey === 'boost'
+            ? 0.18
+            : 0.0001;
+const dryTarget = zoneKey ? 0.92 : 1;
+const now = this.audioContext.currentTime;
+try {
+    this.zoneWetGainNode.gain.setTargetAtTime(wetTarget, now, 0.18);
+    this.zoneDryGainNode.gain.setTargetAtTime(dryTarget, now, 0.12);
+} catch (_) {}
     }
 
     decodeAudioData(arrayBuffer) {
@@ -3929,7 +4155,7 @@ for (let i = 0; i < this.maxVoices; i += 1) {
     try {
         const gainNode = this.audioContext.createGain();
         gainNode.gain.value = 0.0001;
-        const outputNode = this.masterOutputNode || this.audioContext.destination;
+        const outputNode = this.masterGainNode || this.masterOutputNode || this.audioContext.destination;
         let pannerNode = null;
         if (typeof this.audioContext.createStereoPanner === 'function') {
             pannerNode = this.audioContext.createStereoPanner();
@@ -4080,6 +4306,11 @@ let finalVolume = baseVolume;
 let panValue = 0;
 let lowpassHz = null;
 if (position && localPlayerState && app && gameScene) {
+    const listenerWorldPos = getEntityWorldPosition(localPlayerState);
+    const soundWorldPosData = getEntityWorldPosition(position) || {
+        x: Number(position?.x),
+        y: Number(position?.y),
+    };
     const viewCenter = { x: app.screen.width / 2, y: app.screen.height / 2 };
     const soundWorldPos = gameScene.toGlobal(position);
     const dx = soundWorldPos.x - viewCenter.x;
@@ -4096,11 +4327,29 @@ if (position && localPlayerState && app && gameScene) {
         const farRatio = Math.max(0, Math.min(1, (distance - 500) / 400));
         lowpassHz = 8200 - farRatio * 6600;
     }
+    if (
+        !ultraPerformanceMode &&
+        !this.mobileSoundBudget &&
+        distance > 100 &&
+        listenerWorldPos &&
+        Number.isFinite(soundWorldPosData.x) &&
+        Number.isFinite(soundWorldPosData.y)
+    ) {
+        const wallHits = countWallIntersections(listenerWorldPos, soundWorldPosData, walls, 3);
+        if (wallHits > 0) {
+            finalVolume *= Math.max(0.16, 1 - wallHits * 0.3);
+            const occludedCutoffHz = Math.max(900, 5200 - wallHits * 1200);
+            lowpassHz = Number.isFinite(lowpassHz)
+                ? Math.min(lowpassHz, occludedCutoffHz)
+                : occludedCutoffHz;
+        }
+    }
 }
 
 const nowMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
     ? performance.now()
     : Date.now();
+this.syncEnvironmentalReverb(nowMs);
 const prioritizeLocal = !!(options && options.prioritizeLocal);
 const bypassLimiter = !!(options && options.bypassLimiter);
 this.sweepExpiredVoices(nowMs);

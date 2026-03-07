@@ -5225,6 +5225,8 @@
             PLAYER_RADIUS,
             getProjectiles: () => projectiles,
             getPlayers: () => players,
+            getWalls: () => walls,
+            getZones: () => zones,
             getLocalPlayerState: () => localPlayerState,
             getMyPlayerId: () => myPlayerId,
             getGameSettings: () => gameSettings,
@@ -5250,6 +5252,8 @@
                 }
                 return new MusicPlayer({
                     getGameSettings: () => gameSettings,
+                    getAudioManager: () => audioManager,
+                    getLocalPlayerState: () => localPlayerState,
                     log: (message, level = 'info') => log(message, level)
                 });
             } catch (error) {
