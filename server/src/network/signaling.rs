@@ -45,6 +45,7 @@ use webrtc::{
     ice_transport::{
         ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
         ice_candidate_type::RTCIceCandidateType,
+        ice_credential_type::RTCIceCredentialType,
         ice_server::RTCIceServer,
     },
     peer_connection::{
@@ -778,8 +779,7 @@ fn cached_ice_config() -> &'static CachedIceConfig {
     CONFIG.get_or_init(load_cached_ice_config)
 }
 
-fn build_ice_servers() -> Vec<RTCIceServer> {
-    let cfg = cached_ice_config();
+fn build_ice_servers_from_config(cfg: &CachedIceConfig) -> Vec<RTCIceServer> {
     let mut ice_servers: Vec<RTCIceServer> = Vec::new();
 
     if !cfg.disable_stun {
@@ -796,6 +796,7 @@ fn build_ice_servers() -> Vec<RTCIceServer> {
         };
         match cfg.turn_credential_type {
             TurnCredentialType::Password => {
+                turn_server.credential_type = RTCIceCredentialType::Password;
                 if let Some(username) = cfg.turn_username.as_ref() {
                     turn_server.username = username.clone();
                 }
@@ -804,6 +805,7 @@ fn build_ice_servers() -> Vec<RTCIceServer> {
                 }
             }
             TurnCredentialType::HmacSha256 => {
+                turn_server.credential_type = RTCIceCredentialType::Password;
                 if let Some(secret) = cfg.turn_credential.as_ref() {
                     let suffix = cfg.turn_username.as_deref().unwrap_or("server");
                     let (username, credential) = generate_turn_hmac_credentials(secret, suffix);
@@ -812,6 +814,7 @@ fn build_ice_servers() -> Vec<RTCIceServer> {
                 }
             }
             TurnCredentialType::HmacSha1Legacy => {
+                turn_server.credential_type = RTCIceCredentialType::Password;
                 if let Some(secret) = cfg.turn_credential.as_ref() {
                     let suffix = cfg.turn_username.as_deref().unwrap_or("server");
                     let (username, credential) = generate_turn_hmac_credentials_with_algorithm(
@@ -834,12 +837,18 @@ fn build_ice_servers() -> Vec<RTCIceServer> {
     ice_servers
 }
 
+fn build_ice_servers() -> Vec<RTCIceServer> {
+    build_ice_servers_from_config(cached_ice_config())
+}
+
 /// Build the ICE server configuration to send to a connecting client.
 ///
 /// When HMAC credential mode is active, this generates fresh per-session
 /// credentials so each client gets a unique short-lived TURN token.
-fn build_client_ice_config(session_id: &str) -> Vec<ClientIceServer> {
-    let cfg = cached_ice_config();
+fn build_client_ice_config_from_config(
+    cfg: &CachedIceConfig,
+    session_id: &str,
+) -> Vec<ClientIceServer> {
     let mut servers: Vec<ClientIceServer> = Vec::new();
 
     if !cfg.disable_stun {
@@ -888,6 +897,10 @@ fn build_client_ice_config(session_id: &str) -> Vec<ClientIceServer> {
     }
 
     servers
+}
+
+fn build_client_ice_config(session_id: &str) -> Vec<ClientIceServer> {
+    build_client_ice_config_from_config(cached_ice_config(), session_id)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -3232,5 +3245,52 @@ mod tests {
         let json = serde_json::to_string(&server).unwrap();
         assert!(json.contains(r#""username":"user""#));
         assert!(json.contains(r#""credential":"pass""#));
+    }
+
+    #[test]
+    fn build_ice_servers_marks_turn_credentials_as_password() {
+        let config = CachedIceConfig {
+            disable_stun: true,
+            stun_urls: Vec::new(),
+            turn_urls: vec!["turn:127.0.0.1:3478?transport=udp".to_owned()],
+            turn_credential_type: TurnCredentialType::Password,
+            turn_username: Some("turn-user".to_owned()),
+            turn_credential: Some("turn-password".to_owned()),
+            extra_ice_servers: Vec::new(),
+        };
+
+        let ice_servers = build_ice_servers_from_config(&config);
+        assert_eq!(ice_servers.len(), 1);
+        let turn_server = &ice_servers[0];
+        assert_eq!(turn_server.credential_type, RTCIceCredentialType::Password);
+        assert_eq!(turn_server.username, "turn-user");
+        assert_eq!(turn_server.credential, "turn-password");
+    }
+
+    #[test]
+    fn build_client_ice_config_includes_turn_credentials() {
+        let config = CachedIceConfig {
+            disable_stun: true,
+            stun_urls: Vec::new(),
+            turn_urls: vec!["turn:127.0.0.1:3478?transport=udp".to_owned()],
+            turn_credential_type: TurnCredentialType::Password,
+            turn_username: Some("turn-user".to_owned()),
+            turn_credential: Some("turn-password".to_owned()),
+            extra_ice_servers: Vec::new(),
+        };
+
+        let client_ice = build_client_ice_config_from_config(&config, "session-1");
+        assert_eq!(client_ice.len(), 1);
+        let turn_entry = &client_ice[0];
+        assert_eq!(
+            turn_entry.username.as_deref(),
+            Some("turn-user"),
+            "client config should include username"
+        );
+        assert_eq!(
+            turn_entry.credential.as_deref(),
+            Some("turn-password"),
+            "client config should include credential"
+        );
     }
 }

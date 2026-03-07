@@ -282,8 +282,20 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
         .unwrap_or_else(|| "data/auth_store.json".to_owned());
     let auth_otp_ttl_seconds =
         parse_u64_with_default("MGS_AUTH_OTP_TTL_SECONDS", 300, &mut errors).max(60);
+    let allow_short_session_ttl_for_tests = std::env::var("MGS_TEST_ALLOW_SHORT_SESSION_TTL")
+        .ok()
+        .map(|raw| {
+            let normalized = raw.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false);
     let auth_session_ttl_seconds =
-        parse_u64_with_default("MGS_AUTH_SESSION_TTL_SECONDS", 60 * 60 * 24, &mut errors).max(300);
+        parse_u64_with_default("MGS_AUTH_SESSION_TTL_SECONDS", 60 * 60 * 24, &mut errors);
+    let auth_session_ttl_seconds = if allow_short_session_ttl_for_tests {
+        auth_session_ttl_seconds.max(1)
+    } else {
+        auth_session_ttl_seconds.max(300)
+    };
     let auth_resend_interval_seconds =
         parse_u64_with_default("MGS_AUTH_RESEND_INTERVAL_SECONDS", 30, &mut errors).max(5);
     let auth_max_verify_attempts =

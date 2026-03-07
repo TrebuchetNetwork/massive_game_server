@@ -79,7 +79,7 @@ test.describe('UI Performance', () => {
       `Render loop measurement: ${result.fps.toFixed(1)} FPS-equivalent over ${result.elapsed.toFixed(1)}s (${result.renderFrameDelta} frames, last render age ${result.lastRenderAgeMs.toFixed(0)}ms)`
     );
 
-    expect(result.renderFrameDelta).toBeGreaterThan(2);
+    expect(result.renderFrameDelta).toBeGreaterThan(15);
     expect(result.lastRenderAgeMs).toBeLessThan(1500);
   });
 

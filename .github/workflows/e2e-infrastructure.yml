@@ -136,6 +136,7 @@ jobs:
         run: |
           npx playwright test \
             tests/auth_flow.spec.js \
+            tests/auth_session_expiry.spec.js \
             --workers=1 \
             --reporter=list
 

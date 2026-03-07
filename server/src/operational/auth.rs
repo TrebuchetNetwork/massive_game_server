@@ -675,7 +675,18 @@ impl AuthService {
     pub fn new_from_env_config(env: &AuthEnv) -> Self {
         let store_path = PathBuf::from(env.store_path.as_str());
         let otp_ttl_seconds = env.otp_ttl_seconds.max(60);
-        let session_ttl_seconds = env.session_ttl_seconds.max(300);
+        let allow_short_session_ttl_for_tests = std::env::var("MGS_TEST_ALLOW_SHORT_SESSION_TTL")
+            .ok()
+            .map(|raw| {
+                let normalized = raw.trim().to_ascii_lowercase();
+                matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false);
+        let session_ttl_seconds = if allow_short_session_ttl_for_tests {
+            env.session_ttl_seconds.max(1)
+        } else {
+            env.session_ttl_seconds.max(300)
+        };
         let resend_interval_seconds = env.resend_interval_seconds.max(5);
         let max_verify_attempts = env.max_verify_attempts.max(1);
         let sms_command = env

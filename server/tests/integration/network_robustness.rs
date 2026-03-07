@@ -309,6 +309,10 @@ async fn wait_until_ready(base_url: &str) {
 }
 
 async fn spawn_server() -> ServerProcess {
+    spawn_server_with_env(&[]).await
+}
+
+async fn spawn_server_with_env(extra_env: &[(&str, &str)]) -> ServerProcess {
     let port = reserve_free_port();
     let base_url = format!("http://127.0.0.1:{port}");
     let ws_url = format!("ws://127.0.0.1:{port}/ws?username=robustness");
@@ -337,6 +341,9 @@ async fn spawn_server() -> ServerProcess {
         .env("RUST_LOG", "warn")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
     let child = command.spawn().expect("spawn server binary");
 
     let process = ServerProcess {

@@ -304,6 +304,10 @@ export function createConnectionManager(getCtx) {
                             : String(s.urls || '').startsWith('turn:')
                     ).length;
                     log(`Received ${serverIceServers.length} ICE server(s) from server (${turnCount} TURN).`, 'info');
+                    if (typeof window !== 'undefined' && window.__e2e) {
+                        window.__e2e.serverIceServerCount = serverIceServers.length;
+                        window.__e2e.serverTurnCount = turnCount;
+                    }
                     // Merge server-provided ICE servers into the peer connection config.
                     mergeServerIceServers(serverIceServers);
                 }

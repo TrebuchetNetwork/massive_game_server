@@ -226,6 +226,28 @@ async fn spectator_not_counted_as_participant() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn spectator_aoi_includes_distant_players() {
+    let server = setup_test_server();
+
+    let spectator_id = add_player(&server, "spectator_aoi", 0, 0.0, 0.0);
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&spectator_id) {
+        ps.is_spectator = true;
+    }
+    let distant_player_id = add_player(&server, "distant_player", 2, 700.0, 500.0);
+
+    server.update_player_aoi(&spectator_id, 0.0, 0.0);
+
+    let spectator_aoi = server
+        .player_aois
+        .get(spectator_id.as_ref())
+        .expect("spectator AoI");
+    assert!(
+        spectator_aoi.visible_players.contains(&distant_player_id),
+        "spectators should see distant players in their AoI"
+    );
+}
+
 // ── Match timer decrements ──────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread")]

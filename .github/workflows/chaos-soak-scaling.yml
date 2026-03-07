@@ -68,6 +68,7 @@ jobs:
         run: |
           npx playwright test \
             tests/error_recovery.spec.js \
+            tests/graceful_shutdown.spec.js \
             --workers=1 \
             --reporter=list
 

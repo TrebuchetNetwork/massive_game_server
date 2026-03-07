@@ -223,3 +223,23 @@ harness = false
 [[bench]]
 name = "spatial_index"
 harness = false
+
+[[test]]
+name = "rate_limiting_e2e"
+path = "tests/integration/rate_limiting_e2e.rs"
+
+[[test]]
+name = "shutdown_e2e"
+path = "tests/integration/shutdown_e2e.rs"
+
+[[test]]
+name = "live_replay_e2e"
+path = "tests/integration/live_replay_e2e.rs"
+
+[[test]]
+name = "map_templates"
+path = "tests/integration/map_templates.rs"
+
+[[test]]
+name = "cross_transport"
+path = "tests/integration/cross_transport.rs"
