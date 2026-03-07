@@ -1553,7 +1553,6 @@ pub async fn handle_signaling_connection(
         while let Some(message_result) = client_signaling_rx.recv().await {
             match message_result {
                 Ok(msg) => {
-                    shared_connection_manager().touch(peer_id_fwd.as_str());
                     metrics::record_network_bytes("egress_ws", msg.as_bytes().len());
                     if ws_tx.send(msg).await.is_err() {
                         warn!(
