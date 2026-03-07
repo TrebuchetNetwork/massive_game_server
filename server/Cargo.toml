@@ -117,6 +117,7 @@ tikv-jemallocator = { version = "0.5", features = ["stats", "profiling", "unpref
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.4" # Or your preferred version
 temp-env = { version = "0.3", features = ["async_closure"] }
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
 
 [build-dependencies]
 built = { version = "0.7", features = ["git2"] }
@@ -186,6 +187,14 @@ path = "tests/integration/auth_e2e.rs"
 [[test]]
 name = "persistence"
 path = "tests/integration/persistence.rs"
+
+[[test]]
+name = "anti_cheat"
+path = "tests/integration/anti_cheat.rs"
+
+[[test]]
+name = "network_robustness"
+path = "tests/integration/network_robustness.rs"
 
 [[bench]]
 name = "physics"
