@@ -2258,10 +2258,10 @@ pub async fn handle_signaling_connection(
     });
 
     while let Some(result) = ws_rx.next().await {
-        shared_connection_manager().touch(&current_peer_id_ws);
         match result {
             Ok(msg) => {
                 if msg.is_text() {
+                    shared_connection_manager().touch(&current_peer_id_ws);
                     metrics::record_network_bytes("ingress_ws", msg.as_bytes().len());
                     if msg.as_bytes().len() > MAX_SIGNALING_TEXT_BYTES {
                         warn!(
@@ -2368,6 +2368,7 @@ pub async fn handle_signaling_connection(
                     info!("[{}]: WebSocket closed by client.", current_peer_id_ws);
                     break;
                 } else if msg.is_ping() {
+                    shared_connection_manager().touch(&current_peer_id_ws);
                     let payload = msg.as_bytes().to_vec();
                     if !try_queue_signaling_message(
                         &ws_signal_sender_clone,
