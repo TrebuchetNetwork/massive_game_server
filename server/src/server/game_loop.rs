@@ -380,13 +380,15 @@ impl MassiveGameServer {
         }
 
         // 1. Update visible players (using spatial index)
-        let nearby_player_ids = self
-            .spatial_index
-            .query_nearby_players(x, y, effective_aoi_radius);
-        for other_id_arc in nearby_player_ids
-            .into_iter()
-            .take(max_visible_players.saturating_add(1))
-        {
+        let mut nearby_players =
+            self.spatial_index
+                .query_nearby_players_with_positions(x, y, effective_aoi_radius);
+        nearby_players.sort_by(|(_, ax, ay), (_, bx, by)| {
+            let a_dist_sq = (*ax - x).powi(2) + (*ay - y).powi(2);
+            let b_dist_sq = (*bx - x).powi(2) + (*by - y).powi(2);
+            a_dist_sq.total_cmp(&b_dist_sq)
+        });
+        for (other_id_arc, _, _) in nearby_players.into_iter() {
             if &other_id_arc != player_id {
                 next_aoi.visible_players.insert(other_id_arc);
                 if next_aoi.visible_players.len() >= max_visible_players {

@@ -208,6 +208,10 @@ path = "tests/integration/match_lifecycle.rs"
 name = "pickup_zone_interactions"
 path = "tests/integration/pickup_zone_interactions.rs"
 
+[[test]]
+name = "aoi_load"
+path = "tests/integration/aoi_load.rs"
+
 [[bench]]
 name = "physics"
 harness = false

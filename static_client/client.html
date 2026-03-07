@@ -1058,6 +1058,12 @@
         window.__e2e.wallCount = 0;
         window.__e2e.visiblePlayerCount = 0;
         window.__e2e.playerSpriteCount = 0;
+        window.__e2e.pickupCount = 0;
+        window.__e2e.pickupSpriteCount = 0;
+        window.__e2e.zoneCount = 0;
+        window.__e2e.pickupTypeSummary = {};
+        window.__e2e.zoneTypeSummary = {};
+        window.__e2e.nearestPickup = null;
         window.__e2e.localPlayerSpriteReady = false;
         window.__e2e.localPlayerSnapshot = null;
         window.__e2e.playerRenderCap = 220;
@@ -3625,6 +3631,42 @@
                     e2e.wallCount = walls.size;
                     e2e.visiblePlayerCount = lastVisiblePlayers;
                     e2e.playerSpriteCount = playerSprites.size;
+                    e2e.pickupCount = pickups.size;
+                    e2e.pickupSpriteCount = pickupSprites.size;
+                    e2e.zoneCount = zones.size;
+                    {
+                        const pickupTypeSummary = {};
+                        let nearestPickup = null;
+                        for (const pickup of pickups.values()) {
+                            const typeKey = String(Number(pickup?.pickup_type) || 0);
+                            pickupTypeSummary[typeKey] = (pickupTypeSummary[typeKey] || 0) + 1;
+                            if (localPlayerState && pickup && pickup.is_active !== false) {
+                                const dx = (Number(pickup.x) || 0) - (Number(localPlayerState.x) || 0);
+                                const dy = (Number(pickup.y) || 0) - (Number(localPlayerState.y) || 0);
+                                const distance = Math.hypot(dx, dy);
+                                if (!nearestPickup || distance < nearestPickup.distance) {
+                                    nearestPickup = {
+                                        id: String(pickup.id || ''),
+                                        pickupType: Number(pickup.pickup_type) || 0,
+                                        weaponType: Number(pickup.weapon_type) || 0,
+                                        x: Number(pickup.x) || 0,
+                                        y: Number(pickup.y) || 0,
+                                        distance: Number(distance.toFixed(2))
+                                    };
+                                }
+                            }
+                        }
+                        e2e.pickupTypeSummary = pickupTypeSummary;
+                        e2e.nearestPickup = nearestPickup;
+                    }
+                    {
+                        const zoneTypeSummary = {};
+                        for (const zone of zones.values()) {
+                            const typeKey = String(Number(zone?.zone_type) || 0);
+                            zoneTypeSummary[typeKey] = (zoneTypeSummary[typeKey] || 0) + 1;
+                        }
+                        e2e.zoneTypeSummary = zoneTypeSummary;
+                    }
                     e2e.localPlayerSpriteReady = !!localPlayerSprite;
                     e2e.localPlayerSnapshot = localPlayerState ? {
                         x: Number(localPlayerState.x) || 0,
@@ -4615,6 +4657,12 @@
                 window.__e2e.playerCount = 0;
                 window.__e2e.visiblePlayerCount = 0;
                 window.__e2e.playerSpriteCount = 0;
+                window.__e2e.pickupCount = 0;
+                window.__e2e.pickupSpriteCount = 0;
+                window.__e2e.zoneCount = 0;
+                window.__e2e.pickupTypeSummary = {};
+                window.__e2e.zoneTypeSummary = {};
+                window.__e2e.nearestPickup = null;
                 window.__e2e.localPlayerSpriteReady = false;
                 window.__e2e.localPlayerSnapshot = null;
             }
@@ -4828,6 +4876,12 @@
                 window.__e2e.wallCount = 0;
                 window.__e2e.visiblePlayerCount = 0;
                 window.__e2e.playerSpriteCount = 0;
+                window.__e2e.pickupCount = 0;
+                window.__e2e.pickupSpriteCount = 0;
+                window.__e2e.zoneCount = 0;
+                window.__e2e.pickupTypeSummary = {};
+                window.__e2e.zoneTypeSummary = {};
+                window.__e2e.nearestPickup = null;
                 window.__e2e.localPlayerSpriteReady = false;
                 window.__e2e.localPlayerSnapshot = null;
                 window.__e2e.playerRenderCap = PLAYER_RENDER_CAP_DEFAULT;

@@ -66,6 +66,7 @@ jobs:
             tests/connect.spec.js \
             tests/runtime.spec.js \
             tests/human_gameplay_journey.spec.js \
+            tests/pickup_zone_live.spec.js \
             --workers=1 \
             --reporter=list
 

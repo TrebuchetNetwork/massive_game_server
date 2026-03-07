@@ -1,0 +1,287 @@
+name: Chaos Soak Scaling
+
+on:
+  schedule:
+    - cron: "32 7 * * 6"
+  workflow_dispatch:
+    inputs:
+      soak_bots:
+        description: "Number of live bots for the bounded soak run"
+        required: false
+        default: "80"
+      soak_duration_secs:
+        description: "How long the bounded soak run should last"
+        required: false
+        default: "180"
+
+concurrency:
+  group: chaos-soak-scaling-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chaos-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: always
+      E2E_BASE_URL: http://127.0.0.1:19080
+      E2E_WS_URL: ws://127.0.0.1:19080/ws
+      E2E_SERVER_CMD: ./target/debug/massive_game_server_core
+      E2E_SERVER_START_TIMEOUT_MS: "480000"
+      MGS_HOST: 0.0.0.0
+      MGS_PORT: 19080
+      MGS_DISABLE_STUN: "1"
+      MGS_TARGET_BOT_COUNT: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Install FlatBuffers compiler
+        run: scripts/install_flatc.sh
+
+      - name: Build debug server binary
+        run: cargo build -p massive_game_server_core --bin massive_game_server_core --locked
+
+      - name: Verify Node runtime
+        run: |
+          node --version
+          npm --version
+
+      - name: Install Playwright dependencies
+        working-directory: scripts/e2e
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: scripts/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run chaos recovery browser flow
+        working-directory: scripts/e2e
+        run: |
+          npx playwright test \
+            tests/error_recovery.spec.js \
+            --workers=1 \
+            --reporter=list
+
+      - name: Upload chaos recovery artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: chaos-recovery-artifacts
+          path: |
+            scripts/e2e/test-results
+            scripts/e2e/playwright-report
+
+  bounded-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Install FlatBuffers compiler
+        run: scripts/install_flatc.sh
+
+      - name: Build release binaries
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          cargo build --release -p massive_game_server_core --bin massive_game_server_core --locked
+          cargo build --release -p massive_game_server_stress_client --locked
+
+      - name: Run bounded live soak
+        env:
+          SOAK_BOTS: ${{ github.event.inputs.soak_bots || '80' }}
+          SOAK_DURATION_SECS: ${{ github.event.inputs.soak_duration_secs || '180' }}
+        run: |
+          set -euo pipefail
+          MGS_HOST=0.0.0.0 \
+          MGS_PORT=18180 \
+          MGS_DISABLE_STUN=1 \
+          MGS_TARGET_BOT_COUNT=0 \
+          MGS_METRICS_ENABLED=true \
+          MGS_METRICS_BIND_ADDR=127.0.0.1:19191 \
+          RUST_LOG=massive_game_server_core=warn,warp=warn,webrtc=warn \
+            ./target/release/massive_game_server_core > /tmp/mgs_bounded_soak_server.log 2>&1 &
+          server_pid=$!
+          trap 'kill ${server_pid} >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:18180/healthz >/dev/null 2>&1 \
+              && curl -fsS http://127.0.0.1:18180/readyz >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+          ./target/release/massive_game_server_stress_client \
+            -u ws://127.0.0.1:18180/ws \
+            --scenario ramp120 \
+            -n "${SOAK_BOTS}" \
+            -d "${SOAK_DURATION_SECS}"
+
+          curl -fsS http://127.0.0.1:18180/healthz > /tmp/mgs_bounded_soak_health.json
+          python3 - <<'PY'
+          import json
+          import re
+          import time
+          import urllib.request
+
+          with open("/tmp/mgs_bounded_soak_health.json", "r", encoding="utf-8") as fh:
+              health = json.load(fh)
+          assert health.get("ok") is True, health
+          assert health.get("match_degraded") is False, health
+
+          for _ in range(45):
+              metrics = urllib.request.urlopen("http://127.0.0.1:19191/metrics", timeout=5).read().decode("utf-8")
+              match = re.search(r"^game_ws_connections_active\\s+([0-9.]+)$", metrics, re.MULTILINE)
+              if match and float(match.group(1)) == 0.0:
+                  break
+              time.sleep(1)
+          else:
+              raise AssertionError("game_ws_connections_active did not drain to zero after bounded soak")
+          PY
+
+      - name: Upload bounded soak artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bounded-soak-artifacts
+          path: |
+            /tmp/mgs_bounded_soak_server.log
+            /tmp/mgs_bounded_soak_health.json
+
+  dual-instance-scaling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      DUAL_INSTANCE_PRIMARY_PORT: "19180"
+      DUAL_INSTANCE_SECONDARY_PORT: "19181"
+      DUAL_INSTANCE_REDIS_CONTAINER: mgs-dual-instance-redis
+      DUAL_INSTANCE_REDIS_PASSWORD: mgs_dual_instance_password
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Install FlatBuffers compiler
+        run: scripts/install_flatc.sh
+
+      - name: Build debug server binary
+        run: cargo build -p massive_game_server_core --bin massive_game_server_core --locked
+
+      - name: Start shared Redis fixture
+        run: |
+          docker run -d \
+            --name "${DUAL_INSTANCE_REDIS_CONTAINER}" \
+            -p 16380:6379 \
+            redis:7-alpine \
+            redis-server --appendonly yes --requirepass "${DUAL_INSTANCE_REDIS_PASSWORD}"
+
+      - name: Run dual-instance scaling smoke
+        run: |
+          set -euo pipefail
+          data_root=/tmp/mgs_dual_instance
+          rm -rf "${data_root}"
+          mkdir -p \
+            "${data_root}/primary/arena_wasm" \
+            "${data_root}/primary/arena_sources" \
+            "${data_root}/secondary/arena_wasm" \
+            "${data_root}/secondary/arena_sources"
+
+          MGS_HOST=127.0.0.1 \
+          MGS_PORT="${DUAL_INSTANCE_PRIMARY_PORT}" \
+          MGS_DISABLE_STUN=1 \
+          MGS_TARGET_BOT_COUNT=0 \
+          MGS_DIAGNOSTICS_ENABLED=0 \
+          MGS_QUIC_PRIMARY=0 \
+          MGS_SMS_COMMAND="$PWD/scripts/test_support/capture_sms.sh" \
+          MGS_TEST_SMS_CAPTURE_PATH="${data_root}/otp.txt" \
+          MGS_AUTH_STORE_PATH="${data_root}/primary/auth_store.json" \
+          MGS_FEATURE_FLAG_STORE_PATH="${data_root}/primary/feature_flags_store.json" \
+          MGS_ARENA_STORE_PATH="${data_root}/primary/arena_store.json" \
+          MGS_ARENA_WASM_DIR="${data_root}/primary/arena_wasm" \
+          MGS_ARENA_SOURCE_DIR="${data_root}/primary/arena_sources" \
+          MGS_REDIS_URL="redis://:${DUAL_INSTANCE_REDIS_PASSWORD}@127.0.0.1:16380/" \
+          RUST_LOG=warn \
+            ./target/debug/massive_game_server_core > /tmp/mgs_dual_instance_primary.log 2>&1 &
+          primary_pid=$!
+
+          cleanup() {
+            kill ${primary_pid:-0} >/dev/null 2>&1 || true
+            kill ${secondary_pid:-0} >/dev/null 2>&1 || true
+            docker rm -f "${DUAL_INSTANCE_REDIS_CONTAINER}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          MGS_DUAL_INSTANCE_MODE=bootstrap \
+          MGS_DUAL_INSTANCE_PRIMARY_BASE_URL="http://127.0.0.1:${DUAL_INSTANCE_PRIMARY_PORT}" \
+          MGS_DUAL_INSTANCE_SMS_CAPTURE_PATH="${data_root}/otp.txt" \
+          MGS_DUAL_INSTANCE_STATE_PATH="${data_root}/state.json" \
+            python3 scripts/test_support/dual_instance_smoke.py
+
+          MGS_HOST=127.0.0.1 \
+          MGS_PORT="${DUAL_INSTANCE_SECONDARY_PORT}" \
+          MGS_DISABLE_STUN=1 \
+          MGS_TARGET_BOT_COUNT=0 \
+          MGS_DIAGNOSTICS_ENABLED=0 \
+          MGS_QUIC_PRIMARY=0 \
+          MGS_SMS_COMMAND="$PWD/scripts/test_support/capture_sms.sh" \
+          MGS_TEST_SMS_CAPTURE_PATH="${data_root}/otp.txt" \
+          MGS_AUTH_STORE_PATH="${data_root}/secondary/auth_store.json" \
+          MGS_FEATURE_FLAG_STORE_PATH="${data_root}/secondary/feature_flags_store.json" \
+          MGS_ARENA_STORE_PATH="${data_root}/secondary/arena_store.json" \
+          MGS_ARENA_WASM_DIR="${data_root}/secondary/arena_wasm" \
+          MGS_ARENA_SOURCE_DIR="${data_root}/secondary/arena_sources" \
+          MGS_REDIS_URL="redis://:${DUAL_INSTANCE_REDIS_PASSWORD}@127.0.0.1:16380/" \
+          RUST_LOG=warn \
+            ./target/debug/massive_game_server_core > /tmp/mgs_dual_instance_secondary.log 2>&1 &
+          secondary_pid=$!
+
+          curl -fsS "http://127.0.0.1:${DUAL_INSTANCE_PRIMARY_PORT}/healthz" >/dev/null
+          curl -fsS "http://127.0.0.1:${DUAL_INSTANCE_SECONDARY_PORT}/healthz" >/dev/null
+
+          MGS_DUAL_INSTANCE_MODE=verify-secondary \
+          MGS_DUAL_INSTANCE_PRIMARY_BASE_URL="http://127.0.0.1:${DUAL_INSTANCE_PRIMARY_PORT}" \
+          MGS_DUAL_INSTANCE_SECONDARY_BASE_URL="http://127.0.0.1:${DUAL_INSTANCE_SECONDARY_PORT}" \
+          MGS_DUAL_INSTANCE_SMS_CAPTURE_PATH="${data_root}/otp.txt" \
+          MGS_DUAL_INSTANCE_STATE_PATH="${data_root}/state.json" \
+            python3 scripts/test_support/dual_instance_smoke.py
+
+      - name: Upload dual-instance artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dual-instance-scaling-artifacts
+          path: |
+            /tmp/mgs_dual_instance_primary.log
+            /tmp/mgs_dual_instance_secondary.log
+            /tmp/mgs_dual_instance
