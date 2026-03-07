@@ -2368,7 +2368,6 @@ pub async fn handle_signaling_connection(
                     info!("[{}]: WebSocket closed by client.", current_peer_id_ws);
                     break;
                 } else if msg.is_ping() {
-                    shared_connection_manager().touch(&current_peer_id_ws);
                     let payload = msg.as_bytes().to_vec();
                     if !try_queue_signaling_message(
                         &ws_signal_sender_clone,
