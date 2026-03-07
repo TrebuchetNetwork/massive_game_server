@@ -4,6 +4,7 @@ const http = require('http');
 const https = require('https');
 
 let serverProcess;
+let expectedServerExit = false;
 
 function resolveBaseUrl() {
   return process.env.E2E_BASE_URL || 'http://127.0.0.1:19080';
@@ -52,6 +53,7 @@ function waitForHttpReady(url) {
 async function startServer(options = {}) {
   if (process.env.E2E_SERVER_SKIP === '1') return;
   if (serverProcess) return;
+  expectedServerExit = false;
 
   const { env: envOverrides = {}, baseUrl: overrideBaseUrl } = options;
 
@@ -96,7 +98,7 @@ async function startServer(options = {}) {
       if (serverProcess === processRef) {
         serverProcess = undefined;
       }
-      if (ready) {
+      if (ready || expectedServerExit) {
         resolve();
         return;
       }
@@ -114,6 +116,7 @@ async function stopServer() {
   if (!serverProcess) return;
   const processToStop = serverProcess;
   serverProcess = undefined;
+  expectedServerExit = true;
 
   const exited = new Promise((resolve) => {
     processToStop.once('exit', () => resolve());
@@ -126,6 +129,8 @@ async function stopServer() {
     processToStop.kill('SIGKILL');
     await exited;
   }
+
+  expectedServerExit = false;
 }
 
 function registerServerLifecycle(test, options = {}) {

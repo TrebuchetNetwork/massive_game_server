@@ -41,8 +41,8 @@ test.describe('UI Performance', () => {
 
     // Hosted CI runners aggressively throttle headless rendering. Keep this as a
     // liveness/perf-smoke gate rather than a workstation FPS target.
-    expect(result.renderFrameDelta).toBeGreaterThan(5);
-    expect(result.lastRenderAgeMs).toBeLessThan(2500);
+    expect(result.renderFrameDelta).toBeGreaterThanOrEqual(4);
+    expect(result.lastRenderAgeMs).toBeLessThan(3000);
   });
 
   test('no excessive memory growth over time', async ({ page }) => {

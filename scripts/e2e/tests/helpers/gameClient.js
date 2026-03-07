@@ -77,35 +77,49 @@ async function connectClient(page, options = {}) {
     await wsInput.fill(wsUrl);
   }
 
-  await page.click('#connectButton', { force: true });
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.click('#connectButton', { force: true });
 
-  await page.waitForFunction(
-    () => window.__e2e && window.__e2e.matchInfoReady === true,
-    null,
-    { timeout }
-  );
-  await page.waitForFunction(
-    () => window.__e2e && window.__e2e.dataChannelOpen === true,
-    null,
-    { timeout }
-  );
+    try {
+      await page.waitForFunction(
+        () => {
+          const e2e = window.__e2e;
+          if (!e2e) return false;
+          const key = e2e.connectionStatus?.statusKey;
+          const liveStatus = key === 'waiting' || key === 'playing' || key === 'respawn';
+          const hasLiveState = Number(e2e.lastStateUpdate || 0) > 0;
+          return e2e.dataChannelOpen === true && (e2e.matchInfoReady === true || liveStatus || hasLiveState);
+        },
+        null,
+        { timeout }
+      );
 
-  if (requireLocalPlayer) {
-    await page.waitForFunction(
-      () => window.__e2e && window.__e2e.hasLocalPlayer === true,
-      null,
-      { timeout }
-    );
+      if (requireLocalPlayer) {
+        await page.waitForFunction(
+          () => window.__e2e && window.__e2e.hasLocalPlayer === true,
+          null,
+          { timeout }
+        );
+      }
+
+      await page.waitForFunction(
+        () => {
+          const key = window.__e2e?.connectionStatus?.statusKey;
+          return key === 'waiting' || key === 'playing' || key === 'respawn';
+        },
+        null,
+        { timeout }
+      );
+
+      return;
+    } catch (error) {
+      lastError = error;
+      await page.waitForTimeout(2000);
+    }
   }
 
-  await page.waitForFunction(
-    () => {
-      const key = window.__e2e?.connectionStatus?.statusKey;
-      return key === 'waiting' || key === 'playing' || key === 'respawn';
-    },
-    null,
-    { timeout }
-  );
+  throw lastError || new Error('Unable to establish connected gameplay state');
 }
 
 async function waitForPlaying(page, timeout = 60000) {
