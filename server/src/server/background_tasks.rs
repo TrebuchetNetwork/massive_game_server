@@ -134,13 +134,26 @@ pub fn spawn_idle_connection_cleanup(
             if shutdown_flag.load(Ordering::Relaxed) {
                 break;
             }
-            let stale_ids = shared_connection_manager().stale_peer_ids(stale_threshold);
-            if !stale_ids.is_empty() {
+            let orphaned_signaling_ids: Vec<String> = signaling_peers
+                .iter()
+                .filter_map(|entry| {
+                    let peer_id = entry.key();
+                    (!shared_connection_manager().contains(peer_id.as_str()))
+                        .then(|| peer_id.clone())
+                })
+                .collect();
+            let mut evict_ids = shared_connection_manager().stale_peer_ids(stale_threshold);
+            for orphan_id in orphaned_signaling_ids {
+                if !evict_ids.iter().any(|peer_id| peer_id == &orphan_id) {
+                    evict_ids.push(orphan_id);
+                }
+            }
+            if !evict_ids.is_empty() {
                 info!(
-                    "Idle connection cleanup: evicting {} stale peer(s).",
-                    stale_ids.len()
+                    "Idle connection cleanup: evicting {} stale/orphaned peer(s).",
+                    evict_ids.len()
                 );
-                for peer_id in &stale_ids {
+                for peer_id in &evict_ids {
                     cleanup_connection(
                         peer_id,
                         &signaling_peers,

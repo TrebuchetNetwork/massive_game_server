@@ -67,6 +67,10 @@ impl ConnectionManager {
         self.connections.remove(peer_id).map(|(_, value)| value)
     }
 
+    pub fn contains(&self, peer_id: &str) -> bool {
+        self.connections.contains_key(peer_id)
+    }
+
     pub fn len(&self) -> usize {
         self.connections.len()
     }
