@@ -152,7 +152,10 @@ jobs:
           assert health.get("ok") is True, health
           assert health.get("match_degraded") is False, health
 
-          for _ in range(45):
+          # WebRTC peers that time out instead of closing cleanly are evicted by the
+          # idle cleanup worker, which runs every 30s with a 120s stale threshold.
+          # Allow enough time for that background sweep before failing the soak.
+          for _ in range(210):
               metrics = urllib.request.urlopen("http://127.0.0.1:19191/metrics", timeout=5).read().decode("utf-8")
               match = re.search(r"^game_ws_connections_active\\s+([0-9.]+)$", metrics, re.MULTILINE)
               if match and float(match.group(1)) == 0.0:
@@ -242,11 +245,29 @@ jobs:
           }
           trap cleanup EXIT
 
+          wait_for_health() {
+            local port="$1"
+            local log_path="$2"
+            for _ in $(seq 1 60); do
+              if curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 1
+            done
+            echo "Timed out waiting for server on port ${port}" >&2
+            if [ -f "${log_path}" ]; then
+              tail -n 200 "${log_path}" >&2 || true
+            fi
+            return 1
+          }
+
           MGS_DUAL_INSTANCE_MODE=bootstrap \
           MGS_DUAL_INSTANCE_PRIMARY_BASE_URL="http://127.0.0.1:${DUAL_INSTANCE_PRIMARY_PORT}" \
           MGS_DUAL_INSTANCE_SMS_CAPTURE_PATH="${data_root}/otp.txt" \
           MGS_DUAL_INSTANCE_STATE_PATH="${data_root}/state.json" \
             python3 scripts/test_support/dual_instance_smoke.py
+
+          wait_for_health "${DUAL_INSTANCE_PRIMARY_PORT}" /tmp/mgs_dual_instance_primary.log
 
           MGS_HOST=127.0.0.1 \
           MGS_PORT="${DUAL_INSTANCE_SECONDARY_PORT}" \
@@ -266,8 +287,8 @@ jobs:
             ./target/debug/massive_game_server_core > /tmp/mgs_dual_instance_secondary.log 2>&1 &
           secondary_pid=$!
 
-          curl -fsS "http://127.0.0.1:${DUAL_INSTANCE_PRIMARY_PORT}/healthz" >/dev/null
-          curl -fsS "http://127.0.0.1:${DUAL_INSTANCE_SECONDARY_PORT}/healthz" >/dev/null
+          wait_for_health "${DUAL_INSTANCE_PRIMARY_PORT}" /tmp/mgs_dual_instance_primary.log
+          wait_for_health "${DUAL_INSTANCE_SECONDARY_PORT}" /tmp/mgs_dual_instance_secondary.log
 
           MGS_DUAL_INSTANCE_MODE=verify-secondary \
           MGS_DUAL_INSTANCE_PRIMARY_BASE_URL="http://127.0.0.1:${DUAL_INSTANCE_PRIMARY_PORT}" \
