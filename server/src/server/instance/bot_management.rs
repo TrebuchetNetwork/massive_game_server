@@ -399,7 +399,9 @@ impl MassiveGameServer {
                 {
                     let p_state = &mut *p_state_entry;
                     p_state.team_id = team_id;
-                    p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
+                    p_state.is_bot = true;
+                    p_state.bot_behavior = BotBehaviorState::Idle.as_u8();
+                    p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG | FIELD_MISC);
                 }
 
                 // Incrementally maintain team counts so we don't need to

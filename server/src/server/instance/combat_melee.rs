@@ -435,7 +435,7 @@ impl MassiveGameServer {
                                     let attacker_mut_state = &mut *attacker_mut_state_entry;
                                     let mut killstreak_event: Option<(u32, Vec2)> = None;
                                     attacker_mut_state.kills += 1;
-                                    attacker_mut_state
+                                    let milestone = attacker_mut_state
                                         .record_kill_with_weapon(ServerWeaponType::Melee);
 
                                     // Check for friendly fire
@@ -463,6 +463,8 @@ impl MassiveGameServer {
                                             );
                                         }
                                         if base_kill_points > POINTS_PER_KILL {
+                                            attacker_mut_state.hot_zone_kills =
+                                                attacker_mut_state.hot_zone_kills.saturating_add(1);
                                             info!(
                                                 "Hot zone bonus: {} gained {} points for melee elimination at ({:.1}, {:.1})",
                                                 attacker_username, kill_points, target_position.x, target_position.y
@@ -479,6 +481,20 @@ impl MassiveGameServer {
                                     }
 
                                     attacker_mut_state.mark_field_changed(FIELD_SCORE_STATS);
+                                    if let Some(threshold) = milestone {
+                                        self.global_game_events.push(
+                                            GameEvent::WeaponMilestone {
+                                                player_id: attacker_id.clone(),
+                                                weapon: ServerWeaponType::Melee,
+                                                milestone: threshold,
+                                                position: Vec2::new(
+                                                    attacker_mut_state.x,
+                                                    attacker_mut_state.y,
+                                                ),
+                                            },
+                                            EventPriority::Normal,
+                                        );
+                                    }
                                     if let Some((streak, position)) = killstreak_event {
                                         self.global_game_events.push(
                                             GameEvent::Killstreak {

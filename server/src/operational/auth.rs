@@ -1029,6 +1029,14 @@ impl AuthService {
         persistent_guard.users.get(user_id).map(to_profile_view)
     }
 
+    pub fn weapon_kills_by_user_id(&self, user_id: &str) -> Option<[u64; 5]> {
+        let persistent_guard = self.inner.persistent_store.read();
+        persistent_guard
+            .users
+            .get(user_id)
+            .map(|user| user.kills_per_weapon)
+    }
+
     pub fn revoke_session_token(&self, token_raw: &str) -> bool {
         let token = token_raw.trim();
         if token.is_empty() {
@@ -1088,7 +1096,10 @@ impl AuthService {
             user.top_streak = user.top_streak.max(player_state.peak_streak as u64);
             for (idx, kills) in player_state.kills_per_weapon.iter().enumerate() {
                 if let Some(total_slot) = user.kills_per_weapon.get_mut(idx) {
-                    *total_slot = total_slot.saturating_add((*kills).max(0) as u64);
+                    let session_baseline = player_state.career_kills_per_weapon[idx];
+                    *total_slot = (*total_slot)
+                        .max(session_baseline)
+                        .saturating_add((*kills).max(0) as u64);
                 }
             }
             let (xp_gain, credits_gain) = progression_reward_from_match(player_state);

@@ -35,7 +35,8 @@ export function createProtocolHandler({
     const PLAYER_DELTA_FIELD_POWERUPS          = 16;
     const PLAYER_DELTA_FIELD_SHIELD            = 32;
     const PLAYER_DELTA_FIELD_FLAG              = 64;
-    const PLAYER_DELTA_FULL_MASK               = 127;
+    const PLAYER_DELTA_FIELD_MISC              = 128;
+    const PLAYER_DELTA_FULL_MASK               = 255;
 
     // ── Scratch / reusable objects for zero-alloc parsing ────────────
     const flatbufferByteBufferScratch = new flatbuffers.ByteBuffer(new Uint8Array(0));
@@ -151,6 +152,7 @@ export function createProtocolHandler({
         const hasPowerupDelta  = (changedMask & PLAYER_DELTA_FIELD_POWERUPS) !== 0;
         const hasShieldDelta   = (changedMask & PLAYER_DELTA_FIELD_SHIELD) !== 0;
         const hasFlagDelta     = (changedMask & PLAYER_DELTA_FIELD_FLAG) !== 0;
+        const hasMiscDelta     = (changedMask & PLAYER_DELTA_FIELD_MISC) !== 0;
 
         target.id = player.id();
         if (hasScoreDelta || !target.username) {
@@ -182,6 +184,12 @@ export function createProtocolHandler({
             target.kills = player.kills();
             target.deaths = player.deaths();
             target.team_id = player.teamId();
+            target.hot_zone_kills = typeof player.hotZoneKills === 'function'
+                ? player.hotZoneKills()
+                : (Number(target.hot_zone_kills) || 0);
+            target.hot_zone_time_ticks = typeof player.hotZoneTimeTicks === 'function'
+                ? player.hotZoneTimeTicks()
+                : (Number(target.hot_zone_time_ticks) || 0);
         }
         if (hasPowerupDelta) {
             target.speed_boost_remaining = player.speedBoostRemaining();
@@ -197,6 +205,14 @@ export function createProtocolHandler({
         if (hasFlagDelta) {
             target.is_carrying_flag_team_id = player.isCarryingFlagTeamId();
         }
+        if (hasMiscDelta) {
+            target.is_bot = typeof player.isBot === 'function'
+                ? player.isBot()
+                : !!target.is_bot;
+            target.bot_behavior = typeof player.botBehavior === 'function'
+                ? player.botBehavior()
+                : (Number(target.bot_behavior) || 0);
+        }
         target.__changed_fields = changedMask;
         return target;
     }
@@ -210,6 +226,7 @@ export function createProtocolHandler({
         const hasPowerupDelta  = (changedMask & PLAYER_DELTA_FIELD_POWERUPS) !== 0;
         const hasShieldDelta   = (changedMask & PLAYER_DELTA_FIELD_SHIELD) !== 0;
         const hasFlagDelta     = (changedMask & PLAYER_DELTA_FIELD_FLAG) !== 0;
+        const hasMiscDelta     = (changedMask & PLAYER_DELTA_FIELD_MISC) !== 0;
 
         target.id = player.id;
         if (hasScoreDelta || !target.username) {
@@ -239,6 +256,8 @@ export function createProtocolHandler({
             target.kills = player.kills;
             target.deaths = player.deaths;
             target.team_id = player.team_id;
+            target.hot_zone_kills = player.hot_zone_kills;
+            target.hot_zone_time_ticks = player.hot_zone_time_ticks;
         }
         if (hasPowerupDelta) {
             target.speed_boost_remaining = player.speed_boost_remaining;
@@ -251,6 +270,10 @@ export function createProtocolHandler({
         }
         if (hasFlagDelta) {
             target.is_carrying_flag_team_id = player.is_carrying_flag_team_id;
+        }
+        if (hasMiscDelta) {
+            target.is_bot = !!player.is_bot;
+            target.bot_behavior = player.bot_behavior;
         }
         target.__changed_fields = changedMask;
         return target;
@@ -464,6 +487,18 @@ export function createProtocolHandler({
                                 primary_weapon: typeof player.primaryWeapon === 'function'
                                     ? player.primaryWeapon()
                                     : player.weapon(),
+                                hot_zone_kills: typeof player.hotZoneKills === 'function'
+                                    ? player.hotZoneKills()
+                                    : 0,
+                                hot_zone_time_ticks: typeof player.hotZoneTimeTicks === 'function'
+                                    ? player.hotZoneTimeTicks()
+                                    : 0,
+                                is_bot: typeof player.isBot === 'function'
+                                    ? player.isBot()
+                                    : false,
+                                bot_behavior: typeof player.botBehavior === 'function'
+                                    ? player.botBehavior()
+                                    : 0,
                             };
                         }
                         if (writeIdx > 0) { rows.length = writeIdx; initialStateData.players = rows; }
@@ -594,6 +629,12 @@ export function createProtocolHandler({
                                 reload_progress: player.reloadProgress(),
                                 score: player.score(), kills: player.kills(), deaths: player.deaths(),
                                 team_id: player.teamId(),
+                                hot_zone_kills: typeof player.hotZoneKills === 'function'
+                                    ? player.hotZoneKills()
+                                    : 0,
+                                hot_zone_time_ticks: typeof player.hotZoneTimeTicks === 'function'
+                                    ? player.hotZoneTimeTicks()
+                                    : 0,
                                 speed_boost_remaining: player.speedBoostRemaining(),
                                 damage_boost_remaining: player.damageBoostRemaining(),
                                 shield_current: player.shieldCurrent(), shield_max: player.shieldMax(),
@@ -603,6 +644,12 @@ export function createProtocolHandler({
                                     : 0,
                                 weapon_swap_progress: typeof player.weaponSwapProgress === 'function'
                                     ? player.weaponSwapProgress()
+                                    : 0,
+                                is_bot: typeof player.isBot === 'function'
+                                    ? player.isBot()
+                                    : false,
+                                bot_behavior: typeof player.botBehavior === 'function'
+                                    ? player.botBehavior()
                                     : 0,
                             };
                         }
@@ -932,6 +979,7 @@ export function createProtocolHandler({
         PLAYER_DELTA_FIELD_POWERUPS,
         PLAYER_DELTA_FIELD_SHIELD,
         PLAYER_DELTA_FIELD_FLAG,
+        PLAYER_DELTA_FIELD_MISC,
         DELTA_SUPPORTS_REMOVED_PLAYER_IDS,
         DELTA_SUPPORTS_CHANGED_PLAYER_FIELDS,
         DELTA_SUPPORTS_UPDATED_WALLS,

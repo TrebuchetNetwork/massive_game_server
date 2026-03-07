@@ -38,6 +38,10 @@ export declare class PlayerState {
     weaponSwapProgress(): number;
     currentStreak(): number;
     primaryWeapon(): WeaponType;
+    hotZoneKills(): number;
+    hotZoneTimeTicks(): number;
+    isBot(): boolean;
+    botBehavior(): number;
     static startPlayerState(builder: flatbuffers.Builder): void;
     static addId(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset): void;
     static addUsername(builder: flatbuffers.Builder, usernameOffset: flatbuffers.Offset): void;
@@ -69,7 +73,11 @@ export declare class PlayerState {
     static addWeaponSwapProgress(builder: flatbuffers.Builder, weaponSwapProgress: number): void;
     static addCurrentStreak(builder: flatbuffers.Builder, currentStreak: number): void;
     static addPrimaryWeapon(builder: flatbuffers.Builder, primaryWeapon: WeaponType): void;
+    static addHotZoneKills(builder: flatbuffers.Builder, hotZoneKills: number): void;
+    static addHotZoneTimeTicks(builder: flatbuffers.Builder, hotZoneTimeTicks: number): void;
+    static addIsBot(builder: flatbuffers.Builder, isBot: boolean): void;
+    static addBotBehavior(builder: flatbuffers.Builder, botBehavior: number): void;
     static endPlayerState(builder: flatbuffers.Builder): flatbuffers.Offset;
-    static createPlayerState(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset, usernameOffset: flatbuffers.Offset, x: number, y: number, rotation: number, velocityX: number, velocityY: number, health: number, maxHealth: number, alive: boolean, respawnTimer: number, weapon: WeaponType, ammo: number, reloadProgress: number, score: number, kills: number, deaths: number, teamId: number, speedBoostRemaining: number, damageBoostRemaining: number, shieldCurrent: number, shieldMax: number, isCarryingFlagTeamId: number, ability1CooldownRemaining: number, ability2CooldownRemaining: number, invulnerableRemaining: number, secondaryWeapon: WeaponType, weaponSwapProgress: number, currentStreak: number, primaryWeapon: WeaponType): flatbuffers.Offset;
+    static createPlayerState(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset, usernameOffset: flatbuffers.Offset, x: number, y: number, rotation: number, velocityX: number, velocityY: number, health: number, maxHealth: number, alive: boolean, respawnTimer: number, weapon: WeaponType, ammo: number, reloadProgress: number, score: number, kills: number, deaths: number, teamId: number, speedBoostRemaining: number, damageBoostRemaining: number, shieldCurrent: number, shieldMax: number, isCarryingFlagTeamId: number, ability1CooldownRemaining: number, ability2CooldownRemaining: number, invulnerableRemaining: number, secondaryWeapon: WeaponType, weaponSwapProgress: number, currentStreak: number, primaryWeapon: WeaponType, hotZoneKills: number, hotZoneTimeTicks: number, isBot: boolean, botBehavior: number): flatbuffers.Offset;
 }
 //# sourceMappingURL=player-state.d.ts.map

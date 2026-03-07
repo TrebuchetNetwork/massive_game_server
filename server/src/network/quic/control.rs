@@ -228,6 +228,22 @@ pub fn build_quic_control_handler(
                     request.team_id,
                 );
 
+                if joined.is_some() {
+                    let player_id = server.player_manager.id_pool.get_or_create(&peer_id);
+                    if let Some(mut player_state) =
+                        server.player_manager.get_player_state_mut(&player_id)
+                    {
+                        if let Some(career_kills) = auth_service.weapon_kills_by_user_id(&user_id) {
+                            player_state.career_kills_per_weapon = career_kills;
+                        }
+                        player_state.mark_field_changed(
+                            crate::core::types::FIELD_SCORE_STATS
+                                | crate::core::types::FIELD_FLAG
+                                | crate::core::types::FIELD_MISC,
+                        );
+                    }
+                }
+
                 info!(
                     "QUIC join: user_id='{}' peer_id='{}' success={}",
                     user_id,

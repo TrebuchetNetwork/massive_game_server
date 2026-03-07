@@ -349,6 +349,7 @@
             <label><input type="checkbox" id="mobileStickyFire"> Mobile Sticky Fire</label>
             <label><input type="checkbox" id="mobileAutoFireAim" checked> Mobile Auto-Fire While Aiming</label>
             <label><input type="checkbox" id="mobileHaptics" checked> Mobile Haptics</label>
+            <label><input type="checkbox" id="showBotIntentions"> Show Bot Intentions</label>
         </div>
         <div class="flex justify-end mt-6">
             <button id="saveSettingsButton" class="save-btn">Save & Close</button>
@@ -662,6 +663,7 @@
         const mobileStickyFireCheckbox = document.getElementById('mobileStickyFire');
         const mobileAutoFireAimCheckbox = document.getElementById('mobileAutoFireAim');
         const mobileHapticsCheckbox = document.getElementById('mobileHaptics');
+        const showBotIntentionsCheckbox = document.getElementById('showBotIntentions');
         const authCardDiv = document.getElementById('authCard');
         const authSignedOutDiv = document.getElementById('authSignedOut');
         const authSignedInDiv = document.getElementById('authSignedIn');
@@ -2279,6 +2281,7 @@
             mobileStickyFire: false,
             mobileAutoFireAim: true,
             mobileHaptics: true,
+            showBotIntentions: false,
             showDestroyedWallDebug: false // Debug mode for destroyed walls
         };
 
@@ -2581,7 +2584,7 @@
             playerScoreSpan, playerKillsSpan, playerDeathsSpan, powerupStatusDiv,
             playerCountSpan, pingDisplay, networkIndicator,
             showNetworkProfilerCheckbox, combatUiQualitySelect,
-            mobileStickyFireCheckbox, mobileAutoFireAimCheckbox, mobileHapticsCheckbox,
+            mobileStickyFireCheckbox, mobileAutoFireAimCheckbox, mobileHapticsCheckbox, showBotIntentionsCheckbox,
             KILLCAM_MIN_DURATION_MS, KILLCAM_MAX_DURATION_MS, KILLCAM_DISPLAY_GRACE_MS,
             NETWORK_PROFILER_WINDOW_MS, MIN_PLAYERS_TO_START, COMBAT_UI_QUALITY_OVERRIDE,
             BENCH_MODE, STABLE_MODE_FORCED, TOURNAMENT_MODE_FORCED,
@@ -2729,7 +2732,7 @@
 
         // ── Instantiate SpriteManager ──────────────────────────────────────
         const spriteManager = createSpriteManager(() => ({
-            PIXI, GP, renderAssetCache, weaponColors, teamColors, myPlayerId,
+            PIXI, GP, renderAssetCache, weaponColors, teamColors, myPlayerId, gameSettings,
             GLOBAL_LIGHT_DIR, PLAYER_SHADOW_BASE_OFFSET, PLAYER_RADIUS,
             STABLE_MODE_FORCED, ALPHA_EPSILON, TRANSFORM_EPSILON,
             PLAYER_CULL_MARGIN_WORLD, FAR_DETAIL_DISTANCE_SQ,
@@ -3574,8 +3577,9 @@
                     currentTime - lastHotZoneObjectiveAt >= HOT_ZONE_OBJECTIVE_THROTTLE_MS
                 ) {
                     const secondsLeft = Math.max(1, Math.ceil(remainingMs / 1000));
+                    const zoneKills = Math.max(0, Math.trunc(Number(localPlayerState?.hot_zone_kills) || 0));
                     setObjectiveUrgency(
-                        `Hold hot zone ${secondsLeft}s (+${bonusPct}% points)`,
+                        `Hold hot zone ${secondsLeft}s · Zone kills ${zoneKills} (+${bonusPct}% points)`,
                         'positive',
                         900
                     );

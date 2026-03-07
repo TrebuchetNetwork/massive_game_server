@@ -65,6 +65,38 @@ export function createUIManager(getCtx) {
         return normalized;
     }
 
+    function normalizeWeaponKillBreakdown(weaponKills, weaponNames) {
+        if (!weaponKills) return {};
+        if (Array.isArray(weaponKills)) {
+            const output = {};
+            for (let i = 0; i < weaponKills.length; i += 1) {
+                const kills = Math.max(0, toInt(weaponKills[i], 0));
+                if (kills <= 0) continue;
+                const weaponName = String(weaponNames?.[i + 1] || `Weapon ${i + 1}`).trim();
+                if (!weaponName) continue;
+                output[weaponName] = kills;
+            }
+            return output;
+        }
+        if (typeof weaponKills === 'object') {
+            return { ...weaponKills };
+        }
+        return {};
+    }
+
+    function getWeaponColorByName(weaponName, weaponNames, weaponColors) {
+        if (!weaponName) return '#94A3B8';
+        const entries = weaponNames && typeof weaponNames === 'object'
+            ? Object.entries(weaponNames)
+            : [];
+        for (let i = 0; i < entries.length; i += 1) {
+            const [weaponId, mappedName] = entries[i];
+            if (String(mappedName || '').trim() !== String(weaponName).trim()) continue;
+            return safeCssColor(weaponColors?.[weaponId]);
+        }
+        return '#94A3B8';
+    }
+
     function parseMvpMetricNumber(rawValue) {
         if (typeof rawValue === 'number' && Number.isFinite(rawValue)) return rawValue;
         const match = String(rawValue ?? '').match(/-?\d+(?:\.\d+)?/);
@@ -196,7 +228,10 @@ export function createUIManager(getCtx) {
             damage: Math.max(0, toInt(previous.damage, 0)) + damage,
             objectives: Math.max(0, toInt(previous.objectives, 0)) + objectives,
             total_xp: Math.max(0, toInt(previous.total_xp, 0)) + xpGain,
-            weapon_mastery: upsertWeaponMastery(previous.weapon_mastery, localRow?.weapon_kills || localRow?.weaponKills),
+            weapon_mastery: upsertWeaponMastery(
+                previous.weapon_mastery,
+                normalizeWeaponKillBreakdown(localRow?.weapon_kills || localRow?.weaponKills, context?.weaponNames)
+            ),
         };
         try {
             localStorage.setItem(CAREER_PROFILE_KEY, JSON.stringify(nextProfile));
@@ -564,7 +599,10 @@ export function createUIManager(getCtx) {
         const weaponBreakdownDiv = document.getElementById('postMatchWeaponBreakdown');
         if (weaponBreakdownDiv) {
             weaponBreakdownDiv.replaceChildren();
-            const weaponKills = localRow?.weapon_kills || localRow?.weaponKills || {};
+            const weaponKills = normalizeWeaponKillBreakdown(
+                localRow?.weapon_kills || localRow?.weaponKills,
+                ctx.weaponNames
+            );
             const weaponEntries = Object.entries(weaponKills);
             if (weaponEntries.length > 0) {
                 const totalKills = weaponEntries.reduce((sum, [, k]) => sum + Number(k), 0) || 1;
@@ -580,7 +618,7 @@ export function createUIManager(getCtx) {
                     const bar = document.createElement('div');
                     bar.className = 'weapon-bar';
                     bar.style.flex = String(Math.max(1, pct));
-                    bar.style.background = safeCssColor(ctx.weaponColors[wName]);
+                    bar.style.background = getWeaponColorByName(wName, ctx.weaponNames, ctx.weaponColors);
                     bar.title = `${String(wName)}: ${k} kills (${pct}%)`;
                     bar.textContent = pct > 10 ? String(wName) : '';
                     barsContainer.appendChild(bar);
@@ -588,6 +626,9 @@ export function createUIManager(getCtx) {
                 weaponBreakdownDiv.appendChild(barsContainer);
             }
         }
+
+        const localHotZoneKills = Math.max(0, toInt(localRow?.hot_zone_kills || localRow?.hotZoneKills, 0));
+        const localHotZoneTimeSeconds = Math.max(0, Number(localRow?.hot_zone_time_seconds || localRow?.hotZoneTimeSeconds || 0));
 
         // K/D trend across matches (localStorage)
         const trendDiv = document.getElementById('postMatchTrend');
@@ -765,6 +806,7 @@ export function createUIManager(getCtx) {
                 const careerProgress = updateCareerProgress(localRow, summaryPayload, {
                     localTeamId,
                     localName,
+                    weaponNames: ctx.weaponNames,
                 });
                 if (careerProgress) {
                     const levelLabel = document.createElement('div');
@@ -790,7 +832,7 @@ export function createUIManager(getCtx) {
 
                     const careerGrid = document.createElement('div');
                     careerGrid.className = 'post-match-records';
-                    [
+                    const careerEntries = [
                         { label: 'XP Gain', value: `+${careerProgress.xpGain}` },
                         {
                             label: 'Lifetime K/D',
@@ -800,7 +842,14 @@ export function createUIManager(getCtx) {
                         },
                         { label: 'Win Rate', value: `${Math.round(careerProgress.winRate)}%` },
                         { label: 'Matches', value: String(Math.max(0, toInt(careerProgress.profile.matches, 0))) },
-                    ].forEach((entry) => {
+                    ];
+                    if (localHotZoneKills > 0 || localHotZoneTimeSeconds > 0) {
+                        careerEntries.push(
+                            { label: 'Zone Kills', value: String(localHotZoneKills) },
+                            { label: 'Zone Time', value: `${localHotZoneTimeSeconds.toFixed(1)}s` },
+                        );
+                    }
+                    careerEntries.forEach((entry) => {
                         const card = document.createElement('div');
                         card.className = 'post-match-record';
                         const title = document.createElement('div');
@@ -2041,6 +2090,7 @@ export function createUIManager(getCtx) {
         ctx.gameSettings.mobileStickyFire = !!ctx.mobileStickyFireCheckbox?.checked;
         ctx.gameSettings.mobileAutoFireAim = !!ctx.mobileAutoFireAimCheckbox?.checked;
         ctx.gameSettings.mobileHaptics = !!ctx.mobileHapticsCheckbox?.checked;
+        ctx.gameSettings.showBotIntentions = !!ctx.showBotIntentionsCheckbox?.checked;
         ctx.gameSettings.showDestroyedWallDebug = false;
         ctx.applyTournamentPresetSettings();
         ctx.applyEffectsProfile();
@@ -2128,6 +2178,7 @@ export function createUIManager(getCtx) {
         if (ctx.mobileStickyFireCheckbox) ctx.mobileStickyFireCheckbox.checked = !!ctx.gameSettings.mobileStickyFire;
         if (ctx.mobileAutoFireAimCheckbox) ctx.mobileAutoFireAimCheckbox.checked = !!ctx.gameSettings.mobileAutoFireAim;
         if (ctx.mobileHapticsCheckbox) ctx.mobileHapticsCheckbox.checked = !!ctx.gameSettings.mobileHaptics;
+        if (ctx.showBotIntentionsCheckbox) ctx.showBotIntentionsCheckbox.checked = !!ctx.gameSettings.showBotIntentions;
 
         if (ctx.audioManager) {
             ctx.audioManager.setGlobalVolume(ctx.gameSettings.soundVolume);

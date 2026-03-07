@@ -147,6 +147,20 @@ export function createSpriteManager(getCtx) {
             usernameText.position.y = -PLAYER_RADIUS - 28;
             container.addChild(usernameText);
             container.usernameText = usernameText;
+
+            const botIntentionText = new PIXI.Text('', {
+                fontSize: 9,
+                fontWeight: '700',
+                fill: 0x86EFAC,
+                stroke: 0x052E16,
+                strokeThickness: 3,
+                align: 'center',
+            });
+            botIntentionText.anchor.set(0.5);
+            botIntentionText.position.y = -PLAYER_RADIUS - 41;
+            botIntentionText.visible = false;
+            container.addChild(botIntentionText);
+            container.botIntentionText = botIntentionText;
         }
 
         container.speedBoostEffect = null;
@@ -185,6 +199,7 @@ export function createSpriteManager(getCtx) {
         if (!sprite) return;
         sprite.visible = false;
         if (sprite.usernameText) sprite.usernameText.visible = false;
+        if (sprite.botIntentionText) sprite.botIntentionText.visible = false;
         if (sprite.healthBarContainer) sprite.healthBarContainer.visible = false;
         if (sprite.engineGlow) sprite.engineGlow.visible = false;
         if (sprite.shadowSprite) sprite.shadowSprite.visible = false;
@@ -422,6 +437,7 @@ export function createSpriteManager(getCtx) {
             updateShieldVisual(sprite, player.shield_current || 0, player.shield_max || 0);
             updatePlayerReloadArc(sprite, player, hideRemoteFxByDensity, farDetailMode);
             updateStatusEffectIcons(sprite, player, hideRemoteFxByDensity, farDetailMode);
+            updateBotIntentionBadge(sprite, player, hideRemoteFxByDensity, farDetailMode);
         }
 
         if (!shouldSkipDetailTick && sprite.usernameText && sprite.usernameText.text !== (player.username || 'Player')) {
@@ -675,6 +691,53 @@ export function createSpriteManager(getCtx) {
         speedIcon.alpha = hasSpeed ? pulse : 0;
         damageIcon.alpha = hasDamage ? pulse : 0;
         shieldIcon.alpha = hasShield ? pulse : 0;
+    }
+
+    function botBehaviorLabel(code) {
+        switch (Number(code) || 0) {
+            case 1: return 'MOV';
+            case 2: return 'ENG';
+            case 3: return 'PUP';
+            case 4: return 'DEF';
+            case 5: return 'OBJ';
+            case 6: return 'FLK';
+            case 7: return 'PAT';
+            default: return 'IDL';
+        }
+    }
+
+    function botBehaviorTint(code) {
+        switch (Number(code) || 0) {
+            case 2: return 0xF97316;
+            case 3: return 0x22D3EE;
+            case 4: return 0xFACC15;
+            case 5: return 0xA78BFA;
+            case 6: return 0xFB7185;
+            case 7: return 0x60A5FA;
+            case 1: return 0x4ADE80;
+            default: return 0x86EFAC;
+        }
+    }
+
+    function updateBotIntentionBadge(sprite, player, hideRemoteFxByDensity, farDetailMode) {
+        const ctx = getCtx();
+        const badge = sprite.botIntentionText;
+        if (!badge) return;
+        const shouldShow = !!ctx.gameSettings?.showBotIntentions
+            && !!player?.is_bot
+            && !!player?.alive
+            && !hideRemoteFxByDensity
+            && !farDetailMode;
+        if (!shouldShow) {
+            if (badge.visible) badge.visible = false;
+            return;
+        }
+        const label = botBehaviorLabel(player.bot_behavior);
+        if (badge.text !== label) badge.text = label;
+        const tint = botBehaviorTint(player.bot_behavior);
+        if (badge.tint !== tint) badge.tint = tint;
+        badge.alpha = 0.72 + 0.22 * Math.sin(ctx.frameNowMs * 0.012);
+        if (!badge.visible) badge.visible = true;
     }
 
     function updatePlayerHealthBar(sprite, player) {

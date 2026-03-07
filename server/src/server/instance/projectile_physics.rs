@@ -610,7 +610,9 @@ impl MassiveGameServer {
                             self.player_manager.get_player_state_mut(&attacker_id)
                         {
                             attacker_state_entry.kills += 1;
-                            attacker_state_entry.record_kill_with_weapon(weapon);
+                            let milestone = attacker_state_entry.record_kill_with_weapon(weapon);
+                            let milestone_position =
+                                Vec2::new(attacker_state_entry.x, attacker_state_entry.y);
 
                             // Check for friendly fire
                             if attacker_team != 0
@@ -640,6 +642,8 @@ impl MassiveGameServer {
                                     );
                                 }
                                 if base_kill_points > crate::core::constants::POINTS_PER_KILL {
+                                    attacker_state_entry.hot_zone_kills =
+                                        attacker_state_entry.hot_zone_kills.saturating_add(1);
                                     info!(
                                         "Hot zone bonus: {} gained {} points for elimination at ({:.1}, {:.1})",
                                         attacker_state_entry.username,
@@ -666,6 +670,18 @@ impl MassiveGameServer {
                                     attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
                                     drop(attacker_state_entry);
                                 }
+                            }
+
+                            if let Some(threshold) = milestone {
+                                self.global_game_events.push(
+                                    GameEvent::WeaponMilestone {
+                                        player_id: attacker_id.clone(),
+                                        weapon,
+                                        milestone: threshold,
+                                        position: milestone_position,
+                                    },
+                                    EventPriority::Normal,
+                                );
                             }
 
                             // We may have already dropped attacker_state_entry above

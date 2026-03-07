@@ -10,6 +10,7 @@ export function createCombatFeedback(getCtx) {
     let lastLocalDamageImpactAt = 0;
     const streakPingCooldownByPlayer = new Map();
     const TIP_STORAGE_KEY = 'mgs_first_time_tips_v1';
+    const CAREER_PROFILE_KEY = 'mgs_career_profile_v1';
     const tipFlags = (() => {
         try {
             const raw = sessionStorage.getItem(TIP_STORAGE_KEY);
@@ -25,6 +26,49 @@ export function createCombatFeedback(getCtx) {
     function persistTipFlags() {
         try {
             sessionStorage.setItem(TIP_STORAGE_KEY, JSON.stringify(Array.from(tipFlags.values()).slice(-24)));
+        } catch (_) {}
+    }
+
+    function getWeaponDisplayInfo(weaponId) {
+        const ctx = getCtx();
+        const fallbackNames = {
+            1: 'Pistol',
+            2: 'Shotgun',
+            3: 'Rifle',
+            4: 'Sniper',
+            5: 'Melee',
+        };
+        const fallbackColors = {
+            1: 0xFBBF24,
+            2: 0xFB923C,
+            3: 0x60A5FA,
+            4: 0xE879F9,
+            5: 0xF87171,
+        };
+        return {
+            name: ctx.weaponNames?.[weaponId] || fallbackNames[weaponId] || 'Weapon',
+            color: Number(ctx.weaponColors?.[weaponId]) || fallbackColors[weaponId] || 0xF8FAFC,
+        };
+    }
+
+    function persistWeaponMilestone(weaponName, milestone) {
+        if (!weaponName || !Number.isFinite(milestone) || milestone <= 0) return;
+        try {
+            const raw = localStorage.getItem(CAREER_PROFILE_KEY);
+            const parsed = raw ? JSON.parse(raw) : {};
+            const nextProfile = parsed && typeof parsed === 'object' ? parsed : {};
+            const weaponMastery = nextProfile.weapon_mastery && typeof nextProfile.weapon_mastery === 'object'
+                ? { ...nextProfile.weapon_mastery }
+                : {};
+            const weaponMilestones = nextProfile.weapon_milestones && typeof nextProfile.weapon_milestones === 'object'
+                ? { ...nextProfile.weapon_milestones }
+                : {};
+            const threshold = Math.max(0, Math.trunc(milestone));
+            weaponMastery[weaponName] = Math.max(Math.trunc(Number(weaponMastery[weaponName]) || 0), threshold);
+            weaponMilestones[weaponName] = Math.max(Math.trunc(Number(weaponMilestones[weaponName]) || 0), threshold);
+            nextProfile.weapon_mastery = weaponMastery;
+            nextProfile.weapon_milestones = weaponMilestones;
+            localStorage.setItem(CAREER_PROFILE_KEY, JSON.stringify(nextProfile));
         } catch (_) {}
     }
 
@@ -583,13 +627,21 @@ export function createCombatFeedback(getCtx) {
         return null;
     }
 
-    function showStreakMedal(text, durationMs) {
+    function showStreakMedal(text, durationMs, accentColor) {
         const ctx = getCtx();
         const duration = durationMs !== undefined ? durationMs : ctx.COMBAT_MEDAL_MS;
         if (!ctx.EXCITEMENT_UI_ENABLED || !ctx.streakMedalDiv || !text) return;
         ctx.combatUiState.medalText = String(text);
         ctx.combatUiState.medalUntilMs = Date.now() + Math.max(700, Number(duration) || ctx.COMBAT_MEDAL_MS);
         ctx.streakMedalDiv.textContent = ctx.combatUiState.medalText;
+        if (Number.isFinite(accentColor)) {
+            const hex = `#${Math.max(0, accentColor >>> 0).toString(16).padStart(6, '0').slice(-6)}`;
+            ctx.streakMedalDiv.style.color = hex;
+            ctx.streakMedalDiv.style.textShadow = `0 0 18px ${hex}`;
+        } else {
+            ctx.streakMedalDiv.style.color = '';
+            ctx.streakMedalDiv.style.textShadow = '';
+        }
         ctx.streakMedalDiv.classList.add('streak-medal--visible');
     }
 
@@ -796,6 +848,7 @@ export function createCombatFeedback(getCtx) {
         if (!ctx.EXCITEMENT_UI_ENABLED || !event) return;
         const EVENT_SHIELD_BROKEN = ctx.GP?.GameEventType?.ShieldBroken ?? 14;
         const EVENT_POWERUP_EXPIRING = ctx.GP?.GameEventType?.PowerupExpiring ?? 15;
+        const EVENT_WEAPON_MILESTONE = ctx.GP?.GameEventType?.WeaponMilestone ?? 17;
         if (event.event_type === ctx.GP.GameEventType.FlagGrabbed) {
             setObjectiveUrgency('Flag stolen - collapse now', 'critical', 1100);
             if (event.instigator_id === ctx.myPlayerId) {
@@ -888,6 +941,22 @@ export function createCombatFeedback(getCtx) {
             const instigatorId = typeof event.instigator_id === 'string' ? event.instigator_id : '';
             if (instigatorId === ctx.myPlayerId) {
                 setObjectiveUrgency(`Assist! +${Math.round(event.value || 0)} pts`, 'positive', 1200);
+            }
+            return;
+        }
+        if (event.event_type === EVENT_WEAPON_MILESTONE) {
+            const instigatorId = typeof event.instigator_id === 'string' ? event.instigator_id : '';
+            if (instigatorId === ctx.myPlayerId) {
+                const threshold = Math.max(1, Math.round(Number(event.value) || 0));
+                const weapon = getWeaponDisplayInfo(event.weapon_type);
+                showCombatBanner(`${threshold} ${weapon.name} Kills!`, 'positive', 1700);
+                showStreakMedal(`${weapon.name} Mastery`, 1800, weapon.color);
+                setObjectiveUrgency(`${weapon.name} milestone unlocked`, 'positive', 1900);
+                persistWeaponMilestone(weapon.name, threshold);
+                if (ctx.audioManager && ctx.gameSettings?.soundEnabled) {
+                    ctx.audioManager.playSound('flagFanfare', null, 0.42);
+                }
+                triggerHaptic([12, 18, 12]);
             }
             return;
         }

@@ -19,5 +19,6 @@ export enum GameEventType {
   AssistKill = 13,
   ShieldBroken = 14,
   PowerupExpiring = 15,
-  Footstep = 16
+  Footstep = 16,
+  WeaponMilestone = 17
 }

@@ -3,6 +3,7 @@
 use crate::core::constants::*;
 use crate::core::types::{
     CorePickupType, EntityId, PlayerID, PlayerInputData, PlayerState, ServerWeaponType, Vec2, Wall,
+    FIELD_MISC,
 };
 use crate::flatbuffers_generated::game_protocol as fb;
 use crate::server::instance::{BotBehaviorState, BotController, MassiveGameServer};
@@ -729,6 +730,14 @@ impl OptimizedBotAI {
                 if let Some(mut player_state_entry) =
                     server_instance.player_manager.get_player_state_mut(bot_id)
                 {
+                    let next_behavior = bot_controller.behavior_state.as_u8();
+                    let misc_changed = !player_state_entry.is_bot
+                        || player_state_entry.bot_behavior != next_behavior;
+                    player_state_entry.is_bot = true;
+                    player_state_entry.bot_behavior = next_behavior;
+                    if misc_changed {
+                        player_state_entry.mark_field_changed(FIELD_MISC);
+                    }
                     if input.move_forward
                         || input.move_backward
                         || input.move_left

@@ -647,6 +647,9 @@ impl MassiveGameServer {
                 if let Some(mut p_state) = self.player_manager.get_player_state_mut(&player_id_arc)
                 {
                     p_state.team_id = team_id as u8;
+                    p_state.is_bot = true;
+                    p_state.bot_behavior = BotBehaviorState::Idle.as_u8();
+                    p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_MISC);
                 }
 
                 let bot_controller = BotController {

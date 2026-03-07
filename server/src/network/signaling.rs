@@ -2,7 +2,7 @@
 use crate::core::config::ServerConfig;
 use crate::core::types::{
     EntityId, PlayerAoIs, PlayerID, PlayerInputData, RTCDataChannel as CoreRTCDataChannel,
-    FIELD_FLAG, FIELD_SCORE_STATS,
+    FIELD_FLAG, FIELD_MISC, FIELD_SCORE_STATS,
 };
 
 use crate::core::constants::*;
@@ -1880,7 +1880,14 @@ pub async fn handle_signaling_connection(
                     p_state.respawn_timer = None;
                     p_state.reload_progress = None;
                 }
-                p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
+                if let Some(bound_user_id) = auth_user_id_on_open.as_deref() {
+                    if let Some(career_kills) =
+                        auth_service_on_open.weapon_kills_by_user_id(bound_user_id)
+                    {
+                        p_state.career_kills_per_weapon = career_kills;
+                    }
+                }
+                p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG | FIELD_MISC);
                 info!(
                     "[{}] assigned to team {}. Player state marked as changed.",
                     current_peer_id_on_open_cb, team_to_assign

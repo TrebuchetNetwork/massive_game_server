@@ -1521,6 +1521,8 @@ mod instance_tests {
             damage_taken: 0,
             flag_captures: 0,
             flag_returns: 0,
+            hot_zone_kills: 0,
+            hot_zone_time_seconds: 0.0,
             weapon_kills: vec![3, 2, 5, 0, 0],
             kd_ratio: 10.0, // kills as f32
         };

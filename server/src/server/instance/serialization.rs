@@ -89,6 +89,7 @@ pub(super) fn create_fb_player_state_for_delta_ext<'a>(
     let has_powerup_delta = is_full_state || (changed_fields & FIELD_POWERUPS) != 0;
     let has_shield_delta = is_full_state || (changed_fields & FIELD_SHIELD) != 0;
     let has_flag_delta = is_full_state || (changed_fields & FIELD_FLAG) != 0;
+    let has_misc_delta = is_full_state || (changed_fields & FIELD_MISC) != 0;
 
     let id_fb = fb_safe_str(builder, pstate.id.as_ref());
     let username_fb = if is_full_state || has_score_delta {
@@ -219,10 +220,26 @@ pub(super) fn create_fb_player_state_for_delta_ext<'a>(
             } else {
                 0
             },
+            hot_zone_kills: if has_score_delta {
+                pstate.hot_zone_kills
+            } else {
+                0
+            },
+            hot_zone_time_ticks: if has_score_delta {
+                pstate.hot_zone_time_ticks
+            } else {
+                0
+            },
             primary_weapon: if has_weapon_delta {
                 map_server_weapon_to_fb(pstate.primary_weapon)
             } else {
                 fb::WeaponType::Rifle
+            },
+            is_bot: if has_misc_delta { pstate.is_bot } else { false },
+            bot_behavior: if has_misc_delta {
+                pstate.bot_behavior as i8
+            } else {
+                0
             },
         },
     )

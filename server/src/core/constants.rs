@@ -175,6 +175,7 @@ pub const KILLSTREAK_SPEED_BOOST_DURATION_SECS: f32 = 15.0;
 pub const KILLSTREAK_DOMINATING_THRESHOLD: u32 = 7;
 pub const KILLSTREAK_PREF_DAMAGE_FIRST_INPUT_SLOT: u8 = 3;
 pub const KILLSTREAK_PREF_SPEED_FIRST_INPUT_SLOT: u8 = 4;
+pub const WEAPON_MILESTONE_THRESHOLDS: &[u64] = &[10, 25, 50, 100, 250, 500, 1000];
 
 // ── Objective scoring ───────────────────────────────────────────────
 pub const POINTS_PER_KILL: i32 = 10;

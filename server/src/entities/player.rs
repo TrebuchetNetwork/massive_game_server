@@ -214,6 +214,21 @@ fn merge_player_state_delta(base: &mut PlayerState, original: &PlayerState, upda
     if original.kills_per_weapon != updated.kills_per_weapon {
         base.kills_per_weapon = updated.kills_per_weapon;
     }
+    if original.career_kills_per_weapon != updated.career_kills_per_weapon {
+        base.career_kills_per_weapon = updated.career_kills_per_weapon;
+    }
+    if original.hot_zone_kills != updated.hot_zone_kills {
+        base.hot_zone_kills = updated.hot_zone_kills;
+    }
+    if original.hot_zone_time_ticks != updated.hot_zone_time_ticks {
+        base.hot_zone_time_ticks = updated.hot_zone_time_ticks;
+    }
+    if original.is_bot != updated.is_bot {
+        base.is_bot = updated.is_bot;
+    }
+    if original.bot_behavior != updated.bot_behavior {
+        base.bot_behavior = updated.bot_behavior;
+    }
     if original.last_valid_position != updated.last_valid_position {
         base.last_valid_position = updated.last_valid_position;
     }

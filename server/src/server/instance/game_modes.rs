@@ -813,6 +813,15 @@ impl MassiveGameServer {
                     self.capture_match_end_summary("time_expired");
                     return;
                 }
+                let hot_zone_tracking = if match_info_guard.hot_zone_active && safe_delta > 0.0 {
+                    Some((
+                        match_info_guard.hot_zone_center,
+                        match_info_guard.hot_zone_radius * match_info_guard.hot_zone_radius,
+                    ))
+                } else {
+                    None
+                };
+
                 if map_event_to_trigger.is_some()
                     || hot_zone_to_trigger.is_some()
                     || !late_phase_events.is_empty()
@@ -847,6 +856,21 @@ impl MassiveGameServer {
                             }
                         }
                     }
+                }
+
+                if let Some((hot_zone_center, hot_zone_radius_sq)) = hot_zone_tracking {
+                    self.player_manager
+                        .for_each_player_mut(|_player_id, player_state| {
+                            if !player_state.alive || player_state.is_spectator {
+                                return;
+                            }
+                            let dx = player_state.x - hot_zone_center.x;
+                            let dy = player_state.y - hot_zone_center.y;
+                            if (dx * dx + dy * dy) <= hot_zone_radius_sq {
+                                player_state.hot_zone_time_ticks =
+                                    player_state.hot_zone_time_ticks.saturating_add(1);
+                            }
+                        });
                 }
             }
             fb::MatchStateType::Ended => {

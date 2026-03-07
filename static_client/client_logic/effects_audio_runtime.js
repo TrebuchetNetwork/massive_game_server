@@ -999,6 +999,7 @@ if (
     event.event_type !== GP.GameEventType.PlayerDamageEffect &&
     event.event_type !== GP.GameEventType.WallImpact &&
     event.event_type !== GP.GameEventType.WeaponFire &&
+    event.event_type !== (GP?.GameEventType?.WeaponMilestone ?? 17) &&
     event.event_type !== GAME_EVENT_FOOTSTEP
 ) return;
 const registerCombatEventFeedback = globalThis.registerCombatEventFeedback;

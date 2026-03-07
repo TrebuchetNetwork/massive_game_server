@@ -61,7 +61,8 @@ enum GameEventType : byte {
     AssistKill = 13,   // value = assist points awarded
     ShieldBroken = 14, // shield depleted to zero
     PowerupExpiring = 15, // value = seconds remaining (typically 3 or 1)
-    Footstep = 16
+    Footstep = 16,
+    WeaponMilestone = 17
 }
 
 enum SurfaceType : byte {
@@ -169,6 +170,10 @@ table PlayerState {
     weapon_swap_progress: float = 0.0;
     current_streak: uint = 0;
     primary_weapon: WeaponType = Rifle;
+    hot_zone_kills: int = 0;
+    hot_zone_time_ticks: uint = 0;
+    is_bot: bool = false;
+    bot_behavior: byte = 0;
 }
 
 table ProjectileState {

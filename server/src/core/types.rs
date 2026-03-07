@@ -131,6 +131,7 @@ pub const FIELD_SCORE_STATS: u16 = 1 << 3;
 pub const FIELD_POWERUPS: u16 = 1 << 4;
 pub const FIELD_SHIELD: u16 = 1 << 5;
 pub const FIELD_FLAG: u16 = 1 << 6;
+pub const FIELD_MISC: u16 = 1 << 7;
 
 // --- Game Entities (Basic Definitions) ---
 #[derive(Clone, Debug, PartialEq)]
@@ -192,6 +193,11 @@ pub struct PlayerState {
     pub flag_captures: i32,
     pub flag_returns: i32,
     pub kills_per_weapon: [i32; 5],
+    pub career_kills_per_weapon: [u64; 5],
+    pub hot_zone_kills: i32,
+    pub hot_zone_time_ticks: u32,
+    pub is_bot: bool,
+    pub bot_behavior: u8,
 
     pub last_valid_position: (f32, f32),
     pub violation_count: u32,
@@ -284,6 +290,11 @@ impl PlayerState {
             flag_captures: 0,
             flag_returns: 0,
             kills_per_weapon: [0; 5],
+            career_kills_per_weapon: [0; 5],
+            hot_zone_kills: 0,
+            hot_zone_time_ticks: 0,
+            is_bot: false,
+            bot_behavior: 0,
             last_valid_position: (initial_x, initial_y),
             violation_count: 0,
             changed_fields: 0xFFFF,
@@ -912,19 +923,35 @@ impl PlayerState {
     }
 
     #[inline]
-    pub fn record_kill_with_weapon(&mut self, weapon: ServerWeaponType) {
+    pub fn record_kill_with_weapon(&mut self, weapon: ServerWeaponType) -> Option<u64> {
         let idx = Self::weapon_index(weapon);
         if let Some(slot) = self.kills_per_weapon.get_mut(idx) {
             *slot = slot.saturating_add(1);
+            let total_kills = self
+                .career_kills_per_weapon
+                .get(idx)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add((*slot).max(0) as u64);
+            if crate::core::constants::WEAPON_MILESTONE_THRESHOLDS.contains(&total_kills) {
+                return Some(total_kills);
+            }
         }
+        None
     }
 
     pub fn reset_match_stats(&mut self) {
+        for idx in 0..self.kills_per_weapon.len() {
+            self.career_kills_per_weapon[idx] = self.career_kills_per_weapon[idx]
+                .saturating_add(self.kills_per_weapon[idx].max(0) as u64);
+        }
         self.damage_dealt = 0;
         self.damage_taken = 0;
         self.flag_captures = 0;
         self.flag_returns = 0;
         self.kills_per_weapon = [0; 5];
+        self.hot_zone_kills = 0;
+        self.hot_zone_time_ticks = 0;
         self.current_streak = 0;
         self.peak_streak = 0;
         self.streak_damage_boost_remaining = 0.0;
@@ -1086,6 +1113,12 @@ pub enum GameEvent {
         player_id: PlayerID,
         position: Vec2,
         surface_type: u8,
+    },
+    WeaponMilestone {
+        player_id: PlayerID,
+        weapon: ServerWeaponType,
+        milestone: u64,
+        position: Vec2,
     },
     FlagGrabbed {
         player_id: PlayerID,
@@ -1994,5 +2027,19 @@ mod tests {
             max_health: 100,
         };
         assert_eq!(wall.inferred_surface_type(), SurfaceType::Metal);
+    }
+
+    #[test]
+    fn record_kill_with_weapon_emits_threshold_once_total_crosses_milestone() {
+        let mut player = make_player("milestone");
+        player.career_kills_per_weapon[PlayerState::weapon_index(ServerWeaponType::Sniper)] = 9;
+        assert_eq!(
+            player.record_kill_with_weapon(ServerWeaponType::Sniper),
+            Some(10)
+        );
+        assert_eq!(
+            player.record_kill_with_weapon(ServerWeaponType::Sniper),
+            None
+        );
     }
 }

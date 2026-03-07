@@ -12,6 +12,7 @@ pub(crate) fn event_position(event: &GameEvent) -> Vec2 {
         GameEvent::WallImpact { position, .. } => *position,
         GameEvent::MeleeHit { position, .. } => *position,
         GameEvent::Footstep { position, .. } => *position,
+        GameEvent::WeaponMilestone { position, .. } => *position,
         GameEvent::FlagGrabbed { position, .. } => *position,
         GameEvent::FlagDropped { position, .. } => *position,
         GameEvent::FlagReturned { position, .. } => *position,
@@ -38,6 +39,7 @@ pub(crate) fn event_instigator_id(event: &GameEvent) -> Option<PlayerID> {
         GameEvent::AssistKill { assister_id, .. } => Some(assister_id.clone()),
         GameEvent::ShieldBroken { player_id, .. } => Some(player_id.clone()),
         GameEvent::PowerupExpiring { player_id, .. } => Some(player_id.clone()),
+        GameEvent::WeaponMilestone { player_id, .. } => Some(player_id.clone()),
         _ => None,
     }
 }
@@ -66,6 +68,7 @@ pub(crate) fn event_weapon_type(event: &GameEvent) -> Option<ServerWeaponType> {
         GameEvent::PlayerKilled { weapon, .. } => Some(*weapon),
         GameEvent::WeaponFired { weapon, .. } => Some(*weapon),
         GameEvent::MeleeHit { .. } => Some(ServerWeaponType::Melee),
+        GameEvent::WeaponMilestone { weapon, .. } => Some(*weapon),
         _ => None,
     }
 }
@@ -79,6 +82,7 @@ pub(crate) fn event_value(event: &GameEvent) -> Option<f32> {
         GameEvent::PowerupExpiring {
             seconds_remaining, ..
         } => Some(*seconds_remaining),
+        GameEvent::WeaponMilestone { milestone, .. } => Some(*milestone as f32),
         _ => None,
     }
 }
@@ -134,6 +138,7 @@ pub(crate) fn map_game_event_type_to_fb(event: &GameEvent) -> Option<fb::GameEve
         GameEvent::ShieldBroken { .. } => Some(fb::GameEventType::ShieldBroken),
         GameEvent::PowerupExpiring { .. } => Some(fb::GameEventType::PowerupExpiring),
         GameEvent::Footstep { .. } => Some(fb::GameEventType::Footstep),
+        GameEvent::WeaponMilestone { .. } => Some(fb::GameEventType::WeaponMilestone),
         // These events currently do not have explicit FlatBuffer variants in game.fbs.
         // Skip serialization rather than misclassifying them as BulletImpact.
         GameEvent::PlayerJoined { .. } | GameEvent::PlayerLeft { .. } => None,
@@ -168,5 +173,20 @@ mod tests {
             surface_type: SurfaceType::Wood.as_u8(),
         };
         assert_eq!(event_surface_type(&event), fb::SurfaceType::Wood);
+    }
+
+    #[test]
+    fn weapon_milestone_events_serialize_to_milestone_type() {
+        let event = GameEvent::WeaponMilestone {
+            player_id: Arc::from("p1"),
+            weapon: ServerWeaponType::Sniper,
+            milestone: 50,
+            position: Vec2::new(5.0, 9.0),
+        };
+        assert_eq!(
+            map_game_event_type_to_fb(&event),
+            Some(fb::GameEventType::WeaponMilestone)
+        );
+        assert_eq!(event_value(&event), Some(50.0));
     }
 }

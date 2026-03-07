@@ -134,7 +134,7 @@ impl Default for ServerMatchInfo {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BotBehaviorState {
     Idle,
     MovingToPosition,
@@ -144,6 +144,21 @@ pub enum BotBehaviorState {
     MovingToObjective,
     Flanking,
     Patrolling,
+}
+
+impl BotBehaviorState {
+    pub const fn as_u8(self) -> u8 {
+        match self {
+            BotBehaviorState::Idle => 0,
+            BotBehaviorState::MovingToPosition => 1,
+            BotBehaviorState::Engaging => 2,
+            BotBehaviorState::SeekingPickup => 3,
+            BotBehaviorState::Defending => 4,
+            BotBehaviorState::MovingToObjective => 5,
+            BotBehaviorState::Flanking => 6,
+            BotBehaviorState::Patrolling => 7,
+        }
+    }
 }
 
 pub(super) struct ClientInfo {
@@ -252,6 +267,8 @@ pub struct PlayerMatchStats {
     pub damage_taken: i32,
     pub flag_captures: i32,
     pub flag_returns: i32,
+    pub hot_zone_kills: i32,
+    pub hot_zone_time_seconds: f32,
     pub weapon_kills: Vec<i32>,
     pub kd_ratio: f32,
 }
