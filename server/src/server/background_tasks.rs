@@ -19,6 +19,25 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 
+const SIGNALING_RUNTIME_ORPHAN_GRACE: Duration = Duration::from_secs(15);
+
+fn should_evict_signaling_peer(
+    has_connection_record: bool,
+    connected_for: Option<Duration>,
+    has_data_channel: bool,
+    has_client_state: bool,
+    has_player_aoi: bool,
+    has_player_state: bool,
+) -> bool {
+    if !has_connection_record {
+        return true;
+    }
+
+    let runtime_state_missing =
+        !has_data_channel && !has_client_state && !has_player_aoi && !has_player_state;
+    runtime_state_missing && connected_for.is_some_and(|age| age >= SIGNALING_RUNTIME_ORPHAN_GRACE)
+}
+
 pub fn spawn_backup_worker(backup_manager: BackupManager, server: Arc<MassiveGameServer>) {
     if backup_manager.enabled() {
         info!(
@@ -134,14 +153,30 @@ pub fn spawn_idle_connection_cleanup(
             if shutdown_flag.load(Ordering::Relaxed) {
                 break;
             }
+            let client_states_guard = client_states.read();
             let orphaned_signaling_ids: Vec<String> = signaling_peers
                 .iter()
                 .filter_map(|entry| {
                     let peer_id = entry.key();
-                    (!shared_connection_manager().contains(peer_id.as_str()))
-                        .then(|| peer_id.clone())
+                    let connection_info = shared_connection_manager().get(peer_id.as_str());
+                    let connected_for = connection_info
+                        .as_ref()
+                        .map(|info| info.connected_at.elapsed());
+                    let player_id_lookup: Arc<str> = Arc::from(peer_id.clone());
+                    let has_player_state =
+                        player_manager.get_player_state(&player_id_lookup).is_some();
+                    should_evict_signaling_peer(
+                        connection_info.is_some(),
+                        connected_for,
+                        data_channels.contains_key(peer_id.as_str()),
+                        client_states_guard.contains_key(peer_id.as_str()),
+                        player_aois.contains_key(peer_id.as_str()),
+                        has_player_state,
+                    )
+                    .then(|| peer_id.clone())
                 })
                 .collect();
+            drop(client_states_guard);
             let mut evict_ids = shared_connection_manager().stale_peer_ids(stale_threshold);
             for orphan_id in orphaned_signaling_ids {
                 if !evict_ids.iter().any(|peer_id| peer_id == &orphan_id) {
@@ -167,6 +202,55 @@ pub fn spawn_idle_connection_cleanup(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_evict_signaling_peer;
+    use std::time::Duration;
+
+    #[test]
+    fn evicts_signaling_peer_without_connection_record() {
+        assert!(should_evict_signaling_peer(
+            false, None, true, true, true, true
+        ));
+    }
+
+    #[test]
+    fn evicts_runtime_orphan_after_grace_period() {
+        assert!(should_evict_signaling_peer(
+            true,
+            Some(Duration::from_secs(20)),
+            false,
+            false,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn preserves_recent_handshakes_without_runtime_state() {
+        assert!(!should_evict_signaling_peer(
+            true,
+            Some(Duration::from_secs(5)),
+            false,
+            false,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn preserves_active_signaling_peer_with_runtime_state() {
+        assert!(!should_evict_signaling_peer(
+            true,
+            Some(Duration::from_secs(60)),
+            true,
+            false,
+            false,
+            false
+        ));
+    }
 }
 
 pub fn spawn_arena_worker(

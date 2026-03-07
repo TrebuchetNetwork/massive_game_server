@@ -67,6 +67,10 @@ impl ConnectionManager {
         self.connections.remove(peer_id).map(|(_, value)| value)
     }
 
+    pub fn get(&self, peer_id: &str) -> Option<ConnectionInfo> {
+        self.connections.get(peer_id).map(|entry| entry.clone())
+    }
+
     pub fn contains(&self, peer_id: &str) -> bool {
         self.connections.contains_key(peer_id)
     }
@@ -166,5 +170,15 @@ mod tests {
         // After touch, should no longer be stale
         manager.touch("peer1");
         assert!(manager.stale_peer_ids(Duration::from_secs(120)).is_empty());
+    }
+
+    #[test]
+    fn get_returns_cloned_connection_info() {
+        let manager = ConnectionManager::default();
+        manager.upsert(ConnectionInfo::new("peer1", TransportKind::WebRtc));
+
+        let info = manager.get("peer1").expect("connection info should exist");
+        assert_eq!(info.peer_id, "peer1");
+        assert_eq!(info.transport, TransportKind::WebRtc);
     }
 }
