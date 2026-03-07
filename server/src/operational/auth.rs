@@ -159,7 +159,8 @@ struct SessionRecord {
 }
 
 struct AuthRedisCache {
-    connection: ParkingLotMutex<redis::Connection>,
+    client: redis::Client,
+    connection: ParkingLotMutex<Option<redis::Connection>>,
     store_key: String,
 }
 
@@ -2078,15 +2079,36 @@ fn persist_persistent_store(
 }
 
 impl AuthRedisCache {
-    fn load_store(&self) -> Option<PersistentAuthStore> {
-        let mut connection = self.connection.lock();
-        let raw: Option<String> = match connection.get(&self.store_key) {
-            Ok(value) => value,
-            Err(error) => {
-                warn!("Failed to fetch auth store from Redis: {}", error);
-                return None;
+    fn with_connection<T>(
+        &self,
+        mut operation: impl FnMut(&mut redis::Connection) -> redis::RedisResult<T>,
+    ) -> redis::RedisResult<T> {
+        let mut guard = self.connection.lock();
+        if guard.is_none() {
+            *guard = Some(self.client.get_connection()?);
+        }
+
+        match operation(guard.as_mut().expect("redis connection initialized")) {
+            Ok(value) => Ok(value),
+            Err(first_error) => {
+                *guard = None;
+                let mut reconnected = self.client.get_connection()?;
+                let retry_result = operation(&mut reconnected);
+                *guard = Some(reconnected);
+                retry_result.or(Err(first_error))
             }
-        };
+        }
+    }
+
+    fn load_store(&self) -> Option<PersistentAuthStore> {
+        let raw: Option<String> =
+            match self.with_connection(|connection| connection.get(&self.store_key)) {
+                Ok(value) => value,
+                Err(error) => {
+                    warn!("Failed to fetch auth store from Redis: {}", error);
+                    return None;
+                }
+            };
         let payload = raw?;
         match serde_json::from_str::<PersistentAuthStore>(&payload) {
             Ok(store) => {
@@ -2116,8 +2138,8 @@ impl AuthRedisCache {
             }
         };
 
-        let mut connection = self.connection.lock();
-        let result: redis::RedisResult<()> = connection.set(&self.store_key, serialized);
+        let result: redis::RedisResult<()> =
+            self.with_connection(|connection| connection.set(&self.store_key, serialized.clone()));
         if let Err(error) = result {
             warn!(
                 "Failed to persist auth store to Redis key '{}': {}",
@@ -2188,7 +2210,8 @@ fn init_redis_cache(
         safe_url, store_key
     );
     Some(AuthRedisCache {
-        connection: ParkingLotMutex::new(connection),
+        client,
+        connection: ParkingLotMutex::new(Some(connection)),
         store_key,
     })
 }

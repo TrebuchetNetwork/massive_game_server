@@ -147,6 +147,82 @@ jobs:
             scripts/e2e/test-results
             scripts/e2e/playwright-report
 
+  redis-failover-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+      REDIS_FAILOVER_PORT: "19081"
+      REDIS_FAILOVER_CONTAINER: mgs-redis-failover
+      REDIS_FAILOVER_PASSWORD: mgs_redis_dev_password
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Install FlatBuffers compiler
+        run: scripts/install_flatc.sh
+
+      - name: Build debug server binary
+        run: cargo build -p massive_game_server_core --bin massive_game_server_core --locked
+
+      - name: Start Redis failover fixture
+        run: |
+          docker run -d \
+            --name "${REDIS_FAILOVER_CONTAINER}" \
+            -p 16379:6379 \
+            redis:7-alpine \
+            redis-server --appendonly yes --requirepass "${REDIS_FAILOVER_PASSWORD}"
+
+      - name: Run Redis failover smoke
+        run: |
+          set -euo pipefail
+          data_root=/tmp/mgs_redis_failover
+          rm -rf "${data_root}"
+          mkdir -p "${data_root}/arena_wasm" "${data_root}/arena_sources"
+
+          MGS_HOST=127.0.0.1 \
+          MGS_PORT="${REDIS_FAILOVER_PORT}" \
+          MGS_DISABLE_STUN=1 \
+          MGS_TARGET_BOT_COUNT=0 \
+          MGS_DIAGNOSTICS_ENABLED=0 \
+          MGS_QUIC_PRIMARY=0 \
+          MGS_SMS_COMMAND="$PWD/scripts/test_support/capture_sms.sh" \
+          MGS_TEST_SMS_CAPTURE_PATH="${data_root}/otp.txt" \
+          MGS_AUTH_STORE_PATH="${data_root}/auth_store.json" \
+          MGS_FEATURE_FLAG_STORE_PATH="${data_root}/feature_flags_store.json" \
+          MGS_ARENA_STORE_PATH="${data_root}/arena_store.json" \
+          MGS_ARENA_WASM_DIR="${data_root}/arena_wasm" \
+          MGS_ARENA_SOURCE_DIR="${data_root}/arena_sources" \
+          MGS_REDIS_URL="redis://:${REDIS_FAILOVER_PASSWORD}@127.0.0.1:16379/" \
+          RUST_LOG=warn \
+            ./target/debug/massive_game_server_core > /tmp/mgs_redis_failover_server.log 2>&1 &
+          server_pid=$!
+          trap 'kill ${server_pid} >/dev/null 2>&1 || true; docker rm -f "${REDIS_FAILOVER_CONTAINER}" >/dev/null 2>&1 || true' EXIT
+
+          MGS_REDIS_FAILOVER_BASE_URL="http://127.0.0.1:${REDIS_FAILOVER_PORT}" \
+          MGS_REDIS_FAILOVER_SMS_CAPTURE_PATH="${data_root}/otp.txt" \
+          MGS_REDIS_FAILOVER_AUTH_STORE_PATH="${data_root}/auth_store.json" \
+          MGS_REDIS_FAILOVER_CONTAINER="${REDIS_FAILOVER_CONTAINER}" \
+          MGS_REDIS_FAILOVER_PASSWORD="${REDIS_FAILOVER_PASSWORD}" \
+            python3 scripts/test_support/redis_failover_smoke.py
+
+      - name: Upload Redis failover artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: redis-failover-smoke-artifacts
+          path: |
+            /tmp/mgs_redis_failover_server.log
+            /tmp/mgs_redis_failover
+
   reconnect-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20

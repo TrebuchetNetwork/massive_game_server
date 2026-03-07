@@ -183,6 +183,10 @@ path = "tests/integration/quic_transport.rs"
 name = "auth_e2e"
 path = "tests/integration/auth_e2e.rs"
 
+[[test]]
+name = "persistence"
+path = "tests/integration/persistence.rs"
+
 [[bench]]
 name = "physics"
 harness = false
