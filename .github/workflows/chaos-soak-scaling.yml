@@ -144,9 +144,19 @@ jobs:
           curl -fsS http://127.0.0.1:18180/healthz > /tmp/mgs_bounded_soak_health.json
           python3 - <<'PY'
           import json
-          import re
           import time
           import urllib.request
+
+          def parse_metric(metrics_text, prefix):
+              for raw_line in metrics_text.splitlines():
+                  line = raw_line.strip()
+                  if not line.startswith(prefix):
+                      continue
+                  try:
+                      return float(line.split()[-1])
+                  except (IndexError, ValueError):
+                      return -1.0
+              return -1.0
 
           with open("/tmp/mgs_bounded_soak_health.json", "r", encoding="utf-8") as fh:
               health = json.load(fh)
@@ -158,12 +168,9 @@ jobs:
           # Allow enough time for that background sweep before failing the soak.
           for second in range(360):
               metrics = urllib.request.urlopen("http://127.0.0.1:19191/metrics", timeout=5).read().decode("utf-8")
-              ws_match = re.search(r"^game_ws_connections_active\\s+([0-9.]+)$", metrics, re.MULTILINE)
-              players_match = re.search(r"^game_players_connected\\s+([0-9.]+)$", metrics, re.MULTILINE)
-              connected_match = re.search(r'^game_webrtc_peers_in_state\\{state=\"connected\"\\}\\s+([0-9.]+)$', metrics, re.MULTILINE)
-              ws_active = float(ws_match.group(1)) if ws_match else -1.0
-              players_connected = float(players_match.group(1)) if players_match else -1.0
-              connected_webrtc = float(connected_match.group(1)) if connected_match else -1.0
+              ws_active = parse_metric(metrics, "game_ws_connections_active ")
+              players_connected = parse_metric(metrics, "game_players_connected ")
+              connected_webrtc = parse_metric(metrics, 'game_webrtc_peers_in_state{state="connected"} ')
               if second in (0, 30, 60, 90, 120, 150, 180, 210, 240, 300, 359):
                   print(
                       f"drain_check t={second}s ws_active={ws_active} "
