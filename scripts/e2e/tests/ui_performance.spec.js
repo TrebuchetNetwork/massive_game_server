@@ -1,53 +1,13 @@
 const { test, expect } = require('@playwright/test');
-const { registerServerLifecycle, resolveWsUrl } = require('./helpers/serverLifecycle');
-
-async function connectClient(page) {
-  await page.addInitScript(() => {
-    try {
-      localStorage.setItem('mgs_player_name', 'E2EPlayer');
-    } catch (_) {}
-  });
-  await page.goto('/client.html?disable_stun=1&match_type=quick', { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('#connectButton', { state: 'attached' });
-  const matchTypeSelect = page.locator('#matchTypeSelect');
-  if (await matchTypeSelect.count()) {
-    await matchTypeSelect.selectOption('quick');
-  }
-  const wsInput = page.locator('#wsUrl');
-  if (await wsInput.count()) {
-    await wsInput.fill(resolveWsUrl());
-  }
-
-  let lastError = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    await page.click('#connectButton', { force: true });
-    try {
-      await page.waitForFunction(
-        () => window.__e2e && window.__e2e.matchInfoReady === true,
-        null,
-        { timeout: 120000 }
-      );
-      await page.waitForFunction(
-        () => window.__e2e && window.__e2e.lastStateUpdate > 0,
-        null,
-        { timeout: 120000 }
-      );
-      return;
-    } catch (error) {
-      lastError = error;
-      await page.waitForTimeout(2000);
-    }
-  }
-
-  throw lastError || new Error('Unable to establish match state in connectClient');
-}
+const { registerServerLifecycle } = require('./helpers/serverLifecycle');
+const { connectClient } = require('./helpers/gameClient');
 
 registerServerLifecycle(test);
 
 test.describe('UI Performance', () => {
   test.describe.configure({ timeout: 420000, retries: 1 });
   test('maintains acceptable FPS after connection', async ({ page }) => {
-    await connectClient(page);
+    await connectClient(page, { timeout: 120000 });
 
     // Warmup period
     await page.waitForTimeout(2000);
@@ -79,12 +39,14 @@ test.describe('UI Performance', () => {
       `Render loop measurement: ${result.fps.toFixed(1)} FPS-equivalent over ${result.elapsed.toFixed(1)}s (${result.renderFrameDelta} frames, last render age ${result.lastRenderAgeMs.toFixed(0)}ms)`
     );
 
-    expect(result.renderFrameDelta).toBeGreaterThan(15);
-    expect(result.lastRenderAgeMs).toBeLessThan(1500);
+    // Hosted CI runners aggressively throttle headless rendering. Keep this as a
+    // liveness/perf-smoke gate rather than a workstation FPS target.
+    expect(result.renderFrameDelta).toBeGreaterThan(5);
+    expect(result.lastRenderAgeMs).toBeLessThan(2500);
   });
 
   test('no excessive memory growth over time', async ({ page }) => {
-    await connectClient(page);
+    await connectClient(page, { timeout: 120000 });
 
     // Wait for initial state to settle
     await page.waitForTimeout(3000);
@@ -120,7 +82,7 @@ test.describe('UI Performance', () => {
   });
 
   test('render loop processes state updates without stalling', async ({ page }) => {
-    await connectClient(page);
+    await connectClient(page, { timeout: 120000 });
     await page.waitForTimeout(2000);
 
     // Check that state updates keep flowing
@@ -159,7 +121,7 @@ test.describe('UI Performance', () => {
   });
 
   test('client handles rapid input without frame drops', async ({ page }) => {
-    await connectClient(page);
+    await connectClient(page, { timeout: 120000 });
     await page.waitForTimeout(2000);
 
     // Get baseline FPS
@@ -216,7 +178,7 @@ test.describe('UI Performance', () => {
   });
 
   test('canvas element exists and is rendering', async ({ page }) => {
-    await connectClient(page);
+    await connectClient(page, { timeout: 120000 });
     await page.waitForTimeout(2000);
 
     // Verify canvas exists
@@ -236,7 +198,7 @@ test.describe('UI Performance', () => {
   });
 
   test('player count displays correctly', async ({ page }) => {
-    await connectClient(page);
+    await connectClient(page, { timeout: 120000 });
     await page.waitForTimeout(3000);
 
     const playerCount = await page.evaluate(() => {

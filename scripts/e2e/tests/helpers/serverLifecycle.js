@@ -89,9 +89,17 @@ async function startServer(options = {}) {
   serverProcess.stdout.on('data', (data) => process.stdout.write(data.toString()));
   serverProcess.stderr.on('data', (data) => process.stderr.write(data.toString()));
 
-  const exitPromise = new Promise((_, reject) => {
-    serverProcess.on('exit', (code) => {
-      serverProcess = undefined;
+  let ready = false;
+  const processRef = serverProcess;
+  const exitPromise = new Promise((resolve, reject) => {
+    processRef.once('exit', (code) => {
+      if (serverProcess === processRef) {
+        serverProcess = undefined;
+      }
+      if (ready) {
+        resolve();
+        return;
+      }
       reject(new Error(`Server exited early with code ${code}`));
     });
   });
@@ -99,6 +107,7 @@ async function startServer(options = {}) {
   await Promise.race([waitForHttpReady(`${baseUrl}/healthz`), exitPromise]);
   await Promise.race([waitForHttpReady(`${baseUrl}/readyz`), exitPromise]);
   await Promise.race([waitForHttpReady(`${baseUrl}/client.html`), exitPromise]);
+  ready = true;
 }
 
 async function stopServer() {
