@@ -196,6 +196,14 @@ path = "tests/integration/anti_cheat.rs"
 name = "network_robustness"
 path = "tests/integration/network_robustness.rs"
 
+[[test]]
+name = "security_auth"
+path = "tests/integration/security_auth.rs"
+
+[[test]]
+name = "match_lifecycle"
+path = "tests/integration/match_lifecycle.rs"
+
 [[bench]]
 name = "physics"
 harness = false
