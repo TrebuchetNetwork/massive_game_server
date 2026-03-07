@@ -1424,33 +1424,6 @@ pub async fn handle_signaling_connection(
     signaling_peers.insert(peer_id_str.clone(), client_signaling_tx.clone());
     metrics::set_ws_connections_active(signaling_peers.len());
 
-    let peer_id_fwd = peer_id_str.clone();
-    tokio::spawn(async move {
-        while let Some(message_result) = client_signaling_rx.recv().await {
-            match message_result {
-                Ok(msg) => {
-                    shared_connection_manager().touch(peer_id_fwd.as_str());
-                    metrics::record_network_bytes("egress_ws", msg.as_bytes().len());
-                    if ws_tx.send(msg).await.is_err() {
-                        warn!(
-                            "[{}]: WebSocket send error, terminating forwarder.",
-                            peer_id_fwd
-                        );
-                        break;
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        "[{}]: Error in message to send via WebSocket: {:?}",
-                        peer_id_fwd, e
-                    );
-                    break;
-                }
-            }
-        }
-        info!("[{}]: Signaling forwarder task ended.", peer_id_fwd);
-    });
-
     if let Some(keepalive_interval) = ws_keepalive_interval() {
         let keepalive_sender = client_signaling_tx.clone();
         let keepalive_peer_id = peer_id_str.clone();
@@ -1567,6 +1540,62 @@ pub async fn handle_signaling_connection(
     let mut pc_drop_guard =
         PeerConnectionDropGuard::new(Arc::clone(&peer_connection), peer_id_str.clone());
     let cleanup_once = Arc::new(AtomicBool::new(false));
+
+    let peer_id_fwd = peer_id_str.clone();
+    let signaling_peers_for_forwarder = signaling_peers.clone();
+    let player_manager_for_forwarder = player_manager.clone();
+    let data_channels_for_forwarder = data_channels_map.clone();
+    let client_states_for_forwarder = client_states_map.clone();
+    let player_aois_for_forwarder = player_aois.clone();
+    let auth_service_for_forwarder = auth_service.clone();
+    let cleanup_once_for_forwarder = Arc::clone(&cleanup_once);
+    tokio::spawn(async move {
+        while let Some(message_result) = client_signaling_rx.recv().await {
+            match message_result {
+                Ok(msg) => {
+                    shared_connection_manager().touch(peer_id_fwd.as_str());
+                    metrics::record_network_bytes("egress_ws", msg.as_bytes().len());
+                    if ws_tx.send(msg).await.is_err() {
+                        warn!(
+                            "[{}]: WebSocket send error, terminating forwarder.",
+                            peer_id_fwd
+                        );
+                        if begin_cleanup_once(cleanup_once_for_forwarder.as_ref()) {
+                            cleanup_connection(
+                                &peer_id_fwd,
+                                &signaling_peers_for_forwarder,
+                                &player_manager_for_forwarder,
+                                &data_channels_for_forwarder,
+                                &client_states_for_forwarder,
+                                &player_aois_for_forwarder,
+                                &auth_service_for_forwarder,
+                            );
+                        }
+                        break;
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "[{}]: Error in message to send via WebSocket: {:?}",
+                        peer_id_fwd, e
+                    );
+                    if begin_cleanup_once(cleanup_once_for_forwarder.as_ref()) {
+                        cleanup_connection(
+                            &peer_id_fwd,
+                            &signaling_peers_for_forwarder,
+                            &player_manager_for_forwarder,
+                            &data_channels_for_forwarder,
+                            &client_states_for_forwarder,
+                            &player_aois_for_forwarder,
+                            &auth_service_for_forwarder,
+                        );
+                    }
+                    break;
+                }
+            }
+        }
+        info!("[{}]: Signaling forwarder task ended.", peer_id_fwd);
+    });
 
     let pc_for_ice = Arc::clone(&peer_connection);
     let ice_sender_clone = client_signaling_tx.clone();
