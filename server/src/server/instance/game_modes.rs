@@ -869,6 +869,13 @@ impl MassiveGameServer {
                             if (dx * dx + dy * dy) <= hot_zone_radius_sq {
                                 player_state.hot_zone_time_ticks =
                                     player_state.hot_zone_time_ticks.saturating_add(1);
+                                if player_state.hot_zone_time_ticks == 1
+                                    || player_state.hot_zone_time_ticks
+                                        % crate::core::constants::SERVER_TICK_RATE as u32
+                                        == 0
+                                {
+                                    player_state.mark_field_changed(FIELD_SCORE_STATS);
+                                }
                             }
                         });
                 }

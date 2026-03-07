@@ -1029,8 +1029,9 @@ switch (event.event_type) {
         }
         break;
     case GP.GameEventType.WallImpact:
-        if (!this.shouldEmitEffect('impact')) break;
-        this.createEnhancedBulletImpact(pos, event.weapon_type);
+        if (this.shouldEmitEffect('impact')) {
+            this.createEnhancedBulletImpact(pos, event.weapon_type);
+        }
         if (this.audioManager) {
             this.audioManager.playSound(this.getSurfaceImpactSoundName(event.surface_type), pos, 0.5);
             this.audioManager.registerCombatEventIntensity(0.1);
@@ -4316,22 +4317,28 @@ if (position && localPlayerState && app && gameScene) {
     const soundWorldPos = gameScene.toGlobal(position);
     const dx = soundWorldPos.x - viewCenter.x;
     const dy = soundWorldPos.y - viewCenter.y;
-    const distance = Math.sqrt(dx * dx + dy * dy);
+    const worldDx = listenerWorldPos && Number.isFinite(soundWorldPosData.x)
+        ? soundWorldPosData.x - listenerWorldPos.x
+        : 0;
+    const worldDy = listenerWorldPos && Number.isFinite(soundWorldPosData.y)
+        ? soundWorldPosData.y - listenerWorldPos.y
+        : 0;
+    const worldDistance = Math.sqrt(worldDx * worldDx + worldDy * worldDy);
     const maxAudibleDistance = 900;
 
-    if (distance > maxAudibleDistance) return;
-    const attenuation = 1 / (1 + Math.pow(distance / 400, 2));
+    if (worldDistance > maxAudibleDistance) return;
+    const attenuation = 1 / (1 + Math.pow(worldDistance / 400, 2));
     finalVolume *= attenuation;
     if (finalVolume <= 0.001) return;
     panValue = Math.max(-1, Math.min(1, dx / (app.screen.width / 2)));
-    if (distance > 500) {
-        const farRatio = Math.max(0, Math.min(1, (distance - 500) / 400));
+    if (worldDistance > 500) {
+        const farRatio = Math.max(0, Math.min(1, (worldDistance - 500) / 400));
         lowpassHz = 8200 - farRatio * 6600;
     }
     if (
         !ultraPerformanceMode &&
         !this.mobileSoundBudget &&
-        distance > 100 &&
+        worldDistance > 100 &&
         listenerWorldPos &&
         Number.isFinite(soundWorldPosData.x) &&
         Number.isFinite(soundWorldPosData.y)

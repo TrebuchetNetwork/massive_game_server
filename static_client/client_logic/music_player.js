@@ -407,7 +407,8 @@ export class MusicPlayer {
 
   updateDynamicPlayback() {
     const settings = this.getGameSettings() || {};
-    if (!settings.musicEnabled || !this.playerDiv || this.playerDiv.classList.contains("hidden")) {
+    // Playback state should continue adapting even when the player UI is hidden.
+    if (!settings.musicEnabled || !this.playerDiv) {
       return;
     }
 
