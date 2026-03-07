@@ -391,6 +391,12 @@ fn remove_webrtc_peer_state(peer_id: &str) {
     publish_webrtc_peer_state_gauges(states);
 }
 
+pub fn current_webrtc_peer_state_label(peer_id: &str) -> Option<&'static str> {
+    shared_webrtc_peer_states()
+        .get(peer_id)
+        .map(|entry| *entry.value())
+}
+
 #[derive(Clone, Debug)]
 pub struct ClientState {
     pub known_walls_sent: bool,

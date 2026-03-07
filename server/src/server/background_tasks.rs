@@ -2,7 +2,8 @@ use crate::core::types::PlayerAoI;
 use crate::network::connection_manager::shared_connection_manager;
 use crate::network::quic::connected_quic_peer_count;
 use crate::network::signaling::{
-    cleanup_connection, ClientStatesMap, DataChannelsMap, PlayerManagerRef, SignalingPeers,
+    cleanup_connection, current_webrtc_peer_state_label, ClientStatesMap, DataChannelsMap,
+    PlayerManagerRef, SignalingPeers,
 };
 use crate::operational::arena::ArenaService;
 use crate::operational::auth::AuthService;
@@ -28,8 +29,19 @@ fn should_evict_signaling_peer(
     has_client_state: bool,
     has_player_aoi: bool,
     has_player_state: bool,
+    webrtc_state_label: Option<&str>,
 ) -> bool {
     if !has_connection_record {
+        return true;
+    }
+
+    if matches!(webrtc_state_label, Some("closed" | "failed")) {
+        return true;
+    }
+
+    if matches!(webrtc_state_label, Some("disconnected"))
+        && connected_for.is_some_and(|age| age >= SIGNALING_RUNTIME_ORPHAN_GRACE)
+    {
         return true;
     }
 
@@ -165,6 +177,7 @@ pub fn spawn_idle_connection_cleanup(
                     let player_id_lookup: Arc<str> = Arc::from(peer_id.clone());
                     let has_player_state =
                         player_manager.get_player_state(&player_id_lookup).is_some();
+                    let webrtc_state_label = current_webrtc_peer_state_label(peer_id.as_str());
                     should_evict_signaling_peer(
                         connection_info.is_some(),
                         connected_for,
@@ -172,6 +185,7 @@ pub fn spawn_idle_connection_cleanup(
                         client_states_guard.contains_key(peer_id.as_str()),
                         player_aois.contains_key(peer_id.as_str()),
                         has_player_state,
+                        webrtc_state_label,
                     )
                     .then(|| peer_id.clone())
                 })
@@ -261,7 +275,7 @@ mod tests {
     #[test]
     fn evicts_signaling_peer_without_connection_record() {
         assert!(should_evict_signaling_peer(
-            false, None, true, true, true, true
+            false, None, true, true, true, true, None
         ));
     }
 
@@ -273,7 +287,8 @@ mod tests {
             false,
             false,
             false,
-            false
+            false,
+            None
         ));
     }
 
@@ -285,7 +300,8 @@ mod tests {
             false,
             false,
             false,
-            false
+            false,
+            None
         ));
     }
 
@@ -297,7 +313,34 @@ mod tests {
             true,
             false,
             false,
-            false
+            false,
+            None
+        ));
+    }
+
+    #[test]
+    fn evicts_closed_webrtc_peer_even_with_runtime_state_leftovers() {
+        assert!(should_evict_signaling_peer(
+            true,
+            Some(Duration::from_secs(2)),
+            true,
+            true,
+            true,
+            true,
+            Some("closed")
+        ));
+    }
+
+    #[test]
+    fn evicts_disconnected_webrtc_peer_after_grace_period() {
+        assert!(should_evict_signaling_peer(
+            true,
+            Some(Duration::from_secs(20)),
+            true,
+            true,
+            false,
+            false,
+            Some("disconnected")
         ));
     }
 }
