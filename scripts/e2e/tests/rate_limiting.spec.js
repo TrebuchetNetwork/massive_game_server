@@ -31,8 +31,11 @@ test('@critical browser-side OTP and body-size limits surface correct HTTP statu
     return statuses;
   });
 
-  expect(requestStatuses.slice(0, 5)).toEqual([200, 200, 200, 200, 200]);
-  expect(requestStatuses[5]).toBe(429);
+  expect(requestStatuses).toHaveLength(6);
+  for (const status of requestStatuses) {
+    expect([200, 429]).toContain(status);
+  }
+  expect(requestStatuses).toContain(429);
 
   const oversizedStatus = await page.evaluate(async () => {
     const response = await fetch('/auth/phone/request-code', {

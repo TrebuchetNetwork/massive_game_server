@@ -115,11 +115,14 @@ jobs:
       - name: Verify alert delivery wiring
         run: |
           set -euo pipefail
+          STARTS_AT="$(date -u -Iseconds)"
+          ENDS_AT="$(date -u -Iseconds -d '+10 minutes')"
+          curl -fsS http://127.0.0.1:18081/healthz >/dev/null
           curl -fsS \
             -H 'Content-Type: application/json' \
             -X POST \
             http://127.0.0.1:9093/api/v2/alerts \
-            -d '[{"labels":{"alertname":"ReleaseEdgeSynthetic","severity":"warning","suite":"release-edge"},"annotations":{"summary":"release edge synthetic alert"},"startsAt":"2026-03-08T12:00:00Z","endsAt":"2026-03-08T12:10:00Z","generatorURL":"https://localhost/release-edge"}]'
+            -d "[{\"labels\":{\"alertname\":\"ReleaseEdgeSynthetic\",\"severity\":\"warning\",\"suite\":\"release-edge\"},\"annotations\":{\"summary\":\"release edge synthetic alert\"},\"startsAt\":\"${STARTS_AT}\",\"endsAt\":\"${ENDS_AT}\",\"generatorURL\":\"https://localhost/release-edge\"}]"
           for _ in $(seq 1 30); do
             if grep -q 'ReleaseEdgeSynthetic' docker/monitoring/alert_sink/received.jsonl; then
               exit 0
