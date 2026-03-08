@@ -18,6 +18,7 @@ test('server shutdown disconnects client cleanly and persists shutdown snapshot'
   );
 
   await startServer({
+    baseUrl: 'http://127.0.0.1:19080',
     env: {
       MGS_HOST: '0.0.0.0',
       MGS_PORT: '19080',

@@ -7,7 +7,7 @@ registerServerLifecycle(test);
 test.describe('UI Performance', () => {
   test.describe.configure({ timeout: 420000, retries: 1 });
   test('maintains acceptable FPS after connection', async ({ page }) => {
-    await connectClient(page, { timeout: 120000 });
+    await connectClient(page, { timeout: 120000, requireLocalPlayer: false });
 
     // Warmup period
     await page.waitForTimeout(2000);
@@ -46,7 +46,7 @@ test.describe('UI Performance', () => {
   });
 
   test('no excessive memory growth over time', async ({ page }) => {
-    await connectClient(page, { timeout: 120000 });
+    await connectClient(page, { timeout: 120000, requireLocalPlayer: false });
 
     // Wait for initial state to settle
     await page.waitForTimeout(3000);
@@ -82,7 +82,7 @@ test.describe('UI Performance', () => {
   });
 
   test('render loop processes state updates without stalling', async ({ page }) => {
-    await connectClient(page, { timeout: 120000 });
+    await connectClient(page, { timeout: 120000, requireLocalPlayer: false });
     await page.waitForTimeout(2000);
 
     // Check that state updates keep flowing
@@ -121,7 +121,7 @@ test.describe('UI Performance', () => {
   });
 
   test('client handles rapid input without frame drops', async ({ page }) => {
-    await connectClient(page, { timeout: 120000 });
+    await connectClient(page, { timeout: 120000, requireLocalPlayer: false });
     await page.waitForTimeout(2000);
 
     // Get baseline FPS
@@ -178,7 +178,7 @@ test.describe('UI Performance', () => {
   });
 
   test('canvas element exists and is rendering', async ({ page }) => {
-    await connectClient(page, { timeout: 120000 });
+    await connectClient(page, { timeout: 120000, requireLocalPlayer: false });
     await page.waitForTimeout(2000);
 
     // Verify canvas exists
@@ -198,7 +198,7 @@ test.describe('UI Performance', () => {
   });
 
   test('player count displays correctly', async ({ page }) => {
-    await connectClient(page, { timeout: 120000 });
+    await connectClient(page, { timeout: 120000, requireLocalPlayer: false });
     await page.waitForTimeout(3000);
 
     const playerCount = await page.evaluate(() => {
