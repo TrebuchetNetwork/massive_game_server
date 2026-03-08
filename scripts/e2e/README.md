@@ -53,6 +53,28 @@ npx playwright test tests/auth_flow.spec.js tests/reconnect_flow.spec.js --worke
 - `auth_flow.spec.js` verifies OTP request, verify-code, authenticated gameplay join, and logout revocation.
 - `reconnect_flow.spec.js` forces a disconnect and verifies the client reconnects without ghost entities or duplicate player sprites.
 
+## Release Edge Verification
+```bash
+docker compose -f docker/docker-compose.yml up -d --build redis massive-game-server alertmanager alert-webhook prometheus grafana nginx
+cd scripts/e2e
+E2E_SERVER_SKIP=1 \
+E2E_BASE_URL=https://localhost \
+E2E_WS_URL=wss://localhost/ws \
+E2E_IGNORE_HTTPS_ERRORS=1 \
+  npx playwright test tests/edge_release.spec.js tests/auth_flow.spec.js --workers=1 --reporter=list
+```
+
+- Validates the nginx/TLS/WSS edge path instead of the direct localhost app server path.
+- Confirms hardened response headers, static cache policy, cookie-mode auth through the proxy, and gameplay signaling over `wss://`.
+
+## Public Browser Synthetic
+```bash
+./scripts/verify_public_deploy_browser.sh game.trebuchet.network
+```
+
+- Runs a thin Playwright browser journey against the real public domain.
+- Complements `verify_public_deploy.sh`, which remains the fast curl/TLS sanity check.
+
 ## Notes
 - The test suite starts the Rust server by default using:
   `cargo run -p massive_game_server_core --bin massive_game_server_core`

@@ -15,7 +15,11 @@ services:
       MGS_MAX_PLAYERS_PER_MATCH: "${MGS_MAX_PLAYERS_PER_MATCH:-200}"
       MGS_BEHIND_TLS_PROXY: "${MGS_BEHIND_TLS_PROXY:-0}"
       MGS_REQUIRE_AUTH: "${MGS_REQUIRE_AUTH:-0}"
+      MGS_AUTH_USE_COOKIES: "${MGS_AUTH_USE_COOKIES:-0}"
       MGS_ALLOWED_ORIGINS: "${MGS_ALLOWED_ORIGINS:-https://game.trebuchet.network,http://127.0.0.1:18080,http://localhost:18080,http://127.0.0.1:8080,http://localhost:8080}"
+      MGS_SMS_COMMAND: "${MGS_SMS_COMMAND:-}"
+      MGS_TEST_SMS_CAPTURE_PATH: "${MGS_TEST_SMS_CAPTURE_PATH:-}"
+      MGS_MATCH_DURATION_OVERRIDE_SECS: "${MGS_MATCH_DURATION_OVERRIDE_SECS:-}"
       MGS_REDIS_URL: "redis://:${MGS_REDIS_PASSWORD:-mgs_redis_dev_password}@redis:6379/"
       MGS_METRICS_ENABLED: "true"
       MGS_METRICS_BIND_ADDR: "${MGS_METRICS_BIND_ADDR:-0.0.0.0:9090}"
@@ -109,6 +113,34 @@ services:
     networks:
       - game-network
 
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: massive-game-server-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    networks:
+      - game-network
+
+  alert-webhook:
+    image: python:3.12-alpine
+    container_name: massive-game-server-alert-webhook
+    restart: unless-stopped
+    command: ["python", "/srv/alert_webhook.py", "/data/received.jsonl", "18081"]
+    volumes:
+      - ./monitoring/alert_webhook.py:/srv/alert_webhook.py:ro
+      - ./monitoring/alert_sink:/data
+    ports:
+      - "127.0.0.1:18081:18081"
+    networks:
+      - game-network
+
   grafana:
     image: grafana/grafana:11.1.0
     container_name: massive-game-server-grafana
@@ -154,6 +186,7 @@ volumes:
   redis_data:
   nginx_cache:
   prometheus_data:
+  alertmanager_data:
   grafana_data:
 
 secrets:

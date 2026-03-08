@@ -2,7 +2,7 @@ const { test, expect } = require('@playwright/test');
 const { registerServerLifecycle, resolveBaseUrl } = require('./helpers/serverLifecycle');
 const { connectClient } = require('./helpers/gameClient');
 
-const ADMIN_TOKEN = 'match-lifecycle-e2e-admin';
+const ADMIN_TOKEN = process.env.E2E_ADMIN_TOKEN || 'match-lifecycle-e2e-admin';
 
 registerServerLifecycle(test, {
   env: {

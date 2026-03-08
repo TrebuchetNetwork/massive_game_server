@@ -1,0 +1,45 @@
+name: Public Browser Synthetic
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7,37 * * * *"
+
+concurrency:
+  group: public-browser-synthetic-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  public-browser-synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PUBLIC_DOMAIN: game.trebuchet.network
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Verify public edge endpoints
+        run: ./scripts/verify_public_deploy.sh "${PUBLIC_DOMAIN}"
+
+      - name: Install Playwright dependencies
+        working-directory: scripts/e2e
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: scripts/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser-backed public synthetic
+        env:
+          PUBLIC_SYNTH_DEEP_CONNECT: "0"
+        run: ./scripts/verify_public_deploy_browser.sh "${PUBLIC_DOMAIN}"
+
+      - name: Upload public synthetic artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: public-browser-synthetic-artifacts
+          path: |
+            scripts/e2e/test-results
+            scripts/e2e/playwright-report

@@ -1,0 +1,227 @@
+name: Release Edge
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+  schedule:
+    - cron: "33 7 * * *"
+
+concurrency:
+  group: release-edge-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  edge-browser-critical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      EDGE_ADMIN_TOKEN: release-edge-admin-token
+      EDGE_BASE_URL: https://localhost
+      EDGE_WS_URL: wss://localhost/ws
+      EDGE_SMS_CAPTURE_FILE: /app/artifacts/edge_otp.txt
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Prepare docker secret placeholders
+        run: |
+          mkdir -p docker/secrets docker/monitoring/alert_sink
+          printf 'ci-openrouter-placeholder\n' > docker/secrets/openrouter_api_key
+          printf 'admin\n' > docker/secrets/grafana_admin_user
+          printf 'admin-password\n' > docker/secrets/grafana_admin_password
+          : > docker/monitoring/alert_sink/received.jsonl
+
+      - name: Start release edge stack
+        env:
+          MGS_ADMIN_BEARER_TOKEN: ${{ env.EDGE_ADMIN_TOKEN }}
+          MGS_ALLOWED_ORIGINS: https://localhost,https://127.0.0.1,https://game.trebuchet.network
+          MGS_AUTH_USE_COOKIES: "1"
+          MGS_BEHIND_TLS_PROXY: "1"
+          MGS_DISABLE_STUN: "1"
+          MGS_MATCH_DURATION_OVERRIDE_SECS: "15"
+          MGS_METRICS_BIND_ADDR: 0.0.0.0:9090
+          MGS_REQUIRE_AUTH: "0"
+          MGS_SMS_COMMAND: /app/scripts/test_support/capture_sms.sh
+          MGS_TARGET_BOT_COUNT: "0"
+          MGS_TEST_SMS_CAPTURE_PATH: ${{ env.EDGE_SMS_CAPTURE_FILE }}
+          GRAFANA_ROOT_URL: https://localhost/grafana
+        run: |
+          docker compose -f docker/docker-compose.yml up -d --build \
+            redis \
+            massive-game-server \
+            alertmanager \
+            alert-webhook \
+            prometheus \
+            grafana \
+            nginx
+
+      - name: Wait for edge stack readiness
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 90); do
+            if curl -kfsS "${EDGE_BASE_URL}/healthz" >/dev/null 2>&1 \
+              && curl -kfsS "${EDGE_BASE_URL}/readyz" >/dev/null 2>&1 \
+              && curl -fsS http://127.0.0.1:9091/-/ready >/dev/null 2>&1 \
+              && curl -fsS http://127.0.0.1:9093/-/ready >/dev/null 2>&1 \
+              && curl -fsS http://127.0.0.1:18081/healthz >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "release edge stack did not become ready" >&2
+          exit 1
+
+      - name: Verify Node runtime
+        run: |
+          node --version
+          npm --version
+
+      - name: Install Playwright dependencies
+        working-directory: scripts/e2e
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: scripts/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run edge-critical browser suite
+        working-directory: scripts/e2e
+        env:
+          E2E_ADMIN_TOKEN: ${{ env.EDGE_ADMIN_TOKEN }}
+          E2E_BASE_URL: ${{ env.EDGE_BASE_URL }}
+          E2E_DOCKER_SMS_CONTAINER: massive-game-server
+          E2E_DOCKER_SMS_FILE: ${{ env.EDGE_SMS_CAPTURE_FILE }}
+          E2E_IGNORE_HTTPS_ERRORS: "1"
+          E2E_SERVER_SKIP: "1"
+          E2E_WS_URL: ${{ env.EDGE_WS_URL }}
+        run: |
+          npx playwright test \
+            tests/edge_release.spec.js \
+            tests/auth_flow.spec.js \
+            tests/human_gameplay_journey.spec.js \
+            tests/reconnect_flow.spec.js \
+            tests/match_lifecycle.spec.js \
+            --project=chromium \
+            --workers=1 \
+            --reporter=list
+
+      - name: Verify alert delivery wiring
+        run: |
+          set -euo pipefail
+          curl -fsS \
+            -H 'Content-Type: application/json' \
+            -X POST \
+            http://127.0.0.1:9093/api/v2/alerts \
+            -d '[{"labels":{"alertname":"ReleaseEdgeSynthetic","severity":"warning","suite":"release-edge"},"annotations":{"summary":"release edge synthetic alert"},"startsAt":"2026-03-08T12:00:00Z","endsAt":"2026-03-08T12:10:00Z","generatorURL":"https://localhost/release-edge"}]'
+          for _ in $(seq 1 30); do
+            if grep -q 'ReleaseEdgeSynthetic' docker/monitoring/alert_sink/received.jsonl; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "alert delivery did not reach webhook sink" >&2
+          cat docker/monitoring/alert_sink/received.jsonl >&2 || true
+          exit 1
+
+      - name: Upload edge logs on failure
+        if: failure()
+        run: |
+          docker compose -f docker/docker-compose.yml logs --no-color > /tmp/mgs_release_edge.log
+
+      - name: Upload edge artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-edge-artifacts
+          path: |
+            /tmp/mgs_release_edge.log
+            scripts/e2e/test-results
+            scripts/e2e/playwright-report
+            docker/monitoring/alert_sink/received.jsonl
+
+      - name: Tear down edge stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v
+
+  edge-rate-limiting:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      EDGE_BASE_URL: https://localhost
+      EDGE_WS_URL: wss://localhost/ws
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Prepare docker secret placeholders
+        run: |
+          mkdir -p docker/secrets
+          printf 'ci-openrouter-placeholder\n' > docker/secrets/openrouter_api_key
+          printf 'admin\n' > docker/secrets/grafana_admin_user
+          printf 'admin-password\n' > docker/secrets/grafana_admin_password
+
+      - name: Start edge stack for rate limiting
+        env:
+          MGS_ALLOWED_ORIGINS: https://localhost,https://127.0.0.1,https://game.trebuchet.network
+          MGS_AUTH_USE_COOKIES: "1"
+          MGS_BEHIND_TLS_PROXY: "1"
+          MGS_DISABLE_STUN: "1"
+          MGS_REQUIRE_AUTH: "0"
+          MGS_SMS_COMMAND: /app/scripts/test_support/capture_sms.sh
+          MGS_TARGET_BOT_COUNT: "0"
+          MGS_TEST_SMS_CAPTURE_PATH: /app/artifacts/edge_rate_limit_otp.txt
+        run: docker compose -f docker/docker-compose.yml up -d --build redis massive-game-server nginx
+
+      - name: Wait for edge stack readiness
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 90); do
+            if curl -kfsS "${EDGE_BASE_URL}/healthz" >/dev/null 2>&1 \
+              && curl -kfsS "${EDGE_BASE_URL}/readyz" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "edge rate-limit stack did not become ready" >&2
+          exit 1
+
+      - name: Install Playwright dependencies
+        working-directory: scripts/e2e
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: scripts/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run edge rate-limiting browser suite
+        working-directory: scripts/e2e
+        env:
+          E2E_BASE_URL: ${{ env.EDGE_BASE_URL }}
+          E2E_IGNORE_HTTPS_ERRORS: "1"
+          E2E_SERVER_SKIP: "1"
+          E2E_WS_URL: ${{ env.EDGE_WS_URL }}
+        run: |
+          npx playwright test \
+            tests/rate_limiting.spec.js \
+            --project=chromium \
+            --workers=1 \
+            --reporter=list
+
+      - name: Upload edge rate-limiting logs on failure
+        if: failure()
+        run: docker compose -f docker/docker-compose.yml logs --no-color > /tmp/mgs_release_edge_rate_limit.log
+
+      - name: Upload edge rate-limiting artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-edge-rate-limiting-artifacts
+          path: |
+            /tmp/mgs_release_edge_rate_limit.log
+            scripts/e2e/test-results
+            scripts/e2e/playwright-report
+
+      - name: Tear down edge stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v

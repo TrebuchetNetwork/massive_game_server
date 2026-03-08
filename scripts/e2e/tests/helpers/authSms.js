@@ -1,6 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 function defaultSmsCaptureFile(name = 'mgs-e2e-otp') {
   return path.join(os.tmpdir(), `${name}-${process.pid}.txt`);
@@ -24,6 +25,20 @@ async function waitForSmsCode(filePath, timeoutMs = 30000) {
         return match[1];
       }
     } catch (_) {}
+    const dockerContainer = process.env.E2E_DOCKER_SMS_CONTAINER;
+    const dockerFile = process.env.E2E_DOCKER_SMS_FILE;
+    if (dockerContainer && dockerFile) {
+      try {
+        const raw = execFileSync('docker', ['exec', dockerContainer, 'cat', dockerFile], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        const match = raw.match(/\b(\d{6})\b/);
+        if (match) {
+          return match[1];
+        }
+      } catch (_) {}
+    }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error(`Timed out waiting for OTP code in ${filePath}`);

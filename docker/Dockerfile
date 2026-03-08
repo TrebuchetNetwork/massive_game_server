@@ -44,8 +44,10 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/massive_game_server_core /app/massive_game_server_core
 COPY --from=builder /app/static_client /app/static_client
+COPY scripts/test_support/capture_sms.sh /app/scripts/test_support/capture_sms.sh
 
 RUN mkdir -p /app/data /app/artifacts /app/server && \
+    chmod +x /app/scripts/test_support/capture_sms.sh && \
     chown -R nobody:nogroup /app
 
 USER nobody
