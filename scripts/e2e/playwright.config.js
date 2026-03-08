@@ -1,5 +1,31 @@
 const { defineConfig } = require('@playwright/test');
 
+const projects = [
+  {
+    name: 'chromium',
+    use: {
+      browserName: 'chromium',
+    },
+  },
+];
+
+if (process.env.PLAYWRIGHT_CROSS_BROWSER === '1') {
+  projects.push(
+    {
+      name: 'firefox',
+      use: {
+        browserName: 'firefox',
+      },
+    },
+    {
+      name: 'webkit',
+      use: {
+        browserName: 'webkit',
+      },
+    }
+  );
+}
+
 module.exports = defineConfig({
   testDir: './tests',
   timeout: 240000,
@@ -15,5 +41,10 @@ module.exports = defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure'
   },
-  reporter: [['list']]
+  projects,
+  reporter: [
+    ['list'],
+    ['html', { outputFolder: 'playwright-report', open: 'never' }],
+    ['junit', { outputFile: 'test-results/junit.xml' }],
+  ]
 });

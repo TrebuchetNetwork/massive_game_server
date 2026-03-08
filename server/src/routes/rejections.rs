@@ -67,6 +67,20 @@ pub async fn handle_route_rejection(rejection: Rejection) -> Result<impl Reply, 
         return Ok(warp::reply::with_status(body, StatusCode::FORBIDDEN));
     }
 
+    if rejection.find::<warp::reject::PayloadTooLarge>().is_some() {
+        let body = warp::reply::json(&serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "payload_too_large",
+                "message": "Request body exceeds the configured limit."
+            }
+        }));
+        return Ok(warp::reply::with_status(
+            body,
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ));
+    }
+
     if rejection.is_not_found() {
         let body = warp::reply::json(&serde_json::json!({
             "ok": false,

@@ -243,3 +243,11 @@ path = "tests/integration/map_templates.rs"
 [[test]]
 name = "cross_transport"
 path = "tests/integration/cross_transport.rs"
+
+[[test]]
+name = "metrics_endpoint"
+path = "tests/integration/metrics_endpoint.rs"
+
+[[test]]
+name = "health_probes"
+path = "tests/integration/health_probes.rs"

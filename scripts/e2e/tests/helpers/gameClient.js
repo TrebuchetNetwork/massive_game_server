@@ -157,7 +157,22 @@ async function readAmmo(page) {
     .then((value) => Number.parseInt(value, 10) || 0);
 }
 
+async function connectMultipleClients(browser, count, options = {}) {
+  const clients = [];
+  for (let index = 0; index < count; index += 1) {
+    const context = await browser.newContext(options.contextOptions || {});
+    const page = await context.newPage();
+    await connectClient(page, {
+      ...options,
+      name: options.nameFactory ? options.nameFactory(index) : `E2EPlayer${index + 1}`,
+    });
+    clients.push({ context, page });
+  }
+  return clients;
+}
+
 module.exports = {
+  connectMultipleClients,
   connectClient,
   dismissUsernameModalIfVisible,
   getLocalPlayerPosition,

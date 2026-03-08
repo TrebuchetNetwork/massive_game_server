@@ -112,6 +112,18 @@ async function startServer(options = {}) {
   ready = true;
 }
 
+async function startServerOnPort(port, options = {}) {
+  const baseUrl = options.baseUrl || `http://127.0.0.1:${port}`;
+  await startServer({
+    ...options,
+    baseUrl,
+    env: {
+      ...(options.env || {}),
+      MGS_PORT: String(port),
+    },
+  });
+}
+
 async function stopServer() {
   if (!serverProcess) return;
   const processToStop = serverProcess;
@@ -143,10 +155,32 @@ function registerServerLifecycle(test, options = {}) {
   });
 }
 
+async function getServerMetrics(metricsUrl) {
+  const targetUrl =
+    metricsUrl || process.env.E2E_METRICS_URL || 'http://127.0.0.1:19090/metrics';
+  const response = await fetch(targetUrl);
+  const text = await response.text();
+  const metrics = {};
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const separator = trimmed.search(/\s/);
+    if (separator <= 0) continue;
+    const key = trimmed.slice(0, separator);
+    const value = Number.parseFloat(trimmed.slice(separator).trim());
+    if (Number.isFinite(value)) {
+      metrics[key] = value;
+    }
+  }
+  return { response, text, metrics };
+}
+
 module.exports = {
+  getServerMetrics,
   registerServerLifecycle,
   resolveBaseUrl,
   resolveWsUrl,
   startServer,
+  startServerOnPort,
   stopServer,
 };

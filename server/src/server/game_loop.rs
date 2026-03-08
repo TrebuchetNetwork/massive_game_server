@@ -30,14 +30,24 @@ const SHUTDOWN_CHAT_USERNAME: &str = "Server";
 const SHUTDOWN_CHAT_MESSAGE: &str = "Server is shutting down. Please reconnect shortly.";
 const AOI_UPDATE_DIVISOR_MAX: u64 = 60;
 
+fn parse_aoi_update_divisor(raw: Option<&str>) -> u64 {
+    raw.and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(AOI_UPDATE_DIVISOR_DEFAULT)
+        .clamp(1, AOI_UPDATE_DIVISOR_MAX)
+}
+
+fn cap_accumulator(accumulator: Duration, max_accumulator: Duration) -> (Duration, Duration) {
+    if accumulator > max_accumulator {
+        (max_accumulator, accumulator - max_accumulator)
+    } else {
+        (accumulator, Duration::ZERO)
+    }
+}
+
 fn cached_aoi_update_divisor() -> u64 {
     static AOI_UPDATE_DIVISOR: OnceLock<u64> = OnceLock::new();
     *AOI_UPDATE_DIVISOR.get_or_init(|| {
-        std::env::var("MGS_AOI_UPDATE_DIVISOR")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(AOI_UPDATE_DIVISOR_DEFAULT)
-            .clamp(1, AOI_UPDATE_DIVISOR_MAX)
+        parse_aoi_update_divisor(std::env::var("MGS_AOI_UPDATE_DIVISOR").ok().as_deref())
     })
 }
 
@@ -131,16 +141,14 @@ impl MassiveGameServer {
             // Feed elapsed wall-clock time into accumulator (clamped to avoid
             // spiral-of-death when a frame takes much longer than expected).
             accumulator += elapsed;
-            if accumulator > max_accumulator {
-                let dropped = accumulator - max_accumulator;
-                if dropped > tick_duration {
-                    warn!(
-                        "Accumulator overflow: dropping {:?} of simulation time",
-                        dropped
-                    );
-                }
-                accumulator = max_accumulator;
+            let (capped_accumulator, dropped) = cap_accumulator(accumulator, max_accumulator);
+            if dropped > tick_duration {
+                warn!(
+                    "Accumulator overflow: dropping {:?} of simulation time",
+                    dropped
+                );
             }
+            accumulator = capped_accumulator;
 
             // Process as many fixed-step ticks as the accumulator allows.
             while accumulator >= tick_duration {
@@ -475,5 +483,41 @@ impl MassiveGameServer {
 
         next_aoi.last_update = Instant::now();
         self.player_aois.insert(player_id_str.to_owned(), next_aoi);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_aoi_update_divisor_defaults_and_clamps() {
+        assert_eq!(parse_aoi_update_divisor(None), AOI_UPDATE_DIVISOR_DEFAULT);
+        assert_eq!(
+            parse_aoi_update_divisor(Some("invalid")),
+            AOI_UPDATE_DIVISOR_DEFAULT
+        );
+        assert_eq!(parse_aoi_update_divisor(Some("0")), 1);
+        assert_eq!(
+            parse_aoi_update_divisor(Some("999")),
+            AOI_UPDATE_DIVISOR_MAX
+        );
+        assert_eq!(parse_aoi_update_divisor(Some("6")), 6);
+    }
+
+    #[test]
+    fn cap_accumulator_preserves_budgeted_elapsed_time() {
+        let (capped, dropped) =
+            cap_accumulator(Duration::from_millis(24), Duration::from_millis(48));
+        assert_eq!(capped, Duration::from_millis(24));
+        assert_eq!(dropped, Duration::ZERO);
+    }
+
+    #[test]
+    fn cap_accumulator_reports_overflow_when_elapsed_time_spikes() {
+        let (capped, dropped) =
+            cap_accumulator(Duration::from_millis(73), Duration::from_millis(48));
+        assert_eq!(capped, Duration::from_millis(48));
+        assert_eq!(dropped, Duration::from_millis(25));
     }
 }

@@ -230,14 +230,77 @@ jobs:
         run: |
           npx playwright test \
             tests \
-            --workers=1 \
-            --reporter=list
+            --workers=1
 
       - name: Upload Playwright artifacts on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: playwright-e2e-artifacts
+          path: |
+            scripts/e2e/test-results
+            scripts/e2e/playwright-report
+
+  playwright-cross-browser-critical:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+    env:
+      CARGO_TERM_COLOR: always
+      E2E_BASE_URL: http://127.0.0.1:18081
+      E2E_WS_URL: ws://127.0.0.1:18081/ws
+      E2E_SERVER_CMD: ./target/debug/massive_game_server_core
+      E2E_SERVER_START_TIMEOUT_MS: "480000"
+      MGS_HOST: 0.0.0.0
+      MGS_PORT: 18081
+      MGS_DISABLE_STUN: "1"
+      MGS_TARGET_BOT_COUNT: "0"
+      PLAYWRIGHT_CROSS_BROWSER: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Install FlatBuffers compiler
+        run: scripts/install_flatc.sh
+
+      - name: Build debug server binary
+        run: cargo build -p massive_game_server_core --bin massive_game_server_core --locked
+
+      - name: Install Playwright dependencies
+        working-directory: scripts/e2e
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: scripts/e2e
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run cross-browser critical subset
+        working-directory: scripts/e2e
+        run: |
+          npx playwright test \
+            tests/connect.spec.js \
+            tests/human_gameplay_journey.spec.js \
+            tests/combat_projectiles.spec.js \
+            --project=${{ matrix.browser }} \
+            --workers=1
+
+      - name: Upload cross-browser artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: playwright-cross-browser-${{ matrix.browser }}-artifacts
           path: |
             scripts/e2e/test-results
             scripts/e2e/playwright-report

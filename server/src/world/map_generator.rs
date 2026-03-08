@@ -826,3 +826,153 @@ impl MapGenerator {
         spawns
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wall_signature(walls: &[Wall]) -> Vec<(i32, i32, i32, i32, bool, i32, i32)> {
+        let mut signature = walls
+            .iter()
+            .map(|wall| {
+                (
+                    (wall.x * 100.0).round() as i32,
+                    (wall.y * 100.0).round() as i32,
+                    (wall.width * 100.0).round() as i32,
+                    (wall.height * 100.0).round() as i32,
+                    wall.is_destructible,
+                    wall.current_health,
+                    wall.max_health,
+                )
+            })
+            .collect::<Vec<_>>();
+        signature.sort_unstable();
+        signature
+    }
+
+    fn zone_signature(zones: &[Zone]) -> Vec<(i32, i32, i32, i32, ZoneType)> {
+        zones
+            .iter()
+            .map(|zone| {
+                (
+                    (zone.x * 100.0).round() as i32,
+                    (zone.y * 100.0).round() as i32,
+                    (zone.width * 100.0).round() as i32,
+                    (zone.height * 100.0).round() as i32,
+                    zone.zone_type,
+                )
+            })
+            .collect()
+    }
+
+    fn assert_wall_bounds(walls: &[Wall]) {
+        for wall in walls {
+            assert!(wall.width > 0.0, "wall {} has non-positive width", wall.id);
+            assert!(
+                wall.height > 0.0,
+                "wall {} has non-positive height",
+                wall.id
+            );
+            assert!(
+                wall.x >= WORLD_MIN_X - 0.01,
+                "wall {} starts left of world bounds: {}",
+                wall.id,
+                wall.x
+            );
+            assert!(
+                wall.y >= WORLD_MIN_Y - 0.01,
+                "wall {} starts above world bounds: {}",
+                wall.id,
+                wall.y
+            );
+            assert!(
+                wall.x + wall.width <= WORLD_MAX_X + 0.01,
+                "wall {} exceeds right world bound: {}",
+                wall.id,
+                wall.x + wall.width
+            );
+            assert!(
+                wall.y + wall.height <= WORLD_MAX_Y + 0.01,
+                "wall {} exceeds bottom world bound: {}",
+                wall.id,
+                wall.y + wall.height
+            );
+        }
+    }
+
+    fn assert_zone_bounds(zones: &[Zone]) {
+        for zone in zones {
+            assert!(zone.width > 0.0, "zone {} has non-positive width", zone.id);
+            assert!(
+                zone.height > 0.0,
+                "zone {} has non-positive height",
+                zone.id
+            );
+            assert!(
+                zone.x >= WORLD_MIN_X - 0.01,
+                "zone {} starts left of world bounds: {}",
+                zone.id,
+                zone.x
+            );
+            assert!(
+                zone.y >= WORLD_MIN_Y - 0.01,
+                "zone {} starts above world bounds: {}",
+                zone.id,
+                zone.y
+            );
+            assert!(
+                zone.x + zone.width <= WORLD_MAX_X + 0.01,
+                "zone {} exceeds right world bound: {}",
+                zone.id,
+                zone.x + zone.width
+            );
+            assert!(
+                zone.y + zone.height <= WORLD_MAX_Y + 0.01,
+                "zone {} exceeds bottom world bound: {}",
+                zone.id,
+                zone.y + zone.height
+            );
+        }
+    }
+
+    #[test]
+    fn dynamic_map_with_seed_is_deterministic_ignoring_entity_ids() {
+        let (first_walls, first_name) = MapGenerator::generate_dynamic_map_with_seed(48, 4242);
+        let (second_walls, second_name) = MapGenerator::generate_dynamic_map_with_seed(48, 4242);
+
+        assert_eq!(first_name, second_name);
+        assert_eq!(wall_signature(&first_walls), wall_signature(&second_walls));
+    }
+
+    #[test]
+    fn public_map_templates_stay_within_world_bounds() {
+        let (dynamic_walls, _) = MapGenerator::generate_dynamic_map_with_seed(64, 1010);
+        let ten_v_ten = MapGenerator::generate_10v10_map_with_seed(10_010);
+        let (corridors_walls, _) = MapGenerator::generate_corridors_map(2020);
+        let (arena_walls, _) = MapGenerator::generate_arena_map(3030);
+        let (fortress_walls, _) = MapGenerator::generate_fortress_map(4040);
+        let (random_walls, _) = MapGenerator::select_random_map(5050, 64);
+
+        for walls in [
+            dynamic_walls.as_slice(),
+            ten_v_ten.as_slice(),
+            corridors_walls.as_slice(),
+            arena_walls.as_slice(),
+            fortress_walls.as_slice(),
+            random_walls.as_slice(),
+        ] {
+            assert!(!walls.is_empty(), "generated map should not be empty");
+            assert_wall_bounds(walls);
+        }
+    }
+
+    #[test]
+    fn environment_zones_with_seed_are_deterministic_and_in_bounds() {
+        let first = MapGenerator::generate_environment_zones_with_seed(777);
+        let second = MapGenerator::generate_environment_zones_with_seed(777);
+
+        assert_eq!(zone_signature(&first), zone_signature(&second));
+        assert_eq!(first.len(), 5);
+        assert_zone_bounds(&first);
+    }
+}

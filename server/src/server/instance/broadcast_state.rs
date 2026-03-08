@@ -1207,3 +1207,134 @@ impl MassiveGameServer {
         max_seq_in_batch
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::network::signaling::ClientState;
+    use std::collections::{HashMap, HashSet};
+
+    fn wall(id: EntityId, health: i32, max_health: i32) -> Wall {
+        Wall {
+            id,
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+            is_destructible: false,
+            current_health: health,
+            max_health,
+        }
+    }
+
+    fn shared_with_walls(
+        active_walls_snapshot: Vec<Wall>,
+        active_walls_by_id: HashMap<EntityId, Wall>,
+        updated_walls: HashMap<EntityId, Wall>,
+    ) -> SharedBroadcastData {
+        SharedBroadcastData {
+            timestamp_ms: 0,
+            events: Vec::new(),
+            destroyed_wall_ids: Vec::new(),
+            updated_walls,
+            active_walls_by_id,
+            active_walls_snapshot,
+            player_aois_snapshot: Arc::new(HashMap::new()),
+            player_soa_snapshot: Arc::new(PlayerSoASnapshot::default()),
+            player_states_snapshot: HashMap::new(),
+            projectiles_soa_snapshot: Arc::new(ProjectileSoASnapshot::default()),
+            pickups_soa_snapshot: Arc::new(PickupSoASnapshot::default()),
+            projectiles_snapshot: Arc::new(HashMap::new()),
+            pickups_snapshot: Arc::new(HashMap::new()),
+            chat_packets: Vec::new(),
+            match_info_snapshot: MatchInfoSnapshot {
+                time_remaining: 0.0,
+                match_state: fb::MatchStateType::Waiting,
+                game_mode: fb::GameModeType::FreeForAll,
+                team_scores: HashMap::new(),
+                flag_states: HashMap::new(),
+                team1_commander_id: None,
+                team2_commander_id: None,
+                team1_commander_waypoint: None,
+                team2_commander_waypoint: None,
+                team1_commander_attack_bias: 0.0,
+                team2_commander_attack_bias: 0.0,
+            },
+            kill_feed_snapshot: Vec::new(),
+            max_delta_events_per_client: 0,
+            initial_snapshot_caps: InitialSnapshotCaps::DEFAULT,
+            tail_join_mode: false,
+            aggressive_tail_join_mode: false,
+            extreme_tail_join_mode: false,
+            use_aoi_snapshot: true,
+            soa_fallback_active: false,
+            use_soa_snapshot: true,
+            use_entity_soa_snapshot: true,
+        }
+    }
+
+    #[test]
+    fn initial_walls_for_client_sync_prefers_snapshot_and_respects_cap() {
+        let snapshot = vec![wall(1, 100, 100), wall(2, 90, 100), wall(3, 80, 100)];
+        let shared = shared_with_walls(snapshot.clone(), HashMap::new(), HashMap::new());
+
+        let selected = MassiveGameServer::initial_walls_for_client_sync(&shared, 2);
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].id, 1);
+        assert_eq!(selected[1].id, 2);
+    }
+
+    #[test]
+    fn initial_walls_for_client_sync_falls_back_to_sorted_wall_ids() {
+        let active_walls_by_id = HashMap::from([
+            (99, wall(99, 100, 100)),
+            (7, wall(7, 100, 100)),
+            (42, wall(42, 100, 100)),
+        ]);
+        let shared = shared_with_walls(Vec::new(), active_walls_by_id, HashMap::new());
+
+        let selected = MassiveGameServer::initial_walls_for_client_sync(&shared, 2);
+        assert_eq!(
+            selected.iter().map(|wall| wall.id).collect::<Vec<_>>(),
+            vec![7, 42]
+        );
+    }
+
+    #[test]
+    fn select_delta_wall_ids_prioritizes_updated_then_changed_visible_walls() {
+        let updated_id = 11;
+        let changed_visible_id = 12;
+        let unchanged_visible_id = 13;
+        let hidden_updated_id = 14;
+        let active_walls_by_id = HashMap::from([
+            (updated_id, wall(updated_id, 50, 100)),
+            (changed_visible_id, wall(changed_visible_id, 60, 100)),
+            (unchanged_visible_id, wall(unchanged_visible_id, 70, 100)),
+            (hidden_updated_id, wall(hidden_updated_id, 80, 100)),
+        ]);
+        let updated_walls = HashMap::from([
+            (updated_id, wall(updated_id, 50, 100)),
+            (hidden_updated_id, wall(hidden_updated_id, 80, 100)),
+        ]);
+        let shared = shared_with_walls(Vec::new(), active_walls_by_id, updated_walls);
+
+        let visible_walls = HashSet::from([updated_id, changed_visible_id, unchanged_visible_id]);
+        let mut client_state = ClientState::default();
+        client_state
+            .last_known_wall_states
+            .insert(changed_visible_id, (100, 100));
+        client_state
+            .last_known_wall_states
+            .insert(unchanged_visible_id, (70, 100));
+
+        let selected = MassiveGameServer::select_delta_wall_ids_for_client_sync(
+            &shared,
+            &visible_walls,
+            &client_state,
+        );
+
+        assert_eq!(selected, vec![updated_id, changed_visible_id]);
+        assert!(!selected.contains(&hidden_updated_id));
+        assert!(!selected.contains(&unchanged_visible_id));
+    }
+}

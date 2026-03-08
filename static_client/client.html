@@ -1103,6 +1103,16 @@
         window.__e2e.objectiveUrgencyVisible = false;
         window.__e2e.tipsToastText = '';
         window.__e2e.tipsToastVisible = false;
+        window.__e2e.killFeedEntries = [];
+        window.__e2e.chatMessages = [];
+        window.__e2e.localPlayerHealth = null;
+        window.__e2e.localPlayerKills = 0;
+        window.__e2e.localPlayerDeaths = 0;
+        window.__e2e.localPlayerScore = 0;
+        window.__e2e.localPlayerTeam = null;
+        window.__e2e.teamScores = [0, 0];
+        window.__e2e.respawnCount = 0;
+        window.__e2e.deviceClassification = null;
         window.__e2e.mobileAimActive = false;
         window.__e2e.mobileFireTouchActive = false;
         window.__e2e.bodyMobileMode = false;
@@ -1733,6 +1743,9 @@
             if (cores >= 4 && memoryGB >= 3) return 'mid';
             return 'low';
         })();
+        if (window.__e2e) {
+            window.__e2e.deviceClassification = deviceClassification;
+        }
         const isMobileDevice = deviceClassification !== 'desktop';
 
         const MOBILE_RENDER_PROFILES = {
@@ -3709,6 +3722,38 @@
                         weapon: Number(localPlayerState.weapon) || 0,
                         ammo: Number(localPlayerState.ammo) || 0
                     } : null;
+                    e2e.localPlayerHealth = localPlayerState ? (Number(localPlayerState.health) || 0) : null;
+                    e2e.localPlayerKills = localPlayerState ? (Number(localPlayerState.kills) || 0) : 0;
+                    e2e.localPlayerDeaths = localPlayerState ? (Number(localPlayerState.deaths) || 0) : 0;
+                    e2e.localPlayerScore = localPlayerState ? (Number(localPlayerState.score) || 0) : 0;
+                    e2e.localPlayerTeam = localPlayerState ? (Number(localPlayerState.team_id) || 0) : null;
+                    e2e.respawnCount = localPlayerState ? (Number(localPlayerState.deaths) || 0) : 0;
+                    e2e.killFeedEntries = Array.isArray(killFeed)
+                        ? killFeed.slice(-10).map((entry) => ({
+                            killer: String(entry?.killer_name || entry?.killerName || ''),
+                            victim: String(entry?.victim_name || entry?.victimName || ''),
+                            weapon: String(entry?.weapon_name || entry?.weaponName || entry?.weapon || ''),
+                        }))
+                        : [];
+                    e2e.chatMessages = Array.isArray(chatMessages)
+                        ? chatMessages.slice(-10).map((entry) => ({
+                            sender: String(entry?.username || entry?.sender || ''),
+                            text: String(entry?.message || entry?.text || ''),
+                        }))
+                        : [];
+                    {
+                        let redScore = 0;
+                        let blueScore = 0;
+                        if (Array.isArray(matchInfo?.team_scores)) {
+                            matchInfo.team_scores.forEach((teamScore) => {
+                                const teamId = Number(teamScore?.team_id) || 0;
+                                const score = Number(teamScore?.score) || 0;
+                                if (teamId === 1) redScore = score;
+                                if (teamId === 2) blueScore = score;
+                            });
+                        }
+                        e2e.teamScores = [redScore, blueScore];
+                    }
                     e2e.playerRenderCap = lastPlayerRenderCap;
                     if ((currentTime - lastRendererBackendSummaryAt) >= 1000) {
                         e2e.rendererBackend = getRendererBackendSummary(window.app || null, PIXI);
@@ -4702,6 +4747,15 @@
                 window.__e2e.nearestPickup = null;
                 window.__e2e.localPlayerSpriteReady = false;
                 window.__e2e.localPlayerSnapshot = null;
+                window.__e2e.killFeedEntries = [];
+                window.__e2e.chatMessages = [];
+                window.__e2e.localPlayerHealth = null;
+                window.__e2e.localPlayerKills = 0;
+                window.__e2e.localPlayerDeaths = 0;
+                window.__e2e.localPlayerScore = 0;
+                window.__e2e.localPlayerTeam = null;
+                window.__e2e.teamScores = [0, 0];
+                window.__e2e.respawnCount = 0;
             }
             log('Game state cleared for reconnect.', 'info');
         }
@@ -4960,6 +5014,15 @@
                 window.__e2e.objectiveUrgencyVisible = false;
                 window.__e2e.tipsToastText = '';
                 window.__e2e.tipsToastVisible = false;
+                window.__e2e.killFeedEntries = [];
+                window.__e2e.chatMessages = [];
+                window.__e2e.localPlayerHealth = null;
+                window.__e2e.localPlayerKills = 0;
+                window.__e2e.localPlayerDeaths = 0;
+                window.__e2e.localPlayerScore = 0;
+                window.__e2e.localPlayerTeam = null;
+                window.__e2e.teamScores = [0, 0];
+                window.__e2e.respawnCount = 0;
                 window.__e2e.mobileAimActive = false;
                 window.__e2e.mobileFireTouchActive = false;
                 window.__e2e.bodyMobileMode = !!document.body.classList.contains('mobile-mode');
