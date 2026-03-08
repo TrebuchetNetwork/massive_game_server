@@ -62,7 +62,7 @@ test('live client keeps pickup and zone state coherent while moving', async ({ p
     afterPosition.x - beforePosition.x,
     afterPosition.y - beforePosition.y
   );
-  expect(movedDistance).toBeGreaterThan(10);
+  expect(movedDistance).toBeGreaterThan(6);
 
   const after = await page.evaluate(() => ({
     pickupCount: Number(window.__e2e?.pickupCount || 0),

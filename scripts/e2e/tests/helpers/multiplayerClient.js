@@ -33,7 +33,17 @@ async function createConnectedClients(browser, count, options = {}) {
 }
 
 async function closeAllClients(clients) {
-  await Promise.all(clients.map(async ({ context }) => context.close()));
+  await Promise.all(clients.map(async ({ context }) => {
+    if (!context) return;
+    try {
+      await context.close();
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error || '');
+      if (!message.includes('Failed to find context')) {
+        throw error;
+      }
+    }
+  }));
 }
 
 async function waitForPlayerVisibility(page, count, timeout = 60000) {

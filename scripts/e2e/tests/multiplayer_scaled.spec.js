@@ -19,6 +19,7 @@ test.describe.configure({ timeout: 240000, retries: 1 });
 
 test('@critical five browser clients join concurrently and keep receiving live state', async ({ browser }) => {
   const clients = await createConnectedClients(browser, 5, {
+    connectConcurrently: true,
     query: '/client.html?disable_stun=1&match_type=quick',
     matchType: 'quick',
     requireLocalPlayer: false,
@@ -27,14 +28,14 @@ test('@critical five browser clients join concurrently and keep receiving live s
   });
 
   try {
-    await Promise.all(clients.map(({ page }) => waitForPlayerVisibility(page, 1, 60000)));
+    await Promise.all(clients.map(({ page }) => waitForPlayerVisibility(page, 1, 45000)));
 
     await Promise.all(
       clients.slice(0, 2).map(({ page }) =>
         page.waitForFunction(
           () => window.__e2e?.hasLocalPlayer === true,
           null,
-          { timeout: 90000 }
+          { timeout: 60000 }
         )
       )
     );
@@ -42,7 +43,7 @@ test('@critical five browser clients join concurrently and keep receiving live s
     await clients[0].page.waitForFunction(
       () => Number(window.__e2e?.playerCount || 0) >= 2,
       null,
-      { timeout: 90000 }
+      { timeout: 60000 }
     );
 
     const beforeMovement = await Promise.all(

@@ -1,5 +1,6 @@
 const { test, expect } = require('@playwright/test');
-const { registerServerLifecycle, resolveWsUrl } = require('./helpers/serverLifecycle');
+const { registerServerLifecycle } = require('./helpers/serverLifecycle');
+const { connectClient } = require('./helpers/gameClient');
 
 registerServerLifecycle(test);
 
@@ -12,24 +13,6 @@ async function waitForPlaying(page, timeout = 60000) {
     null,
     { timeout }
   );
-}
-
-async function dismissUsernameModalIfVisible(page) {
-  const modalVisible = await page.evaluate(() => {
-    const modal = document.getElementById('usernameModal');
-    return !!modal && !modal.classList.contains('hidden');
-  });
-  if (!modalVisible) return;
-
-  const quickStartButton = page.locator('#usernameSkipButton');
-  if (await quickStartButton.count()) {
-    await quickStartButton.click({ force: true });
-    return;
-  }
-  const saveButton = page.locator('#usernameSaveButton');
-  if (await saveButton.count()) {
-    await saveButton.click({ force: true });
-  }
 }
 
 async function getLocalPlayerPosition(page) {
@@ -80,30 +63,12 @@ test('human gameplay journey remains stable and responsive', async ({ page }) =>
       localStorage.setItem('mgs_player_name', 'E2EPlayer');
     } catch (_) {}
   });
-  await page.goto('/client.html?auto_reconnect=1&disable_stun=1&match_type=quick', { waitUntil: 'domcontentloaded' });
-  await dismissUsernameModalIfVisible(page);
-
-  await page.waitForSelector('#connectButton', { state: 'attached' });
-  const matchTypeSelect = page.locator('#matchTypeSelect');
-  if (await matchTypeSelect.count()) {
-    await matchTypeSelect.selectOption('quick');
-  }
-  const wsInput = page.locator('#wsUrl');
-  if (await wsInput.count()) {
-    await wsInput.fill(resolveWsUrl());
-  }
-  await page.click('#connectButton', { force: true });
-
-  await page.waitForFunction(
-    () => window.__e2e && window.__e2e.matchInfoReady === true,
-    null,
-    { timeout: 60000 }
-  );
-  await page.waitForFunction(
-    () => window.__e2e && window.__e2e.hasLocalPlayer === true,
-    null,
-    { timeout: 60000 }
-  );
+  await connectClient(page, {
+    name: 'E2EPlayer',
+    query: '/client.html?auto_reconnect=1&disable_stun=1&match_type=quick',
+    matchType: 'quick',
+    timeout: 60000,
+  });
   await waitForPlaying(page);
 
   const autoReconnectEnabled = await page.evaluate(

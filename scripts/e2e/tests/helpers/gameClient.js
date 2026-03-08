@@ -120,7 +120,9 @@ async function connectClient(page, options = {}) {
       return;
     } catch (error) {
       lastError = error;
-      await page.waitForTimeout(2000);
+      if (!page.isClosed()) {
+        await page.waitForTimeout(2000).catch(() => {});
+      }
     }
   }
 
