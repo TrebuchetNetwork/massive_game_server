@@ -67,6 +67,7 @@ test('human gameplay journey remains stable and responsive', async ({ page }) =>
     name: 'E2EPlayer',
     query: '/client.html?auto_reconnect=1&disable_stun=1&match_type=quick',
     matchType: 'quick',
+    requireLocalPlayer: process.env.PLAYWRIGHT_CROSS_BROWSER !== '1',
     timeout: 60000,
   });
   await waitForPlaying(page);

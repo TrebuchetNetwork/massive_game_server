@@ -634,7 +634,11 @@ fn parse_usize_with_default(
 
 fn parse_optional_u32(var_name: &str, errors: &mut Vec<String>) -> Option<u32> {
     let raw = std::env::var(var_name).ok()?;
-    match raw.trim().parse::<u32>() {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<u32>() {
         Ok(value) => Some(value),
         Err(_) => {
             errors.push(format!(
@@ -648,7 +652,11 @@ fn parse_optional_u32(var_name: &str, errors: &mut Vec<String>) -> Option<u32> {
 
 fn parse_optional_usize(var_name: &str, errors: &mut Vec<String>) -> Option<usize> {
     let raw = std::env::var(var_name).ok()?;
-    match raw.trim().parse::<usize>() {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<usize>() {
         Ok(value) => Some(value),
         Err(_) => {
             errors.push(format!(
@@ -662,7 +670,11 @@ fn parse_optional_usize(var_name: &str, errors: &mut Vec<String>) -> Option<usiz
 
 fn parse_optional_u64(var_name: &str, errors: &mut Vec<String>) -> Option<u64> {
     let raw = std::env::var(var_name).ok()?;
-    match raw.trim().parse::<u64>() {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<u64>() {
         Ok(value) => Some(value),
         Err(_) => {
             errors.push(format!(
@@ -676,7 +688,11 @@ fn parse_optional_u64(var_name: &str, errors: &mut Vec<String>) -> Option<u64> {
 
 fn parse_optional_f32(var_name: &str, errors: &mut Vec<String>) -> Option<f32> {
     let raw = std::env::var(var_name).ok()?;
-    match raw.trim().parse::<f32>() {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<f32>() {
         Ok(value) if value.is_finite() => Some(value),
         Ok(_) | Err(_) => {
             errors.push(format!(
@@ -690,7 +706,11 @@ fn parse_optional_f32(var_name: &str, errors: &mut Vec<String>) -> Option<f32> {
 
 fn parse_optional_u16(var_name: &str, errors: &mut Vec<String>) -> Option<u16> {
     let raw = std::env::var(var_name).ok()?;
-    match raw.trim().parse::<u16>() {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<u16>() {
         Ok(value) => Some(value),
         Err(_) => {
             errors.push(format!("{} has invalid port value '{}'", var_name, raw));
@@ -710,5 +730,22 @@ mod tests {
         assert!(result.is_err());
         let message = format!("{}", result.expect_err("expected error"));
         assert!(message.contains("MGS_PORT"));
+    }
+
+    #[test]
+    fn load_env_config_treats_empty_optional_numeric_values_as_unset() {
+        let result = temp_env::with_vars(
+            [
+                ("MGS_MATCH_DURATION_OVERRIDE_SECS", Some("")),
+                ("MGS_TARGET_BOT_COUNT", Some("")),
+                ("MGS_WEBRTC_UDP_PORT_MIN", Some("")),
+            ],
+            load_app_env_config,
+        )
+        .expect("empty optional values should be ignored");
+
+        assert_eq!(result.instance.match_duration_override_secs, None);
+        assert_eq!(result.instance.target_bot_count, None);
+        assert_eq!(result.signaling.webrtc_udp_port_min, None);
     }
 }
