@@ -45,6 +45,9 @@ export class Minimap {
         this.drawViewCone = true;
         this.drawDirectionLines = true;
         this.drawLocalPulse = true;
+        this.enemyVisibilityRadius = 520;
+        this.enemyMemoryMs = 3000;
+        this.enemyLastSeen = new Map();
 
         this.backgroundGraphics = new PIXI.Graphics();
         this.gridGraphics = new PIXI.Graphics();
@@ -137,6 +140,7 @@ export class Minimap {
         this.pingsGraphics.clear();
         this.wallsNeedUpdate = true;
         this.objectivesNeedUpdate = true;
+        this.enemyLastSeen.clear();
     }
 
     destroy() {
@@ -173,6 +177,8 @@ export class Minimap {
         const playersGraphics = this.playersGraphics;
         playersGraphics.clear();
         const nowMs = currentNowMs(this.nowProvider);
+        const localTeamId = Number(localPlayerData.team_id) || 0;
+        const visibilityRadiusSq = this.enemyVisibilityRadius * this.enemyVisibilityRadius;
 
         const localX = localPlayerData.x * this.mapScale + this.width / 2;
         const localY = localPlayerData.y * this.mapScale + this.height / 2;
@@ -205,21 +211,55 @@ export class Minimap {
 
             let color = this.teamColors[player.team_id] || this.defaultEnemyColor;
             let shape = "circle";
+            let alpha = 0.9;
+            let renderX = Number(player.x);
+            let renderY = Number(player.y);
+            let renderRotation = Number(player.rotation) || 0;
+            let renderAsLastKnown = false;
 
             if (isLocalPlayer) {
                 color = 0x00FF00;
                 shape = "triangle";
-            } else if (localPlayerData.team_id !== 0 && player.team_id === localPlayerData.team_id) {
+            } else if (localTeamId !== 0 && player.team_id === localTeamId) {
                 color = this.teamColors[player.team_id] || 0x60A5FA;
+            } else {
+                const dx = Number(player.x) - Number(localPlayerData.x);
+                const dy = Number(player.y) - Number(localPlayerData.y);
+                const withinVision =
+                    Number.isFinite(dx) &&
+                    Number.isFinite(dy) &&
+                    ((dx * dx) + (dy * dy)) <= visibilityRadiusSq;
+                const enemyKey = String(player.id || "");
+                if (withinVision) {
+                    this.enemyLastSeen.set(enemyKey, {
+                        x: Number(player.x),
+                        y: Number(player.y),
+                        rotation: Number(player.rotation) || 0,
+                        seenAtMs: nowMs,
+                    });
+                } else {
+                    const lastSeen = this.enemyLastSeen.get(enemyKey);
+                    if (!lastSeen || (nowMs - Number(lastSeen.seenAtMs || 0)) > this.enemyMemoryMs) {
+                        this.enemyLastSeen.delete(enemyKey);
+                        return;
+                    }
+                    renderX = Number(lastSeen.x);
+                    renderY = Number(lastSeen.y);
+                    renderRotation = Number(lastSeen.rotation) || 0;
+                    const fade = Math.max(0.16, 1 - ((nowMs - Number(lastSeen.seenAtMs || 0)) / this.enemyMemoryMs));
+                    alpha = 0.16 + fade * 0.34;
+                    color = 0xFCA5A5;
+                    renderAsLastKnown = true;
+                }
             }
 
-            let dotX = player.x * this.mapScale + this.width / 2;
-            let dotY = player.y * this.mapScale + this.height / 2;
+            let dotX = renderX * this.mapScale + this.width / 2;
+            let dotY = renderY * this.mapScale + this.height / 2;
             dotX = Math.max(3, Math.min(this.width - 3, dotX));
             dotY = Math.max(3, Math.min(this.height - 3, dotY));
 
             if (shape === "triangle") {
-                const direction = player.rotation + Math.PI / 2;
+                const direction = renderRotation + Math.PI / 2;
                 const tipLength = 4;
                 const wingLength = 3;
                 const wingOffset = 2.6;
@@ -231,20 +271,23 @@ export class Minimap {
                 const rightX = dotX + Math.cos(direction - wingOffset) * wingLength;
                 const rightY = dotY + Math.sin(direction - wingOffset) * wingLength;
 
-                playersGraphics.beginFill(color, 0.9);
+                playersGraphics.beginFill(color, alpha);
                 playersGraphics.moveTo(tipX, tipY);
                 playersGraphics.lineTo(leftX, leftY);
                 playersGraphics.lineTo(rightX, rightY);
                 playersGraphics.lineTo(tipX, tipY);
                 playersGraphics.endFill();
             } else {
-                playersGraphics.beginFill(color, 0.9);
-                playersGraphics.drawCircle(dotX, dotY, 3);
+                playersGraphics.beginFill(color, alpha);
+                playersGraphics.drawCircle(dotX, dotY, renderAsLastKnown ? 2.25 : 3);
                 playersGraphics.endFill();
 
-                if (this.drawDirectionLines) {
-                    const otherPlayerRotation = player.rotation + Math.PI / 2;
-                    playersGraphics.lineStyle(1, color, 0.6);
+                if (renderAsLastKnown && this.performanceMode === "normal") {
+                    playersGraphics.lineStyle(1, color, Math.max(0.12, alpha * 0.8));
+                    playersGraphics.drawCircle(dotX, dotY, 5.2);
+                } else if (this.drawDirectionLines) {
+                    const otherPlayerRotation = renderRotation + Math.PI / 2;
+                    playersGraphics.lineStyle(1, color, alpha * 0.66);
                     playersGraphics.moveTo(dotX, dotY);
                     playersGraphics.lineTo(
                         dotX + Math.cos(otherPlayerRotation) * 5,

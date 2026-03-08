@@ -148,6 +148,21 @@ export function createSpriteManager(getCtx) {
             container.addChild(usernameText);
             container.usernameText = usernameText;
 
+            const bountyBadgeText = new PIXI.Text('BNTY', {
+                fontSize: 9,
+                fontWeight: '800',
+                fill: 0xFACC15,
+                stroke: 0x451A03,
+                strokeThickness: 3,
+                align: 'center',
+                letterSpacing: 0.5,
+            });
+            bountyBadgeText.anchor.set(0.5);
+            bountyBadgeText.position.y = -PLAYER_RADIUS - 54;
+            bountyBadgeText.visible = false;
+            container.addChild(bountyBadgeText);
+            container.bountyBadgeText = bountyBadgeText;
+
             const botIntentionText = new PIXI.Text('', {
                 fontSize: 9,
                 fontWeight: '700',
@@ -439,6 +454,7 @@ export function createSpriteManager(getCtx) {
             updateShieldVisual(sprite, player.shield_current || 0, player.shield_max || 0);
             updatePlayerReloadArc(sprite, player, hideRemoteFxByDensity, farDetailMode);
             updateStatusEffectIcons(sprite, player, hideRemoteFxByDensity, farDetailMode);
+            updateBountyBadge(sprite, player, hideRemoteFxByDensity, farDetailMode);
             updateBotIntentionBadge(sprite, player, hideRemoteFxByDensity, farDetailMode);
         }
 
@@ -769,6 +785,22 @@ export function createSpriteManager(getCtx) {
         const tint = botBehaviorTint(player.bot_behavior);
         if (badge.tint !== tint) badge.tint = tint;
         badge.alpha = 0.72 + 0.22 * Math.sin(ctx.frameNowMs * 0.012);
+        if (!badge.visible) badge.visible = true;
+    }
+
+    function updateBountyBadge(sprite, player, hideRemoteFxByDensity, farDetailMode) {
+        const ctx = getCtx();
+        const badge = sprite.bountyBadgeText;
+        if (!badge) return;
+        const shouldShow = !!player?.is_bounty_target
+            && !!player?.alive
+            && !farDetailMode
+            && !hideRemoteFxByDensity;
+        if (!shouldShow) {
+            if (badge.visible) badge.visible = false;
+            return;
+        }
+        badge.alpha = 0.76 + 0.2 * Math.sin(ctx.frameNowMs * 0.01);
         if (!badge.visible) badge.visible = true;
     }
 

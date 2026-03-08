@@ -206,6 +206,9 @@ export function createProtocolHandler({
             target.is_carrying_flag_team_id = player.isCarryingFlagTeamId();
         }
         if (hasMiscDelta) {
+            target.is_bounty_target = typeof player.isBountyTarget === 'function'
+                ? player.isBountyTarget()
+                : !!target.is_bounty_target;
             target.is_bot = typeof player.isBot === 'function'
                 ? player.isBot()
                 : !!target.is_bot;
@@ -272,6 +275,7 @@ export function createProtocolHandler({
             target.is_carrying_flag_team_id = player.is_carrying_flag_team_id;
         }
         if (hasMiscDelta) {
+            target.is_bounty_target = !!player.is_bounty_target;
             target.is_bot = !!player.is_bot;
             target.bot_behavior = player.bot_behavior;
         }
@@ -493,6 +497,9 @@ export function createProtocolHandler({
                                 hot_zone_time_ticks: typeof player.hotZoneTimeTicks === 'function'
                                     ? player.hotZoneTimeTicks()
                                     : 0,
+                                is_bounty_target: typeof player.isBountyTarget === 'function'
+                                    ? player.isBountyTarget()
+                                    : false,
                                 is_bot: typeof player.isBot === 'function'
                                     ? player.isBot()
                                     : false,
@@ -645,6 +652,9 @@ export function createProtocolHandler({
                                 weapon_swap_progress: typeof player.weaponSwapProgress === 'function'
                                     ? player.weaponSwapProgress()
                                     : 0,
+                                is_bounty_target: typeof player.isBountyTarget === 'function'
+                                    ? player.isBountyTarget()
+                                    : false,
                                 is_bot: typeof player.isBot === 'function'
                                     ? player.isBot()
                                     : false,

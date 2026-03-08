@@ -24,6 +24,8 @@ export function createUIManager(getCtx) {
     const CAREER_PROFILE_KEY = 'mgs_career_profile_v1';
     const SOCIAL_GRAPH_KEY = 'mgs_social_graph_v1';
     const SOCIAL_GRAPH_LIMIT = 120;
+    const postMatchAnimationTimeouts = new Set();
+    const postMatchAnimationFrames = new Set();
     let chatModerationRevision = 0;
     const mutedPlayerIds = new Set();
     const mutedNames = new Set();
@@ -459,6 +461,109 @@ export function createUIManager(getCtx) {
         }
     }
 
+    function clearPostMatchAnimations() {
+        postMatchAnimationTimeouts.forEach((handle) => clearTimeout(handle));
+        postMatchAnimationTimeouts.clear();
+        postMatchAnimationFrames.forEach((handle) => cancelAnimationFrame(handle));
+        postMatchAnimationFrames.clear();
+    }
+
+    function schedulePostMatchTimeout(callback, delayMs = 0) {
+        const handle = setTimeout(() => {
+            postMatchAnimationTimeouts.delete(handle);
+            callback();
+        }, Math.max(0, delayMs));
+        postMatchAnimationTimeouts.add(handle);
+        return handle;
+    }
+
+    function schedulePostMatchFrame(callback) {
+        const handle = requestAnimationFrame((timestamp) => {
+            postMatchAnimationFrames.delete(handle);
+            callback(timestamp);
+        });
+        postMatchAnimationFrames.add(handle);
+        return handle;
+    }
+
+    function revealPostMatchNode(node, delayMs = 0) {
+        if (!node || !node.classList) return;
+        node.classList.add('post-match-panel__reveal');
+        node.classList.remove('post-match-panel__reveal--visible');
+        schedulePostMatchTimeout(() => {
+            node.classList.add('post-match-panel__reveal--visible');
+        }, delayMs);
+    }
+
+    function animateNumericToken(element, { delayMs = 0, durationMs = 700 } = {}) {
+        if (!element) return;
+        const finalText = String(element.dataset.finalText || element.textContent || '');
+        const match = finalText.match(/-?\d+(?:\.\d+)?/);
+        if (!match || match.index === undefined) return;
+        const finalNumber = Number(match[0]);
+        if (!Number.isFinite(finalNumber)) return;
+        element.dataset.finalText = finalText;
+        const prefix = finalText.slice(0, match.index);
+        const suffix = finalText.slice(match.index + match[0].length);
+        const decimals = match[0].includes('.') ? match[0].split('.')[1].length : 0;
+        element.textContent = `${prefix}${(0).toFixed(decimals)}${suffix}`;
+        schedulePostMatchTimeout(() => {
+            const startAt = performance.now();
+            const tick = (now) => {
+                const progress = Math.max(0, Math.min(1, (now - startAt) / Math.max(1, durationMs)));
+                const eased = 1 - Math.pow(1 - progress, 3);
+                const currentValue = finalNumber * eased;
+                const formattedValue = decimals > 0
+                    ? currentValue.toFixed(decimals)
+                    : String(Math.round(currentValue));
+                element.textContent = `${prefix}${formattedValue}${suffix}`;
+                if (progress < 1) {
+                    schedulePostMatchFrame(tick);
+                    return;
+                }
+                element.textContent = finalText;
+            };
+            schedulePostMatchFrame(tick);
+        }, delayMs);
+    }
+
+    function animatePostMatchSummaryPresentation(ctx) {
+        clearPostMatchAnimations();
+        const weaponBreakdownDiv = document.getElementById('postMatchWeaponBreakdown');
+        const trendDiv = document.getElementById('postMatchTrend');
+        const panelSections = [
+            ctx.postMatchMetaDiv,
+            ctx.postMatchMvpDiv,
+            ctx.postMatchTableDiv,
+            weaponBreakdownDiv,
+            trendDiv,
+        ].filter(Boolean);
+        panelSections.forEach((node, index) => {
+            revealPostMatchNode(node, 50 + index * 110);
+        });
+
+        const detailNodes = [
+            ...ctx.postMatchMvpDiv.querySelectorAll('.mvp-award'),
+            ...ctx.postMatchTableDiv.querySelectorAll('tbody tr'),
+            ...(weaponBreakdownDiv ? Array.from(weaponBreakdownDiv.querySelectorAll('.weapon-bar')) : []),
+            ...(trendDiv ? Array.from(trendDiv.querySelectorAll('.post-match-compare__item, .post-match-record')) : []),
+        ];
+        detailNodes.forEach((node, index) => {
+            revealPostMatchNode(node, 180 + index * 45);
+        });
+
+        const numericNodes = [
+            ...ctx.postMatchMvpDiv.querySelectorAll('.mvp-award__value'),
+            ...(trendDiv ? Array.from(trendDiv.querySelectorAll('.post-match-record__value')) : []),
+        ];
+        numericNodes.forEach((node, index) => {
+            animateNumericToken(node, {
+                delayMs: 210 + index * 55,
+                durationMs: 760,
+            });
+        });
+    }
+
     function hidePostMatchCallout({ clearText = false } = {}) {
         const ctx = getCtx();
         if (!ctx.postMatchCalloutDiv) return;
@@ -490,6 +595,7 @@ export function createUIManager(getCtx) {
     function closePostMatchSummary() {
         const ctx = getCtx();
         ctx.postMatchSummaryVisible = false;
+        clearPostMatchAnimations();
         hidePostMatchCallout({ clearText: true });
         if (ctx.postMatchPanelDiv) {
             ctx.postMatchPanelDiv.classList.remove('post-match-panel--visible');
@@ -542,7 +648,11 @@ export function createUIManager(getCtx) {
             const boldLabel = document.createElement('b');
             boldLabel.textContent = String(entry.label);
             award.appendChild(boldLabel);
-            award.appendChild(document.createTextNode(` ${String(entry.value)}`));
+            award.appendChild(document.createTextNode(' '));
+            const valueSpan = document.createElement('span');
+            valueSpan.className = 'mvp-award__value';
+            valueSpan.textContent = String(entry.value);
+            award.appendChild(valueSpan);
             const tierBadge = document.createElement('span');
             tierBadge.className = 'mvp-award__tier';
             tierBadge.textContent = tier.code;
@@ -922,6 +1032,7 @@ export function createUIManager(getCtx) {
 
         ctx.postMatchSummaryVisible = true;
         ctx.postMatchPanelDiv.classList.add('post-match-panel--visible');
+        animatePostMatchSummaryPresentation(ctx);
     }
 
     function clearKillcamPlayback() {
@@ -1343,6 +1454,37 @@ export function createUIManager(getCtx) {
             }
 
             ctx.log(`Map event #${eventIndex}: ${eventType} (${spawnedPickups} pickups).`, 'info');
+            return true;
+        }
+
+        if (eventName === 'bounty_ping' && payload && typeof payload === 'object') {
+            const pingX = Number(payload.x);
+            const pingY = Number(payload.y);
+            const targetName = String(payload.player_name || payload.playerName || 'Target').trim() || 'Target';
+            const killCount = Math.max(0, toInt(payload.kills, 0));
+            ctx.setObjectiveUrgency(
+                `Bounty spotted: ${targetName}${killCount > 0 ? ` (${killCount} kills)` : ''}`,
+                'critical',
+                2200
+            );
+            playUiSound('countdownBeep', 0.2);
+            if (Number.isFinite(pingX) && Number.isFinite(pingY) && Array.isArray(ctx.tacticalPings)) {
+                const now = Date.now();
+                ctx.tacticalPings.push({
+                    kind: 'enemy',
+                    x: pingX,
+                    y: pingY,
+                    strength: 1.55,
+                    source: 'bounty',
+                    label: `BOUNTY ${targetName.toUpperCase()}`.slice(0, 36),
+                    createdAt: now,
+                    expiresAt: now + Math.max(2200, Number(ctx.TACTICAL_PING_MS) || 6200),
+                });
+                if (ctx.tacticalPings.length > 18) {
+                    ctx.tacticalPings.splice(0, ctx.tacticalPings.length - 18);
+                }
+            }
+            ctx.log(`Bounty ping: ${targetName}${killCount > 0 ? ` (${killCount} kills)` : ''}.`, 'warn');
             return true;
         }
 

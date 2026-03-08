@@ -189,18 +189,23 @@ hotZoneTimeTicks():number {
   return offset ? this.bb!.readUint32(this.bb_pos + offset) : 0;
 }
 
-isBot():boolean {
+isBountyTarget():boolean {
   const offset = this.bb!.__offset(this.bb_pos, 68);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
-botBehavior():number {
+isBot():boolean {
   const offset = this.bb!.__offset(this.bb_pos, 70);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+botBehavior():number {
+  const offset = this.bb!.__offset(this.bb_pos, 72);
   return offset ? this.bb!.readInt8(this.bb_pos + offset) : 0;
 }
 
 static startPlayerState(builder:flatbuffers.Builder) {
-  builder.startObject(34);
+  builder.startObject(35);
 }
 
 static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
@@ -331,12 +336,16 @@ static addHotZoneTimeTicks(builder:flatbuffers.Builder, hotZoneTimeTicks:number)
   builder.addFieldInt32(31, hotZoneTimeTicks, 0);
 }
 
+static addIsBountyTarget(builder:flatbuffers.Builder, isBountyTarget:boolean) {
+  builder.addFieldInt8(32, +isBountyTarget, +false);
+}
+
 static addIsBot(builder:flatbuffers.Builder, isBot:boolean) {
-  builder.addFieldInt8(32, +isBot, +false);
+  builder.addFieldInt8(33, +isBot, +false);
 }
 
 static addBotBehavior(builder:flatbuffers.Builder, botBehavior:number) {
-  builder.addFieldInt8(33, botBehavior, 0);
+  builder.addFieldInt8(34, botBehavior, 0);
 }
 
 static endPlayerState(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -344,7 +353,7 @@ static endPlayerState(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createPlayerState(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, usernameOffset:flatbuffers.Offset, x:number, y:number, rotation:number, velocityX:number, velocityY:number, health:number, maxHealth:number, alive:boolean, respawnTimer:number, weapon:WeaponType, ammo:number, reloadProgress:number, score:number, kills:number, deaths:number, teamId:number, speedBoostRemaining:number, damageBoostRemaining:number, shieldCurrent:number, shieldMax:number, isCarryingFlagTeamId:number, ability1CooldownRemaining:number, ability2CooldownRemaining:number, invulnerableRemaining:number, secondaryWeapon:WeaponType, weaponSwapProgress:number, currentStreak:number, primaryWeapon:WeaponType, hotZoneKills:number, hotZoneTimeTicks:number, isBot:boolean, botBehavior:number):flatbuffers.Offset {
+static createPlayerState(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset, usernameOffset:flatbuffers.Offset, x:number, y:number, rotation:number, velocityX:number, velocityY:number, health:number, maxHealth:number, alive:boolean, respawnTimer:number, weapon:WeaponType, ammo:number, reloadProgress:number, score:number, kills:number, deaths:number, teamId:number, speedBoostRemaining:number, damageBoostRemaining:number, shieldCurrent:number, shieldMax:number, isCarryingFlagTeamId:number, ability1CooldownRemaining:number, ability2CooldownRemaining:number, invulnerableRemaining:number, secondaryWeapon:WeaponType, weaponSwapProgress:number, currentStreak:number, primaryWeapon:WeaponType, hotZoneKills:number, hotZoneTimeTicks:number, isBountyTarget:boolean, isBot:boolean, botBehavior:number):flatbuffers.Offset {
   PlayerState.startPlayerState(builder);
   PlayerState.addId(builder, idOffset);
   PlayerState.addUsername(builder, usernameOffset);
@@ -378,6 +387,7 @@ static createPlayerState(builder:flatbuffers.Builder, idOffset:flatbuffers.Offse
   PlayerState.addPrimaryWeapon(builder, primaryWeapon);
   PlayerState.addHotZoneKills(builder, hotZoneKills);
   PlayerState.addHotZoneTimeTicks(builder, hotZoneTimeTicks);
+  PlayerState.addIsBountyTarget(builder, isBountyTarget);
   PlayerState.addIsBot(builder, isBot);
   PlayerState.addBotBehavior(builder, botBehavior);
   return PlayerState.endPlayerState(builder);

@@ -3997,6 +3997,9 @@
                 updateProjectilePresentation();
             }
 
+            if (audioManager && typeof audioManager.updateAmbientState === 'function') {
+                audioManager.updateAmbientState(currentTime);
+            }
             maybeEmitMovementJuice(currentTime);
             maybeEmitProjectileNearMissAudio(currentTime);
             maybeEmitOptimisticHitFeedback(currentTime);

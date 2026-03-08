@@ -147,16 +147,20 @@ export class PlayerState {
         const offset = this.bb.__offset(this.bb_pos, 66);
         return offset ? this.bb.readUint32(this.bb_pos + offset) : 0;
     }
-    isBot() {
+    isBountyTarget() {
         const offset = this.bb.__offset(this.bb_pos, 68);
         return offset ? !!this.bb.readInt8(this.bb_pos + offset) : false;
     }
-    botBehavior() {
+    isBot() {
         const offset = this.bb.__offset(this.bb_pos, 70);
+        return offset ? !!this.bb.readInt8(this.bb_pos + offset) : false;
+    }
+    botBehavior() {
+        const offset = this.bb.__offset(this.bb_pos, 72);
         return offset ? this.bb.readInt8(this.bb_pos + offset) : 0;
     }
     static startPlayerState(builder) {
-        builder.startObject(34);
+        builder.startObject(35);
     }
     static addId(builder, idOffset) {
         builder.addFieldOffset(0, idOffset, 0);
@@ -254,17 +258,20 @@ export class PlayerState {
     static addHotZoneTimeTicks(builder, hotZoneTimeTicks) {
         builder.addFieldInt32(31, hotZoneTimeTicks, 0);
     }
+    static addIsBountyTarget(builder, isBountyTarget) {
+        builder.addFieldInt8(32, +isBountyTarget, +false);
+    }
     static addIsBot(builder, isBot) {
-        builder.addFieldInt8(32, +isBot, +false);
+        builder.addFieldInt8(33, +isBot, +false);
     }
     static addBotBehavior(builder, botBehavior) {
-        builder.addFieldInt8(33, botBehavior, 0);
+        builder.addFieldInt8(34, botBehavior, 0);
     }
     static endPlayerState(builder) {
         const offset = builder.endObject();
         return offset;
     }
-    static createPlayerState(builder, idOffset, usernameOffset, x, y, rotation, velocityX, velocityY, health, maxHealth, alive, respawnTimer, weapon, ammo, reloadProgress, score, kills, deaths, teamId, speedBoostRemaining, damageBoostRemaining, shieldCurrent, shieldMax, isCarryingFlagTeamId, ability1CooldownRemaining, ability2CooldownRemaining, invulnerableRemaining, secondaryWeapon, weaponSwapProgress, currentStreak, primaryWeapon, hotZoneKills, hotZoneTimeTicks, isBot, botBehavior) {
+    static createPlayerState(builder, idOffset, usernameOffset, x, y, rotation, velocityX, velocityY, health, maxHealth, alive, respawnTimer, weapon, ammo, reloadProgress, score, kills, deaths, teamId, speedBoostRemaining, damageBoostRemaining, shieldCurrent, shieldMax, isCarryingFlagTeamId, ability1CooldownRemaining, ability2CooldownRemaining, invulnerableRemaining, secondaryWeapon, weaponSwapProgress, currentStreak, primaryWeapon, hotZoneKills, hotZoneTimeTicks, isBountyTarget, isBot, botBehavior) {
         PlayerState.startPlayerState(builder);
         PlayerState.addId(builder, idOffset);
         PlayerState.addUsername(builder, usernameOffset);
@@ -298,6 +305,7 @@ export class PlayerState {
         PlayerState.addPrimaryWeapon(builder, primaryWeapon);
         PlayerState.addHotZoneKills(builder, hotZoneKills);
         PlayerState.addHotZoneTimeTicks(builder, hotZoneTimeTicks);
+        PlayerState.addIsBountyTarget(builder, isBountyTarget);
         PlayerState.addIsBot(builder, isBot);
         PlayerState.addBotBehavior(builder, botBehavior);
         return PlayerState.endPlayerState(builder);

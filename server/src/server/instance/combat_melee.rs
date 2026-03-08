@@ -121,6 +121,7 @@ impl MassiveGameServer {
                         shield_broken: bool,
                         target_position: Vec2,
                         target_username: String,
+                        victim_was_bounty_target: bool,
                         victim_was_carrying_flag_id: u8,
                     },
                     Parried {
@@ -226,6 +227,7 @@ impl MassiveGameServer {
                                     prev_shield > 0 && target_state.shield_current <= 0;
                                 let target_position = Vec2::new(target_state.x, target_state.y);
                                 let target_username = target_state.username.clone();
+                                let victim_was_bounty_target = target_state.is_bounty_target;
                                 let victim_was_carrying_flag_id = if died {
                                     target_state.is_carrying_flag_team_id
                                 } else {
@@ -245,6 +247,7 @@ impl MassiveGameServer {
                                     shield_broken,
                                     target_position,
                                     target_username,
+                                    victim_was_bounty_target,
                                     victim_was_carrying_flag_id,
                                 })
                             }
@@ -368,6 +371,7 @@ impl MassiveGameServer {
                             shield_broken,
                             target_position,
                             target_username,
+                            victim_was_bounty_target,
                             victim_was_carrying_flag_id,
                         } = target_resolution
                         else {
@@ -451,15 +455,20 @@ impl MassiveGameServer {
                                         let streak = self.advance_killstreak(attacker_mut_state);
                                         let base_kill_points =
                                             self.hot_zone_kill_points_at_position(target_position);
-                                        let kill_points = Self::apply_momentum_score_bonus(
+                                        let momentum_points = Self::apply_momentum_score_bonus(
                                             base_kill_points,
                                             streak,
                                         );
+                                        let kill_points =
+                                            super::game_modes::apply_ffa_bounty_score_bonus(
+                                                momentum_points,
+                                                victim_was_bounty_target,
+                                            );
                                         attacker_mut_state.score += kill_points;
                                         if kill_points > base_kill_points {
                                             info!(
-                                                "Momentum bonus (melee): {} streak {} boosted kill score {} -> {}",
-                                                attacker_username, streak, base_kill_points, kill_points
+                                                "Kill bonus (melee): {} streak {} on bounty={} boosted kill score {} -> {}",
+                                                attacker_username, streak, victim_was_bounty_target, base_kill_points, kill_points
                                             );
                                         }
                                         if base_kill_points > POINTS_PER_KILL {

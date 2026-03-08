@@ -235,6 +235,11 @@ pub(super) fn create_fb_player_state_for_delta_ext<'a>(
             } else {
                 fb::WeaponType::Rifle
             },
+            is_bounty_target: if has_misc_delta {
+                pstate.is_bounty_target
+            } else {
+                false
+            },
             is_bot: if has_misc_delta { pstate.is_bot } else { false },
             bot_behavior: if has_misc_delta {
                 pstate.bot_behavior as i8

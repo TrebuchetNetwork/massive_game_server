@@ -108,6 +108,36 @@ fn supply_drop_spacing_conflict(x: f32, y: f32, nearby_positions: &[(f32, f32)])
         .any(|(px, py)| pickup_distance_sq(*px, *py, x, y) < min_spacing_sq)
 }
 
+fn select_ffa_bounty_candidate_index(kills: &[i32]) -> Option<usize> {
+    let mut best_index = None;
+    let mut best_kills = FFA_BOUNTY_MIN_KILLS - 1;
+    let mut tied = false;
+    for (index, kill_count) in kills.iter().copied().enumerate() {
+        if kill_count < FFA_BOUNTY_MIN_KILLS {
+            continue;
+        }
+        if kill_count > best_kills {
+            best_kills = kill_count;
+            best_index = Some(index);
+            tied = false;
+        } else if kill_count == best_kills {
+            tied = true;
+        }
+    }
+    if tied {
+        return None;
+    }
+    best_index
+}
+
+#[inline]
+pub(crate) fn apply_ffa_bounty_score_bonus(points: i32, victim_is_bounty_target: bool) -> i32 {
+    if victim_is_bounty_target {
+        return points.saturating_mul(FFA_BOUNTY_POINTS_MULTIPLIER.max(1));
+    }
+    points
+}
+
 #[derive(Debug, Clone, Copy)]
 enum LatePhaseEvent {
     SupplyWarning {
@@ -473,6 +503,82 @@ impl MassiveGameServer {
         scaled.max(POINTS_PER_KILL)
     }
 
+    fn clear_ffa_bounty_target(&self, match_info_guard: &mut ServerMatchInfo) {
+        let previous_target = match_info_guard.ffa_bounty_player_id.take();
+        match_info_guard.ffa_bounty_ping_elapsed_secs = 0.0;
+        if let Some(player_id) = previous_target {
+            if let Some(mut player_state) = self.player_manager.get_player_state_mut(&player_id) {
+                if player_state.is_bounty_target {
+                    player_state.is_bounty_target = false;
+                    player_state.mark_field_changed(FIELD_MISC);
+                }
+            }
+        }
+    }
+
+    fn update_ffa_bounty_state(&self, match_info_guard: &mut ServerMatchInfo, delta_time: f32) {
+        if match_info_guard.match_state != fb::MatchStateType::Active
+            || match_info_guard.game_mode != fb::GameModeType::FreeForAll
+        {
+            self.clear_ffa_bounty_target(match_info_guard);
+            return;
+        }
+
+        let mut candidates: Vec<(PlayerID, String, i32, f32, f32)> = Vec::new();
+        let mut candidate_kills = Vec::new();
+        self.player_manager
+            .for_each_player(|player_id, player_state| {
+                if player_state.is_spectator {
+                    return;
+                }
+                candidates.push((
+                    player_id.clone(),
+                    player_state.username.clone(),
+                    player_state.kills,
+                    player_state.x,
+                    player_state.y,
+                ));
+                candidate_kills.push(player_state.kills);
+            });
+
+        let next_target = select_ffa_bounty_candidate_index(&candidate_kills)
+            .and_then(|index| candidates.get(index).cloned());
+        let next_target_id = next_target.as_ref().map(|entry| entry.0.clone());
+        let target_changed = match_info_guard.ffa_bounty_player_id != next_target_id;
+        if target_changed {
+            self.clear_ffa_bounty_target(match_info_guard);
+            if let Some((player_id, _, _, _, _)) = next_target.as_ref() {
+                if let Some(mut player_state) = self.player_manager.get_player_state_mut(player_id)
+                {
+                    player_state.is_bounty_target = true;
+                    player_state.mark_field_changed(FIELD_MISC);
+                }
+            }
+            match_info_guard.ffa_bounty_player_id = next_target_id.clone();
+            match_info_guard.ffa_bounty_ping_elapsed_secs = FFA_BOUNTY_PING_INTERVAL_SECS;
+        }
+
+        if let Some((_, player_name, kills, x, y)) = next_target {
+            match_info_guard.ffa_bounty_ping_elapsed_secs += delta_time.max(0.0);
+            if match_info_guard.ffa_bounty_ping_elapsed_secs >= FFA_BOUNTY_PING_INTERVAL_SECS {
+                match_info_guard.ffa_bounty_ping_elapsed_secs = 0.0;
+                let payload = serde_json::json!({
+                    "player_name": player_name,
+                    "kills": kills,
+                    "x": x,
+                    "y": y,
+                    "ping_kind": "enemy",
+                });
+                if let Some(packet) = self.build_system_event_packet("bounty_ping", Some(&payload))
+                {
+                    self.enqueue_direct_packet_for_all_players(packet);
+                }
+            }
+        } else {
+            match_info_guard.ffa_bounty_ping_elapsed_secs = 0.0;
+        }
+    }
+
     pub(super) fn update_match_state_authoritative(&self, delta_time: f32) {
         let mut match_info_guard = self.match_info.write();
         let player_count = self.participant_count();
@@ -500,6 +606,8 @@ impl MassiveGameServer {
                     match_info_guard.hot_zone_elapsed_secs = HOT_ZONE_ROTATE_INTERVAL_SECS;
                     match_info_guard.hot_zone_center = Vec2::new(0.0, 0.0);
                     match_info_guard.hot_zone_radius = HOT_ZONE_RADIUS;
+                    match_info_guard.ffa_bounty_player_id = None;
+                    match_info_guard.ffa_bounty_ping_elapsed_secs = 0.0;
                     match_info_guard.late_phase_supply_warning_triggered = false;
                     match_info_guard.late_phase_zone_surge_triggered = false;
                     match_info_guard.late_phase_final_stand_triggered = false;
@@ -536,7 +644,7 @@ impl MassiveGameServer {
                         p_state.deaths = 0;
                         p_state.reset_match_stats();
                         p_state.is_carrying_flag_team_id = 0;
-                        p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
+                        p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG | FIELD_MISC);
                     });
                     self.kill_feed.write().clear();
                 }
@@ -821,6 +929,7 @@ impl MassiveGameServer {
                 } else {
                     None
                 };
+                self.update_ffa_bounty_state(&mut match_info_guard, safe_delta);
 
                 if map_event_to_trigger.is_some()
                     || hot_zone_to_trigger.is_some()
@@ -1222,6 +1331,8 @@ impl MassiveGameServer {
         match_info.hot_zone_elapsed_secs = 0.0;
         match_info.hot_zone_center = Vec2::new(0.0, 0.0);
         match_info.hot_zone_radius = HOT_ZONE_RADIUS;
+        match_info.ffa_bounty_player_id = None;
+        match_info.ffa_bounty_ping_elapsed_secs = 0.0;
         match_info.late_phase_supply_warning_triggered = false;
         match_info.late_phase_zone_surge_triggered = false;
         match_info.late_phase_final_stand_triggered = false;
@@ -1238,7 +1349,7 @@ impl MassiveGameServer {
             pstate.deaths = 0;
             pstate.reset_match_stats();
             pstate.is_carrying_flag_team_id = 0;
-            pstate.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG);
+            pstate.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG | FIELD_MISC);
         });
         self.kill_feed.write().clear();
     }
@@ -1366,5 +1477,18 @@ mod tests {
         let nearby = vec![(100.0, 100.0), (-20.0, 40.0)];
         assert!(supply_drop_spacing_conflict(100.0 + 20.0, 100.0, &nearby));
         assert!(!supply_drop_spacing_conflict(260.0, 260.0, &nearby));
+    }
+
+    #[test]
+    fn select_ffa_bounty_candidate_requires_unique_leader() {
+        assert_eq!(select_ffa_bounty_candidate_index(&[1, 2, 2]), None);
+        assert_eq!(select_ffa_bounty_candidate_index(&[3, 6, 5]), Some(1));
+        assert_eq!(select_ffa_bounty_candidate_index(&[4, 4, 1]), None);
+    }
+
+    #[test]
+    fn apply_ffa_bounty_score_bonus_doubles_points() {
+        assert_eq!(apply_ffa_bounty_score_bonus(10, false), 10);
+        assert_eq!(apply_ffa_bounty_score_bonus(10, true), 20);
     }
 }

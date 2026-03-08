@@ -17,6 +17,10 @@ export function createWorldRenderer(getCtx) {
     let respawnSpectateCycleIndex = 0;
     let lastRespawnSpectateSwitchAt = 0;
     let lastRespawnSpectateHintAt = 0;
+    let lastCameraLocalAliveState = null;
+    let lastCameraFocusX = 0;
+    let lastCameraFocusY = 0;
+    let spawnCameraTransition = null;
     let hotZoneOverlayGraphics = null;
     let lastHotZoneOverlayDrawAt = 0;
     let lastHotZoneOverlaySignature = '';
@@ -937,6 +941,17 @@ export function createWorldRenderer(getCtx) {
             gameScene.position.x += (targetX - gameScene.position.x) * posSmoothing;
             gameScene.position.y += (targetY - gameScene.position.y) * posSmoothing;
         } else if (localPlayerState) {
+            const localAliveNow = !!localPlayerState.alive;
+            if (lastCameraLocalAliveState === false && localAliveNow) {
+                spawnCameraTransition = {
+                    startedAtMs: currentTimeMs,
+                    durationMs: 500,
+                    fromX: lastCameraFocusX,
+                    fromY: lastCameraFocusY,
+                };
+            }
+            lastCameraLocalAliveState = localAliveNow;
+
             let cameraTarget = localPlayerState;
             const respawnSpectateTarget = getRespawnSpectateTarget(
                 localPlayerState,
@@ -974,11 +989,9 @@ export function createWorldRenderer(getCtx) {
                 speed * dynamicsTuning.cameraSpeedZoomFactor
             );
             const combatZoomOut = Math.min(nextImpulse, dynamicsTuning.cameraMaxSpeedZoomOut * 0.8);
-            const targetScale = Math.max(0.72, dynamicsTuning.cameraBaseScale - speedZoomOut - combatZoomOut);
+            let targetScale = Math.max(0.72, dynamicsTuning.cameraBaseScale - speedZoomOut - combatZoomOut);
             const currentScale = gameScene.scale.x;
             const scaleSmoothing = 0.15;
-            const newScale = currentScale + (targetScale - currentScale) * scaleSmoothing;
-            gameScene.scale.set(newScale);
 
             const lookAheadX = velocityX * dynamicsTuning.cameraLookAheadFactor;
             const lookAheadY = velocityY * dynamicsTuning.cameraLookAheadFactor;
@@ -1001,8 +1014,34 @@ export function createWorldRenderer(getCtx) {
                 }
             }
 
-            const targetX = app.screen.width / 2 - (playerX + lookAheadX + cursorLeadX) * newScale;
-            const targetY = app.screen.height / 2 - (playerY + lookAheadY + cursorLeadY) * newScale;
+            let focusX = playerX;
+            let focusY = playerY;
+            if (spawnCameraTransition && cameraTarget === localPlayerState) {
+                const progress = Math.max(
+                    0,
+                    Math.min(
+                        1,
+                        (currentTimeMs - spawnCameraTransition.startedAtMs)
+                            / Math.max(1, spawnCameraTransition.durationMs)
+                    )
+                );
+                const eased = 1 - Math.pow(1 - progress, 3);
+                focusX = spawnCameraTransition.fromX + (playerX - spawnCameraTransition.fromX) * eased;
+                focusY = spawnCameraTransition.fromY + (playerY - spawnCameraTransition.fromY) * eased;
+                targetScale *= 1 + (1 - progress) * 0.05;
+                if (progress >= 1) {
+                    spawnCameraTransition = null;
+                }
+            }
+
+            const newScale = currentScale + (targetScale - currentScale) * scaleSmoothing;
+            gameScene.scale.set(newScale);
+
+            lastCameraFocusX = focusX;
+            lastCameraFocusY = focusY;
+
+            const targetX = app.screen.width / 2 - (focusX + lookAheadX + cursorLeadX) * newScale;
+            const targetY = app.screen.height / 2 - (focusY + lookAheadY + cursorLeadY) * newScale;
 
             const smoothing = Math.min(
                 0.28,
@@ -1027,6 +1066,10 @@ export function createWorldRenderer(getCtx) {
         _lastWallRedrawAt = 0;
         _pendingWallRedraw = false;
         clearZoneAmbientParticles(ctx.zoneAmbientContainer);
+        lastCameraLocalAliveState = null;
+        lastCameraFocusX = 0;
+        lastCameraFocusY = 0;
+        spawnCameraTransition = null;
         if (ctx.zoneContainer) {
             ctx.zoneContainer.removeChildren().forEach((child) => child.destroy?.());
         }

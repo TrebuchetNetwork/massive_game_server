@@ -1161,6 +1161,7 @@ switch (event.event_type) {
         this.createEnhancedWallDestructionEffect(pos);
         if (this.audioManager) {
             this.audioManager.playSound('explosion', pos, 0.7);
+            this.audioManager.playSound('wallRumble', pos, 0.42);
             this.audioManager.registerCombatEventIntensity(0.3);
         }
         break;
@@ -3518,6 +3519,13 @@ this.sounds = {
     powerupWarning: { freq: [640, 860], duration: 0.12, type: 'square', vol: 0.24 },
     heartbeatPulse: { freq: [110, 82], duration: 0.12, type: 'sine', vol: 0.16 },
     ambientCombat: { freq: [380, 180], duration: 0.28, type: 'noise', vol: 0.12 },
+    wallRumble: { freq: [72, 44], duration: 0.34, type: 'noise', vol: 0.18 },
+    zoneSlowEnter: { freq: [240, 180, 130], duration: 0.22, type: 'triangle', vol: 0.18 },
+    zoneSlowExit: { freq: [160, 220], duration: 0.16, type: 'sine', vol: 0.12 },
+    zoneDamageEnter: { freq: [780, 560, 420], duration: 0.18, type: 'sawtooth', vol: 0.2 },
+    zoneDamageExit: { freq: [520, 680], duration: 0.14, type: 'triangle', vol: 0.12 },
+    zoneBoostEnter: { freq: [420, 760, 1080], duration: 0.18, type: 'sine', vol: 0.18 },
+    zoneBoostExit: { freq: [1080, 760], duration: 0.14, type: 'triangle', vol: 0.12 },
     countdownBeep: { freq: [920, 780], duration: 0.12, type: 'square', vol: 0.24 },
     victorySting: { freq: [720, 980, 1320], duration: 0.58, type: 'triangle', vol: 0.46 },
     defeatSting: { freq: [560, 420, 280], duration: 0.62, type: 'sawtooth', vol: 0.44 },
@@ -3616,6 +3624,13 @@ this.soundLimits = Object.freeze({
     powerupWarning: { minIntervalMs: 180, windowMs: 1000, maxPerWindow: 5, maxConcurrent: 1 },
     heartbeatPulse: { minIntervalMs: 240, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
     ambientCombat: { minIntervalMs: 320, windowMs: 1000, maxPerWindow: 5, maxConcurrent: 1 },
+    wallRumble: { minIntervalMs: 280, windowMs: 1000, maxPerWindow: 3, maxConcurrent: 1 },
+    zoneSlowEnter: { minIntervalMs: 500, windowMs: 2000, maxPerWindow: 2, maxConcurrent: 1 },
+    zoneSlowExit: { minIntervalMs: 500, windowMs: 2000, maxPerWindow: 2, maxConcurrent: 1 },
+    zoneDamageEnter: { minIntervalMs: 500, windowMs: 2000, maxPerWindow: 2, maxConcurrent: 1 },
+    zoneDamageExit: { minIntervalMs: 500, windowMs: 2000, maxPerWindow: 2, maxConcurrent: 1 },
+    zoneBoostEnter: { minIntervalMs: 500, windowMs: 2000, maxPerWindow: 2, maxConcurrent: 1 },
+    zoneBoostExit: { minIntervalMs: 500, windowMs: 2000, maxPerWindow: 2, maxConcurrent: 1 },
     spawnChime: { minIntervalMs: 400, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
     flagFanfare: { minIntervalMs: 1200, windowMs: 2000, maxPerWindow: 1, maxConcurrent: 1 },
     weaponSwap: { minIntervalMs: 80, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
@@ -3650,6 +3665,13 @@ this.mobileSoundLimits = Object.freeze({
     powerupWarning: { minIntervalMs: 280, windowMs: 1000, maxPerWindow: 3, maxConcurrent: 1 },
     heartbeatPulse: { minIntervalMs: 340, windowMs: 1000, maxPerWindow: 3, maxConcurrent: 1 },
     ambientCombat: { minIntervalMs: 420, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
+    wallRumble: { minIntervalMs: 420, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
+    zoneSlowEnter: { minIntervalMs: 900, windowMs: 2000, maxPerWindow: 1, maxConcurrent: 1 },
+    zoneSlowExit: { minIntervalMs: 900, windowMs: 2000, maxPerWindow: 1, maxConcurrent: 1 },
+    zoneDamageEnter: { minIntervalMs: 900, windowMs: 2000, maxPerWindow: 1, maxConcurrent: 1 },
+    zoneDamageExit: { minIntervalMs: 900, windowMs: 2000, maxPerWindow: 1, maxConcurrent: 1 },
+    zoneBoostEnter: { minIntervalMs: 900, windowMs: 2000, maxPerWindow: 1, maxConcurrent: 1 },
+    zoneBoostExit: { minIntervalMs: 900, windowMs: 2000, maxPerWindow: 1, maxConcurrent: 1 },
     spawnChime: { minIntervalMs: 600, windowMs: 1000, maxPerWindow: 1, maxConcurrent: 1 },
     flagFanfare: { minIntervalMs: 1400, windowMs: 2000, maxPerWindow: 1, maxConcurrent: 1 },
     weaponSwap: { minIntervalMs: 140, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
@@ -3673,6 +3695,8 @@ this.lowHealthFilterNode = null;
 this.ambientCombatEnergy = 0;
 this.lastAmbientEnergyAt = 0;
 this.nextAmbientCombatAt = 0;
+this.zoneCueKey = null;
+this.lastZoneCueCheckAt = 0;
 this.zoneDryGainNode = null;
 this.zoneWetGainNode = null;
 this.zoneConvolverNode = null;
@@ -3815,6 +3839,57 @@ try {
     this.zoneWetGainNode.gain.setTargetAtTime(wetTarget, now, 0.18);
     this.zoneDryGainNode.gain.setTargetAtTime(dryTarget, now, 0.12);
 } catch (_) {}
+    }
+
+    getZoneTransitionSoundName(zoneKey, entering) {
+if (zoneKey === 'damage') return entering ? 'zoneDamageEnter' : 'zoneDamageExit';
+if (zoneKey === 'boost') return entering ? 'zoneBoostEnter' : 'zoneBoostExit';
+if (zoneKey === 'slow') return entering ? 'zoneSlowEnter' : 'zoneSlowExit';
+return null;
+    }
+
+    syncZoneAudio(nowMs = 0) {
+if (!this.audioContext || !localPlayerState) {
+    this.zoneCueKey = null;
+    return;
+}
+if ((nowMs - this.lastZoneCueCheckAt) < 140) {
+    return;
+}
+this.lastZoneCueCheckAt = nowMs;
+
+const nextZoneKey = getZoneReverbProfileKey(zones, localPlayerState);
+if (nextZoneKey === this.zoneCueKey) {
+    return;
+}
+
+const playerPos = getEntityWorldPosition(localPlayerState);
+const previousZoneKey = this.zoneCueKey;
+this.zoneCueKey = nextZoneKey;
+
+if (previousZoneKey) {
+    const exitSound = this.getZoneTransitionSoundName(previousZoneKey, false);
+    if (exitSound) {
+        this.playSound(exitSound, playerPos, 0.8, {
+            prioritizeLocal: true,
+            bypassLimiter: true,
+        });
+    }
+}
+if (nextZoneKey) {
+    const enterSound = this.getZoneTransitionSoundName(nextZoneKey, true);
+    if (enterSound) {
+        this.playSound(enterSound, playerPos, 0.92, {
+            prioritizeLocal: true,
+            bypassLimiter: true,
+        });
+    }
+}
+    }
+
+    updateAmbientState(nowMs = 0) {
+this.syncEnvironmentalReverb(nowMs);
+this.syncZoneAudio(nowMs);
     }
 
     decodeAudioData(arrayBuffer) {
@@ -4436,7 +4511,7 @@ if (position && localPlayerState && app && gameScene) {
 const nowMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
     ? performance.now()
     : Date.now();
-this.syncEnvironmentalReverb(nowMs);
+this.updateAmbientState(nowMs);
 const prioritizeLocal = !!(options && options.prioritizeLocal);
 const bypassLimiter = !!(options && options.bypassLimiter);
 this.sweepExpiredVoices(nowMs);

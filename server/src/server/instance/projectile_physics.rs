@@ -605,6 +605,7 @@ impl MassiveGameServer {
                             .map(|p| p.team_id)
                             .unwrap_or(0);
                         let victim_team = target_state_entry.team_id;
+                        let victim_was_bounty_target = target_state_entry.is_bounty_target;
 
                         if let Some(mut attacker_state_entry) =
                             self.player_manager.get_player_state_mut(&attacker_id)
@@ -629,14 +630,19 @@ impl MassiveGameServer {
                                 let streak = self.advance_killstreak(&mut attacker_state_entry);
                                 let base_kill_points =
                                     self.hot_zone_kill_points_at_position(target_pos);
-                                let kill_points =
+                                let momentum_points =
                                     Self::apply_momentum_score_bonus(base_kill_points, streak);
+                                let kill_points = super::game_modes::apply_ffa_bounty_score_bonus(
+                                    momentum_points,
+                                    victim_was_bounty_target,
+                                );
                                 attacker_state_entry.score += kill_points;
                                 if kill_points > base_kill_points {
                                     info!(
-                                        "Momentum bonus: {} streak {} boosted kill score {} -> {}",
+                                        "Kill bonus: {} streak {} on bounty={} boosted kill score {} -> {}",
                                         attacker_state_entry.username,
                                         streak,
+                                        victim_was_bounty_target,
                                         base_kill_points,
                                         kill_points
                                     );

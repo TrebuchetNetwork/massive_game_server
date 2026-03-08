@@ -196,6 +196,7 @@ pub struct PlayerState {
     pub career_kills_per_weapon: [u64; 5],
     pub hot_zone_kills: i32,
     pub hot_zone_time_ticks: u32,
+    pub is_bounty_target: bool,
     pub is_bot: bool,
     pub bot_behavior: u8,
 
@@ -293,6 +294,7 @@ impl PlayerState {
             career_kills_per_weapon: [0; 5],
             hot_zone_kills: 0,
             hot_zone_time_ticks: 0,
+            is_bounty_target: false,
             is_bot: false,
             bot_behavior: 0,
             last_valid_position: (initial_x, initial_y),
@@ -623,6 +625,12 @@ impl PlayerState {
             return false;
         }
         let mut remaining_damage = damage;
+        if self.is_bounty_target && remaining_damage > 0 {
+            let reduced = ((remaining_damage as f32)
+                * (1.0 - crate::core::constants::FFA_BOUNTY_DAMAGE_REDUCTION))
+                .round() as i32;
+            remaining_damage = reduced.max(1);
+        }
 
         if self.shield_current > 0 {
             let shield_damage = remaining_damage.min(self.shield_current);
@@ -952,6 +960,7 @@ impl PlayerState {
         self.kills_per_weapon = [0; 5];
         self.hot_zone_kills = 0;
         self.hot_zone_time_ticks = 0;
+        self.is_bounty_target = false;
         self.current_streak = 0;
         self.peak_streak = 0;
         self.streak_damage_boost_remaining = 0.0;
@@ -1457,6 +1466,15 @@ mod tests {
         assert!(!died);
         assert_eq!(p.health, 100);
         assert!(p.alive);
+    }
+
+    #[test]
+    fn apply_damage_reduces_damage_for_bounty_target() {
+        let mut p = make_player("p1");
+        p.is_bounty_target = true;
+        let died = p.apply_damage(50);
+        assert!(!died);
+        assert_eq!(p.health, 55);
     }
 
     #[test]

@@ -172,6 +172,7 @@ table PlayerState {
     primary_weapon: WeaponType = Rifle;
     hot_zone_kills: int = 0;
     hot_zone_time_ticks: uint = 0;
+    is_bounty_target: bool = false;
     is_bot: bool = false;
     bot_behavior: byte = 0;
 }
