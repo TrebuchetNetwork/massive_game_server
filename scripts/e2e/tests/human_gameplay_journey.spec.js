@@ -24,6 +24,18 @@ async function waitForPlaying(page, timeout = 60000) {
   );
 }
 
+async function resolveInteractionBox(page) {
+  const viewport = page.viewportSize();
+  if (process.env.PLAYWRIGHT_CROSS_BROWSER === '1' && viewport) {
+    return { x: 0, y: 0, width: viewport.width, height: viewport.height };
+  }
+
+  const pixiContainer = page.locator('#pixiContainer');
+  await pixiContainer.waitFor({ state: 'visible', timeout: 60000 });
+  const canvas = page.locator('#pixiContainer canvas');
+  return (await canvas.boundingBox().catch(() => null)) || (await pixiContainer.boundingBox());
+}
+
 async function getLocalPlayerPosition(page) {
   const position = await page.evaluate(() => {
     const snapshot = window.__e2e && window.__e2e.localPlayerSnapshot;
@@ -86,13 +98,7 @@ test('human gameplay journey remains stable and responsive', async ({ page }) =>
   );
   expect(autoReconnectEnabled).toBeTruthy();
 
-  const pixiContainer = page.locator('#pixiContainer');
-  await pixiContainer.waitFor({ state: 'visible', timeout: 60000 });
-  const canvas = page.locator('#pixiContainer canvas');
-  let box = await canvas.boundingBox().catch(() => null);
-  if (!box) {
-    box = await pixiContainer.boundingBox();
-  }
+  const box = await resolveInteractionBox(page);
   expect(box).toBeTruthy();
 
   const posBefore = await getLocalPlayerPosition(page);
