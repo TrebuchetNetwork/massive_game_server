@@ -1,4 +1,7 @@
 const { test, expect } = require('@playwright/test');
+const { registerServerLifecycle } = require('./helpers/serverLifecycle');
+
+registerServerLifecycle(test);
 
 test.describe.configure({ timeout: 120000, retries: 1 });
 
