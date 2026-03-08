@@ -291,8 +291,7 @@ jobs:
         run: |
           npx playwright test \
             tests/connect.spec.js \
-            tests/human_gameplay_journey.spec.js \
-            tests/combat_projectiles.spec.js \
+            tests/runtime.spec.js \
             --project=${{ matrix.browser }} \
             --workers=1
 
