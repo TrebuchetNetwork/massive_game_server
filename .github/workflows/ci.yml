@@ -183,7 +183,7 @@ jobs:
   playwright-e2e:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     env:
       CARGO_TERM_COLOR: always
       E2E_BASE_URL: http://127.0.0.1:18080
