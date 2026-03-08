@@ -17,8 +17,8 @@ jobs:
     timeout-minutes: 45
     env:
       EDGE_ADMIN_TOKEN: release-edge-admin-token
-      EDGE_BASE_URL: https://localhost
-      EDGE_WS_URL: wss://localhost/ws
+      EDGE_BASE_URL: https://127.0.0.1
+      EDGE_WS_URL: wss://127.0.0.1/ws
       EDGE_SMS_CAPTURE_FILE: /app/artifacts/edge_otp.txt
     steps:
       - name: Checkout
@@ -148,8 +148,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      EDGE_BASE_URL: https://localhost
-      EDGE_WS_URL: wss://localhost/ws
+      EDGE_BASE_URL: https://127.0.0.1
+      EDGE_WS_URL: wss://127.0.0.1/ws
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
