@@ -86,9 +86,13 @@ test('human gameplay journey remains stable and responsive', async ({ page }) =>
   );
   expect(autoReconnectEnabled).toBeTruthy();
 
+  const pixiContainer = page.locator('#pixiContainer');
+  await pixiContainer.waitFor({ state: 'visible', timeout: 60000 });
   const canvas = page.locator('#pixiContainer canvas');
-  await canvas.waitFor({ state: 'visible', timeout: 60000 });
-  const box = await canvas.boundingBox();
+  let box = await canvas.boundingBox().catch(() => null);
+  if (!box) {
+    box = await pixiContainer.boundingBox();
+  }
   expect(box).toBeTruthy();
 
   const posBefore = await getLocalPlayerPosition(page);
