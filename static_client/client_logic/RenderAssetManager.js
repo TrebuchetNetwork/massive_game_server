@@ -7,6 +7,13 @@
  */
 
 export function createRenderAssetManager(getCtx) {
+    const weaponRenderColors = {
+        1: 0xFBBF24,
+        2: 0xFB923C,
+        3: 0x60A5FA,
+        4: 0xE879F9,
+        5: 0xF87171,
+    };
 
     function buildRenderTexture(drawFn, resolution = 2) {
         const { app } = getCtx();
@@ -27,8 +34,9 @@ export function createRenderAssetManager(getCtx) {
             [GP.WeaponType.Melee]: { barrelLength: PLAYER_RADIUS + 8, barrelWidth: 8, muzzleSize: 0, barrelCount: 1, scope: false }
         };
         const cfg = configs[weaponType] || configs[GP.WeaponType.Pistol];
+        const weaponColor = weaponRenderColors[weaponType] || 0xFFFFFF;
         return buildRenderTexture((g) => {
-            g.beginFill(0xFFFFFF, 1);
+            g.beginFill(weaponColor, 1);
             if (cfg.barrelCount === 2) {
                 g.drawRoundedRect(0, -4, cfg.barrelLength, 3, 1.5);
                 g.drawRoundedRect(0, 1, cfg.barrelLength, 3, 1.5);
@@ -38,13 +46,13 @@ export function createRenderAssetManager(getCtx) {
             g.endFill();
 
             if (cfg.muzzleSize > 0) {
-                g.beginFill(0xFFFFFF, 1);
+                g.beginFill(weaponColor, 1);
                 g.drawCircle(cfg.barrelLength, 0, cfg.muzzleSize);
                 g.endFill();
             }
 
             if (cfg.scope) {
-                g.beginFill(0xFFFFFF, 0.9);
+                g.beginFill(weaponColor, 0.9);
                 g.drawCircle(cfg.barrelLength * 0.7, 0, 4);
                 g.endFill();
             }
@@ -53,8 +61,9 @@ export function createRenderAssetManager(getCtx) {
 
     function createProjectileTextureForWeapon(weaponType) {
         const { GP } = getCtx();
+        const weaponColor = weaponRenderColors[weaponType] || 0xFFFFFF;
         return buildRenderTexture((g) => {
-            g.beginFill(0xFFFFFF, 1);
+            g.beginFill(weaponColor, 1);
             switch (weaponType) {
                 case GP.WeaponType.Shotgun:
                     g.drawCircle(0, 0, 4);

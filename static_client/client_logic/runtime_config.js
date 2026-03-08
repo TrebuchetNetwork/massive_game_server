@@ -215,11 +215,11 @@ export function buildRuntimeConfig(search, GP) {
     };
 
     const weaponColors = {
-        [GP.WeaponType.Pistol]: 0xffbf00,
-        [GP.WeaponType.Shotgun]: 0xff4444,
-        [GP.WeaponType.Rifle]: 0x4444ff,
-        [GP.WeaponType.Sniper]: 0xaa44ff,
-        [GP.WeaponType.Melee]: 0xd1d5db,
+        [GP.WeaponType.Pistol]: 0xFBBF24,
+        [GP.WeaponType.Shotgun]: 0xFB923C,
+        [GP.WeaponType.Rifle]: 0x60A5FA,
+        [GP.WeaponType.Sniper]: 0xE879F9,
+        [GP.WeaponType.Melee]: 0xF87171,
     };
 
     // Weapon velocity data (pixels per second)

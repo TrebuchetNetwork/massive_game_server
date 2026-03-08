@@ -3561,6 +3561,20 @@ this.sampleBuffers = new Map();
 this.sampleLoadPromises = new Map();
 this.sampleLoadFailures = new Set();
 this.warnedSampleOnlyFallback = new Set();
+this.pendingSounds = [];
+this.maxPendingSounds = 48;
+this.flushingPendingSounds = false;
+this.criticalCombatSamples = Object.freeze([
+    'pistolFire',
+    'shotgunFire',
+    'rifleFire',
+    'sniperFire',
+    'meleeSwing',
+    'playerHit',
+    'hitMarker',
+    'hitMarkerHeadshot',
+]);
+this.criticalSamplesLoaded = false;
 
 this.resumeInFlight = false;
 this.soundActivity = new Map();
@@ -3829,11 +3843,79 @@ return new Promise((resolve, reject) => {
 
     preloadSoundSamples() {
 if (!this.audioContext || typeof fetch !== 'function') return;
+const criticalLoads = this.criticalCombatSamples
+    .filter((soundName) => !!this.soundSamples[soundName])
+    .map((soundName) => this.loadSampleBuffer(soundName).catch(() => null));
+if (criticalLoads.length > 0) {
+    Promise.allSettled(criticalLoads).finally(() => {
+        this.criticalSamplesLoaded = true;
+    });
+} else {
+    this.criticalSamplesLoaded = true;
+}
 Object.keys(this.soundSamples).forEach((soundName) => {
     this.loadSampleBuffer(soundName).catch(() => {
         // Errors are surfaced in loadSampleBuffer; keep preloading fire-and-forget.
     });
 });
+    }
+
+    queuePendingSound(soundName, position = null, volumeMultiplier = 1.0, options = null) {
+const queuedPosition = position && typeof position === 'object'
+    ? { ...position }
+    : position;
+const queuedOptions = options && typeof options === 'object'
+    ? { ...options }
+    : options;
+if (this.pendingSounds.length >= this.maxPendingSounds) {
+    this.pendingSounds.shift();
+}
+this.pendingSounds.push({
+    soundName,
+    position: queuedPosition,
+    volumeMultiplier,
+    options: queuedOptions,
+});
+    }
+
+    flushPendingSounds() {
+if (
+    this.flushingPendingSounds ||
+    !this.audioContext ||
+    this.audioContext.state !== 'running' ||
+    this.pendingSounds.length === 0
+) {
+    return;
+}
+const queuedSounds = this.pendingSounds.splice(0, this.pendingSounds.length);
+this.flushingPendingSounds = true;
+try {
+    queuedSounds.forEach((queued) => {
+        this.playSound(
+            queued.soundName,
+            queued.position,
+            queued.volumeMultiplier,
+            queued.options
+        );
+    });
+} finally {
+    this.flushingPendingSounds = false;
+}
+    }
+
+    requestAudioResume() {
+if (!this.audioContext || this.resumeInFlight || this.audioContext.state !== 'suspended') {
+    return;
+}
+this.resumeInFlight = true;
+this.audioContext.resume()
+    .then(() => {
+        this.flushPendingSounds();
+    })
+    .catch(e => console.warn("AudioContext resume failed:", e))
+    .finally(() => {
+        this.resumeInFlight = false;
+    });
     }
 
     loadSampleBuffer(soundName) {
@@ -4282,15 +4364,12 @@ return buffer;
 
     playSound(soundName, position = null, volumeMultiplier = 1.0, options = null) {
 if (!this.soundEnabled || !this.audioContext || !this.sounds[soundName]) return;
+if (this.audioContext.state === 'running' && this.pendingSounds.length > 0 && !this.flushingPendingSounds) {
+    this.flushPendingSounds();
+}
 if (this.audioContext.state === 'suspended') {
-    if (!this.resumeInFlight) {
-        this.resumeInFlight = true;
-        this.audioContext.resume()
-            .catch(e => console.warn("AudioContext resume failed:", e))
-            .finally(() => {
-                this.resumeInFlight = false;
-            });
-    }
+    this.queuePendingSound(soundName, position, volumeMultiplier, options);
+    this.requestAudioResume();
     return;
 }
 
@@ -4376,12 +4455,14 @@ if (hasSampleMapping) {
     this.loadSampleBuffer(soundName).catch(() => {
         // loadSampleBuffer already logs detailed failures.
     });
+    const allowToneFallback = !this.criticalSamplesLoaded || this.sampleLoadFailures.has(soundName);
     if (this.sampleLoadFailures.has(soundName) && !this.warnedSampleOnlyFallback.has(soundName)) {
         this.warnedSampleOnlyFallback.add(soundName);
-        console.warn(`Skipping tone fallback for '${soundName}' because sample-first mode is enabled.`);
+        console.warn(`Falling back to synthesized '${soundName}' because the sample is unavailable.`);
     }
-    // Preserve sample fidelity: do not synthesize fallback tones for mapped SFX.
-    return;
+    if (!allowToneFallback) {
+        return;
+    }
 }
 this._playTone(
     soundName,

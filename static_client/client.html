@@ -2730,6 +2730,7 @@
             getBackgroundThrottleActive: () => backgroundThrottleActive,
             getAudioManager: () => audioManager,
             getMinimap: () => minimap,
+            applyScreenShake,
             AIM_ASSIST_MAGNETISM,
             AIM_ASSIST_MAX_DISTANCE,
         });
@@ -3022,6 +3023,9 @@
                 const resumeAudio = () => {
                     if (audioManager && audioManager.audioContext && audioManager.audioContext.state === 'suspended') {
                         audioManager.audioContext.resume().then(() => {
+                            if (typeof audioManager.flushPendingSounds === 'function') {
+                                audioManager.flushPendingSounds();
+                            }
                             console.log('Audio context resumed');
                         });
                     }

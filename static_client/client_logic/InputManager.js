@@ -75,6 +75,7 @@ export function createInputManager({
     getBackgroundThrottleActive,
     getAudioManager,
     getMinimap,
+    applyScreenShake,
     // Aim assist
     AIM_ASSIST_MAGNETISM,
     AIM_ASSIST_MAX_DISTANCE,
@@ -136,6 +137,17 @@ export function createInputManager({
     const TACTICAL_PING_CHAT_THROTTLE_MS = 900;
     const KILLSTREAK_PREF_DAMAGE_FIRST_SLOT = 3;
     const KILLSTREAK_PREF_SPEED_FIRST_SLOT = 4;
+
+    function getWeaponFireShakeProfile(weaponType) {
+        switch (weaponType) {
+            case GP.WeaponType.Pistol: return { intensity: 1.5, frames: 2 };
+            case GP.WeaponType.Shotgun: return { intensity: 6, frames: 4 };
+            case GP.WeaponType.Rifle: return { intensity: 2, frames: 1 };
+            case GP.WeaponType.Sniper: return { intensity: 8, frames: 6 };
+            case GP.WeaponType.Melee: return { intensity: 4, frames: 3 };
+            default: return null;
+        }
+    }
 
     function getPredictedWeaponSoundIntervalMs(weaponType) {
         switch (weaponType) {
@@ -737,11 +749,19 @@ export function createInputManager({
             }
         }
 
-        if (currentFrameInput.shooting && now - lastShotFeedbackTime >= 110) {
+        const attackFeedbackActive = currentFrameInput.shooting || currentFrameInput.melee_attack;
+        if (attackFeedbackActive && now - lastShotFeedbackTime >= 110) {
             cameraCombatImpulseRef.value = Math.min(
                 dynamicsTuning.cameraMaxSpeedZoomOut,
                 cameraCombatImpulseRef.value + dynamicsTuning.cameraCombatKick
             );
+            if (gameSettings.screenShake && typeof applyScreenShake === 'function') {
+                const shakeProfile = getWeaponFireShakeProfile(localPlayerState.weapon);
+                const scene = getGameScene();
+                if (shakeProfile && scene) {
+                    applyScreenShake(scene, shakeProfile.intensity, shakeProfile.frames);
+                }
+            }
             if (EXCITEMENT_UI_ENABLED) {
                 combatUiStateRef.momentum = Math.min(1, combatUiStateRef.momentum + 0.016);
                 combatUiStateRef.speedPulse = Math.min(1, combatUiStateRef.speedPulse + 0.08);
