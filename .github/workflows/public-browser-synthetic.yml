@@ -2,6 +2,11 @@ name: Public Browser Synthetic
 
 on:
   workflow_dispatch:
+    inputs:
+      domain:
+        description: "Public domain to probe, for example game.trebuchet.network"
+        required: false
+        type: string
   schedule:
     - cron: "7,37 * * * *"
 
@@ -13,27 +18,51 @@ jobs:
   public-browser-synthetic:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      PUBLIC_DOMAIN: game.trebuchet.network
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
+      - name: Resolve configured public domain
+        id: public-domain
+        env:
+          INPUT_DOMAIN: ${{ inputs.domain }}
+          VAR_DOMAIN: ${{ vars.PUBLIC_SYNTHETIC_DOMAIN }}
+        run: |
+          set -euo pipefail
+          domain="${INPUT_DOMAIN:-}"
+          if [[ -z "${domain}" ]]; then
+            domain="${VAR_DOMAIN:-}"
+          fi
+          if [[ -z "${domain}" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+          echo "domain=${domain}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when no public domain is configured
+        if: steps.public-domain.outputs.configured != 'true'
+        run: echo "Skipping public browser synthetic because PUBLIC_SYNTHETIC_DOMAIN is not configured."
+
       - name: Verify public edge endpoints
-        run: ./scripts/verify_public_deploy.sh "${PUBLIC_DOMAIN}"
+        if: steps.public-domain.outputs.configured == 'true'
+        run: ./scripts/verify_public_deploy.sh "${{ steps.public-domain.outputs.domain }}"
 
       - name: Install Playwright dependencies
+        if: steps.public-domain.outputs.configured == 'true'
         working-directory: scripts/e2e
         run: npm ci
 
       - name: Install Playwright browser
+        if: steps.public-domain.outputs.configured == 'true'
         working-directory: scripts/e2e
         run: npx playwright install --with-deps chromium
 
       - name: Run browser-backed public synthetic
+        if: steps.public-domain.outputs.configured == 'true'
         env:
           PUBLIC_SYNTH_DEEP_CONNECT: "0"
-        run: ./scripts/verify_public_deploy_browser.sh "${PUBLIC_DOMAIN}"
+        run: ./scripts/verify_public_deploy_browser.sh "${{ steps.public-domain.outputs.domain }}"
 
       - name: Upload public synthetic artifacts on failure
         if: failure()
