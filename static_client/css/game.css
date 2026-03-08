@@ -707,6 +707,14 @@
             transform: scale(1);
         }
 
+        .radial-widget--ready {
+            opacity: 1;
+            transform: scale(1.08);
+            border-color: rgba(250, 204, 21, 0.72);
+            box-shadow: 0 0 18px rgba(250, 204, 21, 0.34);
+            animation: radialWidgetReadyPulse 240ms ease-out 2;
+        }
+
         .radial-widget__label {
             position: absolute;
             left: 50%;
@@ -727,9 +735,63 @@
             top: -95px;
         }
 
+        .radial-widget--dash {
+            left: -86px;
+            top: -36px;
+        }
+
+        .radial-widget--dodge {
+            left: 84px;
+            top: -102px;
+        }
+
         .radial-widget--reload {
             left: 28px;
             top: -65px;
+        }
+
+        .death-moment-banner {
+            position: absolute;
+            left: 50%;
+            top: 46%;
+            transform: translate(-50%, -50%) scale(0.86);
+            opacity: 0;
+            padding: 14px 24px;
+            border-radius: 14px;
+            border: 1px solid rgba(248, 113, 113, 0.74);
+            background: linear-gradient(180deg, rgba(23, 23, 23, 0.9), rgba(69, 10, 10, 0.88));
+            color: #FEE2E2;
+            font-size: 34px;
+            font-weight: 900;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            text-shadow: 0 0 18px rgba(239, 68, 68, 0.75);
+            box-shadow: 0 0 28px rgba(127, 29, 29, 0.42);
+            transition: opacity 110ms linear, transform 140ms ease-out;
+            z-index: 29;
+        }
+
+        .death-moment-banner--visible {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+            animation: deathMomentBannerPop 220ms ease-out;
+        }
+
+        #pixiContainer.pixi-container--death-moment {
+            filter: grayscale(0.62) saturate(0.42) brightness(0.86);
+            transition: filter 110ms ease-out;
+        }
+
+        @keyframes radialWidgetReadyPulse {
+            0% { transform: scale(0.9); opacity: 0.65; }
+            50% { transform: scale(1.12); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        @keyframes deathMomentBannerPop {
+            0% { transform: translate(-50%, -50%) scale(0.78); opacity: 0; }
+            55% { transform: translate(-50%, -50%) scale(1.05); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
         }
 
         .ping-wheel {
@@ -1601,9 +1663,23 @@
             left: -132px;
             top: 8px;
         }
+        body.mobile-mode .radial-widget--dash {
+            left: -132px;
+            top: -54px;
+        }
+        body.mobile-mode .radial-widget--dodge {
+            left: -12px;
+            top: -54px;
+        }
         body.mobile-mode .radial-widget--reload {
             left: -72px;
             top: 8px;
+        }
+        body.mobile-mode .death-moment-banner {
+            top: 42%;
+            font-size: 24px;
+            padding: 12px 18px;
+            letter-spacing: 0.12em;
         }
         body.mobile-mode .damage-direction-layer {
             width: 410px;

@@ -54,10 +54,17 @@
                 <div id="abilityRadial" class="radial-widget radial-widget--ability">
                     <span id="abilityRadialLabel" class="radial-widget__label">Ability</span>
                 </div>
+                <div id="dashRadial" class="radial-widget radial-widget--dash">
+                    <span id="dashRadialLabel" class="radial-widget__label">Dash</span>
+                </div>
+                <div id="dodgeRadial" class="radial-widget radial-widget--dodge">
+                    <span id="dodgeRadialLabel" class="radial-widget__label">Dodge</span>
+                </div>
                 <div id="reloadRadial" class="radial-widget radial-widget--reload">
                     <span id="reloadRadialLabel" class="radial-widget__label">Reload</span>
                 </div>
             </div>
+            <div id="deathMomentBanner" class="death-moment-banner">ELIMINATED</div>
             <div id="combatMomentum" class="combat-momentum">
                 <div class="combat-momentum__header">
                     <span id="combatStreakChip" class="combat-chip">Streak x0</span>
@@ -616,8 +623,13 @@
         const combatRadialHudDiv = document.getElementById('combatRadialHud');
         const abilityRadialDiv = document.getElementById('abilityRadial');
         const abilityRadialLabelSpan = document.getElementById('abilityRadialLabel');
+        const dashRadialDiv = document.getElementById('dashRadial');
+        const dashRadialLabelSpan = document.getElementById('dashRadialLabel');
+        const dodgeRadialDiv = document.getElementById('dodgeRadial');
+        const dodgeRadialLabelSpan = document.getElementById('dodgeRadialLabel');
         const reloadRadialDiv = document.getElementById('reloadRadial');
         const reloadRadialLabelSpan = document.getElementById('reloadRadialLabel');
+        const deathMomentBannerDiv = document.getElementById('deathMomentBanner');
         const combatMomentumDiv = document.getElementById('combatMomentum');
         const combatMomentumFillDiv = document.getElementById('combatMomentumFill');
         const combatMomentumValueDiv = document.getElementById('combatMomentumValue');
@@ -643,6 +655,7 @@
         const killcamPanelDiv = document.getElementById('killcamPanel');
         const killcamMetaDiv = document.getElementById('killcamMeta');
         const killcamCanvas = document.getElementById('killcamCanvas');
+        const pixiContainerDiv = document.getElementById('pixiContainer');
         const killcamCanvasCtx = killcamCanvas && typeof killcamCanvas.getContext === 'function'
             ? killcamCanvas.getContext('2d')
             : null;
@@ -1915,6 +1928,18 @@
                 abilityDeg: -1,
                 abilityColor: '',
                 abilityLabel: '',
+                dashVisible: false,
+                dashDeg: -1,
+                dashLabel: '',
+                dashReadyVisible: false,
+                dashReadyUntilMs: 0,
+                dashLastRemaining: 0,
+                dodgeVisible: false,
+                dodgeDeg: -1,
+                dodgeLabel: '',
+                dodgeReadyVisible: false,
+                dodgeReadyUntilMs: 0,
+                dodgeLastRemaining: 0,
                 hudVisible: false
             },
             recentDamageSources: [],
@@ -1963,9 +1988,13 @@
         const HOT_ZONE_MIN_PULSE_INTERVAL_MS = 480;
         const HOT_ZONE_MAX_PULSE_INTERVAL_MS = 1250;
         const HOT_ZONE_OBJECTIVE_THROTTLE_MS = 1450;
+        const DEATH_MOMENT_MS = 800;
         let prevLocalAliveState = null;
         let prevDashRemaining = 0;
         let prevDodgeRemaining = 0;
+        let prevLocalAliveForFeedback = null;
+        let deathMomentUntilMs = 0;
+        let lastLocalInvulnerableRemaining = 0;
         let lastDashTrailAt = 0;
         let lastDodgeTrailAt = 0;
         let lastNearMissCheckAt = 0;
@@ -2014,8 +2043,8 @@
             deathRecapDistanceDiv, deathRecapMinimapCanvas, deathRecapListDiv, combatBannerDiv, combatBannerTextSpan,
             combatOverlayDiv, damageFlashLayerDiv, speedLinesLayerDiv, hitMarkerDiv,
             combatRadialHudDiv, combatMomentumDiv, combatMomentumFillDiv, combatMomentumValueDiv,
-            combatStreakChipSpan, combatComboChipSpan, abilityRadialDiv, reloadRadialDiv,
-            abilityRadialLabelSpan, reloadRadialLabelSpan, deathRecapDiv,
+            combatStreakChipSpan, combatComboChipSpan, abilityRadialDiv, dashRadialDiv, dodgeRadialDiv, reloadRadialDiv,
+            abilityRadialLabelSpan, dashRadialLabelSpan, dodgeRadialLabelSpan, reloadRadialLabelSpan, deathRecapDiv,
             mobileDynamicsEnabled, forceMobileClient, app, gameScene, mouseWorldPos, PIXI, effectsManager,
             applyScreenShake, createScreenFlash,
             COMBAT_RADIAL_LOW_UPDATE_MS, COMBAT_RADIAL_DENSE_UPDATE_MS, COMBAT_RADIAL_UPDATE_MS,
@@ -3626,6 +3655,54 @@
             const currentTime = Date.now();
             frameNowMs = currentTime;
             frameCounter += 1;
+            const localAliveNow = !!localPlayerState?.alive;
+            if (prevLocalAliveForFeedback === null) {
+                prevLocalAliveForFeedback = localAliveNow;
+            }
+            if (prevLocalAliveForFeedback && !localAliveNow) {
+                deathMomentUntilMs = currentTime + DEATH_MOMENT_MS;
+                if (deathMomentBannerDiv) {
+                    deathMomentBannerDiv.classList.add('death-moment-banner--visible');
+                }
+                if (pixiContainerDiv) {
+                    pixiContainerDiv.classList.add('pixi-container--death-moment');
+                }
+                if (audioManager && gameSettings?.soundEnabled) {
+                    audioManager.playSound('defeatSting', getEntityRenderPos(localPlayerState), 0.4, {
+                        prioritizeLocal: true,
+                        bypassLimiter: true,
+                    });
+                }
+            } else if (!prevLocalAliveForFeedback && localAliveNow) {
+                deathMomentUntilMs = 0;
+                if (deathMomentBannerDiv) {
+                    deathMomentBannerDiv.classList.remove('death-moment-banner--visible');
+                }
+                if (pixiContainerDiv) {
+                    pixiContainerDiv.classList.remove('pixi-container--death-moment');
+                }
+            }
+            prevLocalAliveForFeedback = localAliveNow;
+            if (deathMomentBannerDiv && deathMomentUntilMs <= currentTime) {
+                deathMomentBannerDiv.classList.remove('death-moment-banner--visible');
+            }
+            if (pixiContainerDiv && deathMomentUntilMs <= currentTime) {
+                pixiContainerDiv.classList.remove('pixi-container--death-moment');
+            }
+            const localInvulnerableRemaining = Math.max(0, Number(localPlayerState?.invulnerable_remaining) || 0);
+            if (
+                lastLocalInvulnerableRemaining > 0.01 &&
+                localInvulnerableRemaining <= 0.01 &&
+                localAliveNow &&
+                audioManager &&
+                gameSettings?.soundEnabled
+            ) {
+                audioManager.playSound('shieldBreak', getEntityRenderPos(localPlayerState), 0.5, {
+                    prioritizeLocal: true,
+                    bypassLimiter: true,
+                });
+            }
+            lastLocalInvulnerableRemaining = localInvulnerableRemaining;
             const localRespawning =
                 RESPAWN_ANIMATION_LIGHTWEIGHT &&
                 !!localPlayerState &&
@@ -3937,12 +4014,13 @@
             if (hasPendingWallRedraw()) {
                 drawWalls();
             }
+            const deathMomentFreezeActive = deathMomentUntilMs > currentTime;
             if (perfEnabled) {
                 const t = perfStart();
-                updateCamera();
+                if (!deathMomentFreezeActive) updateCamera();
                 perfEnd('camera', t);
             } else {
-                updateCamera();
+                if (!deathMomentFreezeActive) updateCamera();
             }
             if (perfEnabled) {
                 const t = perfStart();
@@ -4913,7 +4991,11 @@
                 combatComboChipSpan.classList.remove('combat-chip--active');
             }
             if (abilityRadialDiv) abilityRadialDiv.classList.remove('radial-widget--visible');
+            if (dashRadialDiv) dashRadialDiv.classList.remove('radial-widget--visible', 'radial-widget--ready');
+            if (dodgeRadialDiv) dodgeRadialDiv.classList.remove('radial-widget--visible', 'radial-widget--ready');
             if (reloadRadialDiv) reloadRadialDiv.classList.remove('radial-widget--visible');
+            if (deathMomentBannerDiv) deathMomentBannerDiv.classList.remove('death-moment-banner--visible');
+            if (pixiContainerDiv) pixiContainerDiv.classList.remove('pixi-container--death-moment');
             if (combatRadialHudDiv) combatRadialHudDiv.style.opacity = '0';
             combatUiState.radialHudCache.lastPaintAt = 0;
             combatUiState.radialHudCache.positionMode = '';
@@ -4927,11 +5009,26 @@
             combatUiState.radialHudCache.abilityDeg = -1;
             combatUiState.radialHudCache.abilityColor = '';
             combatUiState.radialHudCache.abilityLabel = '';
+            combatUiState.radialHudCache.dashVisible = false;
+            combatUiState.radialHudCache.dashDeg = -1;
+            combatUiState.radialHudCache.dashLabel = '';
+            combatUiState.radialHudCache.dashReadyVisible = false;
+            combatUiState.radialHudCache.dashReadyUntilMs = 0;
+            combatUiState.radialHudCache.dashLastRemaining = 0;
+            combatUiState.radialHudCache.dodgeVisible = false;
+            combatUiState.radialHudCache.dodgeDeg = -1;
+            combatUiState.radialHudCache.dodgeLabel = '';
+            combatUiState.radialHudCache.dodgeReadyVisible = false;
+            combatUiState.radialHudCache.dodgeReadyUntilMs = 0;
+            combatUiState.radialHudCache.dodgeLastRemaining = 0;
             combatUiState.radialHudCache.hudVisible = false;
             combatUiState.lastOptimisticHitAt = 0;
             prevLocalAliveState = null;
             prevDashRemaining = 0;
             prevDodgeRemaining = 0;
+            prevLocalAliveForFeedback = null;
+            deathMomentUntilMs = 0;
+            lastLocalInvulnerableRemaining = 0;
             lastDashTrailAt = 0;
             lastDodgeTrailAt = 0;
             lastNearMissCheckAt = 0;

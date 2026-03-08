@@ -166,6 +166,7 @@ export function createSpriteManager(getCtx) {
         container.speedBoostEffect = null;
         container.damageBoostEffect = null;
         container.dodgeGlowEffect = null;
+        container.spawnProtectionText = null;
         container.weaponSwapEffect = null;
         container._lastTeamId = null;
         container._lastAlive = null;
@@ -210,6 +211,7 @@ export function createSpriteManager(getCtx) {
         if (sprite.weaponSwapEffect) sprite.weaponSwapEffect.visible = false;
         if (sprite.carriedFlagSprite) sprite.carriedFlagSprite.visible = false;
         if (sprite.respawnText) sprite.respawnText.visible = false;
+        if (sprite.spawnProtectionText) sprite.spawnProtectionText.visible = false;
         if (sprite.reloadArc) sprite.reloadArc.visible = false;
         if (sprite.statusIconContainer) sprite.statusIconContainer.visible = false;
         if (sprite.shieldImpactRing) sprite.shieldImpactRing.visible = false;
@@ -486,13 +488,43 @@ export function createSpriteManager(getCtx) {
                 if (glowVisible) {
                     const pulse = 0.6 + 0.4 * Math.sin(frameNowMs * 0.012);
                     const fadeOut = Math.min(1, player.invulnerable_remaining * 4);
+                    sprite.dodgeGlowEffect.tint = 0xFACC15;
                     sprite.dodgeGlowEffect.alpha = pulse * fadeOut * 0.7;
                     const glowScale = 1.0 + 0.15 * Math.sin(frameNowMs * 0.008);
                     sprite.dodgeGlowEffect.scale.set(glowScale);
                 }
             }
+            if (isLocalSprite) {
+                if (!sprite.spawnProtectionText) {
+                    const protectionStyle = new PIXI.TextStyle({
+                        fontSize: 10,
+                        fill: 0xFDE68A,
+                        stroke: 0x422006,
+                        strokeThickness: 3,
+                        fontWeight: '800',
+                        align: 'center',
+                        letterSpacing: 0.4,
+                    });
+                    sprite.spawnProtectionText = new PIXI.Text('', protectionStyle);
+                    sprite.spawnProtectionText.anchor.set(0.5);
+                    sprite.spawnProtectionText.position.y = -PLAYER_RADIUS - 44;
+                    sprite.addChild(sprite.spawnProtectionText);
+                }
+                const protectionSeconds = Math.max(1, Math.ceil(Number(player.invulnerable_remaining) || 0));
+                sprite.spawnProtectionText.text = `SPAWN PROTECTION ${protectionSeconds}s`;
+                sprite.spawnProtectionText.visible = true;
+                sprite.spawnProtectionText.alpha = 0.78 + 0.22 * Math.sin(frameNowMs * 0.018);
+                const textScale = 1 + 0.04 * Math.sin(frameNowMs * 0.01);
+                sprite.spawnProtectionText.scale.set(textScale);
+            }
         } else if (sprite.dodgeGlowEffect && sprite.dodgeGlowEffect.visible) {
             sprite.dodgeGlowEffect.visible = false;
+            sprite.dodgeGlowEffect.tint = 0xFFFFFF;
+            sprite.dodgeGlowEffect.scale.set(1);
+        }
+        if ((!player.alive || player.invulnerable_remaining <= 0) && sprite.spawnProtectionText && sprite.spawnProtectionText.visible) {
+            sprite.spawnProtectionText.visible = false;
+            sprite.spawnProtectionText.scale.set(1);
         }
 
         if (player.weapon_swap_progress > 0 && player.alive) {

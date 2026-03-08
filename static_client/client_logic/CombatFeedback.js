@@ -1245,6 +1245,8 @@ export function createCombatFeedback(getCtx) {
                 c.lastPaintAt = 0; c.positionMode = ''; c.left = ''; c.top = ''; c.transform = '';
                 c.reloadVisible = false; c.reloadDeg = -1; c.reloadLabel = '';
                 c.abilityVisible = false; c.abilityDeg = -1; c.abilityColor = ''; c.abilityLabel = '';
+                c.dashVisible = false; c.dashDeg = -1; c.dashLabel = ''; c.dashReadyVisible = false; c.dashReadyUntilMs = 0; c.dashLastRemaining = 0;
+                c.dodgeVisible = false; c.dodgeDeg = -1; c.dodgeLabel = ''; c.dodgeReadyVisible = false; c.dodgeReadyUntilMs = 0; c.dodgeLastRemaining = 0;
                 c.hudVisible = false;
             }
             if (ctx.deathRecapDiv) ctx.deathRecapDiv.classList.remove('death-recap--visible');
@@ -1352,7 +1354,17 @@ export function createCombatFeedback(getCtx) {
             ctx.deathRecapDiv.classList.toggle('death-recap--visible', ctx.combatUiState.deathRecapUntilMs > currentTime);
         }
 
-        if (ctx.combatRadialHudDiv && ctx.abilityRadialDiv && ctx.reloadRadialDiv && ctx.abilityRadialLabelSpan && ctx.reloadRadialLabelSpan) {
+        if (
+            ctx.combatRadialHudDiv &&
+            ctx.abilityRadialDiv &&
+            ctx.dashRadialDiv &&
+            ctx.dodgeRadialDiv &&
+            ctx.reloadRadialDiv &&
+            ctx.abilityRadialLabelSpan &&
+            ctx.dashRadialLabelSpan &&
+            ctx.dodgeRadialLabelSpan &&
+            ctx.reloadRadialLabelSpan
+        ) {
             const radialCache = ctx.combatUiState.radialHudCache;
             const radialUpdateIntervalMs = lowCombatUi
                 ? ctx.COMBAT_RADIAL_LOW_UPDATE_MS
@@ -1433,7 +1445,75 @@ export function createCombatFeedback(getCtx) {
             if (abilityLabel !== radialCache.abilityLabel) ctx.abilityRadialLabelSpan.textContent = abilityLabel;
             radialCache.abilityVisible = abilityActive; radialCache.abilityDeg = abilityDeg; radialCache.abilityColor = abilityColor; radialCache.abilityLabel = abilityLabel;
 
-            const anyRadialVisible = reloadActive || abilityActive;
+            const updateCooldownWidget = (prefix, widgetDiv, labelSpan, remainingSec, maxSec, labelBase, color) => {
+                const previousRemain = Number(radialCache[`${prefix}LastRemaining`]) || 0;
+                const active = remainingSec > 0.01;
+                if (!active && previousRemain > 0.01) {
+                    radialCache[`${prefix}ReadyUntilMs`] = currentTime + 860;
+                }
+                const readyVisible = !active && (Number(radialCache[`${prefix}ReadyUntilMs`]) || 0) > currentTime;
+                const progress = active ? ctx.clamp(remainingSec / maxSec, 0, 1) : 0;
+                const deg = Math.round(progress * 360);
+                const label = active ? `${labelBase} ${Math.ceil(remainingSec)}s` : labelBase;
+                const readyColor = `rgba(250, 204, 21, ${0.72 + 0.18 * Math.sin(currentTime * 0.026)})`;
+                const displayColor = active ? color : readyColor;
+                const shouldPaint =
+                    (active && (
+                        active !== radialCache[`${prefix}Visible`] ||
+                        Math.abs(deg - (Number(radialCache[`${prefix}Deg`]) || -1)) >= radialProgressStepDeg
+                    )) ||
+                    readyVisible !== radialCache[`${prefix}ReadyVisible`] ||
+                    (!active && readyVisible && allowRadialPaint);
+                if (shouldPaint) {
+                    const fillDeg = active ? deg : 360;
+                    widgetDiv.style.background = `radial-gradient(circle at 50% 50%, rgba(15, 23, 42, 0.9) 49%, rgba(15, 23, 42, 0.68) 63%, transparent 64%), conic-gradient(${displayColor} ${fillDeg}deg, rgba(30, 41, 59, 0.32) 0deg)`;
+                    radialPainted = true;
+                }
+                if (active !== radialCache[`${prefix}Visible`]) {
+                    widgetDiv.classList.toggle('radial-widget--visible', active);
+                    radialPainted = true;
+                }
+                if (readyVisible !== radialCache[`${prefix}ReadyVisible`]) {
+                    widgetDiv.classList.toggle('radial-widget--ready', readyVisible);
+                    radialPainted = true;
+                }
+                if (label !== radialCache[`${prefix}Label`]) labelSpan.textContent = label;
+                radialCache[`${prefix}Visible`] = active;
+                radialCache[`${prefix}Deg`] = deg;
+                radialCache[`${prefix}Label`] = label;
+                radialCache[`${prefix}ReadyVisible`] = readyVisible;
+                radialCache[`${prefix}LastRemaining`] = remainingSec;
+                return active || readyVisible;
+            };
+
+            const dashRemain = Math.max(
+                0,
+                Number(ctx.localPlayerState.ability_1_cooldown_remaining ?? ctx.localPlayerState.dash_cooldown_remaining) || 0
+            );
+            const dodgeRemain = Math.max(
+                0,
+                Number(ctx.localPlayerState.ability_2_cooldown_remaining ?? ctx.localPlayerState.dodge_cooldown_remaining) || 0
+            );
+            const dashVisible = updateCooldownWidget(
+                'dash',
+                ctx.dashRadialDiv,
+                ctx.dashRadialLabelSpan,
+                dashRemain,
+                6,
+                'Dash',
+                'rgba(96, 165, 250, 0.96)'
+            );
+            const dodgeVisible = updateCooldownWidget(
+                'dodge',
+                ctx.dodgeRadialDiv,
+                ctx.dodgeRadialLabelSpan,
+                dodgeRemain,
+                9,
+                'Dodge',
+                'rgba(16, 185, 129, 0.96)'
+            );
+
+            const anyRadialVisible = reloadActive || abilityActive || dashVisible || dodgeVisible;
             if (anyRadialVisible !== radialCache.hudVisible) {
                 ctx.combatRadialHudDiv.style.opacity = anyRadialVisible ? '1' : '0';
                 radialCache.hudVisible = anyRadialVisible;
@@ -1490,6 +1570,10 @@ export function createCombatFeedback(getCtx) {
         if (ctx.combatRadialHudDiv) {
             ctx.combatRadialHudDiv.style.opacity = '0';
         }
+        ctx.dashRadialDiv?.classList.remove('radial-widget--visible', 'radial-widget--ready');
+        ctx.dodgeRadialDiv?.classList.remove('radial-widget--visible', 'radial-widget--ready');
+        ctx.abilityRadialDiv?.classList.remove('radial-widget--visible', 'radial-widget--ready');
+        ctx.reloadRadialDiv?.classList.remove('radial-widget--visible', 'radial-widget--ready');
 
         ctx.combatUiState.momentum = 0;
         ctx.combatUiState.speedPulse = 0;
@@ -1540,6 +1624,18 @@ export function createCombatFeedback(getCtx) {
         radialCache.abilityDeg = -1;
         radialCache.abilityColor = '';
         radialCache.abilityLabel = '';
+        radialCache.dashVisible = false;
+        radialCache.dashDeg = -1;
+        radialCache.dashLabel = '';
+        radialCache.dashReadyVisible = false;
+        radialCache.dashReadyUntilMs = 0;
+        radialCache.dashLastRemaining = 0;
+        radialCache.dodgeVisible = false;
+        radialCache.dodgeDeg = -1;
+        radialCache.dodgeLabel = '';
+        radialCache.dodgeReadyVisible = false;
+        radialCache.dodgeReadyUntilMs = 0;
+        radialCache.dodgeLastRemaining = 0;
         radialCache.hudVisible = false;
     }
 
