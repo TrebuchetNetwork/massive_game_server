@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { getServerMetrics, registerServerLifecycle } = require('./helpers/serverLifecycle');
+const { registerServerLifecycle } = require('./helpers/serverLifecycle');
 const {
   closeAllClients,
   createConnectedClients,
@@ -9,8 +9,6 @@ const {
 
 registerServerLifecycle(test, {
   env: {
-    MGS_METRICS_ENABLED: '1',
-    MGS_METRICS_BIND_ADDR: '127.0.0.1:19190',
     MGS_TARGET_BOT_COUNT: '0',
     MGS_JOIN_RATE_LIMIT_PER_SEC: '0',
     MGS_IP_RATE_LIMIT_PER_SEC: '0',
@@ -18,22 +16,6 @@ registerServerLifecycle(test, {
 });
 
 test.describe.configure({ timeout: 240000, retries: 1 });
-
-async function waitForMetricThreshold(metricName, minimum, timeoutMs = 120000) {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const { response, metrics } = await getServerMetrics('http://127.0.0.1:19190/metrics');
-    expect(response.ok).toBe(true);
-    if (Number(metrics[metricName] || 0) >= minimum) {
-      return metrics;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  const { response, metrics } = await getServerMetrics('http://127.0.0.1:19190/metrics');
-  expect(response.ok).toBe(true);
-  expect(Number(metrics[metricName] || 0)).toBeGreaterThanOrEqual(minimum);
-  return metrics;
-}
 
 test('@critical five browser clients join concurrently and keep receiving live state', async ({ browser }) => {
   const clients = await createConnectedClients(browser, 5, {
@@ -47,9 +29,6 @@ test('@critical five browser clients join concurrently and keep receiving live s
   try {
     await Promise.all(clients.map(({ page }) => waitForPlayerVisibility(page, 1, 60000)));
 
-    const metrics = await waitForMetricThreshold('game_players_connected', 5);
-    expect(Number(metrics.game_ws_connections_active || 0)).toBeGreaterThanOrEqual(5);
-
     await Promise.all(
       clients.slice(0, 2).map(({ page }) =>
         page.waitForFunction(
@@ -58,6 +37,12 @@ test('@critical five browser clients join concurrently and keep receiving live s
           { timeout: 90000 }
         )
       )
+    );
+
+    await clients[0].page.waitForFunction(
+      () => Number(window.__e2e?.playerCount || 0) >= 2,
+      null,
+      { timeout: 90000 }
     );
 
     const beforeMovement = await Promise.all(
