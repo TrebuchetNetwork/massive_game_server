@@ -86,8 +86,7 @@ E2E_BASE_URL="${LOCAL_BASE_URL}" \
 E2E_SERVER_SKIP=1 \
 E2E_WS_URL="${LOCAL_WS_URL}" \
   npx playwright test \
-  tests/connect.spec.js \
-  tests/runtime.spec.js \
+  tests/client_shell.spec.js \
   --project=chromium \
   --workers=1 \
   --reporter=list
