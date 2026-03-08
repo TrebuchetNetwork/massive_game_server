@@ -5,12 +5,21 @@ const { connectClient } = require('./helpers/gameClient');
 registerServerLifecycle(test);
 
 async function waitForPlaying(page, timeout = 60000) {
+  const allowCrossBrowserLiveState = process.env.PLAYWRIGHT_CROSS_BROWSER === '1';
   await page.waitForFunction(
-    () =>
-      window.__e2e &&
-      window.__e2e.connectionStatus &&
-      window.__e2e.connectionStatus.statusKey === 'playing',
-    null,
+    (allowLiveState) => {
+      const e2e = window.__e2e;
+      if (!e2e || !e2e.connectionStatus) return false;
+      const key = e2e.connectionStatus.statusKey;
+      if (key === 'playing') {
+        return true;
+      }
+      if (!allowLiveState) {
+        return false;
+      }
+      return ['waiting', 'respawn'].includes(key) || Number(e2e.lastStateUpdate || 0) > 0;
+    },
+    allowCrossBrowserLiveState,
     { timeout }
   );
 }
