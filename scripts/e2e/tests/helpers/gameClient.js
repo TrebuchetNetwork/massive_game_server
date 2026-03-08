@@ -1,5 +1,5 @@
 const { expect } = require('@playwright/test');
-const { resolveWsUrl } = require('./serverLifecycle');
+const { resolveBaseUrl, resolveWsUrl } = require('./serverLifecycle');
 
 async function seedPlayerName(page, name = 'E2EPlayer') {
   await page.addInitScript((value) => {
@@ -51,16 +51,21 @@ async function connectClient(page, options = {}) {
     name = 'E2EPlayer',
     query = '/client.html?disable_stun=1&match_type=quick',
     matchType = 'quick',
-    wsUrl = resolveWsUrl(),
+    baseUrl = resolveBaseUrl(),
+    wsUrl,
     requireLocalPlayer = true,
     timeout = 60000,
   } = options;
+  const resolvedWsUrl = wsUrl || resolveWsUrl(baseUrl);
+  const targetUrl = query.startsWith('http://') || query.startsWith('https://')
+    ? query
+    : new URL(query, baseUrl).toString();
 
   await seedPlayerName(page, name);
-  const response = await page.goto(query, { waitUntil: 'domcontentloaded' });
+  const response = await page.goto(targetUrl, { waitUntil: 'domcontentloaded' });
   if (!response || !response.ok()) {
     throw new Error(
-      `Failed to load ${query}. Status: ${response ? response.status() : 'no response'}`
+      `Failed to load ${targetUrl}. Status: ${response ? response.status() : 'no response'}`
     );
   }
 
@@ -74,7 +79,7 @@ async function connectClient(page, options = {}) {
 
   const wsInput = page.locator('#wsUrl');
   if (await wsInput.count()) {
-    await wsInput.fill(wsUrl);
+    await wsInput.fill(resolvedWsUrl);
   }
 
   let lastError = null;

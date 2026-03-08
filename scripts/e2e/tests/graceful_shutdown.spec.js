@@ -30,6 +30,8 @@ test('server shutdown disconnects client cleanly and persists shutdown snapshot'
   await connectClient(page, {
     name: 'ShutdownE2E',
     query: '/client.html?disable_stun=1&match_type=quick',
+    baseUrl: 'http://127.0.0.1:19080',
+    wsUrl: 'ws://127.0.0.1:19080/ws',
     matchType: 'quick',
     timeout: 90000,
   });

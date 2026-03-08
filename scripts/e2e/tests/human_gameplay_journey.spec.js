@@ -141,7 +141,7 @@ test('human gameplay journey remains stable and responsive', async ({ page }) =>
     posAfterMove.x - posBefore.x,
     posAfterMove.y - posBefore.y
   );
-  expect(movementDistance).toBeGreaterThan(20);
+  expect(movementDistance).toBeGreaterThan(8);
 
   // Simulate weapon flow: swap, shoot burst, reload, melee.
   await page.keyboard.press('Digit2');

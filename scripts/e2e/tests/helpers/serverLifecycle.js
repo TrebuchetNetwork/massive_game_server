@@ -10,11 +10,11 @@ function resolveBaseUrl() {
   return process.env.E2E_BASE_URL || 'http://127.0.0.1:19080';
 }
 
-function resolveWsUrl() {
-  if (process.env.E2E_WS_URL) {
+function resolveWsUrl(baseUrlOverride) {
+  if (!baseUrlOverride && process.env.E2E_WS_URL) {
     return process.env.E2E_WS_URL;
   }
-  const base = new URL(resolveBaseUrl());
+  const base = new URL(baseUrlOverride || resolveBaseUrl());
   const wsProtocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${wsProtocol}//${base.host}/ws`;
 }
