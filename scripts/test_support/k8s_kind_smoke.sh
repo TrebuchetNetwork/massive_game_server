@@ -67,29 +67,10 @@ kubectl -n "${NAMESPACE}" set env deployment/massive-game-server \
   MGS_MATCH_DURATION_OVERRIDE_SECS=15 \
   MGS_REQUIRE_AUTH=0 \
   MGS_TARGET_BOT_COUNT=0
-kubectl -n "${NAMESPACE}" patch deployment massive-game-server --type merge -p '{
-  "spec": {
-    "template": {
-      "spec": {
-        "containers": [
-          {
-            "name": "server",
-            "resources": {
-              "requests": {
-                "cpu": "250m",
-                "memory": "256Mi"
-              },
-              "limits": {
-                "cpu": "1000m",
-                "memory": "1Gi"
-              }
-            }
-          }
-        ]
-      }
-    }
-  }
-}'
+kubectl -n "${NAMESPACE}" set resources deployment/massive-game-server \
+  -c server \
+  --requests=cpu=250m,memory=256Mi \
+  --limits=cpu=1000m,memory=1Gi
 
 kubectl -n "${NAMESPACE}" rollout status deployment/massive-game-server --timeout=300s
 wait_for_ready_replicas 2
