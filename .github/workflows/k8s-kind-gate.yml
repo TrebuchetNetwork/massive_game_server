@@ -1,0 +1,73 @@
+name: K8s Kind Gate
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "21 8 * * 1"
+
+concurrency:
+  group: k8s-kind-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install kind and kubectl
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+          curl -fsSL -o /tmp/kubectl https://dl.k8s.io/release/v1.30.1/bin/linux/amd64/kubectl
+          chmod +x /tmp/kubectl
+          sudo mv /tmp/kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client
+
+      - name: Create kind cluster
+        run: kind create cluster --name mgs-smoke --wait 180s
+
+      - name: Build smoke image
+        run: docker build -f docker/Dockerfile -t massive-game-server:kind .
+
+      - name: Load image into kind
+        run: kind load docker-image massive-game-server:kind --name mgs-smoke
+
+      - name: Install Playwright dependencies
+        working-directory: scripts/e2e
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: scripts/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run kind smoke gate
+        run: scripts/test_support/k8s_kind_smoke.sh
+
+      - name: Collect cluster diagnostics on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/k8s-kind-gate
+          kubectl get all -A -o wide > /tmp/k8s-kind-gate/get-all.txt || true
+          kubectl describe deployment massive-game-server -n mgs-smoke > /tmp/k8s-kind-gate/describe-deployment.txt || true
+          kubectl describe pods -n mgs-smoke > /tmp/k8s-kind-gate/describe-pods.txt || true
+          kubectl logs deployment/massive-game-server -n mgs-smoke --all-containers=true > /tmp/k8s-kind-gate/server-logs.txt || true
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: k8s-kind-gate-diagnostics
+          path: |
+            /tmp/k8s-kind-gate
+            scripts/e2e/test-results
+            scripts/e2e/playwright-report
+
+      - name: Delete kind cluster
+        if: always()
+        run: kind delete cluster --name mgs-smoke || true

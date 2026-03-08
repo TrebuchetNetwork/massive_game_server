@@ -15,3 +15,6 @@ Notes:
 - `livenessProbe` uses `/healthz`
 - ingress/TLS termination is expected to be configured separately
 - `networkpolicy.yaml` allows ingress only on TCP/8080 for `app=massive-game-server` pods
+
+Automation:
+- `.github/workflows/k8s-kind-gate.yml` provisions a disposable `kind` cluster, loads the locally built image, applies these manifests, patches smoke-safe env/resources, verifies rollout, runs browser smoke against a port-forwarded service, then checks rollout restart and single-pod continuity.
