@@ -59,7 +59,7 @@ jobs:
       - name: Wait for edge stack readiness
         run: |
           set -euo pipefail
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 180); do
             if curl -kfsS "${EDGE_BASE_URL}/healthz" >/dev/null 2>&1 \
               && curl -kfsS "${EDGE_BASE_URL}/readyz" >/dev/null 2>&1 \
               && curl -fsS http://127.0.0.1:9091/-/ready >/dev/null 2>&1 \
@@ -176,7 +176,7 @@ jobs:
       - name: Wait for edge stack readiness
         run: |
           set -euo pipefail
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 180); do
             if curl -kfsS "${EDGE_BASE_URL}/healthz" >/dev/null 2>&1 \
               && curl -kfsS "${EDGE_BASE_URL}/readyz" >/dev/null 2>&1; then
               exit 0

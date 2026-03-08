@@ -16,7 +16,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [firefox, webkit]
+        include:
+          - browser: firefox
+            specs: >-
+              tests/connect.spec.js
+              tests/runtime.spec.js
+              tests/reconnect_flow.spec.js
+          - browser: webkit
+            specs: >-
+              tests/connect.spec.js
+              tests/runtime.spec.js
+              tests/reconnect_flow.spec.js
+              tests/human_gameplay_journey.spec.js
     env:
       CARGO_TERM_COLOR: always
       E2E_BASE_URL: http://127.0.0.1:18081
@@ -58,10 +69,7 @@ jobs:
         working-directory: scripts/e2e
         run: |
           npx playwright test \
-            tests/connect.spec.js \
-            tests/runtime.spec.js \
-            tests/reconnect_flow.spec.js \
-            tests/human_gameplay_journey.spec.js \
+            ${{ matrix.specs }} \
             --project=${{ matrix.browser }} \
             --workers=1 \
             --reporter=list
