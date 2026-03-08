@@ -61,6 +61,7 @@ async fn spawn_server_with_sms_capture(
     data_root: PathBuf,
     cookie_mode: bool,
     require_ws_auth: bool,
+    behind_tls_proxy: bool,
 ) -> ServerProcess {
     let port = reserve_free_port();
     let base_url = format!("http://127.0.0.1:{port}");
@@ -84,6 +85,10 @@ async fn spawn_server_with_sms_capture(
         .env("MGS_TEST_SMS_CAPTURE_PATH", &sms_capture_path)
         .env("MGS_AUTH_USE_COOKIES", if cookie_mode { "1" } else { "0" })
         .env("MGS_REQUIRE_AUTH", if require_ws_auth { "1" } else { "0" })
+        .env(
+            "MGS_BEHIND_TLS_PROXY",
+            if behind_tls_proxy { "1" } else { "0" },
+        )
         .env("MGS_AUTH_STORE_PATH", data_root.join("auth_store.json"))
         .env(
             "MGS_FEATURE_FLAG_STORE_PATH",
@@ -152,7 +157,7 @@ async fn cookie_mode_auth_flow_supports_http_and_ws_without_bearer_token() {
     let _guard = auth_test_mutex().lock().await;
     let data_root =
         std::env::temp_dir().join(format!("mgs_security_auth_cookie_{}", reserve_free_port()));
-    let proc = spawn_server_with_sms_capture(data_root, true, true).await;
+    let proc = spawn_server_with_sms_capture(data_root, true, true, false).await;
     let client = reqwest::Client::new();
     let phone = "+15551239876";
 
@@ -180,6 +185,10 @@ async fn cookie_mode_auth_flow_supports_http_and_ws_without_bearer_token() {
     assert!(
         set_cookie.contains("mgs_session=") && set_cookie.contains("HttpOnly"),
         "expected secure session cookie, got {set_cookie}"
+    );
+    assert!(
+        !set_cookie.contains("Secure"),
+        "plain-http cookie mode should omit Secure so localhost/dev works"
     );
     let cookie_pair = set_cookie
         .split(';')
@@ -246,6 +255,15 @@ async fn cookie_mode_auth_flow_supports_http_and_ws_without_bearer_token() {
         .await
         .expect("POST /auth/logout with cookie");
     assert!(logout.status().is_success());
+    let logout_cookie = logout
+        .headers()
+        .get(SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .expect("logout should clear session cookie");
+    assert!(
+        logout_cookie.contains("mgs_session=") && logout_cookie.contains("Max-Age=0"),
+        "logout should expire the browser cookie, got {logout_cookie}"
+    );
     let logout_payload: Value = logout.json().await.expect("logout json");
     assert_eq!(logout_payload["data"]["revoked"], Value::Bool(true));
 
@@ -265,7 +283,7 @@ async fn otp_ip_rate_limit_blocks_excessive_request_code_attempts() {
         "mgs_security_auth_rate_limit_{}",
         reserve_free_port()
     ));
-    let proc = spawn_server_with_sms_capture(data_root, false, false).await;
+    let proc = spawn_server_with_sms_capture(data_root, false, false, false).await;
     let client = reqwest::Client::new();
 
     for idx in 0..5 {
@@ -286,5 +304,42 @@ async fn otp_ip_rate_limit_blocks_excessive_request_code_attempts() {
     assert_eq!(
         payload["error"]["code"],
         Value::String("ip_rate_limited".to_owned())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cookie_mode_sets_secure_cookie_when_tls_proxy_mode_is_enabled() {
+    let _guard = auth_test_mutex().lock().await;
+    let data_root = std::env::temp_dir().join(format!(
+        "mgs_security_auth_cookie_secure_{}",
+        reserve_free_port()
+    ));
+    let proc = spawn_server_with_sms_capture(data_root, true, false, true).await;
+    let client = reqwest::Client::new();
+    let phone = "+15551239877";
+
+    let request_response = request_code(&client, &proc.base_url, phone).await;
+    assert!(
+        request_response.status().is_success(),
+        "request-code failed with status {}",
+        request_response.status()
+    );
+
+    let otp_code = wait_for_sms_code(&proc.sms_capture_path).await;
+    let verify_response = verify_code(&client, &proc.base_url, phone, &otp_code).await;
+    assert!(
+        verify_response.status().is_success(),
+        "verify-code failed with status {}",
+        verify_response.status()
+    );
+
+    let set_cookie = verify_response
+        .headers()
+        .get(SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .expect("expected Set-Cookie header");
+    assert!(
+        set_cookie.contains("Secure"),
+        "TLS proxy mode should emit Secure cookies, got {set_cookie}"
     );
 }

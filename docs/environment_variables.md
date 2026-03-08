@@ -59,7 +59,10 @@ Centralized reference for runtime/deploy environment variables used by `massive_
 
 ## Auth / Sessions / Admin
 
-- `MGS_AUTH_USE_COOKIES`: Use cookie-based auth session transport.
+- `MGS_AUTH_USE_COOKIES`: Use cookie-based auth session transport. The server
+  emits an HttpOnly `mgs_session` cookie and clears it on logout. When
+  `MGS_BEHIND_TLS_PROXY=true`, the cookie is also marked `Secure`; otherwise
+  Secure is omitted so localhost/plain-HTTP dev environments still work.
 - `MGS_AUTH_SESSION_TTL_SECONDS`: Session TTL.
 - `MGS_AUTH_OTP_TTL_SECONDS`: OTP expiry.
 - `MGS_AUTH_RESEND_INTERVAL_SECONDS`: OTP resend interval.

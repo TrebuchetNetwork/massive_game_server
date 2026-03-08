@@ -91,11 +91,13 @@ struct AuthInner {
     sms_command: Option<String>,
     sms_dev_mode: bool,
     /// When true, the verify-code endpoint sets the session token as an
-    /// HttpOnly, Secure, SameSite=Strict cookie instead of (in addition to)
-    /// returning it in the JSON body.  The WebSocket upgrade path and
-    /// authenticated endpoints will then also accept the cookie as a token
-    /// source.  Enable via MGS_AUTH_USE_COOKIES=true.
+    /// HttpOnly, SameSite=Strict cookie instead of (in addition to) returning
+    /// it in the JSON body. The WebSocket upgrade path and authenticated
+    /// endpoints will then also accept the cookie as a token source. Enable via
+    /// MGS_AUTH_USE_COOKIES=true.
     use_auth_cookies: bool,
+    /// When true, emitted auth cookies carry the Secure attribute.
+    auth_cookie_secure: bool,
 }
 
 /// A pending account deletion that is within the grace period.
@@ -660,7 +662,10 @@ fn default_auth_env() -> AuthEnv {
 impl AuthService {
     pub fn new_from_env() -> Self {
         match load_app_env_config() {
-            Ok(app_env) => Self::new_from_env_config(&app_env.auth),
+            Ok(app_env) => Self::new_from_env_config_with_cookie_security(
+                &app_env.auth,
+                app_env.ws_security.behind_tls_proxy,
+            ),
             Err(err) => {
                 warn!(
                     "Falling back to default auth env config due to invalid environment: {}",
@@ -673,6 +678,13 @@ impl AuthService {
     }
 
     pub fn new_from_env_config(env: &AuthEnv) -> Self {
+        Self::new_from_env_config_with_cookie_security(env, false)
+    }
+
+    pub fn new_from_env_config_with_cookie_security(
+        env: &AuthEnv,
+        auth_cookie_secure: bool,
+    ) -> Self {
         let store_path = PathBuf::from(env.store_path.as_str());
         let otp_ttl_seconds = env.otp_ttl_seconds.max(60);
         let allow_short_session_ttl_for_tests = std::env::var("MGS_TEST_ALLOW_SHORT_SESSION_TTL")
@@ -724,7 +736,15 @@ impl AuthService {
             );
         }
         if use_auth_cookies {
-            info!("Cookie-based auth enabled: verify-code will set HttpOnly session cookie.");
+            if auth_cookie_secure {
+                info!(
+                    "Cookie-based auth enabled: verify-code will set HttpOnly Secure session cookie."
+                );
+            } else {
+                warn!(
+                    "Cookie-based auth enabled without TLS proxy: session cookie will omit Secure. Use this only on localhost or non-production HTTP environments."
+                );
+            }
         }
 
         Self {
@@ -744,6 +764,7 @@ impl AuthService {
                 sms_command,
                 sms_dev_mode,
                 use_auth_cookies,
+                auth_cookie_secure,
             }),
         }
     }
@@ -993,6 +1014,11 @@ impl AuthService {
     /// HttpOnly cookies (MGS_AUTH_USE_COOKIES=true).
     pub fn use_auth_cookies(&self) -> bool {
         self.inner.use_auth_cookies
+    }
+
+    /// Returns true when auth cookies should carry the Secure attribute.
+    pub fn auth_cookie_secure(&self) -> bool {
+        self.inner.auth_cookie_secure
     }
 
     /// Returns the configured session TTL in seconds (for cookie Max-Age).
@@ -1596,12 +1622,13 @@ async fn handle_verify_code(
                     ))
                     .into_response());
                 };
-                // Set the session token as an HttpOnly, Secure, SameSite=Strict
-                // cookie so that JS never needs to touch it.
-                let max_age = auth_service.session_ttl_seconds();
-                let cookie_value = format!(
-                    "mgs_session={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={}",
-                    session_token, max_age
+                // Set the session token as an HttpOnly, SameSite=Strict cookie
+                // (Secure when TLS proxy mode is enabled) so that JS never
+                // needs to touch it.
+                let cookie_value = build_session_cookie_header(
+                    &session_token,
+                    auth_service.session_ttl_seconds(),
+                    auth_service.auth_cookie_secure(),
                 );
                 // Cookie mode must not expose bearer tokens in JSON payloads.
                 result.token = None;
@@ -1663,11 +1690,12 @@ async fn handle_auth_logout(
     query: TokenQuery,
     remote_addr: Option<SocketAddr>,
     auth_service: AuthService,
-) -> Result<impl Reply, Infallible> {
+) -> Result<warp::reply::Response, Infallible> {
     if !try_acquire_token_validation_token(remote_addr) {
         return Ok(error_response(AuthError::TokenValidationRateLimited {
             retry_after_seconds: 1,
-        }));
+        })
+        .into_response());
     }
     let token = resolve_token_with_cookie(
         authorization_header.as_deref(),
@@ -1678,7 +1706,16 @@ async fn handle_auth_logout(
         .as_deref()
         .map(|value| auth_service.revoke_session_token(value))
         .unwrap_or(false);
-    Ok(ok_response(serde_json::json!({ "revoked": revoked })))
+    let reply = ok_response(serde_json::json!({ "revoked": revoked }));
+    if auth_service.use_auth_cookies() {
+        return Ok(warp::reply::with_header(
+            reply,
+            "Set-Cookie",
+            clear_session_cookie_header(auth_service.auth_cookie_secure()),
+        )
+        .into_response());
+    }
+    Ok(reply.into_response())
 }
 
 async fn handle_auth_leaderboard(
@@ -1813,6 +1850,22 @@ fn error_response(error: AuthError) -> warp::reply::WithStatus<warp::reply::Json
         }),
     };
     warp::reply::with_status(warp::reply::json(&body), status)
+}
+
+fn build_session_cookie_header(token: &str, max_age: u64, secure: bool) -> String {
+    let secure_attr = if secure { "; Secure" } else { "" };
+    format!(
+        "mgs_session={}; HttpOnly{}; SameSite=Strict; Path=/; Max-Age={}",
+        token, secure_attr, max_age
+    )
+}
+
+fn clear_session_cookie_header(secure: bool) -> String {
+    let secure_attr = if secure { "; Secure" } else { "" };
+    format!(
+        "mgs_session=; HttpOnly{}; SameSite=Strict; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+        secure_attr
+    )
 }
 
 fn resolve_token_with_cookie(
@@ -2722,7 +2775,10 @@ mod tests {
     // ── GDPR account deletion & anonymization tests ──────────────────────
 
     /// Create a test AuthService with an in-memory store (no Redis, no file).
-    fn make_test_auth_service_with_cookie_mode(use_auth_cookies: bool) -> AuthService {
+    fn make_test_auth_service_with_cookie_mode_and_security(
+        use_auth_cookies: bool,
+        auth_cookie_secure: bool,
+    ) -> AuthService {
         let store_path = PathBuf::from(format!(
             "/tmp/mgs_test_auth_store_{}.json",
             Uuid::new_v4().simple()
@@ -2744,8 +2800,13 @@ mod tests {
                 sms_command: None,
                 sms_dev_mode: true,
                 use_auth_cookies,
+                auth_cookie_secure,
             }),
         }
+    }
+
+    fn make_test_auth_service_with_cookie_mode(use_auth_cookies: bool) -> AuthService {
+        make_test_auth_service_with_cookie_mode_and_security(use_auth_cookies, false)
     }
 
     fn make_test_auth_service() -> AuthService {
@@ -3235,6 +3296,10 @@ mod tests {
             cookie_header.contains("HttpOnly"),
             "expected cookie to be HttpOnly"
         );
+        assert!(
+            !cookie_header.contains("Secure"),
+            "plain-http cookie mode should omit Secure unless TLS proxy mode is enabled"
+        );
 
         let body_bytes = warp::hyper::body::to_bytes(response.into_body())
             .await
@@ -3249,6 +3314,89 @@ mod tests {
         assert!(
             data.get("token_expires_at").is_some(),
             "token expiry should still be returned"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn verify_code_cookie_mode_sets_secure_cookie_when_enabled() {
+        let auth = make_test_auth_service_with_cookie_mode_and_security(true, true);
+        let phone = "+15551230112";
+        assert!(auth.request_phone_code(phone).is_ok());
+
+        let normalized_phone = normalize_phone_number(phone).expect("valid phone");
+        let issued_code = auth
+            .inner
+            .otp_challenges
+            .get(&normalized_phone)
+            .map(|entry| entry.code.clone())
+            .expect("issued otp code should exist");
+
+        let response = handle_verify_code(
+            VerifyCodeBody {
+                phone_number: phone.to_owned(),
+                code: issued_code,
+            },
+            auth,
+        )
+        .await
+        .expect("verify handler should not fail");
+
+        let cookie_header = response
+            .headers()
+            .get("Set-Cookie")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            cookie_header.contains("Secure"),
+            "TLS proxy cookie mode should emit Secure cookies"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn logout_cookie_mode_clears_cookie() {
+        let auth = make_test_auth_service_with_cookie_mode(true);
+        let phone = "+15551230113";
+        assert!(auth.request_phone_code(phone).is_ok());
+
+        let normalized_phone = normalize_phone_number(phone).expect("valid phone");
+        let issued_code = auth
+            .inner
+            .otp_challenges
+            .get(&normalized_phone)
+            .map(|entry| entry.code.clone())
+            .expect("issued otp code should exist");
+
+        let verify_response = handle_verify_code(
+            VerifyCodeBody {
+                phone_number: phone.to_owned(),
+                code: issued_code,
+            },
+            auth.clone(),
+        )
+        .await
+        .expect("verify handler should not fail");
+
+        let cookie_pair = verify_response
+            .headers()
+            .get("Set-Cookie")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .map(str::to_owned)
+            .expect("session cookie pair");
+
+        let logout_response =
+            handle_auth_logout(None, Some(cookie_pair), TokenQuery::default(), None, auth)
+                .await
+                .expect("logout handler should not fail");
+
+        let cleared_cookie = logout_response
+            .headers()
+            .get("Set-Cookie")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            cleared_cookie.contains("mgs_session=") && cleared_cookie.contains("Max-Age=0"),
+            "logout should expire the session cookie, got {cleared_cookie}"
         );
     }
 

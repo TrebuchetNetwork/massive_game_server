@@ -5,15 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>2D Shooter - Unified Advanced Client</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%2301111a'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%2300d1ff'/%3E%3C/svg%3E">
-    <script src="./vendor/pixi.min.js"></script>
+    <script src="./vendor/pixi.min.js?v=20260308a"></script>
     <script type="importmap">
         {
           "imports": {
-            "flatbuffers": "./vendor/flatbuffers/flatbuffers.js"
+            "flatbuffers": "./vendor/flatbuffers/flatbuffers.js?v=20260308a"
           }
         }
     </script>
-    <link rel="stylesheet" href="./css/game.css">
+    <link rel="stylesheet" href="./css/game.css?v=20260308a">
 </head>
 <body class="bg-gray-900 text-white min-h-screen overflow-hidden">
 
@@ -284,7 +284,7 @@
     <div id="scoreboard" class="scoreboard hidden">
         <div class="scoreboard-header">
             <h3>Match Scoreboard</h3>
-            <div class="close-btn" onclick="toggleScoreboard(false)">×</div>
+            <button id="scoreboardCloseButton" type="button" class="close-btn" aria-label="Close scoreboard">×</button>
         </div>
         <div id="scoreboardContent" class="scoreboard-teams">
             <div id="ffaScoreboardSection" class="team-section hidden">
@@ -407,7 +407,7 @@
 
     <script type="module">
         import * as flatbuffers from 'flatbuffers';
-        import { GameProtocol } from './generated_js/game.js';
+        import { GameProtocol } from './generated_js/game.js?v=20260308a';
         import {
             Minimap,
             NetworkIndicator,
@@ -584,6 +584,7 @@
         const settingsMenuDiv = document.getElementById('settingsMenu');
         const saveSettingsButton = document.getElementById('saveSettingsButton');
         const cancelSettingsButton = document.getElementById('cancelSettingsButton');
+        const scoreboardCloseButton = document.getElementById('scoreboardCloseButton');
         const scoreboardDiv = document.getElementById('scoreboard');
         const fpsCounterDiv = document.getElementById('fpsCounter');
         const fpsValueSpan = document.getElementById('fpsValue');
@@ -2625,6 +2626,7 @@
             toggleSettings,
         } = uiManager;
         window.toggleScoreboard = toggleScoreboard;
+        scoreboardCloseButton?.addEventListener('click', () => toggleScoreboard(false));
 
         function syncInputManagerState() {
             if (!inputManager) return;

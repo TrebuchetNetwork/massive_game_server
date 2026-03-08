@@ -1,9 +1,9 @@
 // SECURITY NOTE: For production deployments, the ideal token storage is an
-// HttpOnly, Secure, SameSite=Strict cookie set by the server. This removes
-// tokens from JS-accessible storage entirely and eliminates XSS token theft.
-// To enable this, set MGS_AUTH_USE_COOKIES=true on the server. The server will
-// then set the session token as a cookie on the verify-code response, and the
-// WebSocket upgrade path will read the cookie automatically.
+// HttpOnly, SameSite=Strict cookie set by the server. This removes tokens from
+// JS-accessible storage entirely and eliminates XSS token theft. When the
+// server is running behind a TLS proxy (MGS_BEHIND_TLS_PROXY=true), that cookie
+// is also marked Secure. To enable cookie auth, set MGS_AUTH_USE_COOKIES=true
+// on the server. The WebSocket upgrade path will read the cookie automatically.
 //
 // The current client-side approach uses sessionStorage (not localStorage) to
 // limit the exposure window: tokens are cleared when the tab/browser closes,

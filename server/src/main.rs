@@ -149,7 +149,10 @@ async fn main() -> anyhow::Result<()> {
     spawn_alert_evaluator(game_server_instance.clone());
 
     let signaling_peers_state: SignalingPeers = Arc::new(DashMap::new());
-    let auth_service = AuthService::new_from_env_config(&app_env.auth);
+    let auth_service = AuthService::new_from_env_config_with_cookie_security(
+        &app_env.auth,
+        app_env.ws_security.behind_tls_proxy,
+    );
     let arena_service = ArenaService::new_from_env();
     let arena_service_for_worker = arena_service.clone();
     let code_generation_service = CodeGenerationService::new_from_env();

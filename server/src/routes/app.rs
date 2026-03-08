@@ -72,10 +72,9 @@ pub fn compose_http_routes(
                     HeaderName::from_static("referrer-policy"),
                     HeaderValue::from_static("strict-origin-when-cross-origin"),
                 );
-                headers.insert(
-                    HeaderName::from_static("content-security-policy"),
-                    HeaderValue::from_static(DEFAULT_CSP_HEADER_VALUE),
-                );
+                headers
+                    .entry(HeaderName::from_static("content-security-policy"))
+                    .or_insert_with(|| HeaderValue::from_static(DEFAULT_CSP_HEADER_VALUE));
                 response
             },
         )

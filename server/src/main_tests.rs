@@ -165,13 +165,36 @@ fn test_static_cache_control_for_path() {
         massive_game_server_core::routes::static_files::static_cache_control_for_path(Path::new(
             "bundle.js"
         )),
-        "public, max-age=31536000, immutable"
+        "public, max-age=300, must-revalidate"
     );
     assert_eq!(
         massive_game_server_core::routes::static_files::static_cache_control_for_path(Path::new(
             "runtime.unknown"
         )),
         "public, max-age=3600"
+    );
+}
+
+#[test]
+fn test_client_html_uses_hash_based_csp_without_unsafe_inline() {
+    let client_html_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../static_client/client.html");
+    let csp =
+        massive_game_server_core::routes::static_files::static_content_security_policy_for_path(
+            &client_html_path,
+        )
+        .expect("client.html CSP should be generated");
+    assert!(
+        csp.contains("script-src 'self' 'unsafe-eval' blob:"),
+        "expected client CSP to allow self, blob, and unsafe-eval for pixi shader compilation"
+    );
+    assert!(
+        csp.contains("'sha256-"),
+        "expected client CSP to contain inline script hashes"
+    );
+    assert!(
+        !csp.contains("script-src 'self' 'unsafe-inline'"),
+        "client.html should no longer require unsafe-inline in script-src"
     );
 }
 
