@@ -26,10 +26,16 @@ jobs:
 
       - name: Prepare docker secret placeholders
         run: |
-          mkdir -p docker/secrets docker/monitoring/alert_sink
+          mkdir -p docker/secrets docker/monitoring/alert_sink docker/ssl
           printf 'ci-openrouter-placeholder\n' > docker/secrets/openrouter_api_key
           printf 'admin\n' > docker/secrets/grafana_admin_user
           printf 'admin-password\n' > docker/secrets/grafana_admin_password
+          openssl req -x509 -nodes -newkey rsa:2048 \
+            -keyout docker/ssl/privkey.pem \
+            -out docker/ssl/fullchain.pem \
+            -days 7 \
+            -subj '/CN=localhost' \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
           : > docker/monitoring/alert_sink/received.jsonl
 
       - name: Start release edge stack
@@ -156,10 +162,16 @@ jobs:
 
       - name: Prepare docker secret placeholders
         run: |
-          mkdir -p docker/secrets
+          mkdir -p docker/secrets docker/ssl
           printf 'ci-openrouter-placeholder\n' > docker/secrets/openrouter_api_key
           printf 'admin\n' > docker/secrets/grafana_admin_user
           printf 'admin-password\n' > docker/secrets/grafana_admin_password
+          openssl req -x509 -nodes -newkey rsa:2048 \
+            -keyout docker/ssl/privkey.pem \
+            -out docker/ssl/fullchain.pem \
+            -days 7 \
+            -subj '/CN=localhost' \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
 
       - name: Start edge stack for rate limiting
         env:
