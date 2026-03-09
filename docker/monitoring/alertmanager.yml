@@ -2,14 +2,27 @@ global:
   resolve_timeout: 1m
 
 route:
-  receiver: webhook-receiver
+  receiver: warning-webhook
   group_by: ['alertname']
   group_wait: 0s
   group_interval: 5s
   repeat_interval: 1h
+  routes:
+    - matchers:
+        - severity="critical"
+      receiver: critical-webhook
+      repeat_interval: 15m
+    - matchers:
+        - severity="warning"
+      receiver: warning-webhook
+      repeat_interval: 1h
 
 receivers:
-  - name: webhook-receiver
+  - name: critical-webhook
+    webhook_configs:
+      - url: http://alert-webhook:18081/alerts
+        send_resolved: true
+  - name: warning-webhook
     webhook_configs:
       - url: http://alert-webhook:18081/alerts
         send_resolved: true

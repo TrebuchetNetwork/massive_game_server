@@ -26,4 +26,5 @@ plus non-production Alertmanager/webhook wiring used by release-edge verificatio
 - The game server exporter is enabled by `MGS_METRICS_ENABLED=true` and defaults to `127.0.0.1:9090` in Docker compose for least-privilege binding.
 - If you run Prometheus in a separate container, override `MGS_METRICS_BIND_ADDR=0.0.0.0:9090` intentionally.
 - Prometheus forwards alerts to the bundled Alertmanager service in Docker.
+- Alertmanager routes `critical` and `warning` alerts separately, but both currently terminate at the non-production webhook sink.
 - The webhook sink is intended for CI/non-production verification, not paging.
