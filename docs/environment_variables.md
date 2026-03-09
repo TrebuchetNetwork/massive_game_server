@@ -42,6 +42,8 @@ Centralized reference for runtime/deploy environment variables used by `massive_
 - `MGS_IP_RATE_LIMIT_PER_SEC`, `MGS_IP_RATE_LIMIT_BURST`: Signaling/IP request limiting.
 - `MGS_SIGNALING_ICE_RATE_LIMIT_PER_SEC`, `MGS_SIGNALING_ICE_RATE_LIMIT_BURST`: ICE candidate rate limiting.
 - `MGS_CHAT_COOLDOWN_MS`: Per-message chat cooldown.
+- `MGS_CHAT_BURST_CAPACITY`: Chat burst budget per peer before refill throttling.
+- `MGS_CHAT_BURST_WINDOW_MS`: Refill window for the per-peer chat burst budget.
 
 ## QUIC
 

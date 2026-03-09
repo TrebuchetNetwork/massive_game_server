@@ -123,6 +123,8 @@ pub struct BackupEnv {
 #[derive(Debug, Clone)]
 pub struct SignalingEnv {
     pub chat_cooldown_ms: u64,
+    pub chat_burst_capacity: u64,
+    pub chat_burst_window_ms: u64,
     pub disable_stun: bool,
     pub stun_urls: Vec<String>,
     pub turn_urls: Vec<String>,
@@ -337,6 +339,10 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
     let backup_extra_paths = parse_list("MGS_BACKUP_EXTRA_PATHS");
     let signaling_chat_cooldown_ms =
         parse_u64_with_default("MGS_CHAT_COOLDOWN_MS", 450, &mut errors).clamp(0, 5_000);
+    let signaling_chat_burst_capacity =
+        parse_u64_with_default("MGS_CHAT_BURST_CAPACITY", 5, &mut errors).clamp(0, 100);
+    let signaling_chat_burst_window_ms =
+        parse_u64_with_default("MGS_CHAT_BURST_WINDOW_MS", 5_000, &mut errors).clamp(500, 60_000);
     let signaling_disable_stun = parse_bool_with_default("MGS_DISABLE_STUN", false, &mut errors);
     let signaling_stun_urls = parse_list("MGS_STUN_URLS");
     let signaling_turn_urls = parse_list("MGS_TURN_URLS");
@@ -502,6 +508,8 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
         },
         signaling: SignalingEnv {
             chat_cooldown_ms: signaling_chat_cooldown_ms,
+            chat_burst_capacity: signaling_chat_burst_capacity,
+            chat_burst_window_ms: signaling_chat_burst_window_ms,
             disable_stun: signaling_disable_stun,
             stun_urls: signaling_stun_urls,
             turn_urls: signaling_turn_urls,
@@ -747,5 +755,20 @@ mod tests {
         assert_eq!(result.instance.match_duration_override_secs, None);
         assert_eq!(result.instance.target_bot_count, None);
         assert_eq!(result.signaling.webrtc_udp_port_min, None);
+    }
+
+    #[test]
+    fn load_env_config_reads_chat_burst_settings() {
+        let result = temp_env::with_vars(
+            [
+                ("MGS_CHAT_BURST_CAPACITY", Some("7")),
+                ("MGS_CHAT_BURST_WINDOW_MS", Some("4200")),
+            ],
+            load_app_env_config,
+        )
+        .expect("chat burst settings should parse");
+
+        assert_eq!(result.signaling.chat_burst_capacity, 7);
+        assert_eq!(result.signaling.chat_burst_window_ms, 4_200);
     }
 }

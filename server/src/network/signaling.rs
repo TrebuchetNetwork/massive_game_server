@@ -165,6 +165,11 @@ const MAX_CHAT_USERNAME_CHARS: usize = 32;
 const DEFAULT_CHAT_COOLDOWN_MS: u64 = 450;
 const MIN_CHAT_COOLDOWN_MS: u64 = 0;
 const MAX_CHAT_COOLDOWN_MS: u64 = 5_000;
+const DEFAULT_CHAT_BURST_CAPACITY: u64 = 5;
+const MAX_CHAT_BURST_CAPACITY: u64 = 100;
+const DEFAULT_CHAT_BURST_WINDOW_MS: u64 = 5_000;
+const MIN_CHAT_BURST_WINDOW_MS: u64 = 500;
+const MAX_CHAT_BURST_WINDOW_MS: u64 = 60_000;
 const CHAT_COOLDOWN_CLEANUP_INTERVAL_MS: u64 = 10 * 60 * 1000;
 const CHAT_COOLDOWN_ENTRY_TTL_MS: u64 = 20 * 60 * 1000;
 const WEBRTC_STATE_LABELS: [&str; 7] = [
@@ -181,9 +186,18 @@ static SIGNALING_RUNTIME_CONFIG: OnceLock<SignalingEnv> = OnceLock::new();
 static LAST_CHAT_COOLDOWN_CLEANUP_MS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+#[derive(Clone, Copy, Debug)]
+struct ChatRateLimitState {
+    last_sent_ms: u64,
+    burst_tokens: f64,
+    burst_last_refill_ms: u64,
+}
+
 fn default_signaling_env_config() -> SignalingEnv {
     SignalingEnv {
         chat_cooldown_ms: DEFAULT_CHAT_COOLDOWN_MS,
+        chat_burst_capacity: DEFAULT_CHAT_BURST_CAPACITY,
+        chat_burst_window_ms: DEFAULT_CHAT_BURST_WINDOW_MS,
         disable_stun: false,
         stun_urls: vec!["stun:stun.l.google.com:19302".to_owned()],
         turn_urls: Vec::new(),
@@ -220,38 +234,85 @@ fn chat_cooldown_ms() -> u64 {
     })
 }
 
-fn shared_chat_cooldowns() -> &'static DashMap<String, u64> {
-    static LAST_CHAT_BY_PEER_MS: OnceLock<DashMap<String, u64>> = OnceLock::new();
-    LAST_CHAT_BY_PEER_MS.get_or_init(DashMap::new)
+fn chat_burst_capacity() -> u64 {
+    static CHAT_BURST_CAPACITY: OnceLock<u64> = OnceLock::new();
+    *CHAT_BURST_CAPACITY.get_or_init(|| {
+        signaling_env_config()
+            .chat_burst_capacity
+            .clamp(0, MAX_CHAT_BURST_CAPACITY)
+    })
 }
 
-fn try_consume_chat_cooldown_with_map(
+fn chat_burst_window_ms() -> u64 {
+    static CHAT_BURST_WINDOW_MS: OnceLock<u64> = OnceLock::new();
+    *CHAT_BURST_WINDOW_MS.get_or_init(|| {
+        signaling_env_config()
+            .chat_burst_window_ms
+            .clamp(MIN_CHAT_BURST_WINDOW_MS, MAX_CHAT_BURST_WINDOW_MS)
+    })
+}
+
+fn shared_chat_rate_limits() -> &'static DashMap<String, ChatRateLimitState> {
+    static CHAT_RATE_LIMITS_BY_PEER: OnceLock<DashMap<String, ChatRateLimitState>> =
+        OnceLock::new();
+    CHAT_RATE_LIMITS_BY_PEER.get_or_init(DashMap::new)
+}
+
+fn try_consume_chat_rate_limit_with_map(
     peer_id: &str,
     now_timestamp_ms: u64,
     cooldown_ms: u64,
-    cooldowns: &DashMap<String, u64>,
+    burst_capacity: u64,
+    burst_window_ms: u64,
+    rate_limits: &DashMap<String, ChatRateLimitState>,
 ) -> bool {
-    if cooldown_ms == 0 {
+    if cooldown_ms == 0 && (burst_capacity == 0 || burst_window_ms == 0) {
         return true;
     }
-    maybe_cleanup_chat_cooldowns(now_timestamp_ms, cooldowns);
-    match cooldowns.entry(peer_id.to_owned()) {
+    maybe_cleanup_chat_rate_limits(now_timestamp_ms, rate_limits);
+    match rate_limits.entry(peer_id.to_owned()) {
         dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
-            let last_sent = *occupied.get();
-            if now_timestamp_ms.saturating_sub(last_sent) < cooldown_ms {
+            let mut state = *occupied.get();
+            if cooldown_ms > 0 && now_timestamp_ms.saturating_sub(state.last_sent_ms) < cooldown_ms
+            {
                 return false;
             }
-            *occupied.get_mut() = now_timestamp_ms;
+
+            if burst_capacity > 0 && burst_window_ms > 0 {
+                let refill_rate_per_ms = burst_capacity as f64 / burst_window_ms as f64;
+                let elapsed_ms = now_timestamp_ms.saturating_sub(state.burst_last_refill_ms);
+                state.burst_tokens = (state.burst_tokens + elapsed_ms as f64 * refill_rate_per_ms)
+                    .min(burst_capacity as f64);
+                state.burst_last_refill_ms = now_timestamp_ms;
+                if state.burst_tokens < 1.0 {
+                    return false;
+                }
+                state.burst_tokens -= 1.0;
+            }
+
+            state.last_sent_ms = now_timestamp_ms;
+            *occupied.get_mut() = state;
             true
         }
         dashmap::mapref::entry::Entry::Vacant(vacant) => {
-            vacant.insert(now_timestamp_ms);
+            let mut state = ChatRateLimitState {
+                last_sent_ms: now_timestamp_ms,
+                burst_tokens: burst_capacity as f64,
+                burst_last_refill_ms: now_timestamp_ms,
+            };
+            if burst_capacity > 0 && burst_window_ms > 0 {
+                state.burst_tokens = (state.burst_tokens - 1.0).max(0.0);
+            }
+            vacant.insert(state);
             true
         }
     }
 }
 
-fn maybe_cleanup_chat_cooldowns(now_timestamp_ms: u64, cooldowns: &DashMap<String, u64>) {
+fn maybe_cleanup_chat_rate_limits(
+    now_timestamp_ms: u64,
+    rate_limits: &DashMap<String, ChatRateLimitState>,
+) {
     let previous = LAST_CHAT_COOLDOWN_CLEANUP_MS.load(std::sync::atomic::Ordering::Relaxed);
     if now_timestamp_ms.saturating_sub(previous) < CHAT_COOLDOWN_CLEANUP_INTERVAL_MS {
         return;
@@ -266,23 +327,25 @@ fn maybe_cleanup_chat_cooldowns(now_timestamp_ms: u64, cooldowns: &DashMap<Strin
         )
         .is_ok()
     {
-        cooldowns.retain(|_peer_id, last_sent_ms| {
-            now_timestamp_ms.saturating_sub(*last_sent_ms) <= CHAT_COOLDOWN_ENTRY_TTL_MS
+        rate_limits.retain(|_peer_id, state| {
+            now_timestamp_ms.saturating_sub(state.last_sent_ms) <= CHAT_COOLDOWN_ENTRY_TTL_MS
         });
     }
 }
 
-fn try_consume_chat_cooldown(peer_id: &str, now_timestamp_ms: u64) -> bool {
-    try_consume_chat_cooldown_with_map(
+fn try_consume_chat_rate_limit(peer_id: &str, now_timestamp_ms: u64) -> bool {
+    try_consume_chat_rate_limit_with_map(
         peer_id,
         now_timestamp_ms,
         chat_cooldown_ms(),
-        shared_chat_cooldowns(),
+        chat_burst_capacity(),
+        chat_burst_window_ms(),
+        shared_chat_rate_limits(),
     )
 }
 
-fn clear_chat_cooldown(peer_id: &str) {
-    shared_chat_cooldowns().remove(peer_id);
+fn clear_chat_rate_limit(peer_id: &str) {
+    shared_chat_rate_limits().remove(peer_id);
 }
 
 fn begin_cleanup_once(cleanup_once: &AtomicBool) -> bool {
@@ -2142,12 +2205,12 @@ pub async fn handle_signaling_connection(
                                 {
                                     if let Some(message_text_fb) = chat_fb.message() {
                                         let chat_timestamp = now_millis();
-                                        if !try_consume_chat_cooldown(
+                                        if !try_consume_chat_rate_limit(
                                             &pid_msg_inner_str,
                                             chat_timestamp,
                                         ) {
                                             trace!(
-                                                "[{}]: Dropping chat message due to per-player cooldown.",
+                                                "[{}]: Dropping chat message due to per-player rate limit.",
                                                 pid_msg_inner_str
                                             );
                                             return;
@@ -2505,7 +2568,7 @@ pub fn cleanup_connection(
     auth_service: &AuthService,
 ) {
     info!("[{}]: Cleaning up resources.", peer_id_str);
-    clear_chat_cooldown(peer_id_str);
+    clear_chat_rate_limit(peer_id_str);
     remove_webrtc_peer_state(peer_id_str);
     let _ = shared_connection_manager().remove(peer_id_str);
     // Remove signaling sender first; duplicate cleanups are expected under concurrent callbacks.
@@ -2597,52 +2660,137 @@ mod tests {
 
     #[test]
     fn chat_cooldown_blocks_burst_for_same_peer() {
-        let cooldowns = DashMap::new();
+        let rate_limits = DashMap::new();
         let peer_id = "peer-1";
         let cooldown_ms = 450;
 
-        assert!(try_consume_chat_cooldown_with_map(
+        assert!(try_consume_chat_rate_limit_with_map(
             peer_id,
             1_000,
             cooldown_ms,
-            &cooldowns
+            0,
+            0,
+            &rate_limits
         ));
-        assert!(!try_consume_chat_cooldown_with_map(
+        assert!(!try_consume_chat_rate_limit_with_map(
             peer_id,
             1_200,
             cooldown_ms,
-            &cooldowns
+            0,
+            0,
+            &rate_limits
         ));
-        assert!(try_consume_chat_cooldown_with_map(
+        assert!(try_consume_chat_rate_limit_with_map(
             peer_id,
             1_451,
             cooldown_ms,
-            &cooldowns
+            0,
+            0,
+            &rate_limits
         ));
     }
 
     #[test]
     fn chat_cooldown_is_per_peer() {
-        let cooldowns = DashMap::new();
+        let rate_limits = DashMap::new();
         let cooldown_ms = 450;
 
-        assert!(try_consume_chat_cooldown_with_map(
+        assert!(try_consume_chat_rate_limit_with_map(
             "peer-a",
             2_000,
             cooldown_ms,
-            &cooldowns
+            0,
+            0,
+            &rate_limits
         ));
-        assert!(try_consume_chat_cooldown_with_map(
+        assert!(try_consume_chat_rate_limit_with_map(
             "peer-b",
             2_050,
             cooldown_ms,
-            &cooldowns
+            0,
+            0,
+            &rate_limits
         ));
-        assert!(!try_consume_chat_cooldown_with_map(
+        assert!(!try_consume_chat_rate_limit_with_map(
             "peer-a",
             2_200,
             cooldown_ms,
-            &cooldowns
+            0,
+            0,
+            &rate_limits
+        ));
+    }
+
+    #[test]
+    fn chat_burst_budget_blocks_spam_until_tokens_refill() {
+        let rate_limits = DashMap::new();
+        let peer_id = "peer-burst";
+
+        for _ in 0..5 {
+            assert!(try_consume_chat_rate_limit_with_map(
+                peer_id,
+                10_000,
+                0,
+                5,
+                5_000,
+                &rate_limits
+            ));
+        }
+
+        assert!(!try_consume_chat_rate_limit_with_map(
+            peer_id,
+            10_000,
+            0,
+            5,
+            5_000,
+            &rate_limits
+        ));
+
+        assert!(try_consume_chat_rate_limit_with_map(
+            peer_id,
+            11_000,
+            0,
+            5,
+            5_000,
+            &rate_limits
+        ));
+        assert!(!try_consume_chat_rate_limit_with_map(
+            peer_id,
+            11_000,
+            0,
+            5,
+            5_000,
+            &rate_limits
+        ));
+    }
+
+    #[test]
+    fn chat_burst_budget_is_isolated_per_peer() {
+        let rate_limits = DashMap::new();
+
+        assert!(try_consume_chat_rate_limit_with_map(
+            "peer-a",
+            2_000,
+            0,
+            1,
+            5_000,
+            &rate_limits
+        ));
+        assert!(try_consume_chat_rate_limit_with_map(
+            "peer-b",
+            2_000,
+            0,
+            1,
+            5_000,
+            &rate_limits
+        ));
+        assert!(!try_consume_chat_rate_limit_with_map(
+            "peer-a",
+            2_100,
+            0,
+            1,
+            5_000,
+            &rate_limits
         ));
     }
 

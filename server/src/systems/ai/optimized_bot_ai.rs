@@ -47,6 +47,7 @@ const BOT_STUCK_TIME_THRESHOLD: f32 = 2.0; // Seconds before considering bot stu
 const BOT_STUCK_CHECK_INTERVAL: f32 = 0.5; // Check every half second
 const BOT_STUCK_TARGET_TOLERANCE: f32 = BOT_MOVEMENT_TOLERANCE + 20.0;
 const BOT_PREDICTIVE_MODEL_MAX_ENTRIES: usize = 4096;
+const BOT_PREDICTIVE_MODEL_CLEANUP_INTERVAL_TICKS: u64 = 300;
 const BOT_PICKUP_INTEREST_RADIUS: f32 = 780.0;
 const BOT_PICKUP_EMERGENCY_HEALTH: i32 = 40;
 const BOT_PICKUP_LOW_HEALTH: i32 = 70;
@@ -357,6 +358,15 @@ static RUNTIME_PREDICTIVE_MODELS: OnceLock<RuntimePredictiveModels> = OnceLock::
 
 fn runtime_predictive_models() -> &'static RuntimePredictiveModels {
     RUNTIME_PREDICTIVE_MODELS.get_or_init(RuntimePredictiveModels::default)
+}
+
+fn should_cleanup_predictive_models(
+    frame_count: u64,
+    predictive_models: &RuntimePredictiveModels,
+) -> bool {
+    predictive_models.motion_models.len() > BOT_PREDICTIVE_MODEL_MAX_ENTRIES
+        || predictive_models.threat_models.len() > BOT_PREDICTIVE_MODEL_MAX_ENTRIES
+        || frame_count.is_multiple_of(BOT_PREDICTIVE_MODEL_CLEANUP_INTERVAL_TICKS)
 }
 
 #[derive(Clone, Copy, Default)]
@@ -777,13 +787,7 @@ impl OptimizedBotAI {
         let predictive_over_capacity = predictive_models.motion_models.len()
             > BOT_PREDICTIVE_MODEL_MAX_ENTRIES
             || predictive_models.threat_models.len() > BOT_PREDICTIVE_MODEL_MAX_ENTRIES;
-        let predictive_may_have_stale_entries = predictive_models.motion_models.len()
-            > live_player_count
-            || predictive_models.threat_models.len() > live_player_count;
-        if frame_count.is_multiple_of(60)
-            || predictive_over_capacity
-            || predictive_may_have_stale_entries
-        {
+        if should_cleanup_predictive_models(frame_count, predictive_models) {
             let motion_before = predictive_models.motion_models.len();
             let threat_before = predictive_models.threat_models.len();
             predictive_models
@@ -2419,6 +2423,29 @@ mod tests {
     fn weapon_switch_cooldown_ticks_matches_1s() {
         // 60 ticks at 60Hz = 1.0s
         assert_eq!(BOT_WEAPON_SWITCH_COOLDOWN_TICKS, 60);
+    }
+
+    #[test]
+    fn predictive_cleanup_runs_on_interval() {
+        let predictive_models = RuntimePredictiveModels::default();
+        assert!(should_cleanup_predictive_models(
+            BOT_PREDICTIVE_MODEL_CLEANUP_INTERVAL_TICKS,
+            &predictive_models
+        ));
+        assert!(!should_cleanup_predictive_models(1, &predictive_models));
+    }
+
+    #[test]
+    fn predictive_cleanup_runs_when_capacity_is_exceeded() {
+        let predictive_models = RuntimePredictiveModels::default();
+        for idx in 0..=BOT_PREDICTIVE_MODEL_MAX_ENTRIES {
+            let player_id: PlayerID = Arc::from(format!("player-{idx}"));
+            predictive_models
+                .motion_models
+                .insert(player_id.clone(), PredictiveMotionModel::default());
+        }
+
+        assert!(should_cleanup_predictive_models(1, &predictive_models));
     }
 
     // ── A* pathfinding / waypoint-following tests ─────────────────
