@@ -55,6 +55,7 @@ jobs:
         run: |
           docker compose -f docker/docker-compose.yml up -d --build \
             redis \
+            redis-exporter \
             massive-game-server \
             alertmanager \
             alert-webhook \

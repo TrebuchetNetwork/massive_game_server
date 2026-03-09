@@ -72,6 +72,18 @@ services:
     networks:
       - game-network
 
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0
+    container_name: massive-game-server-redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+      REDIS_PASSWORD: "${MGS_REDIS_PASSWORD:-mgs_redis_dev_password}"
+    depends_on:
+      - redis
+    networks:
+      - game-network
+
   nginx:
     image: nginx:1.27-alpine
     container_name: massive-game-server-nginx

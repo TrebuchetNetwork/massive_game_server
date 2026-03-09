@@ -5,7 +5,12 @@ metadata:
   labels:
     app: massive-game-server
 spec:
-  replicas: 2
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: massive-game-server
@@ -14,6 +19,7 @@ spec:
       labels:
         app: massive-game-server
     spec:
+      terminationGracePeriodSeconds: 60
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
@@ -28,26 +34,37 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+            - containerPort: 50000
+              hostPort: 50000
+              name: webrtc-udp-0
+              protocol: UDP
+            - containerPort: 50001
+              hostPort: 50001
+              name: webrtc-udp-1
+              protocol: UDP
+            - containerPort: 50002
+              hostPort: 50002
+              name: webrtc-udp-2
+              protocol: UDP
+            - containerPort: 50003
+              hostPort: 50003
+              name: webrtc-udp-3
+              protocol: UDP
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop:
                 - ALL
-          env:
-            - name: MGS_HOST
-              value: "0.0.0.0"
-            - name: MGS_PORT
-              value: "8080"
-            - name: MGS_DISABLE_STUN
-              value: "1"
-            - name: MGS_TARGET_BOT_COUNT
-              value: "0"
-            - name: MGS_BEHIND_TLS_PROXY
-              value: "1"
-            - name: MGS_REQUIRE_AUTH
-              value: "1"
-            - name: RUST_LOG
-              value: "massive_game_server_core=info,warp=warn,webrtc=warn"
+          envFrom:
+            - configMapRef:
+                name: massive-game-server-config
+            - secretRef:
+                name: massive-game-server-secrets
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: artifacts
+              mountPath: /app/artifacts
           readinessProbe:
             httpGet:
               path: /readyz
@@ -71,3 +88,8 @@ spec:
             limits:
               cpu: "2000m"
               memory: "4Gi"
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: artifacts
+          emptyDir: {}

@@ -8,6 +8,12 @@ test('@synthetic public browser path loads over https', async ({ page, request }
   const baseUrl = resolveBaseUrl();
   test.skip(!baseUrl.startsWith('https://'), `${testInfo.title} requires an HTTPS base URL`);
 
+  const landingResponse = await request.get(`${baseUrl}/index.html`);
+  expect(landingResponse.ok()).toBeTruthy();
+  const landingHeaders = landingResponse.headers();
+  expect(landingHeaders['content-security-policy']).toContain("script-src 'self'");
+  expect(landingHeaders['content-security-policy']).toContain("style-src 'self'");
+
   const htmlResponse = await request.get(`${baseUrl}/client.html`);
   expect(htmlResponse.ok()).toBeTruthy();
   const htmlHeaders = htmlResponse.headers();
@@ -23,6 +29,9 @@ test('@synthetic public browser path loads over https', async ({ page, request }
   expect(readyResponse.ok()).toBeTruthy();
   const readyPayload = await readyResponse.json();
   expect(readyPayload.ok).toBe(true);
+
+  await page.goto(`${baseUrl}/index.html`, { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('h1')).toContainText('Space combat with shooter discipline');
 
   await page.goto(`${baseUrl}/client.html`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#connectButton', { state: 'attached', timeout: 30000 });

@@ -199,6 +199,30 @@ fn test_client_html_uses_hash_based_csp_without_unsafe_inline() {
 }
 
 #[test]
+fn test_index_html_uses_strict_self_hosted_csp() {
+    let index_html_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../static_client/index.html");
+    let csp =
+        massive_game_server_core::routes::static_files::static_content_security_policy_for_path(
+            &index_html_path,
+        )
+        .expect("index.html CSP should be generated");
+    assert!(csp.contains("script-src 'self'"));
+    assert!(csp.contains("style-src 'self'"));
+    assert!(!csp.contains("'unsafe-inline'"));
+    assert!(!csp.contains("'unsafe-eval'"));
+}
+
+#[test]
+fn test_index_html_does_not_depend_on_external_cdns() {
+    let index_html_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../static_client/index.html");
+    let html = std::fs::read_to_string(index_html_path).expect("read index.html");
+    assert!(!html.contains("cdn.tailwindcss.com"));
+    assert!(!html.contains("fonts.googleapis.com"));
+    assert!(!html.contains("fonts.gstatic.com"));
+    assert!(!html.contains("cdnjs.cloudflare.com"));
+}
+
+#[test]
 fn test_parse_u64_env_defaults_and_filters_zero() {
     let key = "MGS_TEST_PARSE_U64_ENV";
     with_env_var(key, Some("256"), || {

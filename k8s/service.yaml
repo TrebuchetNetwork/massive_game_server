@@ -12,3 +12,20 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+      protocol: TCP
+    - name: webrtc-udp-0
+      port: 50000
+      targetPort: webrtc-udp-0
+      protocol: UDP
+    - name: webrtc-udp-1
+      port: 50001
+      targetPort: webrtc-udp-1
+      protocol: UDP
+    - name: webrtc-udp-2
+      port: 50002
+      targetPort: webrtc-udp-2
+      protocol: UDP
+    - name: webrtc-udp-3
+      port: 50003
+      targetPort: webrtc-udp-3
+      protocol: UDP

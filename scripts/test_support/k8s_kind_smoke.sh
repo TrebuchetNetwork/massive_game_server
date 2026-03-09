@@ -54,17 +54,24 @@ trap cleanup_port_forward EXIT
 cd "${ROOT_DIR}"
 
 kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n "${NAMESPACE}" apply -f k8s/configmap.yaml
+kubectl -n "${NAMESPACE}" apply -f k8s/secret.yaml
 kubectl -n "${NAMESPACE}" apply -f k8s/deployment.yaml
 kubectl -n "${NAMESPACE}" apply -f k8s/service.yaml
 kubectl -n "${NAMESPACE}" apply -f k8s/networkpolicy.yaml
 kubectl -n "${NAMESPACE}" apply -f k8s/hpa.yaml
 kubectl -n "${NAMESPACE}" apply -f k8s/pdb.yaml
+kubectl -n "${NAMESPACE}" apply -f k8s/ingress.yaml
 
 kubectl -n "${NAMESPACE}" set image deployment/massive-game-server server="${IMAGE_TAG}"
 kubectl -n "${NAMESPACE}" set env deployment/massive-game-server \
   MGS_BEHIND_TLS_PROXY=0 \
   MGS_DISABLE_STUN=1 \
   MGS_MATCH_DURATION_OVERRIDE_SECS=15 \
+  MGS_WEBRTC_NAT_1TO1_IPS=127.0.0.1 \
+  MGS_WEBRTC_NAT_1TO1_CANDIDATE_TYPE=host \
+  MGS_WEBRTC_UDP_PORT_MIN=50000 \
+  MGS_WEBRTC_UDP_PORT_MAX=50003 \
   MGS_REQUIRE_AUTH=0 \
   MGS_TARGET_BOT_COUNT=0
 kubectl -n "${NAMESPACE}" set resources deployment/massive-game-server \
@@ -73,7 +80,7 @@ kubectl -n "${NAMESPACE}" set resources deployment/massive-game-server \
   --limits=cpu=1000m,memory=1Gi
 
 kubectl -n "${NAMESPACE}" rollout status deployment/massive-game-server --timeout=300s
-wait_for_ready_replicas 2
+wait_for_ready_replicas 1
 
 kubectl -n "${NAMESPACE}" get service massive-game-server >/dev/null
 kubectl -n "${NAMESPACE}" get hpa massive-game-server >/dev/null
@@ -86,7 +93,7 @@ E2E_BASE_URL="${LOCAL_BASE_URL}" \
 E2E_SERVER_SKIP=1 \
 E2E_WS_URL="${LOCAL_WS_URL}" \
   npx playwright test \
-  tests/client_shell.spec.js \
+  tests/k8s_transport.spec.js \
   --project=chromium \
   --workers=1 \
   --reporter=list
@@ -98,7 +105,7 @@ start_port_forward
 
 POD_TO_DELETE="$(kubectl -n "${NAMESPACE}" get pods -l app=massive-game-server -o jsonpath='{.items[0].metadata.name}')"
 kubectl -n "${NAMESPACE}" delete pod "${POD_TO_DELETE}" --wait=true
-wait_for_ready_replicas 2
+wait_for_ready_replicas 1
 start_port_forward
 
 curl -fsS "${LOCAL_BASE_URL}/healthz" >/dev/null

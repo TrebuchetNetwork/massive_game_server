@@ -1393,6 +1393,7 @@ pub async fn handle_signaling_connection(
     requested_username: Option<String>,
     remote_ip: Option<IpAddr>,
     is_mobile: bool,
+    _ws_connection_permit: crate::routes::ws_signaling::WsConnectionPermit,
 ) {
     shared_connection_manager().upsert(ConnectionInfo::new(
         peer_id_str.clone(),

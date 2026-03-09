@@ -79,6 +79,12 @@ pub fn static_cache_control_for_path(path: &Path) -> &'static str {
 
 pub fn static_content_security_policy_for_path(path: &Path) -> Option<String> {
     let file_name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    if file_name == "index.html" {
+        return Some(
+            "default-src 'self'; script-src 'self'; worker-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+                .to_owned(),
+        );
+    }
     if file_name != "client.html" {
         return None;
     }

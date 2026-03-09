@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: massive-game-server-config
+  labels:
+    app: massive-game-server
+data:
+  MGS_HOST: "0.0.0.0"
+  MGS_PORT: "8080"
+  MGS_BEHIND_TLS_PROXY: "1"
+  MGS_DISABLE_STUN: "1"
+  MGS_TARGET_BOT_COUNT: "0"
+  MGS_REQUIRE_AUTH: "1"
+  MGS_WEBRTC_UDP_PORT_MIN: "50000"
+  MGS_WEBRTC_UDP_PORT_MAX: "50003"
+  MGS_AUTH_STORE_PATH: "/app/data/auth_store.json"
+  MGS_FEATURE_FLAG_STORE_PATH: "/app/data/feature_flags_store.json"
+  MGS_LIVE_REPLAY_DISPUTE_STORE_PATH: "/app/data/live_replay_disputes.json"
+  MGS_LIVE_REPLAY_MATCH_STORE_DIR: "/app/data/live_replay_matches"
+  MGS_BACKUP_DIR: "/app/data/backups"
+  RUST_LOG: "massive_game_server_core=info,warp=warn,webrtc=warn"

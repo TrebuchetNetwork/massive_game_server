@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: massive-game-server
+  labels:
+    app: massive-game-server
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - game.trebuchet.network
+      secretName: massive-game-server-tls
+  rules:
+    - host: game.trebuchet.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: massive-game-server
+                port:
+                  name: http

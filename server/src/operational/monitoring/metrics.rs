@@ -58,6 +58,10 @@ fn describe_metrics_catalog() {
         "Network update time in seconds"
     );
     describe_gauge!("game_players_connected", "Number of connected players");
+    describe_gauge!(
+        "game_match_degraded",
+        "Whether the current authoritative match loop has entered degraded mode"
+    );
     describe_gauge!("game_cpu_usage_percent", "CPU usage percentage");
     describe_gauge!(
         "game_memory_rss_bytes",
@@ -146,6 +150,13 @@ pub fn record_frame_metrics(frame_duration_seconds: f64, connected_players: usiz
     histogram!("game_frame_time_seconds").record(frame_duration_seconds);
     counter!("game_frames_total").increment(1);
     gauge!("game_players_connected").set(connected_players as f64);
+}
+
+pub fn set_match_degraded(degraded: bool) {
+    if !enabled() {
+        return;
+    }
+    gauge!("game_match_degraded").set(if degraded { 1.0 } else { 0.0 });
 }
 
 pub fn record_subsystem_time(subsystem: &str, duration_seconds: f64) {

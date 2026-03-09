@@ -30,7 +30,7 @@ jobs:
           kubectl version --client
 
       - name: Create kind cluster
-        run: kind create cluster --name mgs-smoke --wait 180s
+        run: kind create cluster --name mgs-smoke --config scripts/test_support/kind-mgs-config.yaml --wait 180s
 
       - name: Build smoke image
         run: docker build -f docker/Dockerfile -t massive-game-server:kind .

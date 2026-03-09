@@ -27,6 +27,7 @@ impl MassiveGameServer {
             .len()
             .saturating_add(connected_quic_peer_count());
         metrics::record_frame_metrics(frame_duration.as_secs_f64(), connected_players);
+        metrics::set_match_degraded(self.is_match_degraded());
         let mut tuner = self.runtime_tracking.auto_tuner.write();
         let quality = tuner.ingest_sample(TuningSample {
             frame_time_ms: frame_duration.as_secs_f32() * 1000.0,

@@ -13,6 +13,14 @@ function requireHttpsEdge(testInfo) {
 test('@critical edge serves hardened headers and cache policy over https', async ({ request }, testInfo) => {
   const baseUrl = requireHttpsEdge(testInfo);
 
+  const landingResponse = await request.get(`${baseUrl}/index.html`);
+  expect(landingResponse.ok()).toBeTruthy();
+  const landingHeaders = landingResponse.headers();
+  expect(landingHeaders['content-security-policy']).toContain("script-src 'self'");
+  expect(landingHeaders['content-security-policy']).toContain("style-src 'self'");
+  expect(landingHeaders['content-security-policy']).not.toContain("'unsafe-inline'");
+  expect(landingHeaders['content-security-policy']).not.toContain("'unsafe-eval'");
+
   const htmlResponse = await request.get(`${baseUrl}/client.html`);
   expect(htmlResponse.ok()).toBeTruthy();
   const htmlHeaders = htmlResponse.headers();
@@ -27,6 +35,32 @@ test('@critical edge serves hardened headers and cache policy over https', async
   const assetHeaders = assetResponse.headers();
   expect(assetHeaders['cache-control']).toContain('immutable');
   expect(assetHeaders['x-cache-status']).toBeTruthy();
+});
+
+test('@critical edge landing page is self-hosted and browser-clean', async ({ page }, testInfo) => {
+  const baseUrl = requireHttpsEdge(testInfo);
+  const cspViolations = [];
+
+  page.on('console', (msg) => {
+    const text = msg.text();
+    if (msg.type() === 'error' && text.includes('Content Security Policy')) {
+      cspViolations.push(text);
+    }
+  });
+
+  const response = await page.goto(`${baseUrl}/index.html`, { waitUntil: 'domcontentloaded' });
+  expect(response?.ok()).toBeTruthy();
+  await expect(page.locator('h1')).toContainText('Space combat with shooter discipline');
+
+  const resourceOrigins = await page.evaluate(() =>
+    performance
+      .getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .filter((name) => !name.startsWith(window.location.origin))
+  );
+
+  expect(resourceOrigins).toEqual([]);
+  expect(cspViolations).toEqual([]);
 });
 
 test('@critical edge promotes gameplay traffic to wss', async ({ page }, testInfo) => {

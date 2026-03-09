@@ -1165,7 +1165,7 @@ impl MassiveGameServer {
     }
 
     pub async fn run_ai_update(&self) {
-        let delta_time = TICK_DURATION.as_secs_f32();
+        let delta_time = crate::core::constants::TICK_DURATION_SECS_F32;
         if self.commander_mode_enabled {
             self.refresh_commander_runtime_state(self.get_server_timestamp_ms());
         }

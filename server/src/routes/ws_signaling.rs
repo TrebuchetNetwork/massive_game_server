@@ -14,6 +14,7 @@ use dashmap::DashMap;
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{info, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
@@ -39,12 +40,14 @@ pub struct ConnectionLimitRejection;
 
 impl warp::reject::Reject for ConnectionLimitRejection {}
 
+pub type WsConnectionPermit = OwnedSemaphorePermit;
+
 #[derive(Clone)]
 pub struct WsSecurityFilters {
     pub behind_tls_proxy: bool,
     pub ws_require_auth: bool,
     pub origin_check_filter: warp::filters::BoxedFilter<()>,
-    pub ws_connection_cap_filter: warp::filters::BoxedFilter<()>,
+    pub ws_connection_cap_filter: warp::filters::BoxedFilter<(WsConnectionPermit,)>,
 }
 
 pub fn effective_ws_auth_requirement(require_auth_env: bool, ws_dev_mode: bool) -> bool {
@@ -121,9 +124,8 @@ pub fn build_ws_security_filters(
         .unwrap_or(default_max_ws_connections)
         .max(1);
     info!("WebSocket signaling connection cap: {}", max_ws_connections);
-    let ws_connection_cap_filter = build_connection_cap_filter(signaling_peers, max_ws_connections)
-        .untuple_one()
-        .boxed();
+    let ws_connection_cap_filter =
+        build_connection_cap_filter(signaling_peers, max_ws_connections).boxed();
 
     WsSecurityFilters {
         behind_tls_proxy,
@@ -170,21 +172,25 @@ pub fn build_origin_check_filter(
 }
 
 pub fn build_connection_cap_filter(
-    peers: SignalingPeers,
+    _peers: SignalingPeers,
     max_ws_connections: u64,
-) -> impl Filter<Extract = ((),), Error = warp::Rejection> + Clone {
+) -> impl Filter<Extract = (WsConnectionPermit,), Error = warp::Rejection> + Clone {
+    let connection_slots = Arc::new(Semaphore::new(max_ws_connections as usize));
     warp::any()
-        .and(warp::any().map(move || peers.clone()))
-        .and_then(move |peers: SignalingPeers| async move {
-            if peers.len() >= max_ws_connections as usize {
-                warn!(
-                    "WebSocket signaling connection limit reached: {} active peers (limit {}).",
-                    peers.len(),
-                    max_ws_connections
-                );
-                return Err(warp::reject::custom(ConnectionLimitRejection));
+        .and(warp::any().map(move || connection_slots.clone()))
+        .and_then(move |connection_slots: Arc<Semaphore>| async move {
+            match connection_slots.clone().try_acquire_owned() {
+                Ok(permit) => Ok(permit),
+                Err(_) => {
+                    let active_connections = max_ws_connections
+                        .saturating_sub(connection_slots.available_permits() as u64);
+                    warn!(
+                        "WebSocket signaling connection limit reached: {} active peers (limit {}).",
+                        active_connections, max_ws_connections
+                    );
+                    Err(warp::reject::custom(ConnectionLimitRejection))
+                }
             }
-            Ok(())
         })
 }
 
@@ -374,7 +380,7 @@ pub fn build_signaling_route(
     ws_require_auth: bool,
     quic_primary_only: bool,
     origin_check_filter: warp::filters::BoxedFilter<()>,
-    ws_connection_cap_filter: warp::filters::BoxedFilter<()>,
+    ws_connection_cap_filter: warp::filters::BoxedFilter<(WsConnectionPermit,)>,
 ) -> warp::filters::BoxedFilter<(warp::reply::Response,)> {
     let signaling_route_ws = warp::path("ws")
         .and(origin_check_filter)
@@ -399,7 +405,8 @@ pub fn build_signaling_route(
         .and(warp::any().map(move || auth_service.clone()))
         .and(warp::any().map(move || scaling_coordinator.clone()))
         .map(
-            move |ws: warp::ws::Ws,
+            move |ws_connection_permit: WsConnectionPermit,
+                  ws: warp::ws::Ws,
                   ws_auth_query: WsAuthQuery,
                   request_headers: HeaderMap,
                   remote_addr: Option<SocketAddr>,
@@ -514,6 +521,7 @@ pub fn build_signaling_route(
                         requested_username,
                         client_ip,
                         is_mobile,
+                        ws_connection_permit,
                     )
                     .instrument(ws_upgrade_span)
                 })

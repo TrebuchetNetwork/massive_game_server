@@ -3,8 +3,11 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 pub const SERVER_TICK_RATE: u64 = 60;
-pub const TICK_DURATION_MS: u64 = 1000 / SERVER_TICK_RATE;
-pub const TICK_DURATION: Duration = Duration::from_millis(TICK_DURATION_MS);
+pub const NANOS_PER_SECOND: u64 = 1_000_000_000;
+pub const TICK_DURATION_NANOS: u64 = NANOS_PER_SECOND / SERVER_TICK_RATE;
+pub const TICK_DURATION: Duration = Duration::from_nanos(TICK_DURATION_NANOS);
+pub const TICK_DURATION_SECS_F32: f32 = 1.0 / SERVER_TICK_RATE as f32;
+pub const TICK_DURATION_SECS_F64: f64 = 1.0 / SERVER_TICK_RATE as f64;
 
 // World constants
 pub const WORLD_MIN_X: f32 = -800.0; // Example, adjust as needed
@@ -595,7 +598,18 @@ mod tests {
 
     #[test]
     fn tick_duration_is_consistent() {
-        assert_eq!(TICK_DURATION_MS, 1000 / SERVER_TICK_RATE);
-        assert_eq!(TICK_DURATION.as_millis() as u64, TICK_DURATION_MS);
+        assert_eq!(TICK_DURATION_NANOS, NANOS_PER_SECOND / SERVER_TICK_RATE);
+        assert_eq!(TICK_DURATION.as_nanos() as u64, TICK_DURATION_NANOS);
+        assert!((TICK_DURATION_SECS_F32 - (1.0 / 60.0)).abs() < f32::EPSILON);
+        assert!((TICK_DURATION_SECS_F64 - (1.0 / 60.0)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn sixty_ticks_are_one_second_with_nanosecond_precision() {
+        let simulated = TICK_DURATION_SECS_F64 * SERVER_TICK_RATE as f64;
+        assert!(
+            (simulated - 1.0).abs() < 1e-9,
+            "expected 60 ticks to equal one second, got {simulated}"
+        );
     }
 }

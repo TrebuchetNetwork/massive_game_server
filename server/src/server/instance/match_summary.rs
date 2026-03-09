@@ -47,7 +47,7 @@ impl MassiveGameServer {
                     flag_returns: player_state.flag_returns,
                     hot_zone_kills: player_state.hot_zone_kills,
                     hot_zone_time_seconds: player_state.hot_zone_time_ticks as f32
-                        / crate::core::constants::SERVER_TICK_RATE as f32,
+                        * crate::core::constants::TICK_DURATION_SECS_F32,
                     weapon_kills: player_state.kills_per_weapon.to_vec(),
                     kd_ratio,
                 });
