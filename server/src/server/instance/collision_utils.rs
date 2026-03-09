@@ -8,39 +8,32 @@ impl MassiveGameServer {
         to_x: f32,
         to_y: f32,
     ) -> bool {
-        let walls = self
+        !self
             .wall_spatial_index
-            .query_line_segment(from_x, from_y, to_x, to_y);
-        for wall in walls {
-            if segment_first_hit_fraction_with_aabb(
-                from_x,
-                from_y,
-                to_x,
-                to_y,
-                wall.x,
-                wall.x + wall.width,
-                wall.y,
-                wall.y + wall.height,
-            )
-            .is_some()
-            {
-                return false;
-            }
-        }
-        true
+            .any_line_segment_candidate(from_x, from_y, to_x, to_y, |wall| {
+                segment_first_hit_fraction_with_aabb(
+                    from_x,
+                    from_y,
+                    to_x,
+                    to_y,
+                    wall.x,
+                    wall.x + wall.width,
+                    wall.y,
+                    wall.y + wall.height,
+                )
+                .is_some()
+            })
     }
 
     pub(super) fn position_overlaps_any_wall(&self, x: f32, y: f32) -> bool {
-        let nearby_walls = self
-            .wall_spatial_index
-            .query_radius(x, y, PLAYER_RADIUS + 8.0);
-        nearby_walls.iter().any(|wall| {
-            let closest_x = x.clamp(wall.x, wall.x + wall.width);
-            let closest_y = y.clamp(wall.y, wall.y + wall.height);
-            let dx = x - closest_x;
-            let dy = y - closest_y;
-            dx * dx + dy * dy < PLAYER_RADIUS * PLAYER_RADIUS
-        })
+        self.wall_spatial_index
+            .any_radius(x, y, PLAYER_RADIUS + 8.0, |wall| {
+                let closest_x = x.clamp(wall.x, wall.x + wall.width);
+                let closest_y = y.clamp(wall.y, wall.y + wall.height);
+                let dx = x - closest_x;
+                let dy = y - closest_y;
+                dx * dx + dy * dy < PLAYER_RADIUS * PLAYER_RADIUS
+            })
     }
 
     pub fn collect_all_walls_current_state(&self) -> Vec<Wall> {

@@ -1311,18 +1311,14 @@ impl OptimizedBotAI {
 
     /// Check if there's a clear line of sight between two positions
     fn has_line_of_sight(from: Vec2, to: Vec2, server_instance: &MassiveGameServer) -> bool {
-        let candidate_walls = server_instance
+        !server_instance
             .wall_spatial_index
-            .query_line_segment(from.x, from.y, to.x, to.y);
-        for wall in candidate_walls {
-            if wall.is_destructible && wall.current_health <= 0 {
-                continue;
-            }
-            if Self::segment_hits_aabb(from, to, &wall) {
-                return false;
-            }
-        }
-        true
+            .any_line_segment_candidate(from.x, from.y, to.x, to.y, |wall| {
+                if wall.is_destructible && wall.current_health <= 0 {
+                    return false;
+                }
+                Self::segment_hits_aabb(from, to, wall)
+            })
     }
 
     fn segment_hits_aabb(start: Vec2, end: Vec2, wall: &Wall) -> bool {

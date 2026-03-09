@@ -116,6 +116,28 @@ impl WallSpatialIndex {
         }
     }
 
+    fn any_in_aabb<F>(
+        &self,
+        min_x: f32,
+        min_y: f32,
+        max_x: f32,
+        max_y: f32,
+        mut predicate: F,
+    ) -> bool
+    where
+        F: FnMut(&Wall) -> bool,
+    {
+        let query_aabb = AABB::from_corners([min_x, min_y], [max_x, max_y]);
+
+        let tree_guard = self.rtree.read();
+        for spatial_wall in tree_guard.locate_in_envelope_intersecting(&query_aabb) {
+            if predicate(&spatial_wall.wall) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Query walls that intersect with a given AABB
     pub fn query_aabb(&self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Vec<Wall> {
         let mut walls = Vec::new();
@@ -128,6 +150,13 @@ impl WallSpatialIndex {
     /// Query walls within a radius of a point
     pub fn query_radius(&self, x: f32, y: f32, radius: f32) -> Vec<Wall> {
         self.query_aabb(x - radius, y - radius, x + radius, y + radius)
+    }
+
+    pub fn any_radius<F>(&self, x: f32, y: f32, radius: f32, predicate: F) -> bool
+    where
+        F: FnMut(&Wall) -> bool,
+    {
+        self.any_in_aabb(x - radius, y - radius, x + radius, y + radius, predicate)
     }
 
     /// Query walls along a line segment (for projectile paths)
@@ -159,6 +188,31 @@ impl WallSpatialIndex {
             max_x + buffer,
             max_y + buffer,
             visit,
+        )
+    }
+
+    pub fn any_line_segment_candidate<F>(
+        &self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        predicate: F,
+    ) -> bool
+    where
+        F: FnMut(&Wall) -> bool,
+    {
+        let min_x = x1.min(x2);
+        let max_x = x1.max(x2);
+        let min_y = y1.min(y2);
+        let max_y = y1.max(y2);
+        let buffer = 1.0;
+        self.any_in_aabb(
+            min_x - buffer,
+            min_y - buffer,
+            max_x + buffer,
+            max_y + buffer,
+            predicate,
         )
     }
 
@@ -272,6 +326,82 @@ mod tests {
         });
         visited.sort_unstable();
 
+        assert_eq!(visited, vec![1]);
+    }
+
+    #[test]
+    fn any_radius_short_circuits_when_predicate_matches() {
+        let index = WallSpatialIndex::new();
+
+        let walls = vec![
+            Wall {
+                id: 1,
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+                is_destructible: false,
+                current_health: 100,
+                max_health: 100,
+            },
+            Wall {
+                id: 2,
+                x: 50.0,
+                y: 50.0,
+                width: 10.0,
+                height: 10.0,
+                is_destructible: false,
+                current_health: 100,
+                max_health: 100,
+            },
+        ];
+        index.rebuild(&walls, 1);
+
+        let mut visited = Vec::new();
+        let found = index.any_radius(4.0, 4.0, 8.0, |wall| {
+            visited.push(wall.id);
+            wall.id == 1
+        });
+
+        assert!(found);
+        assert_eq!(visited, vec![1]);
+    }
+
+    #[test]
+    fn any_line_segment_candidate_short_circuits_when_predicate_matches() {
+        let index = WallSpatialIndex::new();
+
+        let walls = vec![
+            Wall {
+                id: 1,
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+                is_destructible: false,
+                current_health: 100,
+                max_health: 100,
+            },
+            Wall {
+                id: 2,
+                x: 50.0,
+                y: 50.0,
+                width: 10.0,
+                height: 10.0,
+                is_destructible: false,
+                current_health: 100,
+                max_health: 100,
+            },
+        ];
+        index.rebuild(&walls, 1);
+
+        let mut visited = Vec::new();
+        let found = index.any_line_segment_candidate(-5.0, -5.0, 12.0, 12.0, |wall| {
+            visited.push(wall.id);
+            wall.id == 1
+        });
+
+        assert!(found);
         assert_eq!(visited, vec![1]);
     }
 }

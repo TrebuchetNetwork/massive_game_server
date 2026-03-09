@@ -302,17 +302,18 @@ impl MassiveGameServer {
                         continue;
                     }
 
-                    let overlaps_wall = self
-                        .wall_spatial_index
-                        .query_radius(spawn_x, spawn_y, PLAYER_RADIUS + 8.0)
-                        .iter()
-                        .any(|wall| {
+                    let overlaps_wall = self.wall_spatial_index.any_radius(
+                        spawn_x,
+                        spawn_y,
+                        PLAYER_RADIUS + 8.0,
+                        |wall| {
                             let closest_x = spawn_x.clamp(wall.x, wall.x + wall.width);
                             let closest_y = spawn_y.clamp(wall.y, wall.y + wall.height);
                             let dx = spawn_x - closest_x;
                             let dy = spawn_y - closest_y;
                             dx * dx + dy * dy < PLAYER_RADIUS * PLAYER_RADIUS
-                        });
+                        },
+                    );
                     if overlaps_wall {
                         continue;
                     }
