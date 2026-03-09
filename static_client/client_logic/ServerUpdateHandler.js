@@ -271,7 +271,6 @@ export function createServerUpdateHandler(getCtx) {
 
         if (!messageData) {
             log(`[processServerUpdate] Error: messageData is ${messageData}. isInitial: ${isInitial}. Stack: ${new Error().stack}`, 'error');
-            console.error("[processServerUpdate] messageData:", messageData, "isInitial:", isInitial);
             return;
         }
         const replaceInitialState = options?.replaceInitialState !== false;
@@ -1040,7 +1039,6 @@ export function createServerUpdateHandler(getCtx) {
             ctx.incrementFastDeltaPathErrorCount();
             const errorCount = ctx.fastDeltaPathErrorCount;
             if (errorCount <= 3 || (errorCount % 50) === 0) {
-                console.error('Fast delta apply failed; falling back to generic parser.', error);
                 log(`Fast delta apply failed (${errorCount}): ${error?.message || error}`, 'warn');
             }
             return false;

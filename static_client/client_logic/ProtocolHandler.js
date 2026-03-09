@@ -922,8 +922,7 @@ export function createProtocolHandler({
                     return null;
             }
         } catch (e) {
-            console.error('Error parsing FlatBuffer:', e, data);
-            log(`Error parsing FlatBuffer: ${e.message}`, 'error');
+            log(`Error parsing FlatBuffer: ${e?.message || e}`, 'error');
             return null;
         }
     }

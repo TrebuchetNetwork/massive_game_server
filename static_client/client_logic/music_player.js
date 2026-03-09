@@ -93,6 +93,7 @@ export class MusicPlayer {
       ? options.getLocalPlayerState
       : (() => null);
     this.progressIntervalMs = Math.max(50, Math.floor(asFiniteNumber(options.progressIntervalMs, 100)));
+    this.destroyed = false;
 
     this.playerDiv = document.getElementById("musicPlayer");
     this.playPauseBtn = document.getElementById("playPauseBtn");
@@ -536,6 +537,8 @@ export class MusicPlayer {
   }
 
   destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.cancelCrossfade();
     if (this.progressTimer) {
       window.clearInterval(this.progressTimer);
@@ -565,9 +568,11 @@ export class MusicPlayer {
       }
     });
     this.pause();
+    this.categoryPointers.clear();
     this.audios.forEach((audio) => {
       audio.src = "";
       audio.load();
     });
+    this.onAudioEnded = [];
   }
 }

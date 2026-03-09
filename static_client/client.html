@@ -2530,6 +2530,33 @@
             }
         }
 
+        let clientRuntimeBoundaryInstalled = false;
+        function installClientRuntimeBoundary() {
+            if (clientRuntimeBoundaryInstalled) return;
+            clientRuntimeBoundaryInstalled = true;
+            const reportRuntimeFailure = (source, errorLike) => {
+                const detail = `${source}: ${errorLike?.message || errorLike || 'unknown error'}`;
+                log(detail, 'error');
+                if (window.__e2e) {
+                    window.__e2e.lastFatalClientError = detail;
+                }
+                if (typeof setConnectionError === 'function') {
+                    setConnectionError(detail);
+                }
+                if (typeof applyConnectionStatus === 'function') {
+                    applyConnectionStatus('error', detail);
+                }
+            };
+            window.addEventListener('error', (event) => {
+                reportRuntimeFailure('Unhandled client error', event?.error || event?.message);
+            });
+            window.addEventListener('unhandledrejection', (event) => {
+                reportRuntimeFailure('Unhandled promise rejection', event?.reason);
+            });
+        }
+
+        installClientRuntimeBoundary();
+
         // ── Instantiate ProtocolHandler ──────────────────────────────────
         const protocolHandler = createProtocolHandler({
             flatbuffers,
@@ -3056,7 +3083,7 @@
                             if (typeof audioManager.flushPendingSounds === 'function') {
                                 audioManager.flushPendingSounds();
                             }
-                            console.log('Audio context resumed');
+                            log('Audio context resumed', 'info');
                         });
                     }
                     document.removeEventListener('click', resumeAudio);
@@ -4224,17 +4251,11 @@
                     window.__e2e.perfReportGeneratedAt = performance.now();
                 }
                 if (PERF_CONSOLE_OUTPUT_ENABLED) {
-                    const consoleTableData = {};
-                    perfReport.rankedPhases.slice(0, 12).forEach((phase) => {
-                        consoleTableData[phase.name] = {
-                            avgMs: phase.avgMs,
-                            maxMs: phase.maxMs,
-                            calls: phase.calls,
-                            dutyCyclePct: phase.dutyCyclePct,
-                            sharePct: phase.sharePct,
-                        };
-                    });
-                    console.table(consoleTableData);
+                    const perfSummary = perfReport.rankedPhases
+                        .slice(0, 5)
+                        .map((phase) => `${phase.name}:${phase.avgMs}ms avg/${phase.maxMs}ms max`)
+                        .join(' | ');
+                    log(`Perf top phases: ${perfSummary}`, 'info');
                 }
             }
             
@@ -4244,7 +4265,10 @@
                 if (destroyedWalls.length > 0) {
                     log(`[WALL STATUS] ${destroyedWalls.length} destroyed walls in client state`, 'warn');
                     destroyedWalls.slice(0, 3).forEach(w => {
-                        console.log('[WALL STATUS] Destroyed wall:', w);
+                        logWallDebug(
+                            `[WALL STATUS] Destroyed wall ${w.id} at (${w.x}, ${w.y}) health=${w.current_health}/${w.max_health}`,
+                            'warn'
+                        );
                     });
                     
                     // Check if these walls are actually rendered
@@ -4254,7 +4278,10 @@
                             Math.abs(wall.y + wall.height/2 - localPlayerState.y) < 1000;
                         
                         if (isInView) {
-                            console.log(`[WALL COLLISION CHECK] Destroyed wall ${wall.id} at (${wall.x}, ${wall.y}) - In view but should be invisible`, wall);
+                            logWallDebug(
+                                `[WALL COLLISION CHECK] Destroyed wall ${wall.id} at (${wall.x}, ${wall.y}) is still in view and should be invisible`,
+                                'warn'
+                            );
                         }
                     });
                 }
@@ -4278,7 +4305,6 @@
                 const errorText = error?.message ? error.message : String(error);
                 if (gameLoopErrorCount <= 5 || gameLoopErrorCount % 25 === 0) {
                     log(`Render loop recovery #${gameLoopErrorCount}: ${errorText}`, 'error');
-                    console.error('Render loop failure recovered', error);
                 }
                 if (!ultraPerformanceMode) {
                     setUltraPerformanceMode(true, 'runtime recovery');
@@ -5462,7 +5488,6 @@
             // Check if GameProtocol is loaded
             if (typeof GameProtocol === 'undefined' || typeof GP === 'undefined') {
                 log('Error: GameProtocol not loaded! Make sure to generate and include game.js (or game_generated.js)', 'error');
-                console.error("GameProtocol or GP is undefined. Check FlatBuffers generation and import.");
                 return;
             }
 
