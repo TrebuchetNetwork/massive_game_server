@@ -2122,6 +2122,7 @@ pub async fn handle_signaling_connection(
             Box::pin(async move {
                 metrics::record_network_bytes("ingress_data_channel", msg.data.len());
                 if msg.data.len() > MAX_DATACHANNEL_MESSAGE_BYTES {
+                    metrics::record_input_validation_failed("oversized_data_channel_message");
                     warn!(
                         "[{}]: Dropping oversized data-channel message ({} bytes, limit={}).",
                         pid_msg_inner_str,
@@ -2133,6 +2134,7 @@ pub async fn handle_signaling_connection(
                 if let Ok(game_msg_root) = fb::root_as_game_message(&msg.data) {
                     let protocol_version = game_msg_root.protocol_version();
                     if protocol_version != GAME_PROTOCOL_VERSION {
+                        metrics::record_input_validation_failed("protocol_version_mismatch");
                         warn!(
                             "[{}]: Dropping message with protocol_version={} (server expects {}).",
                             pid_msg_inner_str, protocol_version, GAME_PROTOCOL_VERSION
@@ -2191,6 +2193,7 @@ pub async fn handle_signaling_connection(
                                                 pid_msg_inner_str, seq
                                             );
                                         } else {
+                                            metrics::record_input_validation_failed("sequence_gap_or_replay");
                                             debug!(
                                                 "[{}]: Rejected player input (seq: {}, last_accepted: {}) – replay or sequence gap",
                                                 pid_msg_inner_str, seq, player_entry.last_queued_input_sequence
@@ -2389,6 +2392,13 @@ pub async fn handle_signaling_connection(
                         match serde_json::from_str::<SignalingMessageJson>(text_content) {
                             Ok(sig_data) => {
                                 if let Err(reason) = validate_signaling_payload(&sig_data) {
+                                    metrics::record_input_validation_failed(
+                                        if reason.contains("protocol_version") {
+                                            "signaling_protocol_version_mismatch"
+                                        } else {
+                                            "invalid_signaling_payload"
+                                        },
+                                    );
                                     let detail = match reason {
                                         "protocol_version mismatch" => format!(
                                             "Client signaling protocol version is incompatible with server version {}.",
@@ -2496,6 +2506,7 @@ pub async fn handle_signaling_connection(
                                 }
                             }
                             Err(e) => {
+                                metrics::record_input_validation_failed("invalid_signaling_json");
                                 let _ = try_queue_signaling_message(
                                     &ws_signal_sender_clone,
                                     Ok(Message::text(signaling_error_json(

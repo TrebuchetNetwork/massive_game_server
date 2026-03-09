@@ -95,9 +95,17 @@ fn describe_metrics_catalog() {
         "game_auth_attempts_total",
         "Authentication attempts by stage and result"
     );
+    describe_counter!(
+        "game_input_validation_failed_total",
+        "Rejected client input or signaling payloads by reason"
+    );
     describe_histogram!(
         "game_auth_token_resolution_seconds",
         "Auth token lookup/validation latency in seconds"
+    );
+    describe_counter!(
+        "game_lag_compensation_clamped_total",
+        "Times lag compensation was clamped to the configured maximum"
     );
     describe_counter!(
         "game_backup_runs_total",
@@ -236,6 +244,17 @@ pub fn record_auth_attempt(stage: &'static str, result: &'static str) {
     .increment(1);
 }
 
+pub fn record_input_validation_failed(reason: &'static str) {
+    if !enabled() {
+        return;
+    }
+    counter!(
+        "game_input_validation_failed_total",
+        "reason" => reason
+    )
+    .increment(1);
+}
+
 pub fn record_auth_token_resolution(duration_seconds: f64, result: &'static str) {
     if !enabled() {
         return;
@@ -245,6 +264,13 @@ pub fn record_auth_token_resolution(duration_seconds: f64, result: &'static str)
         "result" => result
     )
     .record(duration_seconds.max(0.0));
+}
+
+pub fn record_lag_compensation_clamped() {
+    if !enabled() {
+        return;
+    }
+    counter!("game_lag_compensation_clamped_total").increment(1);
 }
 
 pub fn record_backup_result(result: &'static str, duration_seconds: f64) {

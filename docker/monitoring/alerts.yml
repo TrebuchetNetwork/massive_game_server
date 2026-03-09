@@ -64,6 +64,24 @@ groups:
           summary: "Authentication rate limiting is being exhausted"
           runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
 
+      - alert: InputValidationFailures
+        expr: sum(increase(game_input_validation_failed_total[5m])) > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rejected client input or signaling payloads exceeded 50 in 5 minutes"
+          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+
+      - alert: LagCompensationClamped
+        expr: increase(game_lag_compensation_clamped_total[10m]) > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Lag compensation is repeatedly clamping to the server maximum"
+          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+
       - alert: HighConnectionRttP95
         expr: histogram_quantile(0.95, sum(rate(game_connection_rtt_ms_bucket[5m])) by (le)) > 250
         for: 10m

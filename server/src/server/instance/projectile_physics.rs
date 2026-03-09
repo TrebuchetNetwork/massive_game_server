@@ -157,6 +157,9 @@ impl MassiveGameServer {
         let clamped_lag_ms = self
             .lag_compensation_ms
             .min(crate::core::constants::MAX_LAG_COMPENSATION_MS);
+        if clamped_lag_ms != self.lag_compensation_ms {
+            crate::operational::monitoring::metrics::record_lag_compensation_clamped();
+        }
         let lag_compensation_target_ms = self
             .get_server_timestamp_ms()
             .saturating_sub(clamped_lag_ms);
