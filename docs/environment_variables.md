@@ -73,7 +73,7 @@ Centralized reference for runtime/deploy environment variables used by `massive_
 - `MGS_ACCOUNT_DELETION_GRACE_PERIOD_HOURS`: GDPR deletion grace window.
 - `MGS_GDPR_HASH_SALT`: Salt for GDPR hash anonymization.
 - `MGS_AUTH_STORE_PATH`: File-backed auth store path.
-- `MGS_REDIS_URL`: Redis URL for auth persistence.
+- `MGS_REDIS_URL`: Shared Redis URL for auth persistence and other shared-state stores.
 - `MGS_REDIS_AUTH_STORE_KEY`: Redis auth store key.
 - `MGS_SMS_COMMAND`: External SMS send command.
 - `MGS_SMS_DEV_MODE`: SMS dev-mode mock behavior.
@@ -149,6 +149,8 @@ Centralized reference for runtime/deploy environment variables used by `massive_
 
 - `MGS_FEATURE_FLAGS`: Bootstrap feature flags from env.
 - `MGS_FEATURE_FLAG_STORE_PATH`: Feature flag persistence path.
+- `MGS_FEATURE_FLAGS_REDIS_URL`: Optional Redis URL override for shared feature flag persistence.
+- `MGS_REDIS_FEATURE_FLAGS_KEY`: Redis key used for shared feature flag persistence.
 - `MGS_CONFIG_PATH`: YAML config override path.
 
 ## Notes

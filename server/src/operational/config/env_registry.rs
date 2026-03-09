@@ -25,6 +25,8 @@ pub struct AppEnvConfig {
 pub struct FeatureFlagsEnv {
     pub store_path: String,
     pub bootstrap_flags: Option<String>,
+    pub redis_url: Option<String>,
+    pub redis_store_key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -172,6 +174,10 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
     let feature_flag_store_path = get_optional_trimmed("MGS_FEATURE_FLAG_STORE_PATH")
         .unwrap_or_else(|| "data/feature_flags.json".to_owned());
     let feature_flag_bootstrap_flags = get_optional_trimmed("MGS_FEATURE_FLAGS");
+    let feature_flag_redis_url = get_optional_trimmed("MGS_FEATURE_FLAGS_REDIS_URL")
+        .or_else(|| get_optional_trimmed("MGS_REDIS_URL"));
+    let feature_flag_redis_store_key = get_optional_trimmed("MGS_REDIS_FEATURE_FLAGS_KEY")
+        .unwrap_or_else(|| "mgs:feature_flags:store".to_owned());
     let target_bot_count = parse_optional_u64("MGS_TARGET_BOT_COUNT", &mut errors);
     let human_priority_enabled =
         parse_bool_with_default("MGS_HUMAN_PRIORITY_ENABLED", true, &mut errors);
@@ -461,6 +467,8 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
         feature_flags: FeatureFlagsEnv {
             store_path: feature_flag_store_path,
             bootstrap_flags: feature_flag_bootstrap_flags,
+            redis_url: feature_flag_redis_url,
+            redis_store_key: feature_flag_redis_store_key,
         },
         diagnostics: DiagnosticsEnv {
             enabled: diagnostics_enabled,
@@ -770,5 +778,23 @@ mod tests {
 
         assert_eq!(result.signaling.chat_burst_capacity, 7);
         assert_eq!(result.signaling.chat_burst_window_ms, 4_200);
+    }
+
+    #[test]
+    fn load_env_config_reads_feature_flag_redis_settings() {
+        let result = temp_env::with_vars(
+            [
+                ("MGS_REDIS_URL", Some("redis://127.0.0.1:6379/")),
+                ("MGS_REDIS_FEATURE_FLAGS_KEY", Some("mgs:test:flags")),
+            ],
+            load_app_env_config,
+        )
+        .expect("feature flag redis settings should parse");
+
+        assert_eq!(
+            result.feature_flags.redis_url.as_deref(),
+            Some("redis://127.0.0.1:6379/")
+        );
+        assert_eq!(result.feature_flags.redis_store_key, "mgs:test:flags");
     }
 }

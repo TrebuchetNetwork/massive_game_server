@@ -1,5 +1,6 @@
 use crate::operational::config::env_registry::{AdminAuthEnv, FeatureFlagsEnv};
 use parking_lot::RwLock;
+use redis::Commands;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -23,7 +24,14 @@ pub struct FeatureFlagService {
 
 struct FeatureFlagInner {
     store_path: PathBuf,
+    redis_store: Option<FeatureFlagRedisStore>,
     flags: RwLock<HashMap<String, FeatureFlagRecord>>,
+}
+
+#[derive(Clone)]
+struct FeatureFlagRedisStore {
+    client: redis::Client,
+    key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,7 +122,15 @@ impl FeatureFlagService {
         let store_path = std::env::var("MGS_FEATURE_FLAG_STORE_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("data/feature_flags.json"));
-        let mut flags = load_store(&store_path);
+        let redis_store = init_redis_store(
+            std::env::var("MGS_FEATURE_FLAGS_REDIS_URL")
+                .ok()
+                .or_else(|| std::env::var("MGS_REDIS_URL").ok()),
+            std::env::var("MGS_REDIS_FEATURE_FLAGS_KEY")
+                .ok()
+                .unwrap_or_else(|| "mgs:feature_flags:store".to_owned()),
+        );
+        let mut flags = load_store(&store_path, redis_store.as_ref());
 
         for (key, enabled) in parse_flags_from_env() {
             let now = unix_now();
@@ -141,6 +157,7 @@ impl FeatureFlagService {
         Self {
             inner: Arc::new(FeatureFlagInner {
                 store_path,
+                redis_store,
                 flags: RwLock::new(flags),
             }),
         }
@@ -153,7 +170,8 @@ impl FeatureFlagService {
         } else {
             PathBuf::from(store_path_raw)
         };
-        let mut flags = load_store(&store_path);
+        let redis_store = init_redis_store(env.redis_url.clone(), env.redis_store_key.clone());
+        let mut flags = load_store(&store_path, redis_store.as_ref());
 
         if let Some(raw) = env.bootstrap_flags.as_deref() {
             for (key, enabled) in parse_flags_from_raw(raw) {
@@ -182,6 +200,7 @@ impl FeatureFlagService {
         Self {
             inner: Arc::new(FeatureFlagInner {
                 store_path,
+                redis_store,
                 flags: RwLock::new(flags),
             }),
         }
@@ -278,8 +297,9 @@ impl FeatureFlagService {
     fn spawn_persist_store(&self) {
         let snapshot = self.inner.flags.read().clone();
         let path = self.inner.store_path.clone();
+        let redis_store = self.inner.redis_store.clone();
         let do_persist = move || {
-            if let Err(err) = persist_store(&path, &snapshot) {
+            if let Err(err) = persist_store(&path, &snapshot, redis_store.as_ref()) {
                 warn!("Background flag persist failed: {}", err);
             }
         };
@@ -317,7 +337,21 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-fn load_store(path: &Path) -> HashMap<String, FeatureFlagRecord> {
+fn load_store(
+    path: &Path,
+    redis_store: Option<&FeatureFlagRedisStore>,
+) -> HashMap<String, FeatureFlagRecord> {
+    if let Some(redis_store) = redis_store {
+        match redis_store.load_flags() {
+            Ok(Some(flags)) => return flags,
+            Ok(None) => {}
+            Err(err) => warn!(
+                "Failed to read feature flag store from Redis key '{}': {}. Falling back to file.",
+                redis_store.key, err
+            ),
+        }
+    }
+
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(err) => {
@@ -342,7 +376,14 @@ fn load_store(path: &Path) -> HashMap<String, FeatureFlagRecord> {
     })
 }
 
-fn persist_store(path: &Path, flags: &HashMap<String, FeatureFlagRecord>) -> Result<(), String> {
+fn persist_store(
+    path: &Path,
+    flags: &HashMap<String, FeatureFlagRecord>,
+    redis_store: Option<&FeatureFlagRedisStore>,
+) -> Result<(), String> {
+    if let Some(redis_store) = redis_store {
+        redis_store.persist_flags(flags)?;
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create '{}': {}", parent.display(), err))?;
@@ -369,6 +410,64 @@ fn persist_store(path: &Path, flags: &HashMap<String, FeatureFlagRecord>) -> Res
             tmp_path.display(),
             err
         )
+    })
+}
+
+impl FeatureFlagRedisStore {
+    fn load_flags(&self) -> Result<Option<HashMap<String, FeatureFlagRecord>>, String> {
+        let mut connection = self
+            .client
+            .get_connection()
+            .map_err(|err| format!("failed to connect to Redis: {}", err))?;
+        let raw: Option<String> = connection
+            .get(&self.key)
+            .map_err(|err| format!("failed to read Redis key '{}': {}", self.key, err))?;
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        serde_json::from_str(&raw).map(Some).map_err(|err| {
+            format!(
+                "failed to parse Redis feature flags '{}': {}",
+                self.key, err
+            )
+        })
+    }
+
+    fn persist_flags(&self, flags: &HashMap<String, FeatureFlagRecord>) -> Result<(), String> {
+        let serialized = serde_json::to_string(flags)
+            .map_err(|err| format!("failed to serialize flags for Redis: {}", err))?;
+        let mut connection = self
+            .client
+            .get_connection()
+            .map_err(|err| format!("failed to connect to Redis: {}", err))?;
+        connection
+            .set::<_, _, ()>(&self.key, serialized)
+            .map_err(|err| format!("failed to persist Redis key '{}': {}", self.key, err))
+    }
+}
+
+fn init_redis_store(
+    redis_url_raw: Option<String>,
+    redis_store_key: String,
+) -> Option<FeatureFlagRedisStore> {
+    let redis_url = redis_url_raw
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let redis_store_key = redis_store_key.trim();
+    if redis_store_key.is_empty() {
+        return None;
+    }
+    let client = match redis::Client::open(redis_url.to_owned()) {
+        Ok(client) => client,
+        Err(err) => {
+            warn!("Failed to configure Redis-backed feature flags: {}", err);
+            return None;
+        }
+    };
+    Some(FeatureFlagRedisStore {
+        client,
+        key: redis_store_key.to_owned(),
     })
 }
 
