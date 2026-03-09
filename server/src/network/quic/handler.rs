@@ -993,29 +993,17 @@ async fn run_connection_writer_framed(
             continue;
         }
 
-        let payload_len = match u32::try_from(payload.len()) {
-            Ok(len) => len,
-            Err(_) => {
-                warn!(
-                    "QUIC framed writer token={} dropping oversized payload ({} bytes) for {}",
-                    connection_token,
-                    payload.len(),
-                    remote_addr
-                );
-                continue;
-            }
-        };
-        let frame_prefix = payload_len.to_be_bytes();
-        debug_assert_eq!(frame_prefix.len(), QUIC_FRAMED_LENGTH_PREFIX_BYTES);
-
-        if let Err(err) = send_stream.write_all(&frame_prefix).await {
-            debug!(
-                "QUIC framed writer token={} failed writing frame prefix to {}: {}",
-                connection_token, remote_addr, err
+        let Some(frame) = build_framed_stream_chunk(&payload) else {
+            warn!(
+                "QUIC framed writer token={} dropping oversized payload ({} bytes) for {}",
+                connection_token,
+                payload.len(),
+                remote_addr
             );
-            break;
-        }
-        if let Err(err) = send_stream.write_all(payload.as_ref()).await {
+            continue;
+        };
+
+        if let Err(err) = send_stream.write_all(&frame).await {
             debug!(
                 "QUIC framed writer token={} failed writing framed payload to {}: {}",
                 connection_token, remote_addr, err
@@ -1037,6 +1025,17 @@ async fn run_connection_writer_framed(
             connection_token, remote_addr, err
         );
     }
+}
+
+fn build_framed_stream_chunk(payload: &Bytes) -> Option<Vec<u8>> {
+    let payload_len = u32::try_from(payload.len()).ok()?;
+    let frame_prefix = payload_len.to_be_bytes();
+    debug_assert_eq!(frame_prefix.len(), QUIC_FRAMED_LENGTH_PREFIX_BYTES);
+
+    let mut frame = Vec::with_capacity(QUIC_FRAMED_LENGTH_PREFIX_BYTES + payload.len());
+    frame.extend_from_slice(&frame_prefix);
+    frame.extend_from_slice(payload.as_ref());
+    Some(frame)
 }
 
 fn cleanup_registered_quic_peers(
@@ -1230,6 +1229,19 @@ mod tests {
             parse_quic_outbound_mode(Some("stream_per_packet")),
             QuicOutboundMode::LegacyPerPacketStream
         );
+    }
+
+    #[test]
+    fn test_build_framed_stream_chunk_prefixes_payload_length() {
+        let payload = Bytes::from_static(b"hello");
+        let frame = build_framed_stream_chunk(&payload).expect("frame should be built");
+
+        assert_eq!(frame.len(), QUIC_FRAMED_LENGTH_PREFIX_BYTES + payload.len());
+        assert_eq!(
+            &frame[..QUIC_FRAMED_LENGTH_PREFIX_BYTES],
+            &(5u32.to_be_bytes())
+        );
+        assert_eq!(&frame[QUIC_FRAMED_LENGTH_PREFIX_BYTES..], payload.as_ref());
     }
 
     #[test]
