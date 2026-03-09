@@ -205,6 +205,8 @@ fn default_instance_env_config() -> InstanceEnv {
         live_replay_player_cap: 64,
         live_replay_dispute_persist_enabled: false,
         live_replay_dispute_store_path: "data/live_replay/disputes.jsonl".to_owned(),
+        live_replay_dispute_redis_url: None,
+        live_replay_dispute_redis_key: "mgs:live_replay:disputes".to_owned(),
         live_replay_dispute_signing_key: None,
         live_replay_dispute_audit_capacity: 512,
         live_replay_match_persist_enabled: false,
@@ -595,6 +597,8 @@ impl MassiveGameServer {
         let live_replay_player_cap = runtime.live_replay_player_cap.clamp(8, 512);
         let live_replay_dispute_persist_enabled = runtime.live_replay_dispute_persist_enabled;
         let live_replay_dispute_store_path = PathBuf::from(&runtime.live_replay_dispute_store_path);
+        let live_replay_dispute_redis_url = runtime.live_replay_dispute_redis_url.clone();
+        let live_replay_dispute_redis_key = runtime.live_replay_dispute_redis_key.clone();
         let live_replay_dispute_signing_key = runtime
             .live_replay_dispute_signing_key
             .clone()
@@ -608,7 +612,11 @@ impl MassiveGameServer {
         let live_replay_match_retention = runtime.live_replay_match_retention.clamp(1, 2_000);
         let direct_packet_queue_cap = runtime.direct_packet_queue_cap.clamp(8, 512);
         let live_replay_dispute_chain_head = if live_replay_dispute_persist_enabled {
-            load_dispute_chain_head(live_replay_dispute_store_path.as_path())
+            load_dispute_chain_head(
+                live_replay_dispute_store_path.as_path(),
+                live_replay_dispute_redis_url.as_deref(),
+                live_replay_dispute_redis_key.as_str(),
+            )
         } else {
             None
         };
@@ -703,6 +711,8 @@ impl MassiveGameServer {
                 player_cap: live_replay_player_cap,
                 dispute_persist_enabled: live_replay_dispute_persist_enabled,
                 dispute_store_path: Arc::new(live_replay_dispute_store_path),
+                dispute_redis_url: live_replay_dispute_redis_url,
+                dispute_redis_key: live_replay_dispute_redis_key,
                 dispute_signing_key: live_replay_dispute_signing_key,
                 dispute_chain_head: Arc::new(ParkingLotRwLock::new(live_replay_dispute_chain_head)),
                 dispute_audits: Arc::new(ParkingLotRwLock::new(VecDeque::with_capacity(

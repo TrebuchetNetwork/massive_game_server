@@ -143,6 +143,8 @@ Centralized reference for runtime/deploy environment variables used by `massive_
 - `MGS_LIVE_REPLAY_MATCH_RETENTION`: Retention for persisted matches.
 - `MGS_LIVE_REPLAY_DISPUTE_PERSIST`: Persist dispute evidence.
 - `MGS_LIVE_REPLAY_DISPUTE_STORE_PATH`: Dispute store path.
+- `MGS_LIVE_REPLAY_DISPUTE_REDIS_URL`: Optional Redis URL override for shared dispute metadata persistence.
+- `MGS_REDIS_LIVE_REPLAY_DISPUTE_KEY`: Redis base key for persisted dispute records and chain head.
 - `MGS_LIVE_REPLAY_DISPUTE_SIGNING_KEY`: Signing key for dispute artifacts.
 
 ## Feature Flags / Config Loader

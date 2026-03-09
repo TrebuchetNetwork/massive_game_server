@@ -48,6 +48,8 @@ pub struct InstanceEnv {
     pub live_replay_player_cap: usize,
     pub live_replay_dispute_persist_enabled: bool,
     pub live_replay_dispute_store_path: String,
+    pub live_replay_dispute_redis_url: Option<String>,
+    pub live_replay_dispute_redis_key: String,
     pub live_replay_dispute_signing_key: Option<String>,
     pub live_replay_dispute_audit_capacity: usize,
     pub live_replay_match_persist_enabled: bool,
@@ -211,6 +213,10 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
     );
     let live_replay_dispute_store_path = get_optional_trimmed("MGS_LIVE_REPLAY_DISPUTE_STORE_PATH")
         .unwrap_or_else(|| "data/live_replay/disputes.jsonl".to_owned());
+    let live_replay_dispute_redis_url = get_optional_trimmed("MGS_LIVE_REPLAY_DISPUTE_REDIS_URL")
+        .or_else(|| get_optional_trimmed("MGS_REDIS_URL"));
+    let live_replay_dispute_redis_key = get_optional_trimmed("MGS_REDIS_LIVE_REPLAY_DISPUTE_KEY")
+        .unwrap_or_else(|| "mgs:live_replay:disputes".to_owned());
     let live_replay_dispute_signing_key =
         get_optional_trimmed("MGS_LIVE_REPLAY_DISPUTE_SIGNING_KEY");
     let live_replay_dispute_audit_capacity =
@@ -442,6 +448,8 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
             live_replay_player_cap,
             live_replay_dispute_persist_enabled,
             live_replay_dispute_store_path,
+            live_replay_dispute_redis_url,
+            live_replay_dispute_redis_key,
             live_replay_dispute_signing_key,
             live_replay_dispute_audit_capacity,
             live_replay_match_persist_enabled,
@@ -796,5 +804,29 @@ mod tests {
             Some("redis://127.0.0.1:6379/")
         );
         assert_eq!(result.feature_flags.redis_store_key, "mgs:test:flags");
+    }
+
+    #[test]
+    fn load_env_config_reads_live_replay_dispute_redis_settings() {
+        let result = temp_env::with_vars(
+            [
+                ("MGS_REDIS_URL", Some("redis://127.0.0.1:6379/")),
+                (
+                    "MGS_REDIS_LIVE_REPLAY_DISPUTE_KEY",
+                    Some("mgs:test:live_replay:disputes"),
+                ),
+            ],
+            load_app_env_config,
+        )
+        .expect("live replay dispute redis settings should parse");
+
+        assert_eq!(
+            result.instance.live_replay_dispute_redis_url.as_deref(),
+            Some("redis://127.0.0.1:6379/")
+        );
+        assert_eq!(
+            result.instance.live_replay_dispute_redis_key,
+            "mgs:test:live_replay:disputes"
+        );
     }
 }

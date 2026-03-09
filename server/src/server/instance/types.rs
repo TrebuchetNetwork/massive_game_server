@@ -204,6 +204,8 @@ pub(super) struct ReplayState {
     pub(super) player_cap: usize,
     pub(super) dispute_persist_enabled: bool,
     pub(super) dispute_store_path: Arc<PathBuf>,
+    pub(super) dispute_redis_url: Option<String>,
+    pub(super) dispute_redis_key: String,
     pub(super) dispute_signing_key: Option<Arc<Vec<u8>>>,
     pub(super) dispute_chain_head: Arc<ParkingLotRwLock<Option<String>>>,
     pub(super) dispute_audits: Arc<ParkingLotRwLock<VecDeque<LiveReplayDisputeAuditProof>>>,

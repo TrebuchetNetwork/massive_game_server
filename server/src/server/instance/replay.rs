@@ -268,7 +268,11 @@ impl MassiveGameServer {
             dispute_id: dispute_id.clone(),
             persisted: false,
             storage_path: if self.replay.dispute_persist_enabled {
-                Some(self.replay.dispute_store_path.to_string_lossy().to_string())
+                if self.replay.dispute_redis_url.is_some() {
+                    Some(format!("redis:{}", self.replay.dispute_redis_key))
+                } else {
+                    Some(self.replay.dispute_store_path.to_string_lossy().to_string())
+                }
             } else {
                 None
             },
@@ -294,8 +298,12 @@ impl MassiveGameServer {
                 signature_hmac_sha256: signature_hmac_sha256.clone(),
             };
 
-            match append_dispute_record(self.replay.dispute_store_path.as_path(), &persisted_record)
-            {
+            match append_dispute_record(
+                self.replay.dispute_store_path.as_path(),
+                self.replay.dispute_redis_url.as_deref(),
+                self.replay.dispute_redis_key.as_str(),
+                &persisted_record,
+            ) {
                 Ok(()) => {
                     *self.replay.dispute_chain_head.write() = Some(chain_hash_sha256.clone());
                     audit.persisted = true;
