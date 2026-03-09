@@ -391,6 +391,7 @@ impl MassiveGameServer {
 
         if actual_dist > max_dist {
             player_state.violation_count += 1;
+            metrics::record_speed_hack_detection("position");
             if player_state.violation_count > POSITION_VALIDATION_VIOLATION_THRESHOLD {
                 player_state.x = player_state.last_valid_position.0;
                 player_state.y = player_state.last_valid_position.1;
@@ -412,6 +413,7 @@ impl MassiveGameServer {
 
         if accel_magnitude > max_allowed_accel {
             player_state.acceleration_violation_count += 1;
+            metrics::record_speed_hack_detection("acceleration");
             if player_state.acceleration_violation_count > ACCELERATION_VIOLATION_THRESHOLD {
                 warn!(
                     "[{}]: Acceleration anomaly (accel={:.1}, threshold={:.1}, count={}).",

@@ -402,6 +402,7 @@ impl MassiveGameServer {
                         }
 
                         // Push damage event
+                        metrics::record_damage_event("melee");
                         self.global_game_events.push(
                             GameEvent::PlayerDamaged {
                                 target_id: target_id_arc_nearby.clone(),

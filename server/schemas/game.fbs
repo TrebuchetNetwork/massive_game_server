@@ -62,7 +62,11 @@ enum GameEventType : byte {
     ShieldBroken = 14, // shield depleted to zero
     PowerupExpiring = 15, // value = seconds remaining (typically 3 or 1)
     Footstep = 16,
-    WeaponMilestone = 17
+    WeaponMilestone = 17,
+    ReloadStart = 18,
+    DodgeStart = 19,
+    DodgeEnd = 20,
+    MeleeCharge = 21
 }
 
 enum SurfaceType : byte {
@@ -281,6 +285,7 @@ table WelcomeMessage {
     message: string;
     server_tick_rate: ushort = 30; // Example: inform client about server's tick rate
     server_protocol_version: uint = 1;
+    schema_version: uint = 6; // Schema version for client/server compatibility negotiation
 }
 
 table InitialStateMessage {

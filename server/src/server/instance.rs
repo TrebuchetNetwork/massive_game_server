@@ -755,6 +755,7 @@ impl MassiveGameServer {
 
         server.publish_authoritative_lock_free_snapshots();
         server.maybe_refresh_navigation_mesh();
+        metrics::record_match_created();
         info!("MassiveGameServer initialized successfully.");
         server
     }

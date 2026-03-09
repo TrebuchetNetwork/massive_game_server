@@ -30,6 +30,7 @@ export {
     normalizeConnectionErrorDetail,
 } from './connection_status.js';
 export { emitClientLog, flushPendingClientLogs } from './client_logger.js';
+export { createErrorBoundary } from './ErrorBoundary.js';
 export { createGameRenderer } from './GameRenderer.js';
 export { createProtocolHandler } from './ProtocolHandler.js?v=20260309a';
 export { createInputManager } from './InputManager.js';

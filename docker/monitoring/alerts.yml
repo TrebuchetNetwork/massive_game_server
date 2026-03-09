@@ -8,16 +8,16 @@ groups:
           severity: critical
         annotations:
           summary: "Game server metrics endpoint is down"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: LowFrameRate
-        expr: increase(game_frames_total[30s]) < 1500
+        expr: rate(game_frames_total[1m]) < 50
         for: 2m
         labels:
           severity: warning
         annotations:
           summary: "Game frame rate dropped below 50 FPS"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: HighMemoryRss
         expr: game_memory_rss_bytes > 3000000000
@@ -26,7 +26,7 @@ groups:
           severity: warning
         annotations:
           summary: "Game server RSS is above 3GB"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: HighPlayerCount
         expr: game_players_connected > 300
@@ -35,7 +35,7 @@ groups:
           severity: warning
         annotations:
           summary: "Player count is above 300"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: HighCpuUsage
         expr: game_cpu_usage_percent > 85
@@ -44,7 +44,7 @@ groups:
           severity: warning
         annotations:
           summary: "Game server CPU usage is above 85%"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: ElevatedAuthFailures
         expr: sum(rate(game_auth_attempts_total{result="failure"}[10m])) > 0.2
@@ -53,7 +53,7 @@ groups:
           severity: warning
         annotations:
           summary: "Authentication failures are elevated"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: AuthRateLimitExhausted
         expr: sum(increase(game_auth_attempts_total{result=~"rate_limited|ip_rate_limited|token_rate_limited"}[5m])) > 25
@@ -62,7 +62,7 @@ groups:
           severity: critical
         annotations:
           summary: "Authentication rate limiting is being exhausted"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: InputValidationFailures
         expr: sum(increase(game_input_validation_failed_total[5m])) > 50
@@ -71,7 +71,7 @@ groups:
           severity: warning
         annotations:
           summary: "Rejected client input or signaling payloads exceeded 50 in 5 minutes"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: LagCompensationClamped
         expr: increase(game_lag_compensation_clamped_total[10m]) > 10
@@ -80,7 +80,7 @@ groups:
           severity: warning
         annotations:
           summary: "Lag compensation is repeatedly clamping to the server maximum"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: HighConnectionRttP95
         expr: histogram_quantile(0.95, sum(rate(game_connection_rtt_ms_bucket[5m])) by (le)) > 250
@@ -89,7 +89,7 @@ groups:
           severity: warning
         annotations:
           summary: "P95 connection RTT is above 250ms"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: WebRtcPeerFailures
         expr: increase(game_webrtc_peer_state_transitions_total{state="failed"}[10m]) > 3
@@ -98,7 +98,7 @@ groups:
           severity: warning
         annotations:
           summary: "WebRTC peers are entering failed state"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: QuicOutboundDrops
         expr: increase(game_quic_outbound_dropped_packets_total[5m]) > 100
@@ -107,7 +107,7 @@ groups:
           severity: warning
         annotations:
           summary: "QUIC outbound packet drops exceeded 100 in 5 minutes"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: MatchStateDegraded
         expr: game_match_degraded > 0
@@ -116,7 +116,7 @@ groups:
           severity: critical
         annotations:
           summary: "Authoritative match loop entered degraded mode"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: RedisUnavailable
         expr: redis_up == 0
@@ -125,7 +125,7 @@ groups:
           severity: critical
         annotations:
           summary: "Redis exporter reports the backing Redis instance as unavailable"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
 
       - alert: LowDiskSpace
         expr: (node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}) < 0.15
@@ -134,4 +134,22 @@ groups:
           severity: warning
         annotations:
           summary: "Host disk space is below 15%"
-          runbook_url: "https://github.com/TrebuchetNetwork/massive_game_server/blob/main/docs/PRODUCTION_SUPER_PLAN.md"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
+
+      - alert: QuicPeerFailures
+        expr: increase(game_quic_connections_rejected_total[5m]) > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "QUIC connection rejections exceeded 25 in 5 minutes"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"
+
+      - alert: InputBacklogHigh
+        expr: sum(rate(game_input_validation_failed_total[1m])) * 60 > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Input validation failure rate exceeds 10 per minute"
+          runbook_url: "https://docs.trebuchet.network/runbooks/{{ $labels.alertname }}"

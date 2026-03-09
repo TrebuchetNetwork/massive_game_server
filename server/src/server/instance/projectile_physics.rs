@@ -566,6 +566,14 @@ impl MassiveGameServer {
                     attacker_state_entry.mark_field_changed(FIELD_SCORE_STATS);
                 }
 
+                metrics::record_damage_event(match weapon {
+                    ServerWeaponType::Pistol => "pistol",
+                    ServerWeaponType::Shotgun => "shotgun",
+                    ServerWeaponType::Rifle => "rifle",
+                    ServerWeaponType::Sniper => "sniper",
+                    ServerWeaponType::Melee => "melee",
+                });
+
                 self.global_game_events.push(
                     GameEvent::PlayerDamaged {
                         target_id: target_id.clone(),

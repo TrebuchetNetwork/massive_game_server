@@ -3,6 +3,7 @@ name = "massive_game_server_core" # Or your desired public crate name
 version = "0.1.2" # Published versions must be unique on crates.io
 authors = ["Trebuchet Network Contributors <contact@trebuchet.network>"] # Or your details
 edition = "2021"
+rust-version = "1.87"
 description = "A high-performance Rust game server core for massive multiplayer interactions, part of Project Trebuchet."
 license = "MIT"
 readme = "README.md" # You might want a specific README for the crate itself, or point to the main one if it's suitable.

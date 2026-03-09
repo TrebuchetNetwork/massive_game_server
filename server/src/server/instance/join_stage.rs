@@ -93,6 +93,9 @@ impl MassiveGameServer {
             }
             if trace.completed_ms.is_none() {
                 trace.completed_ms = Some(now_ms);
+                // Record total join latency from first seen to completion (microseconds → seconds).
+                let join_latency_us = now_ms.saturating_sub(trace.first_seen_ms);
+                metrics::record_player_join_latency(join_latency_us as f64 / 1_000_000.0);
             }
         }
     }

@@ -14,6 +14,7 @@ fn build_welcome_message_bytes(player_id: &str, server_tick_rate: u16) -> Vec<u8
             message: Some(message_fb),
             server_tick_rate,
             server_protocol_version: BENCH_PROTOCOL_VERSION,
+            schema_version: 6,
         },
     );
     let root = fb::GameMessage::create(

@@ -73,6 +73,36 @@
       "targets": [{"expr": "histogram_quantile(0.95, sum(rate(game_frame_time_seconds_bucket[5m])) by (le))", "refId": "A"}],
       "title": "P95 Frame Time",
       "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
+      "id": 8,
+      "targets": [{"expr": "histogram_quantile(0.95, sum(rate(game_auth_token_resolution_seconds_bucket[5m])) by (le))", "refId": "A"}],
+      "title": "Auth Token Resolution P95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {}},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 24},
+      "id": 9,
+      "targets": [{"expr": "game_webrtc_peers_in_state", "legendFormat": "{{ state }}", "refId": "A"}],
+      "title": "WebRTC Peers by State",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 200}]}}
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 24},
+      "id": 10,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "game_ws_connections_active", "refId": "A"}],
+      "title": "Active WebSocket Connections",
+      "type": "stat"
     }
   ],
   "refresh": "10s",

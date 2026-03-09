@@ -438,6 +438,7 @@
             removeSyntheticProjectiles,
             applyConnectionStatusUi,
             normalizeConnectionErrorDetail,
+            createErrorBoundary,
             createGameRenderer,
             createProtocolHandler,
             CLIENT_PROTOCOL_VERSION,
@@ -547,8 +548,18 @@
             pickupColors,
         } = buildRuntimeConfig(window.location.search, GP);
 
+        // ── Error boundary for module init ──────────────────────────────
+        const errorBoundary = createErrorBoundary(() => ({ log: typeof log === 'function' ? log : undefined }));
+        const { wrapModuleInit } = errorBoundary;
+
         // ── Instantiate extracted modules ──────────────────────────────
-        const gameRenderer = createGameRenderer({ PIXI, GP, PLAYER_RADIUS, teamColors, weaponNames, weaponColors, pickupColors });
+        const gameRenderer = wrapModuleInit('GameRenderer', () =>
+            createGameRenderer({ PIXI, GP, PLAYER_RADIUS, teamColors, weaponNames, weaponColors, pickupColors })
+        );
+        if (!gameRenderer) {
+            errorBoundary.showCriticalError('GameRenderer failed to initialize. The game cannot start.');
+            return;
+        }
         const {
             drawRegularPolygon,
             drawStar,
@@ -2573,14 +2584,20 @@
         installClientRuntimeBoundary();
 
         // ── Instantiate ProtocolHandler ──────────────────────────────────
-        const protocolHandler = createProtocolHandler({
-            flatbuffers,
-            GameProtocol,
-            GP,
-            log,
-            isWallDebugEnabled,
-            logWallDebug,
-        });
+        const protocolHandler = wrapModuleInit('ProtocolHandler', () =>
+            createProtocolHandler({
+                flatbuffers,
+                GameProtocol,
+                GP,
+                log,
+                isWallDebugEnabled,
+                logWallDebug,
+            })
+        );
+        if (!protocolHandler) {
+            errorBoundary.showCriticalError('ProtocolHandler failed to initialize. The game cannot start.');
+            return;
+        }
         const {
             toBinaryView,
             bindFlatBufferData,
@@ -4347,42 +4364,48 @@
         }
 
         // ── Instantiate ServerUpdateHandler ────────────────────────────
-        const serverUpdateHandler = createServerUpdateHandler(() => ({
-            log, GP, normalizeAngle, walls, players, projectiles, pickups, zones,
-            localPlayerState, myPlayerId, drawWalls, drawZones,
-            removePlayerClientState, removeProjectileClientState,
-            normalizePlayerDeltaMask, assignPlayerStateFromObject,
-            assignPlayerStateFromTable, assignWallStateFromTable,
-            assignProjectileStateFromTable, assignPickupStateFromTable,
-            parseMatchInfo, parseTeamScores, markProjectileServerUpdate,
-            isWallDebugEnabled, logWallDebug,
-            effectsManager, minimap, killFeed, matchInfo,
-            updateKillFeed, refreshMatchInfoUi, updateFlags,
-            RESPAWN_ANIMATION_LIGHTWEIGHT, pendingInputs, lastProcessedInput,
-            maybeRecordInterpolationSnapshot, minimapWallsCacheDirty, currentMapName,
-            flatbufferParseScratch, GameProtocol,
-            DELTA_SUPPORTS_REMOVED_PLAYER_IDS,
-            DELTA_SUPPORTS_CHANGED_PLAYER_FIELDS,
-            DELTA_SUPPORTS_UPDATED_WALLS,
-            DELTA_SUPPORTS_FULL_WALLS,
-            PLAYER_DELTA_FULL_MASK,
-            FAST_DELTA_APPLY_ENABLED,
-            bindFlatBufferData,
-            fastDeltaPathErrorCount,
-            incrementFastDeltaPathErrorCount: () => { fastDeltaPathErrorCount += 1; },
-            setLocalPlayerState: (v) => { localPlayerState = v; },
-            setMatchInfo: (v) => { matchInfo = v; },
-            setKillFeed: (v) => { killFeed = v; },
-            setLastProcessedInput: (v) => { lastProcessedInput = v; },
-            setPendingInputs: (v) => {
-                pendingInputs = v;
-                if (inputManager) {
-                    inputManager.setPendingInputsBuffer(v);
-                }
-            },
-            setMinimapWallsCacheDirty: (v) => { minimapWallsCacheDirty = v; },
-            setCurrentMapName: (v) => { currentMapName = v; },
-        }));
+        const serverUpdateHandler = wrapModuleInit('ServerUpdateHandler', () =>
+            createServerUpdateHandler(() => ({
+                log, GP, normalizeAngle, walls, players, projectiles, pickups, zones,
+                localPlayerState, myPlayerId, drawWalls, drawZones,
+                removePlayerClientState, removeProjectileClientState,
+                normalizePlayerDeltaMask, assignPlayerStateFromObject,
+                assignPlayerStateFromTable, assignWallStateFromTable,
+                assignProjectileStateFromTable, assignPickupStateFromTable,
+                parseMatchInfo, parseTeamScores, markProjectileServerUpdate,
+                isWallDebugEnabled, logWallDebug,
+                effectsManager, minimap, killFeed, matchInfo,
+                updateKillFeed, refreshMatchInfoUi, updateFlags,
+                RESPAWN_ANIMATION_LIGHTWEIGHT, pendingInputs, lastProcessedInput,
+                maybeRecordInterpolationSnapshot, minimapWallsCacheDirty, currentMapName,
+                flatbufferParseScratch, GameProtocol,
+                DELTA_SUPPORTS_REMOVED_PLAYER_IDS,
+                DELTA_SUPPORTS_CHANGED_PLAYER_FIELDS,
+                DELTA_SUPPORTS_UPDATED_WALLS,
+                DELTA_SUPPORTS_FULL_WALLS,
+                PLAYER_DELTA_FULL_MASK,
+                FAST_DELTA_APPLY_ENABLED,
+                bindFlatBufferData,
+                fastDeltaPathErrorCount,
+                incrementFastDeltaPathErrorCount: () => { fastDeltaPathErrorCount += 1; },
+                setLocalPlayerState: (v) => { localPlayerState = v; },
+                setMatchInfo: (v) => { matchInfo = v; },
+                setKillFeed: (v) => { killFeed = v; },
+                setLastProcessedInput: (v) => { lastProcessedInput = v; },
+                setPendingInputs: (v) => {
+                    pendingInputs = v;
+                    if (inputManager) {
+                        inputManager.setPendingInputsBuffer(v);
+                    }
+                },
+                setMinimapWallsCacheDirty: (v) => { minimapWallsCacheDirty = v; },
+                setCurrentMapName: (v) => { currentMapName = v; },
+            }))
+        );
+        if (!serverUpdateHandler) {
+            errorBoundary.showCriticalError('ServerUpdateHandler failed to initialize. The game cannot start.');
+            return;
+        }
         const { processServerUpdate, processDeltaStateFast, tryProcessDeltaMessageFast } = serverUpdateHandler;
 
         // processServerUpdate, processDeltaStateFast, tryProcessDeltaMessageFast
@@ -4659,42 +4682,48 @@
         }
 
         // ── Instantiate ConnectionManager ──────────────────────────────
-        const connectionManager = createConnectionManager(() => ({
-            log, GP, GameProtocol, PIXI, uiModeParams,
-            normalizeSignalingUrl, summarizeSignalingError,
-            wsUrlInput, isMobileDevice, dataSaverMode,
-            getPreferredPlayerName: () => preferredPlayerName,
-            getSelectedMatchType: () => selectedMatchType,
-            canStartConnectionAttempt, initCullWorker, cullWorker, WORKER_CULL_ENABLED,
-            startJoinTimingAttempt, markJoinTimingStage, markJoinTimingAborted,
-            withAuthTokenInUrl, setConnectionError, clearConnectionOverride,
-            clearReconnectTimer, scheduleAutoReconnect, applyConnectionStatus,
-            connectButton, peerConnectionConfig, peerConnection, signalingSocket, dataChannel,
-            processServerUpdate, tryProcessDeltaMessageFast, parseFlatBufferMessage, unpackCoalescedPackets,
-            controlsDiv, setupInputHandlers, ensureHudWidgets,
-            loadSettings, initRenderAssetCache,
-            setActiveSignalingUrl: (v) => { activeSignalingUrl = v; },
-            setConnectAttemptInFlight: (v) => { connectAttemptInFlight = v; },
-            setHasAttemptedConnection: (v) => { hasAttemptedConnection = v; },
-            setSignalingSocket: (v) => { signalingSocket = v; },
-            setPeerConnection: (v) => { peerConnection = v; },
-            setDataChannel: (v) => { dataChannel = v; },
-            createOffer,
-            trackNetworkProfilerMessage: (byteLength) => {
-                networkProfilerIncomingBytes += byteLength;
-                networkProfilerIncomingMessages += 1;
-                networkProfilerIncomingPackets += 1;
-            },
-            trackFastDeltaPacket: () => { networkProfilerFastDeltaPackets += 1; networkProfilerStateUpdates += 1; },
-            trackFullParsePacket: () => { networkProfilerFullParsePackets += 1; },
-            handleParsedMessage,
-            // (#30) Callback to flush entity state on reconnect
-            clearGameStateForReconnect,
-            // (#30) Reset reconnect bookkeeping on successful connection
-            resetReconnectState,
-            // Delegate from ConnectionManager.resetConnectionUI -> client.html resetConnectionUI
-            resetConnectionUIImpl: resetConnectionUI,
-        }));
+        const connectionManager = wrapModuleInit('ConnectionManager', () =>
+            createConnectionManager(() => ({
+                log, GP, GameProtocol, PIXI, uiModeParams,
+                normalizeSignalingUrl, summarizeSignalingError,
+                wsUrlInput, isMobileDevice, dataSaverMode,
+                getPreferredPlayerName: () => preferredPlayerName,
+                getSelectedMatchType: () => selectedMatchType,
+                canStartConnectionAttempt, initCullWorker, cullWorker, WORKER_CULL_ENABLED,
+                startJoinTimingAttempt, markJoinTimingStage, markJoinTimingAborted,
+                withAuthTokenInUrl, setConnectionError, clearConnectionOverride,
+                clearReconnectTimer, scheduleAutoReconnect, applyConnectionStatus,
+                connectButton, peerConnectionConfig, peerConnection, signalingSocket, dataChannel,
+                processServerUpdate, tryProcessDeltaMessageFast, parseFlatBufferMessage, unpackCoalescedPackets,
+                controlsDiv, setupInputHandlers, ensureHudWidgets,
+                loadSettings, initRenderAssetCache,
+                setActiveSignalingUrl: (v) => { activeSignalingUrl = v; },
+                setConnectAttemptInFlight: (v) => { connectAttemptInFlight = v; },
+                setHasAttemptedConnection: (v) => { hasAttemptedConnection = v; },
+                setSignalingSocket: (v) => { signalingSocket = v; },
+                setPeerConnection: (v) => { peerConnection = v; },
+                setDataChannel: (v) => { dataChannel = v; },
+                createOffer,
+                trackNetworkProfilerMessage: (byteLength) => {
+                    networkProfilerIncomingBytes += byteLength;
+                    networkProfilerIncomingMessages += 1;
+                    networkProfilerIncomingPackets += 1;
+                },
+                trackFastDeltaPacket: () => { networkProfilerFastDeltaPackets += 1; networkProfilerStateUpdates += 1; },
+                trackFullParsePacket: () => { networkProfilerFullParsePackets += 1; },
+                handleParsedMessage,
+                // (#30) Callback to flush entity state on reconnect
+                clearGameStateForReconnect,
+                // (#30) Reset reconnect bookkeeping on successful connection
+                resetReconnectState,
+                // Delegate from ConnectionManager.resetConnectionUI -> client.html resetConnectionUI
+                resetConnectionUIImpl: resetConnectionUI,
+            }))
+        );
+        if (!connectionManager) {
+            errorBoundary.showCriticalError('ConnectionManager failed to initialize. The game cannot start.');
+            return;
+        }
         const {
             withJoinSelectionInUrl,
             startConnectionAttempt,

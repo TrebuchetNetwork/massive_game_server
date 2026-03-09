@@ -16,6 +16,7 @@ codegen-units = 1
 panic = "abort"
 debug = false
 opt-level = 3
+overflow-checks = true
 
 [profile.release-with-debug]
 inherits = "release"

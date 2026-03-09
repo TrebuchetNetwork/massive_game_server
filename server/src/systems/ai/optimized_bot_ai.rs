@@ -6,6 +6,7 @@ use crate::core::types::{
     FIELD_MISC,
 };
 use crate::flatbuffers_generated::game_protocol as fb;
+use crate::operational::monitoring::metrics;
 use crate::server::instance::{BotBehaviorState, BotController, MassiveGameServer};
 use crate::systems::ai::commander::{
     MotionSample, PredictiveMotionModel, ThreatPredictor, ThreatSample,
@@ -417,6 +418,7 @@ impl OptimizedBotAI {
     /// Medium bots get simplified AI every 4th tick, Far bots get basic wander
     /// every 8th tick.  Timing uses tick counts for determinism.
     pub fn update_bots_batch(server_instance: &MassiveGameServer, delta_time: f32) {
+        let bot_batch_start = Instant::now();
         let frame_count = server_instance
             .frame_counter
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -817,6 +819,8 @@ impl OptimizedBotAI {
 
         drop(match_info_guard);
         BOT_IDS.with(|cell| *cell.borrow_mut() = bot_ids);
+
+        metrics::record_bot_decision_time(bot_batch_start.elapsed().as_secs_f64());
     }
 
     /// Far-tier wander: pick a random nearby target and patrol. No combat, no

@@ -8,6 +8,7 @@
 
 use crate::core::simd;
 use crate::core::types::{EntityId, PlayerID};
+use crate::operational::monitoring::metrics;
 use arc_swap::ArcSwap;
 use dashmap::{DashMap, DashSet};
 use std::cell::RefCell;
@@ -226,6 +227,8 @@ thread_local! {
     static CELL_QUERY_INDICES_SCRATCH: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
     static PLAYER_QUERY_DEDUPE_SCRATCH: RefCell<HashSet<PlayerID>> = RefCell::new(HashSet::new());
     static PROJECTILE_QUERY_DEDUPE_SCRATCH: RefCell<HashSet<EntityId>> = RefCell::new(HashSet::new());
+    static PLAYER_CANDIDATE_SCRATCH: RefCell<Vec<PlayerID>> = const { RefCell::new(Vec::new()) };
+    static PROJECTILE_CANDIDATE_SCRATCH: RefCell<Vec<EntityId>> = const { RefCell::new(Vec::new()) };
 }
 
 #[inline]
@@ -394,6 +397,8 @@ impl ImprovedSpatialIndex {
         self.quadtree_last_rebuild_ms
             .store(now_ms, Ordering::Release);
 
+        let rebuild_start = Instant::now();
+
         // Build new trees in local memory (no locks held by readers).
         let mut player_points = Vec::with_capacity(self.player_positions.len());
         for entry in self.player_positions.iter() {
@@ -441,6 +446,8 @@ impl ImprovedSpatialIndex {
             player_tree,
             projectile_tree,
         }));
+
+        metrics::record_spatial_index_rebuild(rebuild_start.elapsed().as_secs_f64());
 
         self.quadtree_rebuilding.store(false, Ordering::Release);
     }
@@ -500,18 +507,21 @@ impl ImprovedSpatialIndex {
                 let mut checked_players = dedupe_scratch.borrow_mut();
                 checked_players.clear();
 
-                let mut candidate_ids = Vec::new();
-                for cell_idx in cell_indices.iter().copied() {
-                    if let Some(cell) = self.player_cell_members.get(cell_idx) {
-                        for player_id in cell.iter() {
-                            if checked_players.insert(player_id.key().clone()) {
-                                candidate_ids.push(player_id.key().clone());
+                PLAYER_CANDIDATE_SCRATCH.with(|candidate_scratch| {
+                    let mut candidate_ids = candidate_scratch.borrow_mut();
+                    candidate_ids.clear();
+                    for cell_idx in cell_indices.iter().copied() {
+                        if let Some(cell) = self.player_cell_members.get(cell_idx) {
+                            for player_id in cell.iter() {
+                                if checked_players.insert(player_id.key().clone()) {
+                                    candidate_ids.push(player_id.key().clone());
+                                }
                             }
                         }
                     }
-                }
-
-                candidate_ids
+                    // Return owned copy; scratch buffer retains capacity for next call
+                    candidate_ids.clone()
+                })
             })
         })
     }
@@ -524,18 +534,20 @@ impl ImprovedSpatialIndex {
                 let mut checked_projectiles = dedupe_scratch.borrow_mut();
                 checked_projectiles.clear();
 
-                let mut candidate_ids = Vec::new();
-                for cell_idx in cell_indices.iter().copied() {
-                    if let Some(cell) = self.projectile_cell_members.get(cell_idx) {
-                        for projectile_id in cell.iter() {
-                            if checked_projectiles.insert(*projectile_id.key()) {
-                                candidate_ids.push(*projectile_id.key());
+                PROJECTILE_CANDIDATE_SCRATCH.with(|candidate_scratch| {
+                    let mut candidate_ids = candidate_scratch.borrow_mut();
+                    candidate_ids.clear();
+                    for cell_idx in cell_indices.iter().copied() {
+                        if let Some(cell) = self.projectile_cell_members.get(cell_idx) {
+                            for projectile_id in cell.iter() {
+                                if checked_projectiles.insert(*projectile_id.key()) {
+                                    candidate_ids.push(*projectile_id.key());
+                                }
                             }
                         }
                     }
-                }
-
-                candidate_ids
+                    candidate_ids.clone()
+                })
             })
         })
     }

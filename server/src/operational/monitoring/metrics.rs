@@ -123,6 +123,30 @@ fn describe_metrics_catalog() {
         "game_quic_outbound_dropped_packets_total",
         "Dropped outbound QUIC packets by reason"
     );
+    describe_counter!(
+        "game_match_created_total",
+        "Total number of matches created"
+    );
+    describe_histogram!(
+        "game_player_join_latency_seconds",
+        "Time taken to process a player join in seconds"
+    );
+    describe_histogram!(
+        "game_spatial_index_rebuild_seconds",
+        "Spatial index quadtree rebuild time in seconds"
+    );
+    describe_histogram!(
+        "game_bot_decision_seconds",
+        "Bot AI decision batch processing time in seconds"
+    );
+    describe_counter!(
+        "game_speed_hack_detections_total",
+        "Total speed hack detections by type"
+    );
+    describe_counter!(
+        "game_damage_events_total",
+        "Total damage events by weapon type"
+    );
 }
 
 pub fn init_metrics_exporter_from_env() -> Result<()> {
@@ -305,6 +329,56 @@ pub fn record_quic_outbound_dropped_packets(reason: &'static str, count: u64) {
         "reason" => reason
     )
     .increment(count);
+}
+
+pub fn record_match_created() {
+    if !enabled() {
+        return;
+    }
+    counter!("game_match_created_total").increment(1);
+}
+
+pub fn record_player_join_latency(duration_seconds: f64) {
+    if !enabled() {
+        return;
+    }
+    histogram!("game_player_join_latency_seconds").record(duration_seconds.max(0.0));
+}
+
+pub fn record_spatial_index_rebuild(duration_seconds: f64) {
+    if !enabled() {
+        return;
+    }
+    histogram!("game_spatial_index_rebuild_seconds").record(duration_seconds.max(0.0));
+}
+
+pub fn record_bot_decision_time(duration_seconds: f64) {
+    if !enabled() {
+        return;
+    }
+    histogram!("game_bot_decision_seconds").record(duration_seconds.max(0.0));
+}
+
+pub fn record_speed_hack_detection(detection_type: &'static str) {
+    if !enabled() {
+        return;
+    }
+    counter!(
+        "game_speed_hack_detections_total",
+        "type" => detection_type
+    )
+    .increment(1);
+}
+
+pub fn record_damage_event(weapon: &'static str) {
+    if !enabled() {
+        return;
+    }
+    counter!(
+        "game_damage_events_total",
+        "weapon" => weapon
+    )
+    .increment(1);
 }
 
 pub struct MetricsSystem {
