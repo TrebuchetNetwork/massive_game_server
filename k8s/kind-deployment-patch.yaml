@@ -1,0 +1,33 @@
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          image: massive-game-server:kind
+          imagePullPolicy: Never
+          env:
+            - name: MGS_BEHIND_TLS_PROXY
+              value: "0"
+            - name: MGS_DISABLE_STUN
+              value: "1"
+            - name: MGS_MATCH_DURATION_OVERRIDE_SECS
+              value: "15"
+            - name: MGS_WEBRTC_NAT_1TO1_IPS
+              value: "127.0.0.1"
+            - name: MGS_WEBRTC_NAT_1TO1_CANDIDATE_TYPE
+              value: "host"
+            - name: MGS_WEBRTC_UDP_PORT_MIN
+              value: "50000"
+            - name: MGS_WEBRTC_UDP_PORT_MAX
+              value: "50003"
+            - name: MGS_REQUIRE_AUTH
+              value: "0"
+            - name: MGS_TARGET_BOT_COUNT
+              value: "0"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
