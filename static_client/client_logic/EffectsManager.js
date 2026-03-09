@@ -5,6 +5,7 @@
  */
 
 import { createEffectsAudioRuntime } from "./effects_audio_runtime.js";
+import { emitClientLog } from "./client_logger.js";
 
 class NoopEffectsManager {
     constructor() {}
@@ -20,7 +21,11 @@ try {
         RuntimeEffectsManager = runtime.EffectsManager;
     }
 } catch (error) {
-    console.warn('[EffectsManager] Runtime bootstrap failed, using no-op fallback.', error);
+    emitClientLog(
+        "[EffectsManager] Runtime bootstrap failed, using no-op fallback.",
+        "warn",
+        error
+    );
 }
 
 export class EffectsManager extends RuntimeEffectsManager {}

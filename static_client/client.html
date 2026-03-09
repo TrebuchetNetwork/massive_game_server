@@ -454,7 +454,8 @@
             createPerformanceBudget,
             createRenderAssetManager,
             createUpdateSprites,
-        } from './client_logic/index.js?v=20260306b';
+            flushPendingClientLogs,
+        } from './client_logic/index.js?v=20260309b';
         const GP = GameProtocol;
         const {
             uiModeParams,
@@ -2519,6 +2520,8 @@
 
             logOutput.scrollTop = logOutput.scrollHeight;
         }
+        window.__mgsClientLog = log;
+        flushPendingClientLogs();
 
         function isWallDebugEnabled() {
             return !!(DEBUG_WALL_UPDATES || gameSettings.showDestroyedWallDebug);

@@ -5,6 +5,8 @@
  * before each method call so dynamic state (app/player/maps) stays current.
  */
 
+import { emitClientLog } from './client_logger.js';
+
 export function createEffectsAudioRuntime({
   PIXI: PIXIRef = globalThis.PIXI,
   GP: GPRef = globalThis.GP || {},
@@ -367,7 +369,7 @@ for (let i = 0; i < variants.length; i += 1) {
             }
         );
     } catch (error) {
-        console.warn('Bitmap font generation failed, falling back to PIXI.Text:', error);
+        emitClientLog('Bitmap font generation failed, falling back to PIXI.Text', 'warn', error);
         this.damageNumberUseBitmapText = false;
         return;
     }
@@ -3473,7 +3475,7 @@ class AudioManager {
         try {
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
         } catch (e) {
-            console.warn("Web Audio API not supported.");
+            emitClientLog("Web Audio API not supported.", "warn");
         }
 
 this.sounds = {
@@ -3775,7 +3777,7 @@ try {
     this.zoneWetGainNode = wetGain;
     this.zoneConvolverNode = convolver;
 } catch (error) {
-    console.warn('Audio output chain init failed, using direct destination:', error);
+    emitClientLog('Audio output chain init failed, using direct destination', 'warn', error);
     this.masterOutputNode = this.audioContext.destination;
     this.masterGainNode = null;
     this.compressorNode = null;
@@ -3987,7 +3989,7 @@ this.audioContext.resume()
     .then(() => {
         this.flushPendingSounds();
     })
-    .catch(e => console.warn("AudioContext resume failed:", e))
+    .catch((e) => emitClientLog("AudioContext resume failed", "warn", e))
     .finally(() => {
         this.resumeInFlight = false;
     });
@@ -4031,7 +4033,11 @@ const loadPromise = fetch(samplePath, { cache: 'force-cache' })
     })
     .catch((error) => {
         this.sampleLoadFailures.add(soundName);
-        console.warn(`Failed to load sound sample '${soundName}' (${samplePath}):`, error);
+        emitClientLog(
+            `Failed to load sound sample '${soundName}' (${samplePath})`,
+            'warn',
+            error
+        );
         return null;
     })
     .finally(() => {
@@ -4332,7 +4338,7 @@ for (let i = 0; i < this.maxVoices; i += 1) {
             busyUntilMs: 0
         });
     } catch (error) {
-        console.warn('Audio voice pool init failed:', error);
+        emitClientLog('Audio voice pool init failed', 'warn', error);
         this.voicePool = [];
         break;
     }
@@ -4451,7 +4457,7 @@ if (this.audioContext.state === 'suspended') {
 const soundProfile = this.sounds[soundName];
 const durationSec = Number(soundProfile.duration);
 if (!Number.isFinite(durationSec) || durationSec <= 0) {
-    console.warn(`Invalid duration for sound: ${soundName}`, soundProfile.duration);
+    emitClientLog(`Invalid duration for sound: ${soundName}`, 'warn', soundProfile.duration);
     return;
 }
 
@@ -4533,7 +4539,10 @@ if (hasSampleMapping) {
     const allowToneFallback = !this.criticalSamplesLoaded || this.sampleLoadFailures.has(soundName);
     if (this.sampleLoadFailures.has(soundName) && !this.warnedSampleOnlyFallback.has(soundName)) {
         this.warnedSampleOnlyFallback.add(soundName);
-        console.warn(`Falling back to synthesized '${soundName}' because the sample is unavailable.`);
+        emitClientLog(
+            `Falling back to synthesized '${soundName}' because the sample is unavailable.`,
+            'warn'
+        );
     }
     if (!allowToneFallback) {
         return;
@@ -4612,7 +4621,7 @@ if (profile.type === 'noise') {
     oscillator.type = profile.type || 'sine';
     if (Array.isArray(profile.freq)) {
         if (!Number.isFinite(profile.freq[0])) {
-            console.warn("Invalid profile.freq[0]", profile);
+            emitClientLog("Invalid profile.freq[0]", "warn", profile);
             this.markVoiceReleased(voice);
             return;
         }
@@ -4626,7 +4635,7 @@ if (profile.type === 'noise') {
     } else if (Number.isFinite(profile.freq)) {
         oscillator.frequency.setValueAtTime(profile.freq * pitchScale, now);
     } else {
-        console.warn("Invalid profile.freq", profile);
+        emitClientLog("Invalid profile.freq", "warn", profile);
         this.markVoiceReleased(voice);
         return;
     }

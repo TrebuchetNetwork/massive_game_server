@@ -6,6 +6,8 @@
  * Uses getCtx callback pattern.
  */
 
+import { emitClientLog } from './client_logger.js';
+
 export function createRenderAssetManager(getCtx) {
     const weaponRenderColors = {
         1: 0xFBBF24,
@@ -235,12 +237,11 @@ export function createRenderAssetManager(getCtx) {
                 let subTexture = toTexture(subFrame);
                 if (!subTexture) {
                     subTexture = PIXI.Texture.EMPTY;
-                    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
-                        console.warn(
-                            `[RenderAssetManager] Failed to create atlas region "${name}"`,
-                            { region: r, atlasW, atlasH }
-                        );
-                    }
+                    emitClientLog(
+                        `[RenderAssetManager] Failed to create atlas region "${name}"`,
+                        'warn',
+                        { region: r, atlasW, atlasH }
+                    );
                 }
                 renderAssetCache.playerAtlasRegions[name] = subTexture;
             }
