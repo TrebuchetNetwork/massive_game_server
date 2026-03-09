@@ -214,34 +214,37 @@ impl MassiveGameServer {
                     let mut earliest_wall_id: EntityId = 0;
                     let mut earliest_wall_destructible = false;
                     let mut earliest_wall_surface_type = SurfaceType::Concrete.as_u8();
-                    let candidate_walls = self
-                        .wall_spatial_index
-                        .query_line_segment(old_x, old_y, proj.x, proj.y);
-                    for wall in candidate_walls {
-                        let Some(hit_t) = segment_first_hit_fraction_with_aabb(
-                            old_x,
-                            old_y,
-                            proj.x,
-                            proj.y,
-                            wall.x,
-                            wall.x + wall.width,
-                            wall.y,
-                            wall.y + wall.height,
-                        ) else {
-                            continue;
-                        };
+                    self.wall_spatial_index.for_each_line_segment_candidate(
+                        old_x,
+                        old_y,
+                        proj.x,
+                        proj.y,
+                        |wall| {
+                            let Some(hit_t) = segment_first_hit_fraction_with_aabb(
+                                old_x,
+                                old_y,
+                                proj.x,
+                                proj.y,
+                                wall.x,
+                                wall.x + wall.width,
+                                wall.y,
+                                wall.y + wall.height,
+                            ) else {
+                                return;
+                            };
 
-                        let is_earlier_hit = match earliest_wall_hit_t {
-                            Some(existing_t) => hit_t < existing_t,
-                            None => true,
-                        };
-                        if is_earlier_hit {
-                            earliest_wall_hit_t = Some(hit_t);
-                            earliest_wall_id = wall.id;
-                            earliest_wall_destructible = wall.is_destructible;
-                            earliest_wall_surface_type = wall.inferred_surface_type().as_u8();
-                        }
-                    }
+                            let is_earlier_hit = match earliest_wall_hit_t {
+                                Some(existing_t) => hit_t < existing_t,
+                                None => true,
+                            };
+                            if is_earlier_hit {
+                                earliest_wall_hit_t = Some(hit_t);
+                                earliest_wall_id = wall.id;
+                                earliest_wall_destructible = wall.is_destructible;
+                                earliest_wall_surface_type = wall.inferred_surface_type().as_u8();
+                            }
+                        },
+                    );
 
                     if let Some(hit_t) = earliest_wall_hit_t {
                         let hit_x = old_x + (proj.x - old_x) * hit_t;

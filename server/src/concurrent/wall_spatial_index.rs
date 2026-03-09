@@ -104,15 +104,25 @@ impl WallSpatialIndex {
         *frame_guard = frame;
     }
 
-    /// Query walls that intersect with a given AABB
-    pub fn query_aabb(&self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Vec<Wall> {
+    fn for_each_in_aabb<F>(&self, min_x: f32, min_y: f32, max_x: f32, max_y: f32, mut visit: F)
+    where
+        F: FnMut(&Wall),
+    {
         let query_aabb = AABB::from_corners([min_x, min_y], [max_x, max_y]);
 
         let tree_guard = self.rtree.read();
-        tree_guard
-            .locate_in_envelope_intersecting(&query_aabb)
-            .map(|spatial_wall| spatial_wall.wall.clone())
-            .collect()
+        for spatial_wall in tree_guard.locate_in_envelope_intersecting(&query_aabb) {
+            visit(&spatial_wall.wall);
+        }
+    }
+
+    /// Query walls that intersect with a given AABB
+    pub fn query_aabb(&self, min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Vec<Wall> {
+        let mut walls = Vec::new();
+        self.for_each_in_aabb(min_x, min_y, max_x, max_y, |wall| {
+            walls.push(wall.clone());
+        });
+        walls
     }
 
     /// Query walls within a radius of a point
@@ -122,6 +132,19 @@ impl WallSpatialIndex {
 
     /// Query walls along a line segment (for projectile paths)
     pub fn query_line_segment(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Vec<Wall> {
+        let mut walls = Vec::new();
+        self.for_each_line_segment_candidate(x1, y1, x2, y2, |wall| {
+            walls.push(wall.clone());
+        });
+        walls
+    }
+
+    /// Visit walls whose AABB intersects the line segment bounds. This avoids
+    /// allocating a candidate Vec on hot collision paths.
+    pub fn for_each_line_segment_candidate<F>(&self, x1: f32, y1: f32, x2: f32, y2: f32, visit: F)
+    where
+        F: FnMut(&Wall),
+    {
         // Get bounding box of the line segment
         let min_x = x1.min(x2);
         let max_x = x1.max(x2);
@@ -130,11 +153,12 @@ impl WallSpatialIndex {
 
         // Add a small buffer for edge cases
         let buffer = 1.0;
-        self.query_aabb(
+        self.for_each_in_aabb(
             min_x - buffer,
             min_y - buffer,
             max_x + buffer,
             max_y + buffer,
+            visit,
         )
     }
 
@@ -211,5 +235,43 @@ mod tests {
         // Query that should find both walls
         let results = index.query_aabb(-5.0, -5.0, 35.0, 35.0);
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn line_segment_candidate_callback_visits_matching_walls() {
+        let index = WallSpatialIndex::new();
+
+        let walls = vec![
+            Wall {
+                id: 1,
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+                is_destructible: false,
+                current_health: 100,
+                max_health: 100,
+            },
+            Wall {
+                id: 2,
+                x: 50.0,
+                y: 50.0,
+                width: 10.0,
+                height: 10.0,
+                is_destructible: false,
+                current_health: 100,
+                max_health: 100,
+            },
+        ];
+
+        index.rebuild(&walls, 1);
+
+        let mut visited = Vec::new();
+        index.for_each_line_segment_candidate(-5.0, -5.0, 12.0, 12.0, |wall| {
+            visited.push(wall.id);
+        });
+        visited.sort_unstable();
+
+        assert_eq!(visited, vec![1]);
     }
 }
