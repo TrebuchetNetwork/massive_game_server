@@ -1,3 +1,4 @@
+use crate::operational::backup::BackupManager;
 use crate::server::instance::{LiveReplayDisputeRequest, MassiveGameServer};
 
 use serde::Deserialize;
@@ -12,6 +13,7 @@ struct LiveReplayRecentQuery {
 pub fn build_ops_admin_routes(
     server: Arc<MassiveGameServer>,
     live_replay_env_enabled: bool,
+    backup_manager: BackupManager,
 ) -> warp::filters::BoxedFilter<(warp::reply::Response,)> {
     let server_for_join_stage_report = server.clone();
     let join_stage_report_route = warp::path!("api" / "ops" / "join-stages")
@@ -135,6 +137,32 @@ pub fn build_ops_admin_routes(
         })
         .boxed();
 
+    let backup_latest_route = warp::path!("api" / "ops" / "backup" / "latest")
+        .and(warp::get())
+        .and(warp::any().map(move || backup_manager.clone()))
+        .and_then(|backup_manager: BackupManager| async move {
+            let response = match backup_manager.latest_backup_metadata().await {
+                Ok(metadata) => warp::reply::json(&serde_json::json!({
+                    "ok": true,
+                    "backup": metadata,
+                }))
+                .into_response(),
+                Err(err) => warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "ok": false,
+                        "error": {
+                            "code": "backup_metadata_unavailable",
+                            "message": err,
+                        }
+                    })),
+                    warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                )
+                .into_response(),
+            };
+            Ok::<_, std::convert::Infallible>(response)
+        })
+        .boxed();
+
     join_stage_report_route
         .or(join_stage_reset_route)
         .unify()
@@ -149,6 +177,8 @@ pub fn build_ops_admin_routes(
         .or(killcam_latest_route)
         .unify()
         .or(match_type_route)
+        .unify()
+        .or(backup_latest_route)
         .unify()
         .boxed()
 }

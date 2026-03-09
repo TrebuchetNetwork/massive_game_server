@@ -21,7 +21,7 @@ Notes:
 - `configmap.yaml` and `secret.yaml` are first-class runtime inputs; do not hardcode production tokens or endpoints in `deployment.yaml`.
 - `ingress.yaml` is repo-managed, but the ingress controller and TLS secret provisioning remain environment-specific responsibilities.
 - `MGS_REDIS_URL` in `secret.yaml` enables the shared Redis-backed stores already supported by the server:
-  auth, feature flags, arena state, live replay dispute metadata, and live replay match metadata.
+  auth, feature flags, arena state, latest backup metadata, live replay dispute metadata, and live replay match metadata.
 - The ConfigMap pins the Redis store keys explicitly so Stage A and future Stage B deployments use the
   same key layout instead of relying on code defaults.
 - Stage B is still not “flip replicas to 2 and call it done”:

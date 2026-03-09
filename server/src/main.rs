@@ -163,8 +163,11 @@ async fn main() -> anyhow::Result<()> {
     let arena_routes = build_arena_routes(arena_service.clone());
     let code_generation_routes = build_code_generation_routes(code_generation_service);
     let feature_flag_routes = build_feature_flag_routes(feature_flag_service);
-    let ops_admin_routes =
-        build_ops_admin_routes(game_server_instance.clone(), app_env.live_replay_enabled);
+    let ops_admin_routes = build_ops_admin_routes(
+        game_server_instance.clone(),
+        app_env.live_replay_enabled,
+        backup_manager.clone(),
+    );
 
     let quic_primary_only = app_env.quic_primary_only;
     if quic_primary_only {

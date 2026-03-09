@@ -119,6 +119,8 @@ pub struct BackupEnv {
     pub interval_seconds: u64,
     pub output_dir: String,
     pub retention_count: usize,
+    pub redis_url: Option<String>,
+    pub redis_store_key: String,
     pub auth_store_path: String,
     pub feature_flags_store_path: String,
     pub arena_store_path: String,
@@ -345,6 +347,10 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
         get_optional_trimmed("MGS_BACKUP_DIR").unwrap_or_else(|| "data/backups".to_owned());
     let backup_retention_count =
         parse_usize_with_default("MGS_BACKUP_RETENTION_COUNT", 48, &mut errors).max(1);
+    let backup_redis_url = get_optional_trimmed("MGS_BACKUP_REDIS_URL")
+        .or_else(|| get_optional_trimmed("MGS_REDIS_URL"));
+    let backup_redis_store_key = get_optional_trimmed("MGS_REDIS_BACKUP_KEY")
+        .unwrap_or_else(|| "mgs:backup:latest".to_owned());
     let backup_auth_store_path = get_optional_trimmed("MGS_AUTH_STORE_PATH")
         .unwrap_or_else(|| "data/auth_store.json".to_owned());
     let backup_feature_flags_store_path = get_optional_trimmed("MGS_FEATURE_FLAGS_STORE_PATH")
@@ -524,6 +530,8 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
             interval_seconds: backup_interval_seconds,
             output_dir: backup_output_dir,
             retention_count: backup_retention_count,
+            redis_url: backup_redis_url,
+            redis_store_key: backup_redis_store_key,
             auth_store_path: backup_auth_store_path,
             feature_flags_store_path: backup_feature_flags_store_path,
             arena_store_path: backup_arena_store_path,
@@ -860,5 +868,23 @@ mod tests {
             result.instance.live_replay_match_redis_key,
             "mgs:test:live_replay:matches"
         );
+    }
+
+    #[test]
+    fn load_env_config_reads_backup_redis_settings() {
+        let result = temp_env::with_vars(
+            [
+                ("MGS_REDIS_URL", Some("redis://127.0.0.1:6379/")),
+                ("MGS_REDIS_BACKUP_KEY", Some("mgs:test:backup:latest")),
+            ],
+            load_app_env_config,
+        )
+        .expect("backup redis settings should parse");
+
+        assert_eq!(
+            result.backup.redis_url.as_deref(),
+            Some("redis://127.0.0.1:6379/")
+        );
+        assert_eq!(result.backup.redis_store_key, "mgs:test:backup:latest");
     }
 }

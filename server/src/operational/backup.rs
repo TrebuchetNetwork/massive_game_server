@@ -2,6 +2,7 @@
 
 use crate::operational::config::env_registry::BackupEnv;
 use crate::operational::monitoring::metrics;
+use redis::Commands;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
@@ -23,6 +24,8 @@ struct BackupConfig {
     interval_seconds: u64,
     output_dir: PathBuf,
     retention_count: usize,
+    redis_url: Option<String>,
+    redis_store_key: String,
     sources: Vec<PathBuf>,
 }
 
@@ -35,10 +38,19 @@ struct BackupManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct BackupCopiedFile {
+pub struct BackupCopiedFile {
     source: String,
     backup_path: String,
     size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupMetadataRecord {
+    pub backup_dir: String,
+    pub created_at_unix: u64,
+    pub reason: String,
+    pub copied_files: Vec<BackupCopiedFile>,
+    pub missing_sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,6 +92,8 @@ impl BackupManager {
                 interval_seconds: env.interval_seconds.max(1),
                 output_dir: PathBuf::from(env.output_dir.as_str()),
                 retention_count: env.retention_count.max(1),
+                redis_url: env.redis_url.clone(),
+                redis_store_key: env.redis_store_key.clone(),
                 sources,
             }),
         }
@@ -101,6 +115,18 @@ impl BackupManager {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(48);
+        let redis_url = std::env::var("MGS_BACKUP_REDIS_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                std::env::var("MGS_REDIS_URL")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            });
+        let redis_store_key = std::env::var("MGS_REDIS_BACKUP_KEY")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "mgs:backup:latest".to_owned());
 
         let mut sources = vec![
             env_path_or_default("MGS_AUTH_STORE_PATH", "data/auth_store.json"),
@@ -129,6 +155,8 @@ impl BackupManager {
                 interval_seconds,
                 output_dir,
                 retention_count,
+                redis_url,
+                redis_store_key,
                 sources,
             }),
         }
@@ -188,6 +216,23 @@ impl BackupManager {
         self.restore_from_backup(None).await
     }
 
+    pub async fn latest_backup_metadata(&self) -> Result<Option<BackupMetadataRecord>, String> {
+        if let Some(redis_url) = self.inner.redis_url.clone() {
+            let redis_key = self.inner.redis_store_key.clone();
+            match tokio::task::spawn_blocking(move || {
+                load_latest_backup_metadata_from_redis(redis_url.as_str(), redis_key.as_str())
+            })
+            .await
+            .map_err(|err| format!("backup metadata redis task join failed: {}", err))?
+            {
+                Ok(Some(metadata)) => return Ok(Some(metadata)),
+                Ok(None) => {}
+                Err(err) => warn!("failed to load latest backup metadata from redis: {}", err),
+            }
+        }
+        load_latest_backup_metadata_from_fs(&self.inner.output_dir).await
+    }
+
     async fn run_once_inner(&self, reason: &str) -> Result<(), String> {
         let created_at_unix = unix_now();
         let backup_root =
@@ -236,6 +281,34 @@ impl BackupManager {
         fs::write(&manifest_path, manifest_json)
             .await
             .map_err(|err| format!("failed to write backup manifest: {}", err))?;
+
+        if let Some(redis_url) = self.inner.redis_url.clone() {
+            let redis_key = self.inner.redis_store_key.clone();
+            let latest_metadata = BackupMetadataRecord {
+                backup_dir: backup_root
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+                created_at_unix,
+                reason: manifest.reason.clone(),
+                copied_files: manifest.copied_files.clone(),
+                missing_sources: manifest.missing_sources.clone(),
+            };
+            match tokio::task::spawn_blocking(move || {
+                persist_latest_backup_metadata_to_redis(
+                    redis_url.as_str(),
+                    redis_key.as_str(),
+                    &latest_metadata,
+                )
+            })
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => warn!("failed to persist latest backup metadata to redis: {}", err),
+                Err(err) => warn!("backup metadata redis task join failed: {}", err),
+            }
+        }
 
         if let Err(err) = self.prune_old_backups().await {
             warn!("Backup pruning failed: {}", err);
@@ -546,6 +619,121 @@ fn resolve_backup_file_path(backup_root: &Path, copied_file: &BackupCopiedFile) 
     backup_root.join(backup_name_for_path(Path::new(&copied_file.source)))
 }
 
+fn latest_backup_metadata_redis_key(base_key: &str) -> &str {
+    base_key
+}
+
+fn load_latest_backup_metadata_from_redis(
+    redis_url: &str,
+    redis_store_key: &str,
+) -> Result<Option<BackupMetadataRecord>, String> {
+    let trimmed_key = redis_store_key.trim();
+    if trimmed_key.is_empty() {
+        return Ok(None);
+    }
+    let client = redis::Client::open(redis_url.to_owned())
+        .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
+    let mut connection = client
+        .get_connection()
+        .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
+    let payload: Option<String> = connection
+        .get(latest_backup_metadata_redis_key(trimmed_key))
+        .map_err(|err| format!("failed to read latest backup metadata from Redis: {}", err))?;
+    payload
+        .map(|raw| {
+            serde_json::from_str::<BackupMetadataRecord>(&raw)
+                .map_err(|err| format!("invalid latest backup metadata in Redis: {}", err))
+        })
+        .transpose()
+}
+
+fn persist_latest_backup_metadata_to_redis(
+    redis_url: &str,
+    redis_store_key: &str,
+    metadata: &BackupMetadataRecord,
+) -> Result<(), String> {
+    let trimmed_key = redis_store_key.trim();
+    if trimmed_key.is_empty() {
+        return Ok(());
+    }
+    let payload = serde_json::to_string(metadata)
+        .map_err(|err| format!("failed to encode latest backup metadata json: {}", err))?;
+    let client = redis::Client::open(redis_url.to_owned())
+        .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
+    let mut connection = client
+        .get_connection()
+        .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
+    connection
+        .set::<_, _, ()>(latest_backup_metadata_redis_key(trimmed_key), payload)
+        .map_err(|err| format!("failed to persist latest backup metadata to Redis: {}", err))
+}
+
+async fn load_latest_backup_metadata_from_fs(
+    output_dir: &Path,
+) -> Result<Option<BackupMetadataRecord>, String> {
+    let backup_root = match latest_backup_root(output_dir).await? {
+        Some(path) => path,
+        None => return Ok(None),
+    };
+    let manifest_path = backup_root.join("manifest.json");
+    let manifest_raw = fs::read(&manifest_path).await.map_err(|err| {
+        format!(
+            "failed to read backup manifest '{}': {}",
+            manifest_path.display(),
+            err
+        )
+    })?;
+    let manifest: BackupManifest = serde_json::from_slice(&manifest_raw).map_err(|err| {
+        format!(
+            "invalid backup manifest '{}': {}",
+            manifest_path.display(),
+            err
+        )
+    })?;
+    Ok(Some(BackupMetadataRecord {
+        backup_dir: backup_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned(),
+        created_at_unix: manifest.created_at_unix,
+        reason: manifest.reason,
+        copied_files: manifest.copied_files,
+        missing_sources: manifest.missing_sources,
+    }))
+}
+
+async fn latest_backup_root(output_dir: &Path) -> Result<Option<PathBuf>, String> {
+    let mut entries = match fs::read_dir(output_dir).await {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("read backup dir failed: {}", err)),
+    };
+
+    let mut backup_dirs: Vec<PathBuf> = Vec::new();
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|err| format!("read backup entry failed: {}", err))?
+    {
+        let file_type = entry
+            .file_type()
+            .await
+            .map_err(|err| format!("backup entry type failed: {}", err))?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if file_name.starts_with("backup-") {
+            backup_dirs.push(entry.path());
+        }
+    }
+
+    backup_dirs.sort();
+    Ok(backup_dirs.pop())
+}
+
 async fn create_unique_backup_root(
     output_dir: &Path,
     created_at_unix: u64,
@@ -658,6 +846,8 @@ mod tests {
                 interval_seconds: 1,
                 output_dir: backup_dir.clone(),
                 retention_count: 4,
+                redis_url: None,
+                redis_store_key: "mgs:test:backup:latest".to_owned(),
                 sources: vec![source_path.clone()],
             }),
         };
@@ -702,6 +892,8 @@ mod tests {
                 interval_seconds: 1,
                 output_dir: backup_dir.clone(),
                 retention_count: 8,
+                redis_url: None,
+                redis_store_key: "mgs:test:backup:latest".to_owned(),
                 sources: vec![source_path.clone()],
             }),
         };
@@ -723,6 +915,52 @@ mod tests {
             "expected two distinct backup directories"
         );
         assert_ne!(backup_dirs[0], backup_dirs[1]);
+
+        let _ = stdfs::remove_dir_all(&test_root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn latest_backup_metadata_falls_back_to_file_when_redis_is_invalid() {
+        let test_root = std::env::temp_dir().join(format!(
+            "mgs-backup-metadata-fallback-{}-{}",
+            std::process::id(),
+            unix_now()
+        ));
+        let source_path = test_root.join("data/auth_store.json");
+        let backup_dir = test_root.join("backups");
+        stdfs::create_dir_all(source_path.parent().expect("source parent"))
+            .expect("create source directory");
+        stdfs::write(&source_path, r#"{"v":"initial"}"#).expect("write source");
+
+        let manager = BackupManager {
+            inner: Arc::new(BackupConfig {
+                enabled: true,
+                interval_seconds: 1,
+                output_dir: backup_dir,
+                retention_count: 8,
+                redis_url: Some("redis://".to_owned()),
+                redis_store_key: "mgs:test:backup:latest".to_owned(),
+                sources: vec![source_path.clone()],
+            }),
+        };
+
+        manager
+            .run_once("metadata-fallback")
+            .await
+            .expect("backup run");
+
+        let latest = manager
+            .latest_backup_metadata()
+            .await
+            .expect("latest backup metadata");
+        assert_eq!(
+            latest.as_ref().map(|record| record.reason.as_str()),
+            Some("metadata-fallback")
+        );
+        assert_eq!(
+            latest.as_ref().map(|record| record.copied_files.len()),
+            Some(1)
+        );
 
         let _ = stdfs::remove_dir_all(&test_root);
     }

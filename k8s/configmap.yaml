@@ -18,6 +18,7 @@ data:
   MGS_REDIS_AUTH_STORE_KEY: "mgs:auth:store"
   MGS_REDIS_FEATURE_FLAGS_KEY: "mgs:feature_flags:store"
   MGS_REDIS_ARENA_STORE_KEY: "mgs:arena:store"
+  MGS_REDIS_BACKUP_KEY: "mgs:backup:latest"
   MGS_REDIS_LIVE_REPLAY_DISPUTE_KEY: "mgs:live_replay:disputes"
   MGS_REDIS_LIVE_REPLAY_MATCH_KEY: "mgs:live_replay:matches"
   MGS_LIVE_REPLAY_DISPUTE_STORE_PATH: "/app/data/live_replay_disputes.json"

@@ -136,6 +136,8 @@ Centralized reference for runtime/deploy environment variables used by `massive_
 - `MGS_BACKUP_DIR`: Backup output directory.
 - `MGS_BACKUP_INTERVAL_SECONDS`: Backup interval.
 - `MGS_BACKUP_RETENTION_COUNT`: Backup retention count.
+- `MGS_BACKUP_REDIS_URL`: Optional Redis URL override for shared latest-backup metadata.
+- `MGS_REDIS_BACKUP_KEY`: Redis key used for the shared latest-backup metadata record.
 - `MGS_BACKUP_EXTRA_PATHS`: Additional paths to archive.
 - `MGS_LIVE_REPLAY_ENABLED`: Enable live replay capture.
 - `MGS_LIVE_REPLAY_CAPACITY`: Replay ring capacity.

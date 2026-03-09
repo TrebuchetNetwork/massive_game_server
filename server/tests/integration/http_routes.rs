@@ -682,6 +682,26 @@ async fn inline_admin_checks_apply_to_ops_report_routes() {
     assert_eq!(match_summary_json["ok"], Value::Bool(true));
     assert!(match_summary_json["summary"].is_null() || match_summary_json["summary"].is_object());
 
+    let backup_latest_unauthorized = client
+        .get(format!("{}/api/ops/backup/latest", proc.base_url))
+        .send()
+        .await
+        .expect("GET /api/ops/backup/latest without token");
+    assert_admin_auth_required(backup_latest_unauthorized).await;
+
+    let backup_latest_authorized = client
+        .get(format!("{}/api/ops/backup/latest", proc.base_url))
+        .header(AUTHORIZATION, format!("Bearer {admin_token}"))
+        .send()
+        .await
+        .expect("GET /api/ops/backup/latest with token");
+    let backup_latest_json: Value = backup_latest_authorized
+        .json()
+        .await
+        .expect("backup latest json");
+    assert_eq!(backup_latest_json["ok"], Value::Bool(true));
+    assert!(backup_latest_json["backup"].is_null() || backup_latest_json["backup"].is_object());
+
     let killcam_unauthorized = client
         .get(format!("{}/api/ops/killcam/test-player", proc.base_url))
         .send()
