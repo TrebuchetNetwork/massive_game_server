@@ -83,6 +83,8 @@ Centralized reference for runtime/deploy environment variables used by `massive_
 ## Arena / Code Generation
 
 - `MGS_ARENA_STORE_PATH`: Arena persistent store path.
+- `MGS_ARENA_REDIS_URL`: Optional Redis URL override for shared arena persistence.
+- `MGS_REDIS_ARENA_STORE_KEY`: Redis key for the persisted arena store snapshot.
 - `MGS_ARENA_WASM_DIR`: Arena wasm storage directory.
 - `MGS_ARENA_WASM_MAX_BYTES`: Max uploaded wasm size.
 - `MGS_ARENA_BOT_FUEL_PER_TICK`: Wasmtime fuel budget per bot tick.

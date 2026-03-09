@@ -7,6 +7,7 @@ use base64::Engine as _;
 use dashmap::DashMap;
 use futures_util::stream::{self, StreamExt};
 use parking_lot::{Mutex, RwLock};
+use redis::Commands;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
@@ -64,6 +65,7 @@ pub struct ArenaService {
 
 struct ArenaInner {
     store_path: PathBuf,
+    redis_store: Option<ArenaRedisStore>,
     bot_sandbox: BotSandbox,
     wasm_dir: PathBuf,
     wasm_max_bytes: usize,
@@ -104,6 +106,12 @@ struct ArenaInner {
 struct PersistentArenaStore {
     models: HashMap<String, ArenaModelRecord>,
     completed_matches: Vec<CompletedMatchRecord>,
+}
+
+#[derive(Clone)]
+struct ArenaRedisStore {
+    client: redis::Client,
+    key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -526,6 +534,14 @@ impl ArenaService {
         let store_path = std::env::var("MGS_ARENA_STORE_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("data/arena_store.json"));
+        let redis_store = init_redis_store(
+            std::env::var("MGS_ARENA_REDIS_URL")
+                .ok()
+                .or_else(|| std::env::var("MGS_REDIS_URL").ok()),
+            std::env::var("MGS_REDIS_ARENA_STORE_KEY")
+                .ok()
+                .unwrap_or_else(|| "mgs:arena:store".to_owned()),
+        );
         let wasm_dir = std::env::var("MGS_ARENA_WASM_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(DEFAULT_ARENA_WASM_DIR));
@@ -555,12 +571,13 @@ impl ArenaService {
             .unwrap_or(DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP)
             .clamp(64, 65_536);
         let (replay_event_tx, _) = broadcast::channel(replay_stream_channel_cap);
-        let persistent_store = load_persistent_store(&store_path);
+        let persistent_store = load_persistent_store(&store_path, redis_store.as_ref());
         let completed_count = persistent_store.completed_matches.len() as u64;
 
         info!(
-            "Arena service initialized. store_path='{}', wasm_dir='{}', models={}, completed_matches={}, replay_history_capacity={}, replay_event_history_capacity={}, replay_match_history_capacity={}, replay_stream_channel_cap={}",
+            "Arena service initialized. store_path='{}', redis_backed={}, wasm_dir='{}', models={}, completed_matches={}, replay_history_capacity={}, replay_event_history_capacity={}, replay_match_history_capacity={}, replay_stream_channel_cap={}",
             store_path.display(),
+            redis_store.is_some(),
             wasm_dir.display(),
             persistent_store.models.len(),
             completed_count,
@@ -573,6 +590,7 @@ impl ArenaService {
         Self {
             inner: Arc::new(ArenaInner {
                 store_path,
+                redis_store,
                 bot_sandbox: BotSandbox::new_from_env(),
                 wasm_dir,
                 wasm_max_bytes,
@@ -1748,8 +1766,9 @@ impl ArenaService {
             store.clone()
         };
         let path = self.inner.store_path.clone();
+        let redis_store = self.inner.redis_store.clone();
         let do_persist = move || {
-            if let Err(err) = persist_store(&path, &snapshot) {
+            if let Err(err) = persist_store(&path, &snapshot, redis_store.as_ref()) {
                 warn!("Background arena persist failed: {}", err);
             }
         };
@@ -1918,7 +1937,73 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-fn load_persistent_store(path: &Path) -> PersistentArenaStore {
+impl ArenaRedisStore {
+    fn load_store(&self) -> Result<Option<PersistentArenaStore>, String> {
+        let mut connection = self
+            .client
+            .get_connection()
+            .map_err(|err| format!("failed to connect to Redis: {}", err))?;
+        let raw: Option<String> = connection
+            .get(&self.key)
+            .map_err(|err| format!("failed to read Redis key '{}': {}", self.key, err))?;
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        serde_json::from_str(&raw)
+            .map(Some)
+            .map_err(|err| format!("failed to parse Redis arena store '{}': {}", self.key, err))
+    }
+
+    fn persist_store(&self, store: &PersistentArenaStore) -> Result<(), String> {
+        let serialized = serde_json::to_string_pretty(store)
+            .map_err(|err| format!("failed to serialize arena store for Redis: {}", err))?;
+        let mut connection = self
+            .client
+            .get_connection()
+            .map_err(|err| format!("failed to connect to Redis: {}", err))?;
+        connection
+            .set::<_, _, ()>(&self.key, serialized)
+            .map_err(|err| format!("failed to persist Redis key '{}': {}", self.key, err))
+    }
+}
+
+fn init_redis_store(
+    redis_url_raw: Option<String>,
+    redis_store_key: String,
+) -> Option<ArenaRedisStore> {
+    let redis_url = redis_url_raw
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let redis_store_key = redis_store_key.trim();
+    if redis_store_key.is_empty() {
+        return None;
+    }
+    let client = match redis::Client::open(redis_url.to_owned()) {
+        Ok(client) => client,
+        Err(err) => {
+            warn!("Failed to configure Redis-backed arena store: {}", err);
+            return None;
+        }
+    };
+    Some(ArenaRedisStore {
+        client,
+        key: redis_store_key.to_owned(),
+    })
+}
+
+fn load_persistent_store(
+    path: &Path,
+    redis_store: Option<&ArenaRedisStore>,
+) -> PersistentArenaStore {
+    if let Some(redis_store) = redis_store {
+        match redis_store.load_store() {
+            Ok(Some(store)) => return store,
+            Ok(None) => {}
+            Err(err) => warn!("Failed to load Redis-backed arena store: {}", err),
+        }
+    }
+
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(err) => {
@@ -1939,7 +2024,14 @@ fn load_persistent_store(path: &Path) -> PersistentArenaStore {
     })
 }
 
-fn persist_store(path: &Path, store: &PersistentArenaStore) -> Result<(), String> {
+fn persist_store(
+    path: &Path,
+    store: &PersistentArenaStore,
+    redis_store: Option<&ArenaRedisStore>,
+) -> Result<(), String> {
+    if let Some(redis_store) = redis_store {
+        redis_store.persist_store(store)?;
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create '{}': {}", parent.display(), err))?;
@@ -2396,6 +2488,7 @@ mod tests {
         let service = ArenaService {
             inner: Arc::new(ArenaInner {
                 store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                redis_store: None,
                 bot_sandbox: BotSandbox::new_from_env(),
                 wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
                 wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
@@ -2521,6 +2614,7 @@ mod tests {
         let service = ArenaService {
             inner: Arc::new(ArenaInner {
                 store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                redis_store: None,
                 bot_sandbox: BotSandbox::new_from_env(),
                 wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
                 wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
@@ -2677,6 +2771,7 @@ mod tests {
         let service = ArenaService {
             inner: Arc::new(ArenaInner {
                 store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                redis_store: None,
                 bot_sandbox: BotSandbox::new_from_env(),
                 wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
                 wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
@@ -2794,6 +2889,7 @@ mod tests {
         let service = ArenaService {
             inner: Arc::new(ArenaInner {
                 store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                redis_store: None,
                 bot_sandbox: BotSandbox::new_from_env(),
                 wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
                 wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
@@ -2865,6 +2961,7 @@ mod tests {
         let service = ArenaService {
             inner: Arc::new(ArenaInner {
                 store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                redis_store: None,
                 bot_sandbox: BotSandbox::new_from_env(),
                 wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
                 wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
@@ -2960,5 +3057,56 @@ mod tests {
         assert_eq!(result.simulation.total_engagements, 20);
         assert_eq!(result.simulation.mode, "tdm");
         assert_eq!(result.simulation.rounds_detail.len(), 2);
+    }
+
+    #[test]
+    fn load_persistent_store_falls_back_to_file_when_redis_is_invalid() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "mgs-arena-store-fallback-{}-{}.json",
+            std::process::id(),
+            nanos
+        ));
+        let store = PersistentArenaStore {
+            models: HashMap::from([(
+                "model-a".to_owned(),
+                ArenaModelRecord {
+                    model_id: "model-a".to_owned(),
+                    model_name: "Arena Alpha".to_owned(),
+                    provider: "test".to_owned(),
+                    version: "1".to_owned(),
+                    active: true,
+                    created_at: 1,
+                    updated_at: 1,
+                    last_seen_at: 1,
+                    elo_rating: 1000.0,
+                    matches_played: 2,
+                    wins: 1,
+                    losses: 1,
+                    draws: 0,
+                    cumulative_score: 4,
+                },
+            )]),
+            completed_matches: Vec::new(),
+        };
+
+        persist_store(&path, &store, None).expect("file persistence should succeed");
+
+        let loaded = load_persistent_store(
+            &path,
+            init_redis_store(
+                Some("redis://".to_owned()),
+                "mgs:test:arena:store".to_owned(),
+            )
+            .as_ref(),
+        );
+
+        assert_eq!(loaded.models.len(), 1);
+        assert!(loaded.models.contains_key("model-a"));
+
+        let _ = fs::remove_file(path);
     }
 }
