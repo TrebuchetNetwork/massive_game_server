@@ -1,4 +1,10 @@
 use super::*;
+use std::cell::RefCell;
+
+thread_local! {
+    static CHAT_FB_BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
+        RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(256));
+}
 
 pub(super) fn map_server_weapon_to_fb(server_weapon: ServerWeaponType) -> fb::WeaponType {
     match server_weapon {
@@ -251,36 +257,38 @@ pub(super) fn create_fb_player_state_for_delta_ext<'a>(
 }
 
 pub(super) fn build_chat_game_message_bytes(chat_entry: &ChatMessage) -> Bytes {
-    let mut chat_builder = flatbuffers::FlatBufferBuilder::with_capacity(256);
+    CHAT_FB_BUILDER.with(|builder_cell| {
+        let mut chat_builder = builder_cell.borrow_mut();
+        chat_builder.reset();
 
-    let player_id_fb = chat_builder.create_string(chat_entry.player_id.as_ref());
-    let username_fb = chat_builder.create_string(&chat_entry.username);
-    let message_fb = chat_builder.create_string(&chat_entry.message);
+        let player_id_fb = chat_builder.create_string(chat_entry.player_id.as_ref());
+        let username_fb = chat_builder.create_string(&chat_entry.username);
+        let message_fb = chat_builder.create_string(&chat_entry.message);
 
-    let chat_payload_offset = fb::ChatMessage::create(
-        &mut chat_builder,
-        &fb::ChatMessageArgs {
-            seq: chat_entry.seq,
-            player_id: Some(player_id_fb),
-            username: Some(username_fb),
-            message: Some(message_fb),
-            timestamp: chat_entry.timestamp,
-        },
-    );
+        let chat_payload_offset = fb::ChatMessage::create(
+            &mut chat_builder,
+            &fb::ChatMessageArgs {
+                seq: chat_entry.seq,
+                player_id: Some(player_id_fb),
+                username: Some(username_fb),
+                message: Some(message_fb),
+                timestamp: chat_entry.timestamp,
+            },
+        );
 
-    let game_message_offset = fb::GameMessage::create(
-        &mut chat_builder,
-        &fb::GameMessageArgs {
-            msg_type: fb::MessageType::Chat,
-            actual_message_type: fb::MessagePayload::ChatMessage,
-            actual_message: Some(chat_payload_offset.as_union_value()),
-            protocol_version: GAME_PROTOCOL_VERSION,
-        },
-    );
+        let game_message_offset = fb::GameMessage::create(
+            &mut chat_builder,
+            &fb::GameMessageArgs {
+                msg_type: fb::MessageType::Chat,
+                actual_message_type: fb::MessagePayload::ChatMessage,
+                actual_message: Some(chat_payload_offset.as_union_value()),
+                protocol_version: GAME_PROTOCOL_VERSION,
+            },
+        );
 
-    chat_builder.finish(game_message_offset, None);
-    let (buffer, root_index) = chat_builder.collapse();
-    Bytes::from(buffer).slice(root_index..)
+        chat_builder.finish(game_message_offset, None);
+        Bytes::copy_from_slice(chat_builder.finished_data())
+    })
 }
 
 pub(super) fn build_game_event_fb<'a>(
@@ -314,4 +322,69 @@ pub(super) fn build_game_event_fb<'a>(
             surface_type: crate::server::event_mapping::event_surface_type(event),
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_chat_game_message_bytes_round_trips_payload() {
+        let chat_entry = ChatMessage {
+            seq: 42,
+            player_id: Arc::from("player-1".to_owned()),
+            username: "Alpha".to_owned(),
+            message: "hello world".to_owned(),
+            timestamp: 123_456,
+        };
+
+        let bytes = build_chat_game_message_bytes(&chat_entry);
+        let parsed = fb::root_as_game_message(bytes.as_ref()).expect("chat message should parse");
+        assert_eq!(parsed.msg_type(), fb::MessageType::Chat);
+        let chat = parsed
+            .actual_message_as_chat_message()
+            .expect("chat payload should exist");
+        assert_eq!(chat.seq(), 42);
+        assert_eq!(chat.player_id(), Some("player-1"));
+        assert_eq!(chat.username(), Some("Alpha"));
+        assert_eq!(chat.message(), Some("hello world"));
+        assert_eq!(chat.timestamp(), 123_456);
+    }
+
+    #[test]
+    fn build_chat_game_message_bytes_reuses_builder_without_corrupting_bytes() {
+        let first = ChatMessage {
+            seq: 1,
+            player_id: Arc::from("player-a".to_owned()),
+            username: "First".to_owned(),
+            message: "one".to_owned(),
+            timestamp: 100,
+        };
+        let second = ChatMessage {
+            seq: 2,
+            player_id: Arc::from("player-b".to_owned()),
+            username: "Second".to_owned(),
+            message: "two".to_owned(),
+            timestamp: 200,
+        };
+
+        let first_bytes = build_chat_game_message_bytes(&first);
+        let second_bytes = build_chat_game_message_bytes(&second);
+
+        let first_parsed =
+            fb::root_as_game_message(first_bytes.as_ref()).expect("first chat should parse");
+        let second_parsed =
+            fb::root_as_game_message(second_bytes.as_ref()).expect("second chat should parse");
+        let first_chat = first_parsed
+            .actual_message_as_chat_message()
+            .expect("first chat payload should exist");
+        let second_chat = second_parsed
+            .actual_message_as_chat_message()
+            .expect("second chat payload should exist");
+
+        assert_eq!(first_chat.seq(), 1);
+        assert_eq!(first_chat.message(), Some("one"));
+        assert_eq!(second_chat.seq(), 2);
+        assert_eq!(second_chat.message(), Some("two"));
+    }
 }
