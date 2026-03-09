@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::Sha256;
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     net::IpAddr,
     sync::{atomic::AtomicBool, Arc, Mutex as StdMutex, OnceLock},
@@ -185,6 +186,11 @@ const WEBRTC_STATE_LABELS: [&str; 7] = [
 static SIGNALING_RUNTIME_CONFIG: OnceLock<SignalingEnv> = OnceLock::new();
 static LAST_CHAT_COOLDOWN_CLEANUP_MS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+
+thread_local! {
+    static WELCOME_FB_BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
+        RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(256));
+}
 
 #[derive(Clone, Copy, Debug)]
 struct ChatRateLimitState {
@@ -640,26 +646,29 @@ fn signaling_protocol_version() -> u32 {
 }
 
 fn build_welcome_message_bytes(player_id: &str, server_tick_rate: u16) -> Bytes {
-    let mut builder_welcome = flatbuffers::FlatBufferBuilder::with_capacity(256);
-    let player_id_fb_welcome = builder_welcome.create_string(player_id);
-    let welcome_text_fb = builder_welcome.create_string("Welcome to MassiveGameServer!");
-    let welcome_msg_args = fb::WelcomeMessageArgs {
-        player_id: Some(player_id_fb_welcome),
-        message: Some(welcome_text_fb),
-        server_tick_rate,
-        server_protocol_version: signaling_protocol_version(),
-    };
-    let welcome_msg = fb::WelcomeMessage::create(&mut builder_welcome, &welcome_msg_args);
-    let game_msg_welcome_args = fb::GameMessageArgs {
-        msg_type: fb::MessageType::Welcome,
-        actual_message_type: fb::MessagePayload::WelcomeMessage,
-        actual_message: Some(welcome_msg.as_union_value()),
-        protocol_version: GAME_PROTOCOL_VERSION,
-    };
-    let game_msg_welcome = fb::GameMessage::create(&mut builder_welcome, &game_msg_welcome_args);
-    builder_welcome.finish(game_msg_welcome, None);
-    let (buffer, root_index) = builder_welcome.collapse();
-    Bytes::from(buffer).slice(root_index..)
+    WELCOME_FB_BUILDER.with(|builder_cell| {
+        let mut builder_welcome = builder_cell.borrow_mut();
+        builder_welcome.reset();
+        let player_id_fb_welcome = builder_welcome.create_string(player_id);
+        let welcome_text_fb = builder_welcome.create_string("Welcome to MassiveGameServer!");
+        let welcome_msg_args = fb::WelcomeMessageArgs {
+            player_id: Some(player_id_fb_welcome),
+            message: Some(welcome_text_fb),
+            server_tick_rate,
+            server_protocol_version: signaling_protocol_version(),
+        };
+        let welcome_msg = fb::WelcomeMessage::create(&mut builder_welcome, &welcome_msg_args);
+        let game_msg_welcome_args = fb::GameMessageArgs {
+            msg_type: fb::MessageType::Welcome,
+            actual_message_type: fb::MessagePayload::WelcomeMessage,
+            actual_message: Some(welcome_msg.as_union_value()),
+            protocol_version: GAME_PROTOCOL_VERSION,
+        };
+        let game_msg_welcome =
+            fb::GameMessage::create(&mut builder_welcome, &game_msg_welcome_args);
+        builder_welcome.finish(game_msg_welcome, None);
+        Bytes::copy_from_slice(builder_welcome.finished_data())
+    })
 }
 
 fn parse_ice_servers_env(raw: &str) -> Vec<RTCIceServer> {
@@ -3506,6 +3515,25 @@ mod tests {
         let json = serde_json::to_string(&server).unwrap();
         assert!(json.contains(r#""username":"user""#));
         assert!(json.contains(r#""credential":"pass""#));
+    }
+
+    #[test]
+    fn build_welcome_message_bytes_serializes_expected_welcome_payload() {
+        let bytes = build_welcome_message_bytes("player-123", 60);
+        let game_msg = fb::root_as_game_message(bytes.as_ref())
+            .expect("welcome bytes should decode into a GameMessage");
+        assert_eq!(game_msg.msg_type(), fb::MessageType::Welcome);
+        assert_eq!(game_msg.protocol_version(), GAME_PROTOCOL_VERSION);
+        let welcome = game_msg
+            .actual_message_as_welcome_message()
+            .expect("welcome payload should exist");
+        assert_eq!(welcome.player_id(), Some("player-123"));
+        assert_eq!(welcome.message(), Some("Welcome to MassiveGameServer!"));
+        assert_eq!(welcome.server_tick_rate(), 60);
+        assert_eq!(
+            welcome.server_protocol_version(),
+            signaling_protocol_version()
+        );
     }
 
     #[test]
