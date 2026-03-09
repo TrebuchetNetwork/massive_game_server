@@ -1,4 +1,12 @@
 use super::*;
+use std::cell::RefCell;
+
+thread_local! {
+    static DELTA_STATE_FB_BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
+        RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(16384));
+    static INITIAL_STATE_FB_BUILDER: RefCell<flatbuffers::FlatBufferBuilder<'static>> =
+        RefCell::new(flatbuffers::FlatBufferBuilder::with_capacity(32768));
+}
 
 #[derive(Clone, Copy)]
 struct InitialStateChunkBuildParams {
@@ -322,457 +330,462 @@ impl MassiveGameServer {
         client_state: &mut ClientState,
         shared_data: &SharedBroadcastData,
     ) -> Result<Bytes, Box<dyn std::error::Error + Send + Sync>> {
-        let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(16384);
-        let build_start = Instant::now();
-        let player_id = self.player_manager.id_pool.get_or_create(peer_id_str);
-        let (own_team_id, own_is_spectator, own_last_processed_input_sequence) =
-            Self::lookup_player_state_from_shared(shared_data, &player_id)
-                .map(|state| {
-                    (
-                        state.team_id,
-                        state.is_spectator,
-                        state.last_processed_input_sequence,
-                    )
-                })
-                .unwrap_or((0, false, 0));
-
-        let quantize = client_state.is_mobile;
-
-        trace!("[{}] DeltaBuilder: Started", peer_id_str);
-
-        let player_aoi = self.resolve_player_aoi_for_player(shared_data, &player_id);
-
-        let mut players_fb_vec = Vec::new();
-        let mut player_fields_mask_vec: Vec<u16> = Vec::new();
-        let mut removed_player_ids_vec = Vec::new();
-        let encode_changed_mask = |mask: u16| -> u16 { mask };
-
-        if let Some(self_state) = Self::lookup_player_state_from_shared(shared_data, &player_id) {
-            let is_new = !client_state.last_known_players.contains(&player_id);
-            if is_new || self_state.changed_fields > 0 {
-                let mask = if is_new {
-                    0xFFFF
-                } else {
-                    self_state.changed_fields
-                };
-                players_fb_vec.push(create_fb_player_state_for_delta_ext(
-                    &mut builder,
-                    self_state,
-                    mask,
-                    quantize,
-                ));
-                player_fields_mask_vec.push(encode_changed_mask(mask));
-            }
-        }
-
-        // Variable-rate entity updates: skip position-only updates for other
-        // players based on their velocity magnitude.  New players and players
-        // with non-position field changes are always included.
-        let vr_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-
-        for visible_player_id in &player_aoi.visible_players {
-            if visible_player_id != &player_id {
-                if let Some(player_state) =
-                    Self::lookup_player_state_from_shared(shared_data, visible_player_id)
-                {
-                    let is_new = !client_state.last_known_players.contains(visible_player_id);
-                    if is_new || player_state.changed_fields > 0 {
-                        let mask = if is_new {
-                            0xFFFF
-                        } else {
-                            player_state.changed_fields
-                        };
-
-                        // Variable-rate: if only position/rotation changed (no other
-                        // fields), gate the update on a velocity-dependent stride so
-                        // slow/stationary entities produce fewer redundant packets.
-                        if !is_new && mask == FIELD_POSITION_ROTATION {
-                            let speed_sq = player_state.velocity_x * player_state.velocity_x
-                                + player_state.velocity_y * player_state.velocity_y;
-                            let high_thresh_sq = VARIABLE_RATE_HIGH_VELOCITY_THRESHOLD
-                                * VARIABLE_RATE_HIGH_VELOCITY_THRESHOLD;
-                            let low_thresh_sq = VARIABLE_RATE_LOW_VELOCITY_THRESHOLD
-                                * VARIABLE_RATE_LOW_VELOCITY_THRESHOLD;
-
-                            if speed_sq > high_thresh_sq {
-                                // High-velocity: 30 Hz (every 2nd frame)
-                                if !vr_frame.is_multiple_of(VARIABLE_RATE_HIGH_STRIDE) {
-                                    continue;
-                                }
-                            } else if speed_sq > low_thresh_sq {
-                                // Low-velocity: 10 Hz (every 6th frame)
-                                if !vr_frame.is_multiple_of(VARIABLE_RATE_LOW_STRIDE) {
-                                    continue;
-                                }
-                            } else {
-                                // Stationary: skip position-only updates entirely
-                                continue;
-                            }
-                        }
-
-                        players_fb_vec.push(create_fb_player_state_for_delta_ext(
-                            &mut builder,
-                            player_state,
-                            mask,
-                            quantize,
-                        ));
-                        player_fields_mask_vec.push(encode_changed_mask(mask));
-                    }
-                }
-            }
-        }
-
-        for known_player_id in &client_state.last_known_players {
-            if !player_aoi.visible_players.contains(known_player_id)
-                && known_player_id != &player_id
-            {
-                removed_player_ids_vec.push(builder.create_string(known_player_id.as_ref()));
-            }
-        }
-
-        let players_fb = builder.create_vector(&players_fb_vec);
-        let changed_player_fields_fb = if !player_fields_mask_vec.is_empty() {
-            Some(builder.create_vector(&player_fields_mask_vec))
-        } else {
-            None
-        };
-        let removed_players_fb = builder.create_vector(&removed_player_ids_vec);
-
-        let mut new_projectiles_vec = Vec::new();
-        let mut removed_projectile_ids_vec = Vec::new();
-
-        // Always send currently visible projectiles. Data channel delivery is
-        // intentionally unreliable/unordered, so one-time projectile snapshots
-        // can be dropped and never recovered.
-        for proj_id in &player_aoi.visible_projectiles {
-            if let Some(proj) = Self::lookup_projectile_from_shared(shared_data, proj_id) {
-                let id_str = fb_safe_entity_id(&mut builder, proj.id);
-                let owner_str = builder.create_string(proj.owner_id.as_ref());
-
-                // Apply mobile quantization to projectile positions/velocities.
-                let (px, py, vx, vy) = if quantize {
-                    use crate::core::constants::{quantize_position, quantize_velocity};
-                    (
-                        quantize_position(proj.x),
-                        quantize_position(proj.y),
-                        quantize_velocity(proj.velocity_x),
-                        quantize_velocity(proj.velocity_y),
-                    )
-                } else {
-                    (proj.x, proj.y, proj.velocity_x, proj.velocity_y)
-                };
-
-                let proj_fb = fb::ProjectileState::create(
-                    &mut builder,
-                    &fb::ProjectileStateArgs {
-                        id: Some(id_str),
-                        x: px,
-                        y: py,
-                        owner_id: Some(owner_str),
-                        weapon_type: map_server_weapon_to_fb(proj.weapon_type),
-                        velocity_x: vx,
-                        velocity_y: vy,
-                    },
-                );
-                new_projectiles_vec.push(proj_fb);
-            }
-        }
-
-        for known_proj_id in &client_state.last_known_projectile_ids {
-            if !player_aoi.visible_projectiles.contains(known_proj_id) {
-                let id_str = fb_safe_entity_id(&mut builder, *known_proj_id);
-                removed_projectile_ids_vec.push(id_str);
-            }
-        }
-
-        let projectiles_fb = builder.create_vector(&new_projectiles_vec);
-        let removed_projectiles_fb = builder.create_vector(&removed_projectile_ids_vec);
-
-        let mut pickups_delta_vec = Vec::new();
-        let mut deactivated_pickup_ids_vec = Vec::new();
-
-        for pickup_id in &player_aoi.visible_pickups {
-            if let Some(pickup) = Self::lookup_pickup_from_shared(shared_data, pickup_id) {
-                let should_send = if let Some(last_known_state) =
-                    client_state.last_known_pickup_states.get(pickup_id)
-                {
-                    last_known_state.is_active != pickup.is_active
-                } else {
-                    true
-                };
-
-                if should_send {
-                    let (pickup_type_fb, weapon_type_fb) =
-                        map_core_pickup_to_fb(&pickup.pickup_type);
-                    let id_str = fb_safe_entity_id(&mut builder, pickup.id);
-
-                    let pickup_fb = fb::Pickup::create(
-                        &mut builder,
-                        &fb::PickupArgs {
-                            id: Some(id_str),
-                            x: pickup.x,
-                            y: pickup.y,
-                            pickup_type: pickup_type_fb,
-                            weapon_type: weapon_type_fb.unwrap_or(fb::WeaponType::Pistol),
-                            is_active: pickup.is_active,
-                        },
-                    );
-                    pickups_delta_vec.push(pickup_fb);
-                }
-            }
-        }
-
-        for known_pickup_id in client_state.last_known_pickup_states.keys() {
-            if !player_aoi.visible_pickups.contains(known_pickup_id) {
-                let id_str = fb_safe_entity_id(&mut builder, *known_pickup_id);
-                deactivated_pickup_ids_vec.push(id_str);
-            }
-        }
-
-        let pickups_fb = builder.create_vector(&pickups_delta_vec);
-        let deactivated_pickups_fb = builder.create_vector(&deactivated_pickup_ids_vec);
-
-        let game_events_fb = if shared_data.max_delta_events_per_client == 0 {
-            None
-        } else {
-            let events_vec: Vec<_> = shared_data
-                .events
-                .iter()
-                .filter(|event| crate::server::event_mapping::should_serialize_game_event(event))
-                .filter(|event| {
-                    if let GameEvent::TeamPing { team_id, .. } = event {
-                        own_is_spectator || (own_team_id != 0 && *team_id == own_team_id)
-                    } else {
-                        true
-                    }
-                })
-                .take(shared_data.max_delta_events_per_client)
-                .filter_map(|event| build_game_event_fb(&mut builder, event))
-                .collect();
-            if events_vec.is_empty() {
-                None
-            } else {
-                Some(builder.create_vector(&events_vec))
-            }
-        };
-
-        let kill_feed_vec: Vec<_> = shared_data
-            .kill_feed_snapshot
-            .iter()
-            .skip(client_state.last_kill_feed_count_sent)
-            .map(|entry| {
-                let killer_name_fb = builder.create_string(&entry.killer_name);
-                let victim_name_fb = builder.create_string(&entry.victim_name);
-                fb::KillFeedEntry::create(
-                    &mut builder,
-                    &fb::KillFeedEntryArgs {
-                        killer_name: Some(killer_name_fb),
-                        victim_name: Some(victim_name_fb),
-                        weapon: map_server_weapon_to_fb(entry.weapon),
-                        timestamp: entry.timestamp as f32,
-                        killer_position: None,
-                        victim_position: None,
-                        is_headshot: entry.is_headshot,
-                        kill_context: map_kill_context_to_fb(entry.kill_context),
-                    },
-                )
-            })
-            .collect();
-        let kill_feed_fb = builder.create_vector(&kill_feed_vec);
-
-        let match_info_fb = {
-            let match_snapshot = &shared_data.match_info_snapshot;
-            let team_scores_changed =
-                client_state.last_known_team_scores != match_snapshot.team_scores;
-            let time_changed = client_state
-                .last_known_match_time_remaining
-                .is_none_or(|t| (t - match_snapshot.time_remaining).abs() > 0.5);
-            let state_changed =
-                client_state.last_known_match_state != Some(match_snapshot.match_state);
-            if client_state.match_info_pending
-                || state_changed
-                || time_changed
-                || team_scores_changed
-            {
-                let team_scores_vec: Vec<_> = match_snapshot
-                    .team_scores
-                    .iter()
-                    .map(|(team_id, score)| {
-                        fb::TeamScoreEntry::create(
-                            &mut builder,
-                            &fb::TeamScoreEntryArgs {
-                                team_id: *team_id as i8,
-                                score: *score,
-                            },
+        DELTA_STATE_FB_BUILDER.with(|builder_cell| {
+            let mut builder = builder_cell.borrow_mut();
+            builder.reset();
+            let build_start = Instant::now();
+            let player_id = self.player_manager.id_pool.get_or_create(peer_id_str);
+            let (own_team_id, own_is_spectator, own_last_processed_input_sequence) =
+                Self::lookup_player_state_from_shared(shared_data, &player_id)
+                    .map(|state| {
+                        (
+                            state.team_id,
+                            state.is_spectator,
+                            state.last_processed_input_sequence,
                         )
                     })
-                    .collect();
-                let team_scores_fb = builder.create_vector(&team_scores_vec);
-                let team1_commander_id_fb = match_snapshot
-                    .team1_commander_id
-                    .as_deref()
-                    .map(|id| fb_safe_str(&mut builder, id));
-                let team2_commander_id_fb = match_snapshot
-                    .team2_commander_id
-                    .as_deref()
-                    .map(|id| fb_safe_str(&mut builder, id));
-                let team1_commander_waypoint_fb =
-                    match_snapshot.team1_commander_waypoint.map(|waypoint| {
-                        fb::Vec2::create(
-                            &mut builder,
-                            &fb::Vec2Args {
-                                x: waypoint.x,
-                                y: waypoint.y,
-                            },
-                        )
-                    });
-                let team2_commander_waypoint_fb =
-                    match_snapshot.team2_commander_waypoint.map(|waypoint| {
-                        fb::Vec2::create(
-                            &mut builder,
-                            &fb::Vec2Args {
-                                x: waypoint.x,
-                                y: waypoint.y,
-                            },
-                        )
-                    });
-                Some(fb::MatchInfo::create(
-                    &mut builder,
-                    &fb::MatchInfoArgs {
-                        time_remaining: match_snapshot.time_remaining,
-                        match_state: match_snapshot.match_state,
-                        winner_id: None,
-                        winner_name: None,
-                        game_mode: match_snapshot.game_mode,
-                        team_scores: Some(team_scores_fb),
-                        team1_commander_id: team1_commander_id_fb,
-                        team2_commander_id: team2_commander_id_fb,
-                        team1_commander_waypoint: team1_commander_waypoint_fb,
-                        team2_commander_waypoint: team2_commander_waypoint_fb,
-                        team1_commander_attack_bias: match_snapshot.team1_commander_attack_bias,
-                        team2_commander_attack_bias: match_snapshot.team2_commander_attack_bias,
-                    },
-                ))
-            } else {
-                None
-            }
-        };
+                    .unwrap_or((0, false, 0));
 
-        let destroyed_walls_vec: Vec<_> = shared_data
-            .destroyed_wall_ids
-            .iter()
-            .filter(|id| !client_state.known_destroyed_wall_ids.contains(*id))
-            .map(|id| fb_safe_entity_id(&mut builder, *id))
-            .collect();
-        let destroyed_wall_ids_fb = if !destroyed_walls_vec.is_empty() {
-            Some(builder.create_vector(&destroyed_walls_vec))
-        } else {
-            None
-        };
+            let quantize = client_state.is_mobile;
 
-        let selected_wall_ids = Self::select_delta_wall_ids_for_client_sync(
-            shared_data,
-            &player_aoi.visible_walls,
-            client_state,
-        );
-        let mut updated_walls_vec = Vec::with_capacity(selected_wall_ids.len());
-        for wall_id in &selected_wall_ids {
-            let wall_data = match shared_data
-                .active_walls_by_id
-                .get(wall_id)
-                .or_else(|| shared_data.updated_walls.get(wall_id))
+            trace!("[{}] DeltaBuilder: Started", peer_id_str);
+
+            let player_aoi = self.resolve_player_aoi_for_player(shared_data, &player_id);
+
+            let mut players_fb_vec = Vec::new();
+            let mut player_fields_mask_vec: Vec<u16> = Vec::new();
+            let mut removed_player_ids_vec = Vec::new();
+            let encode_changed_mask = |mask: u16| -> u16 { mask };
+
+            if let Some(self_state) = Self::lookup_player_state_from_shared(shared_data, &player_id)
             {
-                Some(wall) => wall,
-                None => continue,
-            };
-            let id_fb = fb_safe_entity_id(&mut builder, wall_data.id);
-            let wall_fb = fb::Wall::create(
-                &mut builder,
-                &fb::WallArgs {
-                    id: Some(id_fb),
-                    x: wall_data.x,
-                    y: wall_data.y,
-                    width: wall_data.width,
-                    height: wall_data.height,
-                    is_destructible: wall_data.is_destructible,
-                    current_health: wall_data.current_health,
-                    max_health: wall_data.max_health,
-                    surface_type: crate::server::event_mapping::map_surface_type_to_fb(
-                        wall_data.inferred_surface_type().as_u8(),
-                    ),
-                },
-            );
-            updated_walls_vec.push(wall_fb);
-        }
-
-        let updated_walls_fb = if !updated_walls_vec.is_empty() {
-            Some(builder.create_vector(&updated_walls_vec))
-        } else {
-            None
-        };
-
-        for wall_id in selected_wall_ids {
-            if let Some(wall_data) = shared_data
-                .active_walls_by_id
-                .get(&wall_id)
-                .or_else(|| shared_data.updated_walls.get(&wall_id))
-            {
-                client_state
-                    .last_known_wall_states
-                    .insert(wall_id, (wall_data.current_health, wall_data.max_health));
-                if wall_data.current_health > 0 {
-                    client_state.known_destroyed_wall_ids.remove(&wall_id);
+                let is_new = !client_state.last_known_players.contains(&player_id);
+                if is_new || self_state.changed_fields > 0 {
+                    let mask = if is_new {
+                        0xFFFF
+                    } else {
+                        self_state.changed_fields
+                    };
+                    players_fb_vec.push(create_fb_player_state_for_delta_ext(
+                        &mut builder,
+                        self_state,
+                        mask,
+                        quantize,
+                    ));
+                    player_fields_mask_vec.push(encode_changed_mask(mask));
                 }
             }
-        }
-        client_state.last_known_wall_ids = Some(
-            client_state
-                .last_known_wall_states
-                .keys()
-                .copied()
-                .collect(),
-        );
 
-        let delta_state_args = fb::DeltaStateMessageArgs {
-            players: Some(players_fb),
-            projectiles: Some(projectiles_fb),
-            removed_projectiles: Some(removed_projectiles_fb),
-            pickups: Some(pickups_fb),
-            deactivated_pickup_ids: Some(deactivated_pickups_fb),
-            game_events: game_events_fb,
-            timestamp: shared_data.timestamp_ms,
-            last_processed_input_sequence: own_last_processed_input_sequence,
-            changed_player_fields: changed_player_fields_fb,
-            kill_feed: Some(kill_feed_fb),
-            match_info: match_info_fb,
-            destroyed_wall_ids: destroyed_wall_ids_fb,
-            flag_states: None,
-            removed_player_ids: Some(removed_players_fb),
-            updated_walls: updated_walls_fb,
-        };
+            // Variable-rate entity updates: skip position-only updates for other
+            // players based on their velocity magnitude.  New players and players
+            // with non-position field changes are always included.
+            let vr_frame = self.frame_counter.load(AtomicOrdering::Relaxed);
 
-        let delta_state = fb::DeltaStateMessage::create(&mut builder, &delta_state_args);
+            for visible_player_id in &player_aoi.visible_players {
+                if visible_player_id != &player_id {
+                    if let Some(player_state) =
+                        Self::lookup_player_state_from_shared(shared_data, visible_player_id)
+                    {
+                        let is_new = !client_state.last_known_players.contains(visible_player_id);
+                        if is_new || player_state.changed_fields > 0 {
+                            let mask = if is_new {
+                                0xFFFF
+                            } else {
+                                player_state.changed_fields
+                            };
 
-        let game_msg = fb::GameMessage::create(
-            &mut builder,
-            &fb::GameMessageArgs {
-                msg_type: fb::MessageType::DeltaState,
-                actual_message_type: fb::MessagePayload::DeltaStateMessage,
-                actual_message: Some(delta_state.as_union_value()),
-                protocol_version: GAME_PROTOCOL_VERSION,
-            },
-        );
+                            // Variable-rate: if only position/rotation changed (no other
+                            // fields), gate the update on a velocity-dependent stride so
+                            // slow/stationary entities produce fewer redundant packets.
+                            if !is_new && mask == FIELD_POSITION_ROTATION {
+                                let speed_sq = player_state.velocity_x * player_state.velocity_x
+                                    + player_state.velocity_y * player_state.velocity_y;
+                                let high_thresh_sq = VARIABLE_RATE_HIGH_VELOCITY_THRESHOLD
+                                    * VARIABLE_RATE_HIGH_VELOCITY_THRESHOLD;
+                                let low_thresh_sq = VARIABLE_RATE_LOW_VELOCITY_THRESHOLD
+                                    * VARIABLE_RATE_LOW_VELOCITY_THRESHOLD;
 
-        builder.finish(game_msg, None);
-        let (buffer, root_index) = builder.collapse();
-        let bytes = Bytes::from(buffer).slice(root_index..);
+                                if speed_sq > high_thresh_sq {
+                                    // High-velocity: 30 Hz (every 2nd frame)
+                                    if !vr_frame.is_multiple_of(VARIABLE_RATE_HIGH_STRIDE) {
+                                        continue;
+                                    }
+                                } else if speed_sq > low_thresh_sq {
+                                    // Low-velocity: 10 Hz (every 6th frame)
+                                    if !vr_frame.is_multiple_of(VARIABLE_RATE_LOW_STRIDE) {
+                                        continue;
+                                    }
+                                } else {
+                                    // Stationary: skip position-only updates entirely
+                                    continue;
+                                }
+                            }
 
-        trace!(
-            "[{}] DeltaBuilder: Completed in {:?}",
-            peer_id_str,
-            build_start.elapsed()
-        );
-        Ok(bytes)
+                            players_fb_vec.push(create_fb_player_state_for_delta_ext(
+                                &mut builder,
+                                player_state,
+                                mask,
+                                quantize,
+                            ));
+                            player_fields_mask_vec.push(encode_changed_mask(mask));
+                        }
+                    }
+                }
+            }
+
+            for known_player_id in &client_state.last_known_players {
+                if !player_aoi.visible_players.contains(known_player_id)
+                    && known_player_id != &player_id
+                {
+                    removed_player_ids_vec.push(builder.create_string(known_player_id.as_ref()));
+                }
+            }
+
+            let players_fb = builder.create_vector(&players_fb_vec);
+            let changed_player_fields_fb = if !player_fields_mask_vec.is_empty() {
+                Some(builder.create_vector(&player_fields_mask_vec))
+            } else {
+                None
+            };
+            let removed_players_fb = builder.create_vector(&removed_player_ids_vec);
+
+            let mut new_projectiles_vec = Vec::new();
+            let mut removed_projectile_ids_vec = Vec::new();
+
+            // Always send currently visible projectiles. Data channel delivery is
+            // intentionally unreliable/unordered, so one-time projectile snapshots
+            // can be dropped and never recovered.
+            for proj_id in &player_aoi.visible_projectiles {
+                if let Some(proj) = Self::lookup_projectile_from_shared(shared_data, proj_id) {
+                    let id_str = fb_safe_entity_id(&mut builder, proj.id);
+                    let owner_str = builder.create_string(proj.owner_id.as_ref());
+
+                    // Apply mobile quantization to projectile positions/velocities.
+                    let (px, py, vx, vy) = if quantize {
+                        use crate::core::constants::{quantize_position, quantize_velocity};
+                        (
+                            quantize_position(proj.x),
+                            quantize_position(proj.y),
+                            quantize_velocity(proj.velocity_x),
+                            quantize_velocity(proj.velocity_y),
+                        )
+                    } else {
+                        (proj.x, proj.y, proj.velocity_x, proj.velocity_y)
+                    };
+
+                    let proj_fb = fb::ProjectileState::create(
+                        &mut builder,
+                        &fb::ProjectileStateArgs {
+                            id: Some(id_str),
+                            x: px,
+                            y: py,
+                            owner_id: Some(owner_str),
+                            weapon_type: map_server_weapon_to_fb(proj.weapon_type),
+                            velocity_x: vx,
+                            velocity_y: vy,
+                        },
+                    );
+                    new_projectiles_vec.push(proj_fb);
+                }
+            }
+
+            for known_proj_id in &client_state.last_known_projectile_ids {
+                if !player_aoi.visible_projectiles.contains(known_proj_id) {
+                    let id_str = fb_safe_entity_id(&mut builder, *known_proj_id);
+                    removed_projectile_ids_vec.push(id_str);
+                }
+            }
+
+            let projectiles_fb = builder.create_vector(&new_projectiles_vec);
+            let removed_projectiles_fb = builder.create_vector(&removed_projectile_ids_vec);
+
+            let mut pickups_delta_vec = Vec::new();
+            let mut deactivated_pickup_ids_vec = Vec::new();
+
+            for pickup_id in &player_aoi.visible_pickups {
+                if let Some(pickup) = Self::lookup_pickup_from_shared(shared_data, pickup_id) {
+                    let should_send = if let Some(last_known_state) =
+                        client_state.last_known_pickup_states.get(pickup_id)
+                    {
+                        last_known_state.is_active != pickup.is_active
+                    } else {
+                        true
+                    };
+
+                    if should_send {
+                        let (pickup_type_fb, weapon_type_fb) =
+                            map_core_pickup_to_fb(&pickup.pickup_type);
+                        let id_str = fb_safe_entity_id(&mut builder, pickup.id);
+
+                        let pickup_fb = fb::Pickup::create(
+                            &mut builder,
+                            &fb::PickupArgs {
+                                id: Some(id_str),
+                                x: pickup.x,
+                                y: pickup.y,
+                                pickup_type: pickup_type_fb,
+                                weapon_type: weapon_type_fb.unwrap_or(fb::WeaponType::Pistol),
+                                is_active: pickup.is_active,
+                            },
+                        );
+                        pickups_delta_vec.push(pickup_fb);
+                    }
+                }
+            }
+
+            for known_pickup_id in client_state.last_known_pickup_states.keys() {
+                if !player_aoi.visible_pickups.contains(known_pickup_id) {
+                    let id_str = fb_safe_entity_id(&mut builder, *known_pickup_id);
+                    deactivated_pickup_ids_vec.push(id_str);
+                }
+            }
+
+            let pickups_fb = builder.create_vector(&pickups_delta_vec);
+            let deactivated_pickups_fb = builder.create_vector(&deactivated_pickup_ids_vec);
+
+            let game_events_fb = if shared_data.max_delta_events_per_client == 0 {
+                None
+            } else {
+                let events_vec: Vec<_> = shared_data
+                    .events
+                    .iter()
+                    .filter(|event| {
+                        crate::server::event_mapping::should_serialize_game_event(event)
+                    })
+                    .filter(|event| {
+                        if let GameEvent::TeamPing { team_id, .. } = event {
+                            own_is_spectator || (own_team_id != 0 && *team_id == own_team_id)
+                        } else {
+                            true
+                        }
+                    })
+                    .take(shared_data.max_delta_events_per_client)
+                    .filter_map(|event| build_game_event_fb(&mut builder, event))
+                    .collect();
+                if events_vec.is_empty() {
+                    None
+                } else {
+                    Some(builder.create_vector(&events_vec))
+                }
+            };
+
+            let kill_feed_vec: Vec<_> = shared_data
+                .kill_feed_snapshot
+                .iter()
+                .skip(client_state.last_kill_feed_count_sent)
+                .map(|entry| {
+                    let killer_name_fb = builder.create_string(&entry.killer_name);
+                    let victim_name_fb = builder.create_string(&entry.victim_name);
+                    fb::KillFeedEntry::create(
+                        &mut builder,
+                        &fb::KillFeedEntryArgs {
+                            killer_name: Some(killer_name_fb),
+                            victim_name: Some(victim_name_fb),
+                            weapon: map_server_weapon_to_fb(entry.weapon),
+                            timestamp: entry.timestamp as f32,
+                            killer_position: None,
+                            victim_position: None,
+                            is_headshot: entry.is_headshot,
+                            kill_context: map_kill_context_to_fb(entry.kill_context),
+                        },
+                    )
+                })
+                .collect();
+            let kill_feed_fb = builder.create_vector(&kill_feed_vec);
+
+            let match_info_fb = {
+                let match_snapshot = &shared_data.match_info_snapshot;
+                let team_scores_changed =
+                    client_state.last_known_team_scores != match_snapshot.team_scores;
+                let time_changed = client_state
+                    .last_known_match_time_remaining
+                    .is_none_or(|t| (t - match_snapshot.time_remaining).abs() > 0.5);
+                let state_changed =
+                    client_state.last_known_match_state != Some(match_snapshot.match_state);
+                if client_state.match_info_pending
+                    || state_changed
+                    || time_changed
+                    || team_scores_changed
+                {
+                    let team_scores_vec: Vec<_> = match_snapshot
+                        .team_scores
+                        .iter()
+                        .map(|(team_id, score)| {
+                            fb::TeamScoreEntry::create(
+                                &mut builder,
+                                &fb::TeamScoreEntryArgs {
+                                    team_id: *team_id as i8,
+                                    score: *score,
+                                },
+                            )
+                        })
+                        .collect();
+                    let team_scores_fb = builder.create_vector(&team_scores_vec);
+                    let team1_commander_id_fb = match_snapshot
+                        .team1_commander_id
+                        .as_deref()
+                        .map(|id| fb_safe_str(&mut builder, id));
+                    let team2_commander_id_fb = match_snapshot
+                        .team2_commander_id
+                        .as_deref()
+                        .map(|id| fb_safe_str(&mut builder, id));
+                    let team1_commander_waypoint_fb =
+                        match_snapshot.team1_commander_waypoint.map(|waypoint| {
+                            fb::Vec2::create(
+                                &mut builder,
+                                &fb::Vec2Args {
+                                    x: waypoint.x,
+                                    y: waypoint.y,
+                                },
+                            )
+                        });
+                    let team2_commander_waypoint_fb =
+                        match_snapshot.team2_commander_waypoint.map(|waypoint| {
+                            fb::Vec2::create(
+                                &mut builder,
+                                &fb::Vec2Args {
+                                    x: waypoint.x,
+                                    y: waypoint.y,
+                                },
+                            )
+                        });
+                    Some(fb::MatchInfo::create(
+                        &mut builder,
+                        &fb::MatchInfoArgs {
+                            time_remaining: match_snapshot.time_remaining,
+                            match_state: match_snapshot.match_state,
+                            winner_id: None,
+                            winner_name: None,
+                            game_mode: match_snapshot.game_mode,
+                            team_scores: Some(team_scores_fb),
+                            team1_commander_id: team1_commander_id_fb,
+                            team2_commander_id: team2_commander_id_fb,
+                            team1_commander_waypoint: team1_commander_waypoint_fb,
+                            team2_commander_waypoint: team2_commander_waypoint_fb,
+                            team1_commander_attack_bias: match_snapshot.team1_commander_attack_bias,
+                            team2_commander_attack_bias: match_snapshot.team2_commander_attack_bias,
+                        },
+                    ))
+                } else {
+                    None
+                }
+            };
+
+            let destroyed_walls_vec: Vec<_> = shared_data
+                .destroyed_wall_ids
+                .iter()
+                .filter(|id| !client_state.known_destroyed_wall_ids.contains(*id))
+                .map(|id| fb_safe_entity_id(&mut builder, *id))
+                .collect();
+            let destroyed_wall_ids_fb = if !destroyed_walls_vec.is_empty() {
+                Some(builder.create_vector(&destroyed_walls_vec))
+            } else {
+                None
+            };
+
+            let selected_wall_ids = Self::select_delta_wall_ids_for_client_sync(
+                shared_data,
+                &player_aoi.visible_walls,
+                client_state,
+            );
+            let mut updated_walls_vec = Vec::with_capacity(selected_wall_ids.len());
+            for wall_id in &selected_wall_ids {
+                let wall_data = match shared_data
+                    .active_walls_by_id
+                    .get(wall_id)
+                    .or_else(|| shared_data.updated_walls.get(wall_id))
+                {
+                    Some(wall) => wall,
+                    None => continue,
+                };
+                let id_fb = fb_safe_entity_id(&mut builder, wall_data.id);
+                let wall_fb = fb::Wall::create(
+                    &mut builder,
+                    &fb::WallArgs {
+                        id: Some(id_fb),
+                        x: wall_data.x,
+                        y: wall_data.y,
+                        width: wall_data.width,
+                        height: wall_data.height,
+                        is_destructible: wall_data.is_destructible,
+                        current_health: wall_data.current_health,
+                        max_health: wall_data.max_health,
+                        surface_type: crate::server::event_mapping::map_surface_type_to_fb(
+                            wall_data.inferred_surface_type().as_u8(),
+                        ),
+                    },
+                );
+                updated_walls_vec.push(wall_fb);
+            }
+
+            let updated_walls_fb = if !updated_walls_vec.is_empty() {
+                Some(builder.create_vector(&updated_walls_vec))
+            } else {
+                None
+            };
+
+            for wall_id in selected_wall_ids {
+                if let Some(wall_data) = shared_data
+                    .active_walls_by_id
+                    .get(&wall_id)
+                    .or_else(|| shared_data.updated_walls.get(&wall_id))
+                {
+                    client_state
+                        .last_known_wall_states
+                        .insert(wall_id, (wall_data.current_health, wall_data.max_health));
+                    if wall_data.current_health > 0 {
+                        client_state.known_destroyed_wall_ids.remove(&wall_id);
+                    }
+                }
+            }
+            client_state.last_known_wall_ids = Some(
+                client_state
+                    .last_known_wall_states
+                    .keys()
+                    .copied()
+                    .collect(),
+            );
+
+            let delta_state_args = fb::DeltaStateMessageArgs {
+                players: Some(players_fb),
+                projectiles: Some(projectiles_fb),
+                removed_projectiles: Some(removed_projectiles_fb),
+                pickups: Some(pickups_fb),
+                deactivated_pickup_ids: Some(deactivated_pickups_fb),
+                game_events: game_events_fb,
+                timestamp: shared_data.timestamp_ms,
+                last_processed_input_sequence: own_last_processed_input_sequence,
+                changed_player_fields: changed_player_fields_fb,
+                kill_feed: Some(kill_feed_fb),
+                match_info: match_info_fb,
+                destroyed_wall_ids: destroyed_wall_ids_fb,
+                flag_states: None,
+                removed_player_ids: Some(removed_players_fb),
+                updated_walls: updated_walls_fb,
+            };
+
+            let delta_state = fb::DeltaStateMessage::create(&mut builder, &delta_state_args);
+
+            let game_msg = fb::GameMessage::create(
+                &mut builder,
+                &fb::GameMessageArgs {
+                    msg_type: fb::MessageType::DeltaState,
+                    actual_message_type: fb::MessagePayload::DeltaStateMessage,
+                    actual_message: Some(delta_state.as_union_value()),
+                    protocol_version: GAME_PROTOCOL_VERSION,
+                },
+            );
+
+            builder.finish(game_msg, None);
+            let bytes = Bytes::copy_from_slice(builder.finished_data());
+
+            trace!(
+                "[{}] DeltaBuilder: Completed in {:?}",
+                peer_id_str,
+                build_start.elapsed()
+            );
+            Ok(bytes)
+        })
     }
 
     pub(super) fn build_initial_state_sequence_optimized(
@@ -854,57 +867,58 @@ impl MassiveGameServer {
         params: InitialStateChunkBuildParams,
     ) -> Result<Bytes, Box<dyn std::error::Error + Send + Sync>> {
         const MAX_MESSAGE_SIZE_BYTES: usize = 160000;
+        INITIAL_STATE_FB_BUILDER.with(|builder_cell| {
+            let mut builder = builder_cell.borrow_mut();
+            builder.reset();
+            let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
+            let snapshot_caps = shared_data.initial_snapshot_caps;
+            debug!(
+                "[Frame {}] Client {}: Building InitialStateMessage chunk (walls={}, players={}, projectiles={}, pickups={}, self_only={}).",
+                frame,
+                peer_id_str,
+                params.include_walls,
+                params.include_players,
+                params.include_projectiles,
+                params.include_pickups,
+                params.players_self_only
+            );
 
-        let mut builder = flatbuffers::FlatBufferBuilder::with_capacity(32768);
-        let frame = self.frame_counter.load(AtomicOrdering::Relaxed);
-        let snapshot_caps = shared_data.initial_snapshot_caps;
-        debug!(
-            "[Frame {}] Client {}: Building InitialStateMessage chunk (walls={}, players={}, projectiles={}, pickups={}, self_only={}).",
-            frame,
-            peer_id_str,
-            params.include_walls,
-            params.include_players,
-            params.include_projectiles,
-            params.include_pickups,
-            params.players_self_only
-        );
+            let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
 
-        let self_player_id_arc = self.player_manager.id_pool.get_or_create(peer_id_str);
+            let active_walls_to_send: Cow<'_, [Wall]> =
+                if shared_data.active_walls_snapshot.is_empty() {
+                    let mut fallback_walls: Vec<Wall> =
+                        shared_data.active_walls_by_id.values().cloned().collect();
+                    fallback_walls.sort_by_key(|wall| wall.id);
+                    Cow::Owned(fallback_walls)
+                } else {
+                    Cow::Borrowed(shared_data.active_walls_snapshot.as_slice())
+                };
 
-        let active_walls_to_send: Cow<'_, [Wall]> = if shared_data.active_walls_snapshot.is_empty()
-        {
-            let mut fallback_walls: Vec<Wall> =
-                shared_data.active_walls_by_id.values().cloned().collect();
-            fallback_walls.sort_by_key(|wall| wall.id);
-            Cow::Owned(fallback_walls)
-        } else {
-            Cow::Borrowed(shared_data.active_walls_snapshot.as_slice())
-        };
-
-        let mut walls_fb_vec = Vec::new();
-        if params.include_walls {
-            walls_fb_vec.reserve(active_walls_to_send.len().min(snapshot_caps.max_walls));
-            for wall_data in active_walls_to_send.iter().take(snapshot_caps.max_walls) {
-                let id_fb = fb_safe_entity_id(&mut builder, wall_data.id);
-                walls_fb_vec.push(fb::Wall::create(
-                    &mut builder,
-                    &fb::WallArgs {
-                        id: Some(id_fb),
-                        x: wall_data.x,
-                        y: wall_data.y,
-                        width: wall_data.width,
-                        height: wall_data.height,
-                        is_destructible: wall_data.is_destructible,
-                        current_health: wall_data.current_health,
-                        max_health: wall_data.max_health,
-                        surface_type: crate::server::event_mapping::map_surface_type_to_fb(
-                            wall_data.inferred_surface_type().as_u8(),
-                        ),
-                    },
-                ));
+            let mut walls_fb_vec = Vec::new();
+            if params.include_walls {
+                walls_fb_vec.reserve(active_walls_to_send.len().min(snapshot_caps.max_walls));
+                for wall_data in active_walls_to_send.iter().take(snapshot_caps.max_walls) {
+                    let id_fb = fb_safe_entity_id(&mut builder, wall_data.id);
+                    walls_fb_vec.push(fb::Wall::create(
+                        &mut builder,
+                        &fb::WallArgs {
+                            id: Some(id_fb),
+                            x: wall_data.x,
+                            y: wall_data.y,
+                            width: wall_data.width,
+                            height: wall_data.height,
+                            is_destructible: wall_data.is_destructible,
+                            current_health: wall_data.current_health,
+                            max_health: wall_data.max_health,
+                            surface_type: crate::server::event_mapping::map_surface_type_to_fb(
+                                wall_data.inferred_surface_type().as_u8(),
+                            ),
+                        },
+                    ));
+                }
             }
-        }
-        let walls_fb = builder.create_vector(&walls_fb_vec);
+            let walls_fb = builder.create_vector(&walls_fb_vec);
 
         let mut players_fb_vec = Vec::new();
         let mut player_aoi_data_for_initial_state = Self::get_empty_player_aoi();
@@ -1151,26 +1165,26 @@ impl MassiveGameServer {
             protocol_version: GAME_PROTOCOL_VERSION,
         };
         let game_msg = fb::GameMessage::create(&mut builder, &game_msg_args);
-        builder.finish(game_msg, None);
+            builder.finish(game_msg, None);
 
-        let finished_len = builder.finished_data().len();
-        debug!(
-            "[Frame {} Client {}] InitialState chunk built. Size: {} bytes (walls={}, players={}, projectiles={}, pickups={}).",
-            frame,
-            peer_id_str,
-            finished_len,
-            walls_fb_vec.len(),
-            players_fb_vec.len(),
-            projectiles_fb_vec.len(),
-            pickups_fb_vec.len()
-        );
+            let finished_len = builder.finished_data().len();
+            debug!(
+                "[Frame {} Client {}] InitialState chunk built. Size: {} bytes (walls={}, players={}, projectiles={}, pickups={}).",
+                frame,
+                peer_id_str,
+                finished_len,
+                walls_fb_vec.len(),
+                players_fb_vec.len(),
+                projectiles_fb_vec.len(),
+                pickups_fb_vec.len()
+            );
 
-        if finished_len > MAX_MESSAGE_SIZE_BYTES {
-            return Err("Initial state chunk too large".into());
-        }
+            if finished_len > MAX_MESSAGE_SIZE_BYTES {
+                return Err("Initial state chunk too large".into());
+            }
 
-        let (buffer, root_index) = builder.collapse();
-        Ok(Bytes::from(buffer).slice(root_index..))
+            Ok(Bytes::copy_from_slice(builder.finished_data()))
+        })
     }
 
     pub(super) async fn send_chat_messages_optimized(
