@@ -83,6 +83,7 @@ pub struct GridNav {
     width: i32,
     height: i32,
     blocked: Vec<bool>,
+    block_counts: Vec<u16>,
     cell_size: f32,
     origin_x: f32,
     origin_y: f32,
@@ -129,6 +130,7 @@ impl GridNav {
             width,
             height,
             blocked: vec![false; (width * height).max(0) as usize],
+            block_counts: vec![0; (width * height).max(0) as usize],
             cell_size,
             origin_x,
             origin_y,
@@ -138,6 +140,23 @@ impl GridNav {
     pub fn set_blocked(&mut self, x: i32, y: i32, blocked: bool) {
         if let Some(idx) = self.index(x, y) {
             self.blocked[idx] = blocked;
+            self.block_counts[idx] = if blocked { 1 } else { 0 };
+        }
+    }
+
+    pub fn add_blocker(&mut self, x: i32, y: i32) {
+        if let Some(idx) = self.index(x, y) {
+            let count = self.block_counts[idx].saturating_add(1);
+            self.block_counts[idx] = count;
+            self.blocked[idx] = count > 0;
+        }
+    }
+
+    pub fn remove_blocker(&mut self, x: i32, y: i32) {
+        if let Some(idx) = self.index(x, y) {
+            let count = self.block_counts[idx].saturating_sub(1);
+            self.block_counts[idx] = count;
+            self.blocked[idx] = count > 0;
         }
     }
 
@@ -666,6 +685,20 @@ mod tests {
         nav.set_blocked(0, 0, true);
         let path = nav.find_path((0, 0), (3, 3));
         assert!(path.is_none());
+    }
+
+    #[test]
+    fn grid_nav_blocker_counts_preserve_overlaps() {
+        let mut nav = GridNav::new(4, 4, 1.0);
+        nav.add_blocker(1, 1);
+        nav.add_blocker(1, 1);
+        assert!(nav.is_blocked(1, 1));
+
+        nav.remove_blocker(1, 1);
+        assert!(nav.is_blocked(1, 1));
+
+        nav.remove_blocker(1, 1);
+        assert!(!nav.is_blocked(1, 1));
     }
 
     #[test]

@@ -73,6 +73,7 @@ const BOT_PATH_TARGET_MOVED_THRESHOLD_SQ: f32 = 150.0 * 150.0;
 struct BotNavGridCache {
     grid: Option<Arc<GridNav>>,
     wall_index_frame: u64,
+    active_walls_by_id: HashMap<EntityId, Wall>,
 }
 
 impl Default for BotNavGridCache {
@@ -80,6 +81,7 @@ impl Default for BotNavGridCache {
         Self {
             grid: None,
             wall_index_frame: u64::MAX,
+            active_walls_by_id: HashMap::new(),
         }
     }
 }
@@ -1921,17 +1923,30 @@ impl OptimizedBotAI {
             }
         }
 
-        let rebuilt = Self::build_nav_grid(server_instance);
-        {
-            let mut cache = bot_nav_grid_cache().write();
-            cache.wall_index_frame = wall_index_frame;
-            cache.grid = rebuilt.clone();
+        let active_walls_by_id = Self::collect_active_walls_by_id(server_instance);
+        let mut cache = bot_nav_grid_cache().write();
+        if cache.wall_index_frame == wall_index_frame {
+            if let Some(grid) = cache.grid.as_ref() {
+                return Some(Arc::clone(grid));
+            }
         }
+        let rebuilt = match cache.grid.as_ref() {
+            Some(existing_grid) => Self::update_nav_grid_incremental(
+                existing_grid,
+                &cache.active_walls_by_id,
+                &active_walls_by_id,
+            ),
+            None => Self::build_nav_grid_from_walls(active_walls_by_id.values()),
+        };
+        cache.wall_index_frame = wall_index_frame;
+        cache.active_walls_by_id = active_walls_by_id;
+        cache.grid = rebuilt.clone();
         rebuilt
     }
 
-    /// Build a fresh navigation grid from the current wall layout.
-    fn build_nav_grid(server_instance: &MassiveGameServer) -> Option<Arc<GridNav>> {
+    fn build_nav_grid_from_walls<'a>(
+        walls: impl IntoIterator<Item = &'a Wall>,
+    ) -> Option<Arc<GridNav>> {
         if BOT_NAV_GRID_CELL_SIZE <= 0.0 {
             return None;
         }
@@ -1948,27 +1963,105 @@ impl OptimizedBotAI {
             WORLD_MIN_Y,
         );
 
+        for wall in walls {
+            Self::mark_wall_cells_blocked(&mut nav_grid, wall);
+        }
+        Some(Arc::new(nav_grid))
+    }
+
+    fn collect_active_walls_by_id(server_instance: &MassiveGameServer) -> HashMap<EntityId, Wall> {
         let partitions = server_instance
             .world_partition_manager
             .get_partitions_for_processing();
-        let mut seen_wall_ids: HashSet<EntityId> = HashSet::new();
+        let mut active_walls_by_id = HashMap::new();
         for partition in partitions {
             for wall_entry in partition.all_walls_in_partition.iter() {
                 let wall = wall_entry.value();
                 if wall.is_destructible && wall.current_health <= 0 {
                     continue;
                 }
-                if !seen_wall_ids.insert(wall.id) {
-                    continue;
-                }
-                Self::mark_wall_cells_blocked(&mut nav_grid, wall);
+                active_walls_by_id
+                    .entry(wall.id)
+                    .or_insert_with(|| wall.clone());
             }
         }
-        Some(Arc::new(nav_grid))
+        active_walls_by_id
+    }
+
+    fn update_nav_grid_incremental(
+        existing_grid: &Arc<GridNav>,
+        previous_walls: &HashMap<EntityId, Wall>,
+        current_walls: &HashMap<EntityId, Wall>,
+    ) -> Option<Arc<GridNav>> {
+        let mut nav_grid = (**existing_grid).clone();
+        let mut changed = false;
+
+        for (wall_id, previous_wall) in previous_walls {
+            match current_walls.get(wall_id) {
+                Some(current_wall)
+                    if Self::wall_geometry_is_unchanged(previous_wall, current_wall) => {}
+                _ => {
+                    Self::mark_wall_cells_unblocked(&mut nav_grid, previous_wall);
+                    changed = true;
+                }
+            }
+        }
+
+        for (wall_id, current_wall) in current_walls {
+            match previous_walls.get(wall_id) {
+                Some(previous_wall)
+                    if Self::wall_geometry_is_unchanged(previous_wall, current_wall) => {}
+                _ => {
+                    Self::mark_wall_cells_blocked(&mut nav_grid, current_wall);
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            Some(Arc::new(nav_grid))
+        } else {
+            Some(Arc::clone(existing_grid))
+        }
+    }
+
+    fn wall_geometry_is_unchanged(previous: &Wall, current: &Wall) -> bool {
+        previous.x.to_bits() == current.x.to_bits()
+            && previous.y.to_bits() == current.y.to_bits()
+            && previous.width.to_bits() == current.width.to_bits()
+            && previous.height.to_bits() == current.height.to_bits()
     }
 
     /// Mark grid cells covered by a wall (inflated by PLAYER_RADIUS) as blocked.
     fn mark_wall_cells_blocked(nav_grid: &mut GridNav, wall: &Wall) {
+        let Some((min_cell_x, min_cell_y, max_cell_x, max_cell_y)) =
+            Self::wall_cell_bounds(nav_grid, wall)
+        else {
+            return;
+        };
+
+        for gy in min_cell_y..=max_cell_y {
+            for gx in min_cell_x..=max_cell_x {
+                nav_grid.add_blocker(gx, gy);
+            }
+        }
+    }
+
+    fn mark_wall_cells_unblocked(nav_grid: &mut GridNav, wall: &Wall) {
+        let Some((min_cell_x, min_cell_y, max_cell_x, max_cell_y)) =
+            Self::wall_cell_bounds(nav_grid, wall)
+        else {
+            return;
+        };
+
+        for gy in min_cell_y..=max_cell_y {
+            for gx in min_cell_x..=max_cell_x {
+                nav_grid.remove_blocker(gx, gy);
+            }
+        }
+    }
+
+    fn wall_cell_bounds(nav_grid: &GridNav, wall: &Wall) -> Option<(i32, i32, i32, i32)> {
         let max_world_x = WORLD_MAX_X - f32::EPSILON;
         let max_world_y = WORLD_MAX_Y - f32::EPSILON;
         let inflated_min_x = wall.x - PLAYER_RADIUS;
@@ -1980,20 +2073,20 @@ impl OptimizedBotAI {
             inflated_min_x.clamp(WORLD_MIN_X, WORLD_MAX_X),
             inflated_min_y.clamp(WORLD_MIN_Y, WORLD_MAX_Y),
         ) else {
-            return;
+            return None;
         };
         let Some((max_cell_x, max_cell_y)) = nav_grid.world_to_grid(
             inflated_max_x.clamp(WORLD_MIN_X, max_world_x),
             inflated_max_y.clamp(WORLD_MIN_Y, max_world_y),
         ) else {
-            return;
+            return None;
         };
-
-        for gy in min_cell_y.min(max_cell_y)..=min_cell_y.max(max_cell_y) {
-            for gx in min_cell_x.min(max_cell_x)..=min_cell_x.max(max_cell_x) {
-                nav_grid.set_blocked(gx, gy, true);
-            }
-        }
+        Some((
+            min_cell_x.min(max_cell_x),
+            min_cell_y.min(max_cell_y),
+            min_cell_x.max(max_cell_x),
+            min_cell_y.max(max_cell_y),
+        ))
     }
 
     /// Compute (or reuse) an A* path from the bot's position to its target.
@@ -2446,6 +2539,64 @@ mod tests {
         }
 
         assert!(should_cleanup_predictive_models(1, &predictive_models));
+    }
+
+    fn make_test_wall(id: EntityId, x: f32, y: f32, width: f32, height: f32) -> Wall {
+        Wall {
+            id,
+            x,
+            y,
+            width,
+            height,
+            is_destructible: false,
+            current_health: 100,
+            max_health: 100,
+        }
+    }
+
+    #[test]
+    fn incremental_nav_updates_preserve_overlapping_walls() {
+        let wall_a = make_test_wall(1, 0.0, 0.0, 20.0, 20.0);
+        let wall_b = make_test_wall(2, 0.0, 0.0, 20.0, 20.0);
+        let existing_grid = OptimizedBotAI::build_nav_grid_from_walls([&wall_a, &wall_b])
+            .expect("grid should build");
+
+        let previous_walls =
+            HashMap::from([(wall_a.id, wall_a.clone()), (wall_b.id, wall_b.clone())]);
+        let current_walls = HashMap::from([(wall_b.id, wall_b.clone())]);
+
+        let updated_grid = OptimizedBotAI::update_nav_grid_incremental(
+            &existing_grid,
+            &previous_walls,
+            &current_walls,
+        )
+        .expect("grid should update");
+
+        assert!(updated_grid
+            .find_path_world(Vec2::new(10.0, 10.0), Vec2::new(80.0, 80.0))
+            .is_none());
+    }
+
+    #[test]
+    fn incremental_nav_updates_skip_rebuild_when_only_health_changes() {
+        let wall_a = make_test_wall(1, 0.0, 0.0, 20.0, 20.0);
+        let existing_grid =
+            OptimizedBotAI::build_nav_grid_from_walls([&wall_a]).expect("grid should build");
+
+        let mut damaged_wall = wall_a.clone();
+        damaged_wall.current_health = 80;
+
+        let previous_walls = HashMap::from([(wall_a.id, wall_a.clone())]);
+        let current_walls = HashMap::from([(damaged_wall.id, damaged_wall)]);
+
+        let updated_grid = OptimizedBotAI::update_nav_grid_incremental(
+            &existing_grid,
+            &previous_walls,
+            &current_walls,
+        )
+        .expect("grid should update");
+
+        assert!(Arc::ptr_eq(&existing_grid, &updated_grid));
     }
 
     // ── A* pathfinding / waypoint-following tests ─────────────────
