@@ -47,6 +47,22 @@ fn dispute_records_redis_key(base_key: &str) -> String {
     format!("{}:records", base_key)
 }
 
+fn match_summary_redis_key(base_key: &str) -> String {
+    format!("{}:latest_summary", base_key)
+}
+
+fn match_snapshot_records_redis_key(base_key: &str) -> String {
+    format!("{}:snapshots", base_key)
+}
+
+fn latest_match_summary_file_path(store_dir: &Path) -> PathBuf {
+    store_dir.join("latest_summary.json")
+}
+
+fn match_snapshot_index_file_path(store_dir: &Path) -> PathBuf {
+    store_dir.join("snapshot_index.json")
+}
+
 fn load_dispute_chain_head_from_file(path: &Path) -> Option<String> {
     let bytes = fs::read(path).ok()?;
     let content = String::from_utf8(bytes).ok()?;
@@ -163,6 +179,190 @@ pub(super) fn append_dispute_record(
     append_dispute_record_to_file(path, line.as_str())
 }
 
+fn load_latest_match_end_summary_from_file(store_dir: &Path) -> Option<MatchEndSummary> {
+    let path = latest_match_summary_file_path(store_dir);
+    let bytes = fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn load_latest_match_end_summary_from_redis(
+    redis_url: &str,
+    base_key: &str,
+) -> Result<Option<MatchEndSummary>, String> {
+    let client = redis::Client::open(redis_url.to_owned())
+        .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
+    let mut connection = client
+        .get_connection()
+        .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
+    let summary_key = match_summary_redis_key(base_key);
+    let payload: Option<String> = connection
+        .get(&summary_key)
+        .map_err(|err| format!("failed to read Redis key '{}': {}", summary_key, err))?;
+    payload
+        .map(|raw| serde_json::from_str::<MatchEndSummary>(&raw).map_err(|err| err.to_string()))
+        .transpose()
+}
+
+pub(super) fn load_latest_match_end_summary(
+    store_dir: &Path,
+    redis_url: Option<&str>,
+    redis_key: &str,
+) -> Option<MatchEndSummary> {
+    let normalized_redis_key = redis_key.trim();
+    if let Some(redis_url) = redis_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|_| !normalized_redis_key.is_empty())
+    {
+        match load_latest_match_end_summary_from_redis(redis_url, normalized_redis_key) {
+            Ok(Some(summary)) => return Some(summary),
+            Ok(None) => {}
+            Err(err) => tracing::warn!("Failed to load latest match summary from Redis: {}", err),
+        }
+    }
+    load_latest_match_end_summary_from_file(store_dir)
+}
+
+fn persist_latest_match_end_summary_to_file(
+    store_dir: &Path,
+    payload: &[u8],
+) -> Result<(), String> {
+    fs::create_dir_all(store_dir).map_err(|err| err.to_string())?;
+    let path = latest_match_summary_file_path(store_dir);
+    fs::write(path, payload).map_err(|err| err.to_string())
+}
+
+fn persist_latest_match_end_summary_to_redis(
+    redis_url: &str,
+    base_key: &str,
+    payload: &str,
+) -> Result<(), String> {
+    let client = redis::Client::open(redis_url.to_owned())
+        .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
+    let mut connection = client
+        .get_connection()
+        .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
+    let summary_key = match_summary_redis_key(base_key);
+    connection
+        .set::<_, _, ()>(&summary_key, payload)
+        .map_err(|err| {
+            format!(
+                "failed to persist Redis match summary '{}': {}",
+                summary_key, err
+            )
+        })
+}
+
+pub(super) fn persist_latest_match_end_summary(
+    store_dir: &Path,
+    redis_url: Option<&str>,
+    redis_key: &str,
+    summary: &MatchEndSummary,
+) -> Result<(), String> {
+    let payload = serde_json::to_vec(summary).map_err(|err| err.to_string())?;
+    let payload_str = std::str::from_utf8(&payload).map_err(|err| err.to_string())?;
+    let normalized_redis_key = redis_key.trim();
+    if let Some(redis_url) = redis_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|_| !normalized_redis_key.is_empty())
+    {
+        persist_latest_match_end_summary_to_redis(redis_url, normalized_redis_key, payload_str)?;
+        if let Err(err) = persist_latest_match_end_summary_to_file(store_dir, &payload) {
+            tracing::warn!(
+                "failed to mirror latest match summary to '{}': {}",
+                latest_match_summary_file_path(store_dir).display(),
+                err
+            );
+        }
+        return Ok(());
+    }
+    persist_latest_match_end_summary_to_file(store_dir, &payload)
+}
+
+fn load_match_snapshot_records_from_file(
+    store_dir: &Path,
+) -> Vec<PersistedMatchReplaySnapshotRecord> {
+    let path = match_snapshot_index_file_path(store_dir);
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Vec::new(),
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+fn persist_match_snapshot_records_to_file(
+    store_dir: &Path,
+    records: &[PersistedMatchReplaySnapshotRecord],
+) -> Result<(), String> {
+    fs::create_dir_all(store_dir).map_err(|err| err.to_string())?;
+    let path = match_snapshot_index_file_path(store_dir);
+    let payload = serde_json::to_vec(records).map_err(|err| err.to_string())?;
+    fs::write(path, payload).map_err(|err| err.to_string())
+}
+
+fn append_match_snapshot_record_to_redis(
+    redis_url: &str,
+    base_key: &str,
+    line: &str,
+    retention: usize,
+) -> Result<(), String> {
+    let client = redis::Client::open(redis_url.to_owned())
+        .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
+    let mut connection = client
+        .get_connection()
+        .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
+    let records_key = match_snapshot_records_redis_key(base_key);
+    redis::pipe()
+        .atomic()
+        .cmd("RPUSH")
+        .arg(&records_key)
+        .arg(line)
+        .cmd("LTRIM")
+        .arg(&records_key)
+        .arg(-(retention as isize))
+        .arg(-1)
+        .query::<()>(&mut connection)
+        .map_err(|err| {
+            format!(
+                "failed to persist Redis match snapshot record '{}': {}",
+                records_key, err
+            )
+        })
+}
+
+pub(super) fn append_match_snapshot_record(
+    store_dir: &Path,
+    redis_url: Option<&str>,
+    redis_key: &str,
+    record: &PersistedMatchReplaySnapshotRecord,
+    retention: usize,
+) -> Result<(), String> {
+    let line = serde_json::to_string(record).map_err(|err| err.to_string())?;
+    let mut records = load_match_snapshot_records_from_file(store_dir);
+    records.push(record.clone());
+    if records.len() > retention {
+        let keep_from = records.len().saturating_sub(retention);
+        records.drain(0..keep_from);
+    }
+    persist_match_snapshot_records_to_file(store_dir, &records)?;
+
+    let normalized_redis_key = redis_key.trim();
+    if let Some(redis_url) = redis_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|_| !normalized_redis_key.is_empty())
+    {
+        append_match_snapshot_record_to_redis(
+            redis_url,
+            normalized_redis_key,
+            line.as_str(),
+            retention,
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) fn sha256_hex(payload: &[u8]) -> String {
     let digest = Sha256::digest(payload);
     let mut rendered = String::with_capacity(digest.len() * 2);
@@ -222,6 +422,60 @@ mod tests {
         ))
     }
 
+    fn temp_match_store_dir(test_name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "mgs-{}-{}-{}",
+            test_name,
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    fn sample_match_summary() -> MatchEndSummary {
+        MatchEndSummary {
+            generated_at_ms: 4321,
+            reason: "match_end".to_owned(),
+            map_name: "Arena".to_owned(),
+            game_mode: "FreeForAll".to_owned(),
+            match_duration: 120.0,
+            winning_team: 0,
+            players: vec![PlayerMatchStats {
+                player_id: "player-1".to_owned(),
+                player_name: "Player One".to_owned(),
+                team_id: 0,
+                kills: 5,
+                deaths: 2,
+                score: 200,
+                damage_dealt: 900,
+                damage_taken: 450,
+                flag_captures: 0,
+                flag_returns: 0,
+                hot_zone_kills: 1,
+                hot_zone_time_seconds: 4.0,
+                weapon_kills: vec![1, 2, 1, 1, 0],
+                kd_ratio: 2.5,
+            }],
+            mvp_kills: Some("Player One".to_owned()),
+            mvp_damage: Some("Player One".to_owned()),
+            mvp_objectives: None,
+        }
+    }
+
+    fn sample_match_snapshot_record() -> PersistedMatchReplaySnapshotRecord {
+        PersistedMatchReplaySnapshotRecord {
+            generated_at_ms: 5555,
+            reason: "match_end".to_owned(),
+            map_name: "Arena".to_owned(),
+            file_name: "replay_5555_match_end.json.zst".to_owned(),
+            frame_count: 64,
+            compressed_bytes: 1024,
+        }
+    }
+
     #[test]
     fn append_dispute_record_persists_file_when_redis_disabled() {
         let path = temp_dispute_path("dispute-file-persist");
@@ -246,5 +500,50 @@ mod tests {
         assert_eq!(chain_head.as_deref(), Some("chain-hash-2"));
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn persist_latest_match_end_summary_persists_file_when_redis_disabled() {
+        let store_dir = temp_match_store_dir("match-summary-file-persist");
+        let summary = sample_match_summary();
+
+        persist_latest_match_end_summary(&store_dir, None, "", &summary)
+            .expect("summary persistence should succeed");
+
+        let loaded = load_latest_match_end_summary(&store_dir, None, "");
+        assert_eq!(loaded.unwrap().generated_at_ms, summary.generated_at_ms);
+
+        let _ = fs::remove_dir_all(store_dir);
+    }
+
+    #[test]
+    fn load_latest_match_end_summary_falls_back_to_file_when_redis_is_invalid() {
+        let store_dir = temp_match_store_dir("match-summary-redis-fallback");
+        let summary = sample_match_summary();
+        persist_latest_match_end_summary(&store_dir, None, "", &summary)
+            .expect("summary persistence should succeed");
+
+        let loaded = load_latest_match_end_summary(
+            &store_dir,
+            Some("redis://"),
+            "mgs:test:live_replay:matches",
+        );
+        assert_eq!(loaded.unwrap().generated_at_ms, summary.generated_at_ms);
+
+        let _ = fs::remove_dir_all(store_dir);
+    }
+
+    #[test]
+    fn append_match_snapshot_record_persists_index_file_when_redis_disabled() {
+        let store_dir = temp_match_store_dir("match-snapshot-index");
+        let record = sample_match_snapshot_record();
+
+        append_match_snapshot_record(&store_dir, None, "", &record, 8)
+            .expect("snapshot metadata persistence should succeed");
+
+        let records = load_match_snapshot_records_from_file(&store_dir);
+        assert_eq!(records, vec![record]);
+
+        let _ = fs::remove_dir_all(store_dir);
     }
 }

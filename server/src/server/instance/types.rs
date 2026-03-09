@@ -212,6 +212,8 @@ pub(super) struct ReplayState {
     pub(super) dispute_audit_capacity: usize,
     pub(super) match_persist_enabled: bool,
     pub(super) match_store_dir: Arc<PathBuf>,
+    pub(super) match_redis_url: Option<String>,
+    pub(super) match_redis_key: String,
     pub(super) match_retention: usize,
     pub(super) latest_match_end_summary: Arc<ParkingLotRwLock<Option<MatchEndSummary>>>,
     pub(super) recent_killcams: Arc<DashMap<PlayerID, KillCamData>>,
@@ -261,7 +263,7 @@ pub struct ServerKillFeedEntry {
     pub timestamp: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlayerMatchStats {
     pub player_id: String,
     pub player_name: String,
@@ -279,7 +281,7 @@ pub struct PlayerMatchStats {
     pub kd_ratio: f32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MatchEndSummary {
     pub generated_at_ms: u64,
     pub reason: String,
@@ -291,6 +293,16 @@ pub struct MatchEndSummary {
     pub mvp_kills: Option<String>,
     pub mvp_damage: Option<String>,
     pub mvp_objectives: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PersistedMatchReplaySnapshotRecord {
+    pub generated_at_ms: u64,
+    pub reason: String,
+    pub map_name: String,
+    pub file_name: String,
+    pub frame_count: usize,
+    pub compressed_bytes: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -99,7 +99,8 @@ impl MassiveGameServer {
             mvp_objectives,
         };
 
-        *self.replay.latest_match_end_summary.write() = Some(summary);
+        *self.replay.latest_match_end_summary.write() = Some(summary.clone());
+        self.persist_latest_match_end_summary(&summary);
         let latest_summary = self.latest_match_end_summary();
         if let Some(summary_event_packet) =
             self.build_system_event_packet("match_summary", latest_summary.as_ref())

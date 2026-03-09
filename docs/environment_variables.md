@@ -142,6 +142,8 @@ Centralized reference for runtime/deploy environment variables used by `massive_
 - `MGS_LIVE_REPLAY_PLAYER_CAP`: Per-player replay cap.
 - `MGS_LIVE_REPLAY_MATCH_PERSIST`: Persist match replay snapshots.
 - `MGS_LIVE_REPLAY_MATCH_STORE_DIR`: Replay match storage path.
+- `MGS_LIVE_REPLAY_MATCH_REDIS_URL`: Optional Redis URL override for shared persisted match metadata.
+- `MGS_REDIS_LIVE_REPLAY_MATCH_KEY`: Redis base key for latest match summary and persisted match metadata.
 - `MGS_LIVE_REPLAY_MATCH_RETENTION`: Retention for persisted matches.
 - `MGS_LIVE_REPLAY_DISPUTE_PERSIST`: Persist dispute evidence.
 - `MGS_LIVE_REPLAY_DISPUTE_STORE_PATH`: Dispute store path.

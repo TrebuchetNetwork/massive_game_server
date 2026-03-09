@@ -211,6 +211,8 @@ fn default_instance_env_config() -> InstanceEnv {
         live_replay_dispute_audit_capacity: 512,
         live_replay_match_persist_enabled: false,
         live_replay_match_store_dir: "data/live_replay/matches".to_owned(),
+        live_replay_match_redis_url: None,
+        live_replay_match_redis_key: "mgs:live_replay:matches".to_owned(),
         live_replay_match_retention: 100,
         direct_packet_queue_cap: 64,
         navmesh_enabled: false,
@@ -609,6 +611,8 @@ impl MassiveGameServer {
             runtime.live_replay_dispute_audit_capacity.clamp(16, 4096);
         let live_replay_match_persist_enabled = runtime.live_replay_match_persist_enabled;
         let live_replay_match_store_dir = PathBuf::from(&runtime.live_replay_match_store_dir);
+        let live_replay_match_redis_url = runtime.live_replay_match_redis_url.clone();
+        let live_replay_match_redis_key = runtime.live_replay_match_redis_key.clone();
         let live_replay_match_retention = runtime.live_replay_match_retention.clamp(1, 2_000);
         let direct_packet_queue_cap = runtime.direct_packet_queue_cap.clamp(8, 512);
         let live_replay_dispute_chain_head = if live_replay_dispute_persist_enabled {
@@ -616,6 +620,15 @@ impl MassiveGameServer {
                 live_replay_dispute_store_path.as_path(),
                 live_replay_dispute_redis_url.as_deref(),
                 live_replay_dispute_redis_key.as_str(),
+            )
+        } else {
+            None
+        };
+        let latest_match_end_summary = if live_replay_match_persist_enabled {
+            load_latest_match_end_summary(
+                live_replay_match_store_dir.as_path(),
+                live_replay_match_redis_url.as_deref(),
+                live_replay_match_redis_key.as_str(),
             )
         } else {
             None
@@ -721,8 +734,10 @@ impl MassiveGameServer {
                 dispute_audit_capacity: live_replay_dispute_audit_capacity,
                 match_persist_enabled: live_replay_match_persist_enabled,
                 match_store_dir: Arc::new(live_replay_match_store_dir),
+                match_redis_url: live_replay_match_redis_url,
+                match_redis_key: live_replay_match_redis_key,
                 match_retention: live_replay_match_retention,
-                latest_match_end_summary: Arc::new(ParkingLotRwLock::new(None)),
+                latest_match_end_summary: Arc::new(ParkingLotRwLock::new(latest_match_end_summary)),
                 recent_killcams: Arc::new(DashMap::new()),
             },
             queue_state: QueueState {

@@ -1,6 +1,27 @@
 use super::*;
 
 impl MassiveGameServer {
+    pub(super) fn persist_latest_match_end_summary(&self, summary: &MatchEndSummary) {
+        if !self.replay.match_persist_enabled {
+            return;
+        }
+
+        let store_dir = Arc::clone(&self.replay.match_store_dir);
+        let redis_url = self.replay.match_redis_url.clone();
+        let redis_key = self.replay.match_redis_key.clone();
+        let summary = summary.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(err) = persist_latest_match_end_summary(
+                store_dir.as_path(),
+                redis_url.as_deref(),
+                redis_key.as_str(),
+                &summary,
+            ) {
+                warn!("failed to persist latest match summary: {}", err);
+            }
+        });
+    }
+
     pub fn recent_live_replay_frames(&self, limit: usize) -> Vec<LiveReplayFrame> {
         let replay = self.replay.frames.read();
         let bounded = limit.clamp(1, self.replay.capacity.max(1));
@@ -183,8 +204,18 @@ impl MassiveGameServer {
         // async / game-loop runtime.  The compressed payload and path data are
         // moved into the closure so no references to `self` are needed.
         let store_dir = Arc::clone(&self.replay.match_store_dir);
+        let redis_url = self.replay.match_redis_url.clone();
+        let redis_key = self.replay.match_redis_key.clone();
         let retention = self.replay.match_retention;
         let file_name = format!("replay_{}_{}.json.zst", now_ms, safe_reason);
+        let metadata = PersistedMatchReplaySnapshotRecord {
+            generated_at_ms: now_ms,
+            reason: reason.to_owned(),
+            map_name: self.map_name.clone(),
+            file_name: file_name.clone(),
+            frame_count: frames.len(),
+            compressed_bytes: compressed.len(),
+        };
 
         tokio::task::spawn_blocking(move || {
             if let Err(err) = fs::create_dir_all(store_dir.as_path()) {
@@ -204,6 +235,16 @@ impl MassiveGameServer {
                     err
                 );
                 return;
+            }
+
+            if let Err(err) = append_match_snapshot_record(
+                store_dir.as_path(),
+                redis_url.as_deref(),
+                redis_key.as_str(),
+                &metadata,
+                retention,
+            ) {
+                warn!("failed to persist match replay metadata: {}", err);
             }
 
             Self::enforce_live_replay_match_retention_sync(&store_dir, retention);
