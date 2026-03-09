@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { createProtocolHandler } from "../client_logic/ProtocolHandler.js";
 
-function makeProtocolHandler() {
+function makeProtocolHandler(overrides = {}) {
     class StubType {}
     class StubByteBuffer {
         constructor(bytes) {
@@ -33,7 +33,7 @@ function makeProtocolHandler() {
 
     return createProtocolHandler({
         flatbuffers: { ByteBuffer: StubByteBuffer },
-        GameProtocol: {},
+        GameProtocol: overrides.GameProtocol || {},
         GP,
         log: () => {},
         isWallDebugEnabled: () => false,
@@ -135,4 +135,53 @@ test("parseMatchInfo includes base fields and optional winner/commander metadata
     assert.equal(parsed.winner_name, "Top Player");
     assert.deepEqual(parsed.team1_commander_waypoint, { x: 120, y: 220 });
     assert.equal(parsed.team2_commander_waypoint, null);
+});
+
+test("parseFlatBufferMessage reports protocol mismatch before payload parsing", () => {
+    const handler = makeProtocolHandler({
+        GameProtocol: {
+            MessageType: { Welcome: 1 },
+            GameMessage: {
+                getRootAsGameMessage() {
+                    return {
+                        protocolVersion: () => 999,
+                        msgType: () => 1,
+                    };
+                },
+            },
+        },
+    });
+
+    const parsed = handler.parseFlatBufferMessage(new Uint8Array([1, 2, 3]));
+    assert.equal(parsed.type, "protocol_error");
+    assert.equal(parsed.serverProtocolVersion, 999);
+    assert.match(parsed.detail, /Protocol mismatch/);
+});
+
+test("parseFlatBufferMessage includes welcome protocol version diagnostics", () => {
+    const handler = makeProtocolHandler({
+        GameProtocol: {
+            MessageType: { Welcome: 1 },
+            GameMessage: {
+                getRootAsGameMessage(_buf, _scratch) {
+                    return {
+                        protocolVersion: () => 1,
+                        msgType: () => 1,
+                        actualMessage: () => ({
+                            playerId: () => "player-1",
+                            message: () => "hello",
+                            serverTickRate: () => 60,
+                            serverProtocolVersion: () => 1,
+                        }),
+                    };
+                },
+            },
+        },
+    });
+
+    const parsed = handler.parseFlatBufferMessage(new Uint8Array([9, 9, 9]));
+    assert.equal(parsed.type, "welcome");
+    assert.equal(parsed.playerId, "player-1");
+    assert.equal(parsed.serverTickRate, 60);
+    assert.equal(parsed.serverProtocolVersion, 1);
 });

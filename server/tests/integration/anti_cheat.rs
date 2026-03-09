@@ -202,6 +202,8 @@ impl Drop for TransportServerProcess {
 #[derive(Debug, Serialize, Deserialize)]
 struct SignalingMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
+    protocol_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     sdp: Option<RTCSessionDescription>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ice: Option<IceCandidateJson>,
@@ -295,6 +297,9 @@ impl WebRtcSession {
                         if let Some(candidate) = candidate {
                             if let Ok(init) = candidate.to_json() {
                                 let msg = SignalingMessage {
+                                    protocol_version: Some(
+                                        massive_game_server_core::core::constants::GAME_PROTOCOL_VERSION,
+                                    ),
                                     sdp: None,
                                     ice: Some(IceCandidateJson {
                                         candidate: init.candidate,
@@ -324,6 +329,9 @@ impl WebRtcSession {
         ws_tx
             .send(WsMessage::Text(
                 serde_json::to_string(&SignalingMessage {
+                    protocol_version: Some(
+                        massive_game_server_core::core::constants::GAME_PROTOCOL_VERSION,
+                    ),
                     sdp: Some(offer),
                     ice: None,
                 })

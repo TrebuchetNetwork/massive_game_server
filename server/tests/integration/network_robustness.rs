@@ -13,6 +13,7 @@ use massive_game_server_core::core::constants::GAME_PROTOCOL_VERSION;
 use massive_game_server_core::flatbuffers_generated::game_protocol as fb;
 use massive_game_server_core::network::quic::{start_quic_runtime, QuicEndpointConfig};
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Notify};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use webrtc::api::media_engine::MediaEngine;
@@ -39,6 +40,8 @@ impl Drop for ServerProcess {
 #[derive(Debug, Serialize, Deserialize)]
 struct SignalingMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
+    protocol_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     sdp: Option<RTCSessionDescription>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ice: Option<IceCandidateJson>,
@@ -61,6 +64,33 @@ struct WebRtcSession {
     messages_rx: mpsc::UnboundedReceiver<fb::MessageType>,
     signaling_shutdown: Arc<AtomicBool>,
     signaling_task: tokio::task::JoinHandle<()>,
+}
+
+async fn wait_for_signaling_error(
+    ws_stream: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<TcpStream>,
+    >,
+) -> Result<serde_json::Value> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match ws_stream.next().await {
+                Some(Ok(WsMessage::Text(text))) => {
+                    let parsed: serde_json::Value = serde_json::from_str(&text)
+                        .context("failed to parse signaling server json response")?;
+                    if parsed.get("error").is_some() {
+                        return Ok(parsed);
+                    }
+                }
+                Some(Ok(WsMessage::Close(_))) | None => {
+                    anyhow::bail!("signaling socket closed before error payload arrived");
+                }
+                Some(Ok(_)) => {}
+                Some(Err(err)) => return Err(err).context("signaling websocket error"),
+            }
+        }
+    })
+    .await
+    .context("timed out waiting for signaling error")?
 }
 
 fn quic_test_mutex() -> &'static tokio::sync::Mutex<()> {
@@ -137,6 +167,7 @@ impl WebRtcSession {
                         if let Some(candidate) = candidate {
                             if let Ok(init) = candidate.to_json() {
                                 let msg = SignalingMessage {
+                                    protocol_version: Some(GAME_PROTOCOL_VERSION),
                                     sdp: None,
                                     ice: Some(IceCandidateJson {
                                         candidate: init.candidate,
@@ -166,6 +197,7 @@ impl WebRtcSession {
         ws_tx
             .send(WsMessage::Text(
                 serde_json::to_string(&SignalingMessage {
+                    protocol_version: Some(GAME_PROTOCOL_VERSION),
                     sdp: Some(offer),
                     ice: None,
                 })
@@ -526,6 +558,78 @@ async fn protocol_version_mismatch_does_not_close_webrtc_session() -> Result<()>
         })
         .await?;
     session.close().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn malformed_signaling_json_does_not_crash_server() -> Result<()> {
+    let process = spawn_server().await;
+    let (mut ws_stream, _) = tokio_tungstenite::connect_async(&process.ws_url)
+        .await
+        .context("failed to open signaling websocket")?;
+
+    ws_stream
+        .send(WsMessage::Text("{".to_owned()))
+        .await
+        .context("failed to send malformed signaling payload")?;
+
+    let error = wait_for_signaling_error(&mut ws_stream).await?;
+    assert_eq!(
+        error.get("error").and_then(|value| value.as_str()),
+        Some("invalid_signaling_payload")
+    );
+
+    let ready = reqwest::get(format!("{}/readyz", process.base_url))
+        .await
+        .context("failed to GET /readyz after malformed signaling")?;
+    assert!(
+        ready.status().is_success(),
+        "server should remain ready after malformed signaling payload"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signaling_protocol_version_mismatch_is_rejected_with_error() -> Result<()> {
+    let process = spawn_server().await;
+    let (mut ws_stream, _) = tokio_tungstenite::connect_async(&process.ws_url)
+        .await
+        .context("failed to open signaling websocket")?;
+
+    let mismatched_offer = serde_json::json!({
+        "protocol_version": GAME_PROTOCOL_VERSION + 1,
+        "ice": {
+            "candidate": "candidate:1 1 udp 2130706431 127.0.0.1 50000 typ host",
+            "sdpMid": "0",
+            "sdpMLineIndex": 0
+        }
+    })
+    .to_string();
+
+    ws_stream
+        .send(WsMessage::Text(mismatched_offer))
+        .await
+        .context("failed to send mismatched signaling protocol payload")?;
+
+    let error = wait_for_signaling_error(&mut ws_stream).await?;
+    assert_eq!(
+        error.get("error").and_then(|value| value.as_str()),
+        Some("protocol_version_mismatch")
+    );
+    assert_eq!(
+        error
+            .get("server_protocol_version")
+            .and_then(|value| value.as_u64()),
+        Some(GAME_PROTOCOL_VERSION as u64)
+    );
+
+    let ready = reqwest::get(format!("{}/readyz", process.base_url))
+        .await
+        .context("failed to GET /readyz after protocol mismatch")?;
+    assert!(
+        ready.status().is_success(),
+        "server should remain ready after signaling protocol mismatch"
+    );
     Ok(())
 }
 

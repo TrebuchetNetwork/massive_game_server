@@ -41,8 +41,13 @@ serverTickRate():number {
   return offset ? this.bb!.readUint16(this.bb_pos + offset) : 30;
 }
 
+serverProtocolVersion():number {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.readUint32(this.bb_pos + offset) : 1;
+}
+
 static startWelcomeMessage(builder:flatbuffers.Builder) {
-  builder.startObject(3);
+  builder.startObject(4);
 }
 
 static addPlayerId(builder:flatbuffers.Builder, playerIdOffset:flatbuffers.Offset) {
@@ -57,16 +62,21 @@ static addServerTickRate(builder:flatbuffers.Builder, serverTickRate:number) {
   builder.addFieldInt16(2, serverTickRate, 30);
 }
 
+static addServerProtocolVersion(builder:flatbuffers.Builder, serverProtocolVersion:number) {
+  builder.addFieldInt32(3, serverProtocolVersion, 1);
+}
+
 static endWelcomeMessage(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createWelcomeMessage(builder:flatbuffers.Builder, playerIdOffset:flatbuffers.Offset, messageOffset:flatbuffers.Offset, serverTickRate:number):flatbuffers.Offset {
+static createWelcomeMessage(builder:flatbuffers.Builder, playerIdOffset:flatbuffers.Offset, messageOffset:flatbuffers.Offset, serverTickRate:number, serverProtocolVersion:number):flatbuffers.Offset {
   WelcomeMessage.startWelcomeMessage(builder);
   WelcomeMessage.addPlayerId(builder, playerIdOffset);
   WelcomeMessage.addMessage(builder, messageOffset);
   WelcomeMessage.addServerTickRate(builder, serverTickRate);
+  WelcomeMessage.addServerProtocolVersion(builder, serverProtocolVersion);
   return WelcomeMessage.endWelcomeMessage(builder);
 }
 }

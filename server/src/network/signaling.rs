@@ -459,6 +459,8 @@ pub type ClientStatesMap = Arc<ParkingLotRwLock<HashMap<String, ClientState>>>;
 #[derive(Serialize, Deserialize, Debug)]
 struct SignalingMessageJson {
     #[serde(skip_serializing_if = "Option::is_none")]
+    protocol_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     sdp: Option<RTCSessionDescription>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ice: Option<RTCIceCandidateInitSerde>,
@@ -570,6 +572,10 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
+fn signaling_protocol_version() -> u32 {
+    GAME_PROTOCOL_VERSION
+}
+
 fn build_welcome_message_bytes(player_id: &str, server_tick_rate: u16) -> Bytes {
     let mut builder_welcome = flatbuffers::FlatBufferBuilder::with_capacity(256);
     let player_id_fb_welcome = builder_welcome.create_string(player_id);
@@ -578,6 +584,7 @@ fn build_welcome_message_bytes(player_id: &str, server_tick_rate: u16) -> Bytes 
         player_id: Some(player_id_fb_welcome),
         message: Some(welcome_text_fb),
         server_tick_rate,
+        server_protocol_version: signaling_protocol_version(),
     };
     let welcome_msg = fb::WelcomeMessage::create(&mut builder_welcome, &welcome_msg_args);
     let game_msg_welcome_args = fb::GameMessageArgs {
@@ -1224,6 +1231,7 @@ async fn acquire_sdp_admission_permit(
             let queue_notice = serde_json::json!({
                 "event": "sdp_offer_queue",
                 "queue_position_hint": queue_hint,
+                "server_protocol_version": signaling_protocol_version(),
             })
             .to_string();
             let _ = try_queue_signaling_message(
@@ -1242,6 +1250,7 @@ async fn acquire_sdp_admission_permit(
                     let rejection_notice = serde_json::json!({
                         "event": "sdp_offer_rejected",
                         "reason": "server_busy",
+                        "server_protocol_version": signaling_protocol_version(),
                     })
                     .to_string();
                     let _ = try_queue_signaling_message(
@@ -1341,6 +1350,12 @@ fn try_acquire_ip_rate_limit_token(client_ip: &IpAddr) -> bool {
 }
 
 fn validate_signaling_payload(payload: &SignalingMessageJson) -> Result<(), &'static str> {
+    match payload.protocol_version {
+        Some(version) if version == signaling_protocol_version() => {}
+        Some(_) => return Err("protocol_version mismatch"),
+        None => return Err("missing protocol_version"),
+    }
+
     if payload.sdp.is_none() && payload.ice.is_none() {
         return Err("empty signaling payload");
     }
@@ -1372,6 +1387,15 @@ fn validate_signaling_payload(payload: &SignalingMessageJson) -> Result<(), &'st
     }
 
     Ok(())
+}
+
+fn signaling_error_json(code: &str, detail: impl Into<String>) -> String {
+    serde_json::json!({
+        "error": code,
+        "detail": detail.into(),
+        "server_protocol_version": signaling_protocol_version(),
+    })
+    .to_string()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1406,11 +1430,8 @@ pub async fn handle_signaling_connection(
             peer_id_str
         );
         let (mut throttled_ws_tx, _) = ws.split();
-        let throttled_payload = serde_json::json!({
-            "error": "join_rate_limited",
-            "detail": JOIN_RATE_LIMIT_THROTTLED_MESSAGE,
-        })
-        .to_string();
+        let throttled_payload =
+            signaling_error_json("join_rate_limited", JOIN_RATE_LIMIT_THROTTLED_MESSAGE);
         let _ = throttled_ws_tx.send(Message::text(throttled_payload)).await;
         let _ = throttled_ws_tx.send(Message::close()).await;
         let _ = shared_connection_manager().remove(&peer_id_str);
@@ -1511,6 +1532,7 @@ pub async fn handle_signaling_connection(
         let ice_config_msg = serde_json::json!({
             "event": "ice_servers",
             "ice_servers": client_ice_config,
+            "server_protocol_version": signaling_protocol_version(),
         })
         .to_string();
         if !try_queue_signaling_message(
@@ -1633,6 +1655,7 @@ pub async fn handle_signaling_connection(
                             username_fragment: ice_init_struct.username_fragment,
                         };
                         let sig_msg = SignalingMessageJson {
+                            protocol_version: Some(signaling_protocol_version()),
                             sdp: None,
                             ice: Some(ice_serde),
                         };
@@ -2294,6 +2317,28 @@ pub async fn handle_signaling_connection(
                         match serde_json::from_str::<SignalingMessageJson>(text_content) {
                             Ok(sig_data) => {
                                 if let Err(reason) = validate_signaling_payload(&sig_data) {
+                                    let detail = match reason {
+                                        "protocol_version mismatch" => format!(
+                                            "Client signaling protocol version is incompatible with server version {}.",
+                                            signaling_protocol_version()
+                                        ),
+                                        "missing protocol_version" => format!(
+                                            "Client signaling payload is missing protocol_version; server requires version {}.",
+                                            signaling_protocol_version()
+                                        ),
+                                        _ => reason.to_owned(),
+                                    };
+                                    let code = if reason.contains("protocol_version") {
+                                        "protocol_version_mismatch"
+                                    } else {
+                                        "invalid_signaling_payload"
+                                    };
+                                    let _ = try_queue_signaling_message(
+                                        &ws_signal_sender_clone,
+                                        Ok(Message::text(signaling_error_json(code, detail))),
+                                        &current_peer_id_ws,
+                                        code,
+                                    );
                                     warn!(
                                         "[{}]: Invalid signaling payload: {}. Closing connection.",
                                         current_peer_id_ws, reason
@@ -2325,7 +2370,11 @@ pub async fn handle_signaling_connection(
                                         match pc_signal_receiver.create_answer(None).await {
                                             Ok(answer) => {
                                                 if pc_signal_receiver.set_local_description(answer.clone()).await.is_ok() {
-                                                    let resp_msg = SignalingMessageJson { sdp: Some(answer), ice: None };
+                                                    let resp_msg = SignalingMessageJson {
+                                                        protocol_version: Some(signaling_protocol_version()),
+                                                        sdp: Some(answer),
+                                                        ice: None,
+                                                    };
                                                     if let Ok(json_resp) = serde_json::to_string(&resp_msg) {
                                                         if !try_queue_signaling_message(
                                                             &ws_signal_sender_clone,
@@ -2375,6 +2424,15 @@ pub async fn handle_signaling_connection(
                                 }
                             }
                             Err(e) => {
+                                let _ = try_queue_signaling_message(
+                                    &ws_signal_sender_clone,
+                                    Ok(Message::text(signaling_error_json(
+                                        "invalid_signaling_payload",
+                                        "Malformed signaling JSON.",
+                                    ))),
+                                    &current_peer_id_ws,
+                                    "invalid_signaling_payload",
+                                );
                                 error!(
                                     "[{}]: Failed to parse signaling message: {} (len={}).",
                                     current_peer_id_ws,
@@ -2793,6 +2851,7 @@ mod tests {
     #[test]
     fn validate_payload_rejects_empty() {
         let payload = SignalingMessageJson {
+            protocol_version: Some(signaling_protocol_version()),
             sdp: None,
             ice: None,
         };
@@ -2808,6 +2867,7 @@ mod tests {
         let mut sdp = RTCSessionDescription::default();
         sdp.sdp = large_sdp;
         let payload = SignalingMessageJson {
+            protocol_version: Some(signaling_protocol_version()),
             sdp: Some(sdp),
             ice: None,
         };
@@ -2822,6 +2882,7 @@ mod tests {
         let mut sdp = RTCSessionDescription::default();
         sdp.sdp = "v=0\r\n".to_owned();
         let payload = SignalingMessageJson {
+            protocol_version: Some(signaling_protocol_version()),
             sdp: Some(sdp),
             ice: None,
         };
@@ -2838,6 +2899,7 @@ mod tests {
             username_fragment: None,
         };
         let payload = SignalingMessageJson {
+            protocol_version: Some(signaling_protocol_version()),
             sdp: None,
             ice: Some(ice),
         };
@@ -2857,6 +2919,7 @@ mod tests {
             username_fragment: None,
         };
         let payload = SignalingMessageJson {
+            protocol_version: Some(signaling_protocol_version()),
             sdp: None,
             ice: Some(ice),
         };
@@ -2876,6 +2939,7 @@ mod tests {
             username_fragment: Some(large_frag),
         };
         let payload = SignalingMessageJson {
+            protocol_version: Some(signaling_protocol_version()),
             sdp: None,
             ice: Some(ice),
         };
@@ -2894,10 +2958,47 @@ mod tests {
             username_fragment: Some("abc".to_owned()),
         };
         let payload = SignalingMessageJson {
+            protocol_version: Some(signaling_protocol_version()),
             sdp: None,
             ice: Some(ice),
         };
         assert!(validate_signaling_payload(&payload).is_ok());
+    }
+
+    #[test]
+    fn validate_payload_rejects_missing_protocol_version() {
+        let payload = SignalingMessageJson {
+            protocol_version: None,
+            sdp: None,
+            ice: Some(RTCIceCandidateInitSerde {
+                candidate: "candidate:1".to_owned(),
+                sdp_mid: Some("0".to_owned()),
+                sdp_m_line_index: Some(0),
+                username_fragment: None,
+            }),
+        };
+        assert_eq!(
+            validate_signaling_payload(&payload),
+            Err("missing protocol_version")
+        );
+    }
+
+    #[test]
+    fn validate_payload_rejects_protocol_version_mismatch() {
+        let payload = SignalingMessageJson {
+            protocol_version: Some(signaling_protocol_version() + 1),
+            sdp: None,
+            ice: Some(RTCIceCandidateInitSerde {
+                candidate: "candidate:1".to_owned(),
+                sdp_mid: Some("0".to_owned()),
+                sdp_m_line_index: Some(0),
+                username_fragment: None,
+            }),
+        };
+        assert_eq!(
+            validate_signaling_payload(&payload),
+            Err("protocol_version mismatch")
+        );
     }
 
     // ── JoinRateLimiter tests ────────────────────────────────────────
@@ -3064,8 +3165,9 @@ mod tests {
 
     #[test]
     fn signaling_message_json_deserializes_ice_candidate() {
-        let json_str = r#"{"ice":{"candidate":"candidate:1 1 udp 2130706431 192.168.1.1 1234 typ host","sdpMid":"0","sdpMLineIndex":0}}"#;
+        let json_str = r#"{"protocol_version":1,"ice":{"candidate":"candidate:1 1 udp 2130706431 192.168.1.1 1234 typ host","sdpMid":"0","sdpMLineIndex":0}}"#;
         let parsed: SignalingMessageJson = serde_json::from_str(json_str).unwrap();
+        assert_eq!(parsed.protocol_version, Some(signaling_protocol_version()));
         assert!(parsed.sdp.is_none());
         let ice = parsed.ice.unwrap();
         assert!(ice.candidate.contains("candidate:1"));
@@ -3076,6 +3178,7 @@ mod tests {
     #[test]
     fn signaling_message_json_serializes_ice_with_skip_serializing_if() {
         let msg = SignalingMessageJson {
+            protocol_version: Some(signaling_protocol_version()),
             sdp: None,
             ice: Some(RTCIceCandidateInitSerde {
                 candidate: "test".to_owned(),
@@ -3087,6 +3190,7 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         // The struct uses #[serde(skip_serializing_if = "Option::is_none")] on sdp/ice
         // so the `ice` field should be present and contain the candidate
+        assert!(json.contains("protocol_version"));
         assert!(json.contains("ice"));
         assert!(json.contains("candidate"));
         assert!(json.contains("test"));
@@ -3095,6 +3199,7 @@ mod tests {
     #[test]
     fn signaling_message_json_round_trip() {
         let msg = SignalingMessageJson {
+            protocol_version: Some(signaling_protocol_version()),
             sdp: None,
             ice: Some(RTCIceCandidateInitSerde {
                 candidate: "candidate:1 1 udp 2130706431 192.168.1.1 1234 typ host".to_owned(),
@@ -3105,6 +3210,7 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: SignalingMessageJson = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.protocol_version, Some(signaling_protocol_version()));
         let ice = parsed.ice.unwrap();
         assert_eq!(ice.sdp_mid, Some("audio".to_owned()));
         assert_eq!(ice.username_fragment, Some("frag123".to_owned()));

@@ -1,0 +1,1 @@
+export const CLIENT_PROTOCOL_VERSION = 1;

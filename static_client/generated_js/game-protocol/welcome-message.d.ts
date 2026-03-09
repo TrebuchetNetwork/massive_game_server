@@ -10,11 +10,13 @@ export declare class WelcomeMessage {
     message(): string | null;
     message(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
     serverTickRate(): number;
+    serverProtocolVersion(): number;
     static startWelcomeMessage(builder: flatbuffers.Builder): void;
     static addPlayerId(builder: flatbuffers.Builder, playerIdOffset: flatbuffers.Offset): void;
     static addMessage(builder: flatbuffers.Builder, messageOffset: flatbuffers.Offset): void;
     static addServerTickRate(builder: flatbuffers.Builder, serverTickRate: number): void;
+    static addServerProtocolVersion(builder: flatbuffers.Builder, serverProtocolVersion: number): void;
     static endWelcomeMessage(builder: flatbuffers.Builder): flatbuffers.Offset;
-    static createWelcomeMessage(builder: flatbuffers.Builder, playerIdOffset: flatbuffers.Offset, messageOffset: flatbuffers.Offset, serverTickRate: number): flatbuffers.Offset;
+    static createWelcomeMessage(builder: flatbuffers.Builder, playerIdOffset: flatbuffers.Offset, messageOffset: flatbuffers.Offset, serverTickRate: number, serverProtocolVersion: number): flatbuffers.Offset;
 }
 //# sourceMappingURL=welcome-message.d.ts.map

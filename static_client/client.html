@@ -440,6 +440,7 @@
             normalizeConnectionErrorDetail,
             createGameRenderer,
             createProtocolHandler,
+            CLIENT_PROTOCOL_VERSION,
             createInputManager,
             createCombatFeedback,
             createAimingSystem,
@@ -4536,10 +4537,17 @@
                         myPlayerId = parsed.playerId;
                     }
                     const tickRate = Number(parsed.serverTickRate);
+                    const protocolVersion = Number(parsed.serverProtocolVersion);
                     const tickText = Number.isFinite(tickRate) && tickRate > 0
                         ? ` Server Tick: ${tickRate}Hz`
                         : '';
-                    log(`Welcome! Your ID: ${myPlayerId || 'unknown'}.${tickText}`, 'success');
+                    const protocolText = Number.isFinite(protocolVersion) && protocolVersion > 0
+                        ? ` Protocol: v${protocolVersion}`
+                        : '';
+                    if (window.__e2e) {
+                        window.__e2e.serverProtocolVersion = protocolVersion;
+                    }
+                    log(`Welcome! Your ID: ${myPlayerId || 'unknown'}.${tickText}${protocolText}`, 'success');
                     applyConnectionStatus('waiting', 'Waiting for initial state...');
                     break;
                 }
@@ -4594,6 +4602,13 @@
                         window.__e2e.matchInfoReady = true;
                     }
                     refreshMatchInfoUi(true);
+                    break;
+                }
+                case 'protocol_error': {
+                    const detail = String(parsed.detail || 'Protocol mismatch');
+                    log(detail, 'error');
+                    setConnectionError(detail);
+                    applyConnectionStatus('error', detail);
                     break;
                 }
                 default:
@@ -5289,7 +5304,10 @@
                 markJoinTimingStage('offerCreatedAtMs');
                 await peerConnection.setLocalDescription(offer);
                 markJoinTimingStage('localDescriptionAtMs');
-                signalingSocket.send(JSON.stringify({ 'sdp': peerConnection.localDescription }));
+                signalingSocket.send(JSON.stringify({
+                    sdp: peerConnection.localDescription,
+                    protocol_version: CLIENT_PROTOCOL_VERSION,
+                }));
             } catch (e) {
                 log(`Error creating offer: ${e}`, 'error');
             }

@@ -30,8 +30,12 @@ export class WelcomeMessage {
         const offset = this.bb.__offset(this.bb_pos, 8);
         return offset ? this.bb.readUint16(this.bb_pos + offset) : 30;
     }
+    serverProtocolVersion() {
+        const offset = this.bb.__offset(this.bb_pos, 10);
+        return offset ? this.bb.readUint32(this.bb_pos + offset) : 1;
+    }
     static startWelcomeMessage(builder) {
-        builder.startObject(3);
+        builder.startObject(4);
     }
     static addPlayerId(builder, playerIdOffset) {
         builder.addFieldOffset(0, playerIdOffset, 0);
@@ -42,15 +46,19 @@ export class WelcomeMessage {
     static addServerTickRate(builder, serverTickRate) {
         builder.addFieldInt16(2, serverTickRate, 30);
     }
+    static addServerProtocolVersion(builder, serverProtocolVersion) {
+        builder.addFieldInt32(3, serverProtocolVersion, 1);
+    }
     static endWelcomeMessage(builder) {
         const offset = builder.endObject();
         return offset;
     }
-    static createWelcomeMessage(builder, playerIdOffset, messageOffset, serverTickRate) {
+    static createWelcomeMessage(builder, playerIdOffset, messageOffset, serverTickRate, serverProtocolVersion) {
         WelcomeMessage.startWelcomeMessage(builder);
         WelcomeMessage.addPlayerId(builder, playerIdOffset);
         WelcomeMessage.addMessage(builder, messageOffset);
         WelcomeMessage.addServerTickRate(builder, serverTickRate);
+        WelcomeMessage.addServerProtocolVersion(builder, serverProtocolVersion);
         return WelcomeMessage.endWelcomeMessage(builder);
     }
 }

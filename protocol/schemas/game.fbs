@@ -280,6 +280,7 @@ table WelcomeMessage {
     player_id: string;
     message: string;
     server_tick_rate: ushort = 30; // Example: inform client about server's tick rate
+    server_protocol_version: uint = 1;
 }
 
 table InitialStateMessage {

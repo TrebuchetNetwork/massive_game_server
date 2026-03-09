@@ -1,3 +1,5 @@
+import { CLIENT_PROTOCOL_VERSION } from './protocol_version.js';
+
 /**
  * ConnectionManager.js - WebRTC connection lifecycle management
  *
@@ -45,6 +47,18 @@ export function createConnectionManager(getCtx) {
             clearTimeout(iceConfigTimeoutId);
             iceConfigTimeoutId = null;
         }
+    }
+
+    function sendSignalingPayload(payload) {
+        const currentSocket = getCtx().signalingSocket;
+        if (!currentSocket || currentSocket.readyState !== WebSocket.OPEN) {
+            return false;
+        }
+        currentSocket.send(JSON.stringify({
+            ...payload,
+            protocol_version: CLIENT_PROTOCOL_VERSION,
+        }));
+        return true;
     }
 
     /**
@@ -336,6 +350,9 @@ export function createConnectionManager(getCtx) {
                 setConnectionError(detail);
                 markJoinTimingAborted(detail);
                 applyConnectionStatus('error', detail);
+                if (msg.error === 'protocol_version_mismatch') {
+                    resetConnectionUI({ allowReconnect: false });
+                }
                 return;
             }
 
@@ -351,10 +368,7 @@ export function createConnectionManager(getCtx) {
                         const answer = await peerConnection.createAnswer();
                         await peerConnection.setLocalDescription(answer);
                         markJoinTimingStage('localDescriptionAtMs');
-                        const currentSocket = getCtx().signalingSocket;
-                        if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
-                            currentSocket.send(JSON.stringify({ 'sdp': peerConnection.localDescription }));
-                        }
+                        sendSignalingPayload({ sdp: peerConnection.localDescription });
                     }
                 } catch (e) {
                     log(`Error setting remote desc: ${e}`, 'error');
@@ -426,10 +440,7 @@ export function createConnectionManager(getCtx) {
 
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
-                const currentSocket = getCtx().signalingSocket;
-                if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
-                    currentSocket.send(JSON.stringify({ 'ice': event.candidate }));
-                }
+                sendSignalingPayload({ ice: event.candidate });
             }
         };
         try {
@@ -498,9 +509,7 @@ export function createConnectionManager(getCtx) {
         try {
             const offer = await peerConnection.createOffer({ iceRestart: true });
             await peerConnection.setLocalDescription(offer);
-            const currentSocket = getCtx().signalingSocket;
-            if (currentSocket && currentSocket.readyState === WebSocket.OPEN) {
-                currentSocket.send(JSON.stringify({ 'sdp': peerConnection.localDescription }));
+            if (sendSignalingPayload({ sdp: peerConnection.localDescription })) {
                 log('ICE restart offer sent.', 'info');
             } else {
                 log('Cannot send ICE restart offer: signaling socket not open. Falling back to full reconnect.', 'warn');
@@ -577,6 +586,13 @@ export function createConnectionManager(getCtx) {
                     currentCtx.trackFullParsePacket();
                     const parsed = parseFlatBufferMessage(packet);
                     if (!parsed) continue;
+                    if (parsed.type === 'protocol_error') {
+                        const detail = parsed.detail || 'Protocol mismatch';
+                        currentCtx.setConnectionError(detail);
+                        applyConnectionStatus('error', detail);
+                        resetConnectionUI({ allowReconnect: false });
+                        return;
+                    }
                     currentCtx.handleParsedMessage(parsed);
                 }
                 return;

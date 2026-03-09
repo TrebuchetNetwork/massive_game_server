@@ -1,3 +1,5 @@
+import { CLIENT_PROTOCOL_VERSION } from './protocol_version.js';
+
 /**
  * ProtocolHandler.js - FlatBuffers protocol parsing extracted from client.html
  *
@@ -397,6 +399,16 @@ export function createProtocolHandler({
                 return null;
             }
             const gameMsg = GameProtocol.GameMessage.getRootAsGameMessage(buf, flatbufferParseScratch.gameMessage);
+            const protocolVersion = Number(gameMsg.protocolVersion?.() ?? CLIENT_PROTOCOL_VERSION);
+            if (protocolVersion !== CLIENT_PROTOCOL_VERSION) {
+                const detail = `Protocol mismatch: client=${CLIENT_PROTOCOL_VERSION}, server=${protocolVersion}`;
+                log(detail, 'error');
+                return {
+                    type: 'protocol_error',
+                    detail,
+                    serverProtocolVersion: protocolVersion
+                };
+            }
             const msgType = gameMsg.msgType();
 
             switch (msgType) {
@@ -410,7 +422,10 @@ export function createProtocolHandler({
                         type: 'welcome',
                         playerId: welcome.playerId(),
                         message: welcome.message(),
-                        serverTickRate: welcome.serverTickRate()
+                        serverTickRate: welcome.serverTickRate(),
+                        serverProtocolVersion: typeof welcome.serverProtocolVersion === 'function'
+                            ? welcome.serverProtocolVersion()
+                            : protocolVersion
                     };
                 }
 

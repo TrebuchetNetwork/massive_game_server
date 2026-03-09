@@ -11,6 +11,7 @@ export {
     summarizeSignalingError,
 } from './networking_utils.js';
 export { clamp, lerp, normalizeAngle, smoothFollowGain } from './math_utils.js';
+export { CLIENT_PROTOCOL_VERSION } from './protocol_version.js';
 export { createAuthHelpers } from './auth_utils.js';
 export { createReconnectHelpers } from './reconnect_utils.js';
 export { createAcceleratedLayerRuntime } from './accelerated_layers.js';
@@ -29,14 +30,14 @@ export {
     normalizeConnectionErrorDetail,
 } from './connection_status.js';
 export { createGameRenderer } from './GameRenderer.js';
-export { createProtocolHandler } from './ProtocolHandler.js?v=20260225a';
+export { createProtocolHandler } from './ProtocolHandler.js?v=20260309a';
 export { createInputManager } from './InputManager.js';
 export { createCombatFeedback } from './CombatFeedback.js';
 export { createAimingSystem } from './AimingSystem.js';
 export { createUIManager } from './UIManager.js';
 export { createSpriteManager } from './SpriteManager.js';
 export { createServerUpdateHandler } from './ServerUpdateHandler.js?v=20260306a';
-export { createConnectionManager } from './ConnectionManager.js?v=20260225a';
+export { createConnectionManager } from './ConnectionManager.js?v=20260309a';
 export { createWorldRenderer } from './WorldRenderer.js?v=20260306a';
 export { createInterpolationManager } from './InterpolationManager.js';
 export { createDiagnosticsManager } from './DiagnosticsManager.js';
