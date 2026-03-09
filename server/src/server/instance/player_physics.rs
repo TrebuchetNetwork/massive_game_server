@@ -291,9 +291,11 @@ impl MassiveGameServer {
 
         // Use spatial index to query nearby walls
         let check_radius = PLAYER_RADIUS + 10.0; // Reduced from 50.0 since spatial index is efficient
-        if self
-            .wall_spatial_index
-            .any_radius(player_state.x, player_state.y, check_radius, |wall| {
+        if self.wall_spatial_index.any_radius(
+            player_state.x,
+            player_state.y,
+            check_radius,
+            |wall| {
                 let (wall_x, wall_y, wall_width, wall_height) = if wall.is_destructible {
                     let partition_idx = self.world_partition_manager.get_partition_index_for_point(
                         wall.x + wall.width * 0.5,
@@ -371,8 +373,8 @@ impl MassiveGameServer {
                 player_state.last_valid_position = (old_x, old_y);
                 player_state.mark_field_changed(FIELD_POSITION_ROTATION);
                 true
-            })
-        {
+            },
+        ) {
             return;
         }
 
@@ -454,8 +456,7 @@ impl MassiveGameServer {
                     let closest_y = player_state.y.clamp(wall.y, wall.y + wall.height);
                     update_surface_type_match(
                         &mut best_surface_match,
-                        (player_state.x - closest_x).powi(2)
-                            + (player_state.y - closest_y).powi(2),
+                        (player_state.x - closest_x).powi(2) + (player_state.y - closest_y).powi(2),
                         wall.inferred_surface_type(),
                     );
                 },
