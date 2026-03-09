@@ -5,16 +5,24 @@ This document is the authoritative roadmap for production readiness work on the 
 
 ## Current Truth
 ### Confirmed and actionable
-- Kubernetes Stage A needed honest single-replica gameplay exposure instead of the old 2-replica TCP-only shape.
-- WebSocket connection capping needed reservation-based enforcement instead of `peers.len()` admission.
-- The landing page needed to stop depending on remote CDNs so it could live under the same strict CSP posture as the rest of the app.
-- Tick duration needed exact nanosecond-derived timing instead of millisecond truncation.
+- Kubernetes Stage B is still incomplete: multi-replica gameplay remains deferred until shared artifact storage and the remaining persistence surfaces are externalized.
+- Backup artifacts and replay payload files are still file-system backed; only metadata/state slices have been externalized so far.
+- Client lifecycle cleanup is still ongoing, but the highest-risk reconnect/reset leaks have already been reduced with targeted tests.
 
 ### Confirmed stale findings
 - SMS command injection: already fixed in `main`.
 - ObjectPool race condition: already fixed in `main`.
 - Delta bitmask truncation: already fixed in `main`.
 - Several previously reported missing gameplay feedback systems were already implemented before this roadmap.
+
+### Already implemented in `main`
+- Exact nanosecond-derived tick timing with regression coverage.
+- Self-hosted landing page assets under strict page-specific CSP.
+- Reservation-based WebSocket connection capping.
+- Kubernetes Stage A single-replica UDP gameplay manifests plus kind browser smoke coverage.
+- Shared Redis persistence for feature flags, arena state, live replay disputes, and live replay match metadata.
+- Release-edge alert delivery verification plus severity routing.
+- QUIC framed-write coalescing and additional FlatBuffer builder reuse.
 
 ### Intentionally deferred
 - Full multi-replica Kubernetes gameplay is deferred until shared persistence/state externalization lands.
