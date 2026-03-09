@@ -8,6 +8,46 @@
  * Uses getCtx callback pattern to access shared game state.
  */
 
+const CHAT_MODERATION_SET_LIMIT = 256;
+
+function normalizeChatIdentityValue(rawValue) {
+    return String(rawValue ?? '').trim().toLowerCase();
+}
+
+function trimIdentitySet(targetSet, limit = CHAT_MODERATION_SET_LIMIT) {
+    while (targetSet.size > limit) {
+        const oldest = targetSet.values().next();
+        if (oldest.done) break;
+        targetSet.delete(oldest.value);
+    }
+}
+
+export function rememberBoundedIdentity(targetSet, rawValue, {
+    normalize = true,
+    limit = CHAT_MODERATION_SET_LIMIT,
+} = {}) {
+    const value = normalize ? normalizeChatIdentityValue(rawValue) : String(rawValue ?? '').trim();
+    if (!value) return false;
+    if (targetSet.has(value)) {
+        targetSet.delete(value);
+    }
+    targetSet.add(value);
+    trimIdentitySet(targetSet, limit);
+    return true;
+}
+
+export function hydrateBoundedIdentitySet(targetSet, rawList, {
+    normalize = true,
+    limit = CHAT_MODERATION_SET_LIMIT,
+} = {}) {
+    targetSet.clear();
+    if (!Array.isArray(rawList)) return;
+    const startIndex = Math.max(0, rawList.length - limit);
+    for (let i = startIndex; i < rawList.length; i += 1) {
+        rememberBoundedIdentity(targetSet, rawList[i], { normalize, limit });
+    }
+}
+
 export function createUIManager(getCtx) {
 
     let lastCountdownBeepSecond = null;
@@ -326,18 +366,7 @@ export function createUIManager(getCtx) {
     }
 
     function normalizeChatIdentity(rawValue) {
-        return String(rawValue ?? '').trim().toLowerCase();
-    }
-
-    function hydrateIdentitySet(targetSet, rawList, normalize = true) {
-        targetSet.clear();
-        if (!Array.isArray(rawList)) return;
-        for (let i = 0; i < rawList.length; i += 1) {
-            const rawItem = rawList[i];
-            const item = normalize ? normalizeChatIdentity(rawItem) : String(rawItem ?? '').trim();
-            if (!item) continue;
-            targetSet.add(item);
-        }
+        return normalizeChatIdentityValue(rawValue);
     }
 
     function persistIdentitySet(storageKey, targetSet) {
@@ -351,25 +380,25 @@ export function createUIManager(getCtx) {
     }
 
     function loadChatModerationState() {
-        hydrateIdentitySet(
+        hydrateBoundedIdentitySet(
             mutedPlayerIds,
             loadStoredJson(CHAT_MUTED_IDS_KEY, []),
-            false
+            { normalize: false, limit: CHAT_MODERATION_SET_LIMIT }
         );
-        hydrateIdentitySet(
+        hydrateBoundedIdentitySet(
             mutedNames,
             loadStoredJson(CHAT_MUTED_NAMES_KEY, []),
-            true
+            { normalize: true, limit: CHAT_MODERATION_SET_LIMIT }
         );
-        hydrateIdentitySet(
+        hydrateBoundedIdentitySet(
             blockedPlayerIds,
             loadStoredJson(CHAT_BLOCKED_IDS_KEY, []),
-            false
+            { normalize: false, limit: CHAT_MODERATION_SET_LIMIT }
         );
-        hydrateIdentitySet(
+        hydrateBoundedIdentitySet(
             blockedNames,
             loadStoredJson(CHAT_BLOCKED_NAMES_KEY, []),
-            true
+            { normalize: true, limit: CHAT_MODERATION_SET_LIMIT }
         );
         bumpChatModerationRevision();
     }
@@ -1681,20 +1710,20 @@ export function createUIManager(getCtx) {
         const nextEnabled = !!enabled;
         if (actionMode === 'block') {
             if (playerId) {
-                if (nextEnabled) blockedPlayerIds.add(playerId);
+                if (nextEnabled) rememberBoundedIdentity(blockedPlayerIds, playerId, { normalize: false });
                 else blockedPlayerIds.delete(playerId);
             }
             if (normalizedName) {
-                if (nextEnabled) blockedNames.add(normalizedName);
+                if (nextEnabled) rememberBoundedIdentity(blockedNames, normalizedName);
                 else blockedNames.delete(normalizedName);
             }
         } else {
             if (playerId) {
-                if (nextEnabled) mutedPlayerIds.add(playerId);
+                if (nextEnabled) rememberBoundedIdentity(mutedPlayerIds, playerId, { normalize: false });
                 else mutedPlayerIds.delete(playerId);
             }
             if (normalizedName) {
-                if (nextEnabled) mutedNames.add(normalizedName);
+                if (nextEnabled) rememberBoundedIdentity(mutedNames, normalizedName);
                 else mutedNames.delete(normalizedName);
             }
         }
