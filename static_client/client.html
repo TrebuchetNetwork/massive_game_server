@@ -1150,6 +1150,18 @@
                 ...options,
                 rendererBackend: getRendererBackendSummary(window.app || null, PIXI)
             });
+            window.__e2e.forcePrimaryFire = (enabled) => {
+                inputState.shooting = !!enabled;
+                return inputState.shooting;
+            };
+            window.__e2e.setAimWorldPosition = (x, y) => {
+                const nextX = Number(x);
+                const nextY = Number(y);
+                if (!Number.isFinite(nextX) || !Number.isFinite(nextY)) return false;
+                mouseWorldPos.x = nextX;
+                mouseWorldPos.y = nextY;
+                return true;
+            };
             window.__e2e.forceCloseSignaling = () => {
                 if (!signalingSocket) return false;
                 try {

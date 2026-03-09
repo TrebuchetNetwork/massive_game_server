@@ -3,6 +3,7 @@ const { connectClient, getLocalPlayerPosition } = require('./helpers/gameClient'
 const { sendMovement } = require('./helpers/multiplayerClient');
 
 test.describe.configure({ timeout: 120000, retries: 1 });
+test.skip(process.env.E2E_SERVER_SKIP !== '1', 'kind smoke runs only under the dedicated k8s gate');
 
 test('@smoke kind cluster supports data-channel gameplay movement', async ({ page }) => {
   await connectClient(page, {

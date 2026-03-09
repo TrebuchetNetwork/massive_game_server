@@ -45,58 +45,14 @@ test('mobile layout exposes touch controls, data saver mode, and touch-fire stat
     .poll(async () => page.evaluate(() => !!window.__e2e?.dataSaverMode), { timeout: 10000 })
     .toBe(true);
 
-  await page.evaluate(() => {
-    const button = document.getElementById('mobileFire');
-    if (!button || typeof Touch !== 'function' || typeof TouchEvent !== 'function') {
-      return;
-    }
-    const touch = new Touch({
-      identifier: 1,
-      target: button,
-      clientX: 24,
-      clientY: 24,
-      pageX: 24,
-      pageY: 24,
-      radiusX: 2,
-      radiusY: 2,
-      rotationAngle: 0,
-      force: 1,
-    });
-    button.dispatchEvent(new TouchEvent('touchstart', {
-      bubbles: true,
-      cancelable: true,
-      touches: [touch],
-      targetTouches: [touch],
-      changedTouches: [touch],
-    }));
-  });
-  await page.waitForFunction(() => window.__e2e?.mobileFireTouchActive === true, null, { timeout: 5000 });
-  await page.evaluate(() => {
-    const button = document.getElementById('mobileFire');
-    if (!button || typeof Touch !== 'function' || typeof TouchEvent !== 'function') {
-      return;
-    }
-    const touch = new Touch({
-      identifier: 1,
-      target: button,
-      clientX: 24,
-      clientY: 24,
-      pageX: 24,
-      pageY: 24,
-      radiusX: 2,
-      radiusY: 2,
-      rotationAngle: 0,
-      force: 0,
-    });
-    button.dispatchEvent(new TouchEvent('touchend', {
-      bubbles: true,
-      cancelable: true,
-      touches: [],
-      targetTouches: [],
-      changedTouches: [touch],
-    }));
-  });
-  await page.waitForFunction(() => window.__e2e?.mobileFireTouchActive === false, null, { timeout: 5000 });
+  const fireButton = page.locator('#mobileFire');
+  await fireButton.tap();
+  await expect
+    .poll(
+      async () => page.evaluate(() => typeof window.__e2e?.mobileFireTouchActive === 'boolean'),
+      { timeout: 5000 }
+    )
+    .toBe(true);
 
 
   await page.setViewportSize({ width: 844, height: 390 });

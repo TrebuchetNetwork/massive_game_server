@@ -2069,18 +2069,14 @@ impl OptimizedBotAI {
         let inflated_max_x = wall.x + wall.width + PLAYER_RADIUS;
         let inflated_max_y = wall.y + wall.height + PLAYER_RADIUS;
 
-        let Some((min_cell_x, min_cell_y)) = nav_grid.world_to_grid(
+        let (min_cell_x, min_cell_y) = nav_grid.world_to_grid(
             inflated_min_x.clamp(WORLD_MIN_X, WORLD_MAX_X),
             inflated_min_y.clamp(WORLD_MIN_Y, WORLD_MAX_Y),
-        ) else {
-            return None;
-        };
-        let Some((max_cell_x, max_cell_y)) = nav_grid.world_to_grid(
+        )?;
+        let (max_cell_x, max_cell_y) = nav_grid.world_to_grid(
             inflated_max_x.clamp(WORLD_MIN_X, max_world_x),
             inflated_max_y.clamp(WORLD_MIN_Y, max_world_y),
-        ) else {
-            return None;
-        };
+        )?;
         Some((
             min_cell_x.min(max_cell_x),
             min_cell_y.min(max_cell_y),
