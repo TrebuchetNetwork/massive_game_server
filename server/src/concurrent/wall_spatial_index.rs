@@ -159,6 +159,13 @@ impl WallSpatialIndex {
         self.any_in_aabb(x - radius, y - radius, x + radius, y + radius, predicate)
     }
 
+    pub fn for_each_radius_candidate<F>(&self, x: f32, y: f32, radius: f32, visit: F)
+    where
+        F: FnMut(&Wall),
+    {
+        self.for_each_in_aabb(x - radius, y - radius, x + radius, y + radius, visit)
+    }
+
     /// Query walls along a line segment (for projectile paths)
     pub fn query_line_segment(&self, x1: f32, y1: f32, x2: f32, y2: f32) -> Vec<Wall> {
         let mut walls = Vec::new();

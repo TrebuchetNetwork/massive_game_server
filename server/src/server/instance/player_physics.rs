@@ -33,24 +33,18 @@ fn max_acceleration_for_player(expected_speed: f32) -> f32 {
     MAX_ACCELERATION_PER_TICK.max(expected_speed * 2.4)
 }
 
-fn infer_surface_type_from_nearby_walls(x: f32, y: f32, nearby_walls: &[Wall]) -> SurfaceType {
-    let mut best_match: Option<(f32, SurfaceType)> = None;
-    for wall in nearby_walls {
-        let closest_x = x.clamp(wall.x, wall.x + wall.width);
-        let closest_y = y.clamp(wall.y, wall.y + wall.height);
-        let dist_sq = (x - closest_x).powi(2) + (y - closest_y).powi(2);
-        let candidate = (dist_sq, wall.inferred_surface_type());
-        if best_match
-            .as_ref()
-            .map(|(best_dist_sq, _)| dist_sq < *best_dist_sq)
-            .unwrap_or(true)
-        {
-            best_match = Some(candidate);
-        }
+fn update_surface_type_match(
+    best_match: &mut Option<(f32, SurfaceType)>,
+    dist_sq: f32,
+    surface_type: SurfaceType,
+) {
+    if best_match
+        .as_ref()
+        .map(|(best_dist_sq, _)| dist_sq < *best_dist_sq)
+        .unwrap_or(true)
+    {
+        *best_match = Some((dist_sq, surface_type));
     }
-    best_match
-        .map(|(_, surface_type)| surface_type)
-        .unwrap_or(SurfaceType::Concrete)
 }
 
 impl MassiveGameServer {
@@ -297,43 +291,43 @@ impl MassiveGameServer {
 
         // Use spatial index to query nearby walls
         let check_radius = PLAYER_RADIUS + 10.0; // Reduced from 50.0 since spatial index is efficient
-        let nearby_walls =
-            self.wall_spatial_index
-                .query_radius(player_state.x, player_state.y, check_radius);
+        if self
+            .wall_spatial_index
+            .any_radius(player_state.x, player_state.y, check_radius, |wall| {
+                let (wall_x, wall_y, wall_width, wall_height) = if wall.is_destructible {
+                    let partition_idx = self.world_partition_manager.get_partition_index_for_point(
+                        wall.x + wall.width * 0.5,
+                        wall.y + wall.height * 0.5,
+                    );
+                    let Some(partition) = self.world_partition_manager.get_partition(partition_idx)
+                    else {
+                        return false;
+                    };
+                    let Some(authoritative_wall) = partition.get_wall(wall.id) else {
+                        return false;
+                    };
+                    if authoritative_wall.current_health <= 0 {
+                        return false;
+                    }
+                    (
+                        authoritative_wall.x,
+                        authoritative_wall.y,
+                        authoritative_wall.width,
+                        authoritative_wall.height,
+                    )
+                } else {
+                    (wall.x, wall.y, wall.width, wall.height)
+                };
 
-        // Check collision with nearby walls only
-        for wall in nearby_walls.iter() {
-            let (wall_x, wall_y, wall_width, wall_height) = if wall.is_destructible {
-                let partition_idx = self.world_partition_manager.get_partition_index_for_point(
-                    wall.x + wall.width * 0.5,
-                    wall.y + wall.height * 0.5,
-                );
-                let Some(partition) = self.world_partition_manager.get_partition(partition_idx)
-                else {
-                    continue;
-                };
-                let Some(authoritative_wall) = partition.get_wall(wall.id) else {
-                    continue;
-                };
-                if authoritative_wall.current_health <= 0 {
-                    continue;
+                let closest_x = player_state.x.clamp(wall_x, wall_x + wall_width);
+                let closest_y = player_state.y.clamp(wall_y, wall_y + wall_height);
+
+                let dist_sq =
+                    (player_state.x - closest_x).powi(2) + (player_state.y - closest_y).powi(2);
+                if dist_sq >= PLAYER_RADIUS.powi(2) {
+                    return false;
                 }
-                (
-                    authoritative_wall.x,
-                    authoritative_wall.y,
-                    authoritative_wall.width,
-                    authoritative_wall.height,
-                )
-            } else {
-                (wall.x, wall.y, wall.width, wall.height)
-            };
 
-            let closest_x = player_state.x.clamp(wall_x, wall_x + wall_width);
-            let closest_y = player_state.y.clamp(wall_y, wall_y + wall_height);
-
-            let dist_sq =
-                (player_state.x - closest_x).powi(2) + (player_state.y - closest_y).powi(2);
-            if dist_sq < PLAYER_RADIUS.powi(2) {
                 let impact_speed =
                     (player_state.velocity_x.powi(2) + player_state.velocity_y.powi(2)).sqrt();
                 if impact_speed >= crate::core::constants::WALL_SLAM_STUN_SPEED_THRESHOLD
@@ -370,15 +364,16 @@ impl MassiveGameServer {
                     }
                 }
 
-                // Collision detected - revert position
                 player_state.x = old_x;
                 player_state.y = old_y;
                 player_state.velocity_x = 0.0;
                 player_state.velocity_y = 0.0;
                 player_state.last_valid_position = (old_x, old_y);
                 player_state.mark_field_changed(FIELD_POSITION_ROTATION);
-                return;
-            }
+                true
+            })
+        {
+            return;
         }
 
         // Anti-cheat validation – position-based
@@ -449,8 +444,25 @@ impl MassiveGameServer {
             && movement_speed > 30.0
             && frame.saturating_sub(player_state.last_footstep_frame) >= 12
         {
-            let surface_type =
-                infer_surface_type_from_nearby_walls(player_state.x, player_state.y, &nearby_walls);
+            let mut best_surface_match: Option<(f32, SurfaceType)> = None;
+            self.wall_spatial_index.for_each_radius_candidate(
+                player_state.x,
+                player_state.y,
+                check_radius,
+                |wall| {
+                    let closest_x = player_state.x.clamp(wall.x, wall.x + wall.width);
+                    let closest_y = player_state.y.clamp(wall.y, wall.y + wall.height);
+                    update_surface_type_match(
+                        &mut best_surface_match,
+                        (player_state.x - closest_x).powi(2)
+                            + (player_state.y - closest_y).powi(2),
+                        wall.inferred_surface_type(),
+                    );
+                },
+            );
+            let surface_type = best_surface_match
+                .map(|(_, surface_type)| surface_type)
+                .unwrap_or(SurfaceType::Concrete);
             self.global_game_events.push(
                 GameEvent::Footstep {
                     player_id: player_state.id.clone(),
