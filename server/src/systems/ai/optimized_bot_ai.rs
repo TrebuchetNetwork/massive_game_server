@@ -143,6 +143,21 @@ impl BotAiLodTier {
             BotAiLodTier::Far => frame_count.is_multiple_of(BOT_LOD_FAR_STRIDE),
         }
     }
+
+    #[inline]
+    pub fn classify_from_human_presence(
+        has_any_humans: bool,
+        has_near_human: bool,
+        has_medium_human: bool,
+    ) -> Self {
+        if !has_any_humans || has_near_human {
+            BotAiLodTier::Near
+        } else if has_medium_human {
+            BotAiLodTier::Medium
+        } else {
+            BotAiLodTier::Far
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -409,7 +424,6 @@ impl OptimizedBotAI {
         // Get list of bot IDs (reuse allocation)
         thread_local! {
             static BOT_IDS: RefCell<Vec<PlayerID>> = const { RefCell::new(Vec::new()) };
-            static HUMAN_POSITIONS: RefCell<Vec<(f32, f32)>> = const { RefCell::new(Vec::new()) };
         }
         let mut bot_ids = BOT_IDS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
         bot_ids.clear();
@@ -432,26 +446,6 @@ impl OptimizedBotAI {
             return;
         }
 
-        // Collect human player positions for LOD classification.
-        // A human player is any live player whose ID is NOT in bot_players.
-        let mut human_positions =
-            HUMAN_POSITIONS.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
-        human_positions.clear();
-        server_instance
-            .player_manager
-            .for_each_player(|id, player| {
-                if player.alive && !server_instance.bot_players.contains_key(id) {
-                    human_positions.push((player.x, player.y));
-                }
-            });
-
-        trace!(
-            "Frame {}: Processing {} bots, {} human positions for LOD",
-            frame_count,
-            bot_ids.len(),
-            human_positions.len()
-        );
-
         // Get current match info
         let match_info_guard = server_instance.match_info.read();
         let game_mode = match_info_guard.game_mode;
@@ -461,6 +455,7 @@ impl OptimizedBotAI {
         // Precompute enemies and team objective counts once per tick.
         let mut enemies_team1 = Vec::new();
         let mut enemies_team2 = Vec::new();
+        let mut live_human_ids: HashSet<PlayerID> = HashSet::new();
         let mut live_players_by_id: HashMap<PlayerID, LivePlayerSnapshot> = HashMap::new();
         let mut team_objectives = TeamObjectiveSummary::default();
         let team1_base = MassiveGameServer::get_flag_base_position(1);
@@ -508,6 +503,9 @@ impl OptimizedBotAI {
                         team_id: player.team_id,
                     },
                 );
+                if !server_instance.bot_players.contains_key(id) {
+                    live_human_ids.insert(id.clone());
+                }
 
                 if let Some(metrics) = team_objectives.for_team_mut(player.team_id) {
                     let own_base = if player.team_id == 1 {
@@ -541,6 +539,13 @@ impl OptimizedBotAI {
                     enemies_team1.push(enemy_snapshot);
                 }
             });
+
+        trace!(
+            "Frame {}: Processing {} bots, {} live humans for LOD",
+            frame_count,
+            bot_ids.len(),
+            live_human_ids.len()
+        );
 
         let active_pickups: Vec<PickupSnapshot> = {
             let pickups_snapshot = server_instance.snapshots.pickup_soa_snapshot.load();
@@ -586,23 +591,32 @@ impl OptimizedBotAI {
             };
 
             // ── LOD classification ───────────────────────────────────
-            // Compute squared distance to nearest human player.
-            let min_dist_sq_to_human = if human_positions.is_empty() {
-                // No humans online: treat all bots as Near so they still play.
-                0.0
+            // Use the shared player spatial index to bucket the bot into
+            // Near / Medium / Far without scanning every human player.
+            let lod_tier = if live_human_ids.is_empty() {
+                BotAiLodTier::Near
             } else {
-                let mut best = f32::MAX;
-                for &(hx, hy) in &human_positions {
-                    let dx = bot_snapshot.x - hx;
-                    let dy = bot_snapshot.y - hy;
-                    let d = dx * dx + dy * dy;
-                    if d < best {
-                        best = d;
-                    }
-                }
-                best
+                let has_near_human = server_instance
+                    .spatial_index
+                    .query_nearby_players(bot_snapshot.x, bot_snapshot.y, BOT_LOD_NEAR_DISTANCE)
+                    .into_iter()
+                    .any(|candidate_id| live_human_ids.contains(&candidate_id));
+                let has_medium_human = has_near_human
+                    || server_instance
+                        .spatial_index
+                        .query_nearby_players(
+                            bot_snapshot.x,
+                            bot_snapshot.y,
+                            BOT_LOD_MEDIUM_DISTANCE,
+                        )
+                        .into_iter()
+                        .any(|candidate_id| live_human_ids.contains(&candidate_id));
+                BotAiLodTier::classify_from_human_presence(
+                    !live_human_ids.is_empty(),
+                    has_near_human,
+                    has_medium_human,
+                )
             };
-            let lod_tier = BotAiLodTier::classify(min_dist_sq_to_human);
 
             // Skip this bot entirely if the LOD tier says so.
             if !lod_tier.should_process(frame_count) {
@@ -796,7 +810,6 @@ impl OptimizedBotAI {
         }
 
         drop(match_info_guard);
-        HUMAN_POSITIONS.with(|cell| *cell.borrow_mut() = human_positions);
         BOT_IDS.with(|cell| *cell.borrow_mut() = bot_ids);
     }
 
@@ -2325,6 +2338,38 @@ mod tests {
     fn lod_near_zero_distance() {
         // Bot co-located with human
         assert_eq!(BotAiLodTier::classify(0.0), BotAiLodTier::Near);
+    }
+
+    #[test]
+    fn lod_presence_near_when_no_humans_exist() {
+        assert_eq!(
+            BotAiLodTier::classify_from_human_presence(false, false, false),
+            BotAiLodTier::Near
+        );
+    }
+
+    #[test]
+    fn lod_presence_near_when_human_is_within_aoi() {
+        assert_eq!(
+            BotAiLodTier::classify_from_human_presence(true, true, true),
+            BotAiLodTier::Near
+        );
+    }
+
+    #[test]
+    fn lod_presence_medium_when_only_medium_human_exists() {
+        assert_eq!(
+            BotAiLodTier::classify_from_human_presence(true, false, true),
+            BotAiLodTier::Medium
+        );
+    }
+
+    #[test]
+    fn lod_presence_far_when_all_humans_are_distant() {
+        assert_eq!(
+            BotAiLodTier::classify_from_human_presence(true, false, false),
+            BotAiLodTier::Far
+        );
     }
 
     // ── LOD should_process tick skipping tests ──────────────────
