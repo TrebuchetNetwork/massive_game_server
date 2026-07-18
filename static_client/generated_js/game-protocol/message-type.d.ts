@@ -6,4 +6,3 @@ export declare enum MessageType {
     Chat = 4,
     MatchUpdate = 5
 }
-//# sourceMappingURL=message-type.d.ts.map

@@ -4,4 +4,3 @@ export declare enum SurfaceType {
     Wood = 2,
     Glass = 3
 }
-//# sourceMappingURL=surface-type.d.ts.map

@@ -21,4 +21,3 @@ export declare class FlagState {
     static addRespawnTimer(builder: flatbuffers.Builder, respawnTimer: number): void;
     static endFlagState(builder: flatbuffers.Builder): flatbuffers.Offset;
 }
-//# sourceMappingURL=flag-state.d.ts.map

@@ -8,4 +8,3 @@ export declare enum PickupType {
     FlagRed = 6,
     FlagBlue = 7
 }
-//# sourceMappingURL=pickup-type.d.ts.map

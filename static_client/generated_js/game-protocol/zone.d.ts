@@ -25,4 +25,3 @@ export declare class Zone {
     static endZone(builder: flatbuffers.Builder): flatbuffers.Offset;
     static createZone(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset, x: number, y: number, width: number, height: number, zoneType: ZoneType, direction: number): flatbuffers.Offset;
 }
-//# sourceMappingURL=zone.d.ts.map

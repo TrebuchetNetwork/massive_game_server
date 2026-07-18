@@ -37,4 +37,3 @@ export declare class PlayerInput {
     static endPlayerInput(builder: flatbuffers.Builder): flatbuffers.Offset;
     static createPlayerInput(builder: flatbuffers.Builder, timestamp: bigint, sequence: number, moveForward: boolean, moveBackward: boolean, moveLeft: boolean, moveRight: boolean, shooting: boolean, reload: boolean, rotation: number, meleeAttack: boolean, changeWeaponSlot: number, useAbilitySlot: number, pingX: number, pingY: number): flatbuffers.Offset;
 }
-//# sourceMappingURL=player-input.d.ts.map

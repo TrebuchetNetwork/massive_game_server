@@ -13,4 +13,3 @@ export declare class Vec2 {
     static endVec2(builder: flatbuffers.Builder): flatbuffers.Offset;
     static createVec2(builder: flatbuffers.Builder, x: number, y: number): flatbuffers.Offset;
 }
-//# sourceMappingURL=vec2.d.ts.map

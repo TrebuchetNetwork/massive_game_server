@@ -30,4 +30,3 @@ export declare class GameEvent {
     static addSurfaceType(builder: flatbuffers.Builder, surfaceType: SurfaceType): void;
     static endGameEvent(builder: flatbuffers.Builder): flatbuffers.Offset;
 }
-//# sourceMappingURL=game-event.d.ts.map

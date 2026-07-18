@@ -55,4 +55,3 @@ export declare class InitialStateMessage {
     static addMapName(builder: flatbuffers.Builder, mapNameOffset: flatbuffers.Offset): void;
     static endInitialStateMessage(builder: flatbuffers.Builder): flatbuffers.Offset;
 }
-//# sourceMappingURL=initial-state-message.d.ts.map

@@ -5,4 +5,3 @@ export declare enum KillContext {
     Shutdown = 3,
     LongRange = 4
 }
-//# sourceMappingURL=kill-context.d.ts.map

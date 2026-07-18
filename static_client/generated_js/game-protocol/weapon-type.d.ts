@@ -5,4 +5,3 @@ export declare enum WeaponType {
     Sniper = 3,
     Melee = 4
 }
-//# sourceMappingURL=weapon-type.d.ts.map

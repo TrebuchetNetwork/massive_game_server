@@ -43,4 +43,3 @@ export declare class MatchInfo {
     static addTeam2CommanderAttackBias(builder: flatbuffers.Builder, team2CommanderAttackBias: number): void;
     static endMatchInfo(builder: flatbuffers.Builder): flatbuffers.Offset;
 }
-//# sourceMappingURL=match-info.d.ts.map

@@ -3,4 +3,3 @@ export declare enum MatchStateType {
     Active = 1,
     Ended = 2
 }
-//# sourceMappingURL=match-state-type.d.ts.map

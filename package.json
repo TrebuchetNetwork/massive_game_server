@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "flatbuffers": "^25.9.23",
+    "typescript": "^5.9.3"
+  }
+}

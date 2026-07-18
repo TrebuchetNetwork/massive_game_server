@@ -24,4 +24,3 @@ export declare class Pickup {
     static endPickup(builder: flatbuffers.Builder): flatbuffers.Offset;
     static createPickup(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset, x: number, y: number, pickupType: PickupType, weaponType: WeaponType, isActive: boolean): flatbuffers.Offset;
 }
-//# sourceMappingURL=pickup.d.ts.map

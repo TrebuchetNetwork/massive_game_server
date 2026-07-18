@@ -26,4 +26,3 @@ export declare class ProjectileState {
     static endProjectileState(builder: flatbuffers.Builder): flatbuffers.Offset;
     static createProjectileState(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset, x: number, y: number, ownerIdOffset: flatbuffers.Offset, weaponType: WeaponType, velocityX: number, velocityY: number): flatbuffers.Offset;
 }
-//# sourceMappingURL=projectile-state.d.ts.map

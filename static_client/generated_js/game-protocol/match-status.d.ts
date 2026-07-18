@@ -21,4 +21,3 @@ export declare class MatchStatus {
     static endMatchStatus(builder: flatbuffers.Builder): flatbuffers.Offset;
     static createMatchStatus(builder: flatbuffers.Builder, state: MatchStateType, timeRemainingSeconds: number, team1Score: number, team2Score: number, winningTeam: Team): flatbuffers.Offset;
 }
-//# sourceMappingURL=match-status.d.ts.map

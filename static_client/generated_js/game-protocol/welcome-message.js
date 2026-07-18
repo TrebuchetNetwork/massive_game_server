@@ -34,8 +34,12 @@ export class WelcomeMessage {
         const offset = this.bb.__offset(this.bb_pos, 10);
         return offset ? this.bb.readUint32(this.bb_pos + offset) : 1;
     }
+    schemaVersion() {
+        const offset = this.bb.__offset(this.bb_pos, 12);
+        return offset ? this.bb.readUint32(this.bb_pos + offset) : 6;
+    }
     static startWelcomeMessage(builder) {
-        builder.startObject(4);
+        builder.startObject(5);
     }
     static addPlayerId(builder, playerIdOffset) {
         builder.addFieldOffset(0, playerIdOffset, 0);
@@ -49,16 +53,20 @@ export class WelcomeMessage {
     static addServerProtocolVersion(builder, serverProtocolVersion) {
         builder.addFieldInt32(3, serverProtocolVersion, 1);
     }
+    static addSchemaVersion(builder, schemaVersion) {
+        builder.addFieldInt32(4, schemaVersion, 6);
+    }
     static endWelcomeMessage(builder) {
         const offset = builder.endObject();
         return offset;
     }
-    static createWelcomeMessage(builder, playerIdOffset, messageOffset, serverTickRate, serverProtocolVersion) {
+    static createWelcomeMessage(builder, playerIdOffset, messageOffset, serverTickRate, serverProtocolVersion, schemaVersion) {
         WelcomeMessage.startWelcomeMessage(builder);
         WelcomeMessage.addPlayerId(builder, playerIdOffset);
         WelcomeMessage.addMessage(builder, messageOffset);
         WelcomeMessage.addServerTickRate(builder, serverTickRate);
         WelcomeMessage.addServerProtocolVersion(builder, serverProtocolVersion);
+        WelcomeMessage.addSchemaVersion(builder, schemaVersion);
         return WelcomeMessage.endWelcomeMessage(builder);
     }
 }

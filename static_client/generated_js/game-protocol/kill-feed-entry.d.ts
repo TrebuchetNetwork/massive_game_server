@@ -29,4 +29,3 @@ export declare class KillFeedEntry {
     static addKillContext(builder: flatbuffers.Builder, killContext: KillContext): void;
     static endKillFeedEntry(builder: flatbuffers.Builder): flatbuffers.Offset;
 }
-//# sourceMappingURL=kill-feed-entry.d.ts.map

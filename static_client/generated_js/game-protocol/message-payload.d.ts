@@ -15,4 +15,3 @@ export declare enum MessagePayload {
 }
 export declare function unionToMessagePayload(type: MessagePayload, accessor: (obj: ChatMessage | DeltaStateMessage | InitialStateMessage | MatchInfo | PlayerInput | WelcomeMessage) => ChatMessage | DeltaStateMessage | InitialStateMessage | MatchInfo | PlayerInput | WelcomeMessage | null): ChatMessage | DeltaStateMessage | InitialStateMessage | MatchInfo | PlayerInput | WelcomeMessage | null;
 export declare function unionListToMessagePayload(type: MessagePayload, accessor: (index: number, obj: ChatMessage | DeltaStateMessage | InitialStateMessage | MatchInfo | PlayerInput | WelcomeMessage) => ChatMessage | DeltaStateMessage | InitialStateMessage | MatchInfo | PlayerInput | WelcomeMessage | null, index: number): ChatMessage | DeltaStateMessage | InitialStateMessage | MatchInfo | PlayerInput | WelcomeMessage | null;
-//# sourceMappingURL=message-payload.d.ts.map

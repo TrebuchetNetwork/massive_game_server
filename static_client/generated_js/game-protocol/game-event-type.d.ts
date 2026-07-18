@@ -16,6 +16,9 @@ export declare enum GameEventType {
     ShieldBroken = 14,
     PowerupExpiring = 15,
     Footstep = 16,
-    WeaponMilestone = 17
+    WeaponMilestone = 17,
+    ReloadStart = 18,
+    DodgeStart = 19,
+    DodgeEnd = 20,
+    MeleeCharge = 21
 }
-//# sourceMappingURL=game-event-type.d.ts.map

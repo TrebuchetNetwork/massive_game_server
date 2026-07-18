@@ -1,1 +1,1 @@
-{"version":3,"file":"game.js","sourceRoot":"","sources":["game.ts"],"names":[],"mappings":"AAAA,qEAAqE;gCAIvC,oBAAoB;2BAAtC,YAAY"}
+{"version":3,"file":"game.js","sourceRoot":"","sources":["game.ts"],"names":[],"mappings":"AAAA,qEAAqE;AAErE,oIAAoI;AAEpI,OAAO,KAAK,YAAY,MAAM,oBAAoB,CAAC"}

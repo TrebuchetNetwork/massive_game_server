@@ -22,4 +22,3 @@ export declare class GameMessage {
     static finishSizePrefixedGameMessageBuffer(builder: flatbuffers.Builder, offset: flatbuffers.Offset): void;
     static createGameMessage(builder: flatbuffers.Builder, msgType: MessageType, actualMessageType: MessagePayload, actualMessageOffset: flatbuffers.Offset, protocolVersion: number): flatbuffers.Offset;
 }
-//# sourceMappingURL=game-message.d.ts.map

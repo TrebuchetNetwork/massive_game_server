@@ -3,4 +3,3 @@ export declare enum GameModeType {
     TeamDeathmatch = 1,
     CaptureTheFlag = 2
 }
-//# sourceMappingURL=game-mode-type.d.ts.map

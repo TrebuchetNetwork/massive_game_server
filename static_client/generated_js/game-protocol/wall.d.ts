@@ -29,4 +29,3 @@ export declare class Wall {
     static endWall(builder: flatbuffers.Builder): flatbuffers.Offset;
     static createWall(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset, x: number, y: number, width: number, height: number, isDestructible: boolean, currentHealth: number, maxHealth: number, surfaceType: SurfaceType): flatbuffers.Offset;
 }
-//# sourceMappingURL=wall.d.ts.map

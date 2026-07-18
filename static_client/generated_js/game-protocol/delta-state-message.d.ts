@@ -91,4 +91,3 @@ export declare class DeltaStateMessage {
     static startUpdatedWallsVector(builder: flatbuffers.Builder, numElems: number): void;
     static endDeltaStateMessage(builder: flatbuffers.Builder): flatbuffers.Offset;
 }
-//# sourceMappingURL=delta-state-message.d.ts.map

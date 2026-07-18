@@ -20,5 +20,9 @@ export var GameEventType;
     GameEventType[GameEventType["PowerupExpiring"] = 15] = "PowerupExpiring";
     GameEventType[GameEventType["Footstep"] = 16] = "Footstep";
     GameEventType[GameEventType["WeaponMilestone"] = 17] = "WeaponMilestone";
+    GameEventType[GameEventType["ReloadStart"] = 18] = "ReloadStart";
+    GameEventType[GameEventType["DodgeStart"] = 19] = "DodgeStart";
+    GameEventType[GameEventType["DodgeEnd"] = 20] = "DodgeEnd";
+    GameEventType[GameEventType["MeleeCharge"] = 21] = "MeleeCharge";
 })(GameEventType || (GameEventType = {}));
 //# sourceMappingURL=game-event-type.js.map

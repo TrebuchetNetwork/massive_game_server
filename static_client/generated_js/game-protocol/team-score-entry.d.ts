@@ -13,4 +13,3 @@ export declare class TeamScoreEntry {
     static endTeamScoreEntry(builder: flatbuffers.Builder): flatbuffers.Offset;
     static createTeamScoreEntry(builder: flatbuffers.Builder, teamId: number, score: number): flatbuffers.Offset;
 }
-//# sourceMappingURL=team-score-entry.d.ts.map

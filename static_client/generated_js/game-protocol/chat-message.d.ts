@@ -22,4 +22,3 @@ export declare class ChatMessage {
     static endChatMessage(builder: flatbuffers.Builder): flatbuffers.Offset;
     static createChatMessage(builder: flatbuffers.Builder, seq: bigint, playerIdOffset: flatbuffers.Offset, usernameOffset: flatbuffers.Offset, messageOffset: flatbuffers.Offset, timestamp: bigint): flatbuffers.Offset;
 }
-//# sourceMappingURL=chat-message.d.ts.map
