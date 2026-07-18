@@ -342,7 +342,7 @@ impl MassiveGameServer {
                 .get(bot_name_num as usize % bot_names.len())
                 .unwrap_or(&"Extra");
             let bot_name = format!(
-                "Bot {}{}",
+                "Bot {}{} [selfware.design]",
                 bot_base_name,
                 if bot_name_num >= bot_names.len() as u64 {
                     (bot_name_num / bot_names.len() as u64).to_string()
