@@ -20,6 +20,11 @@
     <!-- Game Container (Fullscreen) -->
     <div id="gameContainer">
         <div id="pixiContainer"></div>
+        <div style="position: absolute; bottom: 10px; left: 10px; z-index: 50; opacity: 0.6; pointer-events: none;">
+            <div style="font-family: 'DM Mono', monospace; font-size: 12px; color: #D4A373; text-transform: uppercase; letter-spacing: 0.1em; text-shadow: 1px 1px 2px rgba(0,0,0,0.8);">
+                Massive Game Simulation · <span style="font-style: italic;">selfware.design</span>
+            </div>
+        </div>
         <div id="fpsCounter" class="fps-counter hidden">FPS: <span id="fpsValue">0</span></div>
         <div id="killFeed" class="kill-feed hidden"></div>
         <div id="chatDisplay" class="chat-display hidden"></div>
@@ -31,6 +36,17 @@
                 <div id="connectionStatusTitle" class="connection-status__title">Not connected</div>
                 <div id="connectionStatusDetail" class="connection-status__detail">Click Connect to join a match</div>
             </div>
+        </div>
+        <div style="position: absolute; top: 10px; right: 10px; z-index: 100; pointer-events: auto;">
+            <a href="https://selfware.design" target="_blank" style="text-decoration: none;">
+                <div style="background: rgba(31, 41, 55, 0.8); border: 1px solid #D4A373; border-radius: 8px; padding: 8px 12px; display: flex; align-items: center; gap: 8px; backdrop-filter: blur(4px); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+                    <div style="font-size: 18px;">🦊</div>
+                    <div style="display: flex; flex-direction: column;">
+                        <div style="font-family: 'DM Mono', monospace; font-size: 10px; color: #908878; letter-spacing: 0.05em; text-transform: uppercase;">Default AI Agent</div>
+                        <div style="font-family: Georgia, serif; font-size: 14px; color: #D4A373; font-style: italic;">selfware.design</div>
+                    </div>
+                </div>
+            </a>
         </div>
         <div id="combatOverlay" class="combat-overlay">
             <div id="damageFlashLayer" class="combat-damage-flash"></div>
@@ -180,7 +196,8 @@
             <div class="space-y-3">
                 <div>
                     <label for="wsUrl" class="block text-sm font-medium text-gray-300 mb-1">WebSocket URL:</label>
-                    <input type="text" id="wsUrl" value="ws://localhost:8080/ws" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
+                    <input type="text" id="wsUrl" value="wss://space.selfware.design/ws" placeholder="wss://..." class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-white placeholder-gray-400">
+                    <!-- Cloudflare Realtime App ID: ac72174f-cf99-4d07-8204-7e4488e69f2b -->
                 </div>
                 <div>
                     <label for="matchTypeSelect" class="block text-sm font-medium text-gray-300 mb-1">Match Mode:</label>
@@ -414,7 +431,7 @@
 
     <script type="module">
         import * as flatbuffers from 'flatbuffers';
-        import { GameProtocol } from './generated_js/game.js?v=20260308a';
+        import { GameProtocol } from './generated_js/game.js?v=20260312_fix_v4';
         import {
             Minimap,
             NetworkIndicator,
@@ -456,7 +473,7 @@
             createRenderAssetManager,
             createUpdateSprites,
             flushPendingClientLogs,
-        } from './client_logic/index.js?v=20260309b';
+        } from './client_logic/index.js?v=20260312_fix_v4';
         const GP = GameProtocol;
         const {
             uiModeParams,
@@ -551,6 +568,7 @@
         // ── Error boundary for module init ──────────────────────────────
         const errorBoundary = createErrorBoundary(() => ({ log: typeof log === 'function' ? log : undefined }));
         const { wrapModuleInit } = errorBoundary;
+        console.log('[MGS] Client Init v20260312-fix3');
 
         // ── Instantiate extracted modules ──────────────────────────────
         const gameRenderer = wrapModuleInit('GameRenderer', () =>
@@ -558,7 +576,7 @@
         );
         if (!gameRenderer) {
             errorBoundary.showCriticalError('GameRenderer failed to initialize. The game cannot start.');
-            return;
+            throw new Error('GameRenderer failed to initialize');
         }
         const {
             drawRegularPolygon,
@@ -1164,6 +1182,12 @@
             window.__e2e.forcePrimaryFire = (enabled) => {
                 inputState.shooting = !!enabled;
                 return inputState.shooting;
+            };
+            window.__e2e.setAimRotation = (radians) => {
+                const next = Number(radians);
+                if (!Number.isFinite(next)) return false;
+                inputState.rotation = next;
+                return inputState.rotation;
             };
             window.__e2e.setAimWorldPosition = (x, y) => {
                 const nextX = Number(x);
@@ -2596,7 +2620,7 @@
         );
         if (!protocolHandler) {
             errorBoundary.showCriticalError('ProtocolHandler failed to initialize. The game cannot start.');
-            return;
+            throw new Error('ProtocolHandler failed to initialize');
         }
         const {
             toBinaryView,
@@ -3814,7 +3838,27 @@
                     e2e.hasLocalPlayer = !!localPlayerState;
                     e2e.smoothedFrameMs = Number(smoothedFrameMs.toFixed(2));
                     e2e.playerCount = players.size;
+                    e2e.playersSnapshot = Array.from(players.values(), (p) => ({
+                        id: String(p.id),
+                        username: String(p.username || ''),
+                        x: Number(p.x) || 0,
+                        y: Number(p.y) || 0,
+                        team: Number(p.team_id) || 0,
+                        alive: !!p.alive,
+                        kills: Number(p.kills) || 0,
+                        deaths: Number(p.deaths) || 0
+                    }));
                     e2e.wallCount = walls.size;
+                    e2e.wallsSnapshot = Array.from(walls.values(), (wall) => ({
+                        id: String(wall.id),
+                        x: Number(wall.x) || 0,
+                        y: Number(wall.y) || 0,
+                        width: Number(wall.width) || 0,
+                        height: Number(wall.height) || 0,
+                        health: Number(wall.current_health) || 0,
+                        maxHealth: Number(wall.max_health) || 0,
+                        destructible: !!wall.is_destructible
+                    }));
                     e2e.visiblePlayerCount = lastVisiblePlayers;
                     e2e.playerSpriteCount = playerSprites.size;
                     e2e.pickupCount = pickups.size;
@@ -4335,8 +4379,11 @@
             } catch (error) {
                 gameLoopErrorCount += 1;
                 const errorText = error?.message ? error.message : String(error);
+                const errorStackTop = typeof error?.stack === 'string'
+                    ? error.stack.split('\n').slice(1, 3).join(' | ').trim()
+                    : '';
                 if (gameLoopErrorCount <= 5 || gameLoopErrorCount % 25 === 0) {
-                    log(`Render loop recovery #${gameLoopErrorCount}: ${errorText}`, 'error');
+                    log(`Render loop recovery #${gameLoopErrorCount}: ${errorText}${errorStackTop ? ` @ ${errorStackTop}` : ''}`, 'error');
                 }
                 if (!ultraPerformanceMode) {
                     setUltraPerformanceMode(true, 'runtime recovery');
@@ -4404,7 +4451,7 @@
         );
         if (!serverUpdateHandler) {
             errorBoundary.showCriticalError('ServerUpdateHandler failed to initialize. The game cannot start.');
-            return;
+            throw new Error('ServerUpdateHandler failed to initialize');
         }
         const { processServerUpdate, processDeltaStateFast, tryProcessDeltaMessageFast } = serverUpdateHandler;
 
@@ -4722,7 +4769,7 @@
         );
         if (!connectionManager) {
             errorBoundary.showCriticalError('ConnectionManager failed to initialize. The game cannot start.');
-            return;
+            throw new Error('ConnectionManager failed to initialize');
         }
         const {
             withJoinSelectionInUrl,
@@ -5568,8 +5615,10 @@
             
             // Initialize music player
             musicPlayer = await initMusicPlayerModule();
-            if (musicPlayer) {
+            if (musicPlayer && !isMobileDevice) {
                 // Keep music controls visible so users can start/stop tracks without opening Settings.
+                // On phones the fixed player overlaps the connect panel and game area,
+                // so it stays hidden until enabled from Settings.
                 musicPlayer.show();
             }
 
