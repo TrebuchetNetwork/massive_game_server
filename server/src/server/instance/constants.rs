@@ -27,6 +27,11 @@ pub(super) const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PROJECTILES: usize 
 pub(super) const INITIAL_SNAPSHOT_SINGLE_MACHINE_BACKLOG_MAX_PICKUPS: usize = 14;
 pub(super) const MAX_CHAT_PER_BATCH: usize = 10;
 
+/// Interval (in broadcast frames) between forced full wall resyncs per client.
+/// The data channel is unreliable/unordered, so one-shot wall updates can be
+/// dropped; a periodic resync bounds wall desync to ~1.5s at 60Hz.
+pub(super) const WALL_RESYNC_INTERVAL_FRAMES: u64 = 90;
+
 pub(super) const MAX_KILL_FEED_HISTORY: usize = 10;
 pub(super) const MAX_MELEE_EVENTS_PER_TICK: usize = 200;
 

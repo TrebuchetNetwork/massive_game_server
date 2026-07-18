@@ -31,6 +31,8 @@ pub struct ClientState {
     pub is_mobile: bool,
     /// Mobile clients get updates at a lower frequency (every N frames)
     pub mobile_delta_skip_modulus: usize,
+    /// Broadcast frame of the last forced full wall resync for this client.
+    pub last_wall_resync_frame: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +63,7 @@ impl Default for ClientState {
             match_info_pending: true,
             is_mobile: false,
             mobile_delta_skip_modulus: 1,
+            last_wall_resync_frame: 0,
         }
     }
 }

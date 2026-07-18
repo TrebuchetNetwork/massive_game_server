@@ -279,6 +279,7 @@ impl MassiveGameServer {
         shared_data: &SharedBroadcastData,
         visible_walls: &HashSet<EntityId>,
         client_state: &ClientState,
+        force_all: bool,
     ) -> Vec<EntityId> {
         let mut selected = Vec::new();
         let mut sent_ids = HashSet::new();
@@ -304,13 +305,17 @@ impl MassiveGameServer {
                 None => continue,
             };
 
-            let should_send = client_state
-                .last_known_wall_states
-                .get(visible_wall_id)
-                .is_none_or(|(known_health, known_max_health)| {
-                    *known_health != wall_data.current_health
-                        || *known_max_health != wall_data.max_health
-                });
+            // On a forced resync, send every visible wall regardless of what we
+            // believe the client knows: earlier one-shot updates may have been
+            // dropped by the unreliable data channel.
+            let should_send = force_all
+                || client_state
+                    .last_known_wall_states
+                    .get(visible_wall_id)
+                    .is_none_or(|(known_health, known_max_health)| {
+                        *known_health != wall_data.current_health
+                            || *known_max_health != wall_data.max_health
+                    });
             if !should_send {
                 continue;
             }
@@ -671,12 +676,47 @@ impl MassiveGameServer {
                 }
             };
 
-            let destroyed_walls_vec: Vec<_> = shared_data
+            // Wall resync: the data channel is unreliable/unordered, so one-shot
+            // wall updates (new/updated/destroyed) can be dropped permanently.
+            // Periodically force-send every visible wall and re-notify the client
+            // about walls it still believes are standing but are actually gone.
+            let force_wall_resync = vr_frame
+                .saturating_sub(client_state.last_wall_resync_frame)
+                >= WALL_RESYNC_INTERVAL_FRAMES;
+            if force_wall_resync {
+                client_state.last_wall_resync_frame = vr_frame;
+            }
+
+            let mut phantom_destroyed_wall_ids: Vec<EntityId> = Vec::new();
+            if force_wall_resync {
+                for (wall_id, (known_health, _)) in client_state.last_known_wall_states.iter() {
+                    // NOTE: deliberately NOT skipping walls in
+                    // known_destroyed_wall_ids — destroys are marked "known" at
+                    // send time over an unreliable channel, so a lost destroy
+                    // packet is exactly the phantom-wall case this resync heals.
+                    if *known_health <= 0 || shared_data.destroyed_wall_ids.contains(wall_id) {
+                        continue;
+                    }
+                    let still_alive = shared_data
+                        .active_walls_by_id
+                        .get(wall_id)
+                        .map(|wall| !wall.is_destructible || wall.current_health > 0)
+                        .unwrap_or(false);
+                    if !still_alive {
+                        phantom_destroyed_wall_ids.push(*wall_id);
+                    }
+                }
+            }
+
+            let mut destroyed_walls_vec: Vec<_> = shared_data
                 .destroyed_wall_ids
                 .iter()
                 .filter(|id| !client_state.known_destroyed_wall_ids.contains(*id))
                 .map(|id| fb_safe_entity_id(&mut builder, *id))
                 .collect();
+            for wall_id in &phantom_destroyed_wall_ids {
+                destroyed_walls_vec.push(fb_safe_entity_id(&mut builder, *wall_id));
+            }
             let destroyed_wall_ids_fb = if !destroyed_walls_vec.is_empty() {
                 Some(builder.create_vector(&destroyed_walls_vec))
             } else {
@@ -687,6 +727,7 @@ impl MassiveGameServer {
                 shared_data,
                 &player_aoi.visible_walls,
                 client_state,
+                force_wall_resync,
             );
             let mut updated_walls_vec = Vec::with_capacity(selected_wall_ids.len());
             for wall_id in &selected_wall_ids {
@@ -736,6 +777,12 @@ impl MassiveGameServer {
                     if wall_data.current_health > 0 {
                         client_state.known_destroyed_wall_ids.remove(&wall_id);
                     }
+                }
+            }
+            for wall_id in phantom_destroyed_wall_ids {
+                client_state.known_destroyed_wall_ids.insert(wall_id);
+                if let Some(known) = client_state.last_known_wall_states.get_mut(&wall_id) {
+                    known.0 = 0;
                 }
             }
             client_state.last_known_wall_ids = Some(
@@ -1345,10 +1392,41 @@ mod tests {
             &shared,
             &visible_walls,
             &client_state,
+            false,
         );
 
         assert_eq!(selected, vec![updated_id, changed_visible_id]);
         assert!(!selected.contains(&hidden_updated_id));
         assert!(!selected.contains(&unchanged_visible_id));
+    }
+
+    #[test]
+    fn select_delta_wall_ids_force_all_resends_unchanged_visible_walls() {
+        let changed_visible_id = 12;
+        let unchanged_visible_id = 13;
+        let active_walls_by_id = HashMap::from([
+            (changed_visible_id, wall(changed_visible_id, 60, 100)),
+            (unchanged_visible_id, wall(unchanged_visible_id, 70, 100)),
+        ]);
+        let shared = shared_with_walls(Vec::new(), active_walls_by_id, HashMap::new());
+
+        let visible_walls = HashSet::from([changed_visible_id, unchanged_visible_id]);
+        let mut client_state = ClientState::default();
+        client_state
+            .last_known_wall_states
+            .insert(changed_visible_id, (100, 100));
+        client_state
+            .last_known_wall_states
+            .insert(unchanged_visible_id, (70, 100));
+
+        let mut selected = MassiveGameServer::select_delta_wall_ids_for_client_sync(
+            &shared,
+            &visible_walls,
+            &client_state,
+            true,
+        );
+        selected.sort_unstable();
+
+        assert_eq!(selected, vec![changed_visible_id, unchanged_visible_id]);
     }
 }

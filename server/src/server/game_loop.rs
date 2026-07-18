@@ -457,10 +457,18 @@ impl MassiveGameServer {
         let min_aoi_y = y - effective_aoi_radius;
         let max_aoi_y = y + effective_aoi_radius;
 
-        let candidate_walls_query = self
+        let mut candidate_walls_query = self
             .wall_spatial_index
             .query_aabb(min_aoi_x, min_aoi_y, max_aoi_x, max_aoi_y);
         let candidate_walls = candidate_walls_query.len();
+        // Prioritize the nearest walls so the AoI cap keeps the walls that
+        // actually surround the player (the mobile cap is much lower than the
+        // desktop one, so an arbitrary selection drops nearby walls).
+        candidate_walls_query.sort_by(|a, b| {
+            let a_dist_sq = (a.x - x).powi(2) + (a.y - y).powi(2);
+            let b_dist_sq = (b.x - x).powi(2) + (b.y - y).powi(2);
+            a_dist_sq.total_cmp(&b_dist_sq)
+        });
         for wall in candidate_walls_query.into_iter().take(max_visible_walls) {
             if wall.is_destructible && wall.current_health <= 0 {
                 continue;
