@@ -655,16 +655,31 @@ export function createInputManager({
     // ── Send inputs to server ─────────────────────────────────────────
 
     function sendInputsToServer(cameraCombatImpulseRef, combatUiStateRef, EXCITEMENT_UI_ENABLED) {
+        if (window.__e2e) window.__e2e.inputSendCalls = (window.__e2e.inputSendCalls || 0) + 1;
         const dataChannel = getDataChannel();
         const localPlayerState = getLocalPlayerState();
         const inputState = getInputState();
         const dynamicsTuning = getDynamicsTuning();
         const backgroundThrottleActive = getBackgroundThrottleActive();
-        if (!dataChannel || dataChannel.readyState !== 'open' || !localPlayerState || !localPlayerState.alive) return;
+        if (!dataChannel || dataChannel.readyState !== 'open' || !localPlayerState || !localPlayerState.alive) {
+            if (window.__e2e) window.__e2e.lastInputGate = 'prereq';
+            return;
+        }
 
         const now = Date.now();
         const inputSendRate = backgroundThrottleActive ? BACKGROUND_INPUT_SEND_RATE : INPUT_SEND_RATE;
-        if (now - lastInputSendTime < 1000 / inputSendRate) return;
+        if (window.__e2e) {
+            window.__e2e.inputGateDebug = {
+                now,
+                lastInputSendTime,
+                inputSendRate,
+                backgroundThrottleActive: !!backgroundThrottleActive,
+            };
+        }
+        if (now - lastInputSendTime < 1000 / inputSendRate) {
+            if (window.__e2e) window.__e2e.lastInputGate = 'ratecap';
+            return;
+        }
 
         let effectiveRotation = inputState.rotation;
         if (inputState.shooting || (isTouchDevice && aimAssistEnabled)) {
@@ -699,10 +714,23 @@ export function createInputManager({
         }
         const sinceLastStateMs = now - lastInputStateSentAt;
         if (!hasOneShotInput && !stickyStateChanged && sinceLastStateMs < heartbeatMs) {
+            if (window.__e2e) window.__e2e.lastInputGate = 'heartbeat';
             return;
         }
 
         lastInputSendTime = now;
+
+        if (window.__e2e) {
+            window.__e2e.lastInputDebug = {
+                shooting: !!inputState.shooting,
+                moveMask,
+                rotation: effectiveRotation,
+                hasOneShotInput,
+                stickyStateChanged,
+                ammo: Number(localPlayerState.ammo) || 0,
+                weapon: Number(localPlayerState.weapon) || 0,
+            };
+        }
 
         const currentFrameInput = {
             timestamp: now,
@@ -721,6 +749,10 @@ export function createInputManager({
             ping_y: Number(inputState.ping_y) || 0,
         };
 
+        // Cosmetic combat feedback (predicted sounds, screen shake, hit
+        // markers). A failure here must NEVER abort input sending, so it is
+        // isolated in its own try/catch.
+        try {
         const audioManager = getAudioManager();
         const canEmitPredictedWeaponSound =
             !!audioManager &&
@@ -755,7 +787,7 @@ export function createInputManager({
                 dynamicsTuning.cameraMaxSpeedZoomOut,
                 cameraCombatImpulseRef.value + dynamicsTuning.cameraCombatKick
             );
-            if (gameSettings.screenShake && typeof applyScreenShake === 'function') {
+            if (getGameSettings().screenShake && typeof applyScreenShake === 'function') {
                 const shakeProfile = getWeaponFireShakeProfile(localPlayerState.weapon);
                 const scene = getGameScene();
                 if (shakeProfile && scene) {
@@ -809,14 +841,44 @@ export function createInputManager({
                 lastOptimisticHitFeedbackAt = now;
             }
         }
+        } catch (feedbackErr) {
+            if (window.__e2e) {
+                window.__e2e.inputFeedbackErrors = (window.__e2e.inputFeedbackErrors || 0) + 1;
+                window.__e2e.lastInputFeedbackError = String(feedbackErr?.stack || feedbackErr);
+            }
+        }
 
         pendingInputs.push(currentFrameInput);
         if (pendingInputs.length > RECONCILIATION_BUFFER_SIZE) pendingInputs.shift();
 
-        const bytes = createInputMessage(currentFrameInput);
+        let bytes = null;
+        try {
+            bytes = createInputMessage(currentFrameInput);
+        } catch (encodeErr) {
+            if (window.__e2e) {
+                window.__e2e.inputEncodeErrors = (window.__e2e.inputEncodeErrors || 0) + 1;
+                window.__e2e.lastInputEncodeError = String(encodeErr?.stack || encodeErr);
+            }
+            return;
+        }
         try {
             dataChannel.send(bytes);
+            if (window.__e2e) {
+                window.__e2e.inputsSentCount = (window.__e2e.inputsSentCount || 0) + 1;
+                window.__e2e.dataChannelDebug = {
+                    readyState: dataChannel.readyState,
+                    bufferedAmount: dataChannel.bufferedAmount,
+                };
+            }
         } catch (_err) {
+            if (window.__e2e) {
+                window.__e2e.inputsSendErrors = (window.__e2e.inputsSendErrors || 0) + 1;
+                window.__e2e.lastSendError = String(_err);
+                window.__e2e.dataChannelDebug = {
+                    readyState: dataChannel.readyState,
+                    bufferedAmount: dataChannel.bufferedAmount,
+                };
+            }
             return;
         }
         lastInputStateSentAt = now;
@@ -928,6 +990,7 @@ export function createInputManager({
                     }
                 } else {
                     inputState.shooting = true;
+                    if (window.__e2e) window.__e2e.mouseDownShootingSet = true;
                 }
             }
         };
