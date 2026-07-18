@@ -28,3 +28,5 @@ docker/ssl/privkey.pem
 /MASTER_PRODUCTION_READINESS_REPORT.md
 /ULTIMATE_PROJECT_ROADMAP.md
 /docker/monitoring/alert_sink/*.jsonl
+node_modules/
+scripts/e2e/playwright-report/
