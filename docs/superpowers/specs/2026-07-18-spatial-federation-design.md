@@ -13,6 +13,8 @@ Evolve the game server from a single world per process into a **federation of se
 - Players cross server boundaries seamlessly and fight players hosted on other servers in real time.
 - Servers with no human players consolidate (reduced cost) and wake on demand.
 - The world has no edges: it wraps in every direction and grows tile by tile.
+- Universes (distinct themed torus worlds) connect through a playable transit hub — **the Between** — with travel as a real, risky traversal.
+- Every universe (and the Between) exposes a public live dashboard.
 
 **Deployment target:** single site (one datacenter/machine) for the first milestone, with protocol and identity models that don't block geo-distribution later.
 
@@ -77,6 +79,31 @@ All servers run the same match timeline. Start/end timestamps live in Redis (`wo
 - 0 humans for 60s → region publishes `draining`, stops bot respawns and pickups, drops to a 20Hz tick; placement stops routing players there.
 - Tile space remains (static grid); crossing still works; the region wakes to 60Hz when a human enters or is routed in.
 
+### 4.9 Multiverse: the Universe Graph and the Between
+
+Two levels of map. Level 1 is the Master Map (tiles of one torus world). Level 2 is the **Universe Graph**: each universe is its own toroidal federated world — own theme, map seed, optionally its own rule flavor — and the graph defines how they connect. Stored as one small versioned doc in Redis (`multiverse:graph`).
+
+**The Between (hub universe).** Every gate leads into the Between; every exit in the Between leads out to a universe. Travel is always *universe → Between → universe*:
+- The Between is itself a small world (one or two tiles) with its own server(s) in the same federation. It is a **live free-for-all world**: combat is allowed — travel is risky by design — but there are no bots and no match timer.
+- Layout: a ring/lobby of **gate platforms**, one per linked universe, each marked with the destination's theme and live population. Travelers physically traverse to the exit they want — a few seconds of real traversal in a real place, crossing paths with other travelers.
+- Dying in the Between respawns at the gate platform you entered from, so travel is always recoverable.
+- Consolidation applies normally (sleeps when truly empty, wakes on arrival), but placement keeps at least one Between region registered whenever any universe is up.
+
+**Gates are world objects.** A gate is a zone entity with a `link_id`, placed deterministically from the universe's map seed so all players share the same landmarks. Entering a gate starts a ~1.5s channel (broken by damage outside the Between), then the **same two-phase handoff as region crossing** runs — full player state (position, health, ammo, loadout, identity) serialized to the target server. No new mechanism, just longer distance between endpoints.
+
+**Carry-over:** identity, loadout, health, and persistent stats (auth layer). Match score and kill feed are per-universe. Arrival lands at the destination universe's linked gate, on the least-loaded region via placement.
+
+**Transit failure:** failed handoff returns the player to the origin gate with 3s spawn protection — never lost in the void. If the Between is down, gates in all universes show as closed instead of dropping players into limbo.
+
+**Phase-2 (not v1):** see-through gates (ghost-render the action on the other side near the gate) and temporary event universes (tournaments) that light up in the graph.
+
+### 4.10 World dashboards
+
+- **Per-universe status endpoint:** public-safe `GET /api/universe/status` on any region server (aggregated via Redis): tile loads, tick rates, player counts, match state, draining/wake status, federation link health (ghost traffic, handoffs/min, claim latency), and per-gate entries/exits with destinations.
+- **Dashboard page:** lightweight `/dashboard.html` in the existing `website/` UI (no framework) rendering the universe's torus grid as a live tile map (colored by load/health) plus a vitals panel, auto-refreshing every few seconds. The Between gets the same dashboard with travelers-in-transit and per-gate throughput.
+- **Multiverse overview:** `/universes.html` reads the Universe Graph and shows every universe as a card (theme, population, status, dashboard link) — doubles as the player's travel guide.
+- **Public vs ops:** dashboards are public and read-only; deep ops detail (CPU, memory, tick histograms, alerts) stays in the existing Grafana/Prometheus stack.
+
 ## 5. Error handling
 
 - **Neighbor link down:** ghosts freeze ≤2s, then fade out; peer marked unhealthy via heartbeat TTL.
@@ -105,8 +132,10 @@ All servers run the same match timeline. Start/end timestamps live in Redis (`wo
 3. **Crossing / handoff** (with client `Redirect` support).
 4. **Cross-server combat claims.**
 5. **Consolidation + growth runbook** (adding a tile).
+6. **Multiverse** (Universe Graph, the Between hub, gates as zone objects, travel as long-distance handoff).
+7. **World dashboards** (status endpoints, `/dashboard.html`, `/universes.html`).
 
-Each step ships working software; steps 2–5 each get their own implementation plan.
+Each step ships working software; steps 2–7 each get their own implementation plan.
 
 ## 9. Open risks
 
