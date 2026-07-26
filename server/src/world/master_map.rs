@@ -44,6 +44,23 @@ impl MasterMap {
         }
     }
 
+    /// Validate invariants after construction from untrusted config/storage.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.cols == 0 || self.rows == 0 {
+            return Err(format!(
+                "master map dimensions must be non-zero (got {}x{})",
+                self.cols, self.rows
+            ));
+        }
+        if !self.tile_width.is_finite() || self.tile_width <= 0.0 {
+            return Err(format!("tile_width must be positive and finite (got {})", self.tile_width));
+        }
+        if !self.tile_height.is_finite() || self.tile_height <= 0.0 {
+            return Err(format!("tile_height must be positive and finite (got {})", self.tile_height));
+        }
+        Ok(())
+    }
+
     pub fn world_width(&self) -> f32 {
         self.cols as f32 * self.tile_width
     }
@@ -155,5 +172,37 @@ mod tests {
         assert_eq!(map.tile_for_position(-900.0, 0.0), TileCoord { x: 0, y: 0 });
         assert_eq!(map.tile_for_position(900.0, 0.0), TileCoord { x: 1, y: 0 });
         assert_eq!(map.tile_for_position(1599.9, 599.9), TileCoord { x: 1, y: 0 });
+    }
+
+    #[test]
+    fn validate_rejects_zero_dimensions() {
+        let map = MasterMap { version: 1, cols: 0, rows: 1, tile_width: 1600.0, tile_height: 1200.0, map_seed: 1 };
+        assert!(map.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_nonpositive_tile_size() {
+        let map = MasterMap { version: 1, cols: 1, rows: 1, tile_width: 0.0, tile_height: 1200.0, map_seed: 1 };
+        assert!(map.validate().is_err());
+        let map2 = MasterMap { version: 1, cols: 1, rows: 1, tile_width: f32::NAN, tile_height: 1200.0, map_seed: 1 };
+        assert!(map2.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_single_tile() {
+        assert!(MasterMap::single_tile().validate().is_ok());
+    }
+
+    #[test]
+    fn neighbor_directions_are_not_swappable() {
+        let map = MasterMap { version: 1, cols: 3, rows: 3, tile_width: 1600.0, tile_height: 1200.0, map_seed: 7 };
+        let t = TileCoord { x: 1, y: 1 };
+        assert_eq!(map.neighbor(t, Direction::East), TileCoord { x: 2, y: 1 });
+        assert_eq!(map.neighbor(t, Direction::West), TileCoord { x: 0, y: 1 });
+        assert_eq!(map.neighbor(t, Direction::South), TileCoord { x: 1, y: 2 });
+        assert_eq!(map.neighbor(t, Direction::North), TileCoord { x: 1, y: 0 });
+        // wrap across the far edge keeps the other axis unchanged
+        let e = TileCoord { x: 2, y: 1 };
+        assert_eq!(map.neighbor(e, Direction::East), TileCoord { x: 0, y: 1 });
     }
 }
