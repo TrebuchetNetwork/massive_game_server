@@ -6,3 +6,4 @@ pub mod error;
 pub mod math;
 pub mod simd;
 pub mod types;
+pub mod world_bounds;
