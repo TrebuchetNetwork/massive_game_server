@@ -118,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
             map.cols, map.rows, map.tile_width, map.tile_height, map.map_seed, min_x, min_y, max_x, max_y
         );
     }
+    massive_game_server_core::world::boundary::configure_world_wrap(federation.world_wrap);
     // Same URL chain as the feature-flags store: MGS_FEATURE_FLAGS_REDIS_URL
     // primary, MGS_REDIS_URL fallback (env_registry.rs).
     if let Ok(redis_url) = std::env::var("MGS_FEATURE_FLAGS_REDIS_URL")
