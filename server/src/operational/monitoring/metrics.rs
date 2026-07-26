@@ -140,6 +140,18 @@ fn describe_metrics_catalog() {
         "Bot AI decision batch processing time in seconds"
     );
     describe_counter!(
+        "game_arena_exhibition_runtime_events_total",
+        "Live arena exhibition runtime lifecycle events by result"
+    );
+    describe_histogram!(
+        "game_arena_exhibition_wasm_decision_seconds",
+        "Fuel-metered WebAssembly strategy decision latency in live exhibitions"
+    );
+    describe_gauge!(
+        "game_arena_exhibition_runtimes_active",
+        "Active verified WebAssembly fighters in the live exhibition"
+    );
+    describe_counter!(
         "game_speed_hack_detections_total",
         "Total speed hack detections by type"
     );
@@ -357,6 +369,27 @@ pub fn record_bot_decision_time(duration_seconds: f64) {
         return;
     }
     histogram!("game_bot_decision_seconds").record(duration_seconds.max(0.0));
+}
+
+pub fn record_arena_exhibition_runtime_event(event: &'static str) {
+    if !enabled() {
+        return;
+    }
+    counter!("game_arena_exhibition_runtime_events_total", "event" => event).increment(1);
+}
+
+pub fn record_arena_exhibition_decision_time(duration_seconds: f64) {
+    if !enabled() {
+        return;
+    }
+    histogram!("game_arena_exhibition_wasm_decision_seconds").record(duration_seconds.max(0.0));
+}
+
+pub fn set_arena_exhibition_runtimes_active(count: usize) {
+    if !enabled() {
+        return;
+    }
+    gauge!("game_arena_exhibition_runtimes_active").set(count as f64);
 }
 
 pub fn record_speed_hack_detection(detection_type: &'static str) {

@@ -1,4 +1,5 @@
 mod persistence;
+pub(crate) mod ratings;
 mod replays;
 mod routes;
 mod scoring;
@@ -7,12 +8,15 @@ mod types;
 
 // ── Re-exports: public API remains identical to the old single-file module ──
 
-pub use routes::build_arena_routes;
+pub use routes::{build_arena_routes, build_public_arena_routes};
 pub use types::{
-    ArenaLeaderboardResponse, ArenaMatchReplayResponse, ArenaModelView, ArenaOverviewResponse,
-    ArenaReplayEvent, ArenaReplayEventFeedResponse, ArenaReplayListResponse, ArenaReplayView,
-    ArenaWorkerStatsResponse, ClaimMatchResponse, ExecuteNextMatchResponse, QueueMatchResponse,
-    QueuedMatchView, ReportMatchResponse, SimulateTeamBattleResponse, UploadModelWasmResponse,
+    ArenaLeaderboardResponse, ArenaLeagueEpochStandingView, ArenaLeagueEpochView, ArenaLeagueView,
+    ArenaMatchReplayResponse, ArenaModelView, ArenaOverviewResponse, ArenaRatingMethodology,
+    ArenaRatingRanking, ArenaRatingsResponse, ArenaReplayEvent, ArenaReplayEventFeedResponse,
+    ArenaReplayListResponse, ArenaReplayView, ArenaSeasonRatingView, ArenaWorkerStatsResponse,
+    ClaimMatchResponse, ExecuteNextMatchResponse, QueueMatchResponse, QueuedMatchView,
+    ReportMatchResponse, SimulateTeamBattleResponse, SimulateWorldBattleResponse,
+    UploadModelWasmResponse,
 };
 
 use crate::operational::bot_sandbox::BotSandbox;
@@ -279,7 +283,9 @@ mod tests {
     use super::scoring::{update_elo_pair, MatchResult};
     use super::types::*;
     use super::*;
-    use crate::operational::bot_sandbox::BotSandbox;
+    use crate::operational::bot_sandbox::{
+        BotSandbox, MAX_WORLD_BATTLE_ENTRANTS, MAX_WORLD_SQUAD_SIZE,
+    };
     use crate::operational::validation::sanitize_model_id;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -867,6 +873,59 @@ mod tests {
         assert_eq!(result.simulation.total_engagements, 20);
         assert_eq!(result.simulation.mode, "tdm");
         assert_eq!(result.simulation.rounds_detail.len(), 2);
+
+        let world = service
+            .simulate_world_battle(SimulateWorldBattleBody {
+                model_ids: vec!["b".to_owned(), "a".to_owned()],
+                squad_size: Some(2),
+                rounds: Some(2),
+                max_ticks: Some(80),
+                seed: Some(11),
+            })
+            .expect("world simulation should succeed");
+        assert_eq!(world.simulation.mode, "world_ffa");
+        assert_eq!(world.simulation.entrants, 2);
+        assert_eq!(world.simulation.squad_size, 2);
+        assert_eq!(world.simulation.rounds_detail.len(), 2);
+        assert_eq!(world.simulation.rankings.len(), 2);
+
+        let duplicate = service.simulate_world_battle(SimulateWorldBattleBody {
+            model_ids: vec!["a".to_owned(), "a".to_owned()],
+            squad_size: Some(1),
+            rounds: Some(1),
+            max_ticks: Some(20),
+            seed: Some(11),
+        });
+        assert!(matches!(
+            duplicate,
+            Err(ArenaError::InvalidInput("duplicate_world_model", _))
+        ));
+
+        let oversized_squad = service.simulate_world_battle(SimulateWorldBattleBody {
+            model_ids: vec!["a".to_owned(), "b".to_owned()],
+            squad_size: Some(MAX_WORLD_SQUAD_SIZE + 1),
+            rounds: Some(1),
+            max_ticks: Some(20),
+            seed: Some(11),
+        });
+        assert!(matches!(
+            oversized_squad,
+            Err(ArenaError::InvalidInput("invalid_world_squad_size", _))
+        ));
+
+        let oversized_roster = service.simulate_world_battle(SimulateWorldBattleBody {
+            model_ids: (0..=MAX_WORLD_BATTLE_ENTRANTS)
+                .map(|index| format!("model_{index}"))
+                .collect(),
+            squad_size: Some(1),
+            rounds: Some(1),
+            max_ticks: Some(20),
+            seed: Some(11),
+        });
+        assert!(matches!(
+            oversized_roster,
+            Err(ArenaError::InvalidInput("invalid_world_entrants", _))
+        ));
     }
 
     #[test]

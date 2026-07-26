@@ -8,14 +8,21 @@ use super::types::{
     ExecuteNextBody, ExecuteNextMatchResponse, ModelHeartbeatBody, QueueMatchBody,
     QueueMatchResponse, QueueRoundRobinBody, QueuedMatch, QueuedMatchView, RegisterModelBody,
     ReportMatchBody, ReportMatchResponse, SimulateTeamBattleBody, SimulateTeamBattleResponse,
-    UploadModelWasmBody, UploadModelWasmResponse,
+    SimulateWorldBattleBody, SimulateWorldBattleResponse, UploadModelWasmBody,
+    UploadModelWasmResponse,
 };
 use super::{ArenaLeaderboardResponse, ArenaService};
-use crate::operational::bot_sandbox::{ArenaMatchMode, BotMatchExecution};
+use crate::operational::bot_sandbox::{
+    ArenaMatchMode, BotMatchExecution, MAX_WORLD_BATTLE_ENTRANTS, MAX_WORLD_BATTLE_ROUNDS,
+    MAX_WORLD_BATTLE_TICKS, MAX_WORLD_SQUAD_SIZE, MIN_WORLD_BATTLE_ENTRANTS,
+};
 use crate::operational::validation::sanitize_model_id;
 use base64::Engine as _;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use tracing::warn;
 use uuid::Uuid;
@@ -224,7 +231,7 @@ impl ArenaService {
             ));
         }
 
-        fs::write(&wasm_path, &wasm_bytes).map_err(|err| {
+        atomic_replace_bytes(&wasm_path, &wasm_bytes).map_err(|err| {
             ArenaError::Internal(format!(
                 "failed to write wasm file '{}': {}",
                 wasm_path.display(),
@@ -246,6 +253,7 @@ impl ArenaService {
             model_id: model_id.to_owned(),
             wasm_path: wasm_path.display().to_string(),
             bytes_written: wasm_bytes.len(),
+            wasm_sha256: sha256_hex(&wasm_bytes),
             overwritten: existed,
         })
     }
@@ -777,6 +785,88 @@ impl ArenaService {
         })
     }
 
+    pub(super) fn simulate_world_battle(
+        &self,
+        body: SimulateWorldBattleBody,
+    ) -> Result<SimulateWorldBattleResponse, ArenaError> {
+        if !(MIN_WORLD_BATTLE_ENTRANTS..=MAX_WORLD_BATTLE_ENTRANTS).contains(&body.model_ids.len())
+        {
+            return Err(ArenaError::InvalidInput(
+                "invalid_world_entrants",
+                format!(
+                    "model_ids must contain between {} and {} models",
+                    MIN_WORLD_BATTLE_ENTRANTS, MAX_WORLD_BATTLE_ENTRANTS
+                ),
+            ));
+        }
+
+        let mut model_ids = Vec::with_capacity(body.model_ids.len());
+        let mut seen = std::collections::HashSet::with_capacity(body.model_ids.len());
+        for raw_model_id in body.model_ids {
+            let model_id = raw_model_id.trim();
+            if sanitize_model_id(model_id).is_none() {
+                return Err(ArenaError::InvalidInput(
+                    "invalid_model_id",
+                    format!("model_id '{}' has an invalid format", model_id),
+                ));
+            }
+            if !seen.insert(model_id.to_owned()) {
+                return Err(ArenaError::InvalidInput(
+                    "duplicate_world_model",
+                    format!("model_id '{}' appears more than once", model_id),
+                ));
+            }
+            model_ids.push(model_id.to_owned());
+        }
+
+        let squad_size = body.squad_size.unwrap_or(3);
+        if !(1..=MAX_WORLD_SQUAD_SIZE).contains(&squad_size) {
+            return Err(ArenaError::InvalidInput(
+                "invalid_world_squad_size",
+                format!("squad_size must be between 1 and {}", MAX_WORLD_SQUAD_SIZE),
+            ));
+        }
+        let rounds = body.rounds.unwrap_or(1);
+        if !(1..=MAX_WORLD_BATTLE_ROUNDS).contains(&rounds) {
+            return Err(ArenaError::InvalidInput(
+                "invalid_world_rounds",
+                format!("rounds must be between 1 and {}", MAX_WORLD_BATTLE_ROUNDS),
+            ));
+        }
+        if let Some(max_ticks) = body.max_ticks {
+            if !(1..=MAX_WORLD_BATTLE_TICKS).contains(&max_ticks) {
+                return Err(ArenaError::InvalidInput(
+                    "invalid_world_max_ticks",
+                    format!("max_ticks must be between 1 and {}", MAX_WORLD_BATTLE_TICKS),
+                ));
+            }
+        }
+
+        let store = self.inner.persistent_store.read();
+        for model_id in &model_ids {
+            if !store.models.contains_key(model_id) {
+                return Err(ArenaError::NotFound(
+                    "model_not_found",
+                    format!("model '{}' does not exist", model_id),
+                ));
+            }
+        }
+        drop(store);
+
+        let seed = body.seed.unwrap_or_else(unix_now);
+        let simulation = self.inner.bot_sandbox.execute_world_battle(
+            &model_ids,
+            squad_size,
+            rounds,
+            seed,
+            body.max_ticks,
+        );
+        Ok(SimulateWorldBattleResponse {
+            generated_at: unix_now(),
+            simulation,
+        })
+    }
+
     pub(super) fn record_worker_success_metrics(&self, response: &ExecuteNextMatchResponse) {
         let sandbox = &response.sandbox;
         let duration_ms = sandbox.duration_ms;
@@ -862,5 +952,66 @@ impl ArenaService {
         } else {
             do_persist();
         }
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Publish a complete sibling file with one rename so concurrent sandbox
+/// readers observe either the previous artifact or the complete replacement.
+fn atomic_replace_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("fighter.wasm");
+    let tmp_path = path.with_file_name(format!(".{file_name}.{}.tmp", Uuid::new_v4().simple()));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&tmp_path, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
+}
+
+#[cfg(test)]
+mod artifact_tests {
+    use super::*;
+
+    #[test]
+    fn uploaded_artifact_helper_replaces_complete_bytes_and_hashes_them() {
+        let directory = std::env::temp_dir().join(format!(
+            "mgs-arena-upload-atomic-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&directory).expect("temporary upload directory");
+        let path = directory.join("fighter.wasm");
+        fs::write(&path, b"old").expect("prior artifact");
+
+        let replacement = b"\0asm\x01\0\0\0complete";
+        atomic_replace_bytes(&path, replacement).expect("atomic upload publication");
+
+        assert_eq!(fs::read(&path).expect("published upload"), replacement);
+        assert_eq!(
+            sha256_hex(replacement),
+            "62f9ec8a2e7ed0b23dfa29381e0d972c22329f182f440a75339c7cc2537c4204"
+        );
+        assert_eq!(
+            fs::read_dir(&directory)
+                .expect("upload directory")
+                .filter_map(Result::ok)
+                .count(),
+            1
+        );
+        let _ = fs::remove_dir_all(directory);
     }
 }

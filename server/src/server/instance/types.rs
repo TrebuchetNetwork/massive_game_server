@@ -228,6 +228,22 @@ pub(super) struct QueueState {
 #[derive(Clone, Debug)]
 pub struct BotController {
     pub player_id: PlayerID,
+    /// Verified weekly arena model backing this bot in exhibition mode.
+    /// `None` always means the generic built-in controller and must retain a
+    /// generic player identity.
+    pub arena_model_id: Option<String>,
+    pub arena_model_rank: Option<usize>,
+    pub arena_slot: i32,
+    pub arena_action: Option<crate::operational::bot_sandbox::ExhibitionBotAction>,
+    /// Ally currently protected by a SUPPORT action. A support action only
+    /// protects this one lowest-health teammate and never the supporter.
+    pub arena_support_target_id: Option<PlayerID>,
+    /// ATTACK and CHARGE may deal damage once per strategy tick. This latch is
+    /// consumed by the first successful hit against the selected target.
+    pub arena_damage_pending: bool,
+    /// Strategy-runtime tick which produced `arena_action`. It is part of the
+    /// deterministic exhibition damage jitter seed.
+    pub arena_action_tick: u32,
     pub target_position: Option<Vec2>,
     pub target_enemy_id: Option<PlayerID>,
     pub last_decision_time: Instant,

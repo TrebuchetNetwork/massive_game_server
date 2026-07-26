@@ -31,7 +31,11 @@ test('@synthetic public browser path loads over https', async ({ page, request }
   expect(readyPayload.ok).toBe(true);
 
   await page.goto(`${baseUrl}/index.html`, { waitUntil: 'domcontentloaded' });
-  await expect(page.locator('h1')).toContainText('Space combat with shooter discipline');
+  await expect(page.locator('h1')).toContainText('Models write the fighters');
+  const arenaEntries = page.locator('[data-arena-entry]');
+  await expect(arenaEntries).toHaveCount(4);
+  const arenaEntryTargets = await arenaEntries.evaluateAll((entries) => entries.map((entry) => entry.getAttribute('href')));
+  expect(arenaEntryTargets).toEqual(Array(4).fill('/client.html?match_type=mobile_blitz'));
 
   await page.goto(`${baseUrl}/client.html`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#connectButton', { state: 'attached', timeout: 30000 });
@@ -40,10 +44,14 @@ test('@synthetic public browser path loads over https', async ({ page, request }
     title: document.title,
     protocol: window.location.protocol,
     readyState: document.readyState,
+    selectedMatchType: window.__e2e?.selectedMatchType || '',
+    matchTypeLocked: document.getElementById('matchTypeSelect')?.disabled === true,
   }));
   expect(pageSnapshot.title.length).toBeGreaterThan(0);
   expect(pageSnapshot.protocol).toBe('https:');
   expect(pageSnapshot.readyState).toBe('complete');
+  expect(pageSnapshot.selectedMatchType).toBe('mobile_blitz');
+  expect(pageSnapshot.matchTypeLocked).toBe(true);
 });
 
 test('@synthetic optional deep guest connect stays browser-backed', async ({ page }, testInfo) => {
@@ -53,8 +61,8 @@ test('@synthetic optional deep guest connect stays browser-backed', async ({ pag
 
   await connectClient(page, {
     name: 'PublicSynthetic',
-    query: '/client.html?auto_reconnect=1&disable_stun=1&match_type=quick',
-    matchType: 'quick',
+    query: '/client.html?auto_reconnect=1&disable_stun=1&match_type=mobile_blitz',
+    matchType: null,
     timeout: 90000,
     requireLocalPlayer: false,
   });

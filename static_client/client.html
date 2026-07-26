@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2D Shooter - Unified Advanced Client</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Model Arena // Human Wildcard</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%2301111a'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%2300d1ff'/%3E%3C/svg%3E">
     <script src="./vendor/pixi.min.js?v=20260308a"></script>
     <script type="importmap">
@@ -13,14 +13,15 @@
           }
         }
     </script>
-    <link rel="stylesheet" href="./css/game.css?v=20260308a">
+    <link rel="stylesheet" href="./css/game.css?v=20260725-mobile-arena2">
+    <script src="./client_logic/arena_telemetry.js?v=20260725-mobile-arena2" defer></script>
 </head>
 <body class="bg-gray-900 text-white min-h-screen overflow-hidden">
 
     <!-- Game Container (Fullscreen) -->
     <div id="gameContainer">
         <div id="pixiContainer"></div>
-        <div style="position: absolute; bottom: 10px; left: 10px; z-index: 50; opacity: 0.6; pointer-events: none;">
+        <div class="arena-watermark" style="position: absolute; bottom: 10px; left: 10px; z-index: 50; opacity: 0.6; pointer-events: none;">
             <div style="font-family: 'DM Mono', monospace; font-size: 12px; color: #D4A373; text-transform: uppercase; letter-spacing: 0.1em; text-shadow: 1px 1px 2px rgba(0,0,0,0.8);">
                 Massive Game Simulation · <span style="font-style: italic;">selfware.design</span>
             </div>
@@ -37,7 +38,80 @@
                 <div id="connectionStatusDetail" class="connection-status__detail">Click Connect to join a match</div>
             </div>
         </div>
-        <div style="position: absolute; top: 10px; right: 10px; z-index: 100; pointer-events: auto;">
+        <button id="arenaEvolutionChip" class="arena-evolution-chip" type="button" aria-haspopup="dialog" aria-controls="arenaRatingsDialog" aria-label="Open model season ratings">
+            <span class="arena-evolution-chip__signal"></span>
+            <span>Models</span><strong data-client-arena-models>--</strong>
+            <i></i>
+            <span>Season</span><strong data-client-arena-season>--</strong>
+            <b><span data-client-arena-chip-label>Open ratings</span><em aria-hidden="true">↗</em></b>
+        </button>
+        <div id="arenaRatingsDialog" class="arena-ratings-dialog" role="dialog" aria-modal="true" aria-labelledby="arenaRatingsTitle" aria-hidden="true" hidden>
+            <button class="arena-ratings-dialog__backdrop" type="button" aria-label="Close model ratings" data-arena-ratings-close></button>
+            <section class="arena-ratings-dialog__panel">
+                <header class="arena-ratings-dialog__header">
+                    <div>
+                        <p><span class="arena-ratings-dialog__live"></span> OpenRouter verified season</p>
+                        <h2 id="arenaRatingsTitle">Weekly strategy tour</h2>
+                    </div>
+                    <button class="arena-ratings-dialog__close" type="button" aria-label="Close model ratings" data-arena-ratings-close>×</button>
+                </header>
+                <div class="arena-ratings-dialog__season">
+                    <span data-client-arena-season-name>No active season</span>
+                    <b data-client-arena-season-status>Waiting for verified WASM fighters</b>
+                </div>
+                <div class="arena-ratings-legend" aria-label="Rating columns">
+                    <span><i>S</i>Strategy</span>
+                    <span><i>P</i>Personal</span>
+                    <span><i>T</i>Team</span>
+                    <span><i>C</i>Collab</span>
+                    <span><i>W</i>World</span>
+                </div>
+                <div class="arena-ratings-list" data-client-arena-ratings-list>
+                    <div class="arena-ratings-empty">
+                        <strong>Season is staging.</strong>
+                        <span>The board activates only after all ten real model responses compile and finish the same side-swapped matches.</span>
+                    </div>
+                </div>
+                <footer class="arena-ratings-dialog__footer">
+                    <div><b>Human wildcard</b><span>Your persistent live score is the human ladder; model tour points come only from complete deterministic epochs.</span></div>
+                    <a href="/" target="_blank">Arena method <span aria-hidden="true">↗</span></a>
+                </footer>
+            </section>
+        </div>
+        <section id="mobileArenaGate" class="mobile-arena-gate" aria-labelledby="mobileArenaTitle">
+            <div class="mobile-arena-gate__eyebrow">
+                <span class="mobile-arena-gate__signal"></span>
+                OpenRouter model arena
+            </div>
+            <h1 id="mobileArenaTitle">Enter as the<br><span>human wildcard.</span></h1>
+            <p>Track models evolving under a 50 KB Rust limit, then enter the human combat surface.</p>
+            <div class="mobile-arena-gate__loop" aria-label="Arena evolution loop">
+                <span>Sense</span><i></i><span>Write</span><i></i><span>Fight</span><i></i><span>Evolve</span>
+            </div>
+            <div class="mobile-arena-gate__controls" aria-label="Phone controls">
+                <span><b>Move</b>Left thumb</span>
+                <span><b>Aim + fire</b>Drag right</span>
+                <span><b>Actions</b>Tap buttons</span>
+            </div>
+            <button id="mobileArenaJoinButton" type="button">Enter arena <span aria-hidden="true">↗</span></button>
+            <div class="mobile-arena-gate__meta">Direct human input · live combat · evolution feed</div>
+            <a class="mobile-arena-gate__learn" href="/">See how the models evolve</a>
+        </section>
+        <section id="mobileCombatHud" class="mobile-combat-hud" aria-label="Live combat status">
+            <div class="mobile-combat-hud__stats">
+                <span><small>Hull</small><strong id="mobileHudHealth">100</strong></span>
+                <span><small>Shield</small><strong id="mobileHudShield">0</strong></span>
+                <span class="mobile-combat-hud__weapon"><small id="mobileHudWeapon">Pistol</small><strong><b id="mobileHudAmmo">10</b> ammo</strong></span>
+                <span><small>Score</small><strong id="mobileHudScore">0</strong></span>
+                <span><small>Ping</small><strong><b id="mobileHudPing">0</b> ms</strong></span>
+            </div>
+            <div class="mobile-combat-hud__objective">
+                <small>Objective</small>
+                <strong id="mobileHudObjective">Ready to deploy</strong>
+                <span id="mobileHudMatchScore" class="mobile-combat-hud__match-score">R 0 · B 0</span>
+            </div>
+        </section>
+        <div class="arena-brand-chip" style="position: absolute; top: 10px; right: 10px; z-index: 100; pointer-events: auto;">
             <a href="https://selfware.design" target="_blank" style="text-decoration: none;">
                 <div style="background: rgba(31, 41, 55, 0.8); border: 1px solid #D4A373; border-radius: 8px; padding: 8px 12px; display: flex; align-items: center; gap: 8px; backdrop-filter: blur(4px); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
                     <div style="font-size: 18px;">🦊</div>
@@ -93,25 +167,26 @@
             </div>
         </div>
         <div id="mobileControls" class="mobile-controls hidden">
-            <div id="mobileMove" class="mobile-controls__left">
+            <div id="mobileMove" class="mobile-controls__left" role="region" aria-label="Movement joystick">
                 <div class="mobile-stick">
                     <div class="mobile-stick__base"></div>
                     <div id="mobileMoveKnob" class="mobile-stick__knob"></div>
                 </div>
             </div>
-            <div id="mobileAim" class="mobile-controls__right"></div>
-            <div class="mobile-controls__buttons">
-                <button id="mobileFire" class="mobile-button mobile-button--primary">Fire</button>
-                <button id="mobileReload" class="mobile-button">Reload</button>
-                <button id="mobileMelee" class="mobile-button">Melee</button>
-                <button id="mobileWeaponPrimary" class="mobile-button">Primary</button>
-                <button id="mobileWeaponSecondary" class="mobile-button">Secondary</button>
-                <button id="mobileAbilityDash" class="mobile-button">Dash</button>
-                <button id="mobileAbilityDodge" class="mobile-button">Dodge</button>
+            <div id="mobileAim" class="mobile-controls__right" role="region" aria-label="Aim area; drag to aim and fire"></div>
+            <div class="mobile-controls__buttons" aria-label="Combat controls">
+                <button id="mobileFire" class="mobile-button mobile-button--primary" aria-label="Fire">Fire</button>
+                <button id="mobileReload" class="mobile-button" aria-label="Reload">↻</button>
+                <button id="mobileMelee" class="mobile-button" aria-label="Melee">Melee</button>
+                <button id="mobileWeaponPrimary" class="mobile-button" aria-label="Primary weapon">1</button>
+                <button id="mobileWeaponSecondary" class="mobile-button" aria-label="Secondary weapon">2</button>
+                <button id="mobileAbilityDash" class="mobile-button" aria-label="Dash">Dash</button>
+                <button id="mobileAbilityDodge" class="mobile-button" aria-label="Dodge">Dodge</button>
             </div>
             <div class="mobile-controls__settings">
                 <button id="mobileDataSaver" class="mobile-button mobile-button--small">Data Saver</button>
                 <button id="mobileAimAssistToggle" class="mobile-button mobile-button--small">Aim Assist</button>
+                <button id="mobilePing" class="mobile-button mobile-button--small" aria-label="Send a group-up ping to your team">Ping</button>
                 <div id="mobileConnectionQuality" class="mobile-connection-indicator">
                     <span class="mobile-connection-bar"></span>
                     <span class="mobile-connection-bar"></span>
@@ -183,11 +258,11 @@
         <!-- Controls Panel -->
         <div id="controlsPanel" class="controls-panel">
             <div class="flex justify-between items-center mb-3">
-                <h1 class="text-lg font-bold text-indigo-400">2D Shooter</h1>
+                <h1 class="text-lg font-bold text-indigo-400">Model Arena</h1>
                 <div class="flex items-center gap-2">
                     <button id="focusModeButton" class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded-md text-white">Focus</button>
                     <button id="minimizeHudButton" class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded-md text-white">Hide</button>
-                    <button id="settingsButton" class="p-1 bg-gray-700 hover:bg-gray-600 rounded-md text-white">
+                    <button id="settingsButton" class="p-1 bg-gray-700 hover:bg-gray-600 rounded-md text-white" type="button" aria-label="Open game settings">
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                     </button>
                 </div>
@@ -303,7 +378,7 @@
                 </details>
         </div>
     </div>
-    <button id="hudMenuToggle" class="hud-menu-toggle hidden">Menu</button>
+    <button id="hudMenuToggle" class="hud-menu-toggle hidden" type="button" aria-label="Open game menu">Menu</button>
 
     <div id="scoreboard" class="scoreboard hidden">
         <div class="scoreboard-header">
@@ -473,7 +548,7 @@
             createRenderAssetManager,
             createUpdateSprites,
             flushPendingClientLogs,
-        } from './client_logic/index.js?v=20260312_fix_v4';
+        } from './client_logic/index.js?v=20260725-mobile-arena2';
         const GP = GameProtocol;
         const {
             uiModeParams,
@@ -629,6 +704,8 @@
         const connectionStatusDiv = document.getElementById('connectionStatus');
         const connectionStatusTitle = document.getElementById('connectionStatusTitle');
         const connectionStatusDetail = document.getElementById('connectionStatusDetail');
+        const mobileArenaGate = document.getElementById('mobileArenaGate');
+        const mobileArenaJoinButton = document.getElementById('mobileArenaJoinButton');
         const combatOverlayDiv = document.getElementById('combatOverlay');
         const damageFlashLayerDiv = document.getElementById('damageFlashLayer');
         const speedLinesLayerDiv = document.getElementById('speedLinesLayer');
@@ -677,6 +754,7 @@
         const mobileWeaponSecondaryButton = document.getElementById('mobileWeaponSecondary');
         const mobileAbilityDashButton = document.getElementById('mobileAbilityDash');
         const mobileAbilityDodgeButton = document.getElementById('mobileAbilityDodge');
+        const mobilePingButton = document.getElementById('mobilePing');
         const pingWheelDiv = document.getElementById('pingWheel');
         const deathRecapDiv = document.getElementById('deathRecap');
         const deathRecapMainDiv = document.getElementById('deathRecapMain');
@@ -744,6 +822,15 @@
         const playerDeathsSpan = document.getElementById('playerDeaths');
         const playerCountSpan = document.getElementById('playerCount');
         const powerupStatusDiv = document.getElementById('powerupStatus');
+        const mobileCombatHud = document.getElementById('mobileCombatHud');
+        const mobileHudHealth = document.getElementById('mobileHudHealth');
+        const mobileHudShield = document.getElementById('mobileHudShield');
+        const mobileHudAmmo = document.getElementById('mobileHudAmmo');
+        const mobileHudWeapon = document.getElementById('mobileHudWeapon');
+        const mobileHudScore = document.getElementById('mobileHudScore');
+        const mobileHudPing = document.getElementById('mobileHudPing');
+        const mobileHudObjective = document.getElementById('mobileHudObjective');
+        const mobileHudMatchScore = document.getElementById('mobileHudMatchScore');
 
         // UI perf tuning
         let ultraPerformanceMode = ULTRA_MODE_FORCED;
@@ -1226,6 +1313,11 @@
                 });
                 return startConnectionAttempt({ isRetry: true });
             };
+            window.__e2e.forceMobileJoinError = () => {
+                clearReconnectTimer();
+                setConnectionError('E2E terminal connection error');
+                return true;
+            };
         } else {
             delete window.__e2e.resetPerfStats;
             delete window.__e2e.setPerfProfiling;
@@ -1240,9 +1332,11 @@
             delete window.__e2e.forceCloseDataChannel;
             delete window.__e2e.forceResetConnection;
             delete window.__e2e.forceReconnectNow;
+            delete window.__e2e.forceMobileJoinError;
         }
 
-        const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        const hasCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches === true;
+        const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || hasCoarsePointer;
         let touchControlsInitialized = false;
 
         // ── Mobile touch enhancements ───────────────────────────────────
@@ -1368,6 +1462,18 @@
             setControlsPanelHidden(true);
         }
 
+        function syncMobileArenaJoinButton(statusKey = 'idle') {
+            if (!mobileArenaJoinButton) return;
+            const isJoining = statusKey === 'connecting' || statusKey === 'negotiating';
+            mobileArenaJoinButton.disabled = isJoining;
+            if (isJoining) {
+                mobileArenaJoinButton.textContent = 'Joining arena…';
+                return;
+            }
+            const label = statusKey === 'error' ? 'Retry arena' : 'Enter arena';
+            mobileArenaJoinButton.innerHTML = `${label} <span aria-hidden="true">↗</span>`;
+        }
+
         function applyConnectionStatus(statusKey, detailText = '') {
             const nextStatus = applyConnectionStatusUi({
                 statusKey,
@@ -1379,6 +1485,13 @@
                 lastConnectionStatusKey,
                 lastConnectionDetail,
                 onStatusChange: (nextKey, nextDetail) => {
+                    const isArenaActive = nextKey === 'waiting' || nextKey === 'playing' || nextKey === 'respawn';
+                    const isArenaJoining = nextKey === 'connecting' || nextKey === 'negotiating';
+                    document.body.dataset.arenaStatus = nextKey;
+                    document.body.classList.toggle('arena-active', isArenaActive);
+                    document.body.classList.toggle('arena-joining', isArenaJoining);
+                    mobileArenaGate?.setAttribute('aria-hidden', String(isArenaActive || isArenaJoining));
+                    syncMobileArenaJoinButton(nextKey);
                     if (window.__e2e) {
                         window.__e2e.connectionStatus = { statusKey: nextKey, detailText: nextDetail };
                     }
@@ -1563,7 +1676,7 @@
             if (!mobileFireButton) return;
             mobileFireButton.classList.toggle('mobile-button--latched', mobileStickyFireArmed);
             if (mobileStickyFireArmed) {
-                mobileFireButton.textContent = 'Fire (Lock)';
+                mobileFireButton.textContent = 'Lock';
             } else {
                 mobileFireButton.textContent = 'Fire';
             }
@@ -1816,6 +1929,13 @@
             low:   { resolution: 0.40, maxFPS: 20, lodMult: 0.4,   effects: false, fog: false, shadows: false },
         };
         const mobileProfile = MOBILE_RENDER_PROFILES[deviceClassification] || null;
+
+        // Pixi's default 32-sampler batch shader fails to link on a number of
+        // mobile WebGL drivers. Eight samplers remains well within the sprite
+        // needs of this client and avoids that fatal initialization path.
+        if (mobileDynamicsEnabled && PIXI?.settings) {
+            PIXI.settings.SPRITE_MAX_TEXTURES = 8;
+        }
 
         // Data saver mode (user toggle)
         let dataSaverMode = localStorage.getItem('dataSaverMode') === 'true';
@@ -2132,7 +2252,8 @@
         const PLAYER_NAME_MIN_CHARS = 2;
         const PLAYER_NAME_MAX_CHARS = 20;
         const IS_AUTOMATION_CONTEXT = typeof navigator !== 'undefined' && navigator.webdriver === true;
-        const MATCH_TYPE_DEFAULT = 'full';
+        const IS_PUBLIC_MOBILE_ARENA = window.location.hostname === 'space.selfware.design';
+        const MATCH_TYPE_DEFAULT = (IS_PUBLIC_MOBILE_ARENA || mobileDynamicsEnabled) ? 'mobile_blitz' : 'full';
         let preferredPlayerName = '';
         let selectedMatchType = MATCH_TYPE_DEFAULT;
         let pendingConnectAfterNameSave = false;
@@ -2155,6 +2276,9 @@
         }
 
         function loadSelectedMatchType() {
+            if (IS_PUBLIC_MOBILE_ARENA) {
+                return 'mobile_blitz';
+            }
             const urlMatchType = normalizeSelectedMatchType(
                 uiModeParams.get('match_type') || uiModeParams.get('mode') || ''
             );
@@ -2185,6 +2309,10 @@
 
         function hydrateMatchTypeSelection() {
             saveSelectedMatchType(loadSelectedMatchType());
+            if (IS_PUBLIC_MOBILE_ARENA && matchTypeSelect) {
+                matchTypeSelect.disabled = true;
+                matchTypeSelect.title = 'This public instance runs the authoritative Mobile Blitz ruleset.';
+            }
         }
 
         function sanitizePreferredPlayerName(rawName) {
@@ -2413,7 +2541,7 @@
         }
 
         function applyMobilePresetSettings() {
-            if (!forceMobileClient) return;
+            if (!mobileDynamicsEnabled) return;
 
             gameSettings.graphicsQuality = 'low';
             gameSettings.combatUiQuality = 'low';
@@ -2426,6 +2554,78 @@
             gameSettings.mobileHaptics = gameSettings.mobileHaptics !== false;
             setControlsPanelHidden(true);
             document.body.classList.add('mobile-mode');
+        }
+
+        function getMobileObjectiveText() {
+            const arenaStatus = document.body.dataset.arenaStatus || 'idle';
+            if (arenaStatus === 'connecting' || arenaStatus === 'negotiating') return 'Linking to arena';
+            if (arenaStatus === 'waiting') return 'Waiting for rivals';
+            if (arenaStatus === 'respawn') return 'Respawning — rejoin the fight';
+
+            const activeMessage = String(combatUiState?.objectiveText || '').trim();
+            if (
+                activeMessage &&
+                /flag|escort|capture|zone|objective|final\s+\d+s/i.test(activeMessage) &&
+                Number(combatUiState?.objectiveUntilMs || 0) > performance.now()
+            ) {
+                return activeMessage;
+            }
+
+            switch (matchInfo?.game_mode) {
+                case GP.GameModeType.CaptureTheFlag:
+                    return 'Capture the enemy flag';
+                case GP.GameModeType.TeamDeathmatch:
+                    return 'Outscore the enemy squad';
+                case GP.GameModeType.FreeForAll:
+                    return 'Eliminate rivals and survive';
+                default:
+                    return arenaStatus === 'playing' ? 'Survive and score' : 'Ready to deploy';
+            }
+        }
+
+        function updateMobileCombatHud() {
+            if (!mobileDynamicsEnabled || !mobileCombatHud) return;
+            const copyText = (target, source, fallback) => {
+                if (!target) return;
+                const nextValue = String(source?.textContent || fallback).trim() || fallback;
+                if (target.textContent !== nextValue) target.textContent = nextValue;
+            };
+
+            copyText(mobileHudHealth, playerHealthSpan, '100');
+            copyText(mobileHudShield, playerShieldSpan, '0');
+            copyText(mobileHudAmmo, playerAmmoSpan, '0');
+            copyText(mobileHudWeapon, playerWeaponSpan, 'Unknown');
+            copyText(mobileHudScore, playerScoreSpan, '0');
+            copyText(mobileHudPing, pingDisplay, '0');
+
+            const objectiveText = getMobileObjectiveText();
+            if (mobileHudObjective && mobileHudObjective.textContent !== objectiveText) {
+                mobileHudObjective.textContent = objectiveText;
+            }
+
+            if (mobileHudMatchScore) {
+                let redScore = 0;
+                let blueScore = 0;
+                if (Array.isArray(matchInfo?.team_scores)) {
+                    matchInfo.team_scores.forEach((teamScore) => {
+                        const teamId = Number(teamScore?.team_id) || 0;
+                        if (teamId === 1) redScore = Number(teamScore?.score) || 0;
+                        if (teamId === 2) blueScore = Number(teamScore?.score) || 0;
+                    });
+                }
+                const remaining = Math.max(0, Number(matchInfo?.time_remaining) || 0);
+                const minutes = Math.floor(remaining / 60);
+                const seconds = Math.floor(remaining % 60).toString().padStart(2, '0');
+                const nextMatchScore = `R ${redScore} · B ${blueScore} · ${minutes}:${seconds}`;
+                if (mobileHudMatchScore.textContent !== nextMatchScore) {
+                    mobileHudMatchScore.textContent = nextMatchScore;
+                }
+            }
+
+            const health = Number.parseFloat(mobileHudHealth?.textContent || '100');
+            const ammo = Number.parseFloat(mobileHudAmmo?.textContent || '0');
+            mobileCombatHud.classList.toggle('mobile-combat-hud--critical', Number.isFinite(health) && health <= 25);
+            mobileCombatHud.classList.toggle('mobile-combat-hud--empty', Number.isFinite(ammo) && ammo <= 0);
         }
 
         function applyBenchPresetSettings() {
@@ -2812,6 +3012,7 @@
             mobileWeaponSecondaryButton,
             mobileAbilityDashButton,
             mobileAbilityDodgeButton,
+            mobilePingButton,
             reloadPromptSpan,
             minimapContainerDiv,
             pingWheelDiv,
@@ -2903,7 +3104,10 @@
         } = spriteManager;
 
         function ensureHudWidgets() {
-            if (!app) return;
+            // Phones already use the native CSS connection bars and the compact
+            // HUD intentionally hides the minimap. Avoid creating two additional
+            // Pixi/WebGL applications that can exhaust fragile mobile drivers.
+            if (!app || mobileDynamicsEnabled) return;
             const minimapContainerElement = document.getElementById('minimapContainer');
             if (!minimap && minimapContainerElement) {
                 minimap = new Minimap({
@@ -4306,6 +4510,7 @@
                 } else {
                     updateGameStatsUI();
                 }
+                updateMobileCombatHud();
                 lastUiUpdateTime = currentTime;
             }
             if (currentTime - lastConnStatusUpdateTime >= CONN_STATUS_INTERVAL_MS) {
@@ -4532,6 +4737,11 @@
         });
 
         // Settings event listeners
+        mobileArenaJoinButton?.addEventListener('click', () => {
+            saveSelectedMatchType('mobile_blitz');
+            syncMobileArenaJoinButton('connecting');
+            connectButton.click();
+        });
         hudMenuToggleButton?.addEventListener('click', () => setControlsPanelHidden(false));
         minimizeHudButton?.addEventListener('click', () => setControlsPanelHidden(true));
         focusModeButton?.addEventListener('click', () => setFocusMode(!focusModeEnabled));
@@ -4623,12 +4833,12 @@
             }
         });
         matchTypeSelect?.addEventListener('change', () => {
-            saveSelectedMatchType(matchTypeSelect.value);
+            saveSelectedMatchType(IS_PUBLIC_MOBILE_ARENA ? 'mobile_blitz' : matchTypeSelect.value);
         });
         if (!preferredPlayerName && IS_AUTOMATION_CONTEXT) {
             savePreferredPlayerName('E2EPlayer');
         }
-        if (!preferredPlayerName && !IS_AUTOMATION_CONTEXT) {
+        if (!preferredPlayerName && !IS_AUTOMATION_CONTEXT && !mobileDynamicsEnabled) {
             openUsernameModal(true);
         }
 
@@ -5399,7 +5609,7 @@
             }
 
             log('Connection reset, game state cleared.', 'info');
-            setControlsPanelHidden(false);
+            setControlsPanelHidden(mobileDynamicsEnabled);
             if (connectionStateOverride === 'error') {
                 applyConnectionStatus('error', connectionErrorDetail);
             } else if (hasAttemptedConnection) {
@@ -5602,6 +5812,9 @@
 
             // Load settings
             loadSettings();
+            // Re-apply the phone-safe preset after persisted settings load so
+            // forced mobile entry cannot inherit desktop FX and HUD costs.
+            applyMobilePresetSettings();
             initCullWorker();
             if (window.__e2e) {
                 window.__e2e.autoReconnectEnabled = autoReconnectEnabled;

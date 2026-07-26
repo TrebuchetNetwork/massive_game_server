@@ -199,6 +199,37 @@ fn test_client_html_uses_hash_based_csp_without_unsafe_inline() {
 }
 
 #[test]
+fn test_client_html_csp_tracks_live_file_updates() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock should be after Unix epoch")
+        .as_nanos();
+    let temp_dir =
+        std::env::temp_dir().join(format!("mgs-csp-refresh-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).expect("create CSP test directory");
+    let client_path = temp_dir.join("client.html");
+
+    std::fs::write(&client_path, "<script>window.version = 1;</script>")
+        .expect("write initial client HTML");
+    let initial =
+        massive_game_server_core::routes::static_files::static_content_security_policy_for_path(
+            &client_path,
+        )
+        .expect("initial client CSP should be generated");
+
+    std::fs::write(&client_path, "<script>window.version = 2;</script>")
+        .expect("write updated client HTML");
+    let updated =
+        massive_game_server_core::routes::static_files::static_content_security_policy_for_path(
+            &client_path,
+        )
+        .expect("updated client CSP should be generated");
+
+    std::fs::remove_dir_all(&temp_dir).expect("remove CSP test directory");
+    assert_ne!(initial, updated, "CSP hashes must follow the served HTML");
+}
+
+#[test]
 fn test_index_html_uses_strict_self_hosted_csp() {
     let index_html_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../static_client/index.html");
     let csp =

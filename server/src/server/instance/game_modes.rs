@@ -596,6 +596,7 @@ impl MassiveGameServer {
             fb::MatchStateType::Waiting => {
                 if effective_participant_count >= MIN_PLAYERS_TO_START {
                     match_info_guard.match_state = fb::MatchStateType::Active;
+                    self.arena_exhibition.mark_round_started();
                     match_info_guard.time_remaining = self.match_duration_secs;
                     match_info_guard.team_scores.clear();
                     match_info_guard.ctf_overtime_round = 0;
@@ -991,6 +992,7 @@ impl MassiveGameServer {
                 }
             }
             fb::MatchStateType::Ended => {
+                self.arena_exhibition.request_round_rotation();
                 match_info_guard.time_remaining -= delta_time;
                 if match_info_guard.time_remaining <= -10.0 {
                     match_info_guard.match_state = fb::MatchStateType::Waiting;

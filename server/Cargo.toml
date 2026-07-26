@@ -38,7 +38,7 @@ serde_yaml = "0.9"
 serde_json = "1.0"
 serde_with = "3.7" # Or your preferred version
 base64 = "0.22"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
 # Concurrency
 dashmap = "5.5" # Or your preferred version

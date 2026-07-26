@@ -23,6 +23,7 @@ use crate::network::signaling::PickupState;
 use crate::network::signaling::{
     next_chat_message_seq, ChatMessagesQueue, ClientState, ClientStatesMap, DataChannelsMap,
 };
+use crate::operational::bot_exhibition::ArenaExhibition;
 use crate::operational::config::env_registry::InstanceEnv;
 use crate::operational::monitoring::metrics;
 use crate::operational::tuning::adaptive_quality::QualitySettings;
@@ -77,6 +78,7 @@ mod collision_utils;
 mod combat_melee;
 mod constants;
 mod entity_store;
+mod exhibition_combat;
 mod game_modes;
 mod input_runtime;
 mod join_stage;
@@ -351,6 +353,9 @@ pub struct MassiveGameServer {
     pub wall_respawn_manager: Arc<WallRespawnManager>,
 
     pub bot_players: Arc<DashMap<PlayerID, BotController>>,
+    /// Strict weekly-model runtimes used only for human-facing exhibition
+    /// matches. This state never reports results to the official arena.
+    pub(crate) arena_exhibition: Arc<ArenaExhibition>,
     pub target_bot_count: Arc<AtomicU64>,
     pub bot_name_counter: Arc<AtomicU64>,
     human_priority_enabled: bool,
@@ -682,6 +687,7 @@ impl MassiveGameServer {
             respawn_manager,
             wall_respawn_manager,
             bot_players: Arc::new(DashMap::new()),
+            arena_exhibition: Arc::new(ArenaExhibition::new_from_env()),
             target_bot_count: Arc::new(AtomicU64::new(initial_target_bot_count)),
             bot_name_counter: Arc::new(AtomicU64::new(0)),
             human_priority_enabled,
@@ -807,6 +813,11 @@ impl MassiveGameServer {
             MatchType::FullMatch => self.config.max_players_per_match,
             other => other.max_players().min(self.config.max_players_per_match),
         }
+    }
+
+    pub(super) fn effective_bot_capacity(&self) -> usize {
+        self.effective_max_players()
+            .saturating_sub(self.reserved_human_slots)
     }
 
     pub fn register_quic_player(

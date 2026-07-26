@@ -1,4 +1,4 @@
-use crate::operational::bot_sandbox::{BotMatchOutcome, TeamBattleOutcome};
+use crate::operational::bot_sandbox::{BotMatchOutcome, TeamBattleOutcome, WorldBattleOutcome};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -39,6 +39,197 @@ pub struct ArenaOverviewResponse {
     pub in_flight_matches: usize,
     pub total_completed_matches: usize,
     pub total_matches_reported_runtime: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ArenaRatingRanking {
+    pub source: String,
+    pub window: String,
+    pub retrieved_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ArenaRatingMethodology {
+    pub prompt_sha256: String,
+    pub source_limit_bytes: usize,
+    pub modes: Vec<String>,
+    pub seed_sets: Vec<u64>,
+    pub team_size: u32,
+    pub rounds: u32,
+    pub personal_weight: f64,
+    pub team_weight: f64,
+    pub collaboration_weight: f64,
+    #[serde(default = "default_duel_strategy_weight")]
+    pub duel_strategy_weight: f64,
+    #[serde(default)]
+    pub world_strategy_weight: f64,
+    #[serde(default)]
+    pub world_squad_size: u32,
+    #[serde(default)]
+    pub world_max_ticks: u32,
+    pub collaboration_kind: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+fn default_duel_strategy_weight() -> f64 {
+    1.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ArenaLeagueView {
+    pub format: String,
+    pub week_id: String,
+    pub frozen_at: String,
+    pub epochs_completed: u64,
+    pub total_seed_count: usize,
+    pub points_by_rank: Vec<u64>,
+    pub standings_order: Vec<String>,
+    pub ledger_sha256: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_epochs: Vec<ArenaLeagueEpochView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ArenaLeagueEpochView {
+    pub index: u64,
+    pub epoch_id: String,
+    pub completed_at: String,
+    pub seeds: Vec<u64>,
+    pub battle_requests: u64,
+    pub total_engagements: u64,
+    #[serde(default)]
+    pub world_requests: u64,
+    #[serde(default)]
+    pub world_fighter_rounds: u64,
+    pub artifact_sha256: String,
+    pub standings: Vec<ArenaLeagueEpochStandingView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ArenaLeagueEpochStandingView {
+    pub model_id: String,
+    pub epoch_rank: usize,
+    pub overall_rating: f64,
+    #[serde(default)]
+    pub world_rating: f64,
+    #[serde(default)]
+    pub strategy_rating: f64,
+    pub points_awarded: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ArenaSeasonRatingView {
+    pub rank: usize,
+    pub provider_rank: usize,
+    /// Stable identifier used by the local arena registry.
+    pub model_id: String,
+    /// Human-readable model label captured when the season was generated.
+    pub model_name: String,
+    /// Exact provider/model slug submitted to OpenRouter.
+    pub provider_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_slug: Option<String>,
+    pub personal_rating: f64,
+    pub team_rating: f64,
+    pub collaboration_rating: f64,
+    pub overall_rating: f64,
+    #[serde(default)]
+    pub world_rating: f64,
+    #[serde(default)]
+    pub strategy_rating: f64,
+    pub source_bytes: usize,
+    pub source_limit_bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_sha256: Option<String>,
+    pub compiled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wasm_bytes: Option<usize>,
+    /// SHA-256 of the exact compiled WebAssembly bytes published for this
+    /// fighter. Older public snapshots may omit this field; new seasons bind
+    /// exhibition execution to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wasm_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compile_attempts: Option<u32>,
+    /// True only for an explicitly synthetic development artifact. Production
+    /// season runners should always emit false.
+    #[serde(default)]
+    pub simulated: bool,
+    #[serde(default)]
+    pub wins: u64,
+    #[serde(default)]
+    pub losses: u64,
+    #[serde(default)]
+    pub draws: u64,
+    #[serde(default)]
+    pub matches_played: u64,
+    #[serde(default)]
+    pub evaluation_engagements: u64,
+    #[serde(default)]
+    pub personal_score_for: u64,
+    #[serde(default)]
+    pub personal_score_against: u64,
+    #[serde(default)]
+    pub team_objective_for: u64,
+    #[serde(default)]
+    pub team_objective_against: u64,
+    #[serde(default)]
+    pub collaboration_score_for: u64,
+    #[serde(default)]
+    pub collaboration_score_against: u64,
+    #[serde(default)]
+    pub world_points: u64,
+    #[serde(default)]
+    pub world_round_wins: u64,
+    #[serde(default)]
+    pub world_eliminations: u64,
+    #[serde(default)]
+    pub world_deaths: u64,
+    #[serde(default)]
+    pub world_collaboration_score: u64,
+    #[serde(default)]
+    pub season_points: u64,
+    #[serde(default)]
+    pub epochs_played: u64,
+    #[serde(default)]
+    pub epoch_wins: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_epoch_rank: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_epoch_rank: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrity_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ArenaRatingsResponse {
+    pub schema_version: u32,
+    pub active: bool,
+    pub status: String,
+    pub season_id: Option<String>,
+    pub generated_at: Option<String>,
+    pub ranking: Option<ArenaRatingRanking>,
+    pub methodology: Option<ArenaRatingMethodology>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub league: Option<ArenaLeagueView>,
+    pub roster: Vec<ArenaSeasonRatingView>,
+}
+
+impl ArenaRatingsResponse {
+    pub(super) fn no_active_season() -> Self {
+        Self {
+            schema_version: 1,
+            active: false,
+            status: "no_active_season".to_owned(),
+            season_id: None,
+            generated_at: None,
+            ranking: None,
+            methodology: None,
+            league: None,
+            roster: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,6 +275,12 @@ pub struct ExecuteNextMatchResponse {
 pub struct SimulateTeamBattleResponse {
     pub generated_at: u64,
     pub simulation: TeamBattleOutcome,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SimulateWorldBattleResponse {
+    pub generated_at: u64,
+    pub simulation: WorldBattleOutcome,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -198,6 +395,7 @@ pub struct UploadModelWasmResponse {
     pub model_id: String,
     pub wasm_path: String,
     pub bytes_written: usize,
+    pub wasm_sha256: String,
     pub overwritten: bool,
 }
 
@@ -366,6 +564,15 @@ pub(super) struct SimulateTeamBattleBody {
     pub(super) model_b_id: String,
     pub(super) mode: Option<String>,
     pub(super) team_size: Option<u32>,
+    pub(super) rounds: Option<u32>,
+    pub(super) max_ticks: Option<u32>,
+    pub(super) seed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub(super) struct SimulateWorldBattleBody {
+    pub(super) model_ids: Vec<String>,
+    pub(super) squad_size: Option<u32>,
     pub(super) rounds: Option<u32>,
     pub(super) max_ticks: Option<u32>,
     pub(super) seed: Option<u64>,

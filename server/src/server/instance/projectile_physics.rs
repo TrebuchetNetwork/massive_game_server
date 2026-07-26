@@ -508,6 +508,7 @@ impl MassiveGameServer {
                         .round()
                         .max(1.0) as i32;
                 }
+                damage = self.resolve_exhibition_hit_damage(&attacker_id, &target_id, damage);
                 if damage <= 0 {
                     continue;
                 }

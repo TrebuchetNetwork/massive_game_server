@@ -2,6 +2,29 @@ use super::*;
 use crate::core::deterministic_rng::DeterministicRng;
 
 impl MassiveGameServer {
+    /// Lowest unused stable strategy slot among live exhibition fighters on
+    /// one team. Humans and generic bots do not consume strategy ABI slots.
+    pub(super) fn next_exhibition_team_slot(&self, team_id: u8) -> i32 {
+        let mut occupied = Vec::new();
+        for controller in self.bot_players.iter() {
+            if controller.arena_model_id.is_none() {
+                continue;
+            }
+            let belongs_to_team = self
+                .player_manager
+                .get_player_state(controller.key())
+                .is_some_and(|player| player.team_id == team_id);
+            if belongs_to_team {
+                occupied.push(controller.arena_slot);
+            }
+        }
+        let mut slot = 0;
+        while occupied.contains(&slot) || self.arena_exhibition.slot_is_reserved(team_id, slot) {
+            slot += 1;
+        }
+        slot
+    }
+
     pub(super) fn manage_bot_population(&self) {
         let mut human_player_count = 0usize;
         self.player_manager
@@ -14,7 +37,7 @@ impl MassiveGameServer {
         let current_bot_count = self.bot_players.len();
 
         let max_players_in_match = self.effective_max_players();
-        let effective_bot_capacity = max_players_in_match.saturating_sub(self.reserved_human_slots);
+        let effective_bot_capacity = self.effective_bot_capacity();
 
         // Quick-match bot auto-fill: if the bot-fill delay has elapsed and we
         // have fewer than the minimum human count, immediately fill remaining
@@ -259,6 +282,7 @@ impl MassiveGameServer {
         if self.bot_players.remove(bot_id).is_none() {
             return false;
         }
+        self.arena_exhibition.detach_bot(bot_id);
 
         self.player_manager.remove_player(bot_id.as_ref());
         self.data_channels_map.remove(bot_id.as_ref());
@@ -394,10 +418,22 @@ impl MassiveGameServer {
                 spawn_pos.x,
                 spawn_pos.y,
             ) {
+                let exhibition_team_slot = self.next_exhibition_team_slot(team_id);
+                let exhibition_assignment = self.arena_exhibition.attach_bot(
+                    player_id_arc.clone(),
+                    team_id,
+                    exhibition_team_slot,
+                    seed ^ bot_name_num,
+                );
+                let visible_bot_name = exhibition_assignment
+                    .as_ref()
+                    .map(|assignment| assignment.fighter.display_name())
+                    .unwrap_or_else(|| bot_name.clone());
                 if let Some(mut p_state_entry) =
                     self.player_manager.get_player_state_mut(&player_id_arc)
                 {
                     let p_state = &mut *p_state_entry;
+                    p_state.username = visible_bot_name.clone();
                     p_state.team_id = team_id;
                     p_state.is_bot = true;
                     p_state.bot_behavior = BotBehaviorState::Idle.as_u8();
@@ -414,6 +450,19 @@ impl MassiveGameServer {
 
                 let bot_controller = BotController {
                     player_id: player_id_arc.clone(),
+                    arena_model_id: exhibition_assignment
+                        .as_ref()
+                        .map(|assignment| assignment.fighter.model_id.clone()),
+                    arena_model_rank: exhibition_assignment
+                        .as_ref()
+                        .map(|assignment| assignment.fighter.rank),
+                    arena_slot: exhibition_assignment
+                        .as_ref()
+                        .map_or(0, |assignment| assignment.slot),
+                    arena_action: None,
+                    arena_support_target_id: None,
+                    arena_damage_pending: false,
+                    arena_action_tick: 0,
                     target_position: None,
                     target_enemy_id: None,
                     last_decision_time: Instant::now(),
@@ -434,7 +483,7 @@ impl MassiveGameServer {
                 self.bot_players.insert(player_id_arc, bot_controller);
                 debug!(
                     "[Bot Management] Spawned additional bot: {} (ID: {}) on team {} at ({:.1}, {:.1}). Total players: {}",
-                    bot_name,
+                    visible_bot_name,
                     bot_player_id_str,
                     team_id,
                     spawn_pos.x,

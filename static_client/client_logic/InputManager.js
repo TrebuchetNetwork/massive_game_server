@@ -40,6 +40,7 @@ export function createInputManager({
     mobileWeaponSecondaryButton,
     mobileAbilityDashButton,
     mobileAbilityDodgeButton,
+    mobilePingButton,
     reloadPromptSpan,
     minimapContainerDiv,
     pingWheelDiv,
@@ -500,6 +501,14 @@ export function createInputManager({
             createdAt: now,
             expiresAt: now + TACTICAL_PING_MS
         });
+        if (typeof window !== 'undefined' && window.__e2e) {
+            window.__e2e.lastTacticalPing = {
+                kind: localCommander ? 'defend' : normalizedKind,
+                x: worldPoint.x,
+                y: worldPoint.y,
+                createdAt: now,
+            };
+        }
         if (tacticalPings.length > 18) {
             tacticalPings.splice(0, tacticalPings.length - 18);
         }
@@ -1265,6 +1274,25 @@ export function createInputManager({
             inputState.use_ability_slot = 2;
             setObjectiveUrgency('Dodge ability activated', 'positive', 600);
             triggerHapticFn([8, 12]);
+            event.preventDefault();
+        }, { passive: false });
+
+        addManagedTouchListener(mobilePingButton, 'touchstart', (event) => {
+            const aimedPoint = getMouseWorldPos();
+            const localPlayerState = getLocalPlayerState();
+            const worldPoint = localPlayerState
+                ? {
+                    x: Number(localPlayerState.render_x ?? localPlayerState.x) || 0,
+                    y: Number(localPlayerState.render_y ?? localPlayerState.y) || 0,
+                }
+                : (Number.isFinite(aimedPoint?.x) && Number.isFinite(aimedPoint?.y)
+                    ? { x: aimedPoint.x, y: aimedPoint.y }
+                    : null);
+            if (worldPoint) {
+                sendTacticalPing('group', worldPoint);
+                setObjectiveUrgency('Group-up ping sent', 'positive', 800);
+            }
+            recordMobileActionReachSample(event.changedTouches?.[0]);
             event.preventDefault();
         }, { passive: false });
 

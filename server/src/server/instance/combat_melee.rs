@@ -219,6 +219,14 @@ impl MassiveGameServer {
                                     attacker_damage_multiplier,
                                     chain_bonus_applied,
                                 );
+                                let effective_melee_damage = self.resolve_exhibition_hit_damage(
+                                    &attacker_id,
+                                    &target_id_arc_nearby,
+                                    effective_melee_damage,
+                                );
+                                if effective_melee_damage <= 0 {
+                                    continue;
+                                }
 
                                 // Apply damage and collect necessary data
                                 let prev_shield = target_state.shield_current;

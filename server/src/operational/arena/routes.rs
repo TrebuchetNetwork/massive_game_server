@@ -1,10 +1,13 @@
+use super::ratings::{load_ratings_response, ratings_path_from_env};
 use super::types::{
     ApiErrorBody, ApiResponse, ExecuteNextBody, LeaderboardQuery, ModelHeartbeatBody, PendingQuery,
     QueueMatchBody, QueueRoundRobinBody, RegisterModelBody, ReplayEventsQuery, ReplayQuery,
-    ReplayStreamQuery, ReportMatchBody, SimulateTeamBattleBody, UploadModelWasmBody,
+    ReplayStreamQuery, ReportMatchBody, SimulateTeamBattleBody, SimulateWorldBattleBody,
+    UploadModelWasmBody,
 };
 use super::ArenaService;
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use subtle::ConstantTimeEq;
 use warp::{Filter, Reply};
@@ -37,6 +40,12 @@ fn with_service(
     service: ArenaService,
 ) -> impl Filter<Extract = (ArenaService,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || service.clone())
+}
+
+fn with_ratings_path(
+    path: PathBuf,
+) -> impl Filter<Extract = (PathBuf,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || path.clone())
 }
 
 fn inline_admin_expected_token() -> Option<&'static String> {
@@ -270,6 +279,31 @@ pub fn build_arena_routes(
             },
         );
 
+    let simulate_world_battle = warp::path!("api" / "arena" / "matches" / "simulate_world_battle")
+        .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(
+            warp::body::content_length_limit(json_body_limit)
+                .and(warp::body::json::<SimulateWorldBattleBody>())
+                .or(warp::any().map(SimulateWorldBattleBody::default))
+                .unify(),
+        )
+        .and(with_service(service.clone()))
+        .map(
+            |authorization: Option<String>, body: SimulateWorldBattleBody, arena: ArenaService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match arena.simulate_world_battle(body) {
+                    Ok(result) => ok_response(result),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
+            },
+        );
+
     let list_pending = warp::path!("api" / "arena" / "matches" / "pending")
         .and(warp::get())
         .and(
@@ -390,6 +424,7 @@ pub fn build_arena_routes(
         .or(claim_next)
         .or(execute_next)
         .or(simulate_team_battle)
+        .or(simulate_world_battle)
         .or(list_pending)
         .or(recent_replays)
         .or(replay_events_recent)
@@ -401,4 +436,216 @@ pub fn build_arena_routes(
         .or(worker_stats)
         .map(warp::reply::Reply::into_response)
         .boxed()
+}
+
+/// Read-only arena telemetry intended for the public evolution surface.
+/// Mutation, source, worker, and replay-event endpoints remain admin-only.
+pub fn build_public_arena_routes(
+    service: ArenaService,
+) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
+    build_public_arena_routes_with_ratings_path(service, ratings_path_from_env())
+}
+
+fn build_public_arena_routes_with_ratings_path(
+    service: ArenaService,
+    ratings_path: PathBuf,
+) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
+    let overview = warp::path!("api" / "public" / "arena" / "overview")
+        .and(warp::get())
+        .and(with_service(service.clone()))
+        .map(|arena: ArenaService| ok_response(arena.overview()));
+
+    let leaderboard = warp::path!("api" / "public" / "arena" / "leaderboard")
+        .and(warp::get())
+        .and(
+            warp::query::<LeaderboardQuery>()
+                .or(warp::any().map(LeaderboardQuery::default))
+                .unify(),
+        )
+        .and(with_service(service.clone()))
+        .map(|query: LeaderboardQuery, arena: ArenaService| {
+            let limit = query.limit.unwrap_or(DEFAULT_ARENA_LEADERBOARD_LIMIT);
+            ok_response(arena.leaderboard(limit))
+        });
+
+    let recent_replays = warp::path!("api" / "public" / "arena" / "replays" / "recent")
+        .and(warp::get())
+        .and(
+            warp::query::<ReplayQuery>()
+                .or(warp::any().map(ReplayQuery::default))
+                .unify(),
+        )
+        .and(with_service(service))
+        .map(|query: ReplayQuery, arena: ArenaService| {
+            let limit = query.limit.unwrap_or(DEFAULT_ARENA_RECENT_REPLAY_LIMIT);
+            ok_response(arena.recent_replays(limit))
+        });
+
+    let ratings = warp::path!("api" / "public" / "arena" / "ratings")
+        .and(warp::get())
+        .and(with_ratings_path(ratings_path))
+        .map(|path: PathBuf| ok_response(load_ratings_response(&path)));
+
+    overview
+        .or(leaderboard)
+        .or(recent_replays)
+        .or(ratings)
+        .map(warp::reply::Reply::into_response)
+        .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use warp::http::StatusCode;
+
+    #[tokio::test]
+    async fn public_arena_routes_expose_telemetry_only() {
+        let routes = build_public_arena_routes(ArenaService::new_from_env());
+
+        let overview = warp::test::request()
+            .method("GET")
+            .path("/api/public/arena/overview")
+            .reply(&routes)
+            .await;
+        assert_eq!(overview.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(overview.body()).expect("overview should be valid JSON");
+        assert_eq!(body["ok"], true);
+
+        let mutation = warp::test::request()
+            .method("POST")
+            .path("/api/public/arena/models/register")
+            .reply(&routes)
+            .await;
+        assert_eq!(mutation.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn world_battle_route_exists_and_requires_admin_auth() {
+        let routes = build_arena_routes(ArenaService::new_from_env());
+        let response = warp::test::request()
+            .method("POST")
+            .path("/api/arena/matches/simulate_world_battle")
+            .json(&serde_json::json!({
+                "model_ids": ["model_a", "model_b"],
+                "squad_size": 3,
+                "rounds": 1,
+                "max_ticks": 120,
+                "seed": 104729
+            }))
+            .reply(&routes)
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(response.body()).expect("world auth error should be JSON");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"]["code"], "admin_auth_required");
+    }
+
+    #[tokio::test]
+    async fn public_ratings_route_returns_validated_snapshot_in_ok_envelope() {
+        let path = std::env::temp_dir().join(format!(
+            "mgs-public-arena-ratings-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let fixture = serde_json::json!({
+            "schema_version": 1,
+            "active": true,
+            "season_id": "weekly-2026-07-23",
+            "generated_at": "2026-07-23T12:00:00Z",
+            "ranking": {
+                "source": "https://openrouter.ai/api/v1/models?sort=top-weekly",
+                "window": "top-weekly",
+                "retrieved_at": "2026-07-23T11:55:00Z"
+            },
+            "methodology": {
+                "prompt_sha256": "a".repeat(64),
+                "source_limit_bytes": 51200,
+                "modes": ["arena", "ctf"],
+                "seed_sets": [1001, 2002],
+                "team_size": 10,
+                "rounds": 2,
+                "personal_weight": 0.4,
+                "team_weight": 0.35,
+                "collaboration_weight": 0.25,
+                "collaboration_kind": "team_context_v2"
+            },
+            "roster": [{
+                "rank": 1,
+                "provider_rank": 1,
+                "model_id": "model_one",
+                "model_name": "Model One",
+                "provider_model": "provider/model-one",
+                "personal_rating": 92.5,
+                "team_rating": 88.0,
+                "collaboration_rating": 84.25,
+                "overall_rating": 88.86,
+                "source_bytes": 2048,
+                "source_limit_bytes": 51200,
+                "source_sha256": "b".repeat(64),
+                "compiled": true,
+                "wasm_bytes": 4096,
+                "wasm_sha256": "c".repeat(64),
+                "compile_attempts": 1,
+                "simulated": false,
+                "wins": 7,
+                "losses": 2,
+                "draws": 1,
+                "matches_played": 10,
+                "evaluation_engagements": 100,
+                "integrity_status": "verified_wasm"
+            }]
+        });
+        fs::write(&path, fixture.to_string()).expect("write ratings fixture");
+        let routes =
+            build_public_arena_routes_with_ratings_path(ArenaService::new_from_env(), path.clone());
+
+        let response = warp::test::request()
+            .method("GET")
+            .path("/api/public/arena/ratings")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(response.body()).expect("ratings should be valid JSON");
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["data"]["active"], true);
+        assert_eq!(body["data"]["season_id"], "weekly-2026-07-23");
+        assert_eq!(body["data"]["roster"][0]["overall_rating"], 88.86);
+        let _ = fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn public_ratings_route_hides_missing_artifact_details() {
+        let missing_path = std::env::temp_dir().join(format!(
+            "mgs-missing-public-arena-ratings-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let routes = build_public_arena_routes_with_ratings_path(
+            ArenaService::new_from_env(),
+            missing_path.clone(),
+        );
+
+        let response = warp::test::request()
+            .method("GET")
+            .path("/api/public/arena/ratings")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(response.body()).expect("ratings should be valid JSON");
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["data"]["active"], false);
+        assert_eq!(body["data"]["status"], "no_active_season");
+        assert_eq!(body["data"]["roster"], serde_json::json!([]));
+        assert!(!response
+            .body()
+            .windows(missing_path.to_string_lossy().len())
+            .any(|window| window == missing_path.to_string_lossy().as_bytes()));
+    }
 }

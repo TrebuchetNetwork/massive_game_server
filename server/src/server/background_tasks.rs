@@ -8,6 +8,7 @@ use crate::network::signaling::{
 use crate::operational::arena::ArenaService;
 use crate::operational::auth::AuthService;
 use crate::operational::backup::BackupManager;
+use crate::operational::bot_exhibition::ExhibitionRefreshOutcome;
 use crate::operational::config::env_registry::ArenaWorkerEnv;
 use crate::operational::diagnostics::heap_profiler;
 use crate::operational::monitoring::{alerts as monitoring_alerts, metrics as monitoring_metrics};
@@ -77,6 +78,55 @@ pub fn spawn_backup_worker(backup_manager: BackupManager, server: Arc<MassiveGam
     } else {
         info!("Automated backups are disabled (set MGS_BACKUP_ENABLED=1 to enable).");
     }
+}
+
+/// Keeps the live exhibition's prepared runtime pool full and atomically
+/// rotates active fighters when a published rating snapshot or round changes.
+/// WASM reads, validation, compilation, and instantiation all run on Tokio's
+/// blocking pool, never on the authoritative frame loop.
+pub fn spawn_arena_exhibition_refresh(server: Arc<MassiveGameServer>) {
+    if !server.arena_exhibition.enabled() {
+        info!("Arena exhibition refresher disabled.");
+        return;
+    }
+
+    let interval_seconds = parse_u64_env("MGS_ARENA_EXHIBITION_REFRESH_SECONDS", 2).clamp(1, 300);
+    info!(
+        "Arena exhibition refresher enabled (interval={}s).",
+        interval_seconds
+    );
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(interval_seconds));
+        // Startup preparation already ran before the game loop. Avoid an
+        // immediate duplicate compilation pass.
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            if server.is_shutdown_requested() {
+                info!("Arena exhibition refresher observed shutdown; stopping.");
+                break;
+            }
+
+            let exhibition = server.arena_exhibition.clone();
+            match tokio::task::spawn_blocking(move || exhibition.refresh_if_needed()).await {
+                Ok(ExhibitionRefreshOutcome::Refreshed) => {
+                    info!("Arena exhibition runtime generation refreshed.");
+                }
+                Ok(
+                    ExhibitionRefreshOutcome::Disabled
+                    | ExhibitionRefreshOutcome::Busy
+                    | ExhibitionRefreshOutcome::Unchanged,
+                ) => {}
+                Ok(ExhibitionRefreshOutcome::RetryRequired) => {
+                    warn!("Arena exhibition refresh raced a bot population change; retrying.");
+                }
+                Ok(ExhibitionRefreshOutcome::InvalidSnapshot) => {
+                    warn!("Arena exhibition ignored an invalid published ratings snapshot.");
+                }
+                Err(err) => warn!("Arena exhibition background refresh failed: {}", err),
+            }
+        }
+    });
 }
 
 pub fn spawn_alert_evaluator(server: Arc<MassiveGameServer>) {

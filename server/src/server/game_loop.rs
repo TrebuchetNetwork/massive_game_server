@@ -44,6 +44,16 @@ fn cap_accumulator(accumulator: Duration, max_accumulator: Duration) -> (Duratio
     }
 }
 
+fn initial_bot_spawn_deficit(
+    target_bot_count: usize,
+    effective_bot_capacity: usize,
+    current_bot_count: usize,
+) -> usize {
+    target_bot_count
+        .min(effective_bot_capacity)
+        .saturating_sub(current_bot_count)
+}
+
 fn cached_aoi_update_divisor() -> u64 {
     static AOI_UPDATE_DIVISOR: OnceLock<u64> = OnceLock::new();
     *AOI_UPDATE_DIVISOR.get_or_init(|| {
@@ -159,13 +169,21 @@ impl MassiveGameServer {
 
                 // Spawn bots after 10 frames to let server stabilize
                 if !bots_spawned && current_frame == 10 {
-                    let initial_bot_count =
+                    let target_bot_count =
                         self.target_bot_count.load(AtomicOrdering::Relaxed) as usize;
-                    info!(
-                        "Spawning {} bots after server stabilization (frame {})",
-                        initial_bot_count, current_frame
+                    let current_bot_count = self.bot_players.len();
+                    let initial_bot_count = initial_bot_spawn_deficit(
+                        target_bot_count,
+                        self.effective_bot_capacity(),
+                        current_bot_count,
                     );
-                    self.spawn_initial_bots(initial_bot_count);
+                    info!(
+                        "Spawning {} missing bots after server stabilization (frame {}, current={}, target={})",
+                        initial_bot_count, current_frame, current_bot_count, target_bot_count
+                    );
+                    if initial_bot_count > 0 {
+                        self.spawn_initial_bots(initial_bot_count);
+                    }
                     bots_spawned = true;
                 }
 
@@ -527,5 +545,13 @@ mod tests {
             cap_accumulator(Duration::from_millis(73), Duration::from_millis(48));
         assert_eq!(capped, Duration::from_millis(48));
         assert_eq!(dropped, Duration::from_millis(25));
+    }
+
+    #[test]
+    fn initial_bot_spawn_respects_match_capacity_and_existing_population() {
+        assert_eq!(initial_bot_spawn_deficit(20, 14, 0), 14);
+        assert_eq!(initial_bot_spawn_deficit(20, 14, 14), 0);
+        assert_eq!(initial_bot_spawn_deficit(14, 14, 9), 5);
+        assert_eq!(initial_bot_spawn_deficit(20, 0, 0), 0);
     }
 }

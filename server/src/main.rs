@@ -17,7 +17,9 @@ use massive_game_server_core::network::signaling::{
     MAX_CHAT_QUEUE_SIZE,
 };
 use massive_game_server_core::operational::admin_auth::{requires_admin_auth, AdminAuthConfig};
-use massive_game_server_core::operational::arena::{build_arena_routes, ArenaService};
+use massive_game_server_core::operational::arena::{
+    build_arena_routes, build_public_arena_routes, ArenaService,
+};
 use massive_game_server_core::operational::auth::{build_auth_routes, AuthService};
 use massive_game_server_core::operational::backup::BackupManager;
 use massive_game_server_core::operational::code_generation::{
@@ -41,7 +43,8 @@ use massive_game_server_core::routes::ws_signaling::{
 };
 use massive_game_server_core::scaling::HorizontalScalingCoordinator;
 use massive_game_server_core::server::background_tasks::{
-    spawn_alert_evaluator, spawn_arena_worker, spawn_backup_worker, spawn_idle_connection_cleanup,
+    spawn_alert_evaluator, spawn_arena_exhibition_refresh, spawn_arena_worker, spawn_backup_worker,
+    spawn_idle_connection_cleanup,
 };
 use massive_game_server_core::server::instance::{configure_instance_runtime, MassiveGameServer};
 use massive_game_server_core::server::lifecycle;
@@ -147,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
     let backup_manager = BackupManager::from_env_config(&app_env.backup);
     spawn_backup_worker(backup_manager.clone(), game_server_instance.clone());
     spawn_alert_evaluator(game_server_instance.clone());
+    spawn_arena_exhibition_refresh(game_server_instance.clone());
 
     let signaling_peers_state: SignalingPeers = Arc::new(DashMap::new());
     let auth_service = AuthService::new_from_env_config_with_cookie_security(
@@ -161,6 +165,7 @@ async fn main() -> anyhow::Result<()> {
     // Start the background GDPR deletion processor (runs hourly)
     auth_service.clone().start_deletion_processor();
     let arena_routes = build_arena_routes(arena_service.clone());
+    let public_arena_routes = build_public_arena_routes(arena_service.clone());
     let code_generation_routes = build_code_generation_routes(code_generation_service);
     let feature_flag_routes = build_feature_flag_routes(feature_flag_service);
     let ops_admin_routes = build_ops_admin_routes(
@@ -227,7 +232,10 @@ async fn main() -> anyhow::Result<()> {
         .map(|(), reply| reply)
         .boxed();
 
-    let public_routes = auth_routes.map(warp::reply::Reply::into_response).boxed();
+    let public_routes = auth_routes
+        .or(public_arena_routes)
+        .map(warp::reply::Reply::into_response)
+        .boxed();
     // Routes that should not be subject to HTTP CORS middleware:
     // - WebSocket signaling has explicit origin/transport guards.
     // - Static/root/health routes should be reachable directly in local mode.

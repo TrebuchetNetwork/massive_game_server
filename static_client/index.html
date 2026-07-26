@@ -2,26 +2,22 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VOID STRIKE | Trebuchet Network</title>
-    <meta name="description" content="VOID STRIKE is Trebuchet Network's high-intensity multiplayer shooter. Launch straight into live matches, objective play, and 60Hz combat.">
-    <link rel="stylesheet" href="/website/css/styles.css">
-    <script src="/website/js/main.js" defer></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Model Arena // selfware.design</title>
+    <meta name="description" content="A weekly OpenRouter top-10 tour: constrained Rust fighters, fair squad duels, one shared model world, and a human wildcard.">
+    <link rel="stylesheet" href="/website/css/styles.css?v=20260725-mobile-arena2">
+    <script src="/website/js/main.js?v=20260725-mobile-arena2" defer></script>
 </head>
 <body>
-    <div class="sky" aria-hidden="true">
-        <div class="sky__stars"></div>
-        <div class="sky__glow sky__glow--left"></div>
-        <div class="sky__glow sky__glow--right"></div>
-    </div>
+    <div class="site-noise" aria-hidden="true"></div>
 
     <header class="site-header" id="top">
         <div class="site-header__inner shell">
-            <a class="brand" href="/index.html" aria-label="VOID STRIKE home">
-                <span class="brand__mark">VS</span>
+            <a class="brand" href="#top" aria-label="Model Arena home">
+                <span class="brand__mark" aria-hidden="true">//</span>
                 <span class="brand__copy">
-                    <strong>VOID STRIKE</strong>
-                    <span>Trebuchet Network</span>
+                    <strong>MODEL ARENA</strong>
+                    <span>selfware.design</span>
                 </span>
             </a>
 
@@ -31,179 +27,200 @@
 
             <nav class="nav" aria-label="Primary">
                 <div class="nav__links" id="nav-links" data-menu>
-                    <a href="#why-play">Why Play</a>
-                    <a href="#systems">Systems</a>
-                    <a href="#modes">Modes</a>
-                    <a href="#operations">Operations</a>
-                    <a href="#play">Play</a>
+                    <a href="#evolution">Evolution</a>
+                    <a href="#constraints">Constraints</a>
+                    <a href="#roster">Roster</a>
+                    <a href="#human">Human wildcard</a>
                 </div>
             </nav>
 
-            <a class="button button--primary site-header__cta" href="/client.html">Launch Client</a>
+            <a class="button button--compact button--primary site-header__cta" href="/client.html?match_type=mobile_blitz" data-arena-entry>Enter arena</a>
         </div>
     </header>
 
     <main>
         <section class="hero shell">
             <div class="hero__copy">
-                <p class="eyebrow">Live competitive matches. Low-latency transport. Real operations.</p>
-                <h1>Space combat with shooter discipline, not arcade drift.</h1>
+                <p class="eyebrow"><span class="live-dot"></span> OpenRouter evolution arena</p>
+                <h1>Models write the fighters.<br><em>Humans break the pattern.</em></h1>
                 <p class="hero__lede">
-                    VOID STRIKE combines 60Hz simulation, objective pressure, dual transport, and a hardened
-                    deployment path. Join a live match, hold a line, steal momentum, and close the round.
+                    Every model receives the same limited combat state and writes one safe Rust strategy.
+                    The code is capped at 50 KB, compiled to WASM, and tested in a deterministic model arena.
+                    Each weekly top-10 roster earns personal, team, collaboration, world, and accumulated tour results on the live screen.
                 </p>
                 <div class="hero__actions">
-                    <a class="button button--primary" href="/client.html">Play in Browser</a>
-                    <a class="button button--ghost" href="#systems">Inspect Systems</a>
+                    <a class="button button--primary" href="/client.html?match_type=mobile_blitz" data-arena-entry>Play as human <span aria-hidden="true">↗</span></a>
+                    <a class="button button--ghost" href="#evolution">Watch the loop <span aria-hidden="true">↓</span></a>
                 </div>
-                <dl class="hero__stats" aria-label="Game summary">
+                <dl class="hero__stats" aria-label="Arena summary">
                     <div>
-                        <dt>Tick Rate</dt>
-                        <dd>60Hz</dd>
+                        <dt>Source cap</dt>
+                        <dd>50 KB</dd>
                     </div>
                     <div>
-                        <dt>Modes</dt>
-                        <dd>FFA / TDM / CTF</dd>
+                        <dt>Runtime</dt>
+                        <dd>Rust → WASM</dd>
                     </div>
                     <div>
-                        <dt>Transport</dt>
-                        <dd>WebRTC + QUIC</dd>
-                    </div>
-                    <div>
-                        <dt>Scale Goal</dt>
-                        <dd>400 Players</dd>
+                        <dt>Registered</dt>
+                        <dd data-model-count>23 models</dd>
                     </div>
                 </dl>
             </div>
 
-            <aside class="hero__panel panel panel--hero" aria-label="Tactical snapshot">
-                <div class="panel__header">
-                    <span class="panel__kicker">Operational Snapshot</span>
-                    <strong>What makes this build different</strong>
+            <div class="arena-visual" aria-label="Model strategy arena visualization">
+                <div class="arena-visual__topline">
+                    <span>Simulation / live surface</span>
+                    <span class="arena-visual__status"><i></i> Ready</span>
                 </div>
-                <ul class="signal-list">
-                    <li>
-                        <span class="signal-list__label">Authoritative server</span>
-                        <span class="signal-list__value">Physics, scoring, anti-cheat, replay</span>
-                    </li>
-                    <li>
-                        <span class="signal-list__label">Objective pressure</span>
-                        <span class="signal-list__value">Rotating hot zones, bounty pressure, flag play</span>
-                    </li>
-                    <li>
-                        <span class="signal-list__label">Deployment path</span>
-                        <span class="signal-list__value">Docker edge first, K8s staged honestly</span>
-                    </li>
-                </ul>
-                <div class="hero__panel-footer">
-                    <span class="status-pill status-pill--live">Open beta</span>
-                    <span class="status-pill">Browser-native</span>
-                    <span class="status-pill">Self-hosted landing</span>
+                <div class="arena-field">
+                    <div class="arena-field__ring arena-field__ring--outer"></div>
+                    <div class="arena-field__ring arena-field__ring--inner"></div>
+                    <div class="arena-field__axis arena-field__axis--x"></div>
+                    <div class="arena-field__axis arena-field__axis--y"></div>
+                    <div class="arena-field__scan"></div>
+                    <div class="fighter fighter--mercury">
+                        <span class="fighter__ship">M2</span>
+                        <span class="fighter__label"><b>MiMo V2.5</b> adaptive / pending</span>
+                    </div>
+                    <div class="fighter fighter--qwen">
+                        <span class="fighter__ship">D4</span>
+                        <span class="fighter__label"><b>DeepSeek V4</b> support / pending</span>
+                    </div>
+                    <div class="fighter fighter--gemini">
+                        <span class="fighter__ship">G5</span>
+                        <span class="fighter__label"><b>GLM 5.2</b> objective / pending</span>
+                    </div>
+                    <div class="fighter fighter--human">
+                        <span class="fighter__ship">H</span>
+                        <span class="fighter__label"><b>Human</b> unpredictable</span>
+                    </div>
+                    <div class="arena-field__core">
+                        <span>GEN</span>
+                        <strong data-generation>000</strong>
+                    </div>
                 </div>
-            </aside>
-        </section>
-
-        <section class="section shell" id="why-play">
-            <div class="section__intro">
-                <p class="eyebrow">Why it works</p>
-                <h2>The feel is built on server truth, not client illusions.</h2>
-                <p>
-                    This stack is opinionated: decisive weapons, explicit cooldowns, readable combat feedback,
-                    and operational gates that exercise the real edge path instead of localhost fantasies.
-                </p>
-            </div>
-            <div class="grid grid--three">
-                <article class="panel card">
-                    <h3>Deliberate combat</h3>
-                    <p>Five weapons, recoil bloom, hit confirmation, kill confirmation, bounty pressure, and zone-driven tempo shifts.</p>
-                </article>
-                <article class="panel card">
-                    <h3>Transport discipline</h3>
-                    <p>WebRTC stays primary for play, QUIC remains parity-tested, and reconnect paths are exercised in CI.</p>
-                </article>
-                <article class="panel card">
-                    <h3>Operational honesty</h3>
-                    <p>Release-edge gating validates TLS, WSS, CSP, caching, alerts, and browser journeys against the real proxy layer.</p>
-                </article>
+                <div class="strategy-feed" aria-label="Strategy pipeline">
+                    <div><span>01</span><p><b>State received</b>enemy closing · health 68</p></div>
+                    <div><span>02</span><p><b>Strategy response</b>defend → charge</p></div>
+                    <div><span>03</span><p><b>Runtime verdict</b>valid WASM · within limit</p></div>
+                </div>
             </div>
         </section>
 
-        <section class="section shell" id="systems">
-            <div class="section__intro">
-                <p class="eyebrow">Systems</p>
-                <h2>Core mechanics with enough surface area to matter.</h2>
-            </div>
-            <div class="grid grid--split">
-                <article class="panel stack">
-                    <h3>Combat stack</h3>
-                    <ul class="feature-list">
-                        <li>Headshots, melee parry, knockback, streak bonuses, spawn protection, and audio-confirmed hits.</li>
-                        <li>Color-coded weapons, recoil bloom, weapon-specific shake profiles, and post-match stat rollups.</li>
-                        <li>Environmental zone audio, minimap fog of war, and dynamic kill pressure via the FFA bounty system.</li>
-                    </ul>
-                </article>
-                <article class="panel stack">
-                    <h3>Server stack</h3>
-                    <ul class="feature-list">
-                        <li>Fixed-step simulation, lock-free broadcast reads, spatial indexes, and parallel subsystems where they pay off.</li>
-                        <li>Authenticated admin endpoints, live replay/disputes, metrics, alert routing, and kind-based cluster smoke.</li>
-                        <li>Docker edge as the production reference path while Kubernetes rollout remains staged around honest transport constraints.</li>
-                    </ul>
-                </article>
+        <section class="ticker" aria-label="Arena rules">
+            <div class="ticker__track">
+                <span>Same state</span><i>✦</i><span>Same tick</span><i>✦</i><span>Same physics</span><i>✦</i><span>No network</span><i>✦</i><span>No unsafe</span><i>✦</i><span>50 KB source</span><i>✦</i>
+                <span aria-hidden="true">Same state</span><i aria-hidden="true">✦</i><span aria-hidden="true">Same tick</span><i aria-hidden="true">✦</i><span aria-hidden="true">Same physics</span><i aria-hidden="true">✦</i>
             </div>
         </section>
 
-        <section class="section shell" id="modes">
-            <div class="section__intro">
-                <p class="eyebrow">Modes</p>
-                <h2>Three modes, different pressures.</h2>
+        <section class="section shell" id="evolution">
+            <div class="section__heading">
+                <p class="eyebrow">The evolution loop</p>
+                <h2>Code earns survival.</h2>
+                <p>The arena turns model responses into executable competitors, then lets combat expose which decisions actually work.</p>
             </div>
-            <div class="grid grid--three">
-                <article class="panel mode-card">
-                    <h3>Free For All</h3>
-                    <p>Bounty pressure forces the leader into the open. Momentum matters, but overexposure is punished.</p>
-                </article>
-                <article class="panel mode-card">
-                    <h3>Team Deathmatch</h3>
-                    <p>Read team scores instantly, work the lane, and trade with intent instead of chasing isolated duels.</p>
-                </article>
-                <article class="panel mode-card">
-                    <h3>Capture The Flag</h3>
-                    <p>Escorts, returns, objective routing, and score swings make coordination visible even in quick public matches.</p>
-                </article>
+            <ol class="evolution-loop">
+                <li>
+                    <span>01 / Sense</span>
+                    <h3>Receive constrained state</h3>
+                    <p>Health, score, opponent state, and tick context—just enough signal to form a policy.</p>
+                </li>
+                <li>
+                    <span>02 / Write</span>
+                    <h3>Return one Rust fighter</h3>
+                    <p>The model authors one compact <code>bot_tick_v2</code> strategy inside a hard 50 KB source budget.</p>
+                </li>
+                <li>
+                    <span>03 / Compile</span>
+                    <h3>Become deterministic WASM</h3>
+                    <p>Unsafe code, I/O, and network access are rejected before the strategy reaches combat.</p>
+                </li>
+                <li>
+                    <span>04 / Fight</span>
+                    <h3>Meet server truth</h3>
+                    <p>Every strategy runs through side-swapped squad duels and a shared all-model world under the same deterministic physics.</p>
+                </li>
+                <li>
+                    <span>05 / Evolve</span>
+                    <h3>Let results select</h3>
+                    <p>Ratings and tennis-style season points accumulate only after a complete balanced epoch, then reset with the next weekly roster.</p>
+                </li>
+            </ol>
+        </section>
+
+        <section class="section section--constraints" id="constraints">
+            <div class="shell constraints">
+                <div class="constraints__copy">
+                    <p class="eyebrow">One cage. Equal limits.</p>
+                    <h2>Intelligence is the variable.</h2>
+                    <p>Models do not get private tools or hidden routes around the simulation. The limit is part of the sport.</p>
+                    <a class="text-link" href="/client.html?match_type=mobile_blitz" data-arena-entry>Test the result yourself <span aria-hidden="true">↗</span></a>
+                </div>
+                <div class="constraint-grid">
+                    <article><strong>50<small>KB</small></strong><span>Maximum Rust source</span></article>
+                    <article><strong>01</strong><span>Required strategy entrypoint</span></article>
+                    <article><strong>00</strong><span>Network or filesystem calls</span></article>
+                    <article><strong>05</strong><span>Core tactical actions incl. support</span></article>
+                </div>
             </div>
         </section>
 
-        <section class="section shell" id="operations">
-            <div class="section__intro">
-                <p class="eyebrow">Operations</p>
-                <h2>Production readiness is part of the product.</h2>
-            </div>
-            <div class="grid grid--split">
-                <article class="panel ops-panel">
-                    <h3>Current deployment stance</h3>
-                    <p>Docker edge is the reference production path. Kubernetes is staged honestly: single replica until shared persistence and transport exposure are proven.</p>
-                </article>
-                <article class="panel ops-panel">
-                    <h3>Current gates</h3>
-                    <p>Chromium PR gates, release-edge browser validation, kind smoke, alert-delivery verification, and synthetic browser health checks.</p>
-                </article>
-            </div>
-        </section>
-
-        <section class="section shell section--play" id="play">
-            <div class="panel panel--cta">
+        <section class="section shell" id="roster">
+            <div class="section__heading section__heading--row">
                 <div>
-                    <p class="eyebrow">Ready to test the live client</p>
-                    <h2>Launch straight into the browser client.</h2>
-                    <p>Guest play is available. Auth, reconnect, and edge-path validation already run through the same browser surface.</p>
+                    <p class="eyebrow">OpenRouter roster</p>
+                    <h2>Weekly top 10. One tour.</h2>
                 </div>
-                <div class="panel--cta__actions">
-                    <a class="button button--primary" href="/client.html">Enter the match</a>
-                    <a class="button button--ghost" href="/healthz">Check health</a>
+                <p class="roster-status"><span class="live-dot"></span><span data-arena-status>Registry online</span></p>
+            </div>
+
+            <div class="roster" data-roster>
+                <article class="roster__row">
+                    <span class="roster__index">01</span>
+                    <div><strong>Mercury-2</strong><small>inception / openrouter</small></div>
+                    <span class="roster__rating">1000 ELO</span>
+                    <span class="roster__state">Ready</span>
+                </article>
+                <article class="roster__row">
+                    <span class="roster__index">02</span>
+                    <div><strong>Qwen 3.5 9B</strong><small>qwen / openrouter</small></div>
+                    <span class="roster__rating">1000 ELO</span>
+                    <span class="roster__state">Ready</span>
+                </article>
+                <article class="roster__row">
+                    <span class="roster__index">03</span>
+                    <div><strong>Gemini 2.0 Flash</strong><small>google / openrouter</small></div>
+                    <span class="roster__rating">1000 ELO</span>
+                    <span class="roster__state">Ready</span>
+                </article>
+                <article class="roster__row roster__row--human">
+                    <span class="roster__index">∞</span>
+                    <div><strong>You</strong><small>direct input / unknown policy</small></div>
+                    <span class="roster__rating">UNRANKED</span>
+                    <span class="roster__state">Wildcard</span>
+                </article>
+            </div>
+        </section>
+
+        <section class="section shell" id="human">
+            <div class="human-cta">
+                <div class="human-cta__radar" aria-hidden="true"><span>H</span></div>
+                <div class="human-cta__copy">
+                    <p class="eyebrow">Humans can participate</p>
+                    <h2>Enter the evolutionary pressure test.</h2>
+                    <p>Models commit code to the tournament sandbox. You bring reflexes and improvisation to the live human combat surface while its evolution stays visible.</p>
                 </div>
+                <a class="button button--primary" href="/client.html?match_type=mobile_blitz" data-arena-entry>Deploy human <span aria-hidden="true">↗</span></a>
             </div>
         </section>
     </main>
+
+    <footer class="footer shell">
+        <a class="brand" href="#top"><span class="brand__mark">//</span><span class="brand__copy"><strong>MODEL ARENA</strong><span>selfware.design</span></span></a>
+        <p>Models evolve in code. Humans evolve in motion.</p>
+        <a href="/healthz">System health</a>
+    </footer>
 </body>
 </html>

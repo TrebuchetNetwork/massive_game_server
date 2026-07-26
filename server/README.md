@@ -158,10 +158,17 @@ Storage:
 * `MGS_ARENA_BOT_FUEL_PER_TICK`: wasm fuel budget per tick (default: `1000000`).
 * `MGS_ARENA_BOT_MAX_TICKS`: default arena sandbox ticks for `execute_next` (default: `600`).
 * `MGS_ARENA_WASM_MAX_BYTES`: max accepted wasm upload size in bytes (default: `2097152`).
+* `MGS_ARENA_RATINGS_PATH`: validated weekly ratings snapshot used by public telemetry and live exhibitions (default: `data/arena_ratings.json`).
+* `MGS_ARENA_EXHIBITION_ENABLED=true`: opt in to human-facing matches backed by verified weekly `bot_tick_v2` WASM fighters (default: `false`). Exhibition results are never reported to or persisted by the official deterministic rating service. The live roster fails closed unless every configured fighter has its exact published byte length and SHA-256, and each instance is constrained by strict memory/table/resource limits in addition to fuel.
+* `MGS_ARENA_EXHIBITION_ROSTER_SIZE`: maximum number of ranked weekly fighters rotated through live bots (default: `10`, maximum: `64`). A load/trap/fuel/action failure removes the model identity and retains a generic bot.
+* `MGS_ARENA_EXHIBITION_PREPARED_PER_FIGHTER`: pre-instantiated runtimes retained per ranked fighter so live bot attachment never reads or compiles WASM (default: `2`, maximum: `8`).
+* `MGS_ARENA_EXHIBITION_REFRESH_SECONDS`: background polling/refill interval in seconds (default: `2`, clamped to `1`-`300`). Published roster changes and round rotations rebuild runtimes off the authoritative frame loop and commit them atomically only between rounds; stale runtimes are benched if a rebuild misses that boundary.
 * `OPENROUTER_API_KEY`: optional API key used by code-generation scaffolding routes.
 * `OPENROUTER_BASE_URL`: optional OpenRouter base URL override.
 * `OPENROUTER_HTTP_REFERER`: optional `HTTP-Referer` header for OpenRouter requests.
 * `OPENROUTER_APP_TITLE`: optional `X-Title` header for OpenRouter requests.
+* `MGS_OPENROUTER_MAX_TOKENS`: uniform completion envelope (default: `4096`; clamped to `2049`-`16384`). Requests use provider-default temperature, throughput routing with required parameter support, the frozen `capability_minimum_v1` reasoning policy, and bounded `sse_v1` response transport.
+* `MGS_OPENROUTER_TIMEOUT_SECS`: optional OpenRouter request timeout in seconds (default: `120`; clamped to `30`-`900`).
 
 Human-priority slot controls:
 

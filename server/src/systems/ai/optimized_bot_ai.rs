@@ -3,9 +3,12 @@
 use crate::core::constants::*;
 use crate::core::types::{
     CorePickupType, EntityId, PlayerID, PlayerInputData, PlayerState, ServerWeaponType, Vec2, Wall,
-    FIELD_MISC,
+    FIELD_FLAG, FIELD_MISC, FIELD_SCORE_STATS,
 };
 use crate::flatbuffers_generated::game_protocol as fb;
+use crate::operational::bot_sandbox::{
+    ArenaMatchMode, ExhibitionBotAction, ExhibitionBotObservation,
+};
 use crate::operational::monitoring::metrics;
 use crate::server::instance::{BotBehaviorState, BotController, MassiveGameServer};
 use crate::systems::ai::commander::{
@@ -318,6 +321,9 @@ struct EnemySnapshot {
     velocity_y: f32,
     carries_flag_team_id: u8,
     weapon: ServerWeaponType,
+    health: i32,
+    /// Stable zero-based exhibition slot when this player is a model fighter.
+    arena_slot: Option<i32>,
 }
 
 #[derive(Clone, Copy)]
@@ -325,6 +331,9 @@ struct LivePlayerSnapshot {
     x: f32,
     y: f32,
     team_id: u8,
+    health: i32,
+    /// Stable zero-based exhibition slot when this player is a model fighter.
+    arena_slot: Option<i32>,
 }
 
 #[derive(Clone)]
@@ -339,6 +348,7 @@ struct BotSnapshotOwned {
     id: PlayerID,
     username: String,
     health: i32,
+    score: i32,
     x: f32,
     y: f32,
     velocity_x: f32,
@@ -349,6 +359,13 @@ struct BotSnapshotOwned {
     team_id: u8,
     is_carrying_flag_team_id: u8,
     last_processed_input_sequence: u32,
+}
+
+struct ExhibitionSelfDeath {
+    player_id: PlayerID,
+    username: String,
+    position: Vec2,
+    carried_flag_team_id: u8,
 }
 
 #[derive(Default)]
@@ -370,6 +387,48 @@ fn should_cleanup_predictive_models(
     predictive_models.motion_models.len() > BOT_PREDICTIVE_MODEL_MAX_ENTRIES
         || predictive_models.threat_models.len() > BOT_PREDICTIVE_MODEL_MAX_ENTRIES
         || frame_count.is_multiple_of(BOT_PREDICTIVE_MODEL_CLEANUP_INTERVAL_TICKS)
+}
+
+#[inline]
+fn exhibition_decision_due(
+    frame_count: u64,
+    last_decision_tick: u64,
+    slot: i32,
+    has_current_action: bool,
+) -> bool {
+    if has_current_action {
+        return frame_count.saturating_sub(last_decision_tick) >= BOT_DECISION_INTERVAL_TICKS;
+    }
+
+    let first_due_tick = BOT_DECISION_INTERVAL_TICKS
+        .saturating_add(slot.rem_euclid(BOT_DECISION_INTERVAL_TICKS as i32) as u64);
+    frame_count >= first_due_tick
+}
+
+#[inline]
+fn should_process_bot_for_lod(
+    lod_tier: BotAiLodTier,
+    frame_count: u64,
+    is_exhibition: bool,
+) -> bool {
+    is_exhibition || lod_tier.should_process(frame_count)
+}
+
+#[inline]
+fn exhibition_action_allows_attack(action: Option<ExhibitionBotAction>) -> bool {
+    matches!(
+        action,
+        Some(ExhibitionBotAction::Attack | ExhibitionBotAction::Charge)
+    )
+}
+
+#[inline]
+fn exhibition_action_self_damage(action: ExhibitionBotAction) -> i32 {
+    if action == ExhibitionBotAction::Charge {
+        4
+    } else {
+        0
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -447,6 +506,7 @@ impl OptimizedBotAI {
                 .iter()
                 .map(|entry| entry.key().clone()),
         );
+        let mut exhibition_self_deaths = Vec::new();
 
         if bot_ids.is_empty() {
             if !predictive_models.motion_models.is_empty()
@@ -465,6 +525,8 @@ impl OptimizedBotAI {
         let game_mode = match_info_guard.game_mode;
         let match_state = match_info_guard.match_state;
         let flag_states = &match_info_guard.flag_states;
+        let exhibition_round_ready = match_state == fb::MatchStateType::Active
+            && server_instance.arena_exhibition.active_round_ready();
 
         // Precompute enemies and team objective counts once per tick.
         let mut enemies_team1 = Vec::new();
@@ -499,6 +561,12 @@ impl OptimizedBotAI {
                     });
                 }
 
+                let arena_slot = server_instance.bot_players.get(id).and_then(|controller| {
+                    controller
+                        .arena_model_id
+                        .as_ref()
+                        .map(|_| controller.arena_slot)
+                });
                 let enemy_snapshot = EnemySnapshot {
                     id: id.clone(),
                     x: player.x,
@@ -507,6 +575,8 @@ impl OptimizedBotAI {
                     velocity_y: player.velocity_y,
                     carries_flag_team_id: player.is_carrying_flag_team_id,
                     weapon: player.weapon,
+                    health: player.health,
+                    arena_slot,
                 };
 
                 live_players_by_id.insert(
@@ -515,6 +585,8 @@ impl OptimizedBotAI {
                         x: player.x,
                         y: player.y,
                         team_id: player.team_id,
+                        health: player.health,
+                        arena_slot,
                     },
                 );
                 if !server_instance.bot_players.contains_key(id) {
@@ -591,6 +663,7 @@ impl OptimizedBotAI {
                     id: bot_state.id.clone(),
                     username: bot_state.username.clone(),
                     health: bot_state.health,
+                    score: bot_state.score,
                     x: bot_state.x,
                     y: bot_state.y,
                     velocity_x: bot_state.velocity_x,
@@ -632,87 +705,189 @@ impl OptimizedBotAI {
                 )
             };
 
-            // Skip this bot entirely if the LOD tier says so.
-            if !lod_tier.should_process(frame_count) {
+            // Model strategy decisions are competition mechanics and retain a
+            // real 2 Hz cadence regardless of their distance from a human.
+            let controller_is_exhibition = server_instance
+                .bot_players
+                .get(bot_id)
+                .is_some_and(|controller| controller.arena_model_id.is_some());
+            let promoted_assignment = if controller_is_exhibition {
+                None
+            } else {
+                server_instance.arena_exhibition.current_assignment(bot_id)
+            };
+            let is_exhibition = controller_is_exhibition || promoted_assignment.is_some();
+            if !should_process_bot_for_lod(lod_tier, frame_count, is_exhibition) {
                 continue;
             }
 
             // Update bot controller
             if let Some(mut bot_controller_entry) = server_instance.bot_players.get_mut(bot_id) {
                 let bot_controller = bot_controller_entry.value_mut();
+                let enemies = if bot_snapshot.team_id == 1 {
+                    &enemies_team1
+                } else {
+                    &enemies_team2
+                };
+                let mut exhibition_identity_lost = false;
+                let mut exhibition_visible_name: Option<String> = None;
+                let mut exhibition_self_damage = 0;
+
+                if bot_controller.arena_model_id.is_none() {
+                    if let Some(assignment) = promoted_assignment.as_ref() {
+                        bot_controller.arena_model_id = Some(assignment.fighter.model_id.clone());
+                        bot_controller.arena_model_rank = Some(assignment.fighter.rank);
+                        bot_controller.arena_slot = assignment.slot;
+                        exhibition_visible_name = Some(assignment.fighter.display_name());
+                    }
+                }
+
+                // Never carry a strategy directive through Waiting/Ended or
+                // into a round whose fresh side rotation missed intermission.
+                // The verified identity stays visible, but the fighter is
+                // benched and its WASM tick remains untouched until ready.
+                if bot_controller.arena_model_id.is_some() && !exhibition_round_ready {
+                    bot_controller.arena_action = None;
+                    bot_controller.arena_support_target_id = None;
+                    bot_controller.arena_damage_pending = false;
+                    bot_controller.target_enemy_id = None;
+                    bot_controller.target_position = None;
+                    bot_controller.behavior_state = BotBehaviorState::Idle;
+                    bot_controller.personality = BotPersonality::Balanced;
+                }
 
                 // Tick-based decision interval check
                 let ticks_since_decision =
                     frame_count.saturating_sub(bot_controller.last_decision_tick);
-                if ticks_since_decision >= BOT_DECISION_INTERVAL_TICKS {
+                let decision_due = if bot_controller.arena_model_id.is_some() {
+                    exhibition_round_ready
+                        && exhibition_decision_due(
+                            frame_count,
+                            bot_controller.last_decision_tick,
+                            bot_controller.arena_slot,
+                            bot_controller.arena_action.is_some(),
+                        )
+                } else {
+                    ticks_since_decision >= BOT_DECISION_INTERVAL_TICKS
+                };
+                if decision_due {
                     bot_controller.last_decision_tick = frame_count;
                     // Keep the Instant for any legacy/external code that might reference it.
                     bot_controller.last_decision_time = Instant::now();
 
                     // Remember old target so we can detect if the decision changed it.
                     let old_target = bot_controller.target_position;
-                    let pickup_override = lod_tier != BotAiLodTier::Far
-                        && Self::maybe_retarget_for_pickup(
+                    let exhibition_decision =
+                        bot_controller.arena_model_id.as_ref().and_then(|_| {
+                            let observation = Self::build_exhibition_observation(
+                                &bot_snapshot,
+                                bot_controller,
+                                game_mode,
+                                &match_info_guard.team_scores,
+                                &live_players_by_id,
+                                enemies,
+                            );
+                            server_instance
+                                .arena_exhibition
+                                .next_action(bot_id, observation)
+                        });
+
+                    if let Some(decision) = exhibition_decision {
+                        let assignment = &decision.assignment;
+                        exhibition_visible_name = Some(assignment.fighter.display_name());
+                        bot_controller.arena_model_id = Some(assignment.fighter.model_id.clone());
+                        bot_controller.arena_model_rank = Some(assignment.fighter.rank);
+                        bot_controller.arena_slot = assignment.slot;
+                        bot_controller.arena_action_tick = decision.tick;
+                        let action = decision.action;
+                        bot_controller.arena_action = Some(action);
+                        bot_controller.arena_damage_pending = matches!(
+                            action,
+                            ExhibitionBotAction::Attack | ExhibitionBotAction::Charge
+                        );
+                        exhibition_self_damage = exhibition_action_self_damage(action);
+                        Self::apply_exhibition_decision(
+                            action,
                             bot_controller,
                             &bot_snapshot,
-                            &active_pickups,
+                            game_mode,
+                            flag_states,
+                            &live_players_by_id,
+                            enemies,
                         );
+                    } else {
+                        if bot_controller.arena_model_id.is_some() {
+                            // A missing/trapped runtime is no longer truthfully
+                            // a model fighter. Remove its visible identity before
+                            // the built-in controller takes over.
+                            bot_controller.arena_model_id = None;
+                            bot_controller.arena_model_rank = None;
+                            bot_controller.arena_action = None;
+                            bot_controller.arena_support_target_id = None;
+                            bot_controller.arena_damage_pending = false;
+                            bot_controller.arena_action_tick = 0;
+                            bot_controller.target_enemy_id = None;
+                            bot_controller.target_position = None;
+                            exhibition_identity_lost = true;
+                        }
 
-                    if !pickup_override {
-                        match lod_tier {
-                            BotAiLodTier::Far => {
-                                // Far tier: basic wander only
-                                Self::make_far_wander_decision(bot_controller, &bot_snapshot);
-                            }
-                            BotAiLodTier::Medium => {
-                                // Medium tier: simplified decisions (no CTF objective, no commander)
-                                Self::make_simple_movement_decision(bot_controller, &bot_snapshot);
-                            }
-                            BotAiLodTier::Near => {
-                                // Near tier: full AI
-                                if BOT_SIMPLE_MOVEMENT_ONLY {
-                                    Self::make_simple_movement_decision(
-                                        bot_controller,
-                                        &bot_snapshot,
-                                    );
-                                } else if game_mode == fb::GameModeType::CaptureTheFlag
-                                    && match_state == fb::MatchStateType::Active
-                                {
-                                    let enemies = if bot_snapshot.team_id == 1 {
-                                        &enemies_team1
-                                    } else {
-                                        &enemies_team2
-                                    };
-                                    Self::make_ctf_decision(
-                                        bot_controller,
-                                        &bot_snapshot,
-                                        flag_states,
-                                        &live_players_by_id,
-                                        team_objectives,
-                                        enemies,
-                                        if bot_snapshot.team_id == 1 {
-                                            commander_attack_bias_team1
-                                        } else {
-                                            commander_attack_bias_team2
-                                        },
-                                    );
-                                } else {
+                        let pickup_override = lod_tier != BotAiLodTier::Far
+                            && Self::maybe_retarget_for_pickup(
+                                bot_controller,
+                                &bot_snapshot,
+                                &active_pickups,
+                            );
+                        if !pickup_override {
+                            match lod_tier {
+                                BotAiLodTier::Far => {
+                                    Self::make_far_wander_decision(bot_controller, &bot_snapshot);
+                                }
+                                BotAiLodTier::Medium => {
                                     Self::make_simple_movement_decision(
                                         bot_controller,
                                         &bot_snapshot,
                                     );
                                 }
+                                BotAiLodTier::Near => {
+                                    if BOT_SIMPLE_MOVEMENT_ONLY {
+                                        Self::make_simple_movement_decision(
+                                            bot_controller,
+                                            &bot_snapshot,
+                                        );
+                                    } else if game_mode == fb::GameModeType::CaptureTheFlag
+                                        && match_state == fb::MatchStateType::Active
+                                    {
+                                        Self::make_ctf_decision(
+                                            bot_controller,
+                                            &bot_snapshot,
+                                            flag_states,
+                                            &live_players_by_id,
+                                            team_objectives,
+                                            enemies,
+                                            if bot_snapshot.team_id == 1 {
+                                                commander_attack_bias_team1
+                                            } else {
+                                                commander_attack_bias_team2
+                                            },
+                                        );
+                                    } else {
+                                        Self::make_simple_movement_decision(
+                                            bot_controller,
+                                            &bot_snapshot,
+                                        );
+                                    }
 
-                                let commander_waypoint = if bot_snapshot.team_id == 1 {
-                                    commander_waypoint_team1
-                                } else {
-                                    commander_waypoint_team2
-                                };
-                                Self::apply_commander_waypoint(
-                                    bot_controller,
-                                    &bot_snapshot,
-                                    commander_waypoint,
-                                );
+                                    let commander_waypoint = if bot_snapshot.team_id == 1 {
+                                        commander_waypoint_team1
+                                    } else {
+                                        commander_waypoint_team2
+                                    };
+                                    Self::apply_commander_waypoint(
+                                        bot_controller,
+                                        &bot_snapshot,
+                                        commander_waypoint,
+                                    );
+                                }
                             }
                         }
                     }
@@ -735,29 +910,53 @@ impl OptimizedBotAI {
                 // Check if bot is stuck before generating input
                 Self::check_stuck_status(bot_controller, &bot_snapshot, delta_time);
 
-                // Generate input - Far bots get simplified movement only
-                let enemies = if bot_snapshot.team_id == 1 {
-                    &enemies_team1
-                } else {
-                    &enemies_team2
-                };
-                let input = if lod_tier == BotAiLodTier::Far {
-                    Self::generate_simple_movement_input(&bot_snapshot, bot_controller)
-                } else {
-                    Self::generate_combat_input(
-                        &bot_snapshot,
-                        bot_controller,
-                        server_instance,
-                        game_mode,
-                        enemies,
-                        frame_count,
-                    )
-                };
+                // Exhibition actions retain their combat adapter at every LOD;
+                // otherwise a distant ATTACK/CHARGE directive could never land.
+                let input =
+                    if lod_tier == BotAiLodTier::Far && bot_controller.arena_model_id.is_none() {
+                        Self::generate_simple_movement_input(&bot_snapshot, bot_controller)
+                    } else {
+                        Self::generate_combat_input(
+                            &bot_snapshot,
+                            bot_controller,
+                            server_instance,
+                            game_mode,
+                            enemies,
+                            frame_count,
+                        )
+                    };
 
                 // Queue the input
                 if let Some(mut player_state_entry) =
                     server_instance.player_manager.get_player_state_mut(bot_id)
                 {
+                    if exhibition_identity_lost {
+                        let short_id: String = bot_id.as_ref().chars().skip(4).take(6).collect();
+                        player_state_entry.username = format!("Bot {short_id}");
+                        player_state_entry.mark_field_changed(FIELD_MISC | FIELD_SCORE_STATS);
+                    } else if let Some(visible_name) = exhibition_visible_name {
+                        if player_state_entry.username != visible_name {
+                            player_state_entry.username = visible_name;
+                            player_state_entry.mark_field_changed(FIELD_MISC | FIELD_SCORE_STATS);
+                        }
+                    }
+                    if exhibition_self_damage > 0 && player_state_entry.alive {
+                        // The competition ABI charges this cost once when a
+                        // fresh CHARGE directive is produced, not once/frame.
+                        if player_state_entry.apply_direct_health_cost(exhibition_self_damage) {
+                            let carried_flag_team_id = player_state_entry.is_carrying_flag_team_id;
+                            if carried_flag_team_id != 0 {
+                                player_state_entry.is_carrying_flag_team_id = 0;
+                                player_state_entry.mark_field_changed(FIELD_FLAG);
+                            }
+                            exhibition_self_deaths.push(ExhibitionSelfDeath {
+                                player_id: bot_id.clone(),
+                                username: player_state_entry.username.clone(),
+                                position: Vec2::new(player_state_entry.x, player_state_entry.y),
+                                carried_flag_team_id,
+                            });
+                        }
+                    }
                     let next_behavior = bot_controller.behavior_state.as_u8();
                     let misc_changed = !player_state_entry.is_bot
                         || player_state_entry.bot_behavior != next_behavior;
@@ -818,6 +1017,16 @@ impl OptimizedBotAI {
         }
 
         drop(match_info_guard);
+        // A lethal CHARGE needs the normal death/flag events. Resolve them
+        // only after releasing the batch-wide match-info read guard.
+        for death in exhibition_self_deaths {
+            server_instance.finalize_exhibition_charge_self_death(
+                death.player_id,
+                death.username,
+                death.position,
+                death.carried_flag_team_id,
+            );
+        }
         BOT_IDS.with(|cell| *cell.borrow_mut() = bot_ids);
 
         metrics::record_bot_decision_time(bot_batch_start.elapsed().as_secs_f64());
@@ -836,6 +1045,202 @@ impl OptimizedBotAI {
         });
         bot_controller.target_position = Some(Vec2::new(target_x, target_y));
         bot_controller.behavior_state = BotBehaviorState::Patrolling;
+    }
+
+    fn build_exhibition_observation(
+        bot_state: &BotSnapshotOwned,
+        bot_controller: &BotController,
+        game_mode: fb::GameModeType,
+        team_scores: &HashMap<u8, i32>,
+        live_players: &HashMap<PlayerID, LivePlayerSnapshot>,
+        enemies: &[EnemySnapshot],
+    ) -> ExhibitionBotObservation {
+        let opposing_team = if bot_state.team_id == 1 { 2 } else { 1 };
+        let own_team_score = team_scores.get(&bot_state.team_id).copied().unwrap_or(0);
+        let opposing_team_score = team_scores.get(&opposing_team).copied().unwrap_or(0);
+        let target_health = Self::select_exhibition_enemy(enemies, bot_controller.arena_slot)
+            .map_or(0, |enemy| enemy.health.max(0));
+        let allies_alive = live_players
+            .values()
+            .filter(|player| player.team_id == bot_state.team_id)
+            .count() as i32;
+        let lowest_ally_health = live_players
+            .iter()
+            .filter(|(player_id, player)| {
+                *player_id != &bot_state.id && player.team_id == bot_state.team_id
+            })
+            .map(|(_, player)| player.health.max(0))
+            .min()
+            .unwrap_or(0);
+
+        ExhibitionBotObservation {
+            self_health: bot_state.health.max(0),
+            target_health,
+            personal_score: bot_state.score,
+            team_score_delta: own_team_score.saturating_sub(opposing_team_score),
+            // Live CTF/TDM team scores are the authoritative objective values.
+            objective_delta: own_team_score.saturating_sub(opposing_team_score),
+            allies_alive,
+            enemies_alive: enemies.len() as i32,
+            lowest_ally_health,
+            slot: bot_controller.arena_slot,
+            mode: if game_mode == fb::GameModeType::CaptureTheFlag {
+                ArenaMatchMode::Ctf
+            } else if game_mode == fb::GameModeType::TeamDeathmatch {
+                ArenaMatchMode::TeamDeathmatch
+            } else {
+                ArenaMatchMode::Arena
+            },
+        }
+    }
+
+    fn select_exhibition_support_ally(
+        live_players: &HashMap<PlayerID, LivePlayerSnapshot>,
+        self_id: &PlayerID,
+        team_id: u8,
+    ) -> Option<(PlayerID, LivePlayerSnapshot)> {
+        live_players
+            .iter()
+            .filter(|(player_id, player)| *player_id != self_id && player.team_id == team_id)
+            .min_by(|(left_id, left), (right_id, right)| {
+                left.health
+                    .cmp(&right.health)
+                    .then_with(|| {
+                        left.arena_slot
+                            .unwrap_or(i32::MAX)
+                            .cmp(&right.arena_slot.unwrap_or(i32::MAX))
+                    })
+                    .then_with(|| left_id.as_ref().cmp(right_id.as_ref()))
+            })
+            .map(|(player_id, player)| (player_id.clone(), *player))
+    }
+
+    fn apply_exhibition_decision(
+        action: ExhibitionBotAction,
+        bot_controller: &mut BotController,
+        bot_state: &BotSnapshotOwned,
+        game_mode: fb::GameModeType,
+        flag_states: &HashMap<u8, crate::server::instance::ServerFlagState>,
+        live_players: &HashMap<PlayerID, LivePlayerSnapshot>,
+        enemies: &[EnemySnapshot],
+    ) {
+        bot_controller.target_enemy_id = None;
+        bot_controller.arena_support_target_id = None;
+        match action {
+            ExhibitionBotAction::Idle => {
+                bot_controller.target_position = None;
+                bot_controller.behavior_state = BotBehaviorState::Idle;
+                bot_controller.personality = BotPersonality::Balanced;
+            }
+            ExhibitionBotAction::Attack | ExhibitionBotAction::Charge => {
+                if let Some(enemy) =
+                    Self::select_exhibition_enemy(enemies, bot_controller.arena_slot)
+                {
+                    bot_controller.target_position = Some(Vec2::new(enemy.x, enemy.y));
+                    bot_controller.target_enemy_id = Some(enemy.id.clone());
+                    bot_controller.behavior_state = if action == ExhibitionBotAction::Charge {
+                        BotBehaviorState::Flanking
+                    } else {
+                        BotBehaviorState::Engaging
+                    };
+                } else {
+                    bot_controller.target_position = None;
+                    bot_controller.behavior_state = BotBehaviorState::Patrolling;
+                }
+                bot_controller.personality = if action == ExhibitionBotAction::Charge {
+                    BotPersonality::Aggressive
+                } else {
+                    BotPersonality::Balanced
+                };
+            }
+            ExhibitionBotAction::Defend => {
+                bot_controller.target_position = if game_mode == fb::GameModeType::CaptureTheFlag {
+                    flag_states
+                        .get(&bot_state.team_id)
+                        .map(|flag| flag.position)
+                } else {
+                    Some(Vec2::new(bot_state.x, bot_state.y))
+                };
+                bot_controller.behavior_state = BotBehaviorState::Defending;
+                bot_controller.personality = BotPersonality::Defensive;
+            }
+            ExhibitionBotAction::Support => {
+                let ally = Self::select_exhibition_support_ally(
+                    live_players,
+                    &bot_state.id,
+                    bot_state.team_id,
+                );
+                if let Some((ally_id, ally)) = ally {
+                    bot_controller.arena_support_target_id = Some(ally_id);
+                    bot_controller.target_position = Some(Vec2::new(ally.x, ally.y));
+                    bot_controller.behavior_state = BotBehaviorState::Defending;
+                } else {
+                    bot_controller.target_position = Some(Vec2::new(bot_state.x, bot_state.y));
+                    bot_controller.behavior_state = BotBehaviorState::Defending;
+                }
+                bot_controller.personality = BotPersonality::Balanced;
+            }
+        }
+    }
+
+    /// Select the live enemy occupying the same stable team slot. If that
+    /// fighter is dead/absent, advance through higher slots and wrap to the
+    /// beginning exactly like the deterministic team evaluator. Players with
+    /// no exhibition slot deterministically fill vacant virtual slots so human
+    /// participants remain valid targets in mixed teams.
+    fn select_exhibition_enemy(
+        enemies: &[EnemySnapshot],
+        desired_slot: i32,
+    ) -> Option<&EnemySnapshot> {
+        let desired_slot = desired_slot.max(0);
+        // An actual exhibition fighter always owns its ABI slot.
+        if let Some(exact) = enemies
+            .iter()
+            .filter(|enemy| enemy.arena_slot == Some(desired_slot))
+            .min_by(|left, right| left.id.as_ref().cmp(right.id.as_ref()))
+        {
+            return Some(exact);
+        }
+
+        // Humans/generic bots do not own ABI slots, but they still participate
+        // in combat. Give them deterministic virtual slots by filling the gaps
+        // left by model fighters, ordered by player ID. This makes a human who
+        // replaces a model targetable by the corresponding opposing slot.
+        let occupied_slots: HashSet<i32> = enemies
+            .iter()
+            .filter_map(|enemy| enemy.arena_slot.map(|slot| slot.max(0)))
+            .collect();
+        let mut unslotted: Vec<&EnemySnapshot> = enemies
+            .iter()
+            .filter(|enemy| enemy.arena_slot.is_none())
+            .collect();
+        unslotted.sort_unstable_by(|left, right| left.id.as_ref().cmp(right.id.as_ref()));
+
+        let mut virtual_slots: Vec<(&EnemySnapshot, i32)> = enemies
+            .iter()
+            .filter_map(|enemy| enemy.arena_slot.map(|slot| (enemy, slot.max(0))))
+            .collect();
+        let mut next_virtual_slot = 0;
+        for enemy in unslotted {
+            while occupied_slots.contains(&next_virtual_slot) {
+                next_virtual_slot += 1;
+            }
+            virtual_slots.push((enemy, next_virtual_slot));
+            next_virtual_slot += 1;
+        }
+
+        virtual_slots
+            .into_iter()
+            .min_by(|(left, left_slot), (right, right_slot)| {
+                let left_wrap = if *left_slot >= desired_slot { 0 } else { 1 };
+                let right_wrap = if *right_slot >= desired_slot { 0 } else { 1 };
+                (left_wrap, *left_slot, left.id.as_ref()).cmp(&(
+                    right_wrap,
+                    *right_slot,
+                    right.id.as_ref(),
+                ))
+            })
+            .map(|(enemy, _)| enemy)
     }
 
     /// Generate a simple movement-only input (no combat, no abilities).
@@ -1469,6 +1874,31 @@ impl OptimizedBotAI {
         selected.map(|(_, candidate)| candidate)
     }
 
+    fn exhibition_target_solution(
+        bot_state: &BotSnapshotOwned,
+        enemies: &[EnemySnapshot],
+        target_enemy_id: &PlayerID,
+    ) -> Option<TargetSolution> {
+        let enemy = enemies.iter().find(|enemy| &enemy.id == target_enemy_id)?;
+        let direct_position = Vec2::new(enemy.x, enemy.y);
+        // Keep the live adapter deterministic while still leading the exact
+        // slot target by the same 120 ms horizon used by generic targeting.
+        let predicted_position = Vec2::new(
+            enemy.x + enemy.velocity_x * 0.12,
+            enemy.y + enemy.velocity_y * 0.12,
+        );
+        let dx = enemy.x - bot_state.x;
+        let dy = enemy.y - bot_state.y;
+        Some(TargetSolution {
+            enemy_id: enemy.id.clone(),
+            direct_position,
+            predicted_position,
+            distance_sq: dx * dx + dy * dy,
+            aim_angle: (predicted_position.y - bot_state.y)
+                .atan2(predicted_position.x - bot_state.x),
+        })
+    }
+
     /// Generate enhanced combat input with shooting and movement.
     /// Uses tick-based timing for weapon switch cooldowns and reaction time.
     fn generate_combat_input(
@@ -1502,20 +1932,48 @@ impl OptimizedBotAI {
             ping_y: 0.0,
         };
         let personality = bot_controller.personality;
-        let difficulty = BotDifficultyTier::from_bot_id(&bot_state.id);
+        // UUID-derived difficulty would confound model strategy comparisons.
+        // All exhibition fighters use the same fixed mechanics tier.
+        let difficulty = if bot_controller.arena_model_id.is_some() {
+            BotDifficultyTier::Normal
+        } else {
+            BotDifficultyTier::from_bot_id(&bot_state.id)
+        };
 
         // Reload if low on ammo
         if bot_state.ammo == 0 {
             input.reload = true;
         }
 
-        // Predictive target selection based on learned threat scores.
-        let selected_target = Self::select_enemy_target(
-            bot_state,
-            enemies,
-            game_mode,
-            server_instance.get_server_timestamp_ms(),
-        );
+        // `idle` is an explicit competition action. Do not let the tactical
+        // adapter silently turn it into auto-fire or movement in the live game.
+        if (bot_controller.arena_model_id.is_some() && bot_controller.arena_action.is_none())
+            || bot_controller.arena_action == Some(ExhibitionBotAction::Idle)
+        {
+            return input;
+        }
+
+        // Exhibition fighters may only engage the target selected by stable
+        // same-slot/wrapping rules. Generic threat selection must not silently
+        // override the strategy ABI target.
+        let selected_target = if bot_controller.arena_model_id.is_some() {
+            match bot_controller.arena_action {
+                Some(ExhibitionBotAction::Attack | ExhibitionBotAction::Charge) => bot_controller
+                    .target_enemy_id
+                    .as_ref()
+                    .and_then(|target_id| {
+                        Self::exhibition_target_solution(bot_state, enemies, target_id)
+                    }),
+                _ => None,
+            }
+        } else {
+            Self::select_enemy_target(
+                bot_state,
+                enemies,
+                game_mode,
+                server_instance.get_server_timestamp_ms(),
+            )
+        };
         let mut nearest_enemy_dist = f32::MAX;
         let mut nearest_enemy_angle = bot_state.rotation;
         let mut has_enemy_target = false;
@@ -1797,6 +2255,14 @@ impl OptimizedBotAI {
 
         if input.change_weapon_slot != 0 {
             bot_controller.last_weapon_switch_tick = frame_count;
+        }
+
+        if bot_controller.arena_model_id.is_some()
+            && !exhibition_action_allows_attack(bot_controller.arena_action)
+        {
+            input.shooting = false;
+            input.melee_attack = false;
+            input.use_ability_slot = 0;
         }
 
         input
@@ -2331,6 +2797,167 @@ mod tests {
         assert!(BotDifficultyTier::Normal.aim_accuracy() < BotDifficultyTier::Hard.aim_accuracy());
     }
 
+    fn exhibition_enemy(id: &str, arena_slot: Option<i32>) -> EnemySnapshot {
+        EnemySnapshot {
+            id: Arc::from(id),
+            x: 0.0,
+            y: 0.0,
+            velocity_x: 0.0,
+            velocity_y: 0.0,
+            carries_flag_team_id: 0,
+            weapon: ServerWeaponType::Rifle,
+            health: 100,
+            arena_slot,
+        }
+    }
+
+    #[test]
+    fn exhibition_target_selection_uses_same_slot_then_wraps() {
+        let enemies = vec![
+            exhibition_enemy("slot-3", Some(3)),
+            exhibition_enemy("slot-0", Some(0)),
+            exhibition_enemy("slot-1", Some(1)),
+        ];
+        assert_eq!(
+            OptimizedBotAI::select_exhibition_enemy(&enemies, 1)
+                .expect("same-slot target")
+                .id
+                .as_ref(),
+            "slot-1"
+        );
+        assert_eq!(
+            OptimizedBotAI::select_exhibition_enemy(&enemies, 2)
+                .expect("next living slot")
+                .id
+                .as_ref(),
+            "slot-3"
+        );
+        assert_eq!(
+            OptimizedBotAI::select_exhibition_enemy(&enemies, 4)
+                .expect("wrapped living slot")
+                .id
+                .as_ref(),
+            "slot-0"
+        );
+    }
+
+    #[test]
+    fn exhibition_target_selection_assigns_humans_to_vacant_virtual_slots() {
+        let enemies = vec![
+            exhibition_enemy("slot-2", Some(2)),
+            exhibition_enemy("human-b", None),
+            exhibition_enemy("slot-0", Some(0)),
+            exhibition_enemy("human-a", None),
+        ];
+        assert_eq!(
+            OptimizedBotAI::select_exhibition_enemy(&enemies, 0)
+                .expect("exact model slot")
+                .id
+                .as_ref(),
+            "slot-0"
+        );
+        assert_eq!(
+            OptimizedBotAI::select_exhibition_enemy(&enemies, 1)
+                .expect("human fills first gap")
+                .id
+                .as_ref(),
+            "human-a"
+        );
+        assert_eq!(
+            OptimizedBotAI::select_exhibition_enemy(&enemies, 3)
+                .expect("human fills next gap")
+                .id
+                .as_ref(),
+            "human-b"
+        );
+        assert_eq!(
+            OptimizedBotAI::select_exhibition_enemy(&enemies, 4)
+                .expect("wraps after virtual roster")
+                .id
+                .as_ref(),
+            "slot-0"
+        );
+    }
+
+    #[test]
+    fn support_selects_lowest_health_ally_with_stable_slot_tie_break() {
+        let self_id: PlayerID = Arc::from("self");
+        let preferred: PlayerID = Arc::from("slot-1");
+        let mut players = HashMap::new();
+        players.insert(
+            self_id.clone(),
+            LivePlayerSnapshot {
+                x: 0.0,
+                y: 0.0,
+                team_id: 1,
+                health: 1,
+                arena_slot: Some(0),
+            },
+        );
+        players.insert(
+            preferred.clone(),
+            LivePlayerSnapshot {
+                x: 10.0,
+                y: 0.0,
+                team_id: 1,
+                health: 25,
+                arena_slot: Some(1),
+            },
+        );
+        players.insert(
+            Arc::from("slot-2"),
+            LivePlayerSnapshot {
+                x: 20.0,
+                y: 0.0,
+                team_id: 1,
+                health: 25,
+                arena_slot: Some(2),
+            },
+        );
+        players.insert(
+            Arc::from("enemy"),
+            LivePlayerSnapshot {
+                x: 30.0,
+                y: 0.0,
+                team_id: 2,
+                health: 1,
+                arena_slot: Some(0),
+            },
+        );
+
+        let (selected, _) = OptimizedBotAI::select_exhibition_support_ally(&players, &self_id, 1)
+            .expect("living ally");
+        assert_eq!(selected, preferred);
+    }
+
+    #[test]
+    fn only_attack_and_charge_actions_allow_live_attacks() {
+        assert!(exhibition_action_allows_attack(Some(
+            ExhibitionBotAction::Attack
+        )));
+        assert!(exhibition_action_allows_attack(Some(
+            ExhibitionBotAction::Charge
+        )));
+        assert!(!exhibition_action_allows_attack(None));
+        assert!(!exhibition_action_allows_attack(Some(
+            ExhibitionBotAction::Idle
+        )));
+        assert!(!exhibition_action_allows_attack(Some(
+            ExhibitionBotAction::Defend
+        )));
+        assert!(!exhibition_action_allows_attack(Some(
+            ExhibitionBotAction::Support
+        )));
+        assert_eq!(
+            exhibition_action_self_damage(ExhibitionBotAction::Charge),
+            4
+        );
+        assert_eq!(
+            exhibition_action_self_damage(ExhibitionBotAction::Attack),
+            0
+        );
+    }
+
     fn make_bot_snapshot_for_pickups(
         health: i32,
         ammo: i32,
@@ -2340,6 +2967,7 @@ mod tests {
             id: std::sync::Arc::from("bot-pickup".to_string()),
             username: "Bot".to_string(),
             health,
+            score: 0,
             x: 0.0,
             y: 0.0,
             velocity_x: 0.0,
@@ -2503,6 +3131,51 @@ mod tests {
     }
 
     #[test]
+    fn exhibition_decisions_survive_global_ai_strides_without_slot_starvation() {
+        for global_stride in [2usize, 6usize] {
+            for slot in 0..30 {
+                let mut due_frames = Vec::new();
+                let mut last_decision_tick = 0;
+                let mut has_current_action = false;
+                for frame in (0..=660u64).step_by(global_stride) {
+                    if exhibition_decision_due(frame, last_decision_tick, slot, has_current_action)
+                    {
+                        due_frames.push(frame);
+                        last_decision_tick = frame;
+                        has_current_action = true;
+                    }
+                }
+
+                assert!(
+                    due_frames.len() >= 20,
+                    "slot {slot} starved at global stride {global_stride}: {due_frames:?}"
+                );
+                let ideal_first = BOT_DECISION_INTERVAL_TICKS + slot as u64;
+                assert!(due_frames[0] >= ideal_first);
+                assert!(due_frames[0] < ideal_first + global_stride as u64);
+                for interval in due_frames.windows(2).map(|pair| pair[1] - pair[0]) {
+                    assert!(interval >= BOT_DECISION_INTERVAL_TICKS);
+                    assert!(
+                        interval < BOT_DECISION_INTERVAL_TICKS + global_stride as u64,
+                        "slot {slot} drifted at global stride {global_stride}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exhibition_bypasses_near_medium_and_far_internal_lod_skips() {
+        for tier in [BotAiLodTier::Near, BotAiLodTier::Medium, BotAiLodTier::Far] {
+            for frame in 0..16 {
+                assert!(should_process_bot_for_lod(tier, frame, true));
+            }
+        }
+        assert!(!should_process_bot_for_lod(BotAiLodTier::Medium, 1, false));
+        assert!(!should_process_bot_for_lod(BotAiLodTier::Far, 4, false));
+    }
+
+    #[test]
     fn reaction_time_ticks_matches_100ms() {
         // 6 ticks at 60Hz = 100ms
         assert_eq!(BOT_REACTION_TIME_TICKS, 6);
@@ -2604,6 +3277,13 @@ mod tests {
     fn make_test_bot_controller(pos: Vec2, path: Vec<Vec2>) -> BotController {
         let mut bc = BotController {
             player_id: std::sync::Arc::from("test-bot".to_string()),
+            arena_model_id: None,
+            arena_model_rank: None,
+            arena_slot: 0,
+            arena_action: None,
+            arena_support_target_id: None,
+            arena_damage_pending: false,
+            arena_action_tick: 0,
             target_position: None,
             target_enemy_id: None,
             last_decision_time: Instant::now(),

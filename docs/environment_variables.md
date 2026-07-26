@@ -83,20 +83,29 @@ Centralized reference for runtime/deploy environment variables used by `massive_
 ## Arena / Code Generation
 
 - `MGS_ARENA_STORE_PATH`: Arena persistent store path.
+- `MGS_ARENA_RATINGS_PATH`: Read-only season ratings snapshot path (default: `data/arena_ratings.json`).
 - `MGS_ARENA_REDIS_URL`: Optional Redis URL override for shared arena persistence.
 - `MGS_REDIS_ARENA_STORE_KEY`: Redis key for the persisted arena store snapshot.
 - `MGS_ARENA_WASM_DIR`: Arena wasm storage directory.
 - `MGS_ARENA_WASM_MAX_BYTES`: Max uploaded wasm size.
 - `MGS_ARENA_BOT_FUEL_PER_TICK`: Wasmtime fuel budget per bot tick.
 - `MGS_ARENA_BOT_MAX_TICKS`: Max arena simulation ticks.
+- `MGS_ARENA_EXHIBITION_ENABLED`: Opt in to verified weekly WASM fighters in human-facing matches (default: `false`). Exhibition matches never update official ratings. Live activation requires the complete configured roster and binds every fighter to the published WASM byte length and SHA-256.
+- `MGS_ARENA_EXHIBITION_ROSTER_SIZE`: Ranked live-fighter roster cap (default: `10`, maximum: `64`).
+- `MGS_ARENA_EXHIBITION_PREPARED_PER_FIGHTER`: Pre-instantiated runtime reserve per ranked fighter (default: `2`, maximum: `8`); live attachment performs no artifact I/O or compilation.
+- `MGS_ARENA_EXHIBITION_REFRESH_SECONDS`: Background runtime refill/ratings/round-rotation poll interval (default: `2`, clamped to `1`-`300`). Roster/runtime generation swaps commit only between rounds; missed swaps bench stale fighters until the next safe boundary.
 - `MGS_ARENA_WORKER_ENABLED`: Enable background arena worker loop.
 - `MGS_ARENA_WORKER_INTERVAL_MS`: Arena worker polling interval.
 - `MGS_ARENA_WORKER_MAX_TICKS`: Worker execution tick cap.
 - `MGS_ARENA_SOURCE_DIR`: Source staging directory for generated bots.
-- `MGS_BOT_SOURCE_MAX_BYTES`: Source-size cap for generated code.
+- `MGS_BOT_SOURCE_MAX_BYTES`: Source-size cap for generated code (default: 51,200 bytes / 50 KiB).
+- `OPENROUTER_API_KEY` / `OPENROUTER_API_KEY_FILE`: OpenRouter credential used by the server for real fighter generation. Prefer the file form and restrict it to the server account.
+- `MGS_OPENROUTER_MAX_TOKENS`: Uniform fighter-generation completion envelope, including any model reasoning tokens (default: 4,096; clamped to 2,049-16,384). The frozen `capability_minimum_v1` policy disables optional reasoning and selects the lowest advertised effort only when a model requires reasoning; reasoning text is excluded. Requests omit sampling temperature, set `provider.sort=throughput`, and require providers to support the submitted parameters. Responses use the fixed `sse_v1` policy and are accepted only after a bounded stream supplies `finish_reason=stop`, audited final usage, and `[DONE]`.
+- `MGS_OPENROUTER_TIMEOUT_SECS`: OpenRouter request timeout in seconds (default: 120; clamped to 30-900).
 - `MGS_CODEGEN_RUSTC_TIMEOUT_SECS`: `rustc` timeout.
 - `MGS_CODEGEN_RUSTC_CPU_LIMIT_SECS`: `rustc` CPU limit.
 - `MGS_CODEGEN_RUSTC_MEMORY_LIMIT_MB`: `rustc` memory limit.
+- `MGS_CODEGEN_RUSTC_PATH`: optional absolute `rustc` executable path. When unset, the server resolves an absolute path from its startup `PATH`; generated code is always compiled with an empty child environment.
 
 ## Performance / Scaling / Concurrency
 

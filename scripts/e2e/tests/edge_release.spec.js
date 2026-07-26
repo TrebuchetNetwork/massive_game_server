@@ -24,17 +24,21 @@ test('@critical edge serves hardened headers and cache policy over https', async
   const htmlResponse = await request.get(`${baseUrl}/client.html`);
   expect(htmlResponse.ok()).toBeTruthy();
   const htmlHeaders = htmlResponse.headers();
+  const clientScriptPolicy = htmlHeaders['content-security-policy']
+    .split(';')
+    .find((directive) => directive.trim().startsWith('script-src')) || '';
   expect(htmlHeaders['strict-transport-security']).toContain('max-age=');
   expect(htmlHeaders['x-frame-options']).toBe('DENY');
   expect(htmlHeaders['content-security-policy']).toContain("frame-ancestors 'none'");
-  expect(htmlHeaders['content-security-policy']).toContain("script-src 'self'");
-  expect(htmlHeaders['content-security-policy']).not.toContain("'unsafe-inline'");
+  expect(clientScriptPolicy).toContain("script-src 'self'");
+  expect(clientScriptPolicy).not.toContain("'unsafe-inline'");
 
   const assetResponse = await request.get(`${baseUrl}/vendor/pixi.min.js?v=20260308a`);
   expect(assetResponse.ok()).toBeTruthy();
   const assetHeaders = assetResponse.headers();
-  expect(assetHeaders['cache-control']).toContain('immutable');
-  expect(assetHeaders['x-cache-status']).toBeTruthy();
+  expect(assetHeaders['cache-control']).toContain('max-age=300');
+  expect(assetHeaders['cache-control']).toContain('must-revalidate');
+  expect(assetHeaders['timing-allow-origin']).toBe('*');
 });
 
 test('@critical edge landing page is self-hosted and browser-clean', async ({ page }, testInfo) => {
@@ -50,7 +54,7 @@ test('@critical edge landing page is self-hosted and browser-clean', async ({ pa
 
   const response = await page.goto(`${baseUrl}/index.html`, { waitUntil: 'domcontentloaded' });
   expect(response?.ok()).toBeTruthy();
-  await expect(page.locator('h1')).toContainText('Space combat with shooter discipline');
+  await expect(page.locator('h1')).toContainText('Models write the fighters');
 
   const resourceOrigins = await page.evaluate(() =>
     performance

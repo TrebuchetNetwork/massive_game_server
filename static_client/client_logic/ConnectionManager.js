@@ -17,6 +17,10 @@ const MAX_ICE_RESTART_ATTEMPTS = 2;
 /** Maximum time to wait for server-provided ICE config before proceeding with defaults (ms). */
 const ICE_CONFIG_WAIT_MS = 2000;
 
+/** Stable user-facing error for browsers that cannot construct a WebRTC peer connection. */
+const WEBRTC_UNAVAILABLE_MESSAGE =
+    'WebRTC is unavailable in this browser or is disabled. Use a current WebRTC-capable browser and try again.';
+
 export function createConnectionManager(getCtx) {
 
     /** Timer id for the connection setup timeout. */
@@ -30,6 +34,9 @@ export function createConnectionManager(getCtx) {
 
     /** Whether the peer connection has been initialized for the current attempt. */
     let peerConnectionInitialized = false;
+
+    /** Whether retries are blocked because this runtime cannot construct WebRTC connections. */
+    let webRtcUnavailable = false;
 
     function logSuppressedError(context, error, level = 'warn') {
         const ctx = getCtx();
@@ -59,6 +66,23 @@ export function createConnectionManager(getCtx) {
             protocol_version: CLIENT_PROTOCOL_VERSION,
         }));
         return true;
+    }
+
+    function failWebRtcUnavailable() {
+        const ctx = getCtx();
+        webRtcUnavailable = true;
+        clearConnectionTimeout();
+        ctx.setConnectAttemptInFlight(false);
+        // Prevent reconnect helpers (including online-event retries) from
+        // scheduling more attempts until the player deliberately retries.
+        ctx.setHasAttemptedConnection(false);
+        ctx.clearReconnectTimer();
+        ctx.log(WEBRTC_UNAVAILABLE_MESSAGE, 'error');
+        ctx.setConnectionError(WEBRTC_UNAVAILABLE_MESSAGE);
+        ctx.markJoinTimingAborted(WEBRTC_UNAVAILABLE_MESSAGE);
+        ctx.applyConnectionStatus('error', WEBRTC_UNAVAILABLE_MESSAGE);
+        resetConnectionUI({ allowReconnect: false });
+        return false;
     }
 
     /**
@@ -107,13 +131,16 @@ export function createConnectionManager(getCtx) {
      * is received, or after a timeout if no config arrives.
      */
     function beginPeerNegotiation() {
-        if (peerConnectionInitialized) return;
+        if (peerConnectionInitialized) return true;
         peerConnectionInitialized = true;
         const ctx = getCtx();
-        const { log, applyConnectionStatus } = ctx;
+        const { applyConnectionStatus } = ctx;
         applyConnectionStatus('negotiating', 'Establishing peer connection...');
-        initializePeerConnection();
+        if (!initializePeerConnection()) {
+            return false;
+        }
         ctx.createOffer();
+        return true;
     }
 
     function withJoinSelectionInUrl(rawUrl) {
@@ -133,33 +160,17 @@ export function createConnectionManager(getCtx) {
             if (normalized === 'mobile_standard' || normalized === 'mobile') return 'mobile_standard';
             return '';
         })();
+        // Match type describes the ruleset, not the player's hardware. The
+        // actual device classification is appended in startConnectionAttempt;
+        // only explicit URL overrides belong here.
+        const mobileJoinRequested = uiModeParams.get('mobile') === '1'
+            || String(uiModeParams.get('platform') || '').trim().toLowerCase() === 'mobile';
         const preferredNameRaw = typeof ctx.getPreferredPlayerName === 'function'
             ? ctx.getPreferredPlayerName()
             : '';
         const preferredName = String(preferredNameRaw || '').trim();
-        if (!joinTeam && !spectatorRequested) {
-            if (!preferredName) {
-                if (!selectedMatchType) return rawUrl;
-                try {
-                    const urlObj = new URL(rawUrl);
-                    urlObj.searchParams.set('match_type', selectedMatchType);
-                    return urlObj.toString();
-                } catch (error) {
-                    logSuppressedError('Failed to apply match_type join param', error);
-                    return rawUrl;
-                }
-            }
-            try {
-                const urlObj = new URL(rawUrl);
-                urlObj.searchParams.set('username', preferredName);
-                if (selectedMatchType) {
-                    urlObj.searchParams.set('match_type', selectedMatchType);
-                }
-                return urlObj.toString();
-            } catch (error) {
-                logSuppressedError('Failed to apply username join param', error);
-                return rawUrl;
-            }
+        if (!joinTeam && !spectatorRequested && !preferredName && !selectedMatchType && !mobileJoinRequested) {
+            return rawUrl;
         }
         try {
             const urlObj = new URL(rawUrl);
@@ -181,9 +192,12 @@ export function createConnectionManager(getCtx) {
             if (selectedMatchType) {
                 urlObj.searchParams.set('match_type', selectedMatchType);
             }
+            if (mobileJoinRequested) {
+                urlObj.searchParams.set('is_mobile', 'true');
+            }
             return urlObj.toString();
         } catch (error) {
-            logSuppressedError('Failed to apply team/spectator join params', error);
+            logSuppressedError('Failed to apply join params', error);
             return rawUrl;
         }
     }
@@ -201,8 +215,20 @@ export function createConnectionManager(getCtx) {
         } = ctx;
 
         const isRetry = !!options.isRetry;
+        if (isRetry && webRtcUnavailable) {
+            clearReconnectTimer();
+            ctx.setConnectAttemptInFlight(false);
+            setConnectionError(WEBRTC_UNAVAILABLE_MESSAGE);
+            applyConnectionStatus('error', WEBRTC_UNAVAILABLE_MESSAGE);
+            return false;
+        }
         if (!canStartConnectionAttempt()) {
             return false;
+        }
+        if (!isRetry) {
+            // A deliberate user retry gets one fresh capability check in case
+            // their browser permissions or runtime changed since the failure.
+            webRtcUnavailable = false;
         }
 
         // (#30) On retry, clear any residual game state from the previous
@@ -264,6 +290,9 @@ export function createConnectionManager(getCtx) {
         connectionTimeoutId = setTimeout(() => {
             connectionTimeoutId = null;
             const currentCtx = getCtx();
+            if (webRtcUnavailable) {
+                return;
+            }
             const dc = currentCtx.dataChannel;
             if (dc && dc.readyState === 'open') {
                 return; // Connection succeeded before timeout fired.
@@ -281,7 +310,7 @@ export function createConnectionManager(getCtx) {
             log('Connected to signaling server.', 'success');
             applyConnectionStatus('negotiating', 'Waiting for server ICE config...');
             connectButton.disabled = true;
-            connectButton.textContent = 'Connected';
+            connectButton.textContent = 'Negotiating...';
             connectButton.classList.replace('bg-indigo-600', 'bg-gray-500');
             connectButton.classList.replace('hover:bg-indigo-700', 'cursor-not-allowed');
 
@@ -350,9 +379,29 @@ export function createConnectionManager(getCtx) {
                 setConnectionError(detail);
                 markJoinTimingAborted(detail);
                 applyConnectionStatus('error', detail);
-                if (msg.error === 'protocol_version_mismatch') {
-                    resetConnectionUI({ allowReconnect: false });
-                }
+                const transientServerErrors = new Set([
+                    'join_rate_limited',
+                    'ip_rate_limited',
+                    'server_busy',
+                ]);
+                // A signaling rejection is terminal for this socket. Reset it
+                // immediately so the visible Retry button is actionable rather
+                // than remaining disabled until the 15-second timeout.
+                resetConnectionUI({
+                    allowReconnect: transientServerErrors.has(String(msg.error)),
+                    reconnectReason: detail,
+                });
+                return;
+            }
+            if (msg.event === 'sdp_offer_rejected') {
+                const detail = msg.reason === 'server_busy'
+                    ? 'Arena is busy. Retrying shortly...'
+                    : String(msg.reason || 'Server rejected connection negotiation');
+                log(detail, 'warn');
+                setConnectionError(detail);
+                markJoinTimingAborted(detail);
+                applyConnectionStatus('error', detail);
+                resetConnectionUI({ allowReconnect: true, reconnectReason: detail });
                 return;
             }
 
@@ -386,6 +435,10 @@ export function createConnectionManager(getCtx) {
         signalingSocket.onerror = (e) => {
             ctx.setConnectAttemptInFlight(false);
             clearConnectionTimeout();
+            if (webRtcUnavailable) {
+                resetConnectionUI({ allowReconnect: false });
+                return;
+            }
             const detail = summarizeSignalingError(e, signalingSocket, url);
             log(detail, 'error');
             setConnectionError(detail);
@@ -401,6 +454,10 @@ export function createConnectionManager(getCtx) {
                 return;
             }
             clearConnectionTimeout();
+            if (webRtcUnavailable) {
+                resetConnectionUI({ allowReconnect: false });
+                return;
+            }
             const closeCode = typeof event?.code === 'number' ? event.code : 'unknown';
             const closeReason = event?.reason ? ` reason="${event.reason}"` : '';
             const clean = event?.wasClean ? 'clean' : 'unclean';
@@ -435,7 +492,22 @@ export function createConnectionManager(getCtx) {
         }
 
         log(`Initializing RTCPeerConnection (${peerConnectionConfig.iceServers.length} ICE server(s))...`);
-        const peerConnection = new RTCPeerConnection(peerConnectionConfig);
+        let peerConnection;
+        try {
+            peerConnection = new RTCPeerConnection(peerConnectionConfig);
+        } catch (_configuredError) {
+            // Some browsers reject one malformed/unsupported ICE entry even
+            // though WebRTC itself works. Retry once with the browser defaults
+            // before classifying the runtime as incapable. Do not expose the
+            // constructor's browser-internal error text.
+            log('Browser rejected the supplied ICE configuration; retrying with browser defaults.', 'warn');
+            try {
+                peerConnection = new RTCPeerConnection();
+            } catch (_fallbackError) {
+                return failWebRtcUnavailable();
+            }
+        }
+        webRtcUnavailable = false;
         ctx.setPeerConnection(peerConnection);
 
         peerConnection.onicecandidate = (event) => {
@@ -497,6 +569,7 @@ export function createConnectionManager(getCtx) {
             ctx.setDataChannel(event.channel);
             setupDataChannelEvents(event.channel);
         };
+        return true;
     }
 
     /**
@@ -543,6 +616,10 @@ export function createConnectionManager(getCtx) {
             clearConnectionTimeout();
             markJoinTimingStage('dataChannelOpenAtMs');
             applyConnectionStatus('waiting', 'Waiting for initial state...');
+            const currentCtx = getCtx();
+            if (currentCtx.connectButton) {
+                currentCtx.connectButton.textContent = 'Connected';
+            }
             controlsDiv.classList.remove('hidden');
             setupInputHandlers();
             ensureHudWidgets();
@@ -551,7 +628,6 @@ export function createConnectionManager(getCtx) {
 
             // (#30) Reset reconnect state on successful connection so the
             // next disconnect starts with a clean attempt counter.
-            const currentCtx = getCtx();
             if (typeof currentCtx.resetReconnectState === 'function') {
                 currentCtx.resetReconnectState();
             }

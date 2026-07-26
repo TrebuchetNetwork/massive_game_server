@@ -1,13 +1,9 @@
 use base64::Engine as _;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
 use warp::http::{header, HeaderName, HeaderValue, Uri};
 use warp::{Filter, Reply};
-
-static STATIC_HTML_CSP_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
 pub fn build_root_route(
 ) -> impl Filter<Extract = (warp::reply::Response,), Error = warp::Rejection> + Clone {
@@ -89,12 +85,9 @@ pub fn static_content_security_policy_for_path(path: &Path) -> Option<String> {
         return None;
     }
 
-    let cache = STATIC_HTML_CSP_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let cache_key = path.to_string_lossy().into_owned();
-    if let Some(existing) = cache.lock().ok()?.get(&cache_key).cloned() {
-        return Some(existing);
-    }
-
+    // client.html is intentionally served with no-store and may be updated while
+    // the server stays online. Recompute its inline-script hashes per request so
+    // the CSP can never refer to an older version of the HTML.
     let html = fs::read_to_string(path).ok()?;
     let script_hashes = inline_script_hashes(&html);
     if script_hashes.is_empty() {
@@ -109,9 +102,6 @@ pub fn static_content_security_policy_for_path(path: &Path) -> Option<String> {
         "default-src 'self'; script-src 'self' 'unsafe-eval' blob:{}; worker-src 'self' blob:; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
         hash_list
     );
-    if let Ok(mut guard) = cache.lock() {
-        guard.insert(cache_key, csp.clone());
-    }
     Some(csp)
 }
 

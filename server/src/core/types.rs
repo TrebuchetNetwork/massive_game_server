@@ -655,6 +655,27 @@ impl PlayerState {
         false
     }
 
+    /// Apply a direct health cost which intentionally bypasses shields,
+    /// invulnerability, bounty mitigation, and other incoming-damage rules.
+    /// This is for mechanics such as the arena exhibition CHARGE cost; it must
+    /// not be used for an attack from another player.
+    pub fn apply_direct_health_cost(&mut self, cost: i32) -> bool {
+        if !self.alive || cost <= 0 {
+            return false;
+        }
+
+        let old_health = self.health;
+        self.health = self.health.saturating_sub(cost).max(0);
+        if self.health != old_health {
+            self.mark_field_changed(FIELD_HEALTH_ALIVE);
+        }
+        if self.health == 0 {
+            self.die();
+            return true;
+        }
+        false
+    }
+
     fn die(&mut self) {
         self.alive = false;
         self.deaths += 1;
@@ -1466,6 +1487,30 @@ mod tests {
         assert!(!died);
         assert_eq!(p.health, 100);
         assert!(p.alive);
+    }
+
+    #[test]
+    fn direct_health_cost_bypasses_shield_invulnerability_and_bounty() {
+        let mut p = make_player("p1");
+        p.shield_current = 50;
+        p.shield_max = 50;
+        p.invulnerable_remaining = 2.0;
+        p.is_bounty_target = true;
+        let died = p.apply_direct_health_cost(4);
+        assert!(!died);
+        assert_eq!(p.health, 96);
+        assert_eq!(p.shield_current, 50);
+    }
+
+    #[test]
+    fn lethal_direct_health_cost_uses_normal_death_state() {
+        let mut p = make_player("p1");
+        p.health = 4;
+        let died = p.apply_direct_health_cost(4);
+        assert!(died);
+        assert_eq!(p.health, 0);
+        assert!(!p.alive);
+        assert_eq!(p.deaths, 1);
     }
 
     #[test]

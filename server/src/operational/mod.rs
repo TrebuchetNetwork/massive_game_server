@@ -4,6 +4,7 @@ pub mod admin_auth;
 pub mod arena;
 pub mod auth;
 pub mod backup;
+pub mod bot_exhibition;
 pub mod bot_sandbox;
 pub mod code_generation;
 pub mod config;
