@@ -19,6 +19,7 @@ pub struct AppEnvConfig {
     pub shutdown_drain_timeout_secs: u64,
     pub allowed_cors_origins: Vec<String>,
     pub ws_security: WsSecurityEnv,
+    pub federation: FederationEnv,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +163,48 @@ pub struct WsSecurityEnv {
     pub allowed_origins: Vec<String>,
     pub trusted_proxy_cidrs: Vec<String>,
     pub max_concurrent_connections: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FederationEnv {
+    pub grid: String,      // "COLSxROWS", e.g. "1x1", "2x1"
+    pub region_id: String, // this server's region name
+    pub tile_width: f32,
+    pub tile_height: f32,
+    pub map_seed: u64,
+    pub world_wrap: bool, // wrap positions on the torus (off until ghosts exist)
+}
+
+impl FederationEnv {
+    pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Self {
+        let (mut tw, mut th) = (1600.0_f32, 1200.0_f32);
+        if let Some(size) = get("MGS_TILE_SIZE") {
+            if let Some((w, h)) = size.split_once('x') {
+                if let (Ok(w), Ok(h)) = (w.parse::<f32>(), h.parse::<f32>()) {
+                    tw = w;
+                    th = h;
+                }
+            }
+        }
+        Self {
+            grid: get("MGS_FEDERATION_GRID").unwrap_or_else(|| "1x1".to_string()),
+            region_id: get("MGS_REGION_ID").unwrap_or_else(|| "region-a".to_string()),
+            tile_width: tw,
+            tile_height: th,
+            map_seed: get("MGS_MAP_SEED")
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(1),
+            world_wrap: matches!(get("MGS_WORLD_WRAP").as_deref(), Some("1") | Some("true")),
+        }
+    }
+
+    pub fn grid_dims(&self) -> (u32, u32) {
+        self.grid
+            .split_once('x')
+            .and_then(|(c, r)| Some((c.parse::<u32>().ok()?, r.parse::<u32>().ok()?)))
+            .filter(|(c, r)| *c > 0 && *r > 0)
+            .unwrap_or((1, 1))
+    }
 }
 
 pub fn load_app_env_config() -> Result<AppEnvConfig> {
@@ -559,6 +602,7 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
         shutdown_drain_timeout_secs,
         allowed_cors_origins,
         ws_security,
+        federation: FederationEnv::from_lookup(|key| get_optional_trimmed(key)),
     })
 }
 
@@ -886,5 +930,38 @@ mod tests {
             Some("redis://127.0.0.1:6379/")
         );
         assert_eq!(result.backup.redis_store_key, "mgs:test:backup:latest");
+    }
+}
+
+#[cfg(test)]
+mod federation_env_tests {
+    use super::*;
+
+    #[test]
+    fn federation_env_defaults_to_single_tile() {
+        let fed = FederationEnv::from_lookup(|_| None);
+        assert_eq!(fed.grid, "1x1".to_string());
+        assert_eq!(fed.region_id, "region-a".to_string());
+        assert_eq!(fed.tile_width, 1600.0);
+        assert_eq!(fed.tile_height, 1200.0);
+        assert!(!fed.world_wrap);
+    }
+
+    #[test]
+    fn federation_env_parses_overrides() {
+        let fed = FederationEnv::from_lookup(|key| match key {
+            "MGS_FEDERATION_GRID" => Some("2x2".to_string()),
+            "MGS_REGION_ID" => Some("region-b".to_string()),
+            "MGS_TILE_SIZE" => Some("800x600".to_string()),
+            "MGS_MAP_SEED" => Some("42".to_string()),
+            "MGS_WORLD_WRAP" => Some("1".to_string()),
+            _ => None,
+        });
+        assert_eq!(fed.grid, "2x2".to_string());
+        assert_eq!(fed.region_id, "region-b".to_string());
+        assert_eq!(fed.tile_width, 800.0);
+        assert_eq!(fed.tile_height, 600.0);
+        assert_eq!(fed.map_seed, 42);
+        assert!(fed.world_wrap);
     }
 }
