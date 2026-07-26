@@ -181,10 +181,10 @@ impl MassiveGameServer {
         client_state: &mut ClientState,
         shared_data: &SharedBroadcastData,
     ) {
-        client_state.last_known_match_state = Some(shared_data.match_info_snapshot.match_state);
-        client_state.last_known_match_time_remaining =
-            Some(shared_data.match_info_snapshot.time_remaining);
-        client_state.last_known_team_scores = shared_data.match_info_snapshot.team_scores.clone();
+        // NOTE: last_known_match_state / last_known_match_time_remaining /
+        // last_known_team_scores are updated at inclusion time inside
+        // build_delta_state_optimized, not here — syncing them on every delta
+        // prevented any match-info change from ever being detected.
         client_state.match_info_pending = false;
         client_state.last_kill_feed_count_sent = shared_data.kill_feed_snapshot.len();
         for wall_id in &shared_data.destroyed_wall_ids {
@@ -612,6 +612,14 @@ impl MassiveGameServer {
                     || time_changed
                     || team_scores_changed
                 {
+                    // Mark as sent here, at inclusion time. Updating these in
+                    // update_client_state_after_delta_with_shared (every frame)
+                    // made the change comparisons permanently false, so match
+                    // info was never re-broadcast after join.
+                    client_state.last_known_match_state = Some(match_snapshot.match_state);
+                    client_state.last_known_match_time_remaining =
+                        Some(match_snapshot.time_remaining);
+                    client_state.last_known_team_scores = match_snapshot.team_scores.clone();
                     let team_scores_vec: Vec<_> = match_snapshot
                         .team_scores
                         .iter()
@@ -680,8 +688,7 @@ impl MassiveGameServer {
             // wall updates (new/updated/destroyed) can be dropped permanently.
             // Periodically force-send every visible wall and re-notify the client
             // about walls it still believes are standing but are actually gone.
-            let force_wall_resync = vr_frame
-                .saturating_sub(client_state.last_wall_resync_frame)
+            let force_wall_resync = vr_frame.saturating_sub(client_state.last_wall_resync_frame)
                 >= WALL_RESYNC_INTERVAL_FRAMES;
             if force_wall_resync {
                 client_state.last_wall_resync_frame = vr_frame;
