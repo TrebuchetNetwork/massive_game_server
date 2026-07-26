@@ -171,18 +171,35 @@ pub struct FederationEnv {
     pub region_id: String, // this server's region name
     pub tile_width: f32,
     pub tile_height: f32,
-    pub map_seed: u64,
+    /// Explicit map seed override; when None, the MasterMap stamps the resolved
+    /// runtime map seed (Task 6 reconciles).
+    pub map_seed: Option<u64>,
     pub world_wrap: bool, // wrap positions on the torus (off until ghosts exist)
 }
 
 impl FederationEnv {
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Self {
-        let (mut tw, mut th) = (1600.0_f32, 1200.0_f32);
+        use crate::world::master_map::{DEFAULT_TILE_HEIGHT, DEFAULT_TILE_WIDTH};
+
+        let (mut tw, mut th) = (DEFAULT_TILE_WIDTH, DEFAULT_TILE_HEIGHT);
         if let Some(size) = get("MGS_TILE_SIZE") {
-            if let Some((w, h)) = size.split_once('x') {
-                if let (Ok(w), Ok(h)) = (w.parse::<f32>(), h.parse::<f32>()) {
+            let parsed = size
+                .split_once('x')
+                .and_then(|(w, h)| Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?)))
+                .filter(|(w, h)| w.is_finite() && *w > 0.0 && h.is_finite() && *h > 0.0);
+            match parsed {
+                Some((w, h)) => {
                     tw = w;
                     th = h;
+                }
+                None => {
+                    tracing::warn!(
+                        "MGS_TILE_SIZE has invalid value '{}'; expected \
+                         'WIDTHxHEIGHT' with finite positive floats, falling back to {}x{}",
+                        size,
+                        DEFAULT_TILE_WIDTH,
+                        DEFAULT_TILE_HEIGHT
+                    );
                 }
             }
         }
@@ -191,19 +208,32 @@ impl FederationEnv {
             region_id: get("MGS_REGION_ID").unwrap_or_else(|| "region-a".to_string()),
             tile_width: tw,
             tile_height: th,
-            map_seed: get("MGS_MAP_SEED")
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(1),
-            world_wrap: matches!(get("MGS_WORLD_WRAP").as_deref(), Some("1") | Some("true")),
+            // InstanceEnv already aborts startup on a malformed MGS_MAP_SEED,
+            // so ignoring parse failures here is safe.
+            map_seed: get("MGS_MAP_SEED").and_then(|v| v.parse::<u64>().ok()),
+            world_wrap: get("MGS_WORLD_WRAP")
+                .and_then(|v| parse_boolish(&v))
+                .unwrap_or(false),
         }
     }
 
     pub fn grid_dims(&self) -> (u32, u32) {
-        self.grid
+        match self
+            .grid
             .split_once('x')
             .and_then(|(c, r)| Some((c.parse::<u32>().ok()?, r.parse::<u32>().ok()?)))
             .filter(|(c, r)| *c > 0 && *r > 0)
-            .unwrap_or((1, 1))
+        {
+            Some(dims) => dims,
+            None => {
+                tracing::warn!(
+                    "MGS_FEDERATION_GRID has invalid value '{}'; expected \
+                     'COLSxROWS' with positive integers, falling back to 1x1",
+                    self.grid
+                );
+                (1, 1)
+            }
+        }
     }
 }
 
@@ -936,14 +966,15 @@ mod tests {
 #[cfg(test)]
 mod federation_env_tests {
     use super::*;
+    use crate::world::master_map::{DEFAULT_TILE_HEIGHT, DEFAULT_TILE_WIDTH};
 
     #[test]
     fn federation_env_defaults_to_single_tile() {
         let fed = FederationEnv::from_lookup(|_| None);
         assert_eq!(fed.grid, "1x1".to_string());
         assert_eq!(fed.region_id, "region-a".to_string());
-        assert_eq!(fed.tile_width, 1600.0);
-        assert_eq!(fed.tile_height, 1200.0);
+        assert_eq!(fed.tile_width, DEFAULT_TILE_WIDTH);
+        assert_eq!(fed.tile_height, DEFAULT_TILE_HEIGHT);
         assert!(!fed.world_wrap);
     }
 
@@ -961,7 +992,41 @@ mod federation_env_tests {
         assert_eq!(fed.region_id, "region-b".to_string());
         assert_eq!(fed.tile_width, 800.0);
         assert_eq!(fed.tile_height, 600.0);
-        assert_eq!(fed.map_seed, 42);
+        assert_eq!(fed.map_seed, Some(42));
         assert!(fed.world_wrap);
+    }
+
+    #[test]
+    fn federation_env_rejects_invalid_tile_size() {
+        for bad in ["nanx100", "0x100", "-5x100", "800xabc", "800"] {
+            let fed = FederationEnv::from_lookup(|key| match key {
+                "MGS_TILE_SIZE" => Some(bad.to_string()),
+                _ => None,
+            });
+            assert_eq!(fed.tile_width, DEFAULT_TILE_WIDTH, "input {:?}", bad);
+            assert_eq!(fed.tile_height, DEFAULT_TILE_HEIGHT, "input {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn federation_env_map_seed_defaults_to_none() {
+        let fed = FederationEnv::from_lookup(|_| None);
+        assert_eq!(fed.map_seed, None);
+        let fed2 = FederationEnv::from_lookup(|key| match key {
+            "MGS_MAP_SEED" => Some("42".to_string()),
+            _ => None,
+        });
+        assert_eq!(fed2.map_seed, Some(42));
+    }
+
+    #[test]
+    fn grid_dims_falls_back_on_garbage() {
+        for bad in ["0x0", "0x3", "abc", "", "2x2x2"] {
+            let fed = FederationEnv::from_lookup(|key| match key {
+                "MGS_FEDERATION_GRID" => Some(bad.to_string()),
+                _ => None,
+            });
+            assert_eq!(fed.grid_dims(), (1, 1), "input {:?}", bad);
+        }
     }
 }
