@@ -174,10 +174,6 @@ Arena worker controls:
 * `MGS_ARENA_WORKER_INTERVAL_MS`: polling interval for worker loop (default: `1000`).
 * `MGS_ARENA_WORKER_MAX_TICKS`: optional max ticks per worker-executed match.
 
-Web console:
-
-* `http://<host>:<port>/arena.html`
-
 ### Feature Flags / A-B Controls
 
 Operational feature flag endpoints:

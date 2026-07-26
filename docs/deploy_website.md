@@ -4,7 +4,6 @@ This repo now includes a deployable website entry point at:
 - `/index.html` (landing page)
 - `/client.html` (main game client)
 - `/ui-template.html` (UI prototype from the VOID STRIKE plan)
-- `/index_legacy.html` (previous operations-focused landing page)
 - `/healthz` (health endpoint)
 
 For the production rollout on `game.trebuchet.network`, use:
