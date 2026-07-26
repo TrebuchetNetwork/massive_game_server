@@ -2,6 +2,7 @@
 use dashmap::DashMap;
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::types::PlayerAoI;
+use massive_game_server_core::core::world_bounds::{init_world_bounds, WorldBounds};
 use massive_game_server_core::network::quic::control::build_quic_control_handler;
 use massive_game_server_core::network::quic::{
     register_quic_disconnect_hook, start_quic_runtime_from_env_with_handler,
@@ -35,6 +36,7 @@ use massive_game_server_core::operational::monitoring::{
 use massive_game_server_core::routes::admin::build_ops_admin_routes;
 use massive_game_server_core::routes::app::compose_http_routes;
 use massive_game_server_core::routes::health::{build_healthz_route, build_readyz_route};
+use massive_game_server_core::routes::master_map::build_master_map_route;
 use massive_game_server_core::routes::static_files::{build_root_route, build_static_files_route};
 use massive_game_server_core::routes::ws_signaling::{
     build_signaling_route, build_ws_security_filters,
@@ -45,6 +47,8 @@ use massive_game_server_core::server::background_tasks::{
 };
 use massive_game_server_core::server::instance::{configure_instance_runtime, MassiveGameServer};
 use massive_game_server_core::server::lifecycle;
+use massive_game_server_core::world::master_map::{MasterMap, TileCoord};
+use massive_game_server_core::world::master_map_store::{master_map_from_config, publish_master_map};
 
 use parking_lot::RwLock as ParkingLotRwLock;
 use std::collections::HashMap;
@@ -81,6 +85,40 @@ async fn main() -> anyhow::Result<()> {
     configure_signaling_runtime(&app_env.signaling);
     configure_instance_runtime(&app_env.instance);
     configure_feature_flags_runtime(&app_env.admin_auth);
+
+    // Federation: assemble the MasterMap once at startup, initialize runtime
+    // world bounds from this server's local tile, and best-effort publish the
+    // map to Redis. This MUST run before the game loop starts (the tick loop
+    // reads world_bounds) and before HTTP routes are composed.
+    let federation = &app_env.federation;
+    // Seed reconciliation: FederationEnv.map_seed is None when MGS_MAP_SEED is
+    // unset. The runtime map generator resolves its own seed as
+    // `runtime.map_seed.unwrap_or(100_000 + players)` (server/instance.rs); here
+    // we stamp `federation.map_seed.unwrap_or(100_000)` — the player-count
+    // component is a runtime default detail; a later task will fully reconcile.
+    let resolved_map_seed = federation.map_seed.unwrap_or(100_000);
+    let master_map = Arc::new(ParkingLotRwLock::new(master_map_from_config(
+        federation.grid_dims(), // called once at startup; warns and falls back on invalid input
+        federation.tile_width,
+        federation.tile_height,
+        resolved_map_seed,
+    )));
+    if let Err(err) = master_map.read().validate() {
+        warn!("master map from config failed validation: {err}; falling back to single tile");
+        *master_map.write() = MasterMap::single_tile();
+    }
+    {
+        let map = master_map.read();
+        let (min_x, min_y, max_x, max_y) = map.tile_rect(TileCoord { x: 0, y: 0 });
+        init_world_bounds(WorldBounds { min_x, min_y, max_x, max_y });
+        info!(
+            "Master map assembled: {}x{} grid of {}x{} tiles (seed {}); local bounds ({}, {}) -> ({}, {})",
+            map.cols, map.rows, map.tile_width, map.tile_height, map.map_seed, min_x, min_y, max_x, max_y
+        );
+    }
+    if let Ok(redis_url) = std::env::var("MGS_REDIS_URL") {
+        publish_master_map(&redis_url, &master_map.read());
+    }
 
     let config = Arc::new(
         load_validated_server_config()
@@ -227,7 +265,11 @@ async fn main() -> anyhow::Result<()> {
         .map(|(), reply| reply)
         .boxed();
 
-    let public_routes = auth_routes.map(warp::reply::Reply::into_response).boxed();
+    let public_routes = auth_routes
+        .map(warp::reply::Reply::into_response)
+        .or(build_master_map_route(master_map.clone()))
+        .map(warp::reply::Reply::into_response)
+        .boxed();
     // Routes that should not be subject to HTTP CORS middleware:
     // - WebSocket signaling has explicit origin/transport guards.
     // - Static/root/health routes should be reachable directly in local mode.
