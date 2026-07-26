@@ -88,8 +88,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Federation: assemble the MasterMap once at startup, initialize runtime
     // world bounds from this server's local tile, and best-effort publish the
-    // map to Redis. This MUST run before the game loop starts (the tick loop
-    // reads world_bounds) and before HTTP routes are composed.
+    // map to Redis. This MUST run before the game loop starts (later steps
+    // will read world_bounds / bound_position (not yet wired)) and before
+    // HTTP routes are composed.
     let federation = &app_env.federation;
     // Seed reconciliation: FederationEnv.map_seed is None when MGS_MAP_SEED is
     // unset. The runtime map generator resolves its own seed as
@@ -107,7 +108,11 @@ async fn main() -> anyhow::Result<()> {
     )));
     if let Err(err) = master_map.read().validate() {
         warn!("master map from config failed validation: {err}; falling back to single tile");
-        *master_map.write() = MasterMap::single_tile();
+        let mut fallback_map = master_map.write();
+        *fallback_map = MasterMap::single_tile();
+        // single_tile() stamps seed 1; keep the resolved seed so the map
+        // agrees with the startup log.
+        fallback_map.map_seed = resolved_map_seed;
     }
     {
         let map = master_map.read();

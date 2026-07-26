@@ -27,6 +27,10 @@ pub fn publish_master_map(redis_url: &str, map: &MasterMap) {
         let mut conn = client
             .get_connection_with_timeout(std::time::Duration::from_secs(2))
             .map_err(|e| e.to_string())?;
+        conn.set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .map_err(|e| e.to_string())?;
+        conn.set_write_timeout(Some(std::time::Duration::from_secs(2)))
+            .map_err(|e| e.to_string())?;
         let json = serde_json::to_string(map).map_err(|e| e.to_string())?;
         redis::cmd("SET")
             .arg(MASTER_MAP_REDIS_KEY)
