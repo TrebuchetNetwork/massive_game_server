@@ -78,4 +78,23 @@ mod tests {
     fn world_wrap_flag_defaults_off() {
         assert!(!world_wrap_enabled());
     }
+
+    #[test]
+    fn bound_position_matches_clamp_when_wrap_disabled() {
+        // Flag is off by default; bound_position must behave exactly like clamp.
+        let boundary = WorldBoundary {
+            min_x: -800.0,
+            max_x: 800.0,
+            min_y: -800.0,
+            max_y: 800.0,
+        };
+        let map = crate::world::master_map::MasterMap::single_tile();
+        for point in [
+            crate::core::types::Vec2::new(0.0, 0.0),
+            crate::core::types::Vec2::new(900.0, -700.0),
+            crate::core::types::Vec2::new(-900.0, 700.0),
+        ] {
+            assert_eq!(boundary.bound_position(point, &map), boundary.clamp(point));
+        }
+    }
 }
