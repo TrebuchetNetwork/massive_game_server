@@ -153,14 +153,19 @@ impl AuthRedisCache {
     ) -> redis::RedisResult<T> {
         let mut guard = self.connection.lock();
         if guard.is_none() {
-            *guard = Some(self.client.get_connection()?);
+            *guard = Some(
+                self.client
+                    .get_connection_with_timeout(std::time::Duration::from_secs(2))?,
+            );
         }
 
         match operation(guard.as_mut().expect("redis connection initialized")) {
             Ok(value) => Ok(value),
             Err(first_error) => {
                 *guard = None;
-                let mut reconnected = self.client.get_connection()?;
+                let mut reconnected = self
+                    .client
+                    .get_connection_with_timeout(std::time::Duration::from_secs(2))?;
                 let retry_result = operation(&mut reconnected);
                 *guard = Some(reconnected);
                 retry_result.or(Err(first_error))
@@ -262,7 +267,7 @@ pub(super) fn init_redis_cache(
         }
     };
 
-    let connection = match client.get_connection() {
+    let connection = match client.get_connection_with_timeout(std::time::Duration::from_secs(2)) {
         Ok(connection) => connection,
         Err(error) => {
             warn!(

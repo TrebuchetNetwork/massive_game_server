@@ -417,7 +417,7 @@ impl FeatureFlagRedisStore {
     fn load_flags(&self) -> Result<Option<HashMap<String, FeatureFlagRecord>>, String> {
         let mut connection = self
             .client
-            .get_connection()
+            .get_connection_with_timeout(std::time::Duration::from_secs(2))
             .map_err(|err| format!("failed to connect to Redis: {}", err))?;
         let raw: Option<String> = connection
             .get(&self.key)
@@ -438,7 +438,7 @@ impl FeatureFlagRedisStore {
             .map_err(|err| format!("failed to serialize flags for Redis: {}", err))?;
         let mut connection = self
             .client
-            .get_connection()
+            .get_connection_with_timeout(std::time::Duration::from_secs(2))
             .map_err(|err| format!("failed to connect to Redis: {}", err))?;
         connection
             .set::<_, _, ()>(&self.key, serialized)

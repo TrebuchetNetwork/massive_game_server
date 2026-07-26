@@ -634,7 +634,7 @@ fn load_latest_backup_metadata_from_redis(
     let client = redis::Client::open(redis_url.to_owned())
         .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
     let mut connection = client
-        .get_connection()
+        .get_connection_with_timeout(std::time::Duration::from_secs(2))
         .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
     let payload: Option<String> = connection
         .get(latest_backup_metadata_redis_key(trimmed_key))
@@ -661,7 +661,7 @@ fn persist_latest_backup_metadata_to_redis(
     let client = redis::Client::open(redis_url.to_owned())
         .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
     let mut connection = client
-        .get_connection()
+        .get_connection_with_timeout(std::time::Duration::from_secs(2))
         .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
     connection
         .set::<_, _, ()>(latest_backup_metadata_redis_key(trimmed_key), payload)

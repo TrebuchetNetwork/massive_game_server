@@ -184,7 +184,7 @@ Run live in-browser profiling (FPS/long tasks/heap plus per-phase runtime breakd
 For ultra mode:
 
 ```bash
-./scripts/ui_profile.sh --url http://127.0.0.1:18080/client_ultra.html --ws ws://127.0.0.1:18080/ws --duration 30 --warmup 5 --out artifacts/ui_profile_ultra.json
+./scripts/ui_profile.sh --url "http://127.0.0.1:18080/client.html?mode=ultra" --ws ws://127.0.0.1:18080/ws --duration 30 --warmup 5 --out artifacts/ui_profile_ultra.json
 ```
 
 ## Ultra Client Profile
@@ -192,19 +192,19 @@ For ultra mode:
 For a dedicated high-density UI profile tuned for many on-screen objects, open:
 
 ```text
-http://localhost:8080/client_ultra.html
+http://localhost:8080/client.html?mode=ultra
 ```
 
-This routes to `client.html` with forced ultra settings (`mode=ultra`, compact HUD, focus UI).
+This forces ultra settings (`mode=ultra`, compact HUD, focus UI).
 The default `client.html` now also auto-enables ultra mode when player density or sustained frame-time pressure is high.
 
 For browser-first reliability with lighter visuals, open:
 
 ```text
-http://localhost:8080/client_stable.html
+http://localhost:8080/client.html?mode=stable
 ```
 
-This routes to `client.html?mode=stable` (non-breaking protocol/UI with conservative render settings).
+This runs `client.html` in stable mode (non-breaking protocol/UI with conservative render settings).
 
 ## Client-Side Schema Generation
 

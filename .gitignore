@@ -31,3 +31,4 @@ docker/ssl/privkey.pem
 node_modules/
 scripts/e2e/playwright-report/
 .worktrees/
+lcov.info

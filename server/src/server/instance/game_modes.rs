@@ -598,6 +598,14 @@ impl MassiveGameServer {
                     match_info_guard.match_state = fb::MatchStateType::Active;
                     self.arena_exhibition.mark_round_started();
                     match_info_guard.time_remaining = self.match_duration_secs;
+                    let epoch = crate::server::epoch::MatchEpoch::new(
+                        self.frame_counter.load(AtomicOrdering::Relaxed),
+                        self.get_server_timestamp_ms() as i64,
+                        self.match_duration_secs,
+                    );
+                    let redis_url = std::env::var("MGS_FEATURE_FLAGS_REDIS_URL")
+                        .ok()
+                        .or_else(|| std::env::var("MGS_REDIS_URL").ok());
                     match_info_guard.team_scores.clear();
                     match_info_guard.ctf_overtime_round = 0;
                     match_info_guard.map_event_count = 0;
@@ -649,6 +657,12 @@ impl MassiveGameServer {
                         p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG | FIELD_MISC);
                     });
                     self.kill_feed.write().clear();
+                    // Publish after releasing the match write lock so a
+                    // slow/hung Redis cannot stall the tick loop.
+                    drop(match_info_guard);
+                    if let Some(url) = redis_url {
+                        crate::server::epoch::publish_epoch(&url, &epoch);
+                    }
                 }
             }
             fb::MatchStateType::Active => {

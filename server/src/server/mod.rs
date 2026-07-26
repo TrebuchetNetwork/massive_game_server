@@ -1,5 +1,6 @@
 // massive_game_server/server/src/server/mod.rs
 pub mod background_tasks;
+pub mod epoch;
 pub(crate) mod event_mapping;
 pub mod game_loop;
 pub mod instance;
