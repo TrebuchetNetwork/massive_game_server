@@ -30,3 +30,4 @@ docker/ssl/privkey.pem
 /docker/monitoring/alert_sink/*.jsonl
 node_modules/
 scripts/e2e/playwright-report/
+.worktrees/
