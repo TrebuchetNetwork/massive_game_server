@@ -10,7 +10,7 @@ impl ArenaRedisStore {
     pub(super) fn load_store(&self) -> Result<Option<PersistentArenaStore>, String> {
         let mut connection = self
             .client
-            .get_connection()
+            .get_connection_with_timeout(std::time::Duration::from_secs(2))
             .map_err(|err| format!("failed to connect to Redis: {}", err))?;
         let raw: Option<String> = connection
             .get(&self.key)
@@ -28,7 +28,7 @@ impl ArenaRedisStore {
             .map_err(|err| format!("failed to serialize arena store for Redis: {}", err))?;
         let mut connection = self
             .client
-            .get_connection()
+            .get_connection_with_timeout(std::time::Duration::from_secs(2))
             .map_err(|err| format!("failed to connect to Redis: {}", err))?;
         connection
             .set::<_, _, ()>(&self.key, serialized)

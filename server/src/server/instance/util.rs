@@ -78,7 +78,7 @@ fn load_dispute_chain_head_from_redis(
     let client = redis::Client::open(redis_url.to_owned())
         .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
     let mut connection = client
-        .get_connection()
+        .get_connection_with_timeout(std::time::Duration::from_secs(2))
         .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
     let chain_head_key = dispute_chain_head_redis_key(base_key);
     connection
@@ -127,7 +127,7 @@ fn append_dispute_record_to_redis(
     let client = redis::Client::open(redis_url.to_owned())
         .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
     let mut connection = client
-        .get_connection()
+        .get_connection_with_timeout(std::time::Duration::from_secs(2))
         .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
     let records_key = dispute_records_redis_key(base_key);
     let chain_head_key = dispute_chain_head_redis_key(base_key);
@@ -192,7 +192,7 @@ fn load_latest_match_end_summary_from_redis(
     let client = redis::Client::open(redis_url.to_owned())
         .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
     let mut connection = client
-        .get_connection()
+        .get_connection_with_timeout(std::time::Duration::from_secs(2))
         .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
     let summary_key = match_summary_redis_key(base_key);
     let payload: Option<String> = connection
@@ -240,7 +240,7 @@ fn persist_latest_match_end_summary_to_redis(
     let client = redis::Client::open(redis_url.to_owned())
         .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
     let mut connection = client
-        .get_connection()
+        .get_connection_with_timeout(std::time::Duration::from_secs(2))
         .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
     let summary_key = match_summary_redis_key(base_key);
     connection
@@ -310,7 +310,7 @@ fn append_match_snapshot_record_to_redis(
     let client = redis::Client::open(redis_url.to_owned())
         .map_err(|err| format!("failed to configure Redis client '{}': {}", redis_url, err))?;
     let mut connection = client
-        .get_connection()
+        .get_connection_with_timeout(std::time::Duration::from_secs(2))
         .map_err(|err| format!("failed to connect to Redis '{}': {}", redis_url, err))?;
     let records_key = match_snapshot_records_redis_key(base_key);
     redis::pipe()
