@@ -20,13 +20,23 @@ pub fn master_map_from_config(
     }
 }
 
-/// Best-effort publish; silently skips when Redis is unavailable.
+/// Best-effort publish; logs a warning and skips when Redis is unavailable.
 pub fn publish_master_map(redis_url: &str, map: &MasterMap) {
-    let Ok(client) = redis::Client::open(redis_url.to_owned()) else { return };
-    let Ok(mut conn) = client.get_connection() else { return };
-    let Ok(json) = serde_json::to_string(map) else { return };
-    let _: Result<(), redis::RedisError> =
-        redis::cmd("SET").arg(MASTER_MAP_REDIS_KEY).arg(json).query(&mut conn);
+    let publish = || -> Result<(), String> {
+        let client = redis::Client::open(redis_url.to_owned()).map_err(|e| e.to_string())?;
+        let mut conn = client
+            .get_connection_with_timeout(std::time::Duration::from_secs(2))
+            .map_err(|e| e.to_string())?;
+        let json = serde_json::to_string(map).map_err(|e| e.to_string())?;
+        redis::cmd("SET")
+            .arg(MASTER_MAP_REDIS_KEY)
+            .arg(json)
+            .query::<()>(&mut conn)
+            .map_err(|e| e.to_string())
+    };
+    if let Err(err) = publish() {
+        tracing::warn!("master map Redis publish skipped: {err}");
+    }
 }
 
 #[cfg(test)]

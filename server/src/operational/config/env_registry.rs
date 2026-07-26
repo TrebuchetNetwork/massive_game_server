@@ -171,8 +171,10 @@ pub struct FederationEnv {
     pub region_id: String, // this server's region name
     pub tile_width: f32,
     pub tile_height: f32,
-    /// Explicit map seed override; when None, the MasterMap stamps the resolved
-    /// runtime map seed (Task 6 reconciles).
+    /// Explicit seed override (MGS_MAP_SEED). When None, the MasterMap
+    /// currently stamps a constant fallback (100_000); full reconciliation
+    /// with the runtime's resolved seed (100_000 + players, or 10_010 for
+    /// force_10v10_map) is follow-up work.
     pub map_seed: Option<u64>,
     pub world_wrap: bool, // wrap positions on the torus (off until ghosts exist)
 }

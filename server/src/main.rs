@@ -93,9 +93,11 @@ async fn main() -> anyhow::Result<()> {
     let federation = &app_env.federation;
     // Seed reconciliation: FederationEnv.map_seed is None when MGS_MAP_SEED is
     // unset. The runtime map generator resolves its own seed as
-    // `runtime.map_seed.unwrap_or(100_000 + players)` (server/instance.rs); here
-    // we stamp `federation.map_seed.unwrap_or(100_000)` — the player-count
-    // component is a runtime default detail; a later task will fully reconcile.
+    // `runtime.map_seed.unwrap_or(10_010 if force_10v10_map else 100_000 +
+    // map_target_players.max(10))` (server/instance.rs:425-431); here we stamp
+    // `federation.map_seed.unwrap_or(100_000)`, a constant fallback. Full
+    // reconciliation is follow-up work — consumers MUST NOT yet use the
+    // stamped seed for deterministic map generation.
     let resolved_map_seed = federation.map_seed.unwrap_or(100_000);
     let master_map = Arc::new(ParkingLotRwLock::new(master_map_from_config(
         federation.grid_dims(), // called once at startup; warns and falls back on invalid input
@@ -116,7 +118,11 @@ async fn main() -> anyhow::Result<()> {
             map.cols, map.rows, map.tile_width, map.tile_height, map.map_seed, min_x, min_y, max_x, max_y
         );
     }
-    if let Ok(redis_url) = std::env::var("MGS_REDIS_URL") {
+    // Same URL chain as the feature-flags store: MGS_FEATURE_FLAGS_REDIS_URL
+    // primary, MGS_REDIS_URL fallback (env_registry.rs).
+    if let Ok(redis_url) = std::env::var("MGS_FEATURE_FLAGS_REDIS_URL")
+        .or_else(|_| std::env::var("MGS_REDIS_URL"))
+    {
         publish_master_map(&redis_url, &master_map.read());
     }
 
