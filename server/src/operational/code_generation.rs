@@ -123,6 +123,10 @@ SAFETY AND FAIRNESS REQUIREMENTS
 - Avoid overflow with comparisons, clamps, saturating arithmetic, or small bounded values.
 
 Return only the complete raw Rust source file."#;
+pub const ARENA_REVISION_PROMPT_VERSION: &str = "arena-rust-revision-v1.0.0";
+pub const ARENA_REVISION_SYSTEM_PROMPT: &str = "You are a contestant in a deterministic Rust/WASM fighter competition revising your previous fighter. Begin the Rust source immediately; do not analyze exhaustively. Return exactly one complete Rust 2021 source file as raw text and stop immediately after its final closing brace. Prefer a simple, complete file below 8 KiB and roughly 2,000 visible tokens. An incomplete file is a failed submission. Never return markdown fences, explanations, or anything before or after the source file.";
+pub const ARENA_REVISION_USER_PROMPT_PREFIX: &str = "You submitted the fighter below earlier this season. Its mid-season performance digest follows. Return one improved complete Rust source file that keeps the exact same required exports and ABI, and addresses the weaknesses the digest shows. Do not change the function signature.\n\nPREVIOUS SOURCE\n";
+pub const ARENA_REVISION_STATS_SEPARATOR: &str = "\n\nPERFORMANCE DIGEST\n";
 
 fn read_env_secret(env_key: &str) -> Option<String> {
     if let Ok(raw) = std::env::var(env_key) {
@@ -239,6 +243,8 @@ struct CodeGenerationStatusResponse {
     provider_configured: bool,
     prompt_version: String,
     prompt_sha256: String,
+    revision_prompt_version: String,
+    revision_prompt_sha256: String,
     source_limit_bytes: usize,
     max_tokens: u32,
     provider_sort_policy: String,
@@ -1043,6 +1049,8 @@ impl CodeGenerationService {
             provider_configured: self.inner.openrouter_api_key.is_some(),
             prompt_version: ARENA_COMPETITION_PROMPT_VERSION.to_owned(),
             prompt_sha256: competition_prompt_sha256(),
+            revision_prompt_version: ARENA_REVISION_PROMPT_VERSION.to_owned(),
+            revision_prompt_sha256: revision_prompt_sha256(),
             source_limit_bytes: self.inner.max_source_bytes,
             max_tokens: self.inner.openrouter_max_tokens,
             provider_sort_policy: ARENA_PROVIDER_SORT_POLICY.to_owned(),
@@ -1736,6 +1744,17 @@ fn canonical_competition_prompt() -> String {
 
 fn competition_prompt_sha256() -> String {
     sha256_hex(canonical_competition_prompt().as_bytes())
+}
+
+fn canonical_revision_prompt() -> String {
+    format!(
+        "SYSTEM\n{}\n\nUSER\n{}",
+        ARENA_REVISION_SYSTEM_PROMPT, ARENA_REVISION_USER_PROMPT_PREFIX
+    )
+}
+
+fn revision_prompt_sha256() -> String {
+    sha256_hex(canonical_revision_prompt().as_bytes())
 }
 
 fn rust_crate_name(safe_model_id: &str) -> String {
@@ -3217,6 +3236,22 @@ mod tests {
         assert_eq!(hash.len(), 64);
         assert!(hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
         assert_eq!(hash, competition_prompt_sha256());
+    }
+
+    #[test]
+    fn status_exposes_revision_contract() {
+        let service = CodeGenerationService::new_from_env();
+        let status = service.status();
+        assert_eq!(
+            status.revision_prompt_version,
+            ARENA_REVISION_PROMPT_VERSION
+        );
+        assert_eq!(status.revision_prompt_sha256, revision_prompt_sha256());
+        assert_eq!(revision_prompt_sha256().len(), 64);
+        // template is deterministic
+        assert_eq!(revision_prompt_sha256(), revision_prompt_sha256());
+        // revision contract differs from the generation contract
+        assert_ne!(status.revision_prompt_sha256, status.prompt_sha256);
     }
 
     #[test]
