@@ -965,7 +965,7 @@ export async function rehydrateEntrant(
   directories,
   {
     allowLegacyMissingDigest = false,
-    verifyExistingArtifact = false,
+    trustArchivedArtifact = false,
     attemptAt = null,
   } = {},
 ) {
@@ -995,6 +995,16 @@ export async function rehydrateEntrant(
     );
   } else {
     validateGenerationCheckpoint(checkpoint, entrant, source, context.codeStatus);
+    if (trustArchivedArtifact) {
+      // Unbound v2 season: the publishing compiler renames a staging artifact
+      // into place, and rustc embeds that staging basename in the wasm name
+      // section, so the server's byte-identical verify_existing rebuild can
+      // never match a v2 artifact. Recompiling every epoch instead would
+      // consume the bounded compile-attempt budget and stall a 7-day season
+      // at ~epoch 96. The frozen checkpoint already proves the fighter was
+      // generated, compiled, and published; trust it and skip the round-trip.
+      return checkpoint;
+    }
   }
   return compileArchivedEntrant(
     context,
@@ -1009,14 +1019,7 @@ export async function rehydrateEntrant(
         verifyExisting: true,
         persistCheckpoint: false,
       }
-      : verifyExistingArtifact
-        ? {
-          expectedWasmBytes: checkpoint.wasm_bytes,
-          expectedWasmSha256: checkpoint.wasm_sha256,
-          verifyExisting: true,
-          persistCheckpoint: false,
-        }
-        : {},
+      : {},
   );
 }
 
@@ -2184,7 +2187,16 @@ async function main() {
       : await mapLimit(
         entrants,
         config.generationConcurrency,
-        (entrant) => rehydrateEntrant(context, entrant, directories),
+        // No binding manifest: trust the frozen compiled checkpoints. Server
+        // verification cannot byte-match staging-renamed v2 artifacts, and
+        // recompiling every epoch burns the bounded compile-attempt budget
+        // long before a 7-day season (~700 epochs) can finish.
+        (entrant) => rehydrateEntrant(
+          context,
+          entrant,
+          directories,
+          { trustArchivedArtifact: true },
+        ),
       );
   } else {
     process.stdout.write(`[arena] generating ${entrants.length} OpenRouter fighters for ${seasonId}\n`);

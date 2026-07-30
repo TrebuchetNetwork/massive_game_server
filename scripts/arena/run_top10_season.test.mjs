@@ -579,6 +579,108 @@ test('legacy digest migration refuses a non-reproducible compile before checkpoi
   assert.equal(Object.prototype.hasOwnProperty.call(persisted, 'wasm_sha256'), false);
 });
 
+test('epoch evaluation without a binding trusts frozen compiled checkpoints without consuming compile attempts', async (t) => {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'arena-epoch-trust-'));
+  t.after(() => fs.rm(temporaryDirectory, { recursive: true, force: true }));
+  const directories = {
+    generations: path.join(temporaryDirectory, 'generations'),
+    sources: path.join(temporaryDirectory, 'sources'),
+  };
+  await fs.mkdir(directories.generations, { recursive: true });
+  await fs.mkdir(directories.sources, { recursive: true });
+  const checkpointPath = path.join(directories.generations, `${entrant.model_id}.json`);
+  // A fighter deep into a 7-day season: one more counted recompile would trip
+  // the >100 metadata guard and stall every remaining epoch (the epoch-96 bug).
+  // Server-side verify_existing cannot be used here: published v2 artifacts
+  // embed a staging basename in the wasm name section, so a byte-identical
+  // rebuild comparison can never match them.
+  await fs.writeFile(
+    checkpointPath,
+    JSON.stringify(compiledCheckpoint({ compile_attempts: 100 })),
+  );
+  await fs.writeFile(path.join(directories.sources, `${entrant.model_id}.rs`), source);
+
+  const routes = [];
+  const context = {
+    apiBase: 'http://arena.invalid',
+    adminToken: 'test-token',
+    codeStatus: normalizeCodeStatus(rawCodeStatus()),
+    apiClient: async (request) => {
+      routes.push(request.route);
+      throw new Error(`no server round-trip is allowed: ${request.route}`);
+    },
+  };
+
+  for (let epoch = 0; epoch < 3; epoch += 1) {
+    const verified = await rehydrateEntrant(
+      context,
+      entrant,
+      directories,
+      { trustArchivedArtifact: true },
+    );
+    assert.equal(verified.compile_attempts, 100, 'trusting the archive is free');
+    assert.equal(verified.wasm_sha256, wasmDigest);
+    assert.equal(verified.stage, 'compiled');
+  }
+  assert.deepEqual(routes, [], 'frozen checkpoints need no per-epoch server call');
+  const persisted = JSON.parse(await fs.readFile(checkpointPath, 'utf8'));
+  assert.equal(persisted.compile_attempts, 100, 'checkpoint file stays untouched');
+  assert.equal(Object.prototype.hasOwnProperty.call(persisted, 'rehydrated_at'), false);
+});
+
+test('epoch verification of an uncompiled fighter still registers and counts the first compile', async (t) => {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'arena-epoch-first-compile-'));
+  t.after(() => fs.rm(temporaryDirectory, { recursive: true, force: true }));
+  const directories = {
+    generations: path.join(temporaryDirectory, 'generations'),
+    sources: path.join(temporaryDirectory, 'sources'),
+  };
+  await fs.mkdir(directories.generations, { recursive: true });
+  await fs.mkdir(directories.sources, { recursive: true });
+  const checkpointPath = path.join(directories.generations, `${entrant.model_id}.json`);
+  await fs.writeFile(checkpointPath, JSON.stringify(compiledCheckpoint({
+    stage: 'generated',
+    compiled: false,
+    wasm_bytes: null,
+    wasm_sha256: null,
+    compiled_at: null,
+    compile_attempts: 1,
+  })));
+  await fs.writeFile(path.join(directories.sources, `${entrant.model_id}.rs`), source);
+
+  const routes = [];
+  const completed = await rehydrateEntrant({
+    apiBase: 'http://arena.invalid',
+    adminToken: 'test-token',
+    codeStatus: normalizeCodeStatus(rawCodeStatus()),
+    apiClient: async (request) => {
+      routes.push(request.route);
+      if (request.route === '/api/arena/models/register') return {};
+      if (request.route === '/api/arena/code/compile') {
+        assert.equal(request.body.overwrite, true);
+        assert.equal(Object.prototype.hasOwnProperty.call(request.body, 'verify_existing'), false);
+        return {
+          model_id: entrant.model_id,
+          compiled: true,
+          bytes_written: 512,
+          wasm_sha256: wasmDigest,
+        };
+      }
+      throw new Error(`unexpected route ${request.route}`);
+    },
+  }, entrant, directories, { trustArchivedArtifact: true });
+
+  assert.deepEqual(routes, [
+    '/api/arena/models/register',
+    '/api/arena/code/compile',
+  ]);
+  assert.equal(completed.stage, 'compiled');
+  assert.equal(completed.compile_attempts, 2, 'a genuine first compile is still accounted');
+  const persisted = JSON.parse(await fs.readFile(checkpointPath, 'utf8'));
+  assert.equal(persisted.stage, 'compiled');
+  assert.equal(persisted.compile_attempts, 2);
+});
+
 test('legacy batch binding is all-or-nothing on Nth failure and retry is idempotent', async (t) => {
   const seasonDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'arena-rehydrate-batch-'));
   t.after(() => fs.rm(seasonDirectory, { recursive: true, force: true }));
