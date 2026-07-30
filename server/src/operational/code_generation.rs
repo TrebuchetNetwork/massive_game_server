@@ -126,6 +126,7 @@ Return only the complete raw Rust source file."#;
 pub const ARENA_REVISION_PROMPT_VERSION: &str = "arena-rust-revision-v1.0.0";
 pub const ARENA_REVISION_SYSTEM_PROMPT: &str = "You are a contestant in a deterministic Rust/WASM fighter competition revising your previous fighter. Begin the Rust source immediately; do not analyze exhaustively. Return exactly one complete Rust 2021 source file as raw text and stop immediately after its final closing brace. Prefer a simple, complete file below 8 KiB and roughly 2,000 visible tokens. An incomplete file is a failed submission. Never return markdown fences, explanations, or anything before or after the source file.";
 pub const ARENA_REVISION_USER_PROMPT_PREFIX: &str = "You submitted the fighter below earlier this season. Its mid-season performance digest follows. Return one improved complete Rust source file that keeps the exact same required exports and ABI, and addresses the weaknesses the digest shows. Do not change the function signature.\n\nPREVIOUS SOURCE\n";
+// Joins the fixed revision prompt prefix with the per-model stats digest in the revise route.
 pub const ARENA_REVISION_STATS_SEPARATOR: &str = "\n\nPERFORMANCE DIGEST\n";
 
 fn read_env_secret(env_key: &str) -> Option<String> {
@@ -180,6 +181,17 @@ struct GenerateBotCodeBody {
     model: String,
     objective: Option<String>,
     prompt_style: Option<String>,
+    reasoning_mode: Option<String>,
+    reasoning_effort: Option<String>,
+}
+
+const MAX_ARENA_STATS_DIGEST_BYTES: usize = 8 * 1024;
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReviseBotCodeBody {
+    model: String,
+    previous_source: String,
+    stats_digest: String,
     reasoning_mode: Option<String>,
     reasoning_effort: Option<String>,
 }
@@ -1116,7 +1128,13 @@ impl CodeGenerationService {
         let mut usage = None;
         let source_code = if let Some(api_key) = self.inner.openrouter_api_key.as_deref() {
             match self
-                .generate_via_openrouter(api_key, model, &reasoning_policy)
+                .generate_via_openrouter(
+                    api_key,
+                    model,
+                    &reasoning_policy,
+                    ARENA_UNIFORM_SYSTEM_PROMPT,
+                    ARENA_UNIFORM_COMPETITION_PROMPT,
+                )
                 .await
             {
                 Ok(generation) => {
@@ -1166,6 +1184,141 @@ impl CodeGenerationService {
             prompt_version: ARENA_COMPETITION_PROMPT_VERSION.to_owned(),
             prompt_sha256: competition_prompt_sha256(),
             prompt_text: canonical_competition_prompt(),
+            max_completion_tokens: self.inner.openrouter_max_tokens,
+            provider_sort_policy: ARENA_PROVIDER_SORT_POLICY.to_owned(),
+            provider_require_parameters: ARENA_PROVIDER_REQUIRE_PARAMETERS,
+            temperature_policy: ARENA_TEMPERATURE_POLICY.to_owned(),
+            reasoning_policy_version: ARENA_REASONING_POLICY_VERSION.to_owned(),
+            reasoning_mode: reasoning_policy.mode,
+            reasoning_effort: reasoning_policy.effort,
+            reasoning_exclude: ARENA_REASONING_EXCLUDE,
+            response_transport_policy: ARENA_RESPONSE_TRANSPORT_POLICY.to_owned(),
+            finish_reason,
+            resolved_model,
+            provider_name,
+            provider_response_id,
+            usage,
+            warnings,
+        })
+    }
+
+    async fn revise_bot_code(
+        &self,
+        body: ReviseBotCodeBody,
+    ) -> Result<GenerateBotCodeResponse, ApiErrorBody> {
+        let model = body.model.trim();
+        if model.is_empty() {
+            return Err(ApiErrorBody {
+                code: "invalid_model",
+                message: "model is required".to_owned(),
+            });
+        }
+        if body.previous_source.len() > self.inner.max_source_bytes {
+            return Err(ApiErrorBody {
+                code: "previous_source_too_large",
+                message: format!(
+                    "previous_source exceeds configured max ({} > {} bytes)",
+                    body.previous_source.len(),
+                    self.inner.max_source_bytes
+                ),
+            });
+        }
+        if body.stats_digest.len() > MAX_ARENA_STATS_DIGEST_BYTES {
+            return Err(ApiErrorBody {
+                code: "stats_digest_too_large",
+                message: format!(
+                    "stats_digest exceeds configured max ({} > {} bytes)",
+                    body.stats_digest.len(),
+                    MAX_ARENA_STATS_DIGEST_BYTES
+                ),
+            });
+        }
+        let reasoning_policy = normalize_arena_reasoning_policy(
+            body.reasoning_mode.as_deref(),
+            body.reasoning_effort.as_deref(),
+        )
+        .map_err(|message| ApiErrorBody {
+            code: "invalid_reasoning_policy",
+            message,
+        })?;
+
+        let objective =
+            "improve the previous fighter using the mid-season performance digest".to_owned();
+        let prompt_style = ARENA_REVISION_PROMPT_VERSION.to_owned();
+        let user_content = format!(
+            "{}{}{}{}",
+            ARENA_REVISION_USER_PROMPT_PREFIX,
+            body.previous_source,
+            ARENA_REVISION_STATS_SEPARATOR,
+            body.stats_digest,
+        );
+
+        let mut simulated = false;
+        let mut warnings = Vec::new();
+
+        let mut finish_reason = None;
+        let mut resolved_model = None;
+        let mut provider_name = None;
+        let mut provider_response_id = None;
+        let mut usage = None;
+        let source_code = if let Some(api_key) = self.inner.openrouter_api_key.as_deref() {
+            match self
+                .generate_via_openrouter(
+                    api_key,
+                    model,
+                    &reasoning_policy,
+                    ARENA_REVISION_SYSTEM_PROMPT,
+                    &user_content,
+                )
+                .await
+            {
+                Ok(generation) => {
+                    finish_reason = generation.finish_reason;
+                    resolved_model = generation.resolved_model;
+                    provider_name = generation.provider_name;
+                    provider_response_id = generation.provider_response_id;
+                    usage = generation.usage;
+                    generation.source_code
+                }
+                Err(err) => {
+                    return Err(ApiErrorBody {
+                        code: "openrouter_generation_failed",
+                        message: err,
+                    });
+                }
+            }
+        } else {
+            simulated = true;
+            warnings.push(
+                "OPENROUTER_API_KEY is not configured; deterministic local template used"
+                    .to_owned(),
+            );
+            self.build_local_template()
+        };
+
+        let validation =
+            validate_source_impl(self.inner.max_source_bytes, &source_code, Some("rust"));
+        if !validation.valid {
+            return Err(ApiErrorBody {
+                code: "generated_code_invalid",
+                message: format!(
+                    "generated source failed validation: {}",
+                    validation.errors.join("; ")
+                ),
+            });
+        }
+        warnings.extend(validation.warnings);
+
+        Ok(GenerateBotCodeResponse {
+            model: model.to_owned(),
+            provider: "openrouter".to_owned(),
+            prompt_style,
+            objective,
+            source_code,
+            simulated,
+            prompt_version: ARENA_REVISION_PROMPT_VERSION.to_owned(),
+            prompt_sha256: revision_prompt_sha256(),
+            prompt_text: canonical_revision_prompt(),
             max_completion_tokens: self.inner.openrouter_max_tokens,
             provider_sort_policy: ARENA_PROVIDER_SORT_POLICY.to_owned(),
             provider_require_parameters: ARENA_PROVIDER_REQUIRE_PARAMETERS,
@@ -1309,9 +1462,16 @@ impl CodeGenerationService {
         api_key: &str,
         model: &str,
         reasoning_policy: &ArenaReasoningPolicy,
+        system_content: &str,
+        user_content: &str,
     ) -> Result<OpenRouterGeneration, String> {
-        let request =
-            build_openrouter_request(model, self.inner.openrouter_max_tokens, reasoning_policy);
+        let request = build_openrouter_request(
+            model,
+            self.inner.openrouter_max_tokens,
+            reasoning_policy,
+            system_content,
+            user_content,
+        );
 
         let endpoint = format!("{}/chat/completions", self.inner.openrouter_base_url);
         let mut headers = HeaderMap::new();
@@ -1478,6 +1638,8 @@ fn build_openrouter_request(
     model: &str,
     max_completion_tokens: u32,
     reasoning_policy: &ArenaReasoningPolicy,
+    system_content: &str,
+    user_content: &str,
 ) -> OpenRouterChatRequest {
     let reasoning = match reasoning_policy.mode.as_str() {
         "unsupported" => None,
@@ -1499,11 +1661,11 @@ fn build_openrouter_request(
         messages: vec![
             OpenRouterMessage {
                 role: "system",
-                content: ARENA_UNIFORM_SYSTEM_PROMPT.to_owned(),
+                content: system_content.to_owned(),
             },
             OpenRouterMessage {
                 role: "user",
-                content: ARENA_UNIFORM_COMPETITION_PROMPT.to_owned(),
+                content: user_content.to_owned(),
             },
         ],
         max_tokens: max_completion_tokens,
@@ -1747,6 +1909,8 @@ fn competition_prompt_sha256() -> String {
 }
 
 fn canonical_revision_prompt() -> String {
+    // Only the fixed prefix is contract-pinned here; per-model data appended
+    // after the prefix (previous source + stats digest) is not hashed.
     format!(
         "SYSTEM\n{}\n\nUSER\n{}",
         ARENA_REVISION_SYSTEM_PROMPT, ARENA_REVISION_USER_PROMPT_PREFIX
@@ -3070,6 +3234,30 @@ pub fn build_code_generation_routes(
             },
         );
 
+    let revise = warp::path!("api" / "arena" / "code" / "revise")
+        .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(warp::body::content_length_limit(json_body_limit))
+        .and(warp::body::json())
+        .and(with_service(service.clone()))
+        .and_then(
+            |authorization: Option<String>,
+             body: ReviseBotCodeBody,
+             service: CodeGenerationService| async move {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return Ok::<_, warp::Rejection>(error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    ));
+                }
+                let reply = match service.revise_bot_code(body).await {
+                    Ok(response) => ok_response(response),
+                    Err(err) => error_response(err.code, err.message),
+                };
+                Ok::<_, warp::Rejection>(reply)
+            },
+        );
+
     let generate_and_compile = warp::path!("api" / "arena" / "code" / "generate_and_compile")
         .and(warp::post())
         .and(warp::header::optional::<String>("authorization"))
@@ -3121,6 +3309,7 @@ pub fn build_code_generation_routes(
     status
         .or(validate)
         .or(generate)
+        .or(revise)
         .or(generate_and_compile)
         .or(compile)
 }
@@ -3246,10 +3435,16 @@ mod tests {
             status.revision_prompt_version,
             ARENA_REVISION_PROMPT_VERSION
         );
+        assert_eq!(ARENA_REVISION_PROMPT_VERSION, "arena-rust-revision-v1.0.0");
         assert_eq!(status.revision_prompt_sha256, revision_prompt_sha256());
         assert_eq!(revision_prompt_sha256().len(), 64);
         // template is deterministic
         assert_eq!(revision_prompt_sha256(), revision_prompt_sha256());
+        // the frozen template content is pinned: accidental edits break this test
+        let canonical = canonical_revision_prompt();
+        assert!(canonical.contains("PREVIOUS SOURCE"));
+        assert!(canonical.contains("revising your previous fighter"));
+        assert!(!canonical.contains("PERFORMANCE DIGEST"));
         // revision contract differs from the generation contract
         assert_ne!(status.revision_prompt_sha256, status.prompt_sha256);
     }
@@ -3349,11 +3544,62 @@ mod tests {
         .await;
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn revise_rejects_oversized_stats_digest() {
+        temp_env::async_with_vars(
+            [
+                ("OPENROUTER_API_KEY", None::<&str>),
+                ("OPENROUTER_API_KEY_FILE", None::<&str>),
+            ],
+            async {
+                let service = CodeGenerationService::new_from_env();
+                let err = service
+                    .revise_bot_code(ReviseBotCodeBody {
+                        model: "openai/gpt-4o".to_owned(),
+                        previous_source: "fn bot_tick_v2() {}".to_owned(),
+                        stats_digest: "x".repeat(MAX_ARENA_STATS_DIGEST_BYTES + 1),
+                        reasoning_mode: None,
+                        reasoning_effort: None,
+                    })
+                    .await
+                    .expect_err("oversized stats digest must be rejected");
+                assert_eq!(err.code, "stats_digest_too_large");
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn revise_route_requires_admin_auth() {
+        let service = CodeGenerationService::new_from_env();
+        let routes = build_code_generation_routes(service);
+        let reply = warp::test::request()
+            .method("POST")
+            .path("/api/arena/code/revise")
+            .json(&serde_json::json!({
+                "model": "openai/gpt-4o",
+                "previous_source": "fn bot_tick_v2() {}",
+                "stats_digest": "{}"
+            }))
+            .reply(&routes)
+            .await;
+        let body: serde_json::Value =
+            serde_json::from_slice(reply.body()).expect("route must return a JSON body");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"]["code"], "admin_auth_required");
+    }
+
     #[test]
     fn openrouter_request_serializes_disabled_reasoning_and_throughput_routing() {
         let policy = normalize_arena_reasoning_policy(Some("disabled"), None)
             .expect("disabled policy should normalize");
-        let request = build_openrouter_request("provider/model", 16_384, &policy);
+        let request = build_openrouter_request(
+            "provider/model",
+            16_384,
+            &policy,
+            ARENA_UNIFORM_SYSTEM_PROMPT,
+            ARENA_UNIFORM_COMPETITION_PROMPT,
+        );
         let serialized = serde_json::to_value(request).expect("request should serialize");
 
         assert_eq!(serialized["model"], "provider/model");
@@ -3377,7 +3623,13 @@ mod tests {
     fn openrouter_request_serializes_mandatory_minimum_reasoning() {
         let policy = normalize_arena_reasoning_policy(Some("minimum"), Some("low"))
             .expect("minimum policy should normalize");
-        let request = build_openrouter_request("provider/model", 16_384, &policy);
+        let request = build_openrouter_request(
+            "provider/model",
+            16_384,
+            &policy,
+            ARENA_UNIFORM_SYSTEM_PROMPT,
+            ARENA_UNIFORM_COMPETITION_PROMPT,
+        );
         let serialized = serde_json::to_value(request).expect("request should serialize");
 
         assert_eq!(serialized["reasoning"]["effort"], "low");
@@ -3388,7 +3640,13 @@ mod tests {
     fn openrouter_request_omits_reasoning_for_unsupported_models() {
         let policy = normalize_arena_reasoning_policy(Some("unsupported"), None)
             .expect("unsupported policy should normalize");
-        let request = build_openrouter_request("provider/model", 16_384, &policy);
+        let request = build_openrouter_request(
+            "provider/model",
+            16_384,
+            &policy,
+            ARENA_UNIFORM_SYSTEM_PROMPT,
+            ARENA_UNIFORM_COMPETITION_PROMPT,
+        );
         let serialized = serde_json::to_value(request).expect("request should serialize");
 
         assert!(serialized.get("reasoning").is_none());
