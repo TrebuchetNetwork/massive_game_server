@@ -181,6 +181,13 @@ async function atomicWriteText(targetPath, value) {
   await fs.rename(temporaryPath, targetPath);
 }
 
+async function atomicWriteBytes(targetPath, value) {
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  const temporaryPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+  await fs.writeFile(temporaryPath, value, { mode: 0o600 });
+  await fs.rename(temporaryPath, targetPath);
+}
+
 async function readJson(targetPath) {
   return JSON.parse(await fs.readFile(targetPath, 'utf8'));
 }
@@ -1006,6 +1013,121 @@ async function compileArchivedEntrant(
   validateGenerationCheckpoint(rehydrated, entrant, source, context.codeStatus);
   if (persistCheckpoint) await atomicWriteJson(checkpointPath, rehydrated);
   return rehydrated;
+}
+
+const REVISION_JOURNAL_FILE = 'revision-attempts.json';
+
+/**
+ * Validate a revision-route response against the frozen revision contract
+ * (or, defensively, the generation contract — validateGeneratedResponse
+ * accepts either). Returns the verified generation fields plus the prompt
+ * pair the checkpoint must pin.
+ */
+export function validateRevisionResponse(response, codeStatus, entrant) {
+  const verified = validateGeneratedResponse(response, codeStatus, entrant);
+  return {
+    ...verified,
+    promptVersion: response.prompt_version,
+    promptSha256: String(response.prompt_sha256 || '').toLowerCase(),
+  };
+}
+
+/**
+ * One-shot mid-season revision of a single frozen fighter. The attempt is
+ * journaled BEFORE the provider call, so a crash or rerun can never burn a
+ * second call: one chance means one call. The gen-1 checkpoint and source
+ * stay untouched until the revised source has validated AND compiled; only
+ * then are they swapped (source first, checkpoint second, both atomic).
+ */
+export async function reviseEntrant(
+  context,
+  entrant,
+  directories,
+  { statsDigest, revisionEpoch, attemptAt = null },
+) {
+  const checkpointPath = path.join(directories.generations, `${entrant.model_id}.json`);
+  const sourcePath = path.join(directories.sources, `${entrant.model_id}.rs`);
+  const journalPath = path.join(directories.revisions, REVISION_JOURNAL_FILE);
+  const previous = await readJson(checkpointPath);
+  const previousSource = await fs.readFile(sourcePath, 'utf8');
+  validateGenerationCheckpoint(previous, entrant, previousSource, context.codeStatus);
+
+  let journal = null;
+  try {
+    journal = await readJson(journalPath);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  journal = journal ?? { schema_version: 1, attempts: {} };
+  if (journal.attempts?.[entrant.model_id]) {
+    throw new Error(`revision already attempted for ${entrant.provider_model}`);
+  }
+  const startedAt = attemptAt || new Date().toISOString();
+  journal.attempts[entrant.model_id] = {
+    started_at: startedAt,
+    stats_digest_sha256: sha256(statsDigest),
+  };
+  await fs.mkdir(directories.revisions, { recursive: true, mode: 0o700 });
+  await atomicWriteJson(journalPath, journal);
+
+  const response = await callArenaApi(context, {
+    method: 'POST',
+    route: '/api/arena/code/revise',
+    timeoutMs: 180_000,
+    body: {
+      model: entrant.provider_model,
+      previous_source: previousSource,
+      stats_digest: statsDigest,
+      reasoning_mode: entrant.reasoning_policy.mode,
+      reasoning_effort: entrant.reasoning_policy.effort,
+    },
+  });
+  const verified = validateRevisionResponse(response, context.codeStatus, entrant);
+
+  const compile = await callArenaApi(context, {
+    method: 'POST',
+    route: '/api/arena/code/compile',
+    timeoutMs: 180_000,
+    body: { model_id: entrant.model_id, source_code: verified.source, overwrite: true },
+  });
+  const wasmArtifact = validateCompileResponse(compile, entrant.model_id);
+
+  const providerGenerated = { ...response };
+  delete providerGenerated.source_code;
+  const providerResponse = { generated: providerGenerated };
+  const completedAt = new Date().toISOString();
+  const revised = {
+    ...previous,
+    prompt_version: verified.promptVersion,
+    prompt_sha256: verified.promptSha256,
+    finish_reason: verified.finishReason,
+    resolved_model: verified.resolvedModel,
+    provider_name: verified.providerName,
+    provider_response_id: verified.providerResponseId,
+    source_bytes: verified.sourceBytes,
+    source_sha256: sha256(verified.source),
+    wasm_bytes: wasmArtifact.wasmBytes,
+    wasm_sha256: wasmArtifact.wasmSha256,
+    compiled_at: completedAt,
+    last_compile_attempt_at: completedAt,
+    last_compile_error_sha256: null,
+    usage: { ...verified.usage },
+    generation_archive_sha256: sha256(JSON.stringify({
+      provider_response: providerResponse,
+      source_sha256: sha256(verified.source),
+    })),
+    provider_response: providerResponse,
+    revision_of: previous.source_sha256,
+    revision_epoch: revisionEpoch,
+    stats_digest_sha256: sha256(statsDigest),
+  };
+  validateGenerationCheckpoint(revised, entrant, verified.source, context.codeStatus);
+  await atomicWriteBytes(sourcePath, Buffer.from(verified.source, 'utf8'));
+  await atomicWriteJson(checkpointPath, revised);
+  journal.attempts[entrant.model_id].completed_at = completedAt;
+  journal.attempts[entrant.model_id].wasm_sha256 = wasmArtifact.wasmSha256;
+  await atomicWriteJson(journalPath, journal);
+  return revised;
 }
 
 export async function rehydrateEntrant(

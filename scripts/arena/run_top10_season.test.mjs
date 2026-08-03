@@ -16,6 +16,7 @@ import {
   readArtifactBinding,
   rehydrateEntrant,
   rehydrateLegacyGeneration,
+  reviseEntrant,
   validateGeneratedCheckpoint,
   validateGeneratedResponse,
   validateGeneration,
@@ -342,6 +343,138 @@ test('stats digest is bounded, deterministic and model-scoped', () => {
     () => buildRevisionStatsDigest({ seasonSnapshot, supervisorState, modelId: 'missing' }),
     /no roster entry/,
   );
+});
+
+const revisionPromptText = 'SYSTEM\nrevision system\n\nUSER\nrevision prefix';
+const revisionPromptSha256 = sha256(revisionPromptText);
+const revisionCodeStatus = () => normalizeCodeStatus(rawCodeStatus({
+  revision_prompt_version: 'arena-rust-revision-v1.0.0',
+  revision_prompt_sha256: revisionPromptSha256,
+}));
+const revisedSource = '#[no_mangle]\npub extern "C" fn bot_tick_v2() { /* improved */ }';
+
+test('revision swaps the checkpoint only after a valid compile, consuming one provider call', async (t) => {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'arena-revise-'));
+  t.after(() => fs.rm(temporaryDirectory, { recursive: true, force: true }));
+  const directories = {
+    generations: path.join(temporaryDirectory, 'generations'),
+    sources: path.join(temporaryDirectory, 'sources'),
+    revisions: path.join(temporaryDirectory, 'revisions'),
+  };
+  await fs.mkdir(directories.generations, { recursive: true });
+  await fs.mkdir(directories.sources, { recursive: true });
+  const checkpointPath = path.join(directories.generations, `${entrant.model_id}.json`);
+  // gen-1 fighter already at the compile-attempt ceiling: the revision must
+  // carry the counter forward unchanged (epoch-96 guard).
+  await fs.writeFile(checkpointPath, JSON.stringify(compiledCheckpoint({ compile_attempts: 100 })));
+  await fs.writeFile(path.join(directories.sources, `${entrant.model_id}.rs`), source);
+
+  const routes = [];
+  const statsDigest = '{"schema_version":1,"model_id":"entrant-one"}';
+  const revised = await reviseEntrant({
+    apiBase: 'http://arena.invalid',
+    adminToken: 'test-token',
+    codeStatus: revisionCodeStatus(),
+    apiClient: async (request) => {
+      routes.push(request.route);
+      if (request.route === '/api/arena/code/revise') {
+        assert.equal(request.body.model, entrant.provider_model);
+        assert.equal(request.body.previous_source, source);
+        assert.equal(request.body.stats_digest, statsDigest);
+        return generationResponse({
+          source_code: revisedSource,
+          prompt_version: 'arena-rust-revision-v1.0.0',
+          prompt_sha256: revisionPromptSha256,
+          prompt_text: revisionPromptText,
+        }).generated;
+      }
+      if (request.route === '/api/arena/code/compile') {
+        assert.equal(request.body.source_code, revisedSource);
+        assert.equal(request.body.overwrite, true);
+        return {
+          model_id: entrant.model_id,
+          compiled: true,
+          bytes_written: 640,
+          wasm_sha256: 'e'.repeat(64),
+        };
+      }
+      throw new Error(`unexpected route ${request.route}`);
+    },
+  }, entrant, directories, { statsDigest, revisionEpoch: 336 });
+
+  assert.deepEqual(routes, ['/api/arena/code/revise', '/api/arena/code/compile']);
+  assert.equal(revised.wasm_sha256, 'e'.repeat(64));
+  assert.equal(revised.wasm_bytes, 640);
+  assert.equal(revised.source_sha256, sha256(revisedSource));
+  assert.equal(revised.revision_of, sha256(source));
+  assert.equal(revised.revision_epoch, 336);
+  assert.equal(revised.stats_digest_sha256, sha256(statsDigest));
+  assert.equal(revised.prompt_version, 'arena-rust-revision-v1.0.0');
+  assert.equal(revised.compile_attempts, 100, 'revision carries the counter forward');
+  const persisted = JSON.parse(await fs.readFile(checkpointPath, 'utf8'));
+  assert.equal(persisted.wasm_sha256, 'e'.repeat(64));
+  validateGenerationCheckpoint(persisted, entrant, revisedSource, revisionCodeStatus());
+  assert.equal(
+    await fs.readFile(path.join(directories.sources, `${entrant.model_id}.rs`), 'utf8'),
+    revisedSource,
+  );
+  const journal = JSON.parse(await fs.readFile(
+    path.join(directories.revisions, 'revision-attempts.json'), 'utf8'));
+  assert.equal(typeof journal.attempts[entrant.model_id].started_at, 'string');
+  assert.equal(typeof journal.attempts[entrant.model_id].completed_at, 'string');
+  assert.equal(journal.attempts[entrant.model_id].wasm_sha256, 'e'.repeat(64));
+});
+
+test('failed revision keeps the gen-1 checkpoint and the journal blocks a second provider call', async (t) => {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'arena-revise-fail-'));
+  t.after(() => fs.rm(temporaryDirectory, { recursive: true, force: true }));
+  const directories = {
+    generations: path.join(temporaryDirectory, 'generations'),
+    sources: path.join(temporaryDirectory, 'sources'),
+    revisions: path.join(temporaryDirectory, 'revisions'),
+  };
+  await fs.mkdir(directories.generations, { recursive: true });
+  await fs.mkdir(directories.sources, { recursive: true });
+  const checkpointPath = path.join(directories.generations, `${entrant.model_id}.json`);
+  const sourcePath = path.join(directories.sources, `${entrant.model_id}.rs`);
+  const gen1 = JSON.stringify(compiledCheckpoint());
+  await fs.writeFile(checkpointPath, gen1);
+  await fs.writeFile(sourcePath, source);
+
+  let apiCalls = 0;
+  const context = {
+    apiBase: 'http://arena.invalid',
+    adminToken: 'test-token',
+    codeStatus: revisionCodeStatus(),
+    apiClient: async (request) => {
+      apiCalls += 1;
+      if (request.route === '/api/arena/code/revise') {
+        return generationResponse({
+          source_code: revisedSource,
+          prompt_version: 'arena-rust-revision-v1.0.0',
+          prompt_sha256: revisionPromptSha256,
+          prompt_text: revisionPromptText,
+        }).generated;
+      }
+      if (request.route === '/api/arena/code/compile') {
+        return { model_id: entrant.model_id, compiled: false, compiler_stderr: 'boom' };
+      }
+      throw new Error(`unexpected route ${request.route}`);
+    },
+  };
+  const statsDigest = '{"schema_version":1}';
+  await assert.rejects(
+    reviseEntrant(context, entrant, directories, { statsDigest, revisionEpoch: 336 }),
+    /fighter compilation failed: boom/,
+  );
+  assert.equal(apiCalls, 2, 'one revise call and one compile call');
+  assert.equal(await fs.readFile(checkpointPath, 'utf8'), gen1, 'gen-1 checkpoint untouched');
+  assert.equal(await fs.readFile(sourcePath, 'utf8'), source, 'gen-1 source untouched');
+  await assert.rejects(
+    reviseEntrant(context, entrant, directories, { statsDigest, revisionEpoch: 336 }),
+    /revision already attempted/,
+  );
+  assert.equal(apiCalls, 2, 'journal blocks any further provider call');
 });
 
 test('generation validation requires frozen provenance and terminal provider metadata', () => {
