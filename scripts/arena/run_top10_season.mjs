@@ -1971,14 +1971,36 @@ async function hasGenerationArtifacts(entrant, directories) {
 }
 
 export async function generateEntrant(context, entrant, directories, attempts, resume) {
-  if (resume) {
-    if (await hasGenerationArtifacts(entrant, directories)) {
-      return await rehydrateEntrant(context, entrant, directories);
-    }
-  }
-
   const checkpointPath = path.join(directories.generations, `${entrant.model_id}.json`);
   const sourcePath = path.join(directories.sources, `${entrant.model_id}.rs`);
+  if (resume) {
+    if (await hasGenerationArtifacts(entrant, directories)) {
+      try {
+        return await rehydrateEntrant(context, entrant, directories);
+      } catch (error) {
+        // An archived source that never compiled can never become a valid
+        // fighter: retrying the same broken compile forever hard-kills the
+        // season (the W32 pattern). With attempts remaining, discard the
+        // still-uncompiled artifacts and fall through to fresh generation.
+        // Only a deterministically broken compile qualifies for regeneration;
+        // the retry limit is a deliberate audit stop (fail closed), and
+        // provenance or tampering errors must fail closed too. A
+        // compiled-stage checkpoint failing here means contract drift —
+        // never discard that.
+        const message = String(error?.message || error);
+        if (attempts < 2 || !/fighter compilation failed/.test(message)) {
+          throw error;
+        }
+        const archived = await readJson(checkpointPath).catch(() => null);
+        if (archived?.stage !== GENERATION_STAGE_GENERATED) throw error;
+        process.stdout.write(
+          `[arena] discarding uncompilable archived generation for ${entrant.provider_model}: ${String(error?.message || error).slice(0, 160)}\n`,
+        );
+        await fs.rm(checkpointPath, { force: true });
+        await fs.rm(sourcePath, { force: true });
+      }
+    }
+  }
 
   let lastError;
   let generated;

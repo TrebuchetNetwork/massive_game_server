@@ -855,6 +855,120 @@ test('validated generation is checkpointed before compile and resumes without a 
   );
 });
 
+test('uncompilable archived generation is discarded and regenerated when attempts remain', async (t) => {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'arena-regen-'));
+  t.after(() => fs.rm(temporaryDirectory, { recursive: true, force: true }));
+  const directories = {
+    generations: path.join(temporaryDirectory, 'generations'),
+    sources: path.join(temporaryDirectory, 'sources'),
+  };
+  const codeStatus = normalizeCodeStatus(rawCodeStatus());
+  const freshSource = '#[no_mangle]\npub extern "C" fn bot_tick_v2() { /* fresh */ }';
+  const failingCompile = {
+    model_id: entrant.model_id,
+    compiled: false,
+    compiler_stderr: '#[panic_handler] function required, but not found',
+    bytes_written: 0,
+  };
+  // Seed an archived, never-compiled generation via a first failed run.
+  await assert.rejects(
+    generateEntrant({
+      apiBase: 'http://arena.invalid',
+      adminToken: 'test-token',
+      codeStatus,
+      apiClient: async (request) => {
+        if (request.route === '/api/arena/code/generate') return generationResponse().generated;
+        if (request.route === '/api/arena/models/register') return {};
+        if (request.route === '/api/arena/code/compile') return failingCompile;
+        throw new Error(`unexpected route ${request.route}`);
+      },
+    }, entrant, directories, 1, false),
+    /fighter compilation failed/,
+  );
+
+  const routes = [];
+  const regenerated = await generateEntrant({
+    apiBase: 'http://arena.invalid',
+    adminToken: 'test-token',
+    codeStatus,
+    apiClient: async (request) => {
+      routes.push(request.route);
+      if (request.route === '/api/arena/code/generate') {
+        return generationResponse({ source_code: freshSource }).generated;
+      }
+      if (request.route === '/api/arena/models/register') return {};
+      if (request.route === '/api/arena/code/compile') {
+        if (request.body.source_code === source) return failingCompile;
+        return {
+          model_id: entrant.model_id,
+          compiled: true,
+          bytes_written: 768,
+          wasm_sha256: wasmDigest,
+        };
+      }
+      throw new Error(`unexpected route ${request.route}`);
+    },
+  }, entrant, directories, 3, true);
+
+  assert.equal(regenerated.stage, 'compiled');
+  assert.equal(regenerated.wasm_sha256, wasmDigest);
+  assert.ok(routes.includes('/api/arena/code/generate'), 'regenerated with a fresh provider call');
+  const checkpointPath = path.join(directories.generations, `${entrant.model_id}.json`);
+  validateGenerationCheckpoint(
+    JSON.parse(await fs.readFile(checkpointPath, 'utf8')),
+    entrant,
+    await fs.readFile(path.join(directories.sources, `${entrant.model_id}.rs`), 'utf8'),
+    codeStatus,
+  );
+});
+
+test('single-attempt resume keeps uncompilable artifacts untouched', async (t) => {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'arena-regen-single-'));
+  t.after(() => fs.rm(temporaryDirectory, { recursive: true, force: true }));
+  const directories = {
+    generations: path.join(temporaryDirectory, 'generations'),
+    sources: path.join(temporaryDirectory, 'sources'),
+  };
+  const codeStatus = normalizeCodeStatus(rawCodeStatus());
+  const failingCompile = {
+    model_id: entrant.model_id,
+    compiled: false,
+    compiler_stderr: '#[panic_handler] function required, but not found',
+    bytes_written: 0,
+  };
+  const context = {
+    apiBase: 'http://arena.invalid',
+    adminToken: 'test-token',
+    codeStatus,
+    apiClient: async (request) => {
+      if (request.route === '/api/arena/code/generate') return generationResponse().generated;
+      if (request.route === '/api/arena/models/register') return {};
+      if (request.route === '/api/arena/code/compile') return failingCompile;
+      throw new Error(`unexpected route ${request.route}`);
+    },
+  };
+  await assert.rejects(generateEntrant(context, entrant, directories, 1, false), /fighter compilation failed/);
+  const checkpointPath = path.join(directories.generations, `${entrant.model_id}.json`);
+  const sourcePath = path.join(directories.sources, `${entrant.model_id}.rs`);
+  const sourceBefore = await fs.readFile(sourcePath, 'utf8');
+  let generateCalls = 0;
+  await assert.rejects(
+    generateEntrant({
+      ...context,
+      apiClient: async (request) => {
+        if (request.route === '/api/arena/code/generate') generateCalls += 1;
+        return context.apiClient(request);
+      },
+    }, entrant, directories, 1, true),
+    /fighter compilation failed/,
+  );
+  assert.equal(generateCalls, 0, 'single-attempt resume never regenerates');
+  assert.equal(await fs.readFile(sourcePath, 'utf8'), sourceBefore, 'source untouched');
+  const persisted = JSON.parse(await fs.readFile(checkpointPath, 'utf8'));
+  assert.equal(persisted.stage, 'generated', 'still an uncompiled archive');
+  assert.equal(persisted.compile_attempts, 2, 'failure accounting still applies');
+});
+
 test('legacy digest migration recompiles only the exact archived source through local routes', async (t) => {
   const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'arena-rehydrate-legacy-'));
   t.after(() => fs.rm(temporaryDirectory, { recursive: true, force: true }));
