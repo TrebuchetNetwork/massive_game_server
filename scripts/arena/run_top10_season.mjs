@@ -2311,6 +2311,7 @@ async function main() {
     sources: path.join(seasonDirectory, 'sources'),
     battles: path.join(seasonDirectory, 'battles'),
     world: path.join(seasonDirectory, 'world'),
+    revisions: path.join(seasonDirectory, 'revisions'),
   };
   const entrants = entrantsFromRanking(ranking, seasonId);
   const plannedBattleTasks = buildBattleTasks(entrants, config.seeds, config.teamSize);
@@ -2392,6 +2393,59 @@ async function main() {
     adminToken,
     codeStatus,
   };
+
+  if (options.reviseOnly) {
+    // Terminal mode: revise frozen fighters from their own mid-season stats.
+    // Runs BEFORE any generation/evaluation branch so a revision never
+    // triggers paid generation. Per-model isolation: one failure never blocks
+    // the other fighters, and the journal makes reruns provider-call-free.
+    const supervisorState = await readJson(path.resolve(options.statsState));
+    const seasonSnapshot = await readJson(path.join(seasonDirectory, 'season.json'));
+    const revisionEpoch = Array.isArray(supervisorState.epochs) ? supervisorState.epochs.length : 0;
+    process.stdout.write(
+      `[arena] revising ${entrants.length} fighters for ${seasonId} at epoch ${revisionEpoch}\n`,
+    );
+    const results = await mapLimit(entrants, config.generationConcurrency, async (entrant) => {
+      const statsDigest = buildRevisionStatsDigest({
+        seasonSnapshot,
+        supervisorState,
+        modelId: entrant.model_id,
+      });
+      try {
+        const checkpoint = await reviseEntrant(
+          context,
+          entrant,
+          directories,
+          { statsDigest, revisionEpoch },
+        );
+        process.stdout.write(`[arena] revised ${entrant.provider_model}\n`);
+        return { model_id: entrant.model_id, status: 'improved', checkpoint };
+      } catch (error) {
+        process.stdout.write(
+          `[arena] kept gen-1 for ${entrant.provider_model}: ${String(error?.message || error).slice(0, 200)}\n`,
+        );
+        return {
+          model_id: entrant.model_id,
+          status: 'kept_gen1',
+          error: String(error?.message || error).slice(0, 500),
+        };
+      }
+    });
+    await atomicWriteJson(path.join(seasonDirectory, 'revision-results.json'), {
+      season_id: seasonId,
+      revision_epoch: revisionEpoch,
+      completed_at: new Date().toISOString(),
+      entries: results.map(({ checkpoint, ...rest }) => ({
+        ...rest,
+        source_sha256_after: checkpoint?.source_sha256 ?? null,
+        wasm_bytes_after: checkpoint?.wasm_bytes ?? null,
+        wasm_sha256_after: checkpoint?.wasm_sha256 ?? null,
+      })),
+    });
+    await releaseLeagueLock();
+    return;
+  }
+
   let generatedEntrants;
   if (options.rehydrateOnly) {
     const binding = await rehydrateLegacyGeneration({

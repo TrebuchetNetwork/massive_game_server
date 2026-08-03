@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   assertCodeStatusUnchanged,
   buildRevisionStatsDigest,
+  entrantsFromRanking,
   generateEntrant,
   loadRanking,
   normalizeCodeStatus,
@@ -475,6 +478,175 @@ test('failed revision keeps the gen-1 checkpoint and the journal blocks a second
     /revision already attempted/,
   );
   assert.equal(apiCalls, 2, 'journal blocks any further provider call');
+});
+
+test('revise-only run revises every fighter once and reruns stay provider-call-free', { timeout: 90_000 }, async (t) => {
+  const arenaDir = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(arenaDir, '../..');
+  const runnerPath = path.join(arenaDir, 'run_top10_season.mjs');
+  const rankingPath = path.join(arenaDir, 'snapshots', 'openrouter_top_weekly_2026-07-23.json');
+  const seasonId = `test-revise-${process.pid}-${Date.now()}`;
+  const seasonDirectory = path.join(repoRoot, 'artifacts', 'arena', 'seasons', seasonId);
+  t.after(() => fs.rm(seasonDirectory, { recursive: true, force: true }));
+
+  const ranking = await loadRanking({ rankingFile: rankingPath, topModels: 10 });
+  const entrants = entrantsFromRanking(ranking, seasonId);
+  const generations = path.join(seasonDirectory, 'generations');
+  const sources = path.join(seasonDirectory, 'sources');
+  await fs.mkdir(generations, { recursive: true });
+  await fs.mkdir(sources, { recursive: true });
+  for (const candidate of entrants) {
+    const checkpoint = compiledCheckpoint({
+      provider_rank: candidate.provider_rank,
+      model_id: candidate.model_id,
+      model_name: candidate.model_name,
+      provider_model: candidate.provider_model,
+      canonical_slug: candidate.canonical_slug,
+      reasoning_policy: { ...candidate.reasoning_policy },
+      reasoning_mode: candidate.reasoning_policy.mode,
+      reasoning_effort: candidate.reasoning_policy.effort ?? null,
+    });
+    checkpoint.provider_response.generated = {
+      ...checkpoint.provider_response.generated,
+      model: candidate.provider_model,
+      reasoning_mode: candidate.reasoning_policy.mode,
+      reasoning_effort: candidate.reasoning_policy.effort ?? null,
+    };
+    checkpoint.generation_archive_sha256 = sha256(JSON.stringify({
+      provider_response: checkpoint.provider_response,
+      source_sha256: checkpoint.source_sha256,
+    }));
+    await fs.writeFile(path.join(generations, `${candidate.model_id}.json`), JSON.stringify(checkpoint));
+    await fs.writeFile(path.join(sources, `${candidate.model_id}.rs`), source);
+  }
+  await fs.writeFile(path.join(seasonDirectory, 'season.json'), JSON.stringify({
+    season_id: seasonId,
+    roster: entrants.map((candidate, index) => ({
+      model_id: candidate.model_id,
+      model_name: candidate.model_name,
+      personal_rating: 50 - index,
+      team_rating: 40,
+      collaboration_rating: 30,
+      world_rating: 20,
+      strategy_rating: 60 - index,
+      rank: index + 1,
+      wins: 1,
+      losses: 1,
+      draws: 0,
+      matches_played: 2,
+    })),
+  }));
+  const statePath = path.join(seasonDirectory, 'supervisor-state.json');
+  await fs.writeFile(statePath, JSON.stringify({
+    epochs: [{ standings: entrants.map((candidate, index) => ({
+      model_id: candidate.model_id,
+      epoch_rank: index + 1,
+    })) }],
+  }));
+
+  const mockRevisionText = 'SYSTEM\nrevision system\n\nUSER\nrevision prefix';
+  const mockRevisionSha = sha256(mockRevisionText);
+  let reviseCalls = 0;
+  const readBody = async (req) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    return Buffer.concat(chunks).toString('utf8');
+  };
+  const server = http.createServer(async (req, res) => {
+    const send = (payload) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify(payload));
+    };
+    const body = await readBody(req);
+    if (req.url === '/api/arena/code/status') {
+      return send({ ok: true, data: rawCodeStatus({
+        revision_prompt_version: 'arena-rust-revision-v1.0.0',
+        revision_prompt_sha256: mockRevisionSha,
+      }) });
+    }
+    if (req.url === '/api/arena/code/revise') {
+      reviseCalls += 1;
+      const parsed = JSON.parse(body);
+      return send({ ok: true, data: {
+        model: parsed.model,
+        source_code: revisedSource,
+        simulated: false,
+        prompt_version: 'arena-rust-revision-v1.0.0',
+        prompt_sha256: mockRevisionSha,
+        prompt_text: mockRevisionText,
+        max_completion_tokens: 2_049,
+        provider_sort_policy: 'throughput',
+        provider_require_parameters: true,
+        temperature_policy: 'provider_default',
+        reasoning_policy_version: 'capability_minimum_v1',
+        reasoning_mode: parsed.reasoning_mode,
+        reasoning_effort: parsed.reasoning_effort ?? null,
+        reasoning_exclude: true,
+        response_transport_policy: 'sse_v1',
+        finish_reason: 'stop',
+        resolved_model: `${parsed.model}-resolved`,
+        provider_name: 'Mock Provider',
+        provider_response_id: `rev-${reviseCalls}`,
+        usage: { prompt_tokens: 100, completion_tokens: 25, total_tokens: 125, cost: 0.01 },
+      } });
+    }
+    if (req.url === '/api/arena/code/compile') {
+      const parsed = JSON.parse(body);
+      return send({ ok: true, data: {
+        model_id: parsed.model_id,
+        compiled: true,
+        bytes_written: 640,
+        wasm_sha256: sha256(`wasm-${parsed.model_id}`),
+      } });
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ ok: false, error: { code: 'not_found', message: req.url } }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const apiBase = `http://127.0.0.1:${server.address().port}`;
+
+  const runRunner = () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      runnerPath,
+      '--ranking-file', rankingPath,
+      '--season-id', seasonId,
+      '--revise-only',
+      '--stats-state', statePath,
+    ], {
+      env: { ...process.env, ARENA_API_BASE: apiBase, ARENA_ADMIN_BEARER_TOKEN: 'test-token' },
+    });
+    let output = '';
+    child.stdout.on('data', (chunk) => { output += chunk; });
+    child.stderr.on('data', (chunk) => { output += chunk; });
+    child.on('error', reject);
+    child.on('exit', (code) => resolve({ code, output }));
+  });
+
+  const first = await runRunner();
+  assert.equal(first.code, 0, `first revise-only run failed:\n${first.output}`);
+  assert.equal(reviseCalls, entrants.length, 'exactly one provider call per fighter');
+  const resultsPath = path.join(seasonDirectory, 'revision-results.json');
+  const results = JSON.parse(await fs.readFile(resultsPath, 'utf8'));
+  assert.equal(results.entries.length, entrants.length);
+  assert.ok(results.entries.every((entry) => entry.status === 'improved'));
+  assert.ok(results.entries.every((entry) => /^[a-f0-9]{64}$/.test(entry.wasm_sha256_after)));
+  const firstEntrant = entrants[0];
+  const swapped = JSON.parse(await fs.readFile(
+    path.join(generations, `${firstEntrant.model_id}.json`), 'utf8'));
+  assert.equal(swapped.revision_of, sha256(source));
+  assert.equal(swapped.wasm_sha256, sha256(`wasm-${firstEntrant.model_id}`));
+  assert.equal(swapped.revision_epoch, 1);
+  assert.equal(
+    await fs.readFile(path.join(sources, `${firstEntrant.model_id}.rs`), 'utf8'),
+    revisedSource,
+  );
+
+  const second = await runRunner();
+  assert.equal(second.code, 0, `second revise-only run failed:\n${second.output}`);
+  assert.equal(reviseCalls, entrants.length, 'rerun burns no further provider calls');
+  const rerunResults = JSON.parse(await fs.readFile(resultsPath, 'utf8'));
+  assert.ok(rerunResults.entries.every((entry) => entry.status === 'kept_gen1'));
 });
 
 test('generation validation requires frozen provenance and terminal provider metadata', () => {
