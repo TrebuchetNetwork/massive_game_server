@@ -1717,10 +1717,9 @@ async function buildCumulativeSnapshot(state, weekDirectory) {
 async function publicationIsCurrent(publishPath, state) {
   try {
     const published = await readJson(publishPath);
-    const expectedBindings = new Map(
-      validateArtifactBindings(state.artifact_bindings, state.entrant_model_ids)
-        .map((binding) => [binding.model_id, binding]),
-    );
+    // Canonicalize bindings; per-model expectations come from
+    // expectedArtifactForEpoch so a recorded revision does not force churn.
+    validateArtifactBindings(state.artifact_bindings, state.entrant_model_ids);
     return published?.schema_version === 1
       && published?.active === true
       && published?.season_id === state.season_id
@@ -1731,7 +1730,7 @@ async function publicationIsCurrent(publishPath, state) {
       && published?.league?.epochs_completed === state.epochs.length
       && published?.league?.ledger_sha256 === sha256(JSON.stringify(state.epochs))
       && published.roster.every((entry) => {
-        const binding = expectedBindings.get(entry.model_id);
+        const binding = expectedArtifactForEpoch(state, entry.model_id, state.epochs.length);
         return binding?.wasm_bytes === entry.wasm_bytes
           && binding?.wasm_sha256 === entry.wasm_sha256;
       });
@@ -1747,6 +1746,65 @@ async function publishIfNeeded(config, state, weekDirectory) {
   process.stdout.write(
     `[arena-weekly] published ${state.week_id} cumulative standings after epoch ${state.epochs.length}\n`,
   );
+}
+
+/**
+ * One-shot mid-season feedback round. Once the league reaches the configured
+ * epoch the season runner revises every fighter from its own stats; the
+ * per-model outcomes are pinned into state.revision so post-revision epoch
+ * artifacts validate (expectedArtifactForEpoch) and the round never repeats.
+ * If the child fails, no revision is recorded and the epoch loop's normal
+ * backoff retries — provider calls are journal-protected against duplicates.
+ */
+export async function runRevisionIfDue({
+  config,
+  state,
+  statePath,
+  weekDirectory,
+  redact,
+  rootDirectory = ROOT_DIR,
+  runner = runRunner,
+  timestamp = nowIso,
+}) {
+  if (state.revision?.completed === true) return state;
+  const revisionEpochIndex = config.revisionEpochIndex ?? 336;
+  if (!Array.isArray(state.epochs) || state.epochs.length < revisionEpochIndex) return state;
+  const rankingPath = await rankingPathFor(weekDirectory, state);
+  process.stdout.write(
+    `[arena-weekly] running mid-season revision round for ${state.week_id} at epoch ${state.epochs.length}\n`,
+  );
+  await runner([
+    '--ranking-file', rankingPath,
+    '--season-id', state.season_id,
+    '--revise-only',
+    '--stats-state', statePath,
+  ], {
+    env: { ARENA_TEAM_SIZE: String(state.team_size) },
+    redact,
+  });
+  const results = await readJson(path.join(
+    rootDirectory,
+    'artifacts/arena/seasons',
+    state.season_id,
+    'revision-results.json',
+  ));
+  const nextState = {
+    ...state,
+    revision: {
+      completed: true,
+      epoch_index: state.epochs.length,
+      completed_at: results.completed_at || timestamp(),
+      entries: results.entries,
+    },
+    updated_at: timestamp(),
+  };
+  validateState(nextState, state.week_id, state.seed_pack_size);
+  await atomicWriteJson(statePath, nextState);
+  const improved = results.entries.filter((entry) => entry.status === 'improved').length;
+  process.stdout.write(
+    `[arena-weekly] revision round complete: ${improved}/${results.entries.length} improved\n`,
+  );
+  return nextState;
 }
 
 async function recordEpoch({ config, state, statePath, weekDirectory, redact }) {
@@ -1828,6 +1886,7 @@ async function main() {
     publishPath: resolveFromRoot(process.env.MGS_ARENA_RATINGS_PATH, DEFAULT_PUBLISH_PATH),
     seedPackSize: integerEnv('ARENA_WEEKLY_SEEDS_PER_EPOCH', 4, 1, 64),
     epochIntervalMs: integerEnv('ARENA_WEEKLY_EPOCH_INTERVAL_MS', 60_000, 10_000, 86_400_000),
+    revisionEpochIndex: integerEnv('ARENA_WEEKLY_REVISION_EPOCH', 336, 1, 1000),
     retryMinMs: integerEnv('ARENA_WEEKLY_RETRY_MIN_MS', 30_000, 1_000, 3_600_000),
     retryMaxMs: integerEnv('ARENA_WEEKLY_RETRY_MAX_MS', 900_000, 1_000, 86_400_000),
   };
@@ -1865,6 +1924,13 @@ async function main() {
           publishPath: config.publishPath,
         });
         await publishIfNeeded(config, state, loaded.weekDirectory);
+        state = await runRevisionIfDue({
+          config,
+          state,
+          statePath,
+          weekDirectory: loaded.weekDirectory,
+          redact,
+        });
         if (!stopRequested) {
           state = await recordEpoch({
             config,

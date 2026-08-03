@@ -10,6 +10,7 @@ import {
   isoWeekId,
   migrateLegacyUnboundState,
   rankingPathFor,
+  runRevisionIfDue,
   validateCommittedArtifactBinding,
   validateLegacyUnboundState,
   validateEpochSnapshot,
@@ -1132,4 +1133,94 @@ test('recorded mid-season revision permits exactly one artifact swap per model',
     () => cumulativeRoster([pre, post], unrecorded),
     /compiled artifact changed across epochs/,
   );
+});
+
+test('revision round runs exactly once at the configured epoch and epochs resume after', async (t) => {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'arena-weekly-revision-'));
+  t.after(() => fs.rm(temporaryDirectory, { recursive: true, force: true }));
+  const weekDirectory = path.join(temporaryDirectory, 'week');
+  await fs.mkdir(weekDirectory, { recursive: true });
+  const rankingPath = path.join(weekDirectory, 'ranking.json');
+  await fs.writeFile(rankingPath, JSON.stringify({ frozen: true }));
+  const rankingSha = digest(await fs.readFile(rankingPath));
+
+  const state = supervisorStateFixture(true);
+  state.ranking_sha256 = rankingSha;
+  state.candidate_ranking_sha256 = rankingSha;
+  state.epochs = [{
+    index: 0,
+    epoch_id: '2026-W30-E000001',
+    completed_at: '2026-07-29T00:00:00.000Z',
+    seeds: deterministicSeedPack(state.week_id, 0, state.seed_pack_size),
+    battle_requests: 45 * 4 * state.seed_pack_size * 2,
+    total_engagements: (90 * state.seed_pack_size) + (270 * state.seed_pack_size * state.team_size),
+    world_requests: state.seed_pack_size,
+    world_fighter_rounds: state.seed_pack_size * 10 * state.world_squad_size,
+    artifact_path: 'artifacts/arena/weekly-supervisor/2026-W30/epochs/epoch-000000.json',
+    artifact_sha256: 'd'.repeat(64),
+    standings: state.entrant_model_ids.map((modelId, index) => ({
+      model_id: modelId,
+      epoch_rank: index + 1,
+      overall_rating: 50,
+      world_rating: 50,
+      strategy_rating: 50,
+      points_awarded: state.points_by_rank[index],
+    })),
+  }];
+  const statePath = path.join(temporaryDirectory, 'state.json');
+
+  const seasonDirectory = path.join(temporaryDirectory, 'artifacts/arena/seasons', state.season_id);
+  await fs.mkdir(seasonDirectory, { recursive: true });
+  await fs.writeFile(path.join(seasonDirectory, 'revision-results.json'), JSON.stringify({
+    season_id: state.season_id,
+    revision_epoch: 1,
+    completed_at: '2026-07-29T12:00:00.000Z',
+    entries: state.entrant_model_ids.map((modelId, index) => (index === 0
+      ? { model_id: modelId, status: 'improved', wasm_bytes_after: 200, wasm_sha256_after: 'f'.repeat(64) }
+      : { model_id: modelId, status: 'kept_gen1' })),
+  }));
+
+  const calls = [];
+  const runner = async (args) => { calls.push(args); };
+  const redact = (value) => String(value ?? '');
+  const config = { revisionEpochIndex: 1 };
+
+  const revised = await runRevisionIfDue({
+    config,
+    state,
+    statePath,
+    weekDirectory,
+    redact,
+    rootDirectory: temporaryDirectory,
+    runner,
+    timestamp: () => '2026-07-29T12:00:01.000Z',
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(2), [
+    '--season-id', state.season_id,
+    '--revise-only',
+    '--stats-state', statePath,
+  ]);
+  assert.equal(revised.revision.completed, true);
+  assert.equal(revised.revision.epoch_index, 1);
+  assert.equal(revised.revision.entries.length, 10);
+  validateState(revised, '2026-W30', 4);
+  const persisted = JSON.parse(await fs.readFile(statePath, 'utf8'));
+  assert.equal(persisted.revision.completed, true);
+
+  const again = await runRevisionIfDue({
+    config, state: revised, statePath, weekDirectory, redact,
+    rootDirectory: temporaryDirectory, runner,
+  });
+  assert.equal(calls.length, 1, 'a recorded revision never reruns');
+  assert.equal(again, revised);
+
+  const early = await runRevisionIfDue({
+    config: { revisionEpochIndex: 336 },
+    state: { ...state, epochs: [] },
+    statePath, weekDirectory, redact,
+    rootDirectory: temporaryDirectory, runner,
+  });
+  assert.equal(calls.length, 1, 'not due below the configured epoch');
+  assert.equal(early.revision, undefined);
 });
