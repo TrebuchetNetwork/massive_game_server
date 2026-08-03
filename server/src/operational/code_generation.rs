@@ -3237,7 +3237,10 @@ pub fn build_code_generation_routes(
     let revise = warp::path!("api" / "arena" / "code" / "revise")
         .and(warp::post())
         .and(warp::header::optional::<String>("authorization"))
-        .and(warp::body::content_length_limit(json_body_limit))
+        // Full previous source + digest ride in this body; JSON escaping of a
+        // near-limit source can exceed the 64 KB JSON limit, so use the source
+        // payload limit like the compile route.
+        .and(warp::body::content_length_limit(source_body_limit))
         .and(warp::body::json())
         .and(with_service(service.clone()))
         .and_then(
@@ -3586,6 +3589,33 @@ mod tests {
         let body: serde_json::Value =
             serde_json::from_slice(reply.body()).expect("route must return a JSON body");
         assert_eq!(body["ok"], false);
+        assert_eq!(body["error"]["code"], "admin_auth_required");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn revise_route_accepts_source_plus_digest_payloads() {
+        // A near-limit previous source plus an 8 KB digest inflates well past
+        // the 64 KB JSON limit once quotes/newlines are escaped; the route must
+        // not 413-reject it before the admin check runs.
+        let service = CodeGenerationService::new_from_env();
+        let routes = build_code_generation_routes(service);
+        let previous_source = "\"\n".repeat(22 * 1024); // 45 KB raw, ~90 KB escaped
+        let stats_digest = "y".repeat(7 * 1024);
+        let payload = serde_json::json!({
+            "model": "openai/gpt-4o",
+            "previous_source": previous_source,
+            "stats_digest": stats_digest,
+        });
+        assert!(serde_json::to_string(&payload).unwrap().len() > 64 * 1024);
+        let reply = warp::test::request()
+            .method("POST")
+            .path("/api/arena/code/revise")
+            .json(&payload)
+            .reply(&routes)
+            .await;
+        assert_ne!(reply.status(), 413, "source+digest body must not hit the JSON limit");
+        let body: serde_json::Value =
+            serde_json::from_slice(reply.body()).expect("route must return a JSON body");
         assert_eq!(body["error"]["code"], "admin_auth_required");
     }
 
