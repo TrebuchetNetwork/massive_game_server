@@ -1015,7 +1015,7 @@ async function compileArchivedEntrant(
   return rehydrated;
 }
 
-const REVISION_JOURNAL_FILE = 'revision-attempts.json';
+const REVISION_JOURNAL_DIRECTORY = 'revision-attempts';
 
 /**
  * Validate a revision-route response against the frozen revision contract
@@ -1047,7 +1047,13 @@ export async function reviseEntrant(
 ) {
   const checkpointPath = path.join(directories.generations, `${entrant.model_id}.json`);
   const sourcePath = path.join(directories.sources, `${entrant.model_id}.rs`);
-  const journalPath = path.join(directories.revisions, REVISION_JOURNAL_FILE);
+  // Per-model attempt record: concurrent revisions never share a file, so the
+  // one-chance guard cannot be lost to a read-modify-write race.
+  const journalPath = path.join(
+    directories.revisions,
+    REVISION_JOURNAL_DIRECTORY,
+    `${entrant.model_id}.json`,
+  );
   const previous = await readJson(checkpointPath);
   const previousSource = await fs.readFile(sourcePath, 'utf8');
   validateGenerationCheckpoint(previous, entrant, previousSource, context.codeStatus);
@@ -1058,16 +1064,17 @@ export async function reviseEntrant(
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
-  journal = journal ?? { schema_version: 1, attempts: {} };
-  if (journal.attempts?.[entrant.model_id]) {
+  if (journal) {
     throw new Error(`revision already attempted for ${entrant.provider_model}`);
   }
   const startedAt = attemptAt || new Date().toISOString();
-  journal.attempts[entrant.model_id] = {
+  journal = {
+    schema_version: 1,
+    model_id: entrant.model_id,
     started_at: startedAt,
     stats_digest_sha256: sha256(statsDigest),
   };
-  await fs.mkdir(directories.revisions, { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.dirname(journalPath), { recursive: true, mode: 0o700 });
   await atomicWriteJson(journalPath, journal);
 
   const response = await callArenaApi(context, {
@@ -1124,8 +1131,8 @@ export async function reviseEntrant(
   validateGenerationCheckpoint(revised, entrant, verified.source, context.codeStatus);
   await atomicWriteBytes(sourcePath, Buffer.from(verified.source, 'utf8'));
   await atomicWriteJson(checkpointPath, revised);
-  journal.attempts[entrant.model_id].completed_at = completedAt;
-  journal.attempts[entrant.model_id].wasm_sha256 = wasmArtifact.wasmSha256;
+  journal.completed_at = completedAt;
+  journal.wasm_sha256 = wasmArtifact.wasmSha256;
   await atomicWriteJson(journalPath, journal);
   return revised;
 }

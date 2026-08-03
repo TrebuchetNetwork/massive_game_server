@@ -422,10 +422,10 @@ test('revision swaps the checkpoint only after a valid compile, consuming one pr
     revisedSource,
   );
   const journal = JSON.parse(await fs.readFile(
-    path.join(directories.revisions, 'revision-attempts.json'), 'utf8'));
-  assert.equal(typeof journal.attempts[entrant.model_id].started_at, 'string');
-  assert.equal(typeof journal.attempts[entrant.model_id].completed_at, 'string');
-  assert.equal(journal.attempts[entrant.model_id].wasm_sha256, 'e'.repeat(64));
+    path.join(directories.revisions, 'revision-attempts', `${entrant.model_id}.json`), 'utf8'));
+  assert.equal(typeof journal.started_at, 'string');
+  assert.equal(typeof journal.completed_at, 'string');
+  assert.equal(journal.wasm_sha256, 'e'.repeat(64));
 });
 
 test('failed revision keeps the gen-1 checkpoint and the journal blocks a second provider call', async (t) => {
@@ -625,7 +625,7 @@ test('revise-only run revises every fighter once and reruns stay provider-call-f
 
   const first = await runRunner();
   assert.equal(first.code, 0, `first revise-only run failed:\n${first.output}`);
-  assert.equal(reviseCalls, entrants.length, 'exactly one provider call per fighter');
+  assert.equal(reviseCalls, entrants.length, `expected one provider call per fighter:\n${first.output}`);
   const resultsPath = path.join(seasonDirectory, 'revision-results.json');
   const results = JSON.parse(await fs.readFile(resultsPath, 'utf8'));
   assert.equal(results.entries.length, entrants.length);
