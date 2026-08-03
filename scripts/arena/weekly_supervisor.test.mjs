@@ -1006,3 +1006,130 @@ test('epoch validation requires a complete pinned duel and world evaluation', ()
     /roster integrity failed/,
   );
 });
+
+test('recorded mid-season revision permits exactly one artifact swap per model', () => {
+  const seeds = [101, 202];
+  const state = supervisorStateFixture(true);
+  state.week_id = '2026-W31';
+  const revisedSha = 'f'.repeat(64);
+  state.revision = {
+    completed: true,
+    epoch_index: 1,
+    completed_at: '2026-07-27T12:00:00.000Z',
+    entries: [
+      {
+        model_id: 'model-0',
+        status: 'improved',
+        wasm_bytes_after: 200,
+        wasm_sha256_after: revisedSha,
+      },
+      ...state.entrant_model_ids.slice(1).map((modelId) => ({
+        model_id: modelId,
+        status: 'kept_gen1',
+      })),
+    ],
+  };
+  validateState(state, '2026-W31', 4);
+
+  const providerIds = state.reasoning_policies.map((entry) => entry.provider_model);
+  state.roster_sha256 = digest(providerIds.join('\n'));
+  const buildSnapshot = (modelZeroBytes, modelZeroSha) => {
+    const roster = state.entrant_model_ids.map((modelId, index) => ({
+      rank: index + 1,
+      model_id: modelId,
+      personal_rating: 50,
+      team_rating: 50,
+      collaboration_rating: 50,
+      overall_rating: 50,
+      world_rating: 50,
+      strategy_rating: 50,
+      compiled: true,
+      simulated: false,
+      wins: 1,
+      losses: 1,
+      draws: 0,
+      matches_played: 2,
+      evaluation_engagements: 2,
+      personal_score_for: 1,
+      personal_score_against: 1,
+      team_objective_for: 1,
+      team_objective_against: 1,
+      collaboration_score_for: 1,
+      collaboration_score_against: 1,
+      world_points: 1,
+      world_round_wins: 1,
+      world_eliminations: 1,
+      world_deaths: 1,
+      world_collaboration_score: 1,
+      source_bytes: 100,
+      source_limit_bytes: 50 * 1024,
+      source_sha256: 'b'.repeat(64),
+      wasm_bytes: index === 0 ? modelZeroBytes : 100,
+      wasm_sha256: index === 0 ? modelZeroSha : 'e'.repeat(64),
+      compile_attempts: 1,
+      integrity_status: 'verified_wasm',
+    }));
+    return {
+      schema_version: 1,
+      active: true,
+      season_id: state.season_id,
+      generated_at: '2026-07-27T12:00:00.000Z',
+      ranking: { models: providerIds.map((id) => ({ id })) },
+      methodology: {
+        seed_sets: seeds,
+        side_swapped: true,
+        prompt_sha256: state.arena_contract.prompt_sha256,
+        prompt_version: state.arena_contract.prompt_version,
+        max_completion_tokens: state.arena_contract.max_completion_tokens,
+        provider_sort_policy: state.arena_contract.provider_sort_policy,
+        temperature_policy: state.arena_contract.temperature_policy,
+        reasoning_policy_version: state.arena_contract.reasoning_policy_version,
+        provider_require_parameters: state.arena_contract.provider_require_parameters,
+        reasoning_exclude: state.arena_contract.reasoning_exclude,
+        reasoning_policies: state.reasoning_policies,
+        response_transport_policy: state.arena_contract.response_transport_policy,
+        source_limit_bytes: state.arena_contract.source_limit_bytes,
+        collaboration_abi_version: state.arena_contract.collaboration_abi_version,
+        simulator_rules_version: state.arena_contract.simulator_rules_version,
+        team_size: 10,
+        modes: state.modes,
+        personal_weight: 0.4,
+        team_weight: 0.35,
+        collaboration_weight: 0.25,
+        duel_strategy_weight: 0.75,
+        world_strategy_weight: 0.25,
+        world_squad_size: 3,
+        world_max_ticks: 600,
+      },
+      integrity: {
+        verified: true,
+        simulator_rules_version: state.arena_contract.simulator_rules_version,
+        battle_requests: 45 * 4 * seeds.length * 2,
+        total_engagements: (90 * seeds.length) + (270 * seeds.length * 10),
+        world_requests: seeds.length,
+        world_fighter_rounds: seeds.length * 10 * 3,
+      },
+      roster,
+    };
+  };
+
+  const pre = buildSnapshot(100, 'e'.repeat(64));
+  const post = buildSnapshot(200, revisedSha);
+  const tampered = buildSnapshot(300, 'd'.repeat(64));
+
+  assert.equal(validateEpochSnapshot(pre, state, seeds, 0), pre);
+  assert.equal(validateEpochSnapshot(post, state, seeds, 1), post);
+  assert.throws(() => validateEpochSnapshot(post, state, seeds, 0), /roster integrity failed/);
+  assert.throws(() => validateEpochSnapshot(tampered, state, seeds, 1), /roster integrity failed/);
+  // callers that do not thread the epoch index stay conservative (frozen artifacts only)
+  assert.throws(() => validateEpochSnapshot(post, state, seeds), /roster integrity failed/);
+  // cumulative standings tolerate the recorded swap...
+  assert.doesNotThrow(() => cumulativeRoster([pre, post], state));
+  // ...but an unrecorded swap is still fatal
+  const unrecorded = supervisorStateFixture(true);
+  unrecorded.week_id = '2026-W31';
+  assert.throws(
+    () => cumulativeRoster([pre, post], unrecorded),
+    /compiled artifact changed across epochs/,
+  );
+});

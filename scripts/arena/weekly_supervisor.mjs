@@ -524,6 +524,25 @@ export function validateState(state, weekId, seedPackSize) {
       throw new Error('weekly supervisor state has non-canonical artifact bindings');
     }
   }
+  if (state.revision != null) {
+    const entries = Array.isArray(state.revision.entries) ? state.revision.entries : [];
+    if (state.revision.completed !== true
+        || !Number.isSafeInteger(state.revision.epoch_index)
+        || state.revision.epoch_index < 1
+        || !isIsoTimestamp(state.revision.completed_at)
+        || entries.length !== 10
+        || new Set(entries.map((entry) => entry?.model_id)).size !== 10
+        || entries.some((entry) => (
+          !state.entrant_model_ids.includes(entry?.model_id)
+          || (entry.status !== 'improved' && entry.status !== 'kept_gen1')
+          || (entry.status === 'improved' && (
+            !Number.isSafeInteger(Number(entry.wasm_bytes_after))
+            || !/^[a-f0-9]{64}$/.test(String(entry.wasm_sha256_after || ''))
+          ))
+        ))) {
+      throw new Error('weekly supervisor state has an invalid revision record');
+    }
+  }
   if (state.seed_pack_size !== seedPackSize) {
     throw new Error(
       `seed pack size is frozen at ${state.seed_pack_size} for ${weekId}; configured ${seedPackSize}`,
@@ -1209,7 +1228,30 @@ async function ensureGeneration({
   return nextState;
 }
 
-export function validateEpochSnapshot(snapshot, state, seeds) {
+/**
+ * The artifact one model is expected to carry in a given epoch. Frozen
+ * bindings govern every epoch before the recorded mid-season revision; from
+ * the revision boundary onward, models marked `improved` are expected to
+ * carry their revised artifact. Anything else is tampering.
+ */
+function expectedArtifactForEpoch(state, modelId, epochIndex) {
+  const frozen = (state.artifact_bindings || []).find((binding) => binding.model_id === modelId);
+  const revision = state.revision;
+  if (revision?.completed === true
+      && Number.isSafeInteger(revision.epoch_index)
+      && Number.isSafeInteger(epochIndex)
+      && epochIndex >= revision.epoch_index) {
+    const entry = (revision.entries || []).find((candidate) => candidate.model_id === modelId);
+    if (entry?.status === 'improved'
+        && Number.isSafeInteger(Number(entry.wasm_bytes_after))
+        && /^[a-f0-9]{64}$/.test(String(entry.wasm_sha256_after || ''))) {
+      return { wasm_bytes: Number(entry.wasm_bytes_after), wasm_sha256: entry.wasm_sha256_after };
+    }
+  }
+  return frozen;
+}
+
+export function validateEpochSnapshot(snapshot, state, seeds, epochIndex = null) {
   if (snapshot?.schema_version !== 1 || snapshot.active !== true) {
     throw new Error('epoch artifact is not an active schema-v1 rating snapshot');
   }
@@ -1293,10 +1335,9 @@ export function validateEpochSnapshot(snapshot, state, seeds) {
   if (ranks.some((rank, index) => rank !== index + 1)) {
     throw new Error('epoch roster ranks must be contiguous from one through ten');
   }
-  const frozenArtifacts = new Map(
-    validateArtifactBindings(state.artifact_bindings, state.entrant_model_ids)
-      .map((binding) => [binding.model_id, binding]),
-  );
+  // Canonicalize the frozen bindings even though per-epoch expectations now
+  // come from expectedArtifactForEpoch: malformed bindings must still fail.
+  validateArtifactBindings(state.artifact_bindings, state.entrant_model_ids);
   for (const entry of snapshot.roster) {
     const ratings = [
       entry.personal_rating,
@@ -1325,7 +1366,7 @@ export function validateEpochSnapshot(snapshot, state, seeds) {
         + (entry.team_rating * weights.team)
         + (entry.collaboration_rating * weights.collaboration),
     );
-    const frozenArtifact = frozenArtifacts.get(entry.model_id);
+    const expectedArtifact = expectedArtifactForEpoch(state, entry.model_id, epochIndex);
     if (entry.compiled !== true || entry.simulated !== false
         || ratings.some((rating) => !Number.isFinite(rating) || rating < 0 || rating > 100)
         || Math.abs(entry.overall_rating - expectedOverall) > 0.01
@@ -1349,8 +1390,8 @@ export function validateEpochSnapshot(snapshot, state, seeds) {
         || entry.wasm_bytes < 1
         || entry.wasm_bytes > 2 * 1024 * 1024
         || !/^[a-f0-9]{64}$/.test(String(entry.wasm_sha256 || ''))
-        || frozenArtifact?.wasm_bytes !== entry.wasm_bytes
-        || frozenArtifact?.wasm_sha256 !== entry.wasm_sha256
+        || expectedArtifact?.wasm_bytes !== entry.wasm_bytes
+        || expectedArtifact?.wasm_sha256 !== entry.wasm_sha256
         || !Number.isSafeInteger(entry.compile_attempts)
         || entry.compile_attempts < 1
         || entry.compile_attempts > 100
@@ -1404,7 +1445,12 @@ async function archiveOrRunEpoch({ config, state, weekDirectory, redact }) {
   let archiveBytes;
   if (await fileExists(archivePath)) {
     archiveBytes = await fs.readFile(archivePath);
-    snapshot = validateEpochSnapshot(JSON.parse(archiveBytes.toString('utf8')), state, seeds);
+    snapshot = validateEpochSnapshot(
+      JSON.parse(archiveBytes.toString('utf8')),
+      state,
+      seeds,
+      epochIndex,
+    );
     process.stdout.write(`[arena-weekly] recovering completed epoch ${epochIndex + 1}\n`);
   } else {
     process.stdout.write(
@@ -1441,7 +1487,7 @@ async function archiveOrRunEpoch({ config, state, weekDirectory, redact }) {
     ))) {
       throw new Error('epoch server competition contract differs from the frozen generation');
     }
-    snapshot = validateEpochSnapshot(await readJson(runnerArtifact), state, seeds);
+    snapshot = validateEpochSnapshot(await readJson(runnerArtifact), state, seeds, epochIndex);
     await atomicWriteJson(archivePath, snapshot);
     archiveBytes = await fs.readFile(archivePath);
   }
@@ -1467,7 +1513,7 @@ async function loadCommittedSnapshots(state, weekDirectory) {
     if (sha256(raw) !== epoch.artifact_sha256) {
       throw new Error(`epoch ${index + 1} archive hash mismatch`);
     }
-    return validateEpochSnapshot(snapshot, state, epoch.seeds);
+    return validateEpochSnapshot(snapshot, state, epoch.seeds, index);
   }));
 }
 
@@ -1508,7 +1554,14 @@ export function cumulativeRoster(snapshots, state) {
         byModel.set(entry.model_id, aggregate);
       } else if (aggregate.template.wasm_bytes !== entry.wasm_bytes
           || aggregate.template.wasm_sha256 !== entry.wasm_sha256) {
-        throw new Error(`compiled artifact changed across epochs for ${entry.model_id}`);
+        // Exactly one artifact change per model is legal: the recorded
+        // mid-season revision. Anything else is still fatal.
+        const expected = expectedArtifactForEpoch(state, entry.model_id, epochIndex);
+        if (expected?.wasm_bytes !== entry.wasm_bytes
+            || expected?.wasm_sha256 !== entry.wasm_sha256) {
+          throw new Error(`compiled artifact changed across epochs for ${entry.model_id}`);
+        }
+        aggregate.template = entry;
       }
       aggregate.personal += Number(entry.personal_rating);
       aggregate.team += Number(entry.team_rating);
