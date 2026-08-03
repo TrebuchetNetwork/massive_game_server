@@ -64,10 +64,12 @@ export function parseArgs(argv) {
     generateOnly: false,
     evaluateOnly: false,
     rehydrateOnly: false,
+    reviseOnly: false,
     publish: true,
     resume: true,
     rankingFile: null,
     seasonId: null,
+    statsState: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -84,10 +86,12 @@ export function parseArgs(argv) {
       case '--generate-only': options.generateOnly = true; break;
       case '--evaluate-only': options.evaluateOnly = true; break;
       case '--rehydrate-only': options.rehydrateOnly = true; break;
+      case '--revise-only': options.reviseOnly = true; break;
       case '--no-publish': options.publish = false; break;
       case '--no-resume': options.resume = false; break;
       case '--ranking-file': options.rankingFile = nextValue(); break;
       case '--season-id': options.seasonId = nextValue(); break;
+      case '--stats-state': options.statsState = nextValue(); break;
       case '--help': options.help = true; break;
       default: throw new Error(`unknown option '${arg}'`);
     }
@@ -101,6 +105,14 @@ export function parseArgs(argv) {
   }
   if (options.rehydrateOnly && (!options.rankingFile || !options.seasonId)) {
     throw new Error('--rehydrate-only requires --ranking-file and --season-id');
+  }
+  if (options.reviseOnly
+      && (options.dryRun || options.snapshotOnly || options.generateOnly
+        || options.evaluateOnly || options.rehydrateOnly)) {
+    throw new Error('--revise-only cannot be combined with another runner mode');
+  }
+  if (options.reviseOnly && (!options.rankingFile || !options.seasonId || !options.statsState)) {
+    throw new Error('--revise-only requires --ranking-file, --season-id and --stats-state');
   }
   return options;
 }
@@ -116,8 +128,10 @@ Options:
   --generate-only       Register and compile all fighters, then stop
   --evaluate-only       Reuse completed generation checkpoints
   --rehydrate-only      Locally recompile audited archived sources, then stop
+  --revise-only         One-shot mid-season revision of every frozen fighter
   --ranking-file PATH   Reproduce a season from a frozen ranking snapshot
   --season-id ID        Override the derived dated season identifier
+  --stats-state PATH    Weekly supervisor state.json (required by --revise-only)
   --no-publish          Keep the completed artifact out of data/arena_ratings.json
   --no-resume           Ignore prior generation and battle checkpoints
   --help                Show this help
@@ -433,6 +447,14 @@ export function normalizeCodeStatus(data) {
   if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(simulatorRulesVersion)) {
     throw new Error('code status response is missing a valid simulator_rules_version');
   }
+  const revisionPromptVersion = String(data?.revision_prompt_version || '').trim();
+  const revisionPromptSha256 = String(data?.revision_prompt_sha256 || '').toLowerCase();
+  if (revisionPromptVersion || revisionPromptSha256) {
+    if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(revisionPromptVersion)
+        || !/^[a-f0-9]{64}$/.test(revisionPromptSha256)) {
+      throw new Error('code status response carries an invalid revision prompt contract');
+    }
+  }
   return {
     ...data,
     provider_configured: providerConfigured,
@@ -448,6 +470,16 @@ export function normalizeCodeStatus(data) {
     reasoning_exclude: reasoningExclude,
     response_transport_policy: responseTransportPolicy,
     simulator_rules_version: simulatorRulesVersion,
+    revision_prompt_version: revisionPromptVersion || null,
+    revision_prompt_sha256: revisionPromptSha256 || null,
+  };
+}
+
+export function revisionContractFromCodeStatus(codeStatus) {
+  if (!codeStatus?.revision_prompt_version || !codeStatus?.revision_prompt_sha256) return null;
+  return {
+    prompt_version: codeStatus.revision_prompt_version,
+    prompt_sha256: codeStatus.revision_prompt_sha256,
   };
 }
 
@@ -455,6 +487,8 @@ export function assertCodeStatusUnchanged(frozen, current) {
   for (const field of [
     'prompt_sha256',
     'prompt_version',
+    'revision_prompt_version',
+    'revision_prompt_sha256',
     'source_limit_bytes',
     'max_tokens',
     'provider_sort_policy',
@@ -589,18 +623,26 @@ export function validateGeneratedResponse(generated, codeStatus, entrant) {
   if (sourceBytes > codeStatus.source_limit_bytes) {
     throw new Error(`generated source exceeds ${codeStatus.source_limit_bytes} bytes`);
   }
+  // The response must prove one of the frozen contracts: the generation
+  // prompt (gen-1 fighters) or the revision prompt (mid-season revision).
+  const revisionContract = revisionContractFromCodeStatus(codeStatus);
   const responsePromptHash = String(generated.prompt_sha256 || '').toLowerCase();
-  if (responsePromptHash !== codeStatus.prompt_sha256) {
-    throw new Error('generation prompt hash differs from the frozen server prompt');
+  const matchesGenerationPrompt = generated.prompt_version === codeStatus.prompt_version
+    && responsePromptHash === codeStatus.prompt_sha256;
+  const matchesRevisionPrompt = revisionContract !== null
+    && generated.prompt_version === revisionContract.prompt_version
+    && responsePromptHash === revisionContract.prompt_sha256;
+  if (!matchesGenerationPrompt && !matchesRevisionPrompt) {
+    throw new Error('generation prompt version or hash differs from the frozen server prompts');
   }
-  if (typeof generated.prompt_text !== 'string' || sha256(generated.prompt_text) !== responsePromptHash) {
+  const expectedPromptSha256 = matchesGenerationPrompt
+    ? codeStatus.prompt_sha256
+    : revisionContract.prompt_sha256;
+  if (typeof generated.prompt_text !== 'string' || sha256(generated.prompt_text) !== expectedPromptSha256) {
     throw new Error('generation response does not prove the exact prompt text');
   }
   if (generated.model !== entrant.provider_model) {
     throw new Error('generation response model differs from the frozen entrant model');
-  }
-  if (generated.prompt_version !== codeStatus.prompt_version) {
-    throw new Error('generation prompt version differs from the frozen server prompt');
   }
   if (Number(generated.max_completion_tokens) !== codeStatus.max_tokens
       || generated.provider_sort_policy !== codeStatus.provider_sort_policy
@@ -667,6 +709,14 @@ export function validateGeneration(data, codeStatus, entrant) {
 function validateCheckpointAudit(checkpoint, entrant, source, codeStatus) {
   const sourceBytes = Buffer.byteLength(source, 'utf8');
   validateGenerationUsage(checkpoint?.usage, codeStatus.max_tokens);
+  // A checkpoint is pinned either to the frozen generation contract (gen-1
+  // fighters) or to the frozen revision contract (mid-season revision round).
+  const revisionContract = revisionContractFromCodeStatus(codeStatus);
+  const matchesPromptContract = (checkpoint?.prompt_sha256 === codeStatus.prompt_sha256
+      && checkpoint?.prompt_version === codeStatus.prompt_version)
+    || (revisionContract !== null
+      && checkpoint?.prompt_sha256 === revisionContract.prompt_sha256
+      && checkpoint?.prompt_version === revisionContract.prompt_version);
   if (
     checkpoint?.model_id !== entrant.model_id
     || checkpoint?.provider_rank !== entrant.provider_rank
@@ -674,8 +724,7 @@ function validateCheckpointAudit(checkpoint, entrant, source, codeStatus) {
     || checkpoint?.provider_model !== entrant.provider_model
     || checkpoint?.canonical_slug !== entrant.canonical_slug
     || checkpoint?.simulated !== false
-    || checkpoint?.prompt_sha256 !== codeStatus.prompt_sha256
-    || checkpoint?.prompt_version !== codeStatus.prompt_version
+    || !matchesPromptContract
     || checkpoint?.max_completion_tokens !== codeStatus.max_tokens
     || checkpoint?.provider_sort_policy !== codeStatus.provider_sort_policy
     || checkpoint?.temperature_policy !== codeStatus.temperature_policy
@@ -1024,9 +1073,16 @@ export async function rehydrateEntrant(
 }
 
 function competitionContractFromCodeStatus(codeStatus) {
+  const revisionContract = revisionContractFromCodeStatus(codeStatus);
   return {
     prompt_version: codeStatus.prompt_version,
     prompt_sha256: codeStatus.prompt_sha256,
+    // Only present when the server advertises a revision contract, so binding
+    // manifests written before the revision route existed stay comparable.
+    ...(revisionContract ? {
+      revision_prompt_version: revisionContract.prompt_version,
+      revision_prompt_sha256: revisionContract.prompt_sha256,
+    } : {}),
     max_completion_tokens: codeStatus.max_tokens,
     provider_sort_policy: codeStatus.provider_sort_policy,
     temperature_policy: codeStatus.temperature_policy,

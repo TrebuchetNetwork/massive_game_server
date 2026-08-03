@@ -213,6 +213,89 @@ test('rehydrate-only requires frozen local inputs and cannot combine with genera
   );
 });
 
+test('revise-only parses and cannot combine with other runner modes', () => {
+  const options = parseArgs([
+    '--revise-only',
+    '--ranking-file', 'ranking.json',
+    '--season-id', 'weekly-test',
+    '--stats-state', 'state.json',
+  ]);
+  assert.equal(options.reviseOnly, true);
+  assert.equal(options.statsState, 'state.json');
+  assert.throws(
+    () => parseArgs([
+      '--revise-only', '--evaluate-only',
+      '--ranking-file', 'r', '--season-id', 's', '--stats-state', 'x',
+    ]),
+    /cannot be combined/,
+  );
+  assert.throws(
+    () => parseArgs(['--revise-only', '--season-id', 's', '--stats-state', 'x']),
+    /requires --ranking-file, --season-id and --stats-state/,
+  );
+  assert.throws(
+    () => parseArgs(['--revise-only', '--ranking-file', 'r', '--season-id', 's']),
+    /requires --ranking-file, --season-id and --stats-state/,
+  );
+});
+
+test('revision checkpoint validates against the revision contract', () => {
+  const revisionPromptText = 'SYSTEM\nrevision system\n\nUSER\nrevision prefix';
+  const revisionPromptSha256 = sha256(revisionPromptText);
+  const revisionStatus = normalizeCodeStatus(rawCodeStatus({
+    revision_prompt_version: 'arena-rust-revision-v1.0.0',
+    revision_prompt_sha256: revisionPromptSha256,
+  }));
+  const revised = compiledCheckpoint({
+    prompt_version: 'arena-rust-revision-v1.0.0',
+    prompt_sha256: revisionPromptSha256,
+  });
+  // a real revised checkpoint archives the revision-flavored provider response
+  revised.provider_response.generated = {
+    ...revised.provider_response.generated,
+    prompt_version: 'arena-rust-revision-v1.0.0',
+    prompt_sha256: revisionPromptSha256,
+    prompt_text: revisionPromptText,
+  };
+  revised.generation_archive_sha256 = sha256(JSON.stringify({
+    provider_response: revised.provider_response,
+    source_sha256: revised.source_sha256,
+  }));
+  // revision pair accepted when the server advertises the revision contract
+  validateGenerationCheckpoint(revised, entrant, source, revisionStatus);
+  // generation pair still accepted alongside it
+  validateGenerationCheckpoint(compiledCheckpoint(), entrant, source, revisionStatus);
+  // unknown prompt contract rejected
+  assert.throws(
+    () => validateGenerationCheckpoint(
+      compiledCheckpoint({ prompt_sha256: 'b'.repeat(64) }),
+      entrant,
+      source,
+      revisionStatus,
+    ),
+    /stale or unverified/,
+  );
+  // revision pair rejected when the server never advertised a revision contract
+  assert.throws(
+    () => validateGenerationCheckpoint(
+      revised,
+      entrant,
+      source,
+      normalizeCodeStatus(rawCodeStatus()),
+    ),
+    /stale or unverified/,
+  );
+  // malformed revision contract in the status response is rejected
+  assert.throws(
+    () => normalizeCodeStatus(rawCodeStatus({ revision_prompt_sha256: 'nope' })),
+    /invalid revision prompt contract/,
+  );
+  assert.throws(
+    () => normalizeCodeStatus(rawCodeStatus({ revision_prompt_version: 'bad version!' })),
+    /invalid revision prompt contract/,
+  );
+});
+
 test('generation validation requires frozen provenance and terminal provider metadata', () => {
   const codeStatus = normalizeCodeStatus(rawCodeStatus());
   assert.equal(
@@ -230,7 +313,7 @@ test('generation validation requires frozen provenance and terminal provider met
       codeStatus,
       entrant,
     ),
-    /prompt version differs/,
+    /prompt version or hash differs/,
   );
   assert.throws(
     () => validateGeneration(
