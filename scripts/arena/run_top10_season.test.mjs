@@ -7,6 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   assertCodeStatusUnchanged,
+  buildRevisionStatsDigest,
   generateEntrant,
   loadRanking,
   normalizeCodeStatus,
@@ -293,6 +294,53 @@ test('revision checkpoint validates against the revision contract', () => {
   assert.throws(
     () => normalizeCodeStatus(rawCodeStatus({ revision_prompt_version: 'bad version!' })),
     /invalid revision prompt contract/,
+  );
+});
+
+test('stats digest is bounded, deterministic and model-scoped', () => {
+  const seasonSnapshot = {
+    season_id: 'weekly-test',
+    roster: [
+      {
+        model_id: 'a', model_name: 'A', personal_rating: 50, team_rating: 40,
+        collaboration_rating: 30, world_rating: 20, strategy_rating: 44, rank: 2,
+        wins: 3, losses: 5, draws: 1, matches_played: 9,
+      },
+      {
+        model_id: 'b', model_name: 'B', personal_rating: 60, team_rating: 55,
+        collaboration_rating: 50, world_rating: 45, strategy_rating: 61, rank: 1,
+        wins: 7, losses: 2, draws: 0, matches_played: 9,
+      },
+    ],
+  };
+  const supervisorState = {
+    epochs: Array.from({ length: 12 }, (_, index) => ({
+      standings: [
+        { model_id: 'a', epoch_rank: (index % 3) + 1 },
+        { model_id: 'b', epoch_rank: ((index + 1) % 3) + 1 },
+      ],
+    })),
+  };
+  const digest = buildRevisionStatsDigest({ seasonSnapshot, supervisorState, modelId: 'a' });
+  const parsed = JSON.parse(digest);
+  assert.equal(parsed.model_id, 'a');
+  assert.equal(parsed.season_id, 'weekly-test');
+  assert.equal(parsed.epochs_completed, 12);
+  assert.equal(parsed.current.strategy_rating, 44);
+  assert.equal(parsed.current.rank, 2);
+  assert.equal(parsed.last_epoch_ranks.length, 10, 'only the last 10 epochs');
+  assert.deepEqual(parsed.last_epoch_ranks, [3, 1, 2, 3, 1, 2, 3, 1, 2, 3]);
+  assert.equal(parsed.top_opponents[0].model_id, 'b');
+  assert.equal(parsed.top_opponents[0].strategy_rating, 61);
+  assert.ok(Buffer.byteLength(digest, 'utf8') <= 4096);
+  assert.equal(
+    digest,
+    buildRevisionStatsDigest({ seasonSnapshot, supervisorState, modelId: 'a' }),
+    'deterministic',
+  );
+  assert.throws(
+    () => buildRevisionStatsDigest({ seasonSnapshot, supervisorState, modelId: 'missing' }),
+    /no roster entry/,
   );
 });
 

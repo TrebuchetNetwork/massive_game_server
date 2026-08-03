@@ -1096,6 +1096,61 @@ function competitionContractFromCodeStatus(codeStatus) {
   };
 }
 
+/**
+ * Bounded, deterministic per-model performance digest fed to the mid-season
+ * revision prompt. Inputs are the season's own artifacts: the latest epoch's
+ * season snapshot (ratings, rank, match record) and the supervisor's epoch
+ * ledger (rank trajectory, epoch wins). No new telemetry is collected.
+ */
+export function buildRevisionStatsDigest({ seasonSnapshot, supervisorState, modelId }) {
+  const roster = Array.isArray(seasonSnapshot?.roster) ? seasonSnapshot.roster : [];
+  const entry = roster.find((candidate) => candidate.model_id === modelId);
+  if (!entry) throw new Error(`no roster entry for ${modelId} in season snapshot`);
+  const epochs = Array.isArray(supervisorState?.epochs) ? supervisorState.epochs : [];
+  const lastEpochRanks = epochs.slice(-10).map((epoch) => {
+    const standing = (epoch.standings || []).find((candidate) => candidate.model_id === modelId);
+    return standing?.epoch_rank ?? null;
+  });
+  const epochWins = epochs.reduce((count, epoch) => count
+    + ((epoch.standings || []).some(
+      (standing) => standing.model_id === modelId && standing.epoch_rank === 1,
+    ) ? 1 : 0), 0);
+  const topOpponents = roster
+    .filter((candidate) => candidate.model_id !== modelId)
+    .sort((a, b) => Number(b.strategy_rating) - Number(a.strategy_rating))
+    .slice(0, 3)
+    .map((candidate) => ({
+      model_id: candidate.model_id,
+      strategy_rating: candidate.strategy_rating,
+    }));
+  const digest = {
+    schema_version: 1,
+    model_id: modelId,
+    season_id: seasonSnapshot.season_id ?? null,
+    epochs_completed: epochs.length,
+    epoch_wins: epochWins,
+    current: {
+      rank: entry.rank,
+      personal_rating: entry.personal_rating,
+      team_rating: entry.team_rating,
+      collaboration_rating: entry.collaboration_rating,
+      world_rating: entry.world_rating,
+      strategy_rating: entry.strategy_rating,
+      wins: entry.wins ?? 0,
+      losses: entry.losses ?? 0,
+      draws: entry.draws ?? 0,
+      matches_played: entry.matches_played ?? 0,
+    },
+    last_epoch_ranks: lastEpochRanks,
+    top_opponents: topOpponents,
+  };
+  const serialized = JSON.stringify(digest);
+  if (Buffer.byteLength(serialized, 'utf8') > 4096) {
+    throw new Error(`stats digest exceeds 4096 bytes for ${modelId}`);
+  }
+  return serialized;
+}
+
 function isSafeBoundGenerationDirectory(value) {
   return typeof value === 'string'
     && /^bound-generations\/[a-f0-9]{24}$/.test(value)
