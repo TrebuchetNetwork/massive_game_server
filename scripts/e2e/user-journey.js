@@ -26,12 +26,22 @@ const { chromium, devices } = require('@playwright/test');
 
   // 2. Go to the client
   await page.goto(playLink || 'https://space.selfware.design/client.html', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForSelector('#connectButton', { state: 'visible', timeout: 15000 });
+  await page.waitForTimeout(2500);
   const wsDefault = await page.evaluate(() => document.getElementById('wsUrl')?.value);
   check('ws url defaults to public wss', /wss:\/\//.test(wsDefault || ''), wsDefault);
 
-  // 3. Connect like a user (tap Connect) — default name via automation context
-  await page.evaluate(() => document.getElementById('connectButton').click());
+  // 3. Connect like a user: phones get a big "Enter arena" button, desktops
+  // the Connect button (possibly behind the callsign modal's Quick Start).
+  const mobileJoin = page.locator('#mobileArenaJoinButton');
+  if (await mobileJoin.isVisible().catch(() => false)) {
+    check('mobile join button visible (phone UI)', true);
+    await mobileJoin.tap();
+  } else {
+    const skip = page.locator('#usernameSkipButton');
+    if (await skip.isVisible().catch(() => false)) await skip.click();
+    await page.waitForSelector('#connectButton', { state: 'visible', timeout: 15000 });
+    await page.evaluate(() => document.getElementById('connectButton').click());
+  }
   let joined = false;
   try {
     await page.waitForFunction(() => window.__e2e?.dataChannelOpen === true, null, { timeout: 45000 });
@@ -66,17 +76,35 @@ const { chromium, devices } = require('@playwright/test');
       const moved = Math.hypot(s1.me.x - before.x, s1.me.y - before.y);
       check('player moves', moved > 20, `moved ${moved.toFixed(0)}px`);
 
-      // 5. Shoot like a user
-      await page.evaluate(() => window.__e2e.forcePrimaryFire(true));
-      await page.waitForTimeout(5000);
-      await page.evaluate(() => window.__e2e.forcePrimaryFire(false));
+      // 5. Shoot like a user: hold the Fire touch button on phones (a tap is
+      // not a hold — the button fires only while touched), mouse on desktop.
+      // (window.__e2e.forcePrimaryFire is localhost-gated and absent publicly.)
+      const fireButton = page.locator('#mobileFire');
+      if (await fireButton.isVisible().catch(() => false)) {
+        const box = await fireButton.boundingBox();
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }],
+        });
+        await page.waitForTimeout(4000);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      } else {
+        await page.mouse.move(640, 300);
+        await page.mouse.down();
+        await page.waitForTimeout(5000);
+        await page.mouse.up();
+      }
       const s2 = await snap();
       check('player shoots (ammo decreases)', s2.me.ammo < s1.me.ammo, `ammo ${s1.me.ammo} -> ${s2.me.ammo}`);
       check('render loop alive', s2.frames > s0.frames, `${s0.frames} -> ${s2.frames}`);
 
-      // 6. Match timer progressing?
+      // 6. Match timer progressing? Counts down within a match; jumps back up
+      // when we joined at the tail of one match and a fresh one began.
       const t0 = s0.match?.timeRemaining, t1 = s2.match?.timeRemaining;
-      check('match timer counts down', typeof t0 === 'number' && typeof t1 === 'number' && t1 < t0, `${t0?.toFixed(1)} -> ${t1?.toFixed(1)}`);
+      const timerProgressed = typeof t0 === 'number' && typeof t1 === 'number'
+        && (t1 < t0 || (t0 <= 0 && t1 > t0));
+      check('match timer counts down', timerProgressed, `${t0?.toFixed(1)} -> ${t1?.toFixed(1)}`);
 
       await page.screenshot({ path: '/tmp/user-journey-game.png' });
     }
