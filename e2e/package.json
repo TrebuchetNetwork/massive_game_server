@@ -1,0 +1,16 @@
+{
+  "name": "massive-game-server-e2e",
+  "version": "1.0.0",
+  "description": "Live in-game smoke test for the arena (space.selfware.design)",
+  "scripts": {
+    "test": "node smoke.cjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright-core": "^1.62.0"
+  },
+  "private": true
+}
