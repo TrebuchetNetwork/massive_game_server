@@ -5,6 +5,31 @@ use std::path::Path;
 use warp::http::{header, HeaderName, HeaderValue, Uri};
 use warp::{Filter, Reply};
 
+/// Dev-only files that live in `static_client/` for the build/test workflow but
+/// must never be served publicly: package manifests, tsconfig, test suites,
+/// the archived/website trees, dependency folders, and dotfiles.
+fn is_dev_only_static_path(path: &Path) -> bool {
+    const DENIED_FILES: &[&str] = &["package.json", "package-lock.json", "tsconfig.client.json"];
+    const DENIED_DIRS: &[&str] = &["tests", "archive", "website", "node_modules"];
+    let mut parts = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy());
+    // The fs::dir root itself is not a served artifact; skip it.
+    let _ = parts.next();
+    let parts: Vec<_> = parts.collect();
+    if parts.is_empty() {
+        return false;
+    }
+    if parts[..parts.len() - 1]
+        .iter()
+        .any(|part| DENIED_DIRS.contains(&part.as_ref()) || part.starts_with('.'))
+    {
+        return true;
+    }
+    let file_name = &parts[parts.len() - 1];
+    DENIED_FILES.contains(&file_name.as_ref()) || file_name.starts_with('.')
+}
+
 pub fn build_root_route(
 ) -> impl Filter<Extract = (warp::reply::Response,), Error = warp::Rejection> + Clone {
     warp::path::end()
@@ -16,7 +41,15 @@ pub fn build_root_route(
 pub fn build_static_files_route(
     static_asset_allow_origin: Option<String>,
 ) -> impl Filter<Extract = (warp::reply::Response,), Error = warp::Rejection> + Clone {
-    warp::fs::dir("static_client").map(move |reply: warp::filters::fs::File| {
+    warp::fs::dir("static_client")
+        .and_then(|reply: warp::filters::fs::File| async move {
+            if is_dev_only_static_path(reply.path()) {
+                Err(warp::reject::not_found())
+            } else {
+                Ok(reply)
+            }
+        })
+        .map(move |reply: warp::filters::fs::File| {
         let requested_path = reply.path().to_path_buf();
         let cache_control = static_cache_control_for_path(&requested_path);
         let mut response = reply.into_response();
@@ -134,4 +167,26 @@ fn inline_script_hashes(html: &str) -> Vec<String> {
     }
 
     hashes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_only_static_paths_are_denied() {
+        assert!(is_dev_only_static_path(Path::new("static_client/package.json")));
+        assert!(is_dev_only_static_path(Path::new("static_client/package-lock.json")));
+        assert!(is_dev_only_static_path(Path::new("static_client/tsconfig.client.json")));
+        assert!(is_dev_only_static_path(Path::new("static_client/tests/math_utils.test.js")));
+        assert!(is_dev_only_static_path(Path::new("static_client/archive/old.html")));
+        assert!(is_dev_only_static_path(Path::new("static_client/website/index.html")));
+        assert!(is_dev_only_static_path(Path::new("static_client/node_modules/x/index.js")));
+        assert!(is_dev_only_static_path(Path::new("static_client/.git/config")));
+        assert!(!is_dev_only_static_path(Path::new("static_client/client.html")));
+        assert!(!is_dev_only_static_path(Path::new("static_client/index.html")));
+        assert!(!is_dev_only_static_path(Path::new("static_client/client_logic/index.js")));
+        assert!(!is_dev_only_static_path(Path::new("static_client/css/ui-main.css")));
+        assert!(!is_dev_only_static_path(Path::new("static_client/favicon.ico")));
+    }
 }
