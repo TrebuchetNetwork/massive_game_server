@@ -10,7 +10,7 @@ use warp::{Filter, Reply};
 /// the archived/website trees, dependency folders, and dotfiles.
 fn is_dev_only_static_path(path: &Path) -> bool {
     const DENIED_FILES: &[&str] = &["package.json", "package-lock.json", "tsconfig.client.json"];
-    const DENIED_DIRS: &[&str] = &["tests", "archive", "website", "node_modules"];
+    const DENIED_DIRS: &[&str] = &["tests", "archive", "node_modules"];
     let mut parts = path
         .components()
         .map(|component| component.as_os_str().to_string_lossy());
@@ -180,7 +180,7 @@ mod tests {
         assert!(is_dev_only_static_path(Path::new("static_client/tsconfig.client.json")));
         assert!(is_dev_only_static_path(Path::new("static_client/tests/math_utils.test.js")));
         assert!(is_dev_only_static_path(Path::new("static_client/archive/old.html")));
-        assert!(is_dev_only_static_path(Path::new("static_client/website/index.html")));
+        assert!(!is_dev_only_static_path(Path::new("static_client/website/css/styles.css")), "landing assets must stay served");
         assert!(is_dev_only_static_path(Path::new("static_client/node_modules/x/index.js")));
         assert!(is_dev_only_static_path(Path::new("static_client/.git/config")));
         assert!(!is_dev_only_static_path(Path::new("static_client/client.html")));
