@@ -620,6 +620,35 @@ async fn wait_for_live_replay_position(
     anyhow::bail!("timed out waiting for live replay sample for {username}")
 }
 
+/// Poll until the newest live-replay sample for `username` shows x above
+/// `threshold`. Replay sampling cadence is not synchronized with input, so a
+/// fixed sleep after sending input is inherently flaky — wait for the
+/// condition instead (bounded, so a genuine regression still fails fast).
+async fn wait_for_live_replay_x_above(
+    base_url: &str,
+    admin_token: &str,
+    username: &str,
+    threshold: f32,
+    timeout: Duration,
+) -> anyhow::Result<f32> {
+    let started = std::time::Instant::now();
+    let mut last_x = f32::NAN;
+    loop {
+        if let Ok((x, _)) = wait_for_live_replay_position(base_url, admin_token, username).await {
+            last_x = x;
+            if x > threshold {
+                return Ok(x);
+            }
+        }
+        if started.elapsed() >= timeout {
+            anyhow::bail!(
+                "timed out waiting for {username} x > {threshold} (last sample {last_x})"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn duplicate_sequence_over_webrtc_does_not_reverse_movement() -> anyhow::Result<()> {
     let admin_token = "integration-anti-cheat-admin-token";
@@ -644,8 +673,14 @@ async fn duplicate_sequence_over_webrtc_does_not_reverse_movement() -> anyhow::R
     session
         .send_data(build_transport_input(1, 0.0, true))
         .await?;
-    tokio::time::sleep(Duration::from_millis(350)).await;
-    let (x1, _) = wait_for_live_replay_position(&process.base_url, admin_token, username).await?;
+    let x1 = wait_for_live_replay_x_above(
+        &process.base_url,
+        admin_token,
+        username,
+        x0 + 5.0,
+        Duration::from_secs(8),
+    )
+    .await?;
     assert!(
         x1 > x0 + 5.0,
         "valid forward input should move the player forward, before={x0}, after={x1}"
@@ -685,11 +720,18 @@ async fn sequence_gap_over_webrtc_does_not_reverse_movement() -> anyhow::Result<
         })
         .await?;
 
+    let (x0, _) = wait_for_live_replay_position(&process.base_url, admin_token, username).await?;
     session
         .send_data(build_transport_input(1, 0.0, true))
         .await?;
-    tokio::time::sleep(Duration::from_millis(350)).await;
-    let (x1, _) = wait_for_live_replay_position(&process.base_url, admin_token, username).await?;
+    let x1 = wait_for_live_replay_x_above(
+        &process.base_url,
+        admin_token,
+        username,
+        x0 + 5.0,
+        Duration::from_secs(8),
+    )
+    .await?;
 
     session
         .send_data(build_transport_input(
