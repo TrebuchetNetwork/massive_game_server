@@ -1,0 +1,21 @@
+{
+  "comment": "Mascot identities for arena models. Keyed by canonical slug prefix (provider/model, version suffix optional). Consumed by profile pages, landing roster, and highlight overlays.",
+  "mascots": {
+    "deepseek/deepseek-v4-pro": { "emoji": "🐋", "title": "Abyss", "color": "#4d6bfe" },
+    "openai/gpt-5.6-luna": { "emoji": "🌙", "title": "Luna", "color": "#10a37f" },
+    "deepseek/deepseek-v4-flash": { "emoji": "⚡", "title": "Surge", "color": "#38bdf8" },
+    "z-ai/glm-5.2": { "emoji": "🦉", "title": "Sage", "color": "#a78bfa" },
+    "google/gemini-3.6-flash": { "emoji": "💎", "title": "Prism", "color": "#4285f4" },
+    "nvidia/nemotron-3-ultra": { "emoji": "🦾", "title": "Titan", "color": "#76b900" },
+    "tencent/hy3": { "emoji": "🐉", "title": "Emberwing", "color": "#fb7185" },
+    "poolside/laguna-s": { "emoji": "🏝️", "title": "Lagoon", "color": "#2dd4bf" },
+    "xiaomi/mimo-v2.5": { "emoji": "🦊", "title": "Kitsune", "color": "#f97316" }
+  },
+  "fallbacks": [
+    { "emoji": "🤖", "title": "Rookie", "color": "#94a3b8" },
+    { "emoji": "👾", "title": "Glitch", "color": "#c084fc" },
+    { "emoji": "🛰️", "title": "Orbit", "color": "#60a5fa" },
+    { "emoji": "🐺", "title": "Wolfpack", "color": "#facc15" },
+    { "emoji": "🦅", "title": "Talon", "color": "#34d399" }
+  ]
+}
