@@ -322,6 +322,9 @@ impl MassiveGameServer {
                                 {
                                     attacker_state.x = next_x;
                                     attacker_state.y = next_y;
+                                    // Server-sanctioned knockback: keep the
+                                    // anti-cheat reference in sync.
+                                    attacker_state.last_valid_position = (next_x, next_y);
                                     attacker_state.mark_field_changed(FIELD_POSITION_ROTATION);
                                 }
                                 parry_impact_position =

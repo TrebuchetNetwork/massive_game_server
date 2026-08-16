@@ -537,6 +537,9 @@ impl ImprovedPlayerManager {
                     let mut next = (**current).clone();
                     next.x = new_x;
                     next.y = new_y;
+                    // Authoritative reposition: keep the anti-cheat reference
+                    // in sync so the next physics tick does not flag it.
+                    next.last_valid_position = (new_x, new_y);
                     Arc::new(next)
                 });
             }

@@ -152,6 +152,40 @@ async fn fire_rate_abuse_does_not_create_projectile_before_cooldown() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn melee_lunge_is_not_counted_as_speed_hack() {
+    let server = setup_test_server();
+    let pid = add_player(&server, "melee-lunger", 1, 0.0, 0.0);
+
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&pid) {
+        ps.weapon = ServerWeaponType::Melee;
+        let mut input = make_input(1);
+        input.melee_attack = true;
+        input.rotation = 0.0;
+        ps.input_queue.push_back(input);
+    }
+
+    server.process_network_input().await;
+    // Melee windup is 90ms; resolve the lunge, then run several validation ticks.
+    for _ in 0..12 {
+        server.run_physics_update(0.016).await;
+    }
+
+    let ps = server.player_manager.get_player_state(&pid).unwrap();
+    assert!(
+        ps.x > 5.0,
+        "melee lunge should move the player forward, got x={} violation_count={} melee_pending={} windup={}",
+        ps.x,
+        ps.violation_count,
+        ps.melee_pending_attack,
+        ps.melee_windup_remaining
+    );
+    assert_eq!(
+        ps.violation_count, 0,
+        "server-sanctioned melee lunge must not count as a speed-hack violation"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn teleported_player_is_clamped_after_violation_threshold() {
     let server = setup_test_server();
     let pid = add_player(&server, "teleporter", 1, 0.0, 0.0);

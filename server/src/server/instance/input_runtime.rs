@@ -1107,6 +1107,9 @@ impl MassiveGameServer {
             {
                 player_state.x = target_x;
                 player_state.y = target_y;
+                // Server-sanctioned teleport: move the anti-cheat reference with
+                // it or the next tick reads the lunge as impossible movement.
+                player_state.last_valid_position = (target_x, target_y);
                 player_state.mark_field_changed(FIELD_POSITION_ROTATION);
             }
         }
