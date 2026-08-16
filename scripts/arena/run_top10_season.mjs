@@ -167,24 +167,36 @@ function seedListFromEnv() {
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
+async function writeFileDurable(temporaryPath, contents) {
+  const handle = await fs.open(temporaryPath, 'w', 0o600);
+  try {
+    await handle.writeFile(contents);
+    // Flush data pages before the rename so a crash cannot resurrect the
+    // target name pointing at an unwritten (zero-byte) inode.
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function atomicWriteJson(targetPath, value) {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   const temporaryPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
-  await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  await writeFileDurable(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
   await fs.rename(temporaryPath, targetPath);
 }
 
 async function atomicWriteText(targetPath, value) {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   const temporaryPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
-  await fs.writeFile(temporaryPath, value, { mode: 0o600 });
+  await writeFileDurable(temporaryPath, value);
   await fs.rename(temporaryPath, targetPath);
 }
 
 async function atomicWriteBytes(targetPath, value) {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   const temporaryPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
-  await fs.writeFile(temporaryPath, value, { mode: 0o600 });
+  await writeFileDurable(temporaryPath, value);
   await fs.rename(temporaryPath, targetPath);
 }
 

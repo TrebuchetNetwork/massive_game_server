@@ -95,11 +95,23 @@ function resolveFromRoot(value, fallback) {
   return configured ? path.resolve(ROOT_DIR, configured) : fallback;
 }
 
+async function writeFileDurable(temporaryPath, contents, options) {
+  const handle = await fs.open(temporaryPath, 'w', options?.mode ?? 0o600);
+  try {
+    await handle.writeFile(contents);
+    // Flush data pages before the rename so a crash cannot resurrect the
+    // target name pointing at an unwritten (zero-byte) inode.
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function atomicWriteJson(targetPath, value) {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   const temporaryPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
   try {
-    await fs.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    await writeFileDurable(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
     await fs.rename(temporaryPath, targetPath);
   } catch (error) {
     await fs.rm(temporaryPath, { force: true }).catch(() => {});
@@ -111,7 +123,7 @@ async function atomicWriteBytes(targetPath, value) {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   const temporaryPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
   try {
-    await fs.writeFile(temporaryPath, value, { mode: 0o600 });
+    await writeFileDurable(temporaryPath, value, { mode: 0o600 });
     await fs.rename(temporaryPath, targetPath);
   } catch (error) {
     await fs.rm(temporaryPath, { force: true }).catch(() => {});
