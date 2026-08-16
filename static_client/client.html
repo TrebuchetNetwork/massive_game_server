@@ -547,6 +547,7 @@
             createPerformanceBudget,
             createRenderAssetManager,
             createUpdateSprites,
+            createMapThemes,
             flushPendingClientLogs,
         } from './client_logic/index.js?v=20260725-mobile-arena2';
         const GP = GameProtocol;
@@ -669,10 +670,16 @@
             updateFogOfWar,
             createHealthVignette,
             updateHealthVignette,
+            setHealthVignetteTint,
             getMaxAmmoForWeaponClient,
             applyScreenShake,
+            updateScreenShake,
             createScreenFlash,
         } = gameRenderer;
+
+        // Map themes ("better worlds"): resolves the server-provided map
+        // name to a backdrop/starfield/wall theme; applied on match start.
+        const mapThemes = wrapModuleInit('MapThemes', () => createMapThemes());
 
         // DOM Elements
         const wsUrlInput = document.getElementById('wsUrl');
@@ -1318,6 +1325,8 @@
                 setConnectionError('E2E terminal connection error');
                 return true;
             };
+            // Test/debug hook: force a map theme by map name (e.g. "Fortress").
+            window.__e2e.applyMapTheme = (name) => applyMapThemeForMap(name);
         } else {
             delete window.__e2e.resetPerfStats;
             delete window.__e2e.setPerfProfiling;
@@ -1333,6 +1342,7 @@
             delete window.__e2e.forceResetConnection;
             delete window.__e2e.forceReconnectNow;
             delete window.__e2e.forceMobileJoinError;
+            delete window.__e2e.applyMapTheme;
         }
 
         const hasCoarsePointer = window.matchMedia?.('(pointer: coarse)').matches === true;
@@ -1777,6 +1787,10 @@
         let healthVignette;
         let fogOfWarContainer;
         let fogOfWarMask;
+        // Active map theme state (see MapThemes.js); the backdrop sprite is
+        // a stage-level gradient baked once per theme switch.
+        let activeMapTheme = null;
+        let mapBackdropSprite = null;
         const FOG_OF_WAR_RADIUS = 600; // Visibility radius
         const FOG_OF_WAR_FADE_DISTANCE = 150; // Fade distance at edge
 
@@ -3094,6 +3108,10 @@
                 }
             },
             setLocalPlayerSprite: (v) => { localPlayerSprite = v; },
+            emitEngineTrail: (x, y, color, intensity) => {
+                if (!effectsManager || typeof effectsManager.emitEngineTrail !== 'function') return;
+                effectsManager.emitEngineTrail(x, y, color, intensity);
+            },
         }));
         const {
             createPlayerSprite, hidePlayerSprite, destroyPlayerSprite,
@@ -3153,6 +3171,7 @@
             dynamicsTuning, cameraCombatImpulse, mouseWorldPos,
             players, myPlayerId, setObjectiveUrgency, hotZoneState, tacticalPings,
             tacticalPingLabelContainer,
+            mapTheme: activeMapTheme,
             setWorldBounds: (bounds) => {
                 if (!bounds || !Number.isFinite(bounds.minX) || !Number.isFinite(bounds.minY) || !Number.isFinite(bounds.maxX) || !Number.isFinite(bounds.maxY)) {
                     worldBoundsState.valid = false;
@@ -3183,10 +3202,73 @@
         const {
             drawZones, updateZonePulse, updateZoneAmbientParticles, updateTacticalPingLabels,
             drawWalls, drawEnhancedWallCracks, drawSimplifiedWallCracks,
+            invalidateWallPanelTextures,
             updateFlags, updateCamera,
             hasPendingWallRedraw,
         } = worldRenderer;
         refreshRuntimePerfIntervals();
+
+        // ── Map theme application ("better worlds") ───────────────────
+        // Runs on scene init and whenever the server reports a map name.
+        // All theme art is baked once here; per-frame cost is unchanged
+        // (parallax layers are still moved by transform only).
+        function applyMapThemeForMap(mapName) {
+            if (!mapThemes) return;
+            // Bail before marking the theme active when the scene does not
+            // exist yet — initPixi applies the theme once the app is up.
+            if (!app || !app.renderer || !app.stage) return;
+            const theme = mapThemes.resolveMapTheme(mapName);
+            if (activeMapTheme && theme.name === activeMapTheme.name) return;
+            const previousWallTint = activeMapTheme ? activeMapTheme.wallTint : undefined;
+            activeMapTheme = theme;
+
+            // Base clear color matches the gradient so any uncovered pixel
+            // still reads as the themed backdrop.
+            app.renderer.backgroundColor = theme.bgColor;
+
+            // Screen-space gradient backdrop, baked once per switch.
+            if (mapBackdropSprite) {
+                app.stage.removeChild(mapBackdropSprite);
+                mapBackdropSprite.destroy({ children: true, texture: true, baseTexture: true });
+                mapBackdropSprite = null;
+            }
+            const backdropCanvas = mapThemes.buildBackdropCanvas(theme);
+            if (backdropCanvas) {
+                mapBackdropSprite = new PIXI.Sprite(PIXI.Texture.from(backdropCanvas));
+                mapBackdropSprite.width = app.screen.width;
+                mapBackdropSprite.height = app.screen.height;
+                app.stage.addChildAt(mapBackdropSprite, 0);
+            }
+
+            // Rebuild the parallax starfield with themed density, star tints
+            // and nebula layer. Low/mid mobile profiles keep it hidden.
+            if (starfield) {
+                starfield.parent?.removeChild(starfield);
+                starfield.destroy({ children: true, texture: true, baseTexture: true });
+                starfield = null;
+                window.starfield = null;
+            }
+            if (!LOW_OVERHEAD_MODE && worldContainer) {
+                starfield = createStarfield(app, theme);
+                worldContainer.addChildAt(starfield, 0);
+                if (mobileProfile && !mobileProfile.shadows) {
+                    starfield.visible = false;
+                }
+                window.starfield = starfield;
+            }
+
+            // Health vignette tint (redrawn once, only visible at low HP).
+            if (healthVignette && typeof setHealthVignetteTint === 'function') {
+                setHealthVignetteTint(healthVignette, app, theme.vignetteTint);
+            }
+
+            // Wall panel tint: drop cached panel textures and force one
+            // redraw so panels pick up the theme's wallTint.
+            if (theme.wallTint !== previousWallTint && typeof invalidateWallPanelTextures === 'function') {
+                invalidateWallPanelTextures();
+                if (typeof drawWalls === 'function') drawWalls(true);
+            }
+        }
 
         // ── Instantiate InterpolationManager ────────────────────────────
         const interpolationManager = createInterpolationManager(() => ({
@@ -3336,6 +3418,10 @@
                     starfield.visible = false;
                 }
 
+                // Apply the current map theme (default until the server's
+                // initial state reports the real map name).
+                applyMapThemeForMap(currentMapName);
+
                 // Add this to resume audio context on first user interaction
                 const resumeAudio = () => {
                     if (audioManager && audioManager.audioContext && audioManager.audioContext.state === 'suspended') {
@@ -3469,6 +3555,10 @@
                 app.renderer.resize(nextWidth, nextHeight);
                 lastRendererWidth = nextWidth;
                 lastRendererHeight = nextHeight;
+                if (mapBackdropSprite) {
+                    mapBackdropSprite.width = app.screen.width;
+                    mapBackdropSprite.height = app.screen.height;
+                }
                 if (webgpuProjectileLayer && webgpuProjectileLayer.ready) {
                     webgpuProjectileLayer.resize(nextWidth, nextHeight);
                 }
@@ -4198,6 +4288,7 @@
                         timeRemaining: Number(matchInfo.time_remaining) || 0,
                         hotZoneActive: !!matchInfo.hot_zone_active,
                     } : null;
+                    e2e.mapTheme = activeMapTheme?.name || null;
                     e2e.modeIntroText = gameModeIntroDiv?.textContent || '';
                     e2e.modeIntroVisible = !!gameModeIntroDiv?.classList.contains('mode-intro--visible');
                     e2e.objectiveUrgencyText = objectiveUrgencyDiv?.textContent || '';
@@ -4333,6 +4424,10 @@
             } else {
                 if (!deathMomentFreezeActive) updateCamera();
             }
+            // Screen shake runs every frame (even during death-moment freeze):
+            // it decays trauma and writes an absolute offset on worldContainer,
+            // never touching the camera-smoothed gameScene position.
+            updateScreenShake(worldContainer, app.ticker.deltaMS);
             if (perfEnabled) {
                 const t = perfStart();
                 updateCombatPresentation(currentTime, clientDeltaTime);
@@ -4651,7 +4746,7 @@
                     }
                 },
                 setMinimapWallsCacheDirty: (v) => { minimapWallsCacheDirty = v; },
-                setCurrentMapName: (v) => { currentMapName = v; },
+                setCurrentMapName: (v) => { currentMapName = v; applyMapThemeForMap(v); },
             }))
         );
         if (!serverUpdateHandler) {
@@ -5753,6 +5848,7 @@
             getGameScene: () => gameScene,
             getUltraPerformanceMode: () => ultraPerformanceMode,
             getSmoothedFrameMs: () => smoothedFrameMs,
+            getDeviceClassification: () => deviceClassification,
             applyScreenShake,
             createScreenFlash,
             drawStar,

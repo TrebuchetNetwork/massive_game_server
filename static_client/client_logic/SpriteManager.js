@@ -8,6 +8,12 @@
 
 export function createSpriteManager(getCtx) {
 
+    // Engine trail emission: only while the ship moves faster than ~30% of the
+    // ~150 px/s base speed, throttled per sprite so remote players under
+    // update stride don't burst-emit when their full update tick lands.
+    const ENGINE_TRAIL_MIN_SPEED = 45;
+    const ENGINE_TRAIL_EMIT_INTERVAL_MS = 45;
+
     function createPlayerSprite(player, isLocal = false) {
         const ctx = getCtx();
         const { PIXI, GP, renderAssetCache, GLOBAL_LIGHT_DIR, PLAYER_SHADOW_BASE_OFFSET,
@@ -37,11 +43,14 @@ export function createSpriteManager(getCtx) {
         if (!lightweightRemote) {
             const engineGlow = new PIXI.Sprite(renderAssetCache.engineGlowTexture);
             engineGlow.anchor.set(0.5);
-            engineGlow.position.set(0, PLAYER_RADIUS * 0.8);
-            engineGlow.tint = 0x00FFFF;
+            engineGlow.position.set(0, PLAYER_RADIUS * 0.95);
+            engineGlow.tint = 0xFFFFFF; // set to the team color on the first update pass
             engineGlow.alpha = 0;
             engineGlow.blendMode = PIXI.BLEND_MODES.ADD;
-            body.addChildAt(engineGlow, 0);
+            // Render behind the hull: parent to the container below the body
+            // (children of a sprite draw above its texture, which would put
+            // the glow on top of the hull).
+            container.addChildAt(engineGlow, container.getChildIndex(body));
             container.engineGlow = engineGlow;
         }
 
@@ -272,7 +281,7 @@ export function createSpriteManager(getCtx) {
                 frameNowMs, frameCounter, RESPAWN_WORLD_TEXT_ENABLED,
                 isWorldPointVisible, createSpeedBoostEffect, createDodgeGlowEffect,
                 createWeaponSwapEffect, buildCarriedFlagSprite,
-                emitPlayerDeathEffect, emitPlayerRespawnEffect } = ctx;
+                emitPlayerDeathEffect, emitPlayerRespawnEffect, emitEngineTrail } = ctx;
 
         const targetX = player.render_x !== undefined ? player.render_x : player.x;
         const targetY = player.render_y !== undefined ? player.render_y : player.y;
@@ -348,6 +357,9 @@ export function createSpriteManager(getCtx) {
             sprite._lastDamageFlashActive !== damageFlashActive
         ) {
             sprite.body.tint = mainBodyColor;
+            if (sprite.engineGlow && sprite.engineGlow.tint !== playerTeamColor) {
+                sprite.engineGlow.tint = playerTeamColor;
+            }
             sprite._lastTeamId = player.team_id;
             sprite._lastAlive = player.alive;
             sprite._lastDamageFlashActive = damageFlashActive;
@@ -373,13 +385,38 @@ export function createSpriteManager(getCtx) {
                     if (Math.abs(sprite.engineGlow.alpha - glowAlpha) > ALPHA_EPSILON) {
                         sprite.engineGlow.alpha = glowAlpha;
                     }
-                    const glowScale = 0.8 + intensity * 0.4;
-                    if (Math.abs((sprite.engineGlow.scale.x || 0) - glowScale) > TRANSFORM_EPSILON) {
-                        sprite.engineGlow.scale.set(glowScale);
+                    const glowScale = 0.55 + intensity * 0.45;
+                    const glowScaleX = glowScale * 0.85;
+                    if (Math.abs((sprite.engineGlow.scale.x || 0) - glowScaleX) > TRANSFORM_EPSILON) {
+                        // Slight vertical stretch reads as a flame licking out of the tail.
+                        sprite.engineGlow.scale.set(glowScaleX, glowScale * 1.25);
                     }
                 } else if (sprite.engineGlow.visible) {
                     sprite.engineGlow.visible = false;
                 }
+            }
+        }
+
+        // Engine trail: while moving at speed, emit pooled fading glow dots
+        // from the engine position (behind the hull, opposite the motion).
+        // Device/effect-quality gating happens inside emitEngineTrail.
+        if (
+            sprite.engineGlow &&
+            !hideRemoteFxByDensity &&
+            player.alive &&
+            typeof emitEngineTrail === 'function' &&
+            (player.velocity_x !== 0 || player.velocity_y !== 0)
+        ) {
+            const trailSpeed = Math.sqrt(player.velocity_x * player.velocity_x + player.velocity_y * player.velocity_y);
+            if (
+                trailSpeed >= ENGINE_TRAIL_MIN_SPEED &&
+                frameNowMs - (sprite._lastTrailEmitMs || 0) >= ENGINE_TRAIL_EMIT_INTERVAL_MS
+            ) {
+                sprite._lastTrailEmitMs = frameNowMs;
+                const invSpeed = 1 / trailSpeed;
+                const engineX = targetX - player.velocity_x * invSpeed * PLAYER_RADIUS * 0.9;
+                const engineY = targetY - player.velocity_y * invSpeed * PLAYER_RADIUS * 0.9;
+                emitEngineTrail(engineX, engineY, playerTeamColor, Math.min(1, trailSpeed / 150));
             }
         }
 

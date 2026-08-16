@@ -93,11 +93,91 @@ export function createRenderAssetManager(getCtx) {
 
         if (renderAssetCache.initialized || !app || !app.renderer) return;
 
-        renderAssetCache.shipTexture = buildRenderTexture((g) => {
-            g.beginFill(0xFFFFFF, 1);
-            g.drawPolygon(SHIP_POINTS);
+        // Layered sleek-fighter hull. All tones are grayscale so the existing
+        // per-team sprite tint (multiply) still works: white reads as full team
+        // color, darker tones read as shaded team color. The outer silhouette
+        // keeps the same extents as SHIP_POINTS (x ±0.8R, y −1.2R..+0.8R) so
+        // texture size and anchor/pivot behavior are unchanged.
+        const drawShipHull = (g) => {
+            const R = PLAYER_RADIUS;
+            // 1) Dark base silhouette (hull outline / shadowed underside)
+            g.beginFill(0x39404B, 1);
+            g.drawPolygon([
+                0, -R * 1.2,
+                R * 0.16, -R * 0.58,
+                R * 0.30, -R * 0.12,
+                R * 0.78, R * 0.52,
+                R * 0.58, R * 0.62,
+                R * 0.30, R * 0.40,
+                R * 0.26, R * 0.80,
+                -R * 0.26, R * 0.80,
+                -R * 0.30, R * 0.40,
+                -R * 0.58, R * 0.62,
+                -R * 0.78, R * 0.52,
+                -R * 0.30, -R * 0.12,
+                -R * 0.16, -R * 0.58,
+            ]);
             g.endFill();
-        });
+            // 2) Mid-tone main panel (slightly inset from the silhouette)
+            g.beginFill(0xC9CFD9, 1);
+            g.drawPolygon([
+                0, -R * 1.06,
+                R * 0.12, -R * 0.52,
+                R * 0.22, -R * 0.08,
+                R * 0.62, R * 0.46,
+                R * 0.48, R * 0.50,
+                R * 0.20, R * 0.30,
+                R * 0.18, R * 0.68,
+                -R * 0.18, R * 0.68,
+                -R * 0.20, R * 0.30,
+                -R * 0.48, R * 0.50,
+                -R * 0.62, R * 0.46,
+                -R * 0.22, -R * 0.08,
+                -R * 0.12, -R * 0.52,
+            ]);
+            g.endFill();
+            // 3) Bright spine highlight running nose → mid fuselage
+            g.beginFill(0xFFFFFF, 0.95);
+            g.drawPolygon([
+                0, -R * 1.12,
+                R * 0.09, -R * 0.45,
+                R * 0.08, R * 0.05,
+                0, R * 0.16,
+                -R * 0.08, R * 0.05,
+                -R * 0.09, -R * 0.45,
+            ]);
+            g.endFill();
+            // Wing leading-edge highlights
+            g.beginFill(0xFFFFFF, 0.55);
+            g.drawPolygon([
+                R * 0.26, -R * 0.10,
+                R * 0.72, R * 0.48,
+                R * 0.62, R * 0.50,
+                R * 0.20, R * 0.02,
+            ]);
+            g.drawPolygon([
+                -R * 0.26, -R * 0.10,
+                -R * 0.72, R * 0.48,
+                -R * 0.62, R * 0.50,
+                -R * 0.20, R * 0.02,
+            ]);
+            g.endFill();
+            // 4) Cockpit canopy (dark glass) with a small glint. Wide enough
+            // that its edges peek out from behind the gun barrel sprite.
+            g.beginFill(0x121822, 0.92);
+            g.drawEllipse(0, -R * 0.28, R * 0.23, R * 0.30);
+            g.endFill();
+            g.beginFill(0xFFFFFF, 0.7);
+            g.drawEllipse(R * 0.10, -R * 0.40, R * 0.06, R * 0.10);
+            g.endFill();
+            // 5) Twin engine nozzles at the tail
+            g.beginFill(0x20252D, 1);
+            g.drawRect(R * 0.05, R * 0.64, R * 0.13, R * 0.16);
+            g.drawRect(-R * 0.18, R * 0.64, R * 0.13, R * 0.16);
+            g.endFill();
+        };
+
+        renderAssetCache.shipTexture = buildRenderTexture(drawShipHull);
 
         renderAssetCache.shadowTexture = buildRenderTexture((g) => {
             // Soft shadow falloff baked into texture (no runtime blur filter cost).
@@ -170,9 +250,7 @@ export function createRenderAssetManager(getCtx) {
 
             // Ship body at (64, 64)
             const shipG = new PIXI.Graphics();
-            shipG.beginFill(0xFFFFFF, 1);
-            shipG.drawPolygon(SHIP_POINTS);
-            shipG.endFill();
+            drawShipHull(shipG);
             shipG.position.set(64, 64);
             atlasContainer.addChild(shipG);
             regions.ship = { x: 64 - PLAYER_RADIUS * 1.3, y: 64 - PLAYER_RADIUS * 1.3, w: PLAYER_RADIUS * 2.6, h: PLAYER_RADIUS * 2.6 };

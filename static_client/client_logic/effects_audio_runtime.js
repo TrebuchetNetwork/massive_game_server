@@ -51,6 +51,7 @@ export function createEffectsAudioRuntime({
   getGameScene = () => null,
   getUltraPerformanceMode = () => false,
   getSmoothedFrameMs = () => 16,
+  getDeviceClassification = () => 'desktop',
   applyScreenShake = () => {},
   createScreenFlash = () => {},
   drawStar = () => {},
@@ -75,6 +76,7 @@ export function createEffectsAudioRuntime({
   let gameScene = getGameScene() || null;
   let ultraPerformanceMode = !!getUltraPerformanceMode();
   let smoothedFrameMs = Number(getSmoothedFrameMs()) || 16;
+  let deviceClassification = getDeviceClassification() || 'desktop';
 
   const safeRefresh = (getter, fallback) => {
     try {
@@ -97,6 +99,7 @@ export function createEffectsAudioRuntime({
     gameScene = safeRefresh(getGameScene, gameScene) || null;
     ultraPerformanceMode = !!safeRefresh(getUltraPerformanceMode, ultraPerformanceMode);
     smoothedFrameMs = Number(safeRefresh(getSmoothedFrameMs, smoothedFrameMs)) || 16;
+    deviceClassification = safeRefresh(getDeviceClassification, deviceClassification) || 'desktop';
   };
 
   const getEntityWorldPosition = (entity) => {
@@ -285,6 +288,9 @@ this.effectStats = {
     dropped: 0,
     evicted: 0
 };
+this.engineTrailPool = [];
+this.engineTrailPoolCursor = 0;
+this.engineTrailMidStrideCounter = 0;
 this.performanceProfiles = {
     high: {
         maxActiveEffects: 2200,
@@ -415,6 +421,7 @@ if (!renderer) {
     textures.debris = fallbackTexture;
     textures.debrisBrown = fallbackTexture;
     textures.debrisGray = fallbackTexture;
+    textures.trailGlow = fallbackTexture;
     return textures;
 }
 
@@ -446,6 +453,20 @@ const buildDebrisTexture = (color) => {
     graphics.destroy();
     return texture;
 };
+const buildSoftGlowTexture = (color) => {
+    // Soft radial falloff baked as concentric rings (no runtime blur cost).
+    const graphics = new PIXI.Graphics();
+    const rings = 5;
+    for (let i = 0; i < rings; i += 1) {
+        const t = i / (rings - 1);
+        graphics.beginFill(color, 0.34 * (1 - t));
+        graphics.drawCircle(0, 0, 2.5 + t * 5.5);
+        graphics.endFill();
+    }
+    const texture = renderer.generateTexture(graphics);
+    graphics.destroy();
+    return texture;
+};
 
 textures.spark = buildSparkTexture(0xFFFFFF);
 textures.sparkRed = buildSparkTexture(0xF87171);
@@ -458,6 +479,7 @@ textures.smokeDark = buildSmokeTexture(0x475569, 0.52);
 textures.debris = buildDebrisTexture(0x444444);
 textures.debrisBrown = buildDebrisTexture(0x8B5E3C);
 textures.debrisGray = buildDebrisTexture(0x6B7280);
+textures.trailGlow = buildSoftGlowTexture(0xFFFFFF);
 
 return textures;
     }
@@ -2499,6 +2521,78 @@ this.activeEffects.push(effect);
 return effect;
     }
 
+    emitEngineTrail(x, y, color = 0xFFFFFF, intensity = 0.6) {
+if (!this.particlesEnabled) return false;
+if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+
+// Device-class gating: full rate on desktop/high, half rate on mid, off on low.
+if (deviceClassification === 'low') return false;
+if (deviceClassification === 'mid') {
+    this.engineTrailMidStrideCounter = (this.engineTrailMidStrideCounter + 1) % 2;
+    if (this.engineTrailMidStrideCounter !== 0) return false;
+}
+// Shared load-based stride gating (movement effects drop first under load).
+if (!this.shouldEmitEffect('movement')) return false;
+
+const clampedIntensity = Math.max(0.2, Math.min(1, Number(intensity) || 0));
+
+// Ring-buffer pool of reusable glow sprites (priority 1 = evicted first).
+const pool = this.engineTrailPool;
+const cap = Math.max(32, Math.round(240 * (this.performanceProfile.particleScale || 1)));
+let sprite = null;
+for (let i = 0; i < pool.length; i += 1) {
+    this.engineTrailPoolCursor = (this.engineTrailPoolCursor + 1) % pool.length;
+    const candidate = pool[this.engineTrailPoolCursor];
+    if (candidate && !candidate._trailActive && !candidate.destroyed) {
+        sprite = candidate;
+        break;
+    }
+}
+if (!sprite) {
+    if (pool.length >= cap) {
+        this.effectStats.dropped += 1;
+        return false;
+    }
+    sprite = new PIXI.Sprite(this.particleTextures.trailGlow || PIXI.Texture.WHITE);
+    sprite.anchor.set(0.5);
+    sprite.blendMode = PIXI.BLEND_MODES.ADD;
+    sprite.visible = false;
+    sprite._trailActive = false;
+    this.effectsContainer.addChild(sprite);
+    pool.push(sprite);
+}
+
+const baseScale = 0.7 + clampedIntensity * 0.85;
+sprite.position.set(x + (Math.random() - 0.5) * 3, y + (Math.random() - 0.5) * 3);
+sprite.tint = color;
+sprite.scale.set(baseScale);
+sprite.alpha = 0.65;
+sprite.visible = true;
+sprite._trailActive = true;
+
+const release = () => {
+    if (sprite.destroyed) return;
+    sprite._trailActive = false;
+    sprite.visible = false;
+};
+const started = this.animateEffect(sprite, {
+    duration: this.scaleDuration(400, 130),
+    priority: 1,
+    preserveObjectOnDrop: true,
+    onUpdate: (progress) => {
+        sprite.alpha = 0.65 * (1 - progress);
+        sprite.scale.set(baseScale * (1 - progress * 0.55));
+    },
+    onComplete: release,
+    onAbort: release
+});
+if (!started) {
+    release();
+    return false;
+}
+return true;
+    }
+
     emitNearMissStreak(localX, localY, velocityX, velocityY, proximity = 0.5) {
 if (!this.shouldEmitEffect('movement')) return;
 const speed = Math.hypot(velocityX, velocityY);
@@ -3452,6 +3546,10 @@ this.activeEffects.forEach(effect => {
 });
 this.activeEffects = [];
 this.effectsContainer.removeChildren().forEach(c => this.destroyEffectObject(c));
+// Pooled trail sprites live in effectsContainer and were just destroyed;
+// reset the pool so destroyed entries don't count toward the pool cap.
+this.engineTrailPool.length = 0;
+this.engineTrailPoolCursor = 0;
 this.activeDamageNumberCount = 0;
 this.pendingDamageNumberBatches.clear();
 this.activeDamageNumberEffectsByKey.clear();

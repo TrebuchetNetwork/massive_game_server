@@ -627,10 +627,191 @@ export function createWorldRenderer(getCtx) {
         return (r << 16) | (g << 8) | b;
     }
 
+    // --- Wall panel texture cache --------------------------------------
+    // Walls are numerous and mostly static, so each distinct wall variant
+    // (size x destructible damage bucket) is pre-rendered once into a cached
+    // texture and drawn as a sprite, instead of re-building vector geometry
+    // on every wall redraw.
+    const wallPanelTextureCache = new Map();
+    const WALL_PANEL_CACHE_LIMIT = 128;
+    const WALL_PANEL_PAD = 8; // texture padding, holds the baked drop shadow
+
+    // -1 = indestructible; 3 intact .. 0 critical for destructible walls.
+    function wallPanelHealthBucket(wall) {
+        if (!wall.is_destructible) return -1;
+        const hp = Math.max(0, Math.min(1, wall.current_health / Math.max(1, wall.max_health)));
+        if (hp > 0.75) return 3;
+        if (hp > 0.5) return 2;
+        if (hp > 0.25) return 1;
+        return 0;
+    }
+
+    function buildWallPanelTexture(PIXI, app, w, h, bucket, mixColors, wallTint) {
+        const P = WALL_PANEL_PAD;
+        const isDestructible = bucket >= 0;
+        // Dark gunmetal base, slightly blue-tinted. Destructible panels shift
+        // warmer/redder as damage increases so hurt walls read at a glance.
+        // A map theme may tint the bases (e.g. warm steel on ember maps);
+        // damage hues stay dominant so hurt walls still read correctly.
+        let baseColor = Number.isInteger(wallTint) ? wallTint : 0x323C52;
+        if (isDestructible) {
+            const hpTone = [0.1, 0.4, 0.7, 1][bucket];
+            const intactColor = Number.isInteger(wallTint)
+                ? mixColors(wallTint, 0xFFFFFF, 0.08)
+                : 0x3A465F;
+            baseColor = interpolateColor(0x74484C, intactColor, hpTone);
+        }
+        const highlight = mixColors(baseColor, 0xD8E6FF, 0.45);
+        const shadowTone = mixColors(baseColor, 0x000000, 0.5);
+        const outline = mixColors(baseColor, 0x000000, 0.55);
+        const g = new PIXI.Graphics();
+
+        // Baked drop shadow (GLOBAL_LIGHT_DIR points down-right).
+        g.beginFill(0x000000, 0.1);
+        g.drawRect(P + 4, P + 5, w + 1, h + 1);
+        g.endFill();
+        g.beginFill(0x000000, 0.22);
+        g.drawRect(P + 2, P + 2.5, w, h);
+        g.endFill();
+
+        // Base plate.
+        g.beginFill(baseColor, 1);
+        g.drawRect(P, P, w, h);
+        g.endFill();
+
+        // Damage scorch tint under the detailing so the bevel stays crisp.
+        if (isDestructible && bucket <= 2) {
+            g.beginFill(0x101018, (2 - bucket) * 0.1);
+            g.drawRect(P, P, w, h);
+            g.endFill();
+        }
+
+        // Fake top-light: lighter crown strip, darker foot strip.
+        const stripH = Math.max(2, h * 0.22);
+        g.beginFill(mixColors(baseColor, 0xFFFFFF, 0.08), 0.55);
+        g.drawRect(P, P, w, stripH);
+        g.endFill();
+        g.beginFill(mixColors(baseColor, 0x000000, 0.16), 0.5);
+        g.drawRect(P, P + h - stripH, w, stripH);
+        g.endFill();
+
+        // Faint inner grid / panel lines.
+        const gridColor = mixColors(baseColor, 0x000000, 0.35);
+        g.lineStyle(1, gridColor, 0.22);
+        const gridSpacing = 16;
+        for (let gx = gridSpacing; gx < w; gx += gridSpacing) {
+            g.moveTo(P + gx, P + 3);
+            g.lineTo(P + gx, P + h - 3);
+        }
+        for (let gy = gridSpacing; gy < h; gy += gridSpacing) {
+            g.moveTo(P + 3, P + gy);
+            g.lineTo(P + w - 3, P + gy);
+        }
+        // Inset panel seam.
+        if (w >= 12 && h >= 12) {
+            g.lineStyle(1, gridColor, 0.4);
+            g.drawRect(P + 4, P + 4, w - 8, h - 8);
+        }
+
+        // Bevel: 2px top/left highlight, 2px bottom/right shadow.
+        g.beginFill(highlight, 0.95);
+        g.drawRect(P, P, w, 2);
+        g.drawRect(P, P, 2, h);
+        g.endFill();
+        g.beginFill(shadowTone, 1.0);
+        g.drawRect(P, P + h - 2, w, 2);
+        g.drawRect(P + w - 2, P, 2, h);
+        g.endFill();
+
+        // Rivets at corners, plus edge midpoints on longer runs.
+        if (w >= 14 && h >= 14) {
+            const rivetColor = mixColors(baseColor, 0x000000, 0.6);
+            const rivetGlint = mixColors(baseColor, 0xFFFFFF, 0.4);
+            const rivetPts = [[5, 5], [w - 5, 5], [5, h - 5], [w - 5, h - 5]];
+            if (w >= 48) rivetPts.push([w / 2, 5], [w / 2, h - 5]);
+            if (h >= 48) rivetPts.push([5, h / 2], [w - 5, h / 2]);
+            for (const [rx, ry] of rivetPts) {
+                g.beginFill(rivetColor, 0.9);
+                g.drawCircle(P + rx, P + ry, 1.6);
+                g.endFill();
+                g.beginFill(rivetGlint, 0.55);
+                g.drawCircle(P + rx - 0.5, P + ry - 0.5, 0.7);
+                g.endFill();
+            }
+        }
+
+        // Baked cracks for damaged destructible panels (deterministic seed
+        // from the cached size/bucket so a texture never flickers).
+        if (isDestructible && bucket <= 2) {
+            const severity = (2 - bucket + 1) / 3;
+            const numCracks = 2 + (2 - bucket) * 2;
+            g.lineStyle(Math.max(1, 2 * severity), 0x141824, 0.5 + severity * 0.3);
+            for (let i = 0; i < numCracks; i++) {
+                let cx = ((i * 0.618) % 1) * w;
+                let cy = ((i * 0.382 + 0.3) % 1) * h;
+                g.moveTo(P + cx, P + cy);
+                const crackLen = Math.min(w, h) * 0.4 * severity;
+                const segments = 3;
+                for (let j = 0; j < segments; j++) {
+                    const seed = (w * 31 + h * 17 + i * 7 + j * 3) & 0xFFFF;
+                    const angle = (seed / 0xFFFF) * Math.PI * 2;
+                    cx = Math.max(0, Math.min(w, cx + Math.cos(angle) * (crackLen / segments)));
+                    cy = Math.max(0, Math.min(h, cy + Math.sin(angle) * (crackLen / segments)));
+                    g.lineTo(P + cx, P + cy);
+                }
+            }
+        }
+
+        // Critical-health warning edge.
+        if (isDestructible && bucket === 0) {
+            g.lineStyle(2, 0xFF6B6B, 0.55);
+            g.drawRect(P - 1, P - 1, w + 2, h + 2);
+        }
+
+        // Crisp collision outline last — walls must always read as "solid".
+        g.lineStyle(2, outline, 1);
+        g.drawRect(P, P, w, h);
+
+        const region = new PIXI.Rectangle(0, 0, w + P * 2, h + P * 2);
+        const texture = app.renderer.generateTexture(g, { resolution: 2, region });
+        g.destroy(true);
+        return texture;
+    }
+
+    function getWallPanelTexture(ctx, wall) {
+        const { PIXI, app, mixColors } = ctx;
+        if (!app || !app.renderer || typeof app.renderer.generateTexture !== 'function') return null;
+        const bucket = wallPanelHealthBucket(wall);
+        const wallTint = Number.isInteger(ctx.mapTheme?.wallTint) ? ctx.mapTheme.wallTint : null;
+        const w = Math.max(1, Math.round(Number(wall.width) || 0));
+        const h = Math.max(1, Math.round(Number(wall.height) || 0));
+        const key = `${wallTint ?? 'd'}:${bucket}:${w}x${h}`;
+        let texture = wallPanelTextureCache.get(key);
+        if (texture) return texture;
+        // Never evict here: drawWalls clears the cache before its sprite
+        // loop, so no texture used by the current redraw pass is destroyed
+        // mid-pass. If the cap is hit mid-pass, simply skip caching.
+        const cacheable = wallPanelTextureCache.size < WALL_PANEL_CACHE_LIMIT;
+        try {
+            texture = buildWallPanelTexture(PIXI, app, w, h, bucket, mixColors, wallTint);
+        } catch (_) {
+            texture = null;
+        }
+        if (texture && cacheable) wallPanelTextureCache.set(key, texture);
+        return texture;
+    }
+
+    // Drops all cached wall panel textures; used on map theme switch so the
+    // next drawWalls pass re-bakes panels in the new theme's wall tint.
+    function invalidateWallPanelTextures() {
+        wallPanelTextureCache.forEach((cached) => cached.destroy?.(true));
+        wallPanelTextureCache.clear();
+    }
+
     function drawWalls(force = false) {
         const ctx = getCtx();
         const {
-            wallGraphics, walls, PIXI, mixColors, minimap,
+            wallGraphics, walls, PIXI, mixColors, minimap, app,
             ultraPerformanceMode, STABLE_MODE_FORCED, smoothedFrameMs,
             WALL_REDRAW_MIN_INTERVAL_MS, WALL_REDRAW_MIN_INTERVAL_ULTRA_MS,
             GLOBAL_LIGHT_DIR, gameSettings, setWorldBounds,
@@ -679,6 +860,39 @@ export function createWorldRenderer(getCtx) {
                     wallGraphics.addChild(text);
                 }
             });
+        }
+
+        // Preferred path: cached pre-rendered panel textures drawn as sprites.
+        // The vector paths below remain as a fallback when no renderer is
+        // available (e.g. headless tests).
+        if (PIXI && PIXI.Sprite && app && app.renderer && typeof app.renderer.generateTexture === 'function') {
+            // Evict BEFORE the sprite loop: the previous pass's sprites were
+            // destroyed above (removeChildren), so no live sprite references
+            // these textures — safe to destroy them here, and the loop below
+            // then never needs to evict mid-pass.
+            if (wallPanelTextureCache.size >= WALL_PANEL_CACHE_LIMIT) {
+                wallPanelTextureCache.forEach((cached) => cached.destroy?.(true));
+                wallPanelTextureCache.clear();
+            }
+            walls.forEach((wall) => {
+                if (wall.is_destructible && wall.current_health <= 0) return;
+                const texture = getWallPanelTexture(ctx, wall);
+                if (!texture) return;
+                const sprite = new PIXI.Sprite(texture);
+                sprite.position.set(
+                    Math.round(wall.x) - WALL_PANEL_PAD,
+                    Math.round(wall.y) - WALL_PANEL_PAD
+                );
+                wallGraphics.addChild(sprite);
+            });
+
+            ctx.setMinimapWallsCacheDirty(true);
+            if (minimap) minimap.wallsNeedUpdate = true;
+            worldBounds = deriveWorldBounds(walls);
+            if (typeof setWorldBounds === 'function') {
+                setWorldBounds(worldBounds);
+            }
+            return;
         }
 
         if (simplifiedWallRender) {
@@ -1091,6 +1305,7 @@ export function createWorldRenderer(getCtx) {
         drawWalls,
         drawEnhancedWallCracks,
         drawSimplifiedWallCracks,
+        invalidateWallPanelTextures,
         updateFlags,
         updateCamera,
         hasPendingWallRedraw,

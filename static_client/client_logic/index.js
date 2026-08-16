@@ -46,3 +46,9 @@ export { createDiagnosticsManager } from './DiagnosticsManager.js';
 export { createRenderAssetManager } from './RenderAssetManager.js?v=20260225a';
 export { createUpdateSprites } from './UpdateSprites.js?v=20260225b';
 export { createPerformanceBudget } from './PerformanceBudget.js';
+export {
+    MAP_THEMES,
+    MAP_THEME_DEFAULT_NAME,
+    createMapThemes,
+    resolveMapTheme,
+} from './MapThemes.js';
