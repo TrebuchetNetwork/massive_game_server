@@ -215,3 +215,43 @@ test("MusicPlayer destroy is idempotent and releases listeners, timers, and cate
     dom.restore();
   }
 });
+
+test("MusicPlayer shows track titles instead of raw filenames in the now-playing line", () => {
+  const dom = installFakeDom();
+  try {
+    const player = new MusicPlayer({
+      playlist: [
+        { title: "Neon Circuit", file: "music/neon-circuit.mp3" },
+        { title: "Arena Drift", file: "music/arena-drift.mp3" },
+      ],
+      log: () => {},
+      getGameSettings: () => ({ musicEnabled: false, musicVolume: 0.3 }),
+    });
+    try {
+      const nowPlaying = dom.elements.get("nowPlaying");
+      assert.match(nowPlaying.textContent, /^Neon Circuit • /);
+      assert.ok(!nowPlaying.textContent.includes(".mp3"));
+      assert.ok(!nowPlaying.textContent.includes("neon-circuit"));
+
+      player.nextTrack();
+      assert.match(nowPlaying.textContent, /^Arena Drift • /);
+      assert.ok(!nowPlaying.textContent.includes(".mp3"));
+
+      // Bare string entries still work and fall back to a derived name.
+      const fallback = new MusicPlayer({
+        playlist: ["music/some-file.mp3"],
+        log: () => {},
+        getGameSettings: () => ({ musicEnabled: false, musicVolume: 0.3 }),
+      });
+      try {
+        assert.match(dom.elements.get("nowPlaying").textContent, /^some-file • /);
+      } finally {
+        fallback.destroy();
+      }
+    } finally {
+      player.destroy();
+    }
+  } finally {
+    dom.restore();
+  }
+});

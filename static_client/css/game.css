@@ -1865,6 +1865,233 @@
         .mobile-connection-indicator[data-quality="poor"] .mobile-connection-bar:nth-child(2) { background: rgba(239, 68, 68, 0.3); }
         .mobile-connection-indicator[data-quality="poor"] .mobile-connection-bar:nth-child(3) { background: rgba(239, 68, 68, 0.3); }
 
+        /* Music Player — self-contained neon-glass HUD panel (no dependency on the utility shim). */
+        .music-player.hidden {
+            display: none;
+        }
+
+        .music-player {
+            position: fixed;
+            right: calc(16px + var(--safe-area-right));
+            /* Desktop: sits above the 150px minimap anchored bottom-right. */
+            bottom: calc(176px + var(--safe-area-bottom));
+            z-index: 60;
+            width: 300px;
+            padding: 14px 16px 14px;
+            border-radius: 16px;
+            background: linear-gradient(160deg, rgba(14, 20, 26, 0.78), rgba(6, 10, 14, 0.82));
+            backdrop-filter: blur(14px) saturate(1.35);
+            -webkit-backdrop-filter: blur(14px) saturate(1.35);
+            border: 1px solid rgba(200, 243, 29, 0.3);
+            box-shadow:
+                0 14px 34px rgba(0, 0, 0, 0.52),
+                0 0 26px rgba(200, 243, 29, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            color: #E5E7EB;
+            font-family: inherit;
+            transition: opacity 200ms ease, transform 200ms ease;
+        }
+
+        .music-player__header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .music-player__title {
+            margin: 0;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #c8f31d;
+            text-shadow: 0 0 12px rgba(200, 243, 29, 0.45);
+        }
+
+        .music-player__close {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            background: transparent;
+            color: rgba(229, 231, 235, 0.55);
+            cursor: pointer;
+            transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+        }
+
+        .music-player__close:hover {
+            color: #F8FAFC;
+            border-color: rgba(200, 243, 29, 0.4);
+            background: rgba(200, 243, 29, 0.08);
+        }
+
+        .music-player__track {
+            margin-bottom: 12px;
+        }
+
+        .music-player__now-playing {
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(229, 231, 235, 0.88);
+            margin-bottom: 7px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .music-player__progress {
+            position: relative;
+            height: 5px;
+            border-radius: 999px;
+            background: rgba(148, 163, 184, 0.2);
+            cursor: pointer;
+            overflow: hidden;
+        }
+
+        .music-player__progress-fill {
+            height: 100%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #8fbf0f, #c8f31d);
+            box-shadow: 0 0 10px rgba(200, 243, 29, 0.55);
+            transition: width 100ms linear;
+        }
+
+        .music-player__controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 18px;
+            margin-bottom: 12px;
+        }
+
+        .music-player__btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            height: 34px;
+            border: 1px solid transparent;
+            border-radius: 50%;
+            background: transparent;
+            color: rgba(229, 231, 235, 0.68);
+            cursor: pointer;
+            transition: color 120ms ease, border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+        }
+
+        .music-player__btn:hover {
+            color: #eaffaf;
+            border-color: rgba(200, 243, 29, 0.45);
+            background: rgba(200, 243, 29, 0.08);
+        }
+
+        .music-player__btn--play {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(180deg, #d4ff2e, #a8d312);
+            border-color: rgba(234, 255, 175, 0.75);
+            color: #0a1200;
+            box-shadow: 0 4px 16px rgba(200, 243, 29, 0.32), 0 0 20px rgba(200, 243, 29, 0.22);
+        }
+
+        .music-player__btn--play:hover {
+            background: linear-gradient(180deg, #e2ff55, #b5e21c);
+            color: #0a1200;
+            box-shadow: 0 6px 20px rgba(200, 243, 29, 0.45), 0 0 26px rgba(200, 243, 29, 0.3);
+        }
+
+        .music-player__volume {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .music-player__volume-icon {
+            color: rgba(229, 231, 235, 0.55);
+            flex-shrink: 0;
+        }
+
+        .music-player__volume-slider {
+            flex: 1 1 0%;
+            height: 5px;
+            border-radius: 999px;
+            appearance: none;
+            -webkit-appearance: none;
+            background: rgba(148, 163, 184, 0.22);
+            cursor: pointer;
+        }
+
+        .music-player__volume-slider::-webkit-slider-thumb {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 13px;
+            height: 13px;
+            border-radius: 50%;
+            background: #c8f31d;
+            border: 2px solid rgba(234, 255, 175, 0.85);
+            box-shadow: 0 0 10px rgba(200, 243, 29, 0.6);
+        }
+
+        .music-player__volume-slider::-moz-range-thumb {
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            background: #c8f31d;
+            border: 2px solid rgba(234, 255, 175, 0.85);
+            box-shadow: 0 0 10px rgba(200, 243, 29, 0.6);
+        }
+
+        .music-player__volume-value {
+            font-size: 11px;
+            font-weight: 600;
+            color: rgba(229, 231, 235, 0.6);
+            width: 34px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Mobile: float above the joystick (bottom-left) and FIRE/button grid
+           (bottom-right, ~166px tall), centered horizontally. */
+        @media (max-width: 900px) {
+            .music-player {
+                left: 50%;
+                right: auto;
+                transform: translateX(-50%);
+                bottom: calc(186px + var(--safe-area-bottom));
+                width: min(330px, calc(100vw - 32px));
+            }
+        }
+
+        /* Short landscape phones: dock to the top-center instead. */
+        @media (max-width: 900px) and (max-height: 460px) {
+            .music-player {
+                top: calc(60px + var(--safe-area-top));
+                bottom: auto;
+            }
+        }
+
+        body.mobile-mode #mobileMusicToggle {
+            width: 44px;
+            height: 44px;
+            min-height: 44px;
+            padding: 0;
+            border-radius: 4px;
+            border-color: rgba(200, 243, 29, 0.42);
+            background: rgba(3, 10, 12, 0.84);
+            color: #dfff73;
+            font-size: 17px;
+            line-height: 1;
+        }
+
+        body.mobile-mode #mobileMusicToggle.mobile-button--active {
+            background: rgba(200, 243, 29, 0.2);
+            border-color: rgba(200, 243, 29, 0.85);
+            box-shadow: 0 0 14px rgba(200, 243, 29, 0.3);
+        }
+
         @media (max-width: 900px) {
             .controls-panel {
                 left: calc(10px + var(--safe-area-left));
@@ -1904,59 +2131,6 @@
         ::-webkit-scrollbar-track { background: #2d3748; border-radius: 4px; }
         ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #718096; }
-
-        /* Music Player Styles */
-        #musicPlayer {
-            transition: transform 0.3s ease-in-out;
-            backdrop-filter: blur(10px);
-            background-color: rgba(31, 41, 55, 0.95);
-            z-index: 60;
-            right: calc(1.25rem + var(--safe-area-right));
-            bottom: calc(1.25rem + var(--safe-area-bottom));
-        }
-        
-        #musicPlayer:hover {
-            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
-        }
-        
-        #volumeSlider {
-            background: linear-gradient(to right, #6366F1 0%, #6366F1 30%, #374151 30%, #374151 100%);
-        }
-        
-        #volumeSlider::-webkit-slider-thumb {
-            appearance: none;
-            width: 12px;
-            height: 12px;
-            background: #818CF8;
-            cursor: pointer;
-            border-radius: 50%;
-            box-shadow: 0 0 8px rgba(129, 140, 248, 0.5);
-        }
-        
-        #volumeSlider::-moz-range-thumb {
-            width: 12px;
-            height: 12px;
-            background: #818CF8;
-            cursor: pointer;
-            border-radius: 50%;
-            border: none;
-            box-shadow: 0 0 8px rgba(129, 140, 248, 0.5);
-        }
-        
-        #progressBar {
-            background: linear-gradient(90deg, #6366F1 0%, #818CF8 100%);
-            box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
-        }
-        
-        #nowPlaying {
-            animation: slideText 15s linear infinite;
-            white-space: nowrap;
-        }
-        
-        @keyframes slideText {
-            0%, 20% { transform: translateX(0); }
-            80%, 100% { transform: translateX(-50%); }
-        }
 
         /* Model Arena mobile shell ------------------------------------------------ */
         .mobile-arena-gate {
@@ -2378,7 +2552,6 @@
 
             body.mobile-mode .arena-watermark,
             body.mobile-mode .arena-brand-chip,
-            body.mobile-mode #musicPlayer,
             body.mobile-mode #killFeed,
             body.mobile-mode #chatDisplay {
                 display: none !important;

@@ -1,29 +1,29 @@
 const DEFAULT_PLAYLIST = [
-  "music/Untitled.mp3",
-  "music/Untitled (1).mp3",
-  "music/Untitled (2).mp3",
-  "music/Untitled (4).mp3",
-  "music/Untitled (5).mp3",
-  "music/Untitled (6).mp3",
-  "music/Untitled (8).mp3",
-  "music/Untitled (10).mp3",
-  "music/Untitled (11).mp3",
-  "music/cassete.mp3",
-  "music/cassete (1).mp3"
+  { title: "Arena Drift", file: "music/arena-drift.mp3" },
+  { title: "Neon Circuit", file: "music/neon-circuit.mp3" },
+  { title: "Midnight Grid", file: "music/midnight-grid.mp3" },
+  { title: "Pulse Runner", file: "music/pulse-runner.mp3" },
+  { title: "Overdrive Protocol", file: "music/overdrive-protocol.mp3" },
+  { title: "Ion Storm", file: "music/ion-storm.mp3" },
+  { title: "Velocity", file: "music/velocity.mp3" },
+  { title: "Redline", file: "music/redline.mp3" },
+  { title: "Critical Mass", file: "music/critical-mass.mp3" },
+  { title: "Analog Dreams", file: "music/analog-dreams.mp3" },
+  { title: "Tape Memories", file: "music/tape-memories.mp3" }
 ];
 
 const TRACK_CATEGORIES = Object.freeze({
-  "music/Untitled.mp3": "ambient",
-  "music/Untitled (1).mp3": "ambient",
-  "music/Untitled (2).mp3": "ambient",
-  "music/Untitled (4).mp3": "action",
-  "music/Untitled (5).mp3": "action",
-  "music/Untitled (6).mp3": "action",
-  "music/Untitled (8).mp3": "action",
-  "music/Untitled (10).mp3": "intense",
-  "music/Untitled (11).mp3": "intense",
-  "music/cassete.mp3": "ambient",
-  "music/cassete (1).mp3": "ambient",
+  "music/arena-drift.mp3": "ambient",
+  "music/neon-circuit.mp3": "ambient",
+  "music/midnight-grid.mp3": "ambient",
+  "music/pulse-runner.mp3": "action",
+  "music/overdrive-protocol.mp3": "action",
+  "music/ion-storm.mp3": "action",
+  "music/velocity.mp3": "action",
+  "music/redline.mp3": "intense",
+  "music/critical-mass.mp3": "intense",
+  "music/analog-dreams.mp3": "ambient",
+  "music/tape-memories.mp3": "ambient",
 });
 
 const CATEGORY_LABELS = Object.freeze({
@@ -54,6 +54,16 @@ function toTrackName(path) {
     .replace(/\.mp3$/i, "") || "Unknown";
 }
 
+function normalizeTrackEntry(entry) {
+  if (entry && typeof entry === "object") {
+    const file = String(entry.file || entry.path || "");
+    const title = String(entry.title || "").trim() || toTrackName(file);
+    return { title, file };
+  }
+  const file = String(entry || "");
+  return { title: toTrackName(file), file };
+}
+
 function nowMs() {
   return (typeof performance !== "undefined" && typeof performance.now === "function")
     ? performance.now()
@@ -63,11 +73,11 @@ function nowMs() {
 export class MusicPlayer {
   constructor(options = {}) {
     this.audios = [this.createAudioElement(0), this.createAudioElement(1)];
-    this.playlist = Array.isArray(options.playlist) && options.playlist.length > 0
-      ? options.playlist.slice()
-      : DEFAULT_PLAYLIST.slice();
+    this.playlist = (Array.isArray(options.playlist) && options.playlist.length > 0
+      ? options.playlist
+      : DEFAULT_PLAYLIST).map(normalizeTrackEntry);
     this.currentTrackIndex = 0;
-    this.currentTrackPath = this.playlist[0] || null;
+    this.currentTrackPath = this.playlist[0]?.file || null;
     this.currentTrackCategory = this.getTrackCategory(this.currentTrackPath);
     this.activeAudioIndex = 0;
     this.trackMix = [1, 0];
@@ -207,10 +217,15 @@ export class MusicPlayer {
     }
   }
 
+  getTrackTitle(path) {
+    const entry = this.playlist.find((track) => track.file === path);
+    return entry?.title || toTrackName(path);
+  }
+
   setNowPlaying(trackPath) {
     if (!this.nowPlaying) return;
     const category = this.getCategoryLabel(this.getTrackCategory(trackPath));
-    this.nowPlaying.textContent = `Track: ${toTrackName(trackPath)} • ${category}`;
+    this.nowPlaying.textContent = `${this.getTrackTitle(trackPath)} • ${category}`;
   }
 
   applyAudioMixVolumes() {
@@ -225,7 +240,7 @@ export class MusicPlayer {
   primeActiveTrack(index, restart = false) {
     if (!this.playlist.length) return;
     const normalizedIndex = ((Math.floor(index) % this.playlist.length) + this.playlist.length) % this.playlist.length;
-    const trackPath = this.playlist[normalizedIndex];
+    const trackPath = this.playlist[normalizedIndex].file;
     const activeAudio = this.getActiveAudio();
     this.currentTrackIndex = normalizedIndex;
     this.currentTrackPath = trackPath;
@@ -246,7 +261,7 @@ export class MusicPlayer {
   loadTrack(index, options = {}) {
     if (!this.playlist.length) return;
     const normalizedIndex = ((Math.floor(index) % this.playlist.length) + this.playlist.length) % this.playlist.length;
-    const trackPath = this.playlist[normalizedIndex];
+    const trackPath = this.playlist[normalizedIndex].file;
     const manual = !!options.manual;
     const immediate = !!options.immediate;
     const shouldCrossfade = !!this.isPlaying && !immediate;
@@ -338,7 +353,7 @@ export class MusicPlayer {
     if (this.volumeSlider) {
       this.volumeSlider.value = String(volumePercent);
       this.volumeSlider.style.background =
-        `linear-gradient(to right, #6366F1 0%, #6366F1 ${volumePercent}%, #374151 ${volumePercent}%, #374151 100%)`;
+        `linear-gradient(to right, #c8f31d 0%, #c8f31d ${volumePercent}%, rgba(148, 163, 184, 0.22) ${volumePercent}%, rgba(148, 163, 184, 0.22) 100%)`;
     }
     if (this.volumeValue) {
       this.volumeValue.textContent = `${Math.round(volumePercent)}%`;
@@ -385,7 +400,7 @@ export class MusicPlayer {
   getCandidateTrackIndexes(category) {
     const matches = [];
     for (let i = 0; i < this.playlist.length; i += 1) {
-      if (this.getTrackCategory(this.playlist[i]) === category) {
+      if (this.getTrackCategory(this.playlist[i].file) === category) {
         matches.push(i);
       }
     }
