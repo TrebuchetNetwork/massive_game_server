@@ -1,0 +1,12 @@
+{
+  "alpha-one": {
+    "emoji": "🐺",
+    "title": "Wolfpack",
+    "color": "#facc15"
+  },
+  "beta-two": {
+    "emoji": "🛰️",
+    "title": "Orbit",
+    "color": "#60a5fa"
+  }
+}

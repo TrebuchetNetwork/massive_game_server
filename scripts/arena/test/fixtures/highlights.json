@@ -1,0 +1,37 @@
+[
+ {
+  "date": "2026-08-15",
+  "webm": "d/a.webm",
+  "gif": "d/a.gif",
+  "poster": "d/a.png",
+  "reason": "3 kills",
+  "score": 41.2,
+  "players": [
+   "#1 Abyss",
+   "#2 Talon"
+  ]
+ },
+ {
+  "date": "2026-08-15",
+  "webm": "d/b.webm",
+  "gif": "d/b.gif",
+  "poster": "d/b.png",
+  "reason": "comeback",
+  "score": 33.0,
+  "players": [
+   "#2 Talon",
+   "#1 Abyss"
+  ]
+ },
+ {
+  "date": "2026-08-15",
+  "webm": "d/c.webm",
+  "gif": "d/c.gif",
+  "poster": "d/c.png",
+  "reason": "shutout",
+  "score": 28.5,
+  "players": [
+   "#1 Abyss"
+  ]
+ }
+]

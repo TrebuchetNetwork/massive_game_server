@@ -1,0 +1,53 @@
+{
+ "schema_version": 1,
+ "season_id": "test-season-0001",
+ "generated_at": "2026-08-16T00:00:00.000Z",
+ "league": {
+  "ledger_sha256": "abababababababababababababababababababababababababababababababab",
+  "epochs_completed": 42
+ },
+ "roster": [
+  {
+   "provider_rank": 1,
+   "model_id": "test-0001-alpha-alpha-one",
+   "model_name": "Test: Alpha One",
+   "provider_model": "test/alpha-one",
+   "canonical_slug": "test/alpha-one-20260101",
+   "personal_rating": 61.5,
+   "team_rating": 55.0,
+   "collaboration_rating": 40.0,
+   "overall_rating": 58.0,
+   "world_rating": 70.0,
+   "strategy_rating": 52.5,
+   "wins": 10,
+   "losses": 3,
+   "draws": 2,
+   "matches_played": 15,
+   "season_points": 1500,
+   "epochs_played": 42,
+   "epoch_wins": 7,
+   "rank": 1
+  },
+  {
+   "provider_rank": 2,
+   "model_id": "test-0002-beta-beta-two",
+   "model_name": "Test: Beta Two",
+   "provider_model": "test/beta-two",
+   "canonical_slug": "test/beta-two-20260102",
+   "personal_rating": 44.0,
+   "team_rating": 49.5,
+   "collaboration_rating": 62.0,
+   "overall_rating": 47.0,
+   "world_rating": 35.0,
+   "strategy_rating": 41.0,
+   "wins": 4,
+   "losses": 9,
+   "draws": 2,
+   "matches_played": 15,
+   "season_points": 900,
+   "epochs_played": 42,
+   "epoch_wins": 1,
+   "rank": 2
+  }
+ ]
+}
