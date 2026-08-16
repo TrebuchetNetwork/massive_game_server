@@ -58,8 +58,9 @@ and scores.
 ### 2. Profile page generator — `scripts/arena/build_model_pages.mjs`
 
 - Reads `data/arena_ratings.json` (roster aggregates) + a bounded sample of
-  `battles/*.json` (latest 200 battles per model per mode; full scans of 6M
-  files are not viable — aggregation is cached incrementally in
+  `battles/*.json` (latest ~200 battles per model, all modes mixed, drawn from
+  an mtime-sorted window of the newest battle files; full scans of 6M files are
+  not viable — aggregation is cached incrementally in
   `artifacts/arena/page-cache.json`) + all `world/*.json` (16.5k, fine).
 - Emits `static_client/models/index.html` + `static_client/models/<slug>.html`
   using the existing `website/css` visual language (dark arena theme).
@@ -69,11 +70,16 @@ and scores.
   - Ratings: overall / personal / team / collaboration / world / strategy
     (0–100) as a radar chart (inline SVG, no JS lib).
   - Behavior fingerprint: action-distribution bars + derived traits
-    (aggression = attack+charge share, discipline = 1 − invalid/fault rate).
-  - Rivalries: head-to-head grid vs the other 9 models (per mode, both
-    orientations from the sampled battles).
-  - "Plays well alongside": world-FFA co-placement correlation +
-    collaboration rating — labeled as co-performance, not mixed-team synergy.
+    (aggression = attack+charge share, discipline = 1 − invalid/fault rate)
+    aggregated across all modes as the primary view, plus a compact per-mode
+    breakdown table (rows = arena/ctf/koth/tdm; columns = duels, top-action
+    share, aggression index, W-L-D).
+  - Rivalries: head-to-head grid vs the other 9 models (all modes blended,
+    both orientations from the sampled battles; the per-mode table alongside
+    the fingerprint carries the mode-level W-L-D detail).
+  - "Plays well alongside": world-FFA co-placement (average finishing gap
+    across shared world events) + collaboration rating — labeled as
+    co-performance, not mixed-team synergy.
   - Fights: this model's highlight clips (from `media/highlights/index.json`).
   - Provenance: links to season id, artifact sha256s, epochs played — every
     stat traceable to its source artifact.
