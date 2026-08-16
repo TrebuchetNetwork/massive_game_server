@@ -332,9 +332,10 @@ impl MassiveGameServer {
 
                 let impact_speed =
                     (player_state.velocity_x.powi(2) + player_state.velocity_y.powi(2)).sqrt();
-                if impact_speed >= crate::core::constants::WALL_SLAM_STUN_SPEED_THRESHOLD
-                    && !player_state.is_wall_slam_stunned()
-                {
+                let slammed = impact_speed
+                    >= crate::core::constants::WALL_SLAM_STUN_SPEED_THRESHOLD
+                    && !player_state.is_wall_slam_stunned();
+                if slammed {
                     player_state.apply_wall_slam_stun();
                     player_state.mark_field_changed(FIELD_POWERUPS);
 
@@ -366,12 +367,46 @@ impl MassiveGameServer {
                     }
                 }
 
-                player_state.x = old_x;
-                player_state.y = old_y;
-                player_state.velocity_x = 0.0;
-                player_state.velocity_y = 0.0;
-                player_state.last_valid_position = (old_x, old_y);
+                // Slam-stun impacts keep the original full-stop behavior: apply_wall_slam_stun()
+                // does not zero velocity itself, and for bots nothing else will, so a stunned
+                // player must be stopped here on the impact tick.
+                let normal_x = player_state.x - closest_x;
+                let normal_y = player_state.y - closest_y;
+                let normal_len = (normal_x.powi(2) + normal_y.powi(2)).sqrt();
+
+                if slammed || normal_len <= 1e-6 {
+                    // Player center is inside the wall AABB (normal undefined), or this was a
+                    // slam-stun impact: revert fully and zero velocity.
+                    player_state.x = old_x;
+                    player_state.y = old_y;
+                    player_state.velocity_x = 0.0;
+                    player_state.velocity_y = 0.0;
+                    player_state.last_valid_position = (old_x, old_y);
+                } else {
+                    // Wall sliding: resolve penetration along the wall normal and keep only
+                    // the tangential velocity component, so players glide along walls instead
+                    // of being pinned in place.
+                    let nx = normal_x / normal_len;
+                    let ny = normal_y / normal_len;
+
+                    // Push the player out to exact contact distance along the normal.
+                    player_state.x = closest_x + nx * PLAYER_RADIUS;
+                    player_state.y = closest_y + ny * PLAYER_RADIUS;
+
+                    // Remove only the velocity component pointing into the wall.
+                    let v_dot_n = player_state.velocity_x * nx + player_state.velocity_y * ny;
+                    if v_dot_n < 0.0 {
+                        player_state.velocity_x -= v_dot_n * nx;
+                        player_state.velocity_y -= v_dot_n * ny;
+                    }
+
+                    player_state.last_valid_position = (player_state.x, player_state.y);
+                }
                 player_state.mark_field_changed(FIELD_POSITION_ROTATION);
+                // Note: only the first colliding wall is resolved per tick (the `true`
+                // short-circuits the spatial query). In concave corners this can leave
+                // residual penetration against a second wall, which is resolved on
+                // subsequent ticks — a pre-existing limitation.
                 true
             },
         ) {
@@ -686,6 +721,9 @@ impl MassiveGameServer {
             if (next_x - player_state.x).abs() > 0.001 || (next_y - player_state.y).abs() > 0.001 {
                 player_state.x = next_x;
                 player_state.y = next_y;
+                // Server-sanctioned separation push: keep the anti-cheat
+                // reference in sync.
+                player_state.last_valid_position = (next_x, next_y);
                 player_state.mark_field_changed(FIELD_POSITION_ROTATION);
             }
         }

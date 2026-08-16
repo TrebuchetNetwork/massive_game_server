@@ -2,7 +2,9 @@
 
 use massive_game_server_core::concurrent::thread_pools::ThreadPoolSystem;
 use massive_game_server_core::core::config::ServerConfig;
-use massive_game_server_core::core::types::{EntityId, Projectile, ServerWeaponType, Wall}; // Removed PlayerID, Vec2
+use massive_game_server_core::core::types::{
+    EntityId, PlayerID, Projectile, ServerWeaponType, Wall,
+};
 use massive_game_server_core::server::instance::MassiveGameServer;
 // Removed unused DataChannelsMap, ClientStatesMap, ChatMessagesQueue (type aliases)
 // Removed unused PlayerAoIs
@@ -48,6 +50,20 @@ async fn setup_test_server() -> TestServerContext {
         player_aois,
     ));
     TestServerContext { server }
+}
+
+fn add_player(server: &MassiveGameServer, peer_id: &str, team_id: u8, x: f32, y: f32) -> PlayerID {
+    server
+        .player_manager
+        .add_player(peer_id.to_owned(), peer_id.to_owned(), x, y);
+    let player_id = server.player_manager.id_pool.get_or_create(peer_id);
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&player_id) {
+        ps.team_id = team_id;
+        ps.x = x;
+        ps.y = y;
+        ps.alive = true;
+    }
+    player_id
 }
 
 fn create_destructible_wall(
@@ -142,6 +158,124 @@ fn fire_projectile_at_wall(
             wall_id
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn player_slides_along_wall_on_diagonal_impact() {
+    let test_ctx = setup_test_server().await;
+    let server = &test_ctx.server;
+
+    // Indestructible vertical wall: x in [500, 520], y in [300, 500].
+    // Location chosen away from the generated map's SlowZone (x in [-95, 95]),
+    // DamageZones (|x| in [140, 260], y in [-70, 70]) and boost pads (y in [-220, 220]).
+    // The spatial index is rebuilt with ONLY this wall so procedurally generated
+    // map walls cannot interfere with the assertion.
+    let wall = Wall {
+        id: 424242,
+        x: 500.0,
+        y: 300.0,
+        width: 20.0,
+        height: 200.0,
+        is_destructible: false,
+        current_health: 1000,
+        max_health: 1000,
+    };
+    server.wall_spatial_index.rebuild(&[wall], 0);
+
+    // Player just left of the wall surface (PLAYER_RADIUS = 15), moving diagonally
+    // into it. Speed ~141 < WALL_SLAM_STUN_SPEED_THRESHOLD (170), so no slam stun.
+    let start_x = 500.0 - 15.0 - 1.0; // 1 unit of clearance from the wall face
+    let pid = add_player(server, "wall_slider", 1, start_x, 400.0);
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&pid) {
+        ps.velocity_x = 100.0;
+        ps.velocity_y = 100.0;
+    }
+
+    server.run_physics_update(0.016).await;
+
+    let ps = server
+        .player_manager
+        .get_player_state(&pid)
+        .expect("player state missing after physics update");
+
+    assert!(
+        ps.velocity_y >= 80.0,
+        "tangential velocity component should be preserved while sliding, got velocity_y={}",
+        ps.velocity_y
+    );
+    assert!(
+        ps.velocity_x.abs() < 1.0,
+        "normal velocity component should be cancelled by the wall, got velocity_x={}",
+        ps.velocity_x
+    );
+    assert!(
+        ps.x <= 500.0 - 15.0 + 0.001,
+        "player must be resolved out of wall penetration, got x={}",
+        ps.x
+    );
+    assert_eq!(
+        ps.last_valid_position,
+        (ps.x, ps.y),
+        "last_valid_position must be synced to the resolved slide position (anti-cheat relies on it)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wall_slam_stun_stops_player_on_impact_tick() {
+    let test_ctx = setup_test_server().await;
+    let server = &test_ctx.server;
+
+    // Same isolated wall setup as the slide test.
+    let wall = Wall {
+        id: 424243,
+        x: 500.0,
+        y: 300.0,
+        width: 20.0,
+        height: 200.0,
+        is_destructible: false,
+        current_health: 1000,
+        max_health: 1000,
+    };
+    server.wall_spatial_index.rebuild(&[wall], 0);
+
+    // Head-on impact at 200 u/s >= WALL_SLAM_STUN_SPEED_THRESHOLD (170): the slam
+    // path must keep the original behavior — full position revert + zeroed velocity —
+    // because the stun itself does not stop the player (bots have no input pass that
+    // would zero it later).
+    let start_x = 500.0 - 15.0 - 1.0;
+    let pid = add_player(server, "wall_slammer", 1, start_x, 400.0);
+    if let Some(mut ps) = server.player_manager.get_player_state_mut(&pid) {
+        ps.velocity_x = 200.0;
+        ps.velocity_y = 0.0;
+    }
+
+    server.run_physics_update(0.016).await;
+
+    let ps = server
+        .player_manager
+        .get_player_state(&pid)
+        .expect("player state missing after physics update");
+
+    assert!(
+        ps.is_wall_slam_stunned() && ps.wall_slam_stun_remaining > 0.0,
+        "slam stun should be applied, wall_slam_stun_remaining={}",
+        ps.wall_slam_stun_remaining
+    );
+    assert_eq!(
+        (ps.x, ps.y),
+        (start_x, 400.0),
+        "slam impact must revert the position to the pre-collision tick position"
+    );
+    assert_eq!(
+        (ps.velocity_x, ps.velocity_y),
+        (0.0, 0.0),
+        "slam impact must zero velocity on the impact tick"
+    );
+    assert_eq!(
+        ps.last_valid_position,
+        (start_x, 400.0),
+        "last_valid_position must follow the slam revert"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
