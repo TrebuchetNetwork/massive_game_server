@@ -72,7 +72,8 @@ check_status() {
 check_status "/" "302"
 check_status "/index.html" "200"
 check_status "/client.html" "200"
-check_status "/ui-template.html" "200"
+# Dead UI prototype bundle removed; it must no longer be served.
+check_status "/ui-template.html" "404"
 
 health_json="$(curl -fsS "$BASE_URL/healthz")"
 ready_json="$(curl -fsS "$BASE_URL/readyz")"
