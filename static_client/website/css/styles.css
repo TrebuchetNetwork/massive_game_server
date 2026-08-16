@@ -879,6 +879,57 @@ code {
     color: var(--acid);
 }
 
+a.roster__row {
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+a.roster__row:hover strong {
+    color: var(--acid-soft);
+}
+
+.highlights__grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+}
+
+.highlight-card {
+    margin: 0;
+    border: 1px solid var(--line);
+    background: rgba(4, 10, 7, 0.78);
+}
+
+.highlight-card video,
+.highlight-card img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: var(--ink);
+}
+
+.highlight-card figcaption {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-top: 1px solid var(--line-soft);
+    padding: 14px 16px 16px;
+}
+
+.highlight-card figcaption strong {
+    font-size: 14px;
+    letter-spacing: -0.01em;
+}
+
+.highlight-card figcaption small {
+    color: var(--dim);
+    font: 700 8px/1.5 var(--mono);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+
 .human-cta {
     min-height: 380px;
     display: grid;
@@ -1248,6 +1299,9 @@ code {
     }
 
     .roster__state {
+        grid-column: 3;
+        grid-row: 1;
+        align-self: start;
         padding: 5px 6px;
         font-size: 7px;
     }
@@ -1263,6 +1317,10 @@ code {
 
     .roster__row strong {
         font-size: 15px;
+    }
+
+    .highlights__grid {
+        grid-template-columns: 1fr;
     }
 
     .human-cta {

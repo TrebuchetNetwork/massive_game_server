@@ -43,6 +43,25 @@ document.addEventListener('DOMContentLoaded', () => {
     return Number.isInteger(value) ? String(value) : value.toFixed(1);
   };
 
+  // Mirror of scripts/arena/build_model_pages.mjs baseSlug():
+  // "deepseek/deepseek-v4-pro-20260423" -> "deepseek-v4-pro".
+  const baseSlug = (rawId) =>
+    String(rawId || '').split('/').pop().replace(/-\d{8}$/, '').replace(/:free$/, '');
+
+  // Match a roster model to its /models/<slug>.html page via mascots.json.
+  // Tries the most specific candidate first so dated twins like
+  // deepseek-v4-flash vs deepseek-v4-flash-0731 resolve to distinct slugs.
+  const mascotForModel = (mascots, model) => {
+    if (!mascots || !model) return null;
+    const candidates = [...new Set([
+      baseSlug(model.provider_model),
+      baseSlug(model.canonical_slug),
+      baseSlug(model.model_id),
+    ].filter(Boolean))].sort((a, b) => b.length - a.length);
+    const slug = candidates.find((candidate) => mascots[candidate]);
+    return slug ? { slug, ...mascots[slug] } : null;
+  };
+
   const appendHumanWildcard = (roster) => {
     const human = document.createElement('article');
     human.className = 'roster__row roster__row--human';
@@ -65,14 +84,16 @@ document.addEventListener('DOMContentLoaded', () => {
     roster.append(human);
   };
 
-  const renderRoster = (models) => {
+  const renderRoster = (models, mascots) => {
     const roster = document.querySelector('[data-roster]');
     if (!roster || !Array.isArray(models) || models.length === 0) return;
 
     roster.replaceChildren();
     models.slice(0, 5).forEach((model, index) => {
-      const row = document.createElement('article');
+      const mascot = mascotForModel(mascots, model);
+      const row = document.createElement(mascot ? 'a' : 'article');
       row.className = 'roster__row';
+      if (mascot) row.href = `/models/${mascot.slug}.html`;
 
       const number = document.createElement('span');
       number.className = 'roster__index';
@@ -80,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const identity = document.createElement('div');
       const name = document.createElement('strong');
-      name.textContent = formatModelName(model.model_name || model.model_id);
+      name.textContent = `${mascot ? `${mascot.emoji} ` : ''}${formatModelName(model.model_name || model.model_id)}`;
       const provider = document.createElement('small');
       provider.textContent = `${model.provider || 'openrouter'} / ${model.matches_played || 0} fights`;
       identity.append(name, provider);
@@ -100,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
     appendHumanWildcard(roster);
   };
 
-  const renderSeasonRoster = (ratings) => {
+  const renderSeasonRoster = (ratings, mascots) => {
     const roster = document.querySelector('[data-roster]');
     if (!roster || ratings?.active !== true || !Array.isArray(ratings.roster) || ratings.roster.length === 0) {
       return false;
@@ -108,8 +129,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     roster.replaceChildren();
     ratings.roster.forEach((model) => {
-      const row = document.createElement('article');
+      const mascot = mascotForModel(mascots, model);
+      const row = document.createElement(mascot ? 'a' : 'article');
       row.className = 'roster__row roster__row--rated';
+      if (mascot) row.href = `/models/${mascot.slug}.html`;
 
       const number = document.createElement('span');
       number.className = 'roster__index';
@@ -117,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const identity = document.createElement('div');
       const name = document.createElement('strong');
-      name.textContent = formatModelName(model.model_name || model.provider_model);
+      name.textContent = `${mascot ? `${mascot.emoji} ` : ''}${formatModelName(model.model_name || model.provider_model)}`;
       const provider = document.createElement('small');
       provider.textContent = Number(model.epochs_played) > 0
         ? `OpenRouter #${model.provider_rank || '–'} / ${model.season_points || 0} pts / ${model.epochs_played} epochs`
@@ -158,10 +181,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const hydrateArenaTelemetry = async () => {
     const status = document.querySelector('[data-arena-status]');
     try {
-      const [overviewResponse, leaderboardResponse, ratingsResponse] = await Promise.all([
+      const [overviewResponse, leaderboardResponse, ratingsResponse, mascotsResponse] = await Promise.all([
         fetch('/api/public/arena/overview', { headers: { Accept: 'application/json' } }),
         fetch('/api/public/arena/leaderboard?limit=5', { headers: { Accept: 'application/json' } }),
         fetch('/api/public/arena/ratings', { headers: { Accept: 'application/json' }, cache: 'no-store' })
+          .catch(() => null),
+        fetch('/models/mascots.json', { headers: { Accept: 'application/json' } })
           .catch(() => null),
       ]);
       if (!overviewResponse.ok || !leaderboardResponse.ok) throw new Error('telemetry unavailable');
@@ -176,6 +201,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (ratingsResponse?.ok) {
         const ratingsPayload = await ratingsResponse.json();
         if (ratingsPayload?.ok === true) ratings = ratingsPayload.data;
+      }
+
+      let mascots = null;
+      if (mascotsResponse?.ok) {
+        mascots = await mascotsResponse.json().catch(() => null);
       }
 
       const ratedSeason = ratings?.active === true && Array.isArray(ratings.roster) && ratings.roster.length > 0;
@@ -199,11 +229,72 @@ document.addEventListener('DOMContentLoaded', () => {
           status.textContent = queued > 0 ? `${queued} fights evolving` : `${overview.active_models || 0} models ready`;
         }
       }
-      if (!renderSeasonRoster(ratings)) renderRoster(leaderboard.models);
+      if (!renderSeasonRoster(ratings, mascots)) renderRoster(leaderboard.models, mascots);
     } catch (_) {
       if (status) status.textContent = 'Registry ready';
     }
   };
 
+  const hydrateHighlights = async () => {
+    const section = document.querySelector('[data-highlights]');
+    const grid = document.querySelector('[data-highlights-grid]');
+    if (!section || !grid) return;
+    try {
+      const response = await fetch('/media/highlights/index.json', { headers: { Accept: 'application/json' } });
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (!Array.isArray(payload) || payload.length === 0) return;
+
+      const clips = payload
+        .filter((clip) => clip && clip.webm)
+        .sort((a, b) => String(b.webm).localeCompare(String(a.webm)))
+        .slice(0, 3);
+      if (clips.length === 0) return;
+
+      grid.replaceChildren();
+      clips.forEach((clip) => {
+        const figure = document.createElement('figure');
+        figure.className = 'highlight-card';
+
+        const video = document.createElement('video');
+        video.muted = true;
+        video.loop = true;
+        video.autoplay = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        if (clip.gif) video.poster = `/media/highlights/${clip.gif}`;
+        const source = document.createElement('source');
+        source.src = `/media/highlights/${clip.webm}`;
+        source.type = 'video/webm';
+        video.append(source);
+        if (clip.gif) {
+          const fallback = document.createElement('img');
+          fallback.src = `/media/highlights/${clip.gif}`;
+          fallback.alt = clip.reason || 'Arena highlight';
+          video.append(fallback);
+        }
+
+        const caption = document.createElement('figcaption');
+        const reason = document.createElement('strong');
+        reason.textContent = clip.reason || 'Highlight';
+        const meta = document.createElement('small');
+        const players = [...new Set(Array.isArray(clip.players) ? clip.players : [])];
+        meta.textContent = players.length > 0 ? players.join(' · ') : String(clip.date || '');
+        caption.append(reason, meta);
+
+        figure.append(video, caption);
+        grid.append(figure);
+      });
+
+      section.hidden = false;
+      grid.querySelectorAll('video').forEach((video) => {
+        video.play().catch(() => {});
+      });
+    } catch (_) {
+      // Highlights are optional: leave the section hidden on any failure.
+    }
+  };
+
   hydrateArenaTelemetry();
+  hydrateHighlights();
 });
