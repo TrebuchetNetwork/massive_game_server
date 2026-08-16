@@ -3275,6 +3275,23 @@
             }
         }
 
+        // Drops the baked backdrop and clears the active theme so the next
+        // match re-applies the theme from scratch. Without this, a renderer
+        // rebuild leaves activeMapTheme claiming a theme is applied while the
+        // same-theme early-return above skips re-baking the visuals.
+        function resetMapThemeState() {
+            if (mapBackdropSprite) {
+                if (app && app.stage) {
+                    app.stage.removeChild(mapBackdropSprite);
+                }
+                if (!mapBackdropSprite.destroyed) {
+                    mapBackdropSprite.destroy({ children: true, texture: true, baseTexture: true });
+                }
+                mapBackdropSprite = null;
+            }
+            activeMapTheme = null;
+        }
+
         // ── Instantiate InterpolationManager ────────────────────────────
         const interpolationManager = createInterpolationManager(() => ({
             players, projectiles, myPlayerId, localPlayerState, inputState,
@@ -5252,6 +5269,7 @@
             }
             if (wallGraphics) wallGraphics.clear();
             if (effectsManager) effectsManager.clearAllEffects();
+            resetMapThemeState();
             playerSprites.clear();
             projectileSprites.clear();
             pickupSprites.clear();
@@ -5656,6 +5674,7 @@
             }
             if (wallGraphics) wallGraphics.clear();
             if (effectsManager) effectsManager.clearAllEffects();
+            resetMapThemeState();
             destroyHudWidgets();
             ensureHudWidgets();
             if (webgpuProjectileLayer && webgpuProjectileLayer.ready) {

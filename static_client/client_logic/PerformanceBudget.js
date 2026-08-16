@@ -645,11 +645,28 @@ export function createPerformanceBudget(getCtx) {
 
     // ── Frame performance signals ───────────────────────────────────
 
+    // ── FPS-cap-aware distress thresholds ───────────────────────────
+    // Mobile profiles cap the ticker (30fps mid / 20fps low), so a healthy
+    // capped device reports smoothed frames near the cap's frame time
+    // (~33ms at 30fps). That is the configured budget, not distress:
+    // frame-time thresholds only trigger once frames meaningfully exceed
+    // the cap's frame time (with a small epsilon for jitter at the cap).
+    const FPS_CAP_DISTRESS_EPSILON_MS = 2;
+
+    function getCapAwareFrameThresholdMs(ctx, baseThresholdMs, headroomRatio) {
+        const cap = typeof ctx.getEffectiveFPSCap === 'function' ? Number(ctx.getEffectiveFPSCap()) : 0;
+        if (!Number.isFinite(cap) || cap <= 0 || cap >= 60) return baseThresholdMs;
+        const capFrameMs = 1000 / cap;
+        return Math.max(baseThresholdMs, capFrameMs * headroomRatio + FPS_CAP_DISTRESS_EPSILON_MS);
+    }
+
     function updateFramePerformanceSignals(deltaMs) {
         const ctx = getCtx();
         const clampedDeltaMs = Math.max(4, Math.min(250, Number(deltaMs) || 16.67));
         ctx.setSmoothedFrameMs(ctx.smoothedFrameMs * 0.92 + clampedDeltaMs * 0.08);
-        const lowFpsThreshold = ctx.STABLE_MODE_FORCED ? ctx.STABLE_ULTRA_FRAME_MS : 28;
+        const lowFpsThreshold = ctx.STABLE_MODE_FORCED
+            ? ctx.STABLE_ULTRA_FRAME_MS
+            : getCapAwareFrameThresholdMs(ctx, 28, 1.05);
         const recoveryThreshold = ctx.STABLE_MODE_FORCED ? ctx.STABLE_DENSE_FRAME_MS : 20;
 
         if (ctx.smoothedFrameMs > lowFpsThreshold) {
@@ -673,7 +690,8 @@ export function createPerformanceBudget(getCtx) {
         const ctx = getCtx();
         if (!ctx.effectsManager) return;
         const disableByProfile = ctx.activeEffectsProfileName === 'ultra';
-        const disableByLoad = ctx.players.size >= (ctx.HIGH_POPULATION_PLAYER_COUNT + 30) || ctx.smoothedFrameMs > 30;
+        const disableByLoad = ctx.players.size >= (ctx.HIGH_POPULATION_PLAYER_COUNT + 30) ||
+            ctx.smoothedFrameMs > getCapAwareFrameThresholdMs(ctx, 30, 1.4);
         const disableByRespawn =
             ctx.RESPAWN_ANIMATION_LIGHTWEIGHT &&
             !!ctx.localPlayerState &&
@@ -706,9 +724,12 @@ export function createPerformanceBudget(getCtx) {
             return 'high';
         }
 
-        if (ctx.smoothedFrameMs > 30 || playerCount >= 180 || activeEffectCount >= 1800) return 'ultra';
-        if (ctx.smoothedFrameMs > 24 || playerCount >= 120 || activeEffectCount >= 1300) return 'dense';
-        if (ctx.smoothedFrameMs > 20 || playerCount >= 75 || activeEffectCount >= 900) return 'medium';
+        const ultraFrameMs = getCapAwareFrameThresholdMs(ctx, 30, 1.4);
+        const denseFrameMs = getCapAwareFrameThresholdMs(ctx, 24, 1.2);
+        const mediumFrameMs = getCapAwareFrameThresholdMs(ctx, 20, 1.05);
+        if (ctx.smoothedFrameMs > ultraFrameMs || playerCount >= 180 || activeEffectCount >= 1800) return 'ultra';
+        if (ctx.smoothedFrameMs > denseFrameMs || playerCount >= 120 || activeEffectCount >= 1300) return 'dense';
+        if (ctx.smoothedFrameMs > mediumFrameMs || playerCount >= 75 || activeEffectCount >= 900) return 'medium';
         return 'high';
     }
 
@@ -888,7 +909,8 @@ export function createPerformanceBudget(getCtx) {
 
         const playerCount = ctx.players.size;
         const hasActiveMatchLoad = playerCount >= 4 || !!ctx.localPlayerState;
-        if (!ctx.ultraPerformanceMode && hasActiveMatchLoad && ctx.smoothedFrameMs >= ctx.ULTRA_EMERGENCY_FRAME_MS) {
+        const emergencyFrameMs = getCapAwareFrameThresholdMs(ctx, ctx.ULTRA_EMERGENCY_FRAME_MS, 1.4);
+        if (!ctx.ultraPerformanceMode && hasActiveMatchLoad && ctx.smoothedFrameMs >= emergencyFrameMs) {
             setUltraPerformanceMode(true, `emergency ${ctx.smoothedFrameMs.toFixed(1)}ms`);
             return;
         }
