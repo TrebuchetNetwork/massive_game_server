@@ -6,6 +6,8 @@
  * various rendering utility functions.
  */
 
+import { buildNebulaCanvas, resolveMapTheme } from './MapThemes.js';
+
 export function createGameRenderer({
     PIXI,
     GP,
@@ -39,6 +41,12 @@ export function createGameRenderer({
             } catch (_) {}
         }
         activeFlashGraphics.clear();
+        shakeTrauma = 0;
+        if (shakeContainer) {
+            shakeContainer.position.x = 0;
+            shakeContainer.position.y = 0;
+            shakeContainer = null;
+        }
     }
 
     // ── Drawing helpers ──────────────────────────────────────────────
@@ -309,29 +317,46 @@ export function createGameRenderer({
 
     // ── Starfield ────────────────────────────────────────────────────
 
-    function createStarfield(app) {
+    // All themed art (nebula glow textures) is baked once here, on theme
+    // switch; per-frame work is limited to moving layer transforms.
+    function createStarfield(app, theme = resolveMapTheme(null)) {
         const starfieldContainer = new PIXI.Container();
+        const density = Math.max(0.2, Number(theme.starDensity) || 1);
+        const starColors = Array.isArray(theme.starColors) && theme.starColors.length > 0
+            ? theme.starColors
+            : [0xFFFFFF, 0xAAAAFF, 0xFFFFAA];
         const starLayers = [
-            { count: 100, scrollFactor: 0.1, minRadius: 0.5, maxRadius: 1, color: 0xFFFFFF },
-            { count: 50,  scrollFactor: 0.3, minRadius: 1,   maxRadius: 1.5, color: 0xAAAAFF },
-            { count: 30,  scrollFactor: 0.5, minRadius: 1.5, maxRadius: 2, color: 0xFFFFAA }
+            { count: Math.round(100 * density), scrollFactor: 0.1, minRadius: 0.5, maxRadius: 1, color: starColors[0] },
+            { count: Math.round(50 * density),  scrollFactor: 0.3, minRadius: 1,   maxRadius: 1.5, color: starColors[1 % starColors.length] },
+            { count: Math.round(30 * density),  scrollFactor: 0.5, minRadius: 1.5, maxRadius: 2, color: starColors[2 % starColors.length] }
         ];
 
-        const nebulaContainer = new PIXI.Container();
-        for (let i = 0; i < 3; i++) {
-            const nebula = new PIXI.Graphics();
-            const size = 200 + Math.random() * 300;
-            const x = Math.random() * app.screen.width;
-            const y = Math.random() * app.screen.height;
-            const color = [0x4B0082, 0x191970, 0x2F4F4F][i % 3];
-            nebula.beginFill(color, 0.1);
-            nebula.drawCircle(0, 0, size);
-            nebula.endFill();
-            nebula.position.set(x, y);
-            nebula.filters = [new PIXI.BlurFilter(50)];
-            nebulaContainer.addChild(nebula);
+        // Nebula layer: huge pre-rendered radial glow sprites, additive,
+        // parallax-slower than the farthest star layer. Sprites are marked
+        // noWrap so the screen-edge star wrap never pops a giant glow.
+        const nebulaConfig = theme.nebula || { colors: [], alpha: 0.14, count: 3 };
+        const nebulaColors = Array.isArray(nebulaConfig.colors) ? nebulaConfig.colors : [];
+        const nebulaCount = Math.max(0, Math.min(6, Math.round(Number(nebulaConfig.count) || 0)));
+        if (nebulaCount > 0 && nebulaColors.length > 0) {
+            const nebulaLayer = new PIXI.Container();
+            nebulaLayer.scrollFactor = 0.06;
+            for (let i = 0; i < nebulaCount; i++) {
+                const canvas = buildNebulaCanvas(nebulaColors[i % nebulaColors.length]);
+                if (!canvas) break;
+                const texture = PIXI.Texture.from(canvas);
+                const nebula = new PIXI.Sprite(texture);
+                nebula.anchor.set(0.5);
+                const scale = 2.2 + Math.random() * 2.8;
+                nebula.scale.set(scale);
+                nebula.alpha = Math.max(0.05, Math.min(0.4, Number(nebulaConfig.alpha) || 0.14));
+                nebula.blendMode = PIXI.BLEND_MODES.ADD;
+                nebula.x = Math.random() * app.screen.width * 2;
+                nebula.y = Math.random() * app.screen.height * 2;
+                nebula.noWrap = true;
+                nebulaLayer.addChild(nebula);
+            }
+            starfieldContainer.addChild(nebulaLayer);
         }
-        starfieldContainer.addChild(nebulaContainer);
 
         starLayers.forEach((layerData) => {
             const layerContainer = new PIXI.Container();
@@ -374,6 +399,7 @@ export function createGameRenderer({
                 layer.y = -cameraY * layer.scrollFactor;
                 if (lowDetailMode) return;
                 layer.children.forEach(star => {
+                    if (star.noWrap) return;
                     if (star.twinkleSpeed) {
                         star.alpha = 0.5 + Math.sin(frameNowMs * star.twinkleSpeed + star.twinkleOffset) * 0.5;
                     }
@@ -395,20 +421,32 @@ export function createGameRenderer({
 
     // ── Health vignette ──────────────────────────────────────────────
 
-    function createHealthVignette(app) {
-        const vignette = new PIXI.Graphics();
+    function drawHealthVignetteRings(vignette, app, tintColor) {
         const radius = Math.max(app.screen.width, app.screen.height);
         const center = new PIXI.Point(app.screen.width / 2, app.screen.height / 2);
+        vignette.clear();
         for (let i = 0; i < 10; i++) {
             const alpha = (i / 10) * 0.5;
             const currentRadius = radius * (1 - i / 10);
-            vignette.beginFill(0xFF0000, alpha);
+            vignette.beginFill(tintColor, alpha);
             vignette.drawCircle(center.x, center.y, currentRadius);
             vignette.endFill();
         }
+    }
+
+    function createHealthVignette(app, tintColor = 0xFF0000) {
+        const vignette = new PIXI.Graphics();
+        drawHealthVignetteRings(vignette, app, tintColor);
         vignette.blendMode = PIXI.BLEND_MODES.MULTIPLY;
         vignette.visible = false;
         return vignette;
+    }
+
+    // Redraws the vignette rings in a new theme tint; called on theme
+    // switch only, never per frame.
+    function setHealthVignetteTint(vignette, app, tintColor) {
+        if (!vignette || vignette.destroyed || !app) return;
+        drawHealthVignetteRings(vignette, app, tintColor);
     }
 
     function updateHealthVignette(vignette, healthPercent, frameNowMs = Date.now()) {
@@ -486,23 +524,49 @@ export function createGameRenderer({
 
     // ── Screen effects ───────────────────────────────────────────────
 
+    // ── Screen shake (trauma model) ─────────────────────────────────
+    //
+    // applyScreenShake only accumulates trauma; updateScreenShake runs once
+    // per frame from the main ticker and writes an absolute offset onto the
+    // world container. The offset is derived solely from the current trauma,
+    // so when trauma decays to 0 the offset is exactly 0 — overlapping
+    // shakes stack (capped) but can never leave a permanent camera offset.
+    // The old implementation captured/restored the camera position on a
+    // private rAF chain, so stacked shakes restored stale positions and
+    // detached the camera.
+    const MAX_SHAKE_PX = 200;
+    let shakeTrauma = 0;
+    let shakeDecayDurationSec = 1 / 60;
+    let shakeContainer = null;
+
     function applyScreenShake(gameScene, intensity, durationFrames) {
-        let frame = 0;
-        const originalX = gameScene.position.x;
-        const originalY = gameScene.position.y;
-        const doShake = () => {
-            if (frame >= durationFrames) {
-                gameScene.position.x = originalX;
-                gameScene.position.y = originalY;
-                return;
-            }
-            const decay = 1 - (frame / durationFrames);
-            gameScene.position.x = originalX + (Math.random() - 0.5) * intensity * decay;
-            gameScene.position.y = originalY + (Math.random() - 0.5) * intensity * decay;
-            frame++;
-            scheduleAnimationFrame(doShake);
-        };
-        doShake();
+        // `gameScene` is kept only for a backward-compatible signature; the
+        // trauma model never captures or restores container positions.
+        void gameScene;
+        const safeIntensity = Math.max(0, Number(intensity) || 0);
+        // sqrt mapping keeps a lone shake's peak amplitude equal to the
+        // legacy `intensity` (trauma^2 * MAX_SHAKE_PX === intensity) while
+        // stacked shakes remain capped at MAX_SHAKE_PX.
+        shakeTrauma = Math.min(1, shakeTrauma + Math.sqrt(safeIntensity / MAX_SHAKE_PX));
+        shakeDecayDurationSec = Math.max(1 / 60, (Number(durationFrames) || 0) / 60);
+    }
+
+    function updateScreenShake(worldContainer, deltaMS) {
+        if (!worldContainer || !worldContainer.position) return;
+        shakeContainer = worldContainer;
+        if (shakeTrauma > 0) {
+            const dtSec = Math.max(0, (Number(deltaMS) || 0) / 1000);
+            const amplitude = shakeTrauma * shakeTrauma * MAX_SHAKE_PX;
+            // Compensate for camera zoom so the shake magnitude stays in
+            // screen pixels regardless of gameScene scale.
+            const zoom = worldContainer.parent?.scale?.x || 1;
+            worldContainer.position.x = ((Math.random() * 2) - 1) * amplitude / zoom;
+            worldContainer.position.y = ((Math.random() * 2) - 1) * amplitude / zoom;
+            shakeTrauma = Math.max(0, shakeTrauma - dtSec / shakeDecayDurationSec);
+        } else if (worldContainer.position.x !== 0 || worldContainer.position.y !== 0) {
+            worldContainer.position.x = 0;
+            worldContainer.position.y = 0;
+        }
     }
 
     function createScreenFlash(app, color, durationFrames, maxAlpha) {
@@ -549,10 +613,12 @@ export function createGameRenderer({
         updateStarfield,
         createHealthVignette,
         updateHealthVignette,
+        setHealthVignetteTint,
         createFogOfWar,
         updateFogOfWar,
         getMaxAmmoForWeaponClient,
         applyScreenShake,
+        updateScreenShake,
         createScreenFlash,
         onConnectionReset,
         destroy,

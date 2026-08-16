@@ -1060,7 +1060,7 @@ export function createCombatFeedback(getCtx) {
                 }
                 lastLocalDamageImpactAt = now;
             }
-            triggerHaptic([8, 12, 8]);
+            triggerHaptic(30);
             return;
         }
         if (event.instigator_id === ctx.myPlayerId && event.target_id && event.target_id !== ctx.myPlayerId) {
@@ -1202,7 +1202,7 @@ export function createCombatFeedback(getCtx) {
             if (!ctx.RESPAWN_ANIMATION_LIGHTWEIGHT) {
                 showCombatBanner('Downed', 'death', 1100);
                 showDeathRecap(entry);
-                triggerHaptic([20, 20, 16]);
+                triggerHaptic([50, 40, 50]);
             }
         });
     }

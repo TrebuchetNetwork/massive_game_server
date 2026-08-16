@@ -178,3 +178,59 @@ test("onConnectionReset clears streak ping cooldowns", () => {
     feedback.registerCombatEventFeedback(killstreakEvent);
     assert.equal(ctx.tacticalPings.length, 2);
 });
+
+function stubNavigator(vibrateImpl) {
+    const original = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", {
+        value: { vibrate: vibrateImpl },
+        configurable: true,
+    });
+    return () => {
+        if (original) {
+            Object.defineProperty(globalThis, "navigator", original);
+        } else {
+            delete globalThis.navigator;
+        }
+    };
+}
+
+test("triggerHaptic only vibrates when haptics enabled on a touch device", (t) => {
+    const calls = [];
+    const restore = stubNavigator((pattern) => {
+        calls.push(pattern);
+        return true;
+    });
+    t.after(restore);
+
+    const ctx = makeCtx();
+    ctx.gameSettings = { mobileHaptics: false };
+    ctx.isTouchDevice = true;
+    const feedback = createCombatFeedback(() => ctx);
+
+    feedback.triggerHaptic(10);
+    assert.equal(calls.length, 0, "vibrates while mobileHaptics is off");
+
+    ctx.gameSettings.mobileHaptics = true;
+    ctx.isTouchDevice = false;
+    feedback.triggerHaptic(10);
+    assert.equal(calls.length, 0, "vibrates on a non-touch device");
+
+    ctx.isTouchDevice = true;
+    feedback.triggerHaptic(30);
+    feedback.triggerHaptic([50, 40, 50]);
+    assert.deepEqual(calls, [30, [50, 40, 50]]);
+});
+
+test("triggerHaptic swallows navigator.vibrate errors", (t) => {
+    const restore = stubNavigator(() => {
+        throw new Error("vibrate blocked");
+    });
+    t.after(restore);
+
+    const ctx = makeCtx();
+    ctx.gameSettings = { mobileHaptics: true };
+    ctx.isTouchDevice = true;
+    const feedback = createCombatFeedback(() => ctx);
+
+    assert.doesNotThrow(() => feedback.triggerHaptic(10));
+});

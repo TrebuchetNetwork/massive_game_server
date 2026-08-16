@@ -1138,7 +1138,10 @@ export function createInputManager({
             mobileAimActive = true;
             recordMobileActionReachSample(touch);
             updateAimFromTouch(touch, true);
-            if (gameSettings.mobileAutoFireAim) inputState.shooting = true;
+            if (gameSettings.mobileAutoFireAim) {
+                inputState.shooting = true;
+                triggerHapticFn(10);
+            }
             event.preventDefault();
         }, { passive: false });
 
@@ -1201,6 +1204,7 @@ export function createInputManager({
                 triggerHapticFn(mobileStickyFireArmed ? [10, 12] : 8);
             } else {
                 inputState.shooting = true;
+                triggerHapticFn(10);
             }
             event.preventDefault();
         }, { passive: false });
