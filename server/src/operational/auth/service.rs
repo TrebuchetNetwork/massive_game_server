@@ -582,41 +582,63 @@ impl AuthService {
             (self.inner.otp_ttl_seconds / 60).max(1)
         );
 
-        if let Some(command_executable) = &self.inner.sms_command {
-            match Command::new(command_executable)
-                .arg(phone_number)
-                .arg(&message)
-                .status()
-            {
-                Ok(status) if status.success() => {
-                    info!(
-                        "SMS command delivered code to {}",
-                        mask_phone_number(phone_number)
-                    );
-                    if self.inner.sms_dev_mode {
+        if let Some(command_line) = &self.inner.sms_command {
+            // MGS_SMS_COMMAND is a full command line (e.g. "/usr/bin/python3
+            // /path/send_sms_twilio.py") — split the program from its arguments
+            // instead of passing the whole string as the executable path.
+            let mut command_parts = command_line.split_whitespace();
+            if let Some(program) = command_parts.next() {
+                match Command::new(program)
+                    .args(command_parts)
+                    .arg(phone_number)
+                    .arg(&message)
+                    .status()
+                {
+                    Ok(status) if status.success() => {
                         info!(
-                            "[AUTH_SMS_DEV] phone={} code=<redacted>",
+                            "SMS command delivered code to {}",
                             mask_phone_number(phone_number)
                         );
+                        if self.inner.sms_dev_mode {
+                            info!(
+                                "[AUTH_SMS_DEV] phone={} code=<redacted>",
+                                mask_phone_number(phone_number)
+                            );
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
-                }
-                Ok(status) => {
-                    return Err(format!(
-                        "SMS command failed with status {}",
-                        status.code().unwrap_or(-1)
-                    ));
-                }
-                Err(error) => {
-                    return Err(format!("SMS command execution failed: {}", error));
+                    Ok(status) => {
+                        if !self.inner.sms_dev_mode {
+                            return Err(format!(
+                                "SMS command failed with status {}",
+                                status.code().unwrap_or(-1)
+                            ));
+                        }
+                        warn!(
+                            "SMS command failed with status {}; dev mode falling back to log delivery",
+                            status.code().unwrap_or(-1)
+                        );
+                    }
+                    Err(error) => {
+                        if !self.inner.sms_dev_mode {
+                            return Err(format!("SMS command execution failed: {}", error));
+                        }
+                        warn!(
+                            "SMS command execution failed: {}; dev mode falling back to log delivery",
+                            error
+                        );
+                    }
                 }
             }
         }
 
         if self.inner.sms_dev_mode {
-            debug!(
-                "[AUTH_SMS_DEV] phone={} code=<redacted>",
-                mask_phone_number(phone_number)
+            // Dev mode delivers the code via the server log so phone login stays
+            // usable while no real SMS provider is configured.
+            info!(
+                "[AUTH_SMS_DEV] phone={} code={}",
+                mask_phone_number(phone_number),
+                code
             );
             return Ok(());
         }
