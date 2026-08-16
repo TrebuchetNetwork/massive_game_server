@@ -65,6 +65,12 @@ export function createEffectsAudioRuntime({
   const mobileDynamicsEnabled = !!isMobileSoundBudget;
   const forceMobileClient = false;
 
+  // Key combat feedback kinds that must stay readable on mobile high/mid
+  // device classes: under load they shed through a softer spawn stride instead
+  // of the full suppression table. 'low' devices, desktop and ultra
+  // performance mode keep the stock strides.
+  const KEY_COMBAT_EFFECT_KINDS = new Set(['damage', 'impact', 'muzzle', 'explosion', 'powerup', 'movement']);
+
   let projectiles = getProjectiles() || new Map();
   let players = getPlayers() || new Map();
   let walls = getWalls() || new Map();
@@ -587,6 +593,18 @@ switch (kind) {
         break;
 }
 
+// Mobile high/mid profiles: soften the load stride for key combat feedback
+// (muzzle flash, explosion, hit markers, dash/dodge, spawn) so those moments
+// still read on smaller screens — half rate under heavy load, full rate under
+// soft load. 'low', desktop and ultra performance mode keep the strides above.
+if (
+    (deviceClassification === 'high' || deviceClassification === 'mid') &&
+    !ultraPerformanceMode &&
+    KEY_COMBAT_EFFECT_KINDS.has(kind)
+) {
+    stride = Math.min(stride, heavy ? 2 : 1);
+}
+
 this.effectSpawnSequence = (this.effectSpawnSequence + 1) % 1000000;
 return (this.effectSpawnSequence % stride) === 0;
     }
@@ -1016,6 +1034,17 @@ switch (surface) {
 }
     }
 
+    // Footstep/impact samples are shared across surfaces (two wavs each);
+    // pitch-shift per surface keeps metal/glass distinct from concrete/wood.
+    getSurfacePitchScale(surfaceType) {
+const surface = Number(surfaceType) || 0;
+const surfaceEnum = GP?.SurfaceType || {};
+if (surface === (surfaceEnum.Metal ?? 1)) return 1.28;
+if (surface === (surfaceEnum.Glass ?? 3)) return 1.42;
+if (surface === (surfaceEnum.Wood ?? 2)) return 0.92;
+return 1.0;
+    }
+
     processGameEvent(event) {
 const GAME_EVENT_FOOTSTEP = GP?.GameEventType?.Footstep ?? 16;
 if (
@@ -1057,7 +1086,9 @@ switch (event.event_type) {
             this.createEnhancedBulletImpact(pos, event.weapon_type);
         }
         if (this.audioManager) {
-            this.audioManager.playSound(this.getSurfaceImpactSoundName(event.surface_type), pos, 0.5);
+            this.audioManager.playSound(this.getSurfaceImpactSoundName(event.surface_type), pos, 0.5, {
+                pitchScale: this.getSurfacePitchScale(event.surface_type),
+            });
             this.audioManager.registerCombatEventIntensity(0.1);
         }
         break;
@@ -1066,7 +1097,10 @@ switch (event.event_type) {
             const instigatorId = event.instigator_id != null ? String(event.instigator_id) : '';
             const localId = myPlayerId != null ? String(myPlayerId) : '';
             if (!instigatorId || !localId || instigatorId !== localId) {
-                this.audioManager.playSound(this.getFootstepSoundName(event.surface_type), pos, 0.24);
+                this.audioManager.playSound(this.getFootstepSoundName(event.surface_type), pos, 0.24, {
+                    pitchScale: this.getSurfacePitchScale(event.surface_type),
+                    pitchJitter: 0.08,
+                });
             }
         }
         break;
@@ -3638,6 +3672,14 @@ this.soundSamples = Object.freeze({
     sniperFire: 'sfx/sniper_fire.wav',
     meleeSwing: 'sfx/melee_swing.wav',
     bulletImpact: 'sfx/bullet_impact.wav',
+    impactConcrete: 'sfx/impact_soft.wav',
+    impactWood: 'sfx/impact_soft.wav',
+    impactMetal: 'sfx/impact_hard.wav',
+    impactGlass: 'sfx/impact_hard.wav',
+    footstepConcrete: 'sfx/footstep_a.wav',
+    footstepWood: 'sfx/footstep_b.wav',
+    footstepMetal: 'sfx/footstep_a.wav',
+    footstepGlass: 'sfx/footstep_b.wav',
     explosion: 'sfx/explosion.wav',
     powerupCollect: 'sfx/powerup_collect.wav',
     playerHit: 'sfx/player_hit.wav',
@@ -3708,10 +3750,10 @@ this.soundLimits = Object.freeze({
     impactMetal: { minIntervalMs: 56, windowMs: 1000, maxPerWindow: 16, maxConcurrent: 3 },
     impactWood: { minIntervalMs: 52, windowMs: 1000, maxPerWindow: 16, maxConcurrent: 3 },
     impactGlass: { minIntervalMs: 64, windowMs: 1000, maxPerWindow: 12, maxConcurrent: 2 },
-    footstepConcrete: { minIntervalMs: 85, windowMs: 1000, maxPerWindow: 12, maxConcurrent: 2 },
-    footstepMetal: { minIntervalMs: 85, windowMs: 1000, maxPerWindow: 12, maxConcurrent: 2 },
-    footstepWood: { minIntervalMs: 85, windowMs: 1000, maxPerWindow: 12, maxConcurrent: 2 },
-    footstepGlass: { minIntervalMs: 95, windowMs: 1000, maxPerWindow: 10, maxConcurrent: 2 },
+    footstepConcrete: { minIntervalMs: 120, windowMs: 1000, maxPerWindow: 3, maxConcurrent: 2 },
+    footstepMetal: { minIntervalMs: 120, windowMs: 1000, maxPerWindow: 3, maxConcurrent: 2 },
+    footstepWood: { minIntervalMs: 120, windowMs: 1000, maxPerWindow: 3, maxConcurrent: 2 },
+    footstepGlass: { minIntervalMs: 140, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 2 },
     playerHit: { minIntervalMs: 52, windowMs: 1000, maxPerWindow: 16, maxConcurrent: 3 },
     explosion: { minIntervalMs: 120, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
     hitMarker: { minIntervalMs: 55, windowMs: 1000, maxPerWindow: 14, maxConcurrent: 2 },
@@ -3751,10 +3793,10 @@ this.mobileSoundLimits = Object.freeze({
     impactMetal: { minIntervalMs: 110, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
     impactWood: { minIntervalMs: 110, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
     impactGlass: { minIntervalMs: 140, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
-    footstepConcrete: { minIntervalMs: 150, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
-    footstepMetal: { minIntervalMs: 150, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
-    footstepWood: { minIntervalMs: 150, windowMs: 1000, maxPerWindow: 6, maxConcurrent: 1 },
-    footstepGlass: { minIntervalMs: 180, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
+    footstepConcrete: { minIntervalMs: 300, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
+    footstepMetal: { minIntervalMs: 300, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
+    footstepWood: { minIntervalMs: 300, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
+    footstepGlass: { minIntervalMs: 340, windowMs: 1000, maxPerWindow: 2, maxConcurrent: 1 },
     playerHit: { minIntervalMs: 88, windowMs: 1000, maxPerWindow: 8, maxConcurrent: 2 },
     explosion: { minIntervalMs: 180, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
     bulletWhiz: { minIntervalMs: 180, windowMs: 1000, maxPerWindow: 4, maxConcurrent: 1 },
@@ -3797,6 +3839,7 @@ this.lastAmbientEnergyAt = 0;
 this.nextAmbientCombatAt = 0;
 this.zoneCueKey = null;
 this.lastZoneCueCheckAt = 0;
+this.localFootstepNextAt = 0;
 this.zoneDryGainNode = null;
 this.zoneWetGainNode = null;
 this.zoneConvolverNode = null;
@@ -3987,9 +4030,39 @@ if (nextZoneKey) {
 }
     }
 
+    // Server footstep events skip the local player, so local steps are
+    // synthesized here from predicted velocity with a speed-scaled stride
+    // interval (longer on mobile sound budgets). Rate limits still apply.
+    syncLocalFootsteps(nowMs = 0) {
+if (!localPlayerState || localPlayerState.alive === false) {
+    this.localFootstepNextAt = 0;
+    return;
+}
+const velocityX = Number(localPlayerState.velocity_x) || 0;
+const velocityY = Number(localPlayerState.velocity_y) || 0;
+const speed = Math.hypot(velocityX, velocityY);
+if (!Number.isFinite(speed) || speed < 30) {
+    this.localFootstepNextAt = 0;
+    return;
+}
+if (nowMs < this.localFootstepNextAt) {
+    return;
+}
+// Reference stride at typical run speed (~200 px/s); clamp so dashes don't
+// machine-gun steps and slow walks don't go silent.
+const baseIntervalMs = this.mobileSoundBudget ? 480 : 350;
+const speedRatio = Math.max(0.55, Math.min(1.6, speed / 200));
+this.localFootstepNextAt = nowMs + baseIntervalMs / speedRatio;
+this.playSound('footstepConcrete', null, 0.5, {
+    prioritizeLocal: true,
+    pitchJitter: 0.14,
+});
+    }
+
     updateAmbientState(nowMs = 0) {
 this.syncEnvironmentalReverb(nowMs);
 this.syncZoneAudio(nowMs);
+this.syncLocalFootsteps(nowMs);
     }
 
     decodeAudioData(arrayBuffer) {

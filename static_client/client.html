@@ -186,6 +186,7 @@
             <div class="mobile-controls__settings">
                 <button id="mobileDataSaver" class="mobile-button mobile-button--small">Data Saver</button>
                 <button id="mobileAimAssistToggle" class="mobile-button mobile-button--small">Aim Assist</button>
+                <button id="mobileMusicToggle" class="mobile-button mobile-button--small" aria-label="Toggle music player">♪</button>
                 <button id="mobilePing" class="mobile-button mobile-button--small" aria-label="Send a group-up ping to your team">Ping</button>
                 <div id="mobileConnectionQuality" class="mobile-connection-indicator">
                     <span class="mobile-connection-bar"></span>
@@ -457,50 +458,50 @@
     </div>
 
     <!-- Music Player -->
-    <div id="musicPlayer" class="fixed bottom-5 right-5 bg-gray-800 rounded-lg p-4 shadow-xl border border-gray-700 transition-all duration-300 hidden" style="min-width: 300px;">
-        <div class="flex items-center justify-between mb-3">
-            <h3 class="text-sm font-bold text-gray-300">Music Player</h3>
-            <button id="closeMusicPlayer" class="text-gray-400 hover:text-gray-200">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <div id="musicPlayer" class="music-player hidden">
+        <div class="music-player__header">
+            <h3 class="music-player__title">Soundtrack</h3>
+            <button id="closeMusicPlayer" class="music-player__close" aria-label="Close music player">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M6 18L18 6M6 6l12 12"/>
                 </svg>
             </button>
         </div>
-        
-        <div class="mb-3">
-            <div id="nowPlaying" class="text-xs text-gray-400 mb-1 truncate">No track playing</div>
-            <div class="bg-gray-700 rounded-full h-2 relative">
-                <div id="progressBar" class="h-full rounded-full transition-all duration-100" style="width: 0%"></div>
+
+        <div class="music-player__track">
+            <div id="nowPlaying" class="music-player__now-playing">No track playing</div>
+            <div class="music-player__progress">
+                <div id="progressBar" class="music-player__progress-fill" style="width: 0%"></div>
             </div>
         </div>
-        
-        <div class="flex items-center justify-center gap-4 mb-3">
-            <button id="prevTrack" class="text-gray-400 hover:text-white transition-colors">
+
+        <div class="music-player__controls">
+            <button id="prevTrack" class="music-player__btn" aria-label="Previous track">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
                 </svg>
             </button>
-            <button id="playPauseBtn" class="bg-indigo-600 hover:bg-indigo-700 rounded-full p-2 transition-colors">
-                <svg id="playIcon" width="24" height="24" viewBox="0 0 24 24" fill="white">
+            <button id="playPauseBtn" class="music-player__btn music-player__btn--play" aria-label="Play or pause">
+                <svg id="playIcon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M8 5v14l11-7z"/>
                 </svg>
-                <svg id="pauseIcon" width="24" height="24" viewBox="0 0 24 24" fill="white" class="hidden">
+                <svg id="pauseIcon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" class="hidden">
                     <path d="M6 4h4v16H6zM14 4h4v16h-4z"/>
                 </svg>
             </button>
-            <button id="nextTrack" class="text-gray-400 hover:text-white transition-colors">
+            <button id="nextTrack" class="music-player__btn" aria-label="Next track">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M16 18h2V6h-2zM6 18l8.5-6L6 6z"/>
                 </svg>
             </button>
         </div>
-        
-        <div class="flex items-center gap-2">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400">
+
+        <div class="music-player__volume">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="music-player__volume-icon">
                 <path d="M11 5L6 9H2v6h4l5 4zM15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14"/>
             </svg>
-            <input type="range" id="volumeSlider" min="0" max="100" value="30" class="flex-1 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
-            <span id="volumeValue" class="text-xs text-gray-400 w-8">30%</span>
+            <input type="range" id="volumeSlider" min="0" max="100" value="30" class="music-player__volume-slider" aria-label="Music volume">
+            <span id="volumeValue" class="music-player__volume-value">30%</span>
         </div>
     </div>
 
@@ -1937,10 +1938,14 @@
         }
         const isMobileDevice = deviceClassification !== 'desktop';
 
+        // effectsProfile maps to an EffectsManager performance profile; null keeps
+        // the adaptive default. Mid keeps key combat effects readable through a
+        // reduced profile (smaller variants) instead of full suppression; low
+        // stays on the most aggressive profile.
         const MOBILE_RENDER_PROFILES = {
-            high:  { resolution: 0.75, maxFPS: 60, lodMult: 1.0,   effects: true,  fog: true,  shadows: true  },
-            mid:   { resolution: 0.50, maxFPS: 30, lodMult: 0.6,   effects: false, fog: false, shadows: false },
-            low:   { resolution: 0.40, maxFPS: 20, lodMult: 0.4,   effects: false, fog: false, shadows: false },
+            high:  { resolution: 0.75, maxFPS: 60, lodMult: 1.0,   effectsProfile: null,     fog: true,  shadows: true  },
+            mid:   { resolution: 0.50, maxFPS: 30, lodMult: 0.6,   effectsProfile: 'medium', fog: false, shadows: false },
+            low:   { resolution: 0.40, maxFPS: 20, lodMult: 0.4,   effectsProfile: 'ultra',  fog: false, shadows: false },
         };
         const mobileProfile = MOBILE_RENDER_PROFILES[deviceClassification] || null;
 
@@ -3407,12 +3412,12 @@
                     syncParticlesBudget();
                 }
 
-                // Apply mobile render profile: disable heavy effects on mid/low devices
+                // Apply mobile render profile: disable heavy visuals on mid/low devices
                 if (mobileProfile && !mobileProfile.fog && fogOfWarContainer) {
                     fogOfWarContainer.visible = false;
                 }
-                if (mobileProfile && !mobileProfile.effects && effectsManager && typeof effectsManager.setPerformanceProfile === 'function') {
-                    activeEffectsProfileName = effectsManager.setPerformanceProfile('ultra');
+                if (mobileProfile && mobileProfile.effectsProfile && effectsManager && typeof effectsManager.setPerformanceProfile === 'function') {
+                    activeEffectsProfileName = effectsManager.setPerformanceProfile(mobileProfile.effectsProfile);
                 }
                 if (mobileProfile && !mobileProfile.shadows && starfield) {
                     starfield.visible = false;
@@ -5924,11 +5929,35 @@
             
             // Initialize music player
             musicPlayer = await initMusicPlayerModule();
-            if (musicPlayer && !isMobileDevice) {
+            if (musicPlayer && !isMobileDevice && !document.body.classList.contains('mobile-mode')) {
                 // Keep music controls visible so users can start/stop tracks without opening Settings.
-                // On phones the fixed player overlaps the connect panel and game area,
-                // so it stays hidden until enabled from Settings.
+                // On phones (incl. coarse-touch entry where the UA still reads desktop) the
+                // fixed player overlaps the connect panel and game area, so it stays hidden
+                // until enabled from Settings or the mobile ♪ toggle.
                 musicPlayer.show();
+            }
+
+            // Mobile music toggle (♪) opens/closes the player panel on touch devices.
+            const mobileMusicToggle = document.getElementById('mobileMusicToggle');
+            if (musicPlayer && mobileMusicToggle) {
+                const syncMusicToggleState = () => {
+                    mobileMusicToggle.classList.toggle(
+                        'mobile-button--active',
+                        !musicPlayer.playerDiv.classList.contains('hidden')
+                    );
+                };
+                mobileMusicToggle.addEventListener('click', () => {
+                    if (musicPlayer.playerDiv.classList.contains('hidden')) {
+                        musicPlayer.show();
+                    } else {
+                        musicPlayer.hide();
+                    }
+                    syncMusicToggleState();
+                });
+                const closeMusicPlayerBtn = document.getElementById('closeMusicPlayer');
+                if (closeMusicPlayerBtn) {
+                    closeMusicPlayerBtn.addEventListener('click', syncMusicToggleState);
+                }
             }
 
             log(`ICE servers configured: ${peerConnectionConfig.iceServers.length}`, 'info');
