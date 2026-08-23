@@ -226,4 +226,231 @@ test('golden render: 2-model mini roster matches checked-in goldens', async (t) 
   assert.match(alpha, /avg finish gap/);
   assert.match(alpha, /Per-mode breakdown/);
   assert.match(alpha, /mode-grid__mode">arena</);
+
+  // No continuous league state under the fixtures root -> no overlay outputs.
+  assert.ok(!fs.existsSync(path.join(outDir, 'league.json')), 'league.json requires a valid continuous state');
+});
+
+// ---------------------------------------------------------------------------
+// Continuous Model League overlay
+// ---------------------------------------------------------------------------
+
+const NOW_MS = Date.parse('2026-08-23T12:00:00.000Z');
+const HEX = (c) => c.repeat(64);
+
+/**
+ * Write a valid continuous league state directory: state.json (2 active, 1
+ * retired, 25 announcements), submissions.jsonl with a torn tail, and three
+ * daily history snapshots. Alpha's lineage: v1 (entrant) -> v2 accepted ->
+ * v3 compile_failed, matching its artifact version 2 / submissions_used 2.
+ */
+function writeContinuousFixture(dir) {
+  fs.mkdirSync(path.join(dir, 'history'), { recursive: true });
+  const mascot = (emoji, title, color) => ({ emoji, title, color });
+  const artifact = (version) => ({
+    wasm_sha256: HEX('a'), source_sha256: HEX('b'), prompt_sha256: HEX('c'),
+    version, parent_version: version > 1 ? version - 1 : null,
+  });
+  const entry = (over) => ({
+    model_id: 'x', slug: 'x', mascot: mascot('🥚', 'X', '#91a098'),
+    joined_at: '2026-08-01T00:00:00.000Z', submissions_used: 1,
+    artifact: artifact(1), rating: 50, wins: 0, losses: 0, draws: 0, matches: 0,
+    days_in_league: 0, status: 'active', ...over,
+  });
+  const alpha = entry({
+    model_id: 'test/alpha-one', slug: 'test/alpha-one-20260101',
+    mascot: mascot('🦊', 'Alpha', '#caff00'),
+    joined_at: '2026-08-10T12:00:00.000Z', submissions_used: 2,
+    artifact: artifact(2), rating: 61.5, wins: 8, losses: 2, draws: 1, matches: 11,
+    days_in_league: 13,
+  });
+  const beta = entry({
+    model_id: 'test/beta-two', slug: 'test/beta-two-20260102',
+    mascot: mascot('🐙', 'Beta', '#00e0ff'),
+    joined_at: '2026-08-12T12:00:00.000Z',
+    rating: 45, wins: 3, losses: 5, draws: 1, matches: 9, days_in_league: 11,
+  });
+  const gamma = entry({
+    model_id: 'test/gamma', slug: 'test/gamma-20260101',
+    mascot: mascot('🦉', 'Gamma', '#a78bfa'),
+    joined_at: '2026-08-01T12:00:00.000Z', submissions_used: 3,
+    artifact: artifact(3), rating: 32, wins: 2, losses: 9, draws: 1, matches: 12,
+    days_in_league: 14,
+    retired_at: '2026-08-15T12:00:00.000Z',
+    reason: '14 days in league, submissions 3/3: rating 32 < 35',
+  });
+
+  const announcements = [];
+  for (let i = 0; i < 21; i++) {
+    announcements.push({
+      type: 'entrant', model_id: `old-${i}`, slug: `old-${i}`,
+      mascot: mascot('🥚', `Old ${i}`, '#91a098'), provider_rank: 50 + i,
+      at: new Date(Date.parse('2026-08-01T00:00:00.000Z') + i * 3600_000).toISOString(),
+    });
+  }
+  announcements.push(
+    { type: 'entrant', model_id: 'test/beta-two', slug: beta.slug, mascot: beta.mascot, provider_rank: 7, at: '2026-08-12T12:00:00.000Z' },
+    { type: 'retirement', model_id: 'test/gamma', slug: gamma.slug, mascot: gamma.mascot, reason: gamma.reason, stats: { rating: 32, wins: 2, losses: 9, draws: 1, matches: 12, days_in_league: 14, submissions_used: 3 }, at: '2026-08-15T11:00:00.000Z' },
+    { type: 'revision', model_id: 'test/alpha-one', slug: alpha.slug, mascot: alpha.mascot, version: 2, outcome: 'accepted', at: '2026-08-15T12:00:00.000Z' },
+    { type: 'revision', model_id: 'test/alpha-one', slug: alpha.slug, mascot: alpha.mascot, version: 3, outcome: 'compile_failed', at: '2026-08-22T12:00:00.000Z' },
+  );
+
+  const state = {
+    schema_version: 1, league_id: 'cml-test-0001', day_index: 13,
+    roster: [alpha, beta], retired: [gamma], announcements,
+    last_feedback_at: '2026-08-22T12:00:00.000Z',
+    created_at: '2026-08-01T00:00:00.000Z', updated_at: '2026-08-23T11:00:00.000Z',
+  };
+  fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(state, null, 2));
+
+  const submission = (over) => JSON.stringify({
+    model_id: 'test/alpha-one', slug: alpha.slug, version_attempted: 2, parent_version: 1,
+    prompt_sha256: HEX('c'), brief_sha256: null, source_sha256: HEX('b'), wasm_sha256: HEX('a'),
+    compile_attempts: 1, outcome: 'accepted', at: '2026-08-15T12:00:00.000Z', ...over,
+  });
+  const tornTail = '{"model_id":"test/alpha-one","version_attempted":4,"outcome":"acc';
+  fs.writeFileSync(
+    path.join(dir, 'submissions.jsonl'),
+    `${submission({})}\n${submission({
+      version_attempted: 3, parent_version: 2, source_sha256: null, wasm_sha256: null,
+      outcome: 'compile_failed', at: '2026-08-22T12:00:00.000Z',
+    })}\n${tornTail}`, // no trailing newline: simulates a crash mid-append
+  );
+
+  const wld = (w, l, d) => ({ wins: w, losses: l, draws: d, matches: w + l + d });
+  const snap = (at, day, alphaStats, betaStats) => [{
+    at, league_id: 'cml-test-0001', day_index: day, season_id: `continuous-cml-test-0001-day${day}`,
+    roster: [
+      { model_id: 'test/alpha-one', slug: alpha.slug, rating: 55, ...alphaStats },
+      { model_id: 'test/beta-two', slug: beta.slug, rating: 47, ...betaStats },
+    ],
+  }];
+  fs.writeFileSync(path.join(dir, 'history', '2026-08-14.json'), JSON.stringify(snap('2026-08-14T23:00:00.000Z', 4, wld(3, 1, 0), wld(1, 2, 0))));
+  fs.writeFileSync(path.join(dir, 'history', '2026-08-18.json'), JSON.stringify(snap('2026-08-18T23:00:00.000Z', 8, wld(6, 2, 1), wld(2, 4, 1))));
+  fs.writeFileSync(path.join(dir, 'history', '2026-08-22.json'), JSON.stringify(snap('2026-08-22T23:00:00.000Z', 12, wld(8, 2, 1), wld(3, 5, 1))));
+}
+
+async function buildWithContinuous(outDir, cmlDir) {
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    continuousDir: cmlDir,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    nowMs: NOW_MS,
+  });
+}
+
+test('continuous overlay: index header, announcements feed order/cap, hall of fame, league.json', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
+  writeContinuousFixture(cmlDir);
+  await buildWithContinuous(outDir, cmlDir);
+
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.match(index, /Continuous league/);
+  assert.match(index, /day 13/);
+  assert.match(index, /2\/10/);
+  assert.match(index, /in 1d 0h/, 'countdown from last_feedback_at + 48h');
+
+  // Feed: capped at 20, newest first, oldest 5 of 25 dropped.
+  const feedItems = index.match(/<li class="announce__item /g) || [];
+  assert.equal(feedItems.length, 20);
+  assert.ok(!index.includes('Old 0'), 'announcements beyond the cap are dropped');
+  assert.ok(index.includes('Old 20'));
+  assert.ok(index.indexOf('v3 compile failed') < index.indexOf('v2 accepted'), 'newest announcement first');
+  assert.ok(index.indexOf('v2 accepted') < index.indexOf('retires to the Hall of Fame'));
+  assert.match(index, /🌱/);
+  assert.match(index, /🔧/);
+  assert.match(index, /🪦/);
+
+  // Hall of Fame lists the retired entry with final stats.
+  assert.match(index, /Hall of Fame/);
+  assert.match(index, /🦉/);
+  assert.match(index, /Gamma/);
+  assert.match(index, /32\.0/);
+  assert.match(index, />14</);
+  assert.match(index, /win">2<\/span>W · <span class="loss">9<\/span>L · 1D/);
+  assert.match(index, /14 days in league, submissions 3\/3: rating 32 &lt; 35/);
+
+  // Ticker payload for the landing page.
+  const league = JSON.parse(fs.readFileSync(path.join(outDir, 'league.json'), 'utf8'));
+  assert.equal(league.day_index, 13);
+  assert.equal(league.announcements.length, 10);
+  assert.equal(league.announcements[0].type, 'revision');
+  assert.equal(league.announcements[0].version, 3);
+  assert.equal(league.announcements[0].outcome, 'compile_failed');
+});
+
+test('continuous overlay: model page renders submission lineage with W/L/D deltas', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
+  writeContinuousFixture(cmlDir);
+  await buildWithContinuous(outDir, cmlDir);
+
+  const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
+  assert.match(alpha, /Submission lineage/);
+  for (const v of ['v1', 'v2', 'v3']) {
+    assert.ok(alpha.includes(`lineage__version">${v}<`), `lineage includes ${v}`);
+  }
+  assert.ok(!alpha.includes('lineage__version">v4<'), 'torn jsonl tail is skipped');
+  assert.match(alpha, /lineage__node--entrant/);
+  assert.match(alpha, /lineage__node--accepted/);
+  assert.match(alpha, /lineage__node--compile_failed/);
+  assert.match(alpha, /entered the league/);
+  assert.match(alpha, /compile attempts 1/);
+  // v1 window: joined -> 2026-08-14 snapshot (3/1/0 from a clean record).
+  assert.match(alpha, /\+3W \+1L \+0D while live/);
+  // v2 window: 2026-08-14 snapshot -> latest snapshot (8/2/1 - 3/1/0).
+  assert.match(alpha, /\+5W \+1L \+1D while live/);
+
+  // Beta has no submissions: lineage shows only the v1 entrant node.
+  const beta = fs.readFileSync(path.join(outDir, 'beta-two.html'), 'utf8');
+  assert.match(beta, /Submission lineage/);
+  assert.ok(beta.includes('lineage__version">v1<'));
+  assert.ok(!beta.includes('lineage__version">v2<'));
+});
+
+test('invalid continuous state falls back to byte-identical weekly output', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
+  fs.writeFileSync(path.join(cmlDir, 'state.json'), JSON.stringify({ schema_version: 99 }));
+  await buildWithContinuous(outDir, cmlDir);
+
+  for (const f of ['index.html', 'alpha-one.html', 'beta-two.html', 'mascots.json']) {
+    assert.equal(
+      fs.readFileSync(path.join(outDir, f), 'utf8'),
+      fs.readFileSync(path.join(FIXTURES, 'golden', f), 'utf8'),
+      `${f} must be byte-identical to the golden when the overlay is inactive`,
+    );
+  }
+  assert.ok(!fs.existsSync(path.join(outDir, 'league.json')));
+});
+
+test('stale league.json is removed when the overlay becomes inactive', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
+  writeContinuousFixture(cmlDir);
+
+  // Valid state -> ticker payload written.
+  await buildWithContinuous(outDir, cmlDir);
+  assert.ok(fs.existsSync(path.join(outDir, 'league.json')), 'league.json written for a valid state');
+
+  // State turns invalid -> rebuild drops the stale payload instead of
+  // serving it to the landing ticker forever.
+  fs.writeFileSync(path.join(cmlDir, 'state.json'), JSON.stringify({ schema_version: 99 }));
+  await buildWithContinuous(outDir, cmlDir);
+  assert.ok(!fs.existsSync(path.join(outDir, 'league.json')), 'stale league.json removed');
+  assert.equal(
+    fs.readFileSync(path.join(outDir, 'index.html'), 'utf8'),
+    fs.readFileSync(path.join(FIXTURES, 'golden', 'index.html'), 'utf8'),
+    'index.html falls back to the byte-identical weekly view',
+  );
+
+  // Overlay never active -> nothing to remove, no crash on a fresh outDir.
+  const cleanOut = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
+  const emptyCml = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
+  await buildWithContinuous(cleanOut, emptyCml);
+  assert.ok(!fs.existsSync(path.join(cleanOut, 'league.json')));
 });

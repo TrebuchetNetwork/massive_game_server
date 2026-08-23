@@ -6,13 +6,23 @@
 //   artifacts/arena/seasons/<season>/battles/   ~7.8M duel artifacts (sampled, never full-read)
 //   artifacts/arena/seasons/<season>/world/     all-model FFA artifacts (full pass)
 //   static_client/media/highlights/index.json   fight clips
+//   artifacts/arena/continuous/                 continuous league overlay (optional):
+//                                               state.json + submissions.jsonl + history/
 //
 // Outputs:
 //   static_client/models/index.html             rank-sorted roster index
 //   static_client/models/<slug>.html            one page per roster model
 //   static_client/models/models.css             shared stylesheet (emitted by this script)
 //   static_client/models/mascots.json           slug -> {emoji,title,color}
+//   static_client/models/league.json            landing-ticker payload (only when the
+//                                               continuous league state validates)
 //   artifacts/arena/page-cache.json             incremental battle-sample cache
+//
+// When the continuous league state is absent or fails its own schema
+// validation the overlay is skipped entirely and the weekly-league HTML
+// outputs (index.html, <slug>.html, mascots.json) are byte-identical to a
+// build without it; models.css always carries the overlay styles, and a stale
+// league.json from a previous valid run is removed.
 //
 // The battles dir is far too large to read fully; we readdir + stat everything
 // (fast), keep the newest window, and only JSON-read files that are new since
@@ -25,6 +35,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { mascotFor } from './mascots.mjs';
+import { FEEDBACK_INTERVAL_MS } from './continuous/league.mjs';
+import { MAX_ROSTER_SIZE, validateState } from './continuous/state.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..', '..');
@@ -48,6 +60,7 @@ export const defaultIo = {
   readdir: (dir) => fs.readdirSync(dir),
   statMtimeMs: (dir, name) => fs.statSync(path.join(dir, name)).mtimeMs,
   readJson: (file) => JSON.parse(fs.readFileSync(file, 'utf8')),
+  readText: (file) => fs.readFileSync(file, 'utf8'),
   // Atomic: write to a sibling temp file, then rename over the target so
   // concurrent readers (the live HTTP server) never see a partial page.
   writeFile: (file, contents) => {
@@ -57,6 +70,7 @@ export const defaultIo = {
     fs.renameSync(tmp, file);
   },
   exists: (file) => fs.existsSync(file),
+  remove: (file) => fs.rmSync(file, { force: true }),
 };
 
 // ---------------------------------------------------------------------------
@@ -703,7 +717,7 @@ ${coPerformanceSection(partners, ctx.metaById, ctx.slugById)}
             <h2>Fights</h2>
 ${fightsSection(clips, ctx.mediaBase)}
         </section>
-
+${ctx.lineage ? `\n${ctx.lineage}\n` : ''}
 ${provenanceFooter(ctx)}
 ${foot}`;
 }
@@ -714,6 +728,7 @@ export function renderIndexPage(ctx) {
     description: 'The weekly top-10 model roster: rankings, season points and per-model profile pages.',
     active: 'models',
   });
+  const continuous = ctx.continuous || null;
   const rows = ctx.cards.map((c) => `            <a class="model-row" href="${esc(c.slug)}.html">
                 <span class="model-row__rank">${String(c.model.rank).padStart(2, '0')}</span>
                 <span class="model-row__emoji" style="border-color:${esc(c.mascot.color)}">${esc(c.mascot.emoji)}</span>
@@ -727,11 +742,320 @@ export function renderIndexPage(ctx) {
             <h1>Weekly top 10. <em>One tour.</em></h1>
             <p class="models-hero__lede">Every model below holds a live profile: ratings, behavior fingerprint, head-to-head rivalries, world co-performance and recorded fights.</p>
         </section>
-        <section class="model-list" aria-label="Ranked models">
+${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
 ${rows}
         </section>
-${provenanceFooter(ctx)}
+${continuous ? `${[announcementsSection(continuous.state.announcements), hallOfFameSection(continuous.state.retired)].filter(Boolean).join('\n')}\n` : ''}${provenanceFooter(ctx)}
 ${foot}`;
+}
+
+// ---------------------------------------------------------------------------
+// Continuous Model League overlay (optional)
+// ---------------------------------------------------------------------------
+//
+// Rendered only when <continuousDir>/state.json exists and validates against
+// the league's own schema. The index gains a league status strip, an
+// announcements feed and a Hall of Fame; model pages gain a submission
+// lineage timeline; and a compact league.json is emitted for the landing
+// page ticker. Anything missing or malformed degrades to the weekly view.
+
+export const ANNOUNCEMENT_ICONS = { entrant: '🌱', revision: '🔧', retirement: '🪦' };
+export const ANNOUNCEMENTS_PAGE_LIMIT = 20;
+export const ANNOUNCEMENTS_TICKER_LIMIT = 10;
+
+const REVISION_OUTCOME_LABELS = {
+  accepted: 'accepted',
+  compile_failed: 'compile failed',
+  codegen_failed: 'codegen failed',
+  interrupted: 'interrupted',
+};
+
+const LINEAGE_OUTCOME_META = {
+  entrant: { icon: ANNOUNCEMENT_ICONS.entrant, label: 'entered the league' },
+  accepted: { icon: ANNOUNCEMENT_ICONS.revision, label: 'accepted' },
+  compile_failed: { icon: '⚠️', label: 'compile failed' },
+  codegen_failed: { icon: '⚠️', label: 'codegen failed' },
+  interrupted: { icon: '⚠️', label: 'interrupted' },
+};
+
+/** Parse submissions.jsonl, tolerating a torn tail: unparseable lines are skipped. */
+export function parseSubmissionsJsonl(text) {
+  const out = [];
+  for (const line of String(text || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const record = JSON.parse(trimmed);
+      if (record && typeof record === 'object' && record.model_id) out.push(record);
+    } catch {
+      // Torn tail from a crash mid-append — skip the partial line.
+    }
+  }
+  return out;
+}
+
+/**
+ * Load the continuous league overlay from continuousDir, or return null when
+ * the state is missing or fails schema validation — publishing must never be
+ * blocked by league trouble. History snapshots are flattened and sorted by
+ * timestamp; unreadable day files are skipped.
+ */
+export function loadContinuousLeague({ continuousDir, io = defaultIo, log = () => {} }) {
+  const statePath = path.join(continuousDir, 'state.json');
+  if (!io.exists(statePath)) return null;
+  let state;
+  try {
+    state = validateState(io.readJson(statePath));
+  } catch (error) {
+    log(`continuous: ignoring invalid state (${String(error?.message || error).slice(0, 200)})`);
+    return null;
+  }
+
+  let submissions = [];
+  const submissionsPath = path.join(continuousDir, 'submissions.jsonl');
+  if (io.exists(submissionsPath)) {
+    try {
+      submissions = parseSubmissionsJsonl(io.readText(submissionsPath));
+    } catch {
+      log('continuous: submissions.jsonl unreadable — lineage sections will be empty');
+    }
+  }
+
+  const snapshots = [];
+  const historyDir = path.join(continuousDir, 'history');
+  if (io.exists(historyDir)) {
+    for (const name of io.readdir(historyDir).filter((n) => n.endsWith('.json')).sort()) {
+      try {
+        const entries = io.readJson(path.join(historyDir, name));
+        if (Array.isArray(entries)) snapshots.push(...entries);
+      } catch {
+        // Skip an unreadable history day rather than dropping the overlay.
+      }
+    }
+  }
+  snapshots.sort((a, b) => String(a?.at || '').localeCompare(String(b?.at || '')));
+  return { state, submissions, snapshots };
+}
+
+/**
+ * Match a weekly-roster model to its continuous league entry (active or
+ * retired) via canonical slug / provider id.
+ */
+export function findContinuousEntry(state, model) {
+  const ids = new Set(
+    [model.canonical_slug, model.provider_model, model.model_id].filter(Boolean).map(String),
+  );
+  const match = (e) => ids.has(String(e.slug)) || ids.has(String(e.model_id));
+  return state.roster.find(match) || state.retired.find(match) || null;
+}
+
+/** Newest-first view of the announcement ledger, capped at `limit`. */
+export function latestAnnouncements(announcements, limit) {
+  return (Array.isArray(announcements) ? [...announcements] : [])
+    .reverse()
+    .slice(0, limit);
+}
+
+/** Compact ticker payload emitted as static_client/models/league.json. */
+export function leagueTickerPayload(state) {
+  return {
+    day_index: state.day_index,
+    announcements: latestAnnouncements(state.announcements, ANNOUNCEMENTS_TICKER_LIMIT)
+      .map((a) => ({
+        type: a.type,
+        at: a.at,
+        slug: a.slug,
+        mascot: a.mascot,
+        version: a.version,
+        outcome: a.outcome,
+        provider_rank: a.provider_rank,
+      })),
+  };
+}
+
+function fmtLeagueTs(iso) {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return String(iso ?? '');
+  return `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+}
+
+function fmtCountdown(ms) {
+  const totalMin = Math.floor(ms / 60000);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function continuousLeagueHeader(state, nowMs) {
+  let feedback;
+  if (state.last_feedback_at === null) {
+    feedback = 'at next cycle';
+  } else {
+    const remaining = Date.parse(state.last_feedback_at) + FEEDBACK_INTERVAL_MS - nowMs;
+    feedback = remaining <= 0 ? 'due now' : `in ${fmtCountdown(remaining)}`;
+  }
+  return `        <section class="league-strip" aria-label="Continuous league status">
+            <div><dt>Continuous league</dt><dd>day ${fmtInt(state.day_index)}</dd></div>
+            <div><dt>Active slots</dt><dd>${state.roster.length}/${MAX_ROSTER_SIZE}</dd></div>
+            <div><dt>Next feedback</dt><dd>${esc(feedback)}</dd></div>
+            <div><dt>Retired</dt><dd>${fmtInt(state.retired.length)}</dd></div>
+        </section>`;
+}
+
+function announcementText(a) {
+  switch (a.type) {
+    case 'entrant':
+      return `enters the league${a.provider_rank ? ` · OpenRouter #${a.provider_rank}` : ''}`;
+    case 'revision':
+      return `v${a.version} ${REVISION_OUTCOME_LABELS[a.outcome] || a.outcome || 'revision'}`;
+    case 'retirement':
+      return 'retires to the Hall of Fame';
+    default:
+      return String(a.type || 'update');
+  }
+}
+
+function announcementsSection(announcements) {
+  const items = latestAnnouncements(announcements, ANNOUNCEMENTS_PAGE_LIMIT);
+  if (!items.length) return '';
+  const rows = items.map((a) => `            <li class="announce__item announce__item--${esc(a.type)}">
+                <span class="announce__icon" aria-hidden="true">${ANNOUNCEMENT_ICONS[a.type] || '📣'}</span>
+                <span class="announce__name">${esc(a.mascot?.emoji || '')} ${esc(a.mascot?.title || a.slug || a.model_id || 'unknown')}</span>
+                <span class="announce__text">${esc(announcementText(a))}</span>
+                <time class="announce__at" datetime="${esc(a.at)}">${esc(fmtLeagueTs(a.at))}</time>
+            </li>`).join('\n');
+  return `        <section class="panel announce" aria-label="League announcements">
+            <h2>Announcements</h2>
+            <ul class="announce__feed">
+${rows}
+            </ul>
+        </section>`;
+}
+
+function hallOfFameSection(retired) {
+  if (!Array.isArray(retired) || !retired.length) return '';
+  const cards = [...retired].reverse().map((e) => `            <article class="hof__card">
+                <span class="hof__emoji" style="border-color:${esc(e.mascot.color)}">${esc(e.mascot.emoji)}</span>
+                <div class="hof__id">
+                    <b>${esc(e.mascot.title)}</b>
+                    <small>${esc(e.slug)}</small>
+                </div>
+                <dl class="hof__stats">
+                    <div><dt>Days in league</dt><dd>${fmtInt(e.days_in_league)}</dd></div>
+                    <div><dt>Final rating</dt><dd>${Number(e.rating).toFixed(1)}</dd></div>
+                    <div><dt>Record</dt><dd><span class="win">${fmtInt(e.wins)}</span>W · <span class="loss">${fmtInt(e.losses)}</span>L · ${fmtInt(e.draws)}D</dd></div>
+                </dl>
+                <p class="hof__reason">${esc(e.reason)}</p>
+            </article>`).join('\n');
+  return `        <section class="panel hof" aria-label="Hall of Fame">
+            <h2>Hall of Fame <span class="hof__hint">🪦 retired with honors</span></h2>
+            <div class="hof__grid">
+${cards}
+            </div>
+        </section>`;
+}
+
+/** Cumulative W/L/D timeline for one model, from flattened history snapshots. */
+function statsTimeline(snapshots, modelId) {
+  const out = [];
+  for (const snap of snapshots) {
+    const entry = Array.isArray(snap?.roster)
+      ? snap.roster.find((r) => r?.model_id === modelId)
+      : null;
+    if (!entry) continue;
+    out.push({
+      at: String(snap.at || ''),
+      wins: Number(entry.wins) || 0,
+      losses: Number(entry.losses) || 0,
+      draws: Number(entry.draws) || 0,
+    });
+  }
+  return out.sort((a, b) => a.at.localeCompare(b.at));
+}
+
+/** Latest cumulative stats strictly before `beforeIso` (or overall when null). */
+function statsBefore(timeline, beforeIso) {
+  let hit = null;
+  for (const point of timeline) {
+    if (beforeIso !== null && point.at >= beforeIso) break;
+    hit = point;
+  }
+  return hit;
+}
+
+/**
+ * Build the submission lineage for one continuous league entry: v1 (the
+ * entrant) plus every recorded revision attempt ordered by version. Each
+ * version that actually went live (entrant + accepted revisions) carries the
+ * W/L/D delta accumulated while it was the active artifact, derived from the
+ * daily history snapshots; failed attempts never go live and carry no delta.
+ */
+export function buildLineage(entry, submissions, snapshots) {
+  const mine = submissions
+    .filter((s) => s.model_id === entry.model_id && Number.isSafeInteger(s.version_attempted))
+    .sort((a, b) => a.version_attempted - b.version_attempted);
+  const nodes = [{
+    version: 1,
+    at: entry.joined_at,
+    outcome: 'entrant',
+    compileAttempts: 1,
+  }];
+  for (const s of mine) {
+    nodes.push({
+      version: s.version_attempted,
+      at: s.at,
+      outcome: s.outcome || 'unknown',
+      compileAttempts: Number(s.compile_attempts) || 0,
+    });
+  }
+
+  const timeline = statsTimeline(snapshots, entry.model_id);
+  const live = nodes.filter((n) => n.outcome === 'entrant' || n.outcome === 'accepted');
+  const deltaByVersion = new Map();
+  live.forEach((node, i) => {
+    const end = i + 1 < live.length ? live[i + 1].at : null;
+    const endStats = statsBefore(timeline, end);
+    const startStats = node.outcome === 'entrant'
+      ? { wins: 0, losses: 0, draws: 0 } // entrants join with a clean record
+      : statsBefore(timeline, node.at);
+    if (endStats && startStats) {
+      deltaByVersion.set(node.version, {
+        w: endStats.wins - startStats.wins,
+        l: endStats.losses - startStats.losses,
+        d: endStats.draws - startStats.draws,
+      });
+    }
+  });
+  return nodes.map((n) => ({ ...n, delta: deltaByVersion.get(n.version) || null }));
+}
+
+function lineageSection(entry, submissions, snapshots) {
+  const nodes = buildLineage(entry, submissions, snapshots);
+  if (!nodes.length) return '';
+  const items = nodes.map((n) => {
+    const meta = LINEAGE_OUTCOME_META[n.outcome] || { icon: '🔧', label: String(n.outcome) };
+    const delta = n.delta
+      ? `<span class="lineage__delta">+${n.delta.w}W +${n.delta.l}L +${n.delta.d}D while live</span>`
+      : '';
+    return `            <li class="lineage__node lineage__node--${esc(n.outcome)}">
+                <span class="lineage__icon" aria-hidden="true">${meta.icon}</span>
+                <span class="lineage__version">v${n.version}</span>
+                <span class="lineage__outcome">${esc(meta.label)}</span>
+                <span class="lineage__meta">compile attempts ${n.compileAttempts}</span>
+                ${delta}
+                <time class="lineage__at" datetime="${esc(n.at)}">${esc(fmtLeagueTs(n.at))}</time>
+            </li>`;
+  }).join('\n');
+  return `        <section class="panel lineage" aria-label="Submission lineage">
+            <h2>Submission lineage</h2>
+            <ol class="lineage__timeline">
+${items}
+            </ol>
+            <p class="metric-note">W/L/D deltas derive from daily history snapshots; a failed attempt consumes a submission but the previous artifact stays live.</p>
+        </section>`;
 }
 
 // Emitted as static_client/models/models.css — mirrors the landing page's
@@ -1051,6 +1375,79 @@ table.mode-grid td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--lin
     .footer { grid-template-columns: 1fr auto; padding-block: 30px; }
     .footer p { display: none; }
 }
+
+/* continuous league overlay */
+.league-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    margin: 0 0 34px;
+    border: 1px solid var(--line);
+    background: rgba(7, 16, 12, 0.66);
+}
+.league-strip div { padding: 16px 18px; }
+.league-strip div + div { border-left: 1px solid var(--line-soft); }
+.league-strip dt { margin-bottom: 7px; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.11em; text-transform: uppercase; }
+.league-strip dd { margin: 0; color: var(--acid-soft); font: 800 13px/1.3 var(--mono); letter-spacing: -0.03em; }
+.announce__feed { list-style: none; margin: 0; padding: 0; }
+.announce__item {
+    display: grid;
+    grid-template-columns: 28px minmax(130px, 210px) minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line-soft);
+}
+.announce__item:last-child { border-bottom: none; }
+.announce__icon { font-size: 15px; }
+.announce__name { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
+.announce__text { color: var(--muted); font: 700 9px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.announce__at { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+.hof__hint { color: var(--dim); font: 700 9px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.hof__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.hof__card { border: 1px solid var(--line-soft); padding: 18px; background: rgba(3, 7, 6, 0.5); }
+.hof__emoji {
+    width: 44px; height: 44px;
+    display: grid; place-items: center;
+    border: 1px solid var(--line);
+    font-size: 22px;
+    background: rgba(5, 13, 10, 0.6);
+}
+.hof__id { margin: 12px 0 0; display: flex; flex-direction: column; gap: 5px; }
+.hof__id b { font-size: 16px; }
+.hof__id small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; word-break: break-all; }
+.hof__stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0 0; }
+.hof__stats dt { margin-bottom: 6px; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.hof__stats dd { margin: 0; color: var(--white); font: 800 11px/1.3 var(--mono); }
+.hof__stats .win { color: var(--acid); }
+.hof__stats .loss { color: #fb7185; }
+.hof__reason { margin: 14px 0 0; color: var(--dim); font: 600 8px/1.6 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.lineage__timeline { list-style: none; margin: 0; padding: 0; }
+.lineage__node {
+    display: grid;
+    grid-template-columns: 28px 44px minmax(110px, 170px) auto minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line-soft);
+}
+.lineage__node:last-child { border-bottom: none; }
+.lineage__icon { font-size: 15px; }
+.lineage__version { color: var(--acid-soft); font: 800 11px/1 var(--mono); }
+.lineage__outcome { font-size: 13px; font-weight: 700; }
+.lineage__node--compile_failed .lineage__outcome,
+.lineage__node--codegen_failed .lineage__outcome,
+.lineage__node--interrupted .lineage__outcome { color: #fb7185; }
+.lineage__meta { color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+.lineage__delta { color: var(--muted); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.lineage__at { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+@media (max-width: 860px) {
+    .league-strip { grid-template-columns: repeat(2, 1fr); }
+    .league-strip div:nth-child(odd) { border-left: none; }
+    .announce__item { grid-template-columns: 28px minmax(0, 1fr) auto; }
+    .announce__text { grid-column: 2 / 4; }
+    .lineage__node { grid-template-columns: 28px 44px minmax(0, 1fr) auto; }
+    .lineage__meta, .lineage__delta { display: none; }
+}
 `;
 
 // ---------------------------------------------------------------------------
@@ -1063,9 +1460,11 @@ export async function buildPages({
   highlightsPath = path.join(REPO_ROOT, 'static_client', 'media', 'highlights', 'index.json'),
   outDir = path.join(REPO_ROOT, 'static_client', 'models'),
   cachePath = path.join(REPO_ROOT, 'artifacts', 'arena', 'page-cache.json'),
+  continuousDir = null, // defaults to <artifactsRoot>/continuous
   mediaBase = '/media/highlights',
   perModelLimit = 200,
   windowSize = 4000,
+  nowMs = Date.now(),
   io = defaultIo,
   log = () => {},
 } = {}) {
@@ -1073,6 +1472,13 @@ export async function buildPages({
   const roster = [...ratings.roster].sort((a, b) => a.rank - b.rank);
   const rosterIds = roster.map((m) => m.model_id);
   const slugById = slugifyRoster(roster);
+
+  // Optional continuous league overlay — null unless the state validates.
+  const continuous = loadContinuousLeague({
+    continuousDir: continuousDir || path.join(artifactsRoot, 'continuous'),
+    io,
+    log,
+  });
 
   const seasonDir = path.join(artifactsRoot, 'seasons', ratings.season_id);
   const battlesDir = path.join(seasonDir, 'battles');
@@ -1131,7 +1537,20 @@ export async function buildPages({
     seasonId: ratings.season_id,
     generated_at: ratings.generated_at,
     league: ratings.league,
+    continuous,
+    nowMs,
   }));
+
+  if (continuous) {
+    io.writeFile(
+      path.join(outDir, 'league.json'),
+      `${JSON.stringify(leagueTickerPayload(continuous.state), null, 2)}\n`,
+    );
+  } else if (io.exists(path.join(outDir, 'league.json'))) {
+    // Overlay inactive (state absent/invalid): drop any stale ticker payload
+    // from a previous valid run so the landing ticker never serves old data.
+    io.remove(path.join(outDir, 'league.json'));
+  }
 
   const collabById = new Map(roster.map((m) => [m.model_id, Number(m.collaboration_rating ?? 50)]));
   for (const m of roster) {
@@ -1148,6 +1567,10 @@ export async function buildPages({
     const clips = matchFights(highlights, {
       rank: m.rank, title: mascot.title, modelName: m.model_name,
     });
+    const continuousEntry = continuous ? findContinuousEntry(continuous.state, m) : null;
+    const lineage = continuousEntry
+      ? lineageSection(continuousEntry, continuous.submissions, continuous.snapshots) || null
+      : null;
     io.writeFile(path.join(outDir, `${slugById.get(id)}.html`), renderModelPage({
       model: m,
       slug: slugById.get(id),
@@ -1156,6 +1579,7 @@ export async function buildPages({
       world,
       partners,
       clips,
+      lineage,
       slugById,
       metaById,
       mediaBase,
