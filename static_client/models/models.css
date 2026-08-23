@@ -313,3 +313,76 @@ table.mode-grid td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--lin
     .footer { grid-template-columns: 1fr auto; padding-block: 30px; }
     .footer p { display: none; }
 }
+
+/* continuous league overlay */
+.league-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    margin: 0 0 34px;
+    border: 1px solid var(--line);
+    background: rgba(7, 16, 12, 0.66);
+}
+.league-strip div { padding: 16px 18px; }
+.league-strip div + div { border-left: 1px solid var(--line-soft); }
+.league-strip dt { margin-bottom: 7px; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.11em; text-transform: uppercase; }
+.league-strip dd { margin: 0; color: var(--acid-soft); font: 800 13px/1.3 var(--mono); letter-spacing: -0.03em; }
+.announce__feed { list-style: none; margin: 0; padding: 0; }
+.announce__item {
+    display: grid;
+    grid-template-columns: 28px minmax(130px, 210px) minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line-soft);
+}
+.announce__item:last-child { border-bottom: none; }
+.announce__icon { font-size: 15px; }
+.announce__name { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
+.announce__text { color: var(--muted); font: 700 9px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.announce__at { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+.hof__hint { color: var(--dim); font: 700 9px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.hof__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.hof__card { border: 1px solid var(--line-soft); padding: 18px; background: rgba(3, 7, 6, 0.5); }
+.hof__emoji {
+    width: 44px; height: 44px;
+    display: grid; place-items: center;
+    border: 1px solid var(--line);
+    font-size: 22px;
+    background: rgba(5, 13, 10, 0.6);
+}
+.hof__id { margin: 12px 0 0; display: flex; flex-direction: column; gap: 5px; }
+.hof__id b { font-size: 16px; }
+.hof__id small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; word-break: break-all; }
+.hof__stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0 0; }
+.hof__stats dt { margin-bottom: 6px; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.hof__stats dd { margin: 0; color: var(--white); font: 800 11px/1.3 var(--mono); }
+.hof__stats .win { color: var(--acid); }
+.hof__stats .loss { color: #fb7185; }
+.hof__reason { margin: 14px 0 0; color: var(--dim); font: 600 8px/1.6 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.lineage__timeline { list-style: none; margin: 0; padding: 0; }
+.lineage__node {
+    display: grid;
+    grid-template-columns: 28px 44px minmax(110px, 170px) auto minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line-soft);
+}
+.lineage__node:last-child { border-bottom: none; }
+.lineage__icon { font-size: 15px; }
+.lineage__version { color: var(--acid-soft); font: 800 11px/1 var(--mono); }
+.lineage__outcome { font-size: 13px; font-weight: 700; }
+.lineage__node--compile_failed .lineage__outcome,
+.lineage__node--codegen_failed .lineage__outcome,
+.lineage__node--interrupted .lineage__outcome { color: #fb7185; }
+.lineage__meta { color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+.lineage__delta { color: var(--muted); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.lineage__at { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+@media (max-width: 860px) {
+    .league-strip { grid-template-columns: repeat(2, 1fr); }
+    .league-strip div:nth-child(odd) { border-left: none; }
+    .announce__item { grid-template-columns: 28px minmax(0, 1fr) auto; }
+    .announce__text { grid-column: 2 / 4; }
+    .lineage__node { grid-template-columns: 28px 44px minmax(0, 1fr) auto; }
+    .lineage__meta, .lineage__delta { display: none; }
+}

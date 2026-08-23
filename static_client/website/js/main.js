@@ -295,6 +295,78 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  // Compact continuous-league ticker under the roster. Reads the static
+  // payload emitted by build_model_pages.mjs; any failure leaves the ticker
+  // hidden (fail-silent).
+  const LEAGUE_TICKER_ICONS = { entrant: '🌱', revision: '🔧', retirement: '🪦' };
+
+  const leagueTickerText = (a) => {
+    const name = `${a?.mascot?.emoji ? `${a.mascot.emoji} ` : ''}${a?.mascot?.title || a?.slug || 'A model'}`;
+    switch (a?.type) {
+      case 'entrant':
+        return `${name} enters the league${a.provider_rank ? ` · OpenRouter #${a.provider_rank}` : ''}`;
+      case 'revision': {
+        const outcome = { accepted: 'accepted', compile_failed: 'compile failed', codegen_failed: 'codegen failed', interrupted: 'interrupted' }[a.outcome] || a.outcome || 'revision';
+        return `${name} v${a.version} ${outcome}`;
+      }
+      case 'retirement':
+        return `${name} retires to the Hall of Fame`;
+      default:
+        return `${name} league update`;
+    }
+  };
+
+  const leagueTickerAge = (iso) => {
+    const ms = Date.parse(iso);
+    if (!Number.isFinite(ms)) return '';
+    const minutes = Math.max(0, Math.floor((Date.now() - ms) / 60000));
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 48) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  };
+
+  const hydrateLeagueTicker = async () => {
+    const ticker = document.querySelector('[data-league-ticker]');
+    if (!ticker) return;
+    try {
+      const response = await fetch('/models/league.json', { headers: { Accept: 'application/json' }, cache: 'no-store' });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const items = Array.isArray(payload?.announcements) ? payload.announcements.slice(0, 3) : [];
+      if (items.length === 0) return;
+
+      const label = document.createElement('a');
+      label.className = 'league-ticker__label';
+      label.href = '/models/';
+      label.textContent = `Continuous league · day ${Number(payload.day_index) || 0}`;
+
+      const children = [label];
+      items.forEach((a) => {
+        const item = document.createElement('span');
+        item.className = 'league-ticker__item';
+        const icon = document.createElement('i');
+        icon.textContent = LEAGUE_TICKER_ICONS[a?.type] || '📣';
+        const text = document.createElement('span');
+        text.textContent = leagueTickerText(a);
+        item.append(icon, text);
+        const age = leagueTickerAge(a?.at);
+        if (age) {
+          const time = document.createElement('time');
+          time.dateTime = String(a.at);
+          time.textContent = age;
+          item.append(time);
+        }
+        children.push(item);
+      });
+      ticker.replaceChildren(...children);
+      ticker.hidden = false;
+    } catch (_) {
+      // League ticker is optional: stay hidden on any failure.
+    }
+  };
+
   hydrateArenaTelemetry();
   hydrateHighlights();
+  hydrateLeagueTicker();
 });

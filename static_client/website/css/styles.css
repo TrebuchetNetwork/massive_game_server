@@ -889,6 +889,50 @@ a.roster__row:hover strong {
     color: var(--acid-soft);
 }
 
+/* continuous league ticker (fail-silent: hidden until league.json loads) */
+.league-ticker {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 22px;
+    margin-top: 22px;
+    border: 1px solid var(--line-soft);
+    padding: 12px 16px;
+    color: var(--muted);
+    font: 700 9px/1.5 var(--mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.league-ticker[hidden] {
+    display: none;
+}
+
+.league-ticker__label {
+    color: var(--acid);
+    text-decoration: none;
+}
+
+.league-ticker__label:hover {
+    color: var(--acid-soft);
+}
+
+.league-ticker__item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+
+.league-ticker__item i {
+    font-style: normal;
+}
+
+.league-ticker__item time {
+    color: var(--dim);
+    white-space: nowrap;
+}
+
 .highlights__grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

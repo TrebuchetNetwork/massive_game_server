@@ -1,5 +1,299 @@
 [
   {
+    "date": "2026-08-23",
+    "webm": "2026-08-23/replay_1787465209313_time_expired_38567-59980.webm",
+    "gif": "2026-08-23/replay_1787465209313_time_expired_38567-59980.gif",
+    "poster": "2026-08-23/replay_1787465209313_time_expired_38567-59980.png",
+    "reason": "3 kills",
+    "score": 43.6,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-23",
+    "webm": "2026-08-23/replay_1787467190418_time_expired_38000-59867.webm",
+    "gif": "2026-08-23/replay_1787467190418_time_expired_38000-59867.gif",
+    "poster": "2026-08-23/replay_1787467190418_time_expired_38000-59867.png",
+    "reason": "4 kills",
+    "score": 54.4,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-23",
+    "webm": "2026-08-23/replay_1787464548935_time_expired_19700-47221.webm",
+    "gif": "2026-08-23/replay_1787464548935_time_expired_19700-47221.gif",
+    "poster": "2026-08-23/replay_1787464548935_time_expired_19700-47221.png",
+    "reason": "Kill cluster x3",
+    "score": 90.7,
+    "players": [
+      "#1 Emberwing",
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-22",
+    "webm": "2026-08-22/replay_1787376196774_time_expired_38852-59985.webm",
+    "gif": "2026-08-22/replay_1787376196774_time_expired_38852-59985.gif",
+    "poster": "2026-08-22/replay_1787376196774_time_expired_38852-59985.png",
+    "reason": "2 kills",
+    "score": 35,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-22",
+    "webm": "2026-08-22/replay_1787371794859_time_expired_38820-59984.webm",
+    "gif": "2026-08-22/replay_1787371794859_time_expired_38820-59984.gif",
+    "poster": "2026-08-22/replay_1787371794859_time_expired_38820-59984.png",
+    "reason": "2 kills",
+    "score": 35,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-22",
+    "webm": "2026-08-22/replay_1787365191958_time_expired_38815-59983.webm",
+    "gif": "2026-08-22/replay_1787365191958_time_expired_38815-59983.gif",
+    "poster": "2026-08-22/replay_1787365191958_time_expired_38815-59983.png",
+    "reason": "2 kills",
+    "score": 35,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-21",
+    "webm": "2026-08-21/replay_1787280014304_time_expired_38400-59980.webm",
+    "gif": "2026-08-21/replay_1787280014304_time_expired_38400-59980.gif",
+    "poster": "2026-08-21/replay_1787280014304_time_expired_38400-59980.png",
+    "reason": "2 kills",
+    "score": 34.9,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-21",
+    "webm": "2026-08-21/replay_1787295421731_time_expired_38468-59983.webm",
+    "gif": "2026-08-21/replay_1787295421731_time_expired_38468-59983.gif",
+    "poster": "2026-08-21/replay_1787295421731_time_expired_38468-59983.png",
+    "reason": "2 kills",
+    "score": 35,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-21",
+    "webm": "2026-08-21/replay_1787288818648_time_expired_38467-59987.webm",
+    "gif": "2026-08-21/replay_1787288818648_time_expired_38467-59987.gif",
+    "poster": "2026-08-21/replay_1787288818648_time_expired_38467-59987.png",
+    "reason": "2 kills",
+    "score": 35,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-20",
+    "webm": "2026-08-20/replay_1787196754333_time_expired_39316-59985.webm",
+    "gif": "2026-08-20/replay_1787196754333_time_expired_39316-59985.gif",
+    "poster": "2026-08-20/replay_1787196754333_time_expired_39316-59985.png",
+    "reason": "2 kills",
+    "score": 35.2,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-20",
+    "webm": "2026-08-20/replay_1787194553343_time_expired_39247-59981.webm",
+    "gif": "2026-08-20/replay_1787194553343_time_expired_39247-59981.gif",
+    "poster": "2026-08-20/replay_1787194553343_time_expired_39247-59981.png",
+    "reason": "2 kills",
+    "score": 35.2,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-20",
+    "webm": "2026-08-20/replay_1787192352354_time_expired_39783-59980.webm",
+    "gif": "2026-08-20/replay_1787192352354_time_expired_39783-59980.gif",
+    "poster": "2026-08-20/replay_1787192352354_time_expired_39783-59980.png",
+    "reason": "2 kills",
+    "score": 35.2,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-19",
+    "webm": "2026-08-19/replay_1787111574836_time_expired_39298-59982.webm",
+    "gif": "2026-08-19/replay_1787111574836_time_expired_39298-59982.gif",
+    "poster": "2026-08-19/replay_1787111574836_time_expired_39298-59982.png",
+    "reason": "2 kills",
+    "score": 35.2,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-19",
+    "webm": "2026-08-19/replay_1787109373867_time_expired_39433-59982.webm",
+    "gif": "2026-08-19/replay_1787109373867_time_expired_39433-59982.gif",
+    "poster": "2026-08-19/replay_1787109373867_time_expired_39433-59982.png",
+    "reason": "2 kills",
+    "score": 35.2,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-19",
+    "webm": "2026-08-19/replay_1787107172824_time_expired_37867-59983.webm",
+    "gif": "2026-08-19/replay_1787107172824_time_expired_37867-59983.gif",
+    "poster": "2026-08-19/replay_1787107172824_time_expired_37867-59983.png",
+    "reason": "4 kills",
+    "score": 56,
+    "players": [
+      "#1 Emberwing",
+      "#10 Abyss",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-18",
+    "webm": "2026-08-18/replay_1787031617935_time_expired_20397-44997.webm",
+    "gif": "2026-08-18/replay_1787031617935_time_expired_20397-44997.gif",
+    "poster": "2026-08-18/replay_1787031617935_time_expired_20397-44997.png",
+    "reason": "4 kills",
+    "score": 46.5,
+    "players": [
+      "#1 Emberwing",
+      "#10 Kitsune",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-18",
+    "webm": "2026-08-18/replay_1787025014662_time_expired_20400-44997.webm",
+    "gif": "2026-08-18/replay_1787025014662_time_expired_20400-44997.gif",
+    "poster": "2026-08-18/replay_1787025014662_time_expired_20400-44997.png",
+    "reason": "4 kills",
+    "score": 46.5,
+    "players": [
+      "#1 Emberwing",
+      "#10 Kitsune",
+      "#2 Sage",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-18",
+    "webm": "2026-08-18/replay_1787032968257_time_expired_37031-59982.webm",
+    "gif": "2026-08-18/replay_1787032968257_time_expired_37031-59982.gif",
+    "poster": "2026-08-18/replay_1787032968257_time_expired_37031-59982.png",
+    "reason": "Kill cluster x3",
+    "score": 109.7,
+    "players": [
+      "#6 Surge",
+      "#1 Emberwing",
+      "#10 Kitsune",
+      "#2 Sage"
+    ]
+  },
+  {
+    "date": "2026-08-17",
+    "webm": "2026-08-17/replay_1786934527799_time_expired_38698-59979.webm",
+    "gif": "2026-08-17/replay_1786934527799_time_expired_38698-59979.gif",
+    "poster": "2026-08-17/replay_1786934527799_time_expired_38698-59979.png",
+    "reason": "2 kills",
+    "score": 36.1,
+    "players": [
+      "#1 Sage",
+      "#1 Sage",
+      "#10 Titan",
+      "#10 Titan"
+    ]
+  },
+  {
+    "date": "2026-08-17",
+    "webm": "2026-08-17/replay_1786954557647_time_expired_21468-46068.webm",
+    "gif": "2026-08-17/replay_1786954557647_time_expired_21468-46068.gif",
+    "poster": "2026-08-17/replay_1786954557647_time_expired_21468-46068.png",
+    "reason": "4 kills",
+    "score": 46.4,
+    "players": [
+      "#1 Sage",
+      "#1 Sage",
+      "#10 Kitsune",
+      "#10 Kitsune"
+    ]
+  },
+  {
+    "date": "2026-08-17",
+    "webm": "2026-08-17/replay_1786954337545_time_expired_21403-46002.webm",
+    "gif": "2026-08-17/replay_1786954337545_time_expired_21403-46002.gif",
+    "poster": "2026-08-17/replay_1786954337545_time_expired_21403-46002.png",
+    "reason": "4 kills",
+    "score": 47.2,
+    "players": [
+      "#1 Sage",
+      "#1 Sage",
+      "#10 Kitsune",
+      "#10 Kitsune"
+    ]
+  },
+  {
     "date": "2026-08-16",
     "webm": "2026-08-16/replay_1786891382773_time_expired_39982-59982.webm",
     "gif": "2026-08-16/replay_1786891382773_time_expired_39982-59982.gif",
