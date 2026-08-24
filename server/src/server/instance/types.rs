@@ -364,7 +364,11 @@ pub(super) struct ProjectileChunkResults {
 #[derive(Debug, Clone)]
 pub(super) struct AimAnomalyState {
     pub(super) last_rotation: f32,
-    pub(super) last_input_timestamp_ms: u64,
+    // Server-side receive time, not the client-supplied input timestamp —
+    // a cheating client can lie about its own timestamp to shrink the
+    // computed rotation speed and evade detection; wall-clock Instant
+    // captured on receipt can't be spoofed the same way.
+    pub(super) last_seen_at_for_anomaly: Instant,
     pub(super) suspicion_score: f32,
     pub(super) last_warned_at: Instant,
 }

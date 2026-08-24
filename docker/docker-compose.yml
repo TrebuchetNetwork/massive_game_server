@@ -20,7 +20,7 @@ services:
       MGS_SMS_COMMAND: "${MGS_SMS_COMMAND:-}"
       MGS_TEST_SMS_CAPTURE_PATH: "${MGS_TEST_SMS_CAPTURE_PATH:-}"
       MGS_MATCH_DURATION_OVERRIDE_SECS: "${MGS_MATCH_DURATION_OVERRIDE_SECS:-}"
-      MGS_REDIS_URL: "redis://:${MGS_REDIS_PASSWORD:-mgs_redis_dev_password}@redis:6379/"
+      MGS_REDIS_URL: "redis://:${MGS_REDIS_PASSWORD:?set MGS_REDIS_PASSWORD, e.g. in a .env file}@redis:6379/"
       MGS_METRICS_ENABLED: "true"
       MGS_METRICS_BIND_ADDR: "${MGS_METRICS_BIND_ADDR:-0.0.0.0:9090}"
       RUST_LOG: "${RUST_LOG:-massive_game_server_core=info,warp=warn,webrtc=warn}"
@@ -60,7 +60,7 @@ services:
     image: redis:7-alpine
     container_name: massive-game-server-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy volatile-ttl --requirepass ${MGS_REDIS_PASSWORD:-mgs_redis_dev_password}
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy volatile-ttl --requirepass ${MGS_REDIS_PASSWORD:?set MGS_REDIS_PASSWORD, e.g. in a .env file}
     volumes:
       - redis_data:/data
     deploy:
@@ -78,7 +78,7 @@ services:
     restart: unless-stopped
     environment:
       REDIS_ADDR: "redis://redis:6379"
-      REDIS_PASSWORD: "${MGS_REDIS_PASSWORD:-mgs_redis_dev_password}"
+      REDIS_PASSWORD: "${MGS_REDIS_PASSWORD:?set MGS_REDIS_PASSWORD, e.g. in a .env file}"
     depends_on:
       - redis
     networks:

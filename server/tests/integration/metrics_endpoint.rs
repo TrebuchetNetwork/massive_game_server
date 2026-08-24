@@ -6,7 +6,12 @@ use tokio_tungstenite::connect_async;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn metrics_endpoint_exposes_expected_prometheus_metrics() {
-    let process = spawn_server("mgs_metrics_endpoint", &[], true).await;
+    let process = spawn_server(
+        "mgs_metrics_endpoint",
+        &[("MGS_REQUIRE_AUTH", "0".to_owned())],
+        true,
+    )
+    .await;
     let metrics_url = process
         .metrics_url
         .as_deref()

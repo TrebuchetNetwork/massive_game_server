@@ -492,7 +492,7 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
     let ws_security = WsSecurityEnv {
         behind_tls_proxy: parse_bool_with_default("MGS_BEHIND_TLS_PROXY", false, &mut errors),
         dev_mode: parse_bool_with_default("MGS_DEV_MODE", false, &mut errors),
-        require_auth_env: parse_bool_with_default("MGS_REQUIRE_AUTH", false, &mut errors),
+        require_auth_env: parse_bool_with_default("MGS_REQUIRE_AUTH", true, &mut errors),
         allow_insecure_ws_proxy_proto: parse_bool_with_default(
             "MGS_ALLOW_INSECURE_WS_PROXY_PROTO",
             false,

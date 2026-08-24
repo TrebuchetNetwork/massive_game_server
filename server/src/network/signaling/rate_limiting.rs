@@ -251,6 +251,79 @@ fn ip_rate_limit_config() -> Option<IpRateLimitConfig> {
         .copied()
 }
 
+pub(super) const DEFAULT_MAX_WS_CONNECTIONS_PER_IP: u32 = 12;
+
+/// Holds a source IP's slot in the per-IP concurrent-connection cap for as
+/// long as the connection is alive; releases it on drop so every exit path
+/// out of `handle_signaling_connection` (including early returns) frees the
+/// slot without needing a matching manual release call.
+pub(super) struct IpConnectionGuard(Option<IpAddr>);
+
+impl Drop for IpConnectionGuard {
+    fn drop(&mut self) {
+        if let Some(ip) = self.0 {
+            release_ip_connection_slot(&ip);
+        }
+    }
+}
+
+fn max_ws_connections_per_ip() -> u32 {
+    static MAX_PER_IP: OnceLock<u32> = OnceLock::new();
+    *MAX_PER_IP.get_or_init(|| {
+        let value = env_u32(
+            "MGS_MAX_WS_CONNECTIONS_PER_IP",
+            DEFAULT_MAX_WS_CONNECTIONS_PER_IP,
+        );
+        if value == 0 {
+            info!("Per-IP concurrent WebSocket connection cap disabled (MGS_MAX_WS_CONNECTIONS_PER_IP=0).");
+        } else {
+            info!(
+                "Per-IP concurrent WebSocket connection cap: {} connections.",
+                value
+            );
+        }
+        value
+    })
+}
+
+fn ip_connection_counts() -> &'static DashMap<IpAddr, u32> {
+    static IP_CONNECTION_COUNTS: OnceLock<DashMap<IpAddr, u32>> = OnceLock::new();
+    IP_CONNECTION_COUNTS.get_or_init(DashMap::new)
+}
+
+/// Reserves one of this IP's connection slots. Returns `None` if the cap for
+/// that IP is already reached — the caller should reject the connection.
+/// The global connection semaphore (`build_connection_cap_filter`) already
+/// bounds total connections; this bounds how much of that pool one IP can
+/// claim, so one source can't exhaust the whole server before the join-rate
+/// limiter would otherwise catch it.
+pub(super) fn try_acquire_ip_connection_slot(client_ip: &IpAddr) -> Option<IpConnectionGuard> {
+    let max = max_ws_connections_per_ip();
+    if max == 0 {
+        return Some(IpConnectionGuard(None));
+    }
+    let counts = ip_connection_counts();
+    let mut entry = counts.entry(*client_ip).or_insert(0);
+    if *entry >= max {
+        return None;
+    }
+    *entry += 1;
+    Some(IpConnectionGuard(Some(*client_ip)))
+}
+
+fn release_ip_connection_slot(client_ip: &IpAddr) {
+    let counts = ip_connection_counts();
+    if let Some(mut entry) = counts.get_mut(client_ip) {
+        *entry = entry.saturating_sub(1);
+        let now_empty = *entry == 0;
+        drop(entry);
+        if now_empty {
+            // Avoid unbounded growth from IPs that connect once and never return.
+            counts.remove_if(client_ip, |_, count| *count == 0);
+        }
+    }
+}
+
 pub(super) fn input_rate_limit_config() -> Option<InputRateLimitConfig> {
     static INPUT_RATE_LIMIT_CONFIG: OnceLock<Option<InputRateLimitConfig>> = OnceLock::new();
     INPUT_RATE_LIMIT_CONFIG

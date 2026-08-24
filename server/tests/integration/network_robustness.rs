@@ -341,7 +341,10 @@ async fn wait_until_ready(base_url: &str) {
 }
 
 async fn spawn_server() -> ServerProcess {
-    spawn_server_with_env(&[]).await
+    // This file tests payload/protocol robustness, not auth enforcement —
+    // MGS_REQUIRE_AUTH now defaults to true, so opt out explicitly rather
+    // than requiring every caller here to also implement a login flow.
+    spawn_server_with_env(&[("MGS_REQUIRE_AUTH", "0")]).await
 }
 
 async fn spawn_server_with_env(extra_env: &[(&str, &str)]) -> ServerProcess {

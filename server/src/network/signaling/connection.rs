@@ -36,11 +36,11 @@ use super::client_state::{ClientState, ClientStatesMap};
 use super::ice_config::{build_client_ice_config, build_ice_servers};
 use super::rate_limiting::{
     acquire_sdp_admission_permit, ice_candidate_rate_limit_config, input_rate_limit_config,
-    signaling_error_json, try_acquire_ip_rate_limit_token, try_acquire_join_rate_limit_token,
-    try_queue_signaling_message, validate_signaling_payload, InputRateLimiter,
-    RTCIceCandidateInitSerde, SignalingMessageJson, DISCONNECTED_CLEANUP_GRACE_SECS,
-    JOIN_RATE_LIMIT_THROTTLED_MESSAGE, MAX_DATACHANNEL_MESSAGE_BYTES, MAX_SIGNALING_TEXT_BYTES,
-    SIGNALING_OUTBOX_CAPACITY,
+    signaling_error_json, try_acquire_ip_connection_slot, try_acquire_ip_rate_limit_token,
+    try_acquire_join_rate_limit_token, try_queue_signaling_message, validate_signaling_payload,
+    InputRateLimiter, RTCIceCandidateInitSerde, SignalingMessageJson,
+    DISCONNECTED_CLEANUP_GRACE_SECS, JOIN_RATE_LIMIT_THROTTLED_MESSAGE,
+    MAX_DATACHANNEL_MESSAGE_BYTES, MAX_SIGNALING_TEXT_BYTES, SIGNALING_OUTBOX_CAPACITY,
 };
 use super::sanitization::{
     build_welcome_message_bytes, now_millis, sanitize_chat_field, sanitize_username_field,
@@ -95,6 +95,10 @@ pub async fn handle_signaling_connection(
         let _ = shared_connection_manager().remove(&peer_id_str);
         return;
     }
+    // Holds this IP's concurrent-connection slot for the rest of this
+    // function's lifetime; released automatically on drop (any return path,
+    // including the many early returns below) via IpConnectionGuard.
+    let mut _ip_connection_guard = None;
     if let Some(client_ip) = remote_ip {
         if !try_acquire_ip_rate_limit_token(&client_ip) {
             warn!(
@@ -111,6 +115,25 @@ pub async fn handle_signaling_connection(
             let _ = throttled_ws_tx.send(Message::close()).await;
             let _ = shared_connection_manager().remove(&peer_id_str);
             return;
+        }
+        match try_acquire_ip_connection_slot(&client_ip) {
+            Some(guard) => _ip_connection_guard = Some(guard),
+            None => {
+                warn!(
+                    "[{}]: Join rejected, this IP already holds the maximum concurrent connections (ip={}).",
+                    peer_id_str, client_ip
+                );
+                let (mut throttled_ws_tx, _) = ws.split();
+                let throttled_payload = serde_json::json!({
+                    "error": "ip_connection_limit",
+                    "detail": "Too many simultaneous connections from this IP.",
+                })
+                .to_string();
+                let _ = throttled_ws_tx.send(Message::text(throttled_payload)).await;
+                let _ = throttled_ws_tx.send(Message::close()).await;
+                let _ = shared_connection_manager().remove(&peer_id_str);
+                return;
+            }
         }
     }
 
@@ -717,6 +740,23 @@ pub async fn handle_signaling_connection(
                     );
                     return;
                 }
+                // Generic per-connection budget applied before the verifying
+                // parse, so it covers every message type (including failed
+                // parses and unhandled types), not just Input — those
+                // previously cost a full FlatBuffers verify pass plus a
+                // synchronous log line with no rate limit at all.
+                if let Some(rate_limiter) = input_rate_limiter_on_msg.as_ref() {
+                    let mut limiter_guard = rate_limiter.lock().await;
+                    if !limiter_guard.try_acquire() {
+                        if limiter_guard.should_log_throttle() {
+                            warn!(
+                                "[{}]: Dropping data-channel message due to per-connection rate limit.",
+                                pid_msg_inner_str
+                            );
+                        }
+                        return;
+                    }
+                }
                 if let Ok(game_msg_root) = fb::root_as_game_message(&msg.data) {
                     let protocol_version = game_msg_root.protocol_version();
                     if protocol_version != GAME_PROTOCOL_VERSION {
@@ -730,19 +770,7 @@ pub async fn handle_signaling_connection(
 
                     match game_msg_root.msg_type() {
                         fb::MessageType::Input => {
-                            if let Some(rate_limiter) = input_rate_limiter_on_msg.as_ref() {
-                                let mut limiter_guard = rate_limiter.lock().await;
-                                if !limiter_guard.try_acquire() {
-                                    if limiter_guard.should_log_throttle() {
-                                        warn!(
-                                            "[{}]: Dropping input due to per-connection input rate limit.",
-                                            pid_msg_inner_str
-                                        );
-                                    }
-                                    return;
-                                }
-                            }
-
+                            // Rate limit already applied generically above, before the parse.
                             if game_msg_root.actual_message_type()
                                 == fb::MessagePayload::PlayerInput
                             {

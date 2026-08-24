@@ -392,18 +392,19 @@ impl MassiveGameServer {
             .entry(player_id.clone())
             .or_insert_with(|| AimAnomalyState {
                 last_rotation: input.rotation,
-                last_input_timestamp_ms: input.timestamp,
+                last_seen_at_for_anomaly: now,
                 suspicion_score: 0.0,
                 last_warned_at: now,
             });
 
-        let dt_ms = input
-            .timestamp
-            .saturating_sub(entry.last_input_timestamp_ms)
-            .max(1);
-        let dt_sec = dt_ms as f32 / 1000.0;
+        // dt is measured from the server's own receive time, not the
+        // client-supplied input.timestamp — see AimAnomalyState's doc comment.
+        let dt_sec = now
+            .saturating_duration_since(entry.last_seen_at_for_anomaly)
+            .as_secs_f32()
+            .max(0.001);
         let rotation_delta = shortest_angle_diff_radians(input.rotation, entry.last_rotation).abs();
-        let rotation_speed = rotation_delta / dt_sec.max(0.001);
+        let rotation_speed = rotation_delta / dt_sec;
 
         if input.shooting && rotation_speed > AIMBOT_SUSPICION_ROTATION_RAD_PER_SEC {
             let overshoot = rotation_speed / AIMBOT_SUSPICION_ROTATION_RAD_PER_SEC - 1.0;
@@ -427,7 +428,7 @@ impl MassiveGameServer {
         }
 
         entry.last_rotation = input.rotation;
-        entry.last_input_timestamp_ms = input.timestamp;
+        entry.last_seen_at_for_anomaly = now;
     }
     pub(super) fn sync_pickups_to_partition_index(
         world_partition_manager: &Arc<WorldPartitionManager>,

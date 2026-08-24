@@ -15,7 +15,10 @@ fn signaling_url(base_ws_url: &str, username: &str) -> String {
 async fn websocket_connection_cap_rejects_second_upgrade() {
     let proc = spawn_server(
         "mgs_rate_limiting_e2e",
-        &[("MGS_MAX_CONCURRENT_CONNECTIONS", "1".to_owned())],
+        &[
+            ("MGS_MAX_CONCURRENT_CONNECTIONS", "1".to_owned()),
+            ("MGS_REQUIRE_AUTH", "0".to_owned()),
+        ],
         false,
     )
     .await;
@@ -45,7 +48,10 @@ async fn websocket_connection_cap_rejects_second_upgrade() {
 async fn websocket_connection_cap_never_oversubscribes_under_concurrent_upgrades() {
     let proc = spawn_server(
         "mgs_rate_limiting_e2e",
-        &[("MGS_MAX_CONCURRENT_CONNECTIONS", "2".to_owned())],
+        &[
+            ("MGS_MAX_CONCURRENT_CONNECTIONS", "2".to_owned()),
+            ("MGS_REQUIRE_AUTH", "0".to_owned()),
+        ],
         false,
     )
     .await;

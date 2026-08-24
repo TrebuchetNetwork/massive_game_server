@@ -13,7 +13,12 @@ members = [
 [profile.release]
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# "unwind" (the default) — required for the JoinSet/is_panic() degraded-match
+# handling in server/instance/tick.rs and per-connection task isolation to
+# actually work. Under "abort", a panic anywhere (e.g. triggered by malformed
+# client input) kills the whole process for every connected player instead of
+# just the one task; "unwind" contains it to that task/tick.
+panic = "unwind"
 debug = false
 opt-level = 3
 overflow-checks = true

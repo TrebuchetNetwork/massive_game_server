@@ -67,6 +67,7 @@ async fn spawn_server() -> ServerProcess {
         .env("MGS_ARENA_STORE_PATH", data_root.join("arena_store.json"))
         .env("MGS_ARENA_WASM_DIR", &arena_wasm_dir)
         .env("MGS_ARENA_SOURCE_DIR", &arena_source_dir)
+        .env("MGS_REQUIRE_AUTH", "0")
         .env("RUST_LOG", "warn")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
