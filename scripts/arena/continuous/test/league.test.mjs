@@ -11,6 +11,7 @@ import {
   feedbackDue,
   nextVersion,
   shouldRetire,
+  trackPolicy,
   winRate,
 } from '../league.mjs';
 
@@ -213,4 +214,54 @@ test('nextVersion increments the version and links the parent', () => {
   // Input untouched.
   assert.equal(entry.artifact.version, 1);
   assert.throws(() => nextVersion({ artifact: { version: 0 } }), Error);
+});
+
+// --- Multi-track policies (amendment 2026-08-24) -----------------------------
+
+test('trackPolicy returns the exact track configs', () => {
+  assert.deepEqual(trackPolicy('L0'), {
+    maxSubmissions: 1, compileAttempts: 1, feedbackIntervalMs: null, maxRevisions: 0,
+  });
+  assert.deepEqual(trackPolicy('L1'), {
+    maxSubmissions: 1, compileAttempts: 3, feedbackIntervalMs: null, maxRevisions: 0,
+  });
+  assert.deepEqual(trackPolicy('L2'), {
+    maxSubmissions: 3, compileAttempts: 3, feedbackIntervalMs: FEEDBACK_INTERVAL_MS, maxRevisions: 2,
+  });
+  assert.deepEqual(trackPolicy('L3'), {
+    maxSubmissions: 9, compileAttempts: 3, feedbackIntervalMs: 7 * 24 * 60 * 60 * 1000,
+    maxRevisions: 8,
+  });
+  assert.throws(() => trackPolicy('L9'), /unknown league track/);
+});
+
+test('L0/L1 exhaust submissions at entry, so their bar is rating-based after day 3', () => {
+  const weak = model({
+    submissions_used: 1,
+    rating: 20,
+    wins: 1,
+    losses: 9,
+    days_in_league: 4,
+  });
+  assert.equal(shouldRetire(weak, NOW, trackPolicy('L0')), true);
+  assert.equal(shouldRetire(weak, NOW, trackPolicy('L1')), true);
+  // Same model under L2 still has submissions left: not retired.
+  assert.equal(shouldRetire(weak, NOW, trackPolicy('L2')), false);
+  // A healthy L0 model is never retired regardless of policy.
+  assert.equal(shouldRetire(model({ submissions_used: 1, rating: 60 }), NOW, trackPolicy('L0')), false);
+});
+
+test('feedback cadence per track policy', () => {
+  const dayAgo = { last_feedback_at: new Date(NOW - 24 * 60 * 60 * 1000).toISOString() };
+  const threeDaysAgo = { last_feedback_at: new Date(NOW - 3 * 24 * 60 * 60 * 1000).toISOString() };
+  const eightDaysAgo = { last_feedback_at: new Date(NOW - 8 * 24 * 60 * 60 * 1000).toISOString() };
+  // L0/L1 never revise.
+  assert.equal(feedbackDue({ last_feedback_at: null }, NOW, trackPolicy('L0')), false);
+  assert.equal(feedbackDue(threeDaysAgo, NOW, trackPolicy('L1')), false);
+  // L2: 48h.
+  assert.equal(feedbackDue(dayAgo, NOW, trackPolicy('L2')), false);
+  assert.equal(feedbackDue(threeDaysAgo, NOW, trackPolicy('L2')), true);
+  // L3: 7 days.
+  assert.equal(feedbackDue(threeDaysAgo, NOW, trackPolicy('L3')), false);
+  assert.equal(feedbackDue(eightDaysAgo, NOW, trackPolicy('L3')), true);
 });

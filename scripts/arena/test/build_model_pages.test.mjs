@@ -16,6 +16,7 @@ import {
   scanBattles,
   slugifyRoster,
 } from '../build_model_pages.mjs';
+import { trackPolicy } from '../continuous/league.mjs';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const A = 'test-0001-alpha-alpha-one';
@@ -239,13 +240,17 @@ const NOW_MS = Date.parse('2026-08-23T12:00:00.000Z');
 const HEX = (c) => c.repeat(64);
 
 /**
- * Write a valid continuous league state directory: state.json (2 active, 1
- * retired, 25 announcements), submissions.jsonl with a torn tail, and three
- * daily history snapshots. Alpha's lineage: v1 (entrant) -> v2 accepted ->
- * v3 compile_failed, matching its artifact version 2 / submissions_used 2.
+ * Write a valid schema-v2 (four-track) continuous league state directory.
+ * Alpha and beta compete in every track with diverging per-track ratings
+ * (matrix data); delta retired in L0, gamma retired in L1 (two HoF groups);
+ * epsilon fills the rosters so standings top-3 are real. Announcements are
+ * spread across tracks (26 total → merged feed caps at 20). Shared
+ * submissions.jsonl carries track + stint fields plus a stale-stint record
+ * and a torn tail. Alpha's L2 lineage: v1 (entrant) -> v2 accepted -> v3
+ * compile_failed; L3 lineage: v1 -> v2 accepted. Per-track history snapshots
+ * live under tracks/<T>/history.
  */
 function writeContinuousFixture(dir) {
-  fs.mkdirSync(path.join(dir, 'history'), { recursive: true });
   const mascot = (emoji, title, color) => ({ emoji, title, color });
   const artifact = (version) => ({
     wasm_sha256: HEX('a'), source_sha256: HEX('b'), prompt_sha256: HEX('c'),
@@ -253,81 +258,159 @@ function writeContinuousFixture(dir) {
   });
   const entry = (over) => ({
     model_id: 'x', slug: 'x', mascot: mascot('🥚', 'X', '#91a098'),
-    joined_at: '2026-08-01T00:00:00.000Z', submissions_used: 1,
+    joined_at: '2026-08-10T12:00:00.000Z', submissions_used: 1,
     artifact: artifact(1), rating: 50, wins: 0, losses: 0, draws: 0, matches: 0,
-    days_in_league: 0, status: 'active', ...over,
+    days_in_league: 13, status: 'active', ...over,
   });
-  const alpha = entry({
+  const wld = (w, l, d) => ({ wins: w, losses: l, draws: d, matches: w + l + d });
+
+  const alphaAt = (rating, over = {}) => entry({
     model_id: 'test/alpha-one', slug: 'test/alpha-one-20260101',
-    mascot: mascot('🦊', 'Alpha', '#caff00'),
-    joined_at: '2026-08-10T12:00:00.000Z', submissions_used: 2,
-    artifact: artifact(2), rating: 61.5, wins: 8, losses: 2, draws: 1, matches: 11,
-    days_in_league: 13,
+    mascot: mascot('🦊', 'Alpha', '#caff00'), rating, ...wld(8, 2, 1), ...over,
   });
-  const beta = entry({
+  const betaAt = (rating) => entry({
     model_id: 'test/beta-two', slug: 'test/beta-two-20260102',
-    mascot: mascot('🐙', 'Beta', '#00e0ff'),
-    joined_at: '2026-08-12T12:00:00.000Z',
-    rating: 45, wins: 3, losses: 5, draws: 1, matches: 9, days_in_league: 11,
+    mascot: mascot('🐙', 'Beta', '#00e0ff'), rating, ...wld(3, 5, 1),
   });
-  const gamma = entry({
-    model_id: 'test/gamma', slug: 'test/gamma-20260101',
-    mascot: mascot('🦉', 'Gamma', '#a78bfa'),
-    joined_at: '2026-08-01T12:00:00.000Z', submissions_used: 3,
-    artifact: artifact(3), rating: 32, wins: 2, losses: 9, draws: 1, matches: 12,
+  const epsilonAt = (rating) => entry({
+    model_id: 'test/epsilon', slug: 'test/epsilon-20260101',
+    mascot: mascot('🐢', 'Epsilon', '#facc15'), rating, ...wld(4, 4, 1),
+  });
+  const retiredEntry = (name, emoji, rating) => entry({
+    model_id: `test/${name}`, slug: `test/${name}-20260101`,
+    mascot: mascot(emoji, name[0].toUpperCase() + name.slice(1), '#a78bfa'),
+    joined_at: '2026-08-01T12:00:00.000Z', rating, ...wld(2, 9, 1),
     days_in_league: 14,
     retired_at: '2026-08-15T12:00:00.000Z',
-    reason: '14 days in league, submissions 3/3: rating 32 < 35',
+    reason: `14 days in league, submissions 1/1: rating ${rating} < 35`,
   });
+  const delta = retiredEntry('delta', '🦎', 30);
+  const gamma = retiredEntry('gamma', '🦉', 32);
 
-  const announcements = [];
-  for (let i = 0; i < 21; i++) {
-    announcements.push({
-      type: 'entrant', model_id: `old-${i}`, slug: `old-${i}`,
-      mascot: mascot('🥚', `Old ${i}`, '#91a098'), provider_rank: 50 + i,
-      at: new Date(Date.parse('2026-08-01T00:00:00.000Z') + i * 3600_000).toISOString(),
-    });
-  }
-  announcements.push(
-    { type: 'entrant', model_id: 'test/beta-two', slug: beta.slug, mascot: beta.mascot, provider_rank: 7, at: '2026-08-12T12:00:00.000Z' },
-    { type: 'retirement', model_id: 'test/gamma', slug: gamma.slug, mascot: gamma.mascot, reason: gamma.reason, stats: { rating: 32, wins: 2, losses: 9, draws: 1, matches: 12, days_in_league: 14, submissions_used: 3 }, at: '2026-08-15T11:00:00.000Z' },
-    { type: 'revision', model_id: 'test/alpha-one', slug: alpha.slug, mascot: alpha.mascot, version: 2, outcome: 'accepted', at: '2026-08-15T12:00:00.000Z' },
-    { type: 'revision', model_id: 'test/alpha-one', slug: alpha.slug, mascot: alpha.mascot, version: 3, outcome: 'compile_failed', at: '2026-08-22T12:00:00.000Z' },
-  );
+  const fillers = (trackId, from, to) => {
+    const out = [];
+    for (let i = from; i < to; i++) {
+      out.push({
+        type: 'entrant', track: trackId, model_id: `old-${i}`, slug: `old-${i}`,
+        mascot: mascot('🥚', `Old ${i}`, '#91a098'), provider_rank: 50 + i,
+        at: new Date(Date.parse('2026-08-01T00:00:00.000Z') + i * 3600_000).toISOString(),
+      });
+    }
+    return out;
+  };
+  const alphaMascot = mascot('🦊', 'Alpha', '#caff00');
+  const betaMascot = mascot('🐙', 'Beta', '#00e0ff');
+
+  const slice = (trackId, over) => {
+    const policy = trackPolicy(trackId);
+    return {
+      day_index: 0,
+      policy: {
+        max_submissions: policy.maxSubmissions,
+        compile_attempts: policy.compileAttempts,
+        feedback_interval_ms: policy.feedbackIntervalMs,
+        max_revisions: policy.maxRevisions,
+      },
+      roster: [],
+      retired: [],
+      announcements: [],
+      last_feedback_at: null,
+      ...over,
+    };
+  };
 
   const state = {
-    schema_version: 1, league_id: 'cml-test-0001', day_index: 13,
-    roster: [alpha, beta], retired: [gamma], announcements,
-    last_feedback_at: '2026-08-22T12:00:00.000Z',
-    created_at: '2026-08-01T00:00:00.000Z', updated_at: '2026-08-23T11:00:00.000Z',
+    schema_version: 2,
+    league_id: 'cml-test-0001',
+    tracks: {
+      L0: slice('L0', {
+        day_index: 10,
+        roster: [alphaAt(52), betaAt(41), epsilonAt(48)],
+        retired: [delta],
+        announcements: fillers('L0', 0, 11),
+      }),
+      L1: slice('L1', {
+        day_index: 11,
+        roster: [alphaAt(55), betaAt(43), epsilonAt(50)],
+        retired: [gamma],
+        announcements: [
+          ...fillers('L1', 11, 21),
+          { type: 'retirement', track: 'L1', model_id: 'test/gamma', slug: gamma.slug, mascot: gamma.mascot, reason: gamma.reason, stats: { rating: 32, wins: 2, losses: 9, draws: 1, matches: 12, days_in_league: 14, submissions_used: 1 }, at: '2026-08-15T11:00:00.000Z' },
+        ],
+      }),
+      L2: slice('L2', {
+        day_index: 12,
+        roster: [alphaAt(61.5, { submissions_used: 2, artifact: artifact(2) }), betaAt(45), epsilonAt(44)],
+        announcements: [
+          { type: 'entrant', track: 'L2', model_id: 'test/beta-two', slug: 'test/beta-two-20260102', mascot: betaMascot, provider_rank: 7, at: '2026-08-12T12:00:00.000Z' },
+          { type: 'revision', track: 'L2', model_id: 'test/alpha-one', slug: 'test/alpha-one-20260101', mascot: alphaMascot, version: 2, outcome: 'accepted', at: '2026-08-15T12:00:00.000Z' },
+          { type: 'revision', track: 'L2', model_id: 'test/alpha-one', slug: 'test/alpha-one-20260101', mascot: alphaMascot, version: 3, outcome: 'compile_failed', at: '2026-08-22T12:00:00.000Z' },
+        ],
+        last_feedback_at: '2026-08-22T12:00:00.000Z',
+      }),
+      L3: slice('L3', {
+        day_index: 13,
+        roster: [alphaAt(66, { submissions_used: 2, artifact: artifact(2) }), betaAt(40), epsilonAt(52)],
+        announcements: [
+          { type: 'revision', track: 'L3', model_id: 'test/alpha-one', slug: 'test/alpha-one-20260101', mascot: alphaMascot, version: 2, outcome: 'accepted', at: '2026-08-18T12:00:00.000Z' },
+        ],
+        last_feedback_at: '2026-08-22T12:00:00.000Z',
+      }),
+    },
+    created_at: '2026-08-01T00:00:00.000Z',
+    updated_at: '2026-08-23T11:00:00.000Z',
   };
   fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(state, null, 2));
 
+  const STINT = '2026-08-10T12:00:00.000Z';
   const submission = (over) => JSON.stringify({
-    model_id: 'test/alpha-one', slug: alpha.slug, version_attempted: 2, parent_version: 1,
+    track: 'L2', stint: STINT,
+    model_id: 'test/alpha-one', slug: 'test/alpha-one-20260101', version_attempted: 2, parent_version: 1,
     prompt_sha256: HEX('c'), brief_sha256: null, source_sha256: HEX('b'), wasm_sha256: HEX('a'),
     compile_attempts: 1, outcome: 'accepted', at: '2026-08-15T12:00:00.000Z', ...over,
   });
-  const tornTail = '{"model_id":"test/alpha-one","version_attempted":4,"outcome":"acc';
+  const tornTail = '{"model_id":"test/alpha-one","track":"L2","version_attempted":6,"outcome":"acc';
   fs.writeFileSync(
     path.join(dir, 'submissions.jsonl'),
     `${submission({})}\n${submission({
       version_attempted: 3, parent_version: 2, source_sha256: null, wasm_sha256: null,
       outcome: 'compile_failed', at: '2026-08-22T12:00:00.000Z',
-    })}\n${tornTail}`, // no trailing newline: simulates a crash mid-append
+    })}\n${submission({
+      track: 'L3', version_attempted: 2, at: '2026-08-18T12:00:00.000Z',
+    })}\n${submission({
+      stint: '2026-07-01T00:00:00.000Z', version_attempted: 5, at: '2026-07-05T12:00:00.000Z',
+    })}\n${tornTail}`, // stale stint (previous incarnation) + torn tail, both ignored
   );
 
-  const wld = (w, l, d) => ({ wins: w, losses: l, draws: d, matches: w + l + d });
-  const snap = (at, day, alphaStats, betaStats) => [{
-    at, league_id: 'cml-test-0001', day_index: day, season_id: `continuous-cml-test-0001-day${day}`,
+  const snap = (trackId, at, day, alphaStats, betaStats) => [{
+    at, league_id: 'cml-test-0001', track: trackId, day_index: day,
+    season_id: `continuous-cml-test-0001-${trackId}-day${day}`,
     roster: [
-      { model_id: 'test/alpha-one', slug: alpha.slug, rating: 55, ...alphaStats },
-      { model_id: 'test/beta-two', slug: beta.slug, rating: 47, ...betaStats },
+      { model_id: 'test/alpha-one', slug: 'test/alpha-one-20260101', rating: 55, ...alphaStats },
+      { model_id: 'test/beta-two', slug: 'test/beta-two-20260102', rating: 47, ...betaStats },
     ],
   }];
-  fs.writeFileSync(path.join(dir, 'history', '2026-08-14.json'), JSON.stringify(snap('2026-08-14T23:00:00.000Z', 4, wld(3, 1, 0), wld(1, 2, 0))));
-  fs.writeFileSync(path.join(dir, 'history', '2026-08-18.json'), JSON.stringify(snap('2026-08-18T23:00:00.000Z', 8, wld(6, 2, 1), wld(2, 4, 1))));
-  fs.writeFileSync(path.join(dir, 'history', '2026-08-22.json'), JSON.stringify(snap('2026-08-22T23:00:00.000Z', 12, wld(8, 2, 1), wld(3, 5, 1))));
+  const writeHistory = (trackId, entries) => {
+    const dirT = path.join(dir, 'tracks', trackId, 'history');
+    fs.mkdirSync(dirT, { recursive: true });
+    for (const [date, payload] of entries) {
+      fs.writeFileSync(path.join(dirT, `${date}.json`), JSON.stringify(payload));
+    }
+  };
+  // L2: v1 window ends at the 08-14 snapshot (3/1/0); v2 runs to 08-22 (8/2/1).
+  writeHistory('L2', [
+    ['2026-08-14', snap('L2', '2026-08-14T23:00:00.000Z', 4, wld(3, 1, 0), wld(1, 2, 0))],
+    ['2026-08-18', snap('L2', '2026-08-18T23:00:00.000Z', 8, wld(6, 2, 1), wld(2, 4, 1))],
+    ['2026-08-22', snap('L2', '2026-08-22T23:00:00.000Z', 12, wld(8, 2, 1), wld(3, 5, 1))],
+  ]);
+  // L3: v1 window ends at 08-17 (2/0/1); v2 accepted 08-18, runs to 08-22 (9/3/1).
+  writeHistory('L3', [
+    ['2026-08-17', snap('L3', '2026-08-17T23:00:00.000Z', 7, wld(2, 0, 1), wld(1, 1, 0))],
+    ['2026-08-22', snap('L3', '2026-08-22T23:00:00.000Z', 12, wld(9, 3, 1), wld(3, 5, 1))],
+  ]);
+  // L0/L1 never revise: a single snapshot each, so v1 carries a plain delta.
+  writeHistory('L0', [['2026-08-22', snap('L0', '2026-08-22T23:00:00.000Z', 10, wld(4, 3, 0), wld(2, 5, 0))]]);
+  writeHistory('L1', [['2026-08-22', snap('L1', '2026-08-22T23:00:00.000Z', 11, wld(5, 3, 0), wld(2, 6, 0))]]);
 }
 
 async function buildWithContinuous(outDir, cmlDir) {
@@ -342,48 +425,87 @@ async function buildWithContinuous(outDir, cmlDir) {
   });
 }
 
-test('continuous overlay: index header, announcements feed order/cap, hall of fame, league.json', async () => {
+test('continuous overlay: multi-track header, standings, matrix, track-badged feed, HoF, league.json', async () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
   const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
   writeContinuousFixture(cmlDir);
   await buildWithContinuous(outDir, cmlDir);
 
   const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
-  assert.match(index, /Continuous league/);
-  assert.match(index, /day 13/);
-  assert.match(index, /2\/10/);
-  assert.match(index, /in 1d 0h/, 'countdown from last_feedback_at + 48h');
 
-  // Feed: capped at 20, newest first, oldest 5 of 25 dropped.
+  // Header: league id, per-track day index, per-track feedback cadence.
+  assert.match(index, /cml-test-0001/);
+  assert.match(index, /L0<\/span> Zero-shot/);
+  assert.match(index, /day 10 · 3\/10 slots/);
+  assert.match(index, /day 13 · 3\/10 slots/);
+  assert.match(index, /never revises/);
+  assert.match(index, /feedback in 1d 0h/, 'L2 countdown from last_feedback_at + 48h');
+  assert.match(index, /feedback in 6d 0h/, 'L3 countdown from last_feedback_at + 7d');
+
+  // Standings: one table per track, rank-sorted by rating, with subs used/allowed.
+  assert.equal((index.match(/standings__track/g) || []).length, 4);
+  const l3Block = index.split('L3</span> Weekly feedback <small>')[1];
+  assert.ok(l3Block.indexOf('66.0') < l3Block.indexOf('40.0'), 'L3 standings sorted by rating');
+  assert.match(index, /2\/3/, 'L2 submissions used/allowed');
+  assert.match(index, /2\/9/, 'L3 submissions used/allowed');
+
+  // Experiment matrix: model x track ratings + L3-L0 delta, sorted by delta.
+  assert.match(index, /Experiment matrix/);
+  assert.match(index, /Δ feedback/);
+  const matrix = index.split('<section class="panel matrix"')[1].split('<section class="panel announce"')[0];
+  const alphaRow = matrix.split('🦊</span> <b>Alpha</b>')[1].split('</tr>')[0];
+  for (const cell of ['52.0', '55.0', '61.5', '66.0']) assert.ok(alphaRow.includes(cell), `alpha matrix cell ${cell}`);
+  assert.ok(alphaRow.includes('matrix__delta--pos">+14.0'), 'alpha L3-L0 delta');
+  const betaRow = matrix.split('🐙</span> <b>Beta</b>')[1].split('</tr>')[0];
+  assert.ok(betaRow.includes('matrix__delta--neg">-1.0'), 'beta L3-L0 delta');
+  assert.ok(
+    matrix.indexOf('<b>Alpha</b>') < matrix.indexOf('<b>Epsilon</b>')
+      && matrix.indexOf('<b>Epsilon</b>') < matrix.indexOf('<b>Beta</b>'),
+    'matrix rows sorted by feedback delta',
+  );
+  assert.match(matrix, /32\.0 🪦/, 'retired cell keeps final rating with marker');
+
+  // Feed: merged across tracks, capped at 20, newest first, track-badged.
   const feedItems = index.match(/<li class="announce__item /g) || [];
-  assert.equal(feedItems.length, 20);
-  assert.ok(!index.includes('Old 0'), 'announcements beyond the cap are dropped');
-  assert.ok(index.includes('Old 20'));
+  assert.equal(feedItems.length, 20, 'merged feed capped at 20 of 26');
+  assert.ok(!index.includes('Old 5'), 'oldest announcements beyond the cap are dropped');
+  assert.ok(index.includes('Old 6'));
   assert.ok(index.indexOf('v3 compile failed') < index.indexOf('v2 accepted'), 'newest announcement first');
   assert.ok(index.indexOf('v2 accepted') < index.indexOf('retires to the Hall of Fame'));
+  assert.match(index, /track-badge track-badge--L2/);
+  assert.match(index, /track-badge track-badge--L3/);
   assert.match(index, /🌱/);
   assert.match(index, /🔧/);
   assert.match(index, /🪦/);
 
-  // Hall of Fame lists the retired entry with final stats.
+  // Hall of Fame grouped by track (L0: delta, L1: gamma).
   assert.match(index, /Hall of Fame/);
-  assert.match(index, /🦉/);
-  assert.match(index, /Gamma/);
-  assert.match(index, /32\.0/);
-  assert.match(index, />14</);
-  assert.match(index, /win">2<\/span>W · <span class="loss">9<\/span>L · 1D/);
-  assert.match(index, /14 days in league, submissions 3\/3: rating 32 &lt; 35/);
+  assert.equal((index.match(/hof__track/g) || []).length, 2);
+  const hof = index.split('🪦 retired with honors, per track')[1];
+  assert.ok(hof.indexOf('L0</span> Zero-shot') < hof.indexOf('Delta'));
+  assert.ok(hof.indexOf('L1</span> Compile-fix') < hof.indexOf('Gamma'));
+  assert.match(hof, /32\.0/);
+  assert.match(hof, /14 days in league, submissions 1\/1: rating 32 &lt; 35/);
 
-  // Ticker payload for the landing page.
+  // Ticker payload: back-compat flat fields + new per-track map.
   const league = JSON.parse(fs.readFileSync(path.join(outDir, 'league.json'), 'utf8'));
-  assert.equal(league.day_index, 13);
-  assert.equal(league.announcements.length, 10);
+  assert.equal(league.day_index, 13, 'legacy day_index = max across tracks');
+  assert.equal(league.announcements.length, 10, 'legacy flat announcements kept for the ticker');
   assert.equal(league.announcements[0].type, 'revision');
   assert.equal(league.announcements[0].version, 3);
   assert.equal(league.announcements[0].outcome, 'compile_failed');
+  assert.equal(league.announcements[0].track, 'L2');
+  for (const t of ['L0', 'L1', 'L2', 'L3']) {
+    assert.ok(league.tracks[t], `tracks.${t} present`);
+    assert.equal(league.tracks[t].standings.length, 3, 'top-3 standings per track');
+  }
+  assert.equal(league.tracks.L0.day_index, 10);
+  assert.equal(league.tracks.L3.day_index, 13);
+  assert.equal(league.tracks.L3.standings[0].rating, 66);
+  assert.equal(league.tracks.L3.standings[0].submissions_allowed, 9);
 });
 
-test('continuous overlay: model page renders submission lineage with W/L/D deltas', async () => {
+test('continuous overlay: model page renders per-track submission lineage', async () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
   const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
   writeContinuousFixture(cmlDir);
@@ -391,23 +513,31 @@ test('continuous overlay: model page renders submission lineage with W/L/D delta
 
   const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
   assert.match(alpha, /Submission lineage/);
-  for (const v of ['v1', 'v2', 'v3']) {
-    assert.ok(alpha.includes(`lineage__version">${v}<`), `lineage includes ${v}`);
-  }
-  assert.ok(!alpha.includes('lineage__version">v4<'), 'torn jsonl tail is skipped');
-  assert.match(alpha, /lineage__node--entrant/);
-  assert.match(alpha, /lineage__node--accepted/);
-  assert.match(alpha, /lineage__node--compile_failed/);
-  assert.match(alpha, /entered the league/);
-  assert.match(alpha, /compile attempts 1/);
-  // v1 window: joined -> 2026-08-14 snapshot (3/1/0 from a clean record).
-  assert.match(alpha, /\+3W \+1L \+0D while live/);
-  // v2 window: 2026-08-14 snapshot -> latest snapshot (8/2/1 - 3/1/0).
-  assert.match(alpha, /\+5W \+1L \+1D while live/);
+  assert.equal((alpha.match(/lineage__track/g) || []).length, 4, 'one lineage block per track');
 
-  // Beta has no submissions: lineage shows only the v1 entrant node.
+  const l2 = alpha.split('L2<\/span> Two-iteration')[1].split('lineage__track')[0];
+  for (const v of ['v1', 'v2', 'v3']) {
+    assert.ok(l2.includes(`lineage__version">${v}<`), `L2 lineage includes ${v}`);
+  }
+  assert.match(l2, /lineage__node--compile_failed/);
+  // L2 v1 window: joined -> 2026-08-14 snapshot (3/1/0 from a clean record).
+  assert.match(l2, /\+3W \+1L \+0D while live/);
+  // L2 v2 window: 2026-08-14 snapshot -> latest snapshot (8/2/1 - 3/1/0).
+  assert.match(l2, /\+5W \+1L \+1D while live/);
+
+  const l3 = alpha.split('L3<\/span> Weekly feedback')[1];
+  assert.ok(l3.includes('lineage__version">v2<'), 'L3 lineage includes v2');
+  assert.ok(!l3.includes('lineage__version">v3<'), 'L3 has no v3 attempt');
+  // L3 v2 window: 08-17 snapshot (2/0/1) -> latest (9/3/1).
+  assert.match(l3, /\+7W \+3L \+0D while live/);
+
+  // Stale-stint record (v5) and the torn tail (v6) never render.
+  assert.ok(!alpha.includes('lineage__version">v5<'), 'stale-stint submission ignored');
+  assert.ok(!alpha.includes('lineage__version">v6<'), 'torn jsonl tail is skipped');
+
+  // Beta has no submissions: four v1-entrant-only blocks.
   const beta = fs.readFileSync(path.join(outDir, 'beta-two.html'), 'utf8');
-  assert.match(beta, /Submission lineage/);
+  assert.equal((beta.match(/lineage__track/g) || []).length, 4);
   assert.ok(beta.includes('lineage__version">v1<'));
   assert.ok(!beta.includes('lineage__version">v2<'));
 });

@@ -10,6 +10,49 @@ export const RETIRE_MIN_DAYS = 3;
 export const FEEDBACK_INTERVAL_MS = 48 * 60 * 60 * 1000;
 export const RETIRE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Intervention track policies (multi-track amendment, 2026-08-24):
+ *
+ *   L0 zero-shot:        1 submission, 1 compile attempt, never revised
+ *   L1 compile-fix:      1 submission, 3 compile attempts (raw compiler error
+ *                        surfaced in logs/ledger), never revised
+ *   L2 two-iteration:    3 submissions (1 initial + 2 revisions), feedback
+ *                        rounds at least 48h apart
+ *   L3 weekly-feedback:  9 submissions (1 initial + 8 revisions), one
+ *                        revision round every 7 days
+ *
+ * feedbackIntervalMs === null means the track never revises. Compile
+ * "attempts" are retries of the same source against the compiler (only
+ * transient failures can benefit; a deterministic rustc error fails all
+ * attempts); they never consume a submission.
+ */
+export const TRACKS = Object.freeze(['L0', 'L1', 'L2', 'L3']);
+export const TRACK_POLICIES = Object.freeze({
+  L0: Object.freeze({
+    maxSubmissions: 1, compileAttempts: 1, feedbackIntervalMs: null, maxRevisions: 0,
+  }),
+  L1: Object.freeze({
+    maxSubmissions: 1, compileAttempts: 3, feedbackIntervalMs: null, maxRevisions: 0,
+  }),
+  L2: Object.freeze({
+    maxSubmissions: 3, compileAttempts: 3, feedbackIntervalMs: FEEDBACK_INTERVAL_MS, maxRevisions: 2,
+  }),
+  L3: Object.freeze({
+    maxSubmissions: 9, compileAttempts: 3, feedbackIntervalMs: WEEK_MS, maxRevisions: 8,
+  }),
+});
+
+/** The pre-multitrack behavior, kept as the default for legacy callers. */
+export const DEFAULT_TRACK_POLICY = TRACK_POLICIES.L2;
+
+export function trackPolicy(trackId) {
+  const policy = TRACK_POLICIES[trackId];
+  if (!policy) throw new Error(`unknown league track: ${trackId}`);
+  return policy;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Win rate in [0, 1]; a model with no recorded matches rates 0. */
@@ -20,25 +63,31 @@ export function winRate(model) {
 
 /**
  * Retirement bar (spec): retire when ALL hold —
- *   days_in_league >= 3 AND submissions_used === 3
+ *   days_in_league >= 3 AND submissions_used === policy.maxSubmissions
  *   AND (rating < 35 OR winRate < 0.25).
  * `nowMs` is accepted for signature symmetry with the other gates; tenure is
  * read from the model's `days_in_league` counter, which the daily cycle
- * maintains (whole days since joined_at).
+ * maintains (whole days since joined_at). `policy` defaults to the L2 track
+ * policy (the pre-multitrack behavior).
  */
-export function shouldRetire(model, nowMs) { // eslint-disable-line no-unused-vars
+export function shouldRetire(model, nowMs, policy = DEFAULT_TRACK_POLICY) { // eslint-disable-line no-unused-vars
   if (!model || typeof model !== 'object') return false;
   if ((model.days_in_league ?? 0) < RETIRE_MIN_DAYS) return false;
-  if (model.submissions_used !== MAX_SUBMISSIONS) return false;
+  if (model.submissions_used !== policy.maxSubmissions) return false;
   return (Number(model.rating) || 0) < RETIRE_RATING
     || winRate(model) < RETIRE_WINRATE;
 }
 
-/** True when at least 48h elapsed since the last feedback round (null → due). */
-export function feedbackDue(state, nowMs) {
+/**
+ * True when the track's feedback interval elapsed since the last feedback
+ * round (null → due). Tracks with feedbackIntervalMs === null (L0/L1) never
+ * revise. `policy` defaults to the L2 track policy.
+ */
+export function feedbackDue(state, nowMs, policy = DEFAULT_TRACK_POLICY) {
+  if (policy.feedbackIntervalMs === null) return false;
   if (state?.last_feedback_at == null) return true;
   const elapsed = Number(nowMs) - Date.parse(state.last_feedback_at);
-  return Number.isFinite(elapsed) && elapsed >= FEEDBACK_INTERVAL_MS;
+  return Number.isFinite(elapsed) && elapsed >= policy.feedbackIntervalMs;
 }
 
 /**

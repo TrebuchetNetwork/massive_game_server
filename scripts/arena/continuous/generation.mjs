@@ -34,6 +34,7 @@ import {
 import { atomicWriteJson } from './state.mjs';
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const CHECKPOINT_SCHEMA_VERSION = 2;
 const CHECKPOINT_STAGE_COMPILED = 'compiled';
@@ -120,14 +121,24 @@ function validateCompileResponse(compile, expectedModelId) {
  * Register the entrant's arena model id and compile its source on the server
  * (overwrite). Battles resolve fighters by model id, so every season day's
  * derived ids must be published before evaluation.
+ *
+ * `attempts` is the track's compile-attempt policy (L0: 1, L1+ : 3). Retries
+ * recompile the SAME source — only transient compiler failures can benefit;
+ * a deterministic rustc error fails every attempt. The raw compiler stderr
+ * is surfaced in the thrown error, and the number of attempts used is tagged
+ * as `error.compileAttempts` so the ledger reflects reality.
  */
 export async function compileFighterSource({
   apiBase,
   adminToken,
   entrant,
   source,
+  attempts = 1,
   apiClient = arenaApiJson,
 }) {
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 10) {
+    throw new Error('compile attempts must be a safe integer in 1..10');
+  }
   await apiClient({
     apiBase,
     adminToken,
@@ -142,19 +153,29 @@ export async function compileFighterSource({
       initial_elo: 1000,
     },
   });
-  const compile = await apiClient({
-    apiBase,
-    adminToken,
-    method: 'POST',
-    route: '/api/arena/code/compile',
-    timeoutMs: 180_000,
-    body: {
-      model_id: entrant.model_id,
-      source_code: source,
-      overwrite: true,
-    },
-  });
-  return validateCompileResponse(compile, entrant.model_id);
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const compile = await apiClient({
+        apiBase,
+        adminToken,
+        method: 'POST',
+        route: '/api/arena/code/compile',
+        timeoutMs: 180_000,
+        body: {
+          model_id: entrant.model_id,
+          source_code: source,
+          overwrite: true,
+        },
+      });
+      return validateCompileResponse(compile, entrant.model_id);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await delay(Math.min(3_000, 500 * (2 ** (attempt - 1))));
+    }
+  }
+  lastError.compileAttempts = attempts;
+  throw lastError;
 }
 
 // Schema-v2 compiled checkpoint, same shape the runner's
@@ -212,12 +233,15 @@ function buildCompiledCheckpoint({ entrant, generated, verified, codeStatus, was
 
 /**
  * Generate and compile one fighter bot via the server admin API, reusing the
- * runner's exact contract. Returns { checkpoint, source, codeStatus }.
+ * runner's exact contract. `compileAttempts` is the track's compile policy
+ * (L0: 1 — a failed compile means no entry; L1+: 3). Returns
+ * { checkpoint, source, codeStatus }.
  */
 export async function generateFighter({
   apiBase,
   adminToken,
   entrant,
+  compileAttempts = 1,
   codeStatus = null,
   apiClient = arenaApiJson,
   now = () => new Date().toISOString(),
@@ -249,6 +273,7 @@ export async function generateFighter({
     adminToken,
     entrant,
     source: verified.source,
+    attempts: compileAttempts,
     apiClient,
   });
   const checkpoint = buildCompiledCheckpoint({
@@ -367,6 +392,7 @@ export async function compileRevision({
   entrant,
   request,
   previousCheckpoint,
+  compileAttempts = 1,
   apiClient = arenaApiJson,
   now = () => new Date().toISOString(),
 }) {
@@ -377,6 +403,7 @@ export async function compileRevision({
       adminToken,
       entrant,
       source: request.verified.source,
+      attempts: compileAttempts,
       apiClient,
     });
   } catch (error) {
@@ -413,6 +440,7 @@ export async function reviseFighter({
   source,
   brief,
   previousCheckpoint,
+  compileAttempts = 1,
   codeStatus = null,
   apiClient = arenaApiJson,
   now = () => new Date().toISOString(),
@@ -432,6 +460,7 @@ export async function reviseFighter({
     entrant,
     request: { ...request, brief },
     previousCheckpoint,
+    compileAttempts,
     apiClient,
     now,
   });

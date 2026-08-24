@@ -1,11 +1,16 @@
 // Continuous Model League — improvement brief builder.
 //
-// Every 48h each active roster model with submissions left gets a revision
-// prompt built from its own recent battles. The brief is a compact (< 2KB)
-// plain-text digest fed to the server's /api/arena/code/revise route as the
-// stats_digest (server cap: 8KB), containing: a behavior fingerprint (action
-// distribution), the worst 3 matchups by loss rate, runtime fault counts,
-// per-mode weaknesses, and an instruction paragraph for the codegen model.
+// Every feedback round (track policy permitting) each active roster model
+// with submissions left gets a revision prompt built from its own recent
+// battles. The brief is a compact (< 2KB) plain-text digest fed to the
+// server's /api/arena/code/revise route as the stats_digest (server cap:
+// 8KB).
+//
+// NEUTRALITY RULE (hard, multi-track amendment 2026-08-24): the brief is a
+// PURE DATA DOCUMENT — measured stats only (action distribution, W/L/D per
+// mode and per matchup, fault counts) plus the single neutral framing line
+// "Here are your measured results." No imperative or coaching language, no
+// suggested strategies; the model alone decides what to change.
 //
 // Battle sampling mirrors build_model_pages.mjs: battle checkpoints are far
 // too numerous to read blindly, so directories are listed, stat'ed, sorted by
@@ -90,7 +95,9 @@ async function listBattleJsons(io, dir) {
 /**
  * Sample a roster model's newest battle records across the league's day
  * season directories (newest day first, newest files first within a day),
- * capped at perModelLimit. Returns normalized records:
+ * capped at perModelLimit. Season directories are named
+ * `continuous-<leagueId>-<trackId>-day<N>` (trackId optional for legacy
+ * single-track fixtures). Returns normalized records:
  *   { mode, me, opponent, winner, draw, counts, faults, m }
  * with provider model ids on both sides. Battles not involving the model and
  * files that fail to parse are skipped.
@@ -98,6 +105,7 @@ async function listBattleJsons(io, dir) {
 export async function sampleModelBattles({
   seasonsDirectory,
   leagueId,
+  trackId = null,
   dayIndex,
   modelId,
   perModelLimit = PER_MODEL_SAMPLE_LIMIT,
@@ -107,7 +115,7 @@ export async function sampleModelBattles({
   for (let day = dayIndex - 1; day >= 0 && records.length < perModelLimit; day -= 1) {
     const seasonDirectory = path.join(
       seasonsDirectory,
-      `continuous-${leagueId}-day${day}`,
+      `continuous-${leagueId}-${trackId ? `${trackId}-` : ''}day${day}`,
     );
     let generationNames;
     try {
@@ -189,6 +197,12 @@ function truncateToBytes(text, maxBytes) {
 /**
  * Build the improvement brief for one roster model from its sampled battle
  * records (see sampleModelBattles). Always returns at most maxBytes bytes.
+ *
+ * Strict neutrality: raw sums and rates ONLY. No derived composites (no
+ * "aggression" index), and no editorial ordering — modes are listed in
+ * canonical order (arena, ctf, koth, tdm, then alphabetical), matchups
+ * alphabetically under a neutral "Matchups:" heading. Nothing is ranked,
+ * named, or framed as good/bad/worst.
  */
 export function buildBrief({ model, records, maxBytes = BRIEF_MAX_BYTES }) {
   const sample = Array.isArray(records) ? records : [];
@@ -219,34 +233,37 @@ export function buildBrief({ model, records, maxBytes = BRIEF_MAX_BYTES }) {
 
   const actionTotal = ACTIONS.reduce((sum, action) => sum + counts[action], 0);
   const share = (action) => (actionTotal > 0 ? counts[action] / actionTotal : 0);
-  const aggression = share('attack') + share('charge');
 
+  const MODE_ORDER = ['arena', 'ctf', 'koth', 'tdm'];
   const recordOf = (entry) => ({ ...entry, games: entry.w + entry.l + entry.d });
   const lossRate = (entry) => (entry.games > 0 ? entry.l / entry.games : 0);
-  const byWeakness = (left, right) => lossRate(right) - lossRate(left)
-    || right.games - left.games;
   const modeSummaries = [...modes.entries()]
     .map(([mode, entry]) => ({ mode, ...recordOf(entry) }))
-    .sort((a, b) => byWeakness(a, b) || a.mode.localeCompare(b.mode));
-  const rivalSummaries = [...rivals.entries()]
+    .sort((a, b) => {
+      const ai = MODE_ORDER.indexOf(a.mode);
+      const bi = MODE_ORDER.indexOf(b.mode);
+      return (ai === -1 ? MODE_ORDER.length : ai) - (bi === -1 ? MODE_ORDER.length : bi)
+        || a.mode.localeCompare(b.mode);
+    });
+  const matchupSummaries = [...rivals.entries()]
     .map(([opponent, entry]) => ({ opponent, ...recordOf(entry) }))
-    .sort((a, b) => byWeakness(a, b) || a.opponent.localeCompare(b.opponent));
-  const worst = rivalSummaries.slice(0, 3);
+    .sort((a, b) => a.opponent.localeCompare(b.opponent));
 
   const lines = [];
+  lines.push('Here are your measured results.');
   lines.push(
-    `Arena fighter improvement brief — ${model.model_id} `
+    `Model: ${model.model_id} `
     + `(artifact v${model.artifact?.version ?? 1}, rating ${model.rating}, `
     + `league record ${model.wins}-${model.losses}-${model.draws}).`,
   );
   if (sample.length === 0) {
-    lines.push('No sampled battles yet; make a robust all-round improvement.');
+    lines.push('No sampled battles yet.');
   } else {
     lines.push(`Sampled ${sample.length} recent battles: ${wins}W-${losses}L-${draws}D.`);
     lines.push(
       'Behavior fingerprint: '
       + ACTIONS.map((action) => `${action} ${pct(share(action))}`).join(', ')
-      + ` (aggression ${aggression.toFixed(2)}).`,
+      + '.',
     );
     lines.push(
       `Per-mode record: ${modeSummaries.map((summary) => (
@@ -254,42 +271,16 @@ export function buildBrief({ model, records, maxBytes = BRIEF_MAX_BYTES }) {
       )).join(', ')}.`,
     );
     lines.push(
-      worst.length > 0
-        ? `Worst matchups: ${worst.map((summary) => (
+      matchupSummaries.length > 0
+        ? `Matchups: ${matchupSummaries.map((summary) => (
           `vs ${summary.opponent} ${summary.w}-${summary.l}-${summary.d} (loses ${pct(lossRate(summary))})`
         )).join('; ')}.`
-        : 'Worst matchups: none on record.',
+        : 'Matchups: none on record.',
     );
     lines.push(
       `Runtime faults in sample: traps ${faults.trap}, `
       + `fuel errors ${faults.fuel}, fallbacks ${faults.fallback}.`,
     );
   }
-
-  const focuses = [];
-  const weakest = modeSummaries[0];
-  if (weakest && weakest.games > 0 && lossRate(weakest) >= 0.5) {
-    focuses.push(
-      `your weakest mode is ${weakest.mode} (loses ${pct(lossRate(weakest))}); `
-      + 'rework objective play, positioning, and target selection for it',
-    );
-  }
-  if (worst.length > 0 && lossRate(worst[0]) >= 0.5) {
-    focuses.push(
-      `you lose most games against ${worst.map((summary) => summary.opponent).join(', ')}; `
-      + 'counter their pressure without abandoning your strengths',
-    );
-  }
-  const faultTotal = faults.trap + faults.fuel + faults.fallback;
-  if (faultTotal > 0) {
-    focuses.push(`eliminate the ${faultTotal} runtime traps/fuel errors/fallbacks in the sample`);
-  }
-  if (focuses.length === 0) {
-    focuses.push('make a conservative robustness improvement rather than a risky rewrite');
-  }
-  lines.push(
-    'Instructions: revise the fighter bot, keeping the bot_tick_v2 ABI and the '
-    + `source-size limit. ${focuses.join('; ')}. Preserve what already works.`,
-  );
   return truncateToBytes(lines.join('\n'), maxBytes);
 }

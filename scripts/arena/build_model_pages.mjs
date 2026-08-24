@@ -7,7 +7,8 @@
 //   artifacts/arena/seasons/<season>/world/     all-model FFA artifacts (full pass)
 //   static_client/media/highlights/index.json   fight clips
 //   artifacts/arena/continuous/                 continuous league overlay (optional):
-//                                               state.json + submissions.jsonl + history/
+//                                               state.json (v2, tracks:{L0..L3}) +
+//                                               submissions.jsonl + tracks/<T>/history/
 //
 // Outputs:
 //   static_client/models/index.html             rank-sorted roster index
@@ -35,7 +36,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { mascotFor } from './mascots.mjs';
-import { FEEDBACK_INTERVAL_MS } from './continuous/league.mjs';
+import { TRACKS } from './continuous/league.mjs';
 import { MAX_ROSTER_SIZE, validateState } from './continuous/state.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -771,7 +772,7 @@ export function renderIndexPage(ctx) {
 ${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
 ${rows}
         </section>
-${continuous ? `${[announcementsSection(continuous.state.announcements), hallOfFameSection(continuous.state.retired)].filter(Boolean).join('\n')}\n` : ''}${provenanceFooter(ctx)}
+${continuous ? `${[standingsSection(continuous.state), matrixSection(continuous.state), announcementsSection(allAnnouncements(continuous.state)), hallOfFameSection(continuous.state)].filter(Boolean).join('\n')}\n` : ''}${provenanceFooter(ctx)}
 ${foot}`;
 }
 
@@ -780,10 +781,12 @@ ${foot}`;
 // ---------------------------------------------------------------------------
 //
 // Rendered only when <continuousDir>/state.json exists and validates against
-// the league's own schema. The index gains a league status strip, an
-// announcements feed and a Hall of Fame; model pages gain a submission
-// lineage timeline; and a compact league.json is emitted for the landing
-// page ticker. Anything missing or malformed degrades to the weekly view.
+// the league's own schema (v2, four intervention tracks). The index gains a
+// league status strip, per-track standings, the model × track experiment
+// matrix, a track-badged announcements feed and a per-track Hall of Fame;
+// model pages gain a per-track submission lineage timeline; and a compact
+// league.json is emitted for the landing page ticker. Anything missing or
+// malformed degrades to the weekly view.
 
 export const ANNOUNCEMENT_ICONS = { entrant: '🌱', revision: '🔧', retirement: '🪦' };
 export const ANNOUNCEMENTS_PAGE_LIMIT = 20;
@@ -820,11 +823,24 @@ export function parseSubmissionsJsonl(text) {
   return out;
 }
 
+/** Display labels for the intervention tracks (multi-track amendment). */
+export const TRACK_LABELS = {
+  L0: 'Zero-shot',
+  L1: 'Compile-fix',
+  L2: 'Two-iteration',
+  L3: 'Weekly feedback',
+};
+
 /**
  * Load the continuous league overlay from continuousDir, or return null when
  * the state is missing or fails schema validation — publishing must never be
- * blocked by league trouble. History snapshots are flattened and sorted by
- * timestamp; unreadable day files are skipped.
+ * blocked by league trouble.
+ *
+ * Multi-track (schema v2): the state carries one slice per track under
+ * `tracks`; per-track history snapshots live under `tracks/<T>/history/*.json`
+ * (flattened and sorted by timestamp, unreadable day files skipped); the
+ * shared submissions.jsonl is parsed whole — records carry `track` (and
+ * `stint`) and are filtered per track at render time.
  */
 export function loadContinuousLeague({ continuousDir, io = defaultIo, log = () => {} }) {
   const statePath = path.join(continuousDir, 'state.json');
@@ -847,55 +863,102 @@ export function loadContinuousLeague({ continuousDir, io = defaultIo, log = () =
     }
   }
 
-  const snapshots = [];
-  const historyDir = path.join(continuousDir, 'history');
-  if (io.exists(historyDir)) {
-    for (const name of io.readdir(historyDir).filter((n) => n.endsWith('.json')).sort()) {
-      try {
-        const entries = io.readJson(path.join(historyDir, name));
-        if (Array.isArray(entries)) snapshots.push(...entries);
-      } catch {
-        // Skip an unreadable history day rather than dropping the overlay.
+  const snapshots = {}; // trackId -> snapshots sorted by timestamp
+  for (const trackId of TRACKS) {
+    const historyDir = path.join(continuousDir, 'tracks', trackId, 'history');
+    const list = [];
+    if (io.exists(historyDir)) {
+      for (const name of io.readdir(historyDir).filter((n) => n.endsWith('.json')).sort()) {
+        try {
+          const entries = io.readJson(path.join(historyDir, name));
+          if (Array.isArray(entries)) list.push(...entries);
+        } catch {
+          // Skip an unreadable history day rather than dropping the overlay.
+        }
       }
     }
+    list.sort((a, b) => String(a?.at || '').localeCompare(String(b?.at || '')));
+    snapshots[trackId] = list;
   }
-  snapshots.sort((a, b) => String(a?.at || '').localeCompare(String(b?.at || '')));
   return { state, submissions, snapshots };
 }
 
 /**
- * Match a weekly-roster model to its continuous league entry (active or
+ * Match a weekly-roster model to its entry in one track slice (active or
  * retired) via canonical slug / provider id.
  */
-export function findContinuousEntry(state, model) {
+export function findContinuousEntry(trackSlice, model) {
   const ids = new Set(
     [model.canonical_slug, model.provider_model, model.model_id].filter(Boolean).map(String),
   );
   const match = (e) => ids.has(String(e.slug)) || ids.has(String(e.model_id));
-  return state.roster.find(match) || state.retired.find(match) || null;
+  return trackSlice.roster.find(match) || trackSlice.retired.find(match) || null;
 }
 
-/** Newest-first view of the announcement ledger, capped at `limit`. */
+/** All announcements across tracks, newest first, each tagged with its track. */
+export function allAnnouncements(state) {
+  const out = [];
+  for (const trackId of TRACKS) {
+    for (const a of state.tracks[trackId]?.announcements || []) {
+      out.push({ ...a, track: a.track ?? trackId });
+    }
+  }
+  return out.sort((a, b) => String(b?.at || '').localeCompare(String(a?.at || '')));
+}
+
+/** Newest-first view of an announcement list, capped at `limit`. */
 export function latestAnnouncements(announcements, limit) {
   return (Array.isArray(announcements) ? [...announcements] : [])
-    .reverse()
+    .sort((a, b) => String(b?.at || '').localeCompare(String(a?.at || '')))
     .slice(0, limit);
 }
 
-/** Compact ticker payload emitted as static_client/models/league.json. */
+/** Roster of one track slice, rank-sorted by rating (ties: model id). */
+export function trackStandings(trackSlice) {
+  return [...(trackSlice?.roster || [])]
+    .sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0)
+      || String(a.model_id).localeCompare(String(b.model_id)));
+}
+
+/**
+ * Ticker payload emitted as static_client/models/league.json. Back-compat:
+ * the legacy flat `day_index` (max across tracks) and `announcements`
+ * (merged latest 10) fields are kept for the current landing ticker; the
+ * `tracks` map adds per-track day index and top-3 standings.
+ */
 export function leagueTickerPayload(state) {
-  return {
-    day_index: state.day_index,
-    announcements: latestAnnouncements(state.announcements, ANNOUNCEMENTS_TICKER_LIMIT)
-      .map((a) => ({
-        type: a.type,
-        at: a.at,
-        slug: a.slug,
-        mascot: a.mascot,
-        version: a.version,
-        outcome: a.outcome,
-        provider_rank: a.provider_rank,
+  const announcements = latestAnnouncements(allAnnouncements(state), ANNOUNCEMENTS_TICKER_LIMIT)
+    .map((a) => ({
+      type: a.type,
+      at: a.at,
+      track: a.track,
+      slug: a.slug,
+      mascot: a.mascot,
+      version: a.version,
+      outcome: a.outcome,
+      provider_rank: a.provider_rank,
+    }));
+  const tracks = {};
+  for (const trackId of TRACKS) {
+    const slice = state.tracks[trackId];
+    tracks[trackId] = {
+      day_index: slice.day_index,
+      standings: trackStandings(slice).slice(0, 3).map((e) => ({
+        slug: e.slug,
+        mascot: e.mascot,
+        rating: e.rating,
+        wins: e.wins,
+        losses: e.losses,
+        draws: e.draws,
+        submissions_used: e.submissions_used,
+        submissions_allowed: slice.policy.max_submissions,
       })),
+    };
+  }
+  return {
+    day_index: Math.max(...TRACKS.map((trackId) => state.tracks[trackId].day_index)),
+    announcements,
+    tracks,
   };
 }
 
@@ -915,19 +978,26 @@ function fmtCountdown(ms) {
   return `${m}m`;
 }
 
+function trackBadge(trackId) {
+  return `<span class="track-badge track-badge--${esc(trackId)}">${esc(trackId)}</span>`;
+}
+
+function feedbackText(slice, nowMs) {
+  const interval = slice.policy?.feedback_interval_ms;
+  if (interval == null) return 'never revises';
+  if (slice.last_feedback_at === null) return 'feedback at next cycle';
+  const remaining = Date.parse(slice.last_feedback_at) + interval - nowMs;
+  return remaining <= 0 ? 'feedback due now' : `feedback in ${fmtCountdown(remaining)}`;
+}
+
 function continuousLeagueHeader(state, nowMs) {
-  let feedback;
-  if (state.last_feedback_at === null) {
-    feedback = 'at next cycle';
-  } else {
-    const remaining = Date.parse(state.last_feedback_at) + FEEDBACK_INTERVAL_MS - nowMs;
-    feedback = remaining <= 0 ? 'due now' : `in ${fmtCountdown(remaining)}`;
-  }
-  return `        <section class="league-strip" aria-label="Continuous league status">
-            <div><dt>Continuous league</dt><dd>day ${fmtInt(state.day_index)}</dd></div>
-            <div><dt>Active slots</dt><dd>${state.roster.length}/${MAX_ROSTER_SIZE}</dd></div>
-            <div><dt>Next feedback</dt><dd>${esc(feedback)}</dd></div>
-            <div><dt>Retired</dt><dd>${fmtInt(state.retired.length)}</dd></div>
+  const cells = TRACKS.map((trackId) => {
+    const slice = state.tracks[trackId];
+    return `            <div><dt>${trackBadge(trackId)} ${esc(TRACK_LABELS[trackId])}</dt><dd>day ${fmtInt(slice.day_index)} · ${slice.roster.length}/${MAX_ROSTER_SIZE} slots</dd><dd class="league-strip__sub">${esc(feedbackText(slice, nowMs))}</dd></div>`;
+  }).join('\n');
+  return `        <section class="league-strip league-strip--tracks" aria-label="Continuous league status">
+            <div><dt>Continuous league</dt><dd>${esc(state.league_id)}</dd><dd class="league-strip__sub">4-track intervention experiment</dd></div>
+${cells}
         </section>`;
 }
 
@@ -949,6 +1019,7 @@ function announcementsSection(announcements) {
   if (!items.length) return '';
   const rows = items.map((a) => `            <li class="announce__item announce__item--${esc(a.type)}">
                 <span class="announce__icon" aria-hidden="true">${ANNOUNCEMENT_ICONS[a.type] || '📣'}</span>
+                ${trackBadge(a.track)}
                 <span class="announce__name">${esc(a.mascot?.emoji || '')} ${esc(a.mascot?.title || a.slug || a.model_id || 'unknown')}</span>
                 <span class="announce__text">${esc(announcementText(a))}</span>
                 <time class="announce__at" datetime="${esc(a.at)}">${esc(fmtLeagueTs(a.at))}</time>
@@ -961,26 +1032,120 @@ ${rows}
         </section>`;
 }
 
-function hallOfFameSection(retired) {
-  if (!Array.isArray(retired) || !retired.length) return '';
-  const cards = [...retired].reverse().map((e) => `            <article class="hof__card">
-                <span class="hof__emoji" style="border-color:${esc(e.mascot.color)}">${esc(e.mascot.emoji)}</span>
-                <div class="hof__id">
-                    <b>${esc(e.mascot.title)}</b>
-                    <small>${esc(e.slug)}</small>
-                </div>
-                <dl class="hof__stats">
-                    <div><dt>Days in league</dt><dd>${fmtInt(e.days_in_league)}</dd></div>
-                    <div><dt>Final rating</dt><dd>${Number(e.rating).toFixed(1)}</dd></div>
-                    <div><dt>Record</dt><dd><span class="win">${fmtInt(e.wins)}</span>W · <span class="loss">${fmtInt(e.losses)}</span>L · ${fmtInt(e.draws)}D</dd></div>
-                </dl>
-                <p class="hof__reason">${esc(e.reason)}</p>
-            </article>`).join('\n');
-  return `        <section class="panel hof" aria-label="Hall of Fame">
-            <h2>Hall of Fame <span class="hof__hint">🪦 retired with honors</span></h2>
+function standingsSection(state) {
+  const tables = TRACKS.map((trackId) => {
+    const slice = state.tracks[trackId];
+    const allowed = slice.policy.max_submissions;
+    const rows = trackStandings(slice).map((e, i) => `                    <tr>
+                        <td class="num">${String(i + 1).padStart(2, '0')}</td>
+                        <td><span class="standings__emoji">${esc(e.mascot.emoji)}</span> <b>${esc(e.mascot.title)}</b></td>
+                        <td class="num standings__rating">${Number(e.rating).toFixed(1)}</td>
+                        <td class="num"><span class="win">${fmtInt(e.wins)}</span>‑<span class="loss">${fmtInt(e.losses)}</span>‑${fmtInt(e.draws)}</td>
+                        <td class="num">${e.submissions_used}/${allowed}</td>
+                    </tr>`).join('\n');
+    return `            <article class="standings__track">
+                <h3>${trackBadge(trackId)} ${esc(TRACK_LABELS[trackId])} <small>day ${fmtInt(slice.day_index)}</small></h3>
+                <table class="standings__table">
+                    <thead><tr><th>#</th><th>Model</th><th>Rating</th><th>W‑L‑D</th><th>Subs</th></tr></thead>
+                    <tbody>
+${rows}
+                    </tbody>
+                </table>
+            </article>`;
+  }).join('\n');
+  return `        <section class="panel standings" aria-label="Per-track standings">
+            <h2>Track standings</h2>
+            <div class="standings__grid">
+${tables}
+            </div>
+        </section>`;
+}
+
+/**
+ * Experiment matrix: model × track ratings, plus the cross-track delta
+ * (L3 − L0) per model — how much weekly feedback helps that model. Rows are
+ * sorted by that delta (best feedback responders first); models missing a
+ * track cell sort after, by best available rating. Retired cells keep their
+ * final rating, marked 🪦.
+ */
+function matrixSection(state) {
+  const byModel = new Map(); // modelKey -> { mascot, cells: {track -> {rating, retired}} }
+  for (const trackId of TRACKS) {
+    const slice = state.tracks[trackId];
+    for (const [list, retired] of [[slice.roster, false], [slice.retired, true]]) {
+      for (const e of list) {
+        const key = String(e.model_id);
+        if (!byModel.has(key)) byModel.set(key, { mascot: e.mascot, slug: e.slug, cells: {} });
+        byModel.get(key).cells[trackId] = { rating: Number(e.rating), retired };
+      }
+    }
+  }
+  if (!byModel.size) return '';
+  const rows = [...byModel.values()].map((row) => {
+    const l0 = row.cells.L0?.rating;
+    const l3 = row.cells.L3?.rating;
+    return { ...row, delta: l0 !== undefined && l3 !== undefined ? l3 - l0 : null };
+  }).sort((a, b) => {
+    if (a.delta !== null && b.delta !== null) return b.delta - a.delta;
+    if (a.delta !== null) return -1;
+    if (b.delta !== null) return 1;
+    const best = (r) => Math.max(...TRACKS.map((t) => r.cells[t]?.rating ?? -1));
+    return best(b) - best(a);
+  });
+  const body = rows.map((row) => {
+    const cells = TRACKS.map((trackId) => {
+      const cell = row.cells[trackId];
+      if (!cell) return '                        <td class="num matrix__cell matrix__cell--empty">—</td>';
+      return `                        <td class="num matrix__cell${cell.retired ? ' matrix__cell--retired' : ''}">${cell.rating.toFixed(1)}${cell.retired ? ' 🪦' : ''}</td>`;
+    }).join('\n');
+    const delta = row.delta === null
+      ? '<td class="num matrix__delta">—</td>'
+      : `<td class="num matrix__delta matrix__delta--${row.delta >= 0 ? 'pos' : 'neg'}">${row.delta >= 0 ? '+' : ''}${row.delta.toFixed(1)}</td>`;
+    return `                    <tr>
+                        <td class="matrix__model"><span><span class="standings__emoji">${esc(row.mascot.emoji)}</span> <b>${esc(row.mascot.title)}</b></span><small>${esc(row.slug)}</small></td>
+${cells}
+                        ${delta}
+                    </tr>`;
+  }).join('\n');
+  return `        <section class="panel matrix" aria-label="Experiment matrix">
+            <h2>Experiment matrix <span class="hof__hint">rating per track · Δ = L3 − L0</span></h2>
+            <table class="matrix__table">
+                <thead><tr><th>Model</th>${TRACKS.map((t) => `<th>${trackBadge(t)}</th>`).join('')}<th>Δ feedback</th></tr></thead>
+                <tbody>
+${body}
+                </tbody>
+            </table>
+            <p class="metric-note">Same v1 artifacts in every track; tracks diverge only by compile-fix and feedback policy. Raw measured stats only — no coaching.</p>
+        </section>`;
+}
+
+function hallOfFameSection(state) {
+  const groups = TRACKS
+    .map((trackId) => ({ trackId, retired: state.tracks[trackId]?.retired || [] }))
+    .filter((g) => g.retired.length);
+  if (!groups.length) return '';
+  const sections = groups.map(({ trackId, retired }) => {
+    const cards = [...retired].reverse().map((e) => `                <article class="hof__card">
+                    <span class="hof__emoji" style="border-color:${esc(e.mascot.color)}">${esc(e.mascot.emoji)}</span>
+                    <div class="hof__id">
+                        <b>${esc(e.mascot.title)}</b>
+                        <small>${esc(e.slug)}</small>
+                    </div>
+                    <dl class="hof__stats">
+                        <div><dt>Days in league</dt><dd>${fmtInt(e.days_in_league)}</dd></div>
+                        <div><dt>Final rating</dt><dd>${Number(e.rating).toFixed(1)}</dd></div>
+                        <div><dt>Record</dt><dd><span class="win">${fmtInt(e.wins)}</span>W · <span class="loss">${fmtInt(e.losses)}</span>L · ${fmtInt(e.draws)}D</dd></div>
+                    </dl>
+                    <p class="hof__reason">${esc(e.reason)}</p>
+                </article>`).join('\n');
+    return `            <h3 class="hof__track">${trackBadge(trackId)} ${esc(TRACK_LABELS[trackId])}</h3>
             <div class="hof__grid">
 ${cards}
-            </div>
+            </div>`;
+  }).join('\n');
+  return `        <section class="panel hof" aria-label="Hall of Fame">
+            <h2>Hall of Fame <span class="hof__hint">🪦 retired with honors, per track</span></h2>
+${sections}
         </section>`;
 }
 
@@ -1058,15 +1223,28 @@ export function buildLineage(entry, submissions, snapshots) {
   return nodes.map((n) => ({ ...n, delta: deltaByVersion.get(n.version) || null }));
 }
 
-function lineageSection(entry, submissions, snapshots) {
-  const nodes = buildLineage(entry, submissions, snapshots);
-  if (!nodes.length) return '';
-  const items = nodes.map((n) => {
-    const meta = LINEAGE_OUTCOME_META[n.outcome] || { icon: '🔧', label: String(n.outcome) };
-    const delta = n.delta
-      ? `<span class="lineage__delta">+${n.delta.w}W +${n.delta.l}L +${n.delta.d}D while live</span>`
-      : '';
-    return `            <li class="lineage__node lineage__node--${esc(n.outcome)}">
+/**
+ * Submission lineage for one weekly-roster model, grouped per track: for each
+ * track where the model has an entry, v1 (the entrant) plus that track's
+ * revision attempts (shared submissions.jsonl filtered by track and stint),
+ * with deltas derived from that track's own history snapshots.
+ */
+function lineageSection(state, model, submissions, snapshotsByTrack) {
+  const blocks = [];
+  for (const trackId of TRACKS) {
+    const slice = state.tracks[trackId];
+    const entry = findContinuousEntry(slice, model);
+    if (!entry) continue;
+    const trackSubmissions = submissions.filter((s) => (s.track ?? null) === trackId
+      && (s.stint == null || s.stint === entry.joined_at));
+    const nodes = buildLineage(entry, trackSubmissions, snapshotsByTrack[trackId] || []);
+    if (!nodes.length) continue;
+    const items = nodes.map((n) => {
+      const meta = LINEAGE_OUTCOME_META[n.outcome] || { icon: '🔧', label: String(n.outcome) };
+      const delta = n.delta
+        ? `<span class="lineage__delta">+${n.delta.w}W +${n.delta.l}L +${n.delta.d}D while live</span>`
+        : '';
+      return `            <li class="lineage__node lineage__node--${esc(n.outcome)}">
                 <span class="lineage__icon" aria-hidden="true">${meta.icon}</span>
                 <span class="lineage__version">v${n.version}</span>
                 <span class="lineage__outcome">${esc(meta.label)}</span>
@@ -1074,13 +1252,17 @@ function lineageSection(entry, submissions, snapshots) {
                 ${delta}
                 <time class="lineage__at" datetime="${esc(n.at)}">${esc(fmtLeagueTs(n.at))}</time>
             </li>`;
-  }).join('\n');
-  return `        <section class="panel lineage" aria-label="Submission lineage">
-            <h2>Submission lineage</h2>
+    }).join('\n');
+    blocks.push(`            <h3 class="lineage__track">${trackBadge(trackId)} ${esc(TRACK_LABELS[trackId])}</h3>
             <ol class="lineage__timeline">
 ${items}
-            </ol>
-            <p class="metric-note">W/L/D deltas derive from daily history snapshots; a failed attempt consumes a submission but the previous artifact stays live.</p>
+            </ol>`);
+  }
+  if (!blocks.length) return '';
+  return `        <section class="panel lineage" aria-label="Submission lineage">
+            <h2>Submission lineage <span class="hof__hint">per track</span></h2>
+${blocks.join('\n')}
+            <p class="metric-note">W/L/D deltas derive from the track's daily history snapshots; a failed attempt consumes a submission but the previous artifact stays live.</p>
         </section>`;
 }
 
@@ -1412,12 +1594,63 @@ table.mode-grid td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--lin
 }
 .league-strip div { padding: 16px 18px; }
 .league-strip div + div { border-left: 1px solid var(--line-soft); }
-.league-strip dt { margin-bottom: 7px; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.11em; text-transform: uppercase; }
+.league-strip dt { margin-bottom: 7px; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.11em; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
 .league-strip dd { margin: 0; color: var(--acid-soft); font: 800 13px/1.3 var(--mono); letter-spacing: -0.03em; }
+.league-strip__sub { margin-top: 4px !important; color: var(--dim) !important; font: 700 8px/1.4 var(--mono) !important; letter-spacing: 0.06em !important; text-transform: uppercase; }
+.track-badge {
+    display: inline-block;
+    border: 1px solid var(--line);
+    padding: 2px 5px;
+    color: var(--acid-soft);
+    font: 800 8px/1 var(--mono);
+    letter-spacing: 0.08em;
+    background: rgba(202, 255, 0, 0.05);
+}
+.track-badge--L0 { color: var(--muted); border-color: var(--line-soft); background: transparent; }
+.track-badge--L3 { color: var(--acid); border-color: var(--line); box-shadow: inset 0 0 10px rgba(202, 255, 0, 0.08); }
+.standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: 18px; }
+.standings__track h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
+.standings__track h3 small { margin-left: auto; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; }
+table.standings__table { width: 100%; border-collapse: collapse; }
+table.standings__table th {
+    padding: 0 8px 8px 0;
+    color: var(--dim);
+    font: 700 8px/1 var(--mono);
+    letter-spacing: 0.1em;
+    text-align: left;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--line);
+}
+table.standings__table td { padding: 8px 8px 8px 0; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+table.standings__table tr:last-child td { border-bottom: none; }
+.standings__emoji { font-size: 14px; }
+.standings__rating { color: var(--acid-soft); }
+.matrix__table { width: 100%; border-collapse: collapse; }
+.matrix__table th {
+    padding: 0 10px 10px 0;
+    color: var(--dim);
+    font: 700 8px/1 var(--mono);
+    letter-spacing: 0.1em;
+    text-align: left;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--line);
+}
+.matrix__table td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--line-soft); }
+.matrix__model { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 13px; }
+.matrix__model > span { display: flex; align-items: center; gap: 7px; }
+.matrix__model small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; word-break: break-all; }
+.matrix__cell { font-size: 13px; color: var(--acid-soft); }
+.matrix__cell--empty { color: var(--dim); }
+.matrix__cell--retired { color: var(--muted); }
+.matrix__delta { font-size: 13px; }
+.matrix__delta--pos { color: var(--acid); }
+.matrix__delta--neg { color: #fb7185; }
+.lineage__track { display: flex; align-items: center; gap: 9px; margin: 22px 0 4px; font: 800 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.hof__track { display: flex; align-items: center; gap: 9px; margin: 22px 0 14px; font: 800 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
 .announce__feed { list-style: none; margin: 0; padding: 0; }
 .announce__item {
     display: grid;
-    grid-template-columns: 28px minmax(130px, 210px) minmax(0, 1fr) auto;
+    grid-template-columns: 28px 34px minmax(130px, 190px) minmax(0, 1fr) auto;
     align-items: baseline;
     gap: 14px;
     padding: 10px 0;
@@ -1469,8 +1702,9 @@ table.mode-grid td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--lin
 @media (max-width: 860px) {
     .league-strip { grid-template-columns: repeat(2, 1fr); }
     .league-strip div:nth-child(odd) { border-left: none; }
-    .announce__item { grid-template-columns: 28px minmax(0, 1fr) auto; }
-    .announce__text { grid-column: 2 / 4; }
+    .announce__item { grid-template-columns: 28px 34px minmax(0, 1fr) auto; }
+    .announce__text { grid-column: 3 / 5; }
+    .matrix__table { display: block; overflow-x: auto; }
     .lineage__node { grid-template-columns: 28px 44px minmax(0, 1fr) auto; }
     .lineage__meta, .lineage__delta { display: none; }
 }
@@ -1593,9 +1827,8 @@ export async function buildPages({
     const clips = matchFights(highlights, {
       rank: m.rank, title: mascot.title, modelName: m.model_name,
     });
-    const continuousEntry = continuous ? findContinuousEntry(continuous.state, m) : null;
-    const lineage = continuousEntry
-      ? lineageSection(continuousEntry, continuous.submissions, continuous.snapshots) || null
+    const lineage = continuous
+      ? lineageSection(continuous.state, m, continuous.submissions, continuous.snapshots) || null
       : null;
     io.writeFile(path.join(outDir, `${slugById.get(id)}.html`), renderModelPage({
       model: m,
@@ -1627,7 +1860,11 @@ export async function buildPages({
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   const t0 = Date.now();
-  buildPages({ log: (msg) => console.error(`[build_model_pages] ${msg}`) })
+  // Optional: --continuous-dir <path> points the league overlay at a
+  // non-default state directory (e.g. the shadow state before cutover).
+  const dirFlag = process.argv.indexOf('--continuous-dir');
+  const continuousDir = dirFlag !== -1 ? process.argv[dirFlag + 1] : undefined;
+  buildPages({ continuousDir: continuousDir || undefined, log: (msg) => console.error(`[build_model_pages] ${msg}`) })
     .then(({ slugs, battleStats }) => {
       console.error(`[build_model_pages] done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${JSON.stringify(battleStats)}`);
       for (const [id, slug] of Object.entries(slugs)) console.log(`${slug}\t${id}`);

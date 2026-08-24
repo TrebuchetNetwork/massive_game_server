@@ -59,22 +59,46 @@ function fixtureRecords() {
   return records;
 }
 
-test('buildBrief reports fingerprint, per-mode weakness, worst matchups, faults', () => {
+test('buildBrief reports fingerprint, per-mode record, matchups, faults', () => {
   const brief = buildBrief({ model: model(), records: fixtureRecords() });
   assert.ok(Buffer.byteLength(brief, 'utf8') <= BRIEF_MAX_BYTES);
-  assert.match(brief, /improvement brief — vendor\/model-a/);
+  // The single neutral framing line opens the brief (hard neutrality rule).
+  assert.ok(brief.startsWith('Here are your measured results.\n'));
+  assert.match(brief, /Model: vendor\/model-a/);
   assert.match(brief, /artifact v2/);
   assert.match(brief, /Sampled 20 recent battles: 9W-11L-0D\./);
-  assert.match(brief, /Behavior fingerprint: idle 10%, attack 50%, defend 20%, charge 10%, support 10%/);
-  assert.match(brief, /aggression 0\.60/);
-  assert.match(brief, /ctf 1-8-0 \(loses 89%\)/);
-  assert.match(brief, /arena 8-3-0 \(loses 27%\)/);
-  // Worst matchup first: vendor/strong at 88% losses.
-  assert.match(brief, /Worst matchups: vs vendor\/strong 1-7-0 \(loses 88%\); vs vendor\/mid 3-3-0 \(loses 50%\); vs vendor\/weak 5-1-0 \(loses 17%\)\./);
+  assert.match(brief, /Behavior fingerprint: idle 10%, attack 50%, defend 20%, charge 10%, support 10%\./);
+  // Modes in canonical order (arena first), not weakness order.
+  assert.match(brief, /Per-mode record: arena 8-3-0 \(loses 27%\), ctf 1-8-0 \(loses 89%\)\./);
+  // Matchups alphabetical, under the neutral heading.
+  assert.match(brief, /Matchups: vs vendor\/mid 3-3-0 \(loses 50%\); vs vendor\/strong 1-7-0 \(loses 88%\); vs vendor\/weak 5-1-0 \(loses 17%\)\./);
   assert.match(brief, /Runtime faults in sample: traps 2, fuel errors 1, fallbacks 0\./);
-  assert.match(brief, /weakest mode is ctf \(loses 89%\)/);
-  assert.match(brief, /you lose most games against vendor\/strong/);
-  assert.match(brief, /eliminate the 3 runtime traps\/fuel errors\/fallbacks/);
+});
+
+test('buildBrief contains no composites, rankings, or coaching language', () => {
+  const brief = buildBrief({ model: model(), records: fixtureRecords() });
+  const lower = brief.toLowerCase();
+  for (const banned of [
+    'improve', 'instructions', 'you should', 'your weakest', 'rework', 'eliminate',
+    'counter ', 'focus', 'try to', 'consider', 'revise the fighter', 'preserve',
+    'aggression', 'worst',
+  ]) {
+    assert.ok(!lower.includes(banned), `brief must not contain "${banned}"`);
+  }
+  // Matchups must NOT be sorted by loss rate: the 88%-loss opponent
+  // (vendor/strong) must not lead the list — alphabetical order puts
+  // vendor/mid (50%) first.
+  const matchupsLine = brief.split('\n').find((line) => line.startsWith('Matchups:'));
+  const order = [...matchupsLine.matchAll(/vs (\S+) \d+-\d+-\d+ \(loses (\d+)%\)/g)]
+    .map((match) => ({ opponent: match[1], lossRate: Number(match[2]) }));
+  assert.ok(order.length >= 2);
+  const byLossRate = [...order].sort((a, b) => b.lossRate - a.lossRate);
+  assert.notDeepEqual(order, byLossRate, 'matchups must not be sorted by loss rate');
+  assert.deepEqual(
+    order.map((entry) => entry.opponent),
+    [...order.map((entry) => entry.opponent)].sort(),
+    'matchups are alphabetical',
+  );
 });
 
 test('buildBrief stays under the byte cap with many rivals and long ids', () => {

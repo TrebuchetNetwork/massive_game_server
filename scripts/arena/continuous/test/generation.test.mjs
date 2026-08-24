@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { validateGenerationCheckpoint } from '../../run_top10_season.mjs';
 import {
+  compileFighterSource,
   entrantFromChallenger,
   generateFighter,
   materializeSeasonFighter,
@@ -400,4 +401,84 @@ test('reviseFighter tags compile-phase failures', async () => {
   }).catch((error) => error);
   assert.equal(failure.phase, 'compile');
   assert.match(failure.message, /fighter compilation failed/);
+});
+
+// --- Track compile-attempt policies ------------------------------------------
+
+test('compileFighterSource honors the L0 policy: one attempt, no recovery', async () => {
+  let compileCalls = 0;
+  const apiClient = async (request) => {
+    if (request.route === '/api/arena/models/register') return { registered: true };
+    if (request.route === '/api/arena/code/compile') {
+      compileCalls += 1;
+      return {
+        model_id: request.body.model_id,
+        compiled: false,
+        compiler_stderr: 'error[E0308]: mismatched types',
+      };
+    }
+    throw new Error(`unexpected route ${request.route}`);
+  };
+  const failure = await compileFighterSource({
+    apiBase: 'http://127.0.0.1:9',
+    adminToken: 'test-token',
+    entrant: entrant(),
+    source: SOURCE,
+    attempts: 1,
+    apiClient,
+  }).catch((error) => error);
+  assert.equal(compileCalls, 1);
+  assert.match(failure.message, /fighter compilation failed: error\[E0308\]/);
+  assert.equal(failure.compileAttempts, 1);
+});
+
+test('compileFighterSource honors the L1 policy: up to 3 attempts', async () => {
+  let compileCalls = 0;
+  const apiClient = async (request) => {
+    if (request.route === '/api/arena/models/register') return { registered: true };
+    if (request.route === '/api/arena/code/compile') {
+      compileCalls += 1;
+      if (compileCalls < 3) {
+        return {
+          model_id: request.body.model_id,
+          compiled: false,
+          compiler_stderr: 'error: linker transiently unavailable',
+        };
+      }
+      return {
+        model_id: request.body.model_id,
+        compiled: true,
+        bytes_written: 999,
+        wasm_sha256: sha('7'),
+      };
+    }
+    throw new Error(`unexpected route ${request.route}`);
+  };
+  const wasm = await compileFighterSource({
+    apiBase: 'http://127.0.0.1:9',
+    adminToken: 'test-token',
+    entrant: entrant(),
+    source: SOURCE,
+    attempts: 3,
+    apiClient,
+  });
+  assert.equal(compileCalls, 3);
+  assert.equal(wasm.wasmSha256, sha('7'));
+
+  // Deterministic failure exhausts all 3 attempts and reports the count.
+  let failedCalls = 0;
+  const alwaysFail = await compileFighterSource({
+    apiBase: 'http://127.0.0.1:9',
+    adminToken: 'test-token',
+    entrant: entrant(),
+    source: SOURCE,
+    attempts: 3,
+    apiClient: async (request) => {
+      if (request.route === '/api/arena/models/register') return { registered: true };
+      failedCalls += 1;
+      return { model_id: request.body.model_id, compiled: false, compiler_stderr: 'error' };
+    },
+  }).catch((error) => error);
+  assert.equal(failedCalls, 3);
+  assert.equal(alwaysFail.compileAttempts, 3);
 });

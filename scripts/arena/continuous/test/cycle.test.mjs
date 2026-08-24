@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { mascotFor } from '../../mascots.mjs';
-import { runCycle, stateDirectoryFromEnv } from '../../continuous_league.mjs';
+import { runCycle, runTrackCycle, stateDirectoryFromEnv } from '../../continuous_league.mjs';
+import { trackPolicy } from '../league.mjs';
 import { writeFighterRecord } from '../generation.mjs';
-import { validateState } from '../state.mjs';
+import { createState, validateState, validateTrackSlice } from '../state.mjs';
 
 const NOW = Date.parse('2026-08-23T00:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -46,17 +47,26 @@ function model(overrides = {}) {
   };
 }
 
+// Track-slice fixture (schema v2): the per-track league state runTrackCycle
+// operates on. L2 policy by default (the pre-multitrack behavior).
+function policySlice(trackId) {
+  const policy = trackPolicy(trackId);
+  return {
+    max_submissions: policy.maxSubmissions,
+    compile_attempts: policy.compileAttempts,
+    feedback_interval_ms: policy.feedbackIntervalMs,
+    max_revisions: policy.maxRevisions,
+  };
+}
+
 function stateWith(overrides = {}) {
   return {
-    schema_version: 1,
-    league_id: 'cml-test',
     day_index: 0,
+    policy: policySlice('L2'),
     roster: [],
     retired: [],
     announcements: [],
     last_feedback_at: null,
-    created_at: '2026-08-18T00:00:00.000Z',
-    updated_at: '2026-08-23T00:00:00.000Z',
     ...overrides,
   };
 }
@@ -139,10 +149,13 @@ test('evaluate folds season results into ratings and appends a history snapshot'
     entry.model_id,
     { wins: 3, losses: 1, draws: 0, matches_played: 4 },
   ]));
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: {
       nowMs: NOW,
@@ -168,7 +181,7 @@ test('evaluate folds season results into ratings and appends a history snapshot'
   const { args, env } = runnerCalls[0];
   assert.ok(args.includes('--evaluate-only'));
   assert.ok(args.includes('--no-publish'));
-  assert.ok(args.includes('continuous-cml-test-day0'));
+  assert.ok(args.includes('continuous-cml-test-L2-day0'));
   assert.match(env.ARENA_SEEDS, /^\d+,\d+,\d+,\d+$/);
   assert.equal(env.ARENA_TOP_MODELS, '10');
 
@@ -177,24 +190,24 @@ test('evaluate folds season results into ratings and appends a history snapshot'
     'utf8',
   ));
   assert.equal(history.length, 1);
-  assert.equal(history[0].season_id, 'continuous-cml-test-day0');
+  assert.equal(history[0].season_id, 'continuous-cml-test-L2-day0');
   assert.equal(history[0].day_index, 0);
   assert.equal(history[0].roster.length, 10);
   assert.equal(history[0].roster[0].rating, next.roster[0].rating);
 
-  const seasonDir = path.join(rootDir, 'artifacts/arena/seasons', 'continuous-cml-test-day0');
+  const seasonDir = path.join(rootDir, 'artifacts/arena/seasons', 'continuous-cml-test-L2-day0');
   assert.equal((await fs.readdir(path.join(seasonDir, 'generations'))).length, 10);
   assert.equal((await fs.readdir(path.join(seasonDir, 'sources'))).length, 10);
 
   const ranking = JSON.parse(await fs.readFile(
-    path.join(stateDir, 'rankings', 'continuous-cml-test-day0.json'),
+    path.join(stateDir, 'rankings', 'continuous-cml-test-L2-day0.json'),
     'utf8',
   ));
   assert.equal(ranking.models.length, 10);
   assert.equal(ranking.models[0].id, 'vendor/model-0');
   assert.deepEqual(ranking.models[0].reasoning_policy, REASONING_POLICY);
 
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('retires an exhausted model below the bar with an announcement', async () => {
@@ -221,10 +234,13 @@ test('retires an exhausted model below the bar with an announcement', async () =
   const state = stateWith({ roster: [failing, healthy] });
 
   const logs = [];
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: {
       nowMs: NOW,
@@ -270,7 +286,7 @@ test('retires an exhausted model below the bar with an announcement', async () =
   assert.equal(announcement.stats.rating, retired.rating);
   assert.equal(announcement.stats.submissions_used, 3);
   assert.ok(logs.some((line) => line.includes('retire: vendor/failing')));
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('recruits eligible challengers into open slots', async () => {
@@ -292,10 +308,13 @@ test('recruits eligible challengers into open slots', async () => {
 
   const generatedFor = [];
   const logs = [];
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: {
       nowMs: NOW,
@@ -340,7 +359,7 @@ test('recruits eligible challengers into open slots', async () => {
 
   const fighterDirs = await fs.readdir(path.join(stateDir, 'fighters'));
   assert.equal(fighterDirs.length, 9);
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('recruit failure leaves the slot open without consuming a submission', async () => {
@@ -361,10 +380,13 @@ test('recruit failure leaves the slot open without consuming a submission', asyn
   ];
 
   const logs = [];
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: {
       nowMs: NOW,
@@ -389,7 +411,7 @@ test('recruit failure leaves the slot open without consuming a submission', asyn
   )));
   // No fighter record persisted for the failed challenger.
   assert.equal(await fs.readdir(path.join(stateDir, 'fighters')).catch(() => null), null);
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('shadow mode skips recruit and resolves an isolated state directory', async () => {
@@ -411,10 +433,13 @@ test('shadow mode skips recruit and resolves an isolated state directory', async
 
   const { stateDir, rootDir } = await tempDirs();
   const logs = [];
-  const next = await runCycle({
-    state: stateWith({ roster: [] }),
+  const next = await runTrackCycle({
+    track: stateWith({ roster: [] }),
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: true },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: {
       nowMs: NOW,
@@ -427,7 +452,7 @@ test('shadow mode skips recruit and resolves an isolated state directory', async
   assert.equal(next.roster.length, 0);
   assert.ok(logs.some((line) => line.includes('evaluate: skipped, roster is empty')));
   assert.ok(logs.some((line) => line.includes('shadow: recruit skipped')));
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('recruit dry-run failure skips recruit without failing the cycle', async () => {
@@ -438,14 +463,17 @@ test('recruit dry-run failure skips recruit without failing the cycle', async ()
     days_in_league: 0,
   });
   const logs = [];
-  const next = await runCycle({
-    state: stateWith({
+  const next = await runTrackCycle({
+    track: stateWith({
       roster: [keeper],
       // Feedback recently ran: this test exercises recruit, not revisions.
       last_feedback_at: new Date(NOW).toISOString(),
     }),
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: {
       nowMs: NOW,
@@ -457,12 +485,11 @@ test('recruit dry-run failure skips recruit without failing the cycle', async ()
   });
   assert.deepEqual(next.roster.map((entry) => entry.model_id), ['vendor/model-0']);
   assert.equal(next.announcements.length, 0);
-  assert.equal(next.updated_at, new Date(NOW).toISOString());
   assert.ok(logs.some((line) => (
     line.includes('recruit: skipped, live ranking unavailable')
     && line.includes('HTTP 500')
   )));
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('history append is idempotent per day_index on a retried cycle', async () => {
@@ -482,7 +509,7 @@ test('history append is idempotent per day_index on a retried cycle', async () =
     at: '2026-08-23T00:00:00.000Z',
     league_id: 'cml-test',
     day_index: 0,
-    season_id: 'continuous-cml-test-day0',
+    season_id: 'continuous-cml-test-L2-day0',
     roster: [],
   };
   await fs.writeFile(path.join(historyDir, '2026-08-23.json'), JSON.stringify([seeded]));
@@ -492,10 +519,13 @@ test('history append is idempotent per day_index on a retried cycle', async () =
     entry.model_id,
     { wins: 3, losses: 1, draws: 0, matches_played: 4 },
   ]));
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: {
       nowMs: NOW,
@@ -519,7 +549,7 @@ test('history append is idempotent per day_index on a retried cycle', async () =
   ));
   assert.equal(history.length, 1);
   assert.deepEqual(history[0], seeded);
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 const REBOUND_CODE_STATUS = {
@@ -570,10 +600,13 @@ test('stale checkpoints trigger a recompile-only rebind and one evaluate retry',
     entry.model_id,
     { wins: 3, losses: 1, draws: 0, matches_played: 4 },
   ]));
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: {
       nowMs: NOW,
@@ -611,7 +644,7 @@ test('stale checkpoints trigger a recompile-only rebind and one evaluate retry',
     assert.equal(checkpoint.wasm_sha256, sha('9'));
     assert.equal(checkpoint.wasm_bytes, 4321);
   }
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('an unfixable contract change fails closed with a manual rebind error', async () => {
@@ -624,10 +657,13 @@ test('an unfixable contract change fails closed with a manual rebind error', asy
 
   const recompiled = [];
   await assert.rejects(
-    runCycle({
-      state,
+    runTrackCycle({
+      track: state,
+      leagueId: 'cml-test',
+      trackId: 'L2',
       flags: { shadow: false },
       stateDirectory: stateDir,
+      trackDirectory: stateDir,
       rootDirectory: rootDir,
       deps: {
         nowMs: NOW,
@@ -700,10 +736,13 @@ test('feedback due: accepted revision bumps version, links parent, resyncs diges
   await makeFighter(stateDir, keeper.model_id);
   const state = stateWith({ roster: [keeper], last_feedback_at: null });
   const logs = [];
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       log: (line) => logs.push(line),
@@ -766,7 +805,7 @@ test('feedback due: accepted revision bumps version, links parent, resyncs diges
   assert.equal(revision.outcome, 'accepted');
   assert.equal(revision.version, 2);
   assert.ok(logs.some((line) => line.includes('revision accepted')));
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('compile failure consumes the submission but keeps the old artifact', async () => {
@@ -779,10 +818,13 @@ test('compile failure consumes the submission but keeps the old artifact', async
   });
   await makeFighter(stateDir, keeper.model_id);
   const state = stateWith({ roster: [keeper], last_feedback_at: null });
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       requestRevision: async () => ({
@@ -813,7 +855,7 @@ test('compile failure consumes the submission but keeps the old artifact', async
   const revision = next.announcements.find((a) => a.type === 'revision');
   assert.equal(revision.outcome, 'compile_failed');
   assert.equal(revision.version, 2); // the version that was attempted
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('codegen failure consumes the submission with outcome codegen_failed', async () => {
@@ -826,10 +868,13 @@ test('codegen failure consumes the submission with outcome codegen_failed', asyn
   });
   await makeFighter(stateDir, keeper.model_id);
   const state = stateWith({ roster: [keeper], last_feedback_at: null });
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       requestRevision: async () => {
@@ -846,7 +891,7 @@ test('codegen failure consumes the submission with outcome codegen_failed', asyn
   const submissions = await readSubmissions(stateDir);
   assert.equal(submissions[0].outcome, 'codegen_failed');
   assert.equal(submissions[0].compile_attempts, 0);
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('a model with 3/3 submissions is never revised', async () => {
@@ -863,10 +908,13 @@ test('a model with 3/3 submissions is never revised', async () => {
   await makeFighter(stateDir, exhausted.model_id);
   const state = stateWith({ roster: [exhausted], last_feedback_at: null });
   let reviseCalled = false;
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       requestRevision: async () => {
@@ -880,7 +928,7 @@ test('a model with 3/3 submissions is never revised', async () => {
   assert.equal(next.roster[0].artifact.version, 1);
   assert.equal(next.last_feedback_at, new Date(NOW).toISOString());
   assert.equal(await fs.readFile(path.join(stateDir, 'submissions.jsonl'), 'utf8').catch(() => null), null);
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('feedback cadence gate: not due means no revisions', async () => {
@@ -895,10 +943,13 @@ test('feedback cadence gate: not due means no revisions', async () => {
   const recent = new Date(NOW - 60 * 60 * 1000).toISOString();
   const state = stateWith({ roster: [keeper], last_feedback_at: recent });
   let reviseCalled = false;
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       requestRevision: async () => {
@@ -911,7 +962,7 @@ test('feedback cadence gate: not due means no revisions', async () => {
   assert.equal(next.roster[0].submissions_used, 1);
   assert.equal(next.last_feedback_at, recent);
   assert.equal(next.announcements.filter((a) => a.type === 'revision').length, 0);
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('shadow mode skips feedback without touching the cadence clock', async () => {
@@ -924,10 +975,13 @@ test('shadow mode skips feedback without touching the cadence clock', async () =
   });
   const state = stateWith({ roster: [keeper], last_feedback_at: null });
   const logs = [];
-  const next = await runCycle({
-    state,
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: true },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       log: (line) => logs.push(line),
@@ -942,12 +996,13 @@ test('shadow mode skips feedback without touching the cadence clock', async () =
   assert.equal(next.roster[0].submissions_used, 1);
   assert.equal(next.last_feedback_at, null);
   assert.ok(logs.some((line) => line.includes('shadow: feedback skipped')));
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 // --- Revision journal idempotency (crash-window double-spend) ----------------
 
-const JOURNAL_KEY = 'vendor__model-0-v2';
+// Journal filenames carry the stint discriminator: <modelKey>-<joinedAtMs>-v<N>.
+const JOURNAL_KEY = `vendor__model-0-${NOW}-v2`;
 
 async function writeJournal(stateDir, journal) {
   const dir = path.join(stateDir, 'revision-journal');
@@ -985,10 +1040,13 @@ test('a pending revision journal is consumed as interrupted without a provider c
   await makeFighter(stateDir, keeper.model_id);
   await writeJournal(stateDir, journalBase({ phase: 'pending' }));
   let codegenCalled = false;
-  const next = await runCycle({
-    state: stateWith({ roster: [keeper], last_feedback_at: null }),
+  const next = await runTrackCycle({
+    track: stateWith({ roster: [keeper], last_feedback_at: null }),
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       requestRevision: async () => {
@@ -1013,7 +1071,7 @@ test('a pending revision journal is consumed as interrupted without a provider c
   ));
   assert.equal(journal.outcome, 'interrupted');
   assert.equal(next.announcements.find((a) => a.type === 'revision').outcome, 'interrupted');
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('a revised journal resumes at compile without a second codegen call', async () => {
@@ -1030,10 +1088,13 @@ test('a revised journal resumes at compile without a second codegen call', async
   }));
   let codegenCalled = false;
   let compileCalled = 0;
-  const next = await runCycle({
-    state: stateWith({ roster: [keeper], last_feedback_at: null }),
+  const next = await runTrackCycle({
+    track: stateWith({ roster: [keeper], last_feedback_at: null }),
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       requestRevision: async () => {
@@ -1067,7 +1128,7 @@ test('a revised journal resumes at compile without a second codegen call', async
   const submissions = await readSubmissions(stateDir);
   assert.equal(submissions.length, 1);
   assert.equal(submissions[0].outcome, 'accepted');
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('a finalized journal re-applies its outcome without IO or ledger writes', async () => {
@@ -1095,10 +1156,13 @@ test('a finalized journal re-applies its outcome without IO or ledger writes', a
     outcome: 'accepted',
     at: new Date(NOW).toISOString(),
   })}\n`);
-  const next = await runCycle({
-    state: stateWith({ roster: [keeper], last_feedback_at: null }),
+  const next = await runTrackCycle({
+    track: stateWith({ roster: [keeper], last_feedback_at: null }),
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       requestRevision: async () => {
@@ -1118,7 +1182,7 @@ test('a finalized journal re-applies its outcome without IO or ledger writes', a
   const submissions = await readSubmissions(stateDir);
   assert.equal(submissions.length, 1); // no duplicate lineage record
   assert.equal(next.announcements.find((a) => a.type === 'revision').outcome, 'accepted');
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('a compiled journal resumes the commit stage without duplicating the ledger', async () => {
@@ -1138,8 +1202,10 @@ test('a compiled journal resumes the commit stage without duplicating the ledger
   // Crash window: the jsonl record was appended but the journal never
   // finalized — the rerun must dedup the ledger append.
   await fs.writeFile(path.join(stateDir, 'submissions.jsonl'), `${JSON.stringify({
+    track: 'L2',
     model_id: 'vendor/model-0',
     slug: keeper.slug,
+    stint: keeper.joined_at,
     version_attempted: 2,
     parent_version: 1,
     prompt_sha256: sha('1'),
@@ -1150,10 +1216,13 @@ test('a compiled journal resumes the commit stage without duplicating the ledger
     outcome: 'accepted',
     at: new Date(NOW).toISOString(),
   })}\n`);
-  const next = await runCycle({
-    state: stateWith({ roster: [keeper], last_feedback_at: null }),
+  const next = await runTrackCycle({
+    track: stateWith({ roster: [keeper], last_feedback_at: null }),
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       requestRevision: async () => {
@@ -1180,17 +1249,20 @@ test('a compiled journal resumes the commit stage without duplicating the ledger
     await fs.readFile(path.join(stateDir, 'fighters', 'vendor__model-0', 'source.rs'), 'utf8'),
     'fn bot_tick_v2() { /* v2 */ }\n',
   );
-  validateState(next);
+  validateTrackSlice(next, 'L2');
 });
 
 test('an untagged post-codegen failure records interrupted, not codegen_failed', async () => {
   const { stateDir, rootDir } = await tempDirs();
   const keeper = keeperState();
   await makeFighter(stateDir, keeper.model_id);
-  const next = await runCycle({
-    state: stateWith({ roster: [keeper], last_feedback_at: null }),
+  const next = await runTrackCycle({
+    track: stateWith({ roster: [keeper], last_feedback_at: null }),
+    leagueId: 'cml-test',
+    trackId: 'L2',
     flags: { shadow: false },
     stateDirectory: stateDir,
+    trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
       requestRevision: async () => ({
@@ -1211,5 +1283,447 @@ test('an untagged post-codegen failure records interrupted, not codegen_failed',
   const submissions = await readSubmissions(stateDir);
   assert.equal(submissions[0].outcome, 'interrupted');
   assert.equal(submissions[0].compile_attempts, 0);
+  validateTrackSlice(next, 'L2');
+});
+
+// --- Multi-track orchestration (schema v2) -----------------------------------
+
+const ALL_TRACKS = ['L0', 'L1', 'L2', 'L3'];
+
+test('--track runs only the selected track', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const state = createState({ now: new Date(NOW), leagueId: 'cml-test' });
+  state.tracks.L2.roster.push(model({
+    model_id: 'vendor/model-0',
+    joined_at: new Date(NOW).toISOString(),
+    days_in_league: 0,
+  }));
+  state.tracks.L2.last_feedback_at = new Date(NOW).toISOString();
+  const logs = [];
+  const next = await runCycle({
+    state,
+    flags: { shadow: false, track: 'L2' },
+    stateDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: {
+      nowMs: NOW,
+      log: (line) => logs.push(line),
+      runRunner: async () => ({
+        stdout: JSON.stringify({ ranking: { models: [rankingEntry('vendor/model-0', 1)] } }),
+        stderr: '',
+      }),
+      adminToken: 'test-token',
+      apiBase: 'http://127.0.0.1:9',
+    },
+  });
+  // L2 ran (recruit dry-run happened, no challengers), the rest untouched.
+  assert.equal(next.tracks.L2.roster.length, 1);
+  for (const trackId of ['L0', 'L1', 'L3']) {
+    assert.equal(next.tracks[trackId].roster.length, 0, trackId);
+    assert.equal(next.tracks[trackId].announcements.length, 0, trackId);
+  }
   validateState(next);
+});
+
+test('a failing track never blocks the other tracks', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const state = createState({ now: new Date(NOW), leagueId: 'cml-test' });
+  // L0 has two models but NO fighter records: its evaluate fails; the other
+  // tracks must still run their (empty-roster, shadow) cycles.
+  state.tracks.L0.roster.push(model({ model_id: 'vendor/a' }), model({ model_id: 'vendor/b' }));
+  const errors = [];
+  const next = await runCycle({
+    state,
+    flags: { shadow: true },
+    stateDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: {
+      nowMs: NOW,
+      log: () => {},
+      errorLog: (line) => errors.push(line),
+    },
+  });
+  assert.equal(next.tracks.L0.day_index, 0); // evaluate failed before increment
+  validateState(next);
+});
+
+test('retirement is isolated per track', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const state = createState({ now: new Date(NOW), leagueId: 'cml-test' });
+  // The same model: exhausted + below the bar in L0 (max 1 submission),
+  // healthy and still revisable in L2.
+  state.tracks.L0.roster.push(model({
+    model_id: 'vendor/model-x',
+    submissions_used: 1,
+    rating: 20,
+    wins: 1,
+    losses: 9,
+    matches: 10,
+    joined_at: new Date(NOW - 4 * DAY_MS).toISOString(),
+  }));
+  state.tracks.L2.roster.push(model({
+    model_id: 'vendor/model-x',
+    submissions_used: 1,
+    rating: 80,
+    wins: 8,
+    losses: 2,
+    matches: 10,
+    joined_at: new Date(NOW - 4 * DAY_MS).toISOString(),
+  }));
+  const next = await runCycle({
+    state,
+    flags: { shadow: true },
+    stateDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: { nowMs: NOW, log: () => {} },
+  });
+  assert.equal(next.tracks.L0.roster.length, 0);
+  assert.equal(next.tracks.L0.retired.length, 1);
+  assert.equal(next.tracks.L0.retired[0].model_id, 'vendor/model-x');
+  assert.equal(next.tracks.L0.announcements[0].track, 'L0');
+  assert.match(next.tracks.L0.retired[0].reason, /days in track L0/);
+  assert.equal(next.tracks.L2.roster.length, 1);
+  assert.equal(next.tracks.L2.retired.length, 0);
+  validateState(next);
+});
+
+test('L0 recruit passes compileAttempts=1 and a failed compile means no entry', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const track = stateWith({
+    policy: policySlice('L0'),
+    roster: [],
+  });
+  let seenAttempts = null;
+  const next = await runTrackCycle({
+    track,
+    leagueId: 'cml-test',
+    trackId: 'L0',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: {
+      nowMs: NOW,
+      log: () => {},
+      runRunner: async () => ({
+        stdout: JSON.stringify({ ranking: { models: [rankingEntry('vendor/new-1', 1)] } }),
+        stderr: '',
+      }),
+      generateFighter: async ({ compileAttempts }) => {
+        seenAttempts = compileAttempts;
+        throw new Error('fighter compilation failed: error[E0308]');
+      },
+      adminToken: 'test-token',
+      apiBase: 'http://127.0.0.1:9',
+    },
+  });
+  assert.equal(seenAttempts, 1);
+  assert.equal(next.roster.length, 0);
+  assert.equal(next.announcements.length, 0);
+  validateTrackSlice(next, 'L0');
+});
+
+test('L1 recruit passes compileAttempts=3', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const track = stateWith({ policy: policySlice('L1'), roster: [] });
+  let seenAttempts = null;
+  await runTrackCycle({
+    track,
+    leagueId: 'cml-test',
+    trackId: 'L1',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: {
+      nowMs: NOW,
+      log: () => {},
+      runRunner: async () => ({
+        stdout: JSON.stringify({ ranking: { models: [rankingEntry('vendor/new-1', 1)] } }),
+        stderr: '',
+      }),
+      generateFighter: async ({ compileAttempts }) => {
+        seenAttempts = compileAttempts;
+        throw new Error('still broken');
+      },
+      adminToken: 'test-token',
+      apiBase: 'http://127.0.0.1:9',
+    },
+  });
+  assert.equal(seenAttempts, 3);
+});
+
+test('L2 caps revisions at 2 (submissions exhausted at 3)', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const keeper = model({
+    model_id: 'vendor/model-0',
+    joined_at: new Date(NOW).toISOString(),
+    days_in_league: 0,
+    submissions_used: 2, // one revision already accepted
+    artifact: {
+      wasm_sha256: sha('a'),
+      source_sha256: sha('b'),
+      prompt_sha256: sha('c'),
+      version: 2,
+      parent_version: 1,
+    },
+  });
+  await makeFighter(stateDir, keeper.model_id);
+  const track = stateWith({ roster: [keeper], last_feedback_at: null });
+  const next = await runTrackCycle({
+    track,
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: feedbackDeps({
+      requestRevision: async () => ({
+        response: { simulated: false },
+        verified: { source: 'fn bot_tick_v2() { /* v2 */ }\n' },
+        codeStatus: null,
+      }),
+      compileRevision: async ({ previousCheckpoint }) => ({
+        checkpoint: {
+          ...previousCheckpoint,
+          prompt_sha256: sha('1'),
+          source_sha256: sha('2'),
+          wasm_sha256: sha('3'),
+        },
+        source: 'fn bot_tick_v2() { /* v2 */ }\n',
+      }),
+    }),
+  });
+  // Second revision accepted: submissions 3/3, artifact v3 with parent v2.
+  assert.equal(next.roster[0].submissions_used, 3);
+  assert.equal(next.roster[0].artifact.version, 3);
+  assert.equal(next.roster[0].artifact.parent_version, 2);
+
+  // Next round: exhausted, never revised again.
+  const again = await runTrackCycle({
+    track: { ...next, roster: next.roster.map((entry) => ({ ...entry })), last_feedback_at: null },
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: feedbackDeps({
+      requestRevision: async () => {
+        throw new Error('must not be called: L2 revisions are capped at 2');
+      },
+    }),
+  });
+  assert.equal(again.roster[0].submissions_used, 3);
+  assert.equal(again.roster[0].artifact.version, 3);
+  validateTrackSlice(again, 'L2');
+});
+
+test('L3 revises weekly: not due at 3 days, due at 8 days', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const keeper = model({
+    model_id: 'vendor/model-0',
+    joined_at: new Date(NOW - 10 * DAY_MS).toISOString(),
+    days_in_league: 10,
+    submissions_used: 4,
+    artifact: {
+      wasm_sha256: sha('a'),
+      source_sha256: sha('b'),
+      prompt_sha256: sha('c'),
+      version: 4,
+      parent_version: 3,
+    },
+  });
+  await makeFighter(stateDir, keeper.model_id);
+
+  const notDue = await runTrackCycle({
+    track: stateWith({
+      policy: policySlice('L3'),
+      roster: [keeper],
+      last_feedback_at: new Date(NOW - 3 * DAY_MS).toISOString(),
+    }),
+    leagueId: 'cml-test',
+    trackId: 'L3',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: feedbackDeps({
+      requestRevision: async () => {
+        throw new Error('must not be called: L3 revises weekly');
+      },
+    }),
+  });
+  assert.equal(notDue.roster[0].submissions_used, 4);
+
+  const due = await runTrackCycle({
+    track: stateWith({
+      policy: policySlice('L3'),
+      roster: [keeper],
+      last_feedback_at: new Date(NOW - 8 * DAY_MS).toISOString(),
+    }),
+    leagueId: 'cml-test',
+    trackId: 'L3',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: feedbackDeps({
+      requestRevision: async () => ({
+        response: { simulated: false },
+        verified: { source: 'fn bot_tick_v2() { /* v5 */ }\n' },
+        codeStatus: null,
+      }),
+      compileRevision: async ({ previousCheckpoint }) => ({
+        checkpoint: {
+          ...previousCheckpoint,
+          prompt_sha256: sha('1'),
+          source_sha256: sha('2'),
+          wasm_sha256: sha('3'),
+        },
+        source: 'fn bot_tick_v2() { /* v5 */ }\n',
+      }),
+    }),
+  });
+  assert.equal(due.roster[0].submissions_used, 5);
+  assert.equal(due.roster[0].artifact.version, 5);
+  assert.equal(due.roster[0].artifact.parent_version, 4);
+  const submissions = await readSubmissions(stateDir);
+  assert.equal(submissions[0].track, 'L3');
+  validateTrackSlice(due, 'L3');
+});
+
+test('retire then re-recruit starts a fresh stint with its own journal and ledger lineage', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const OLD_JOINED = new Date(NOW - 12 * DAY_MS).toISOString();
+  const OLD_JOURNAL_KEY = `vendor__model-x-${NOW - 12 * DAY_MS}-v2`;
+  // Old stint: retired 8 days ago (past the 7-day re-recruit cooldown).
+  const retiredEntry = {
+    ...model({
+      model_id: 'vendor/model-x',
+      joined_at: OLD_JOINED,
+      submissions_used: 3,
+      rating: 20,
+      wins: 1,
+      losses: 9,
+      matches: 10,
+      days_in_league: 4,
+    }),
+    retired_at: new Date(NOW - 8 * DAY_MS).toISOString(),
+    reason: 'old stint exhausted',
+  };
+  // Old stint's finalized journal + ledger record for v2.
+  await fs.mkdir(path.join(stateDir, 'revision-journal'), { recursive: true });
+  await fs.writeFile(
+    path.join(stateDir, 'revision-journal', `${OLD_JOURNAL_KEY}.json`),
+    JSON.stringify(journalBase({
+      model_id: 'vendor/model-x',
+      stint: OLD_JOINED,
+      phase: 'compiled',
+      checkpoint: { prompt_sha256: sha('4'), source_sha256: sha('5'), wasm_sha256: sha('6') },
+      outcome: 'accepted',
+      completed_at: new Date(NOW - 11 * DAY_MS).toISOString(),
+    })),
+  );
+  await fs.writeFile(path.join(stateDir, 'submissions.jsonl'), `${JSON.stringify({
+    track: 'L2',
+    model_id: 'vendor/model-x',
+    slug: retiredEntry.slug,
+    stint: OLD_JOINED,
+    version_attempted: 2,
+    parent_version: 1,
+    prompt_sha256: sha('4'),
+    brief_sha256: sha('7'),
+    source_sha256: sha('5'),
+    wasm_sha256: sha('6'),
+    compile_attempts: 1,
+    outcome: 'accepted',
+    at: new Date(NOW - 11 * DAY_MS).toISOString(),
+  })}\n`);
+
+  // Cycle 1: the cooldown has elapsed, so the model is re-recruited at v1.
+  const track = stateWith({ retired: [retiredEntry] });
+  const afterRecruit = await runTrackCycle({
+    track,
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: feedbackDeps({
+      runRunner: async () => ({
+        stdout: JSON.stringify({ ranking: { models: [rankingEntry('vendor/model-x', 1)] } }),
+        stderr: '',
+      }),
+      generateFighter: async () => ({
+        checkpoint: {
+          provider_model: 'vendor/model-x',
+          wasm_sha256: sha('d'),
+          source_sha256: sha('e'),
+          prompt_sha256: sha('f'),
+        },
+        source: 'fn bot_tick_v2() { /* new stint */ }\n',
+      }),
+    }),
+  });
+  assert.equal(afterRecruit.roster.length, 1);
+  assert.equal(afterRecruit.roster[0].artifact.version, 1);
+  assert.equal(afterRecruit.roster[0].joined_at, new Date(NOW).toISOString());
+
+  // Cycle 2 (3 days later): feedback revises the NEW stint at v2.
+  const afterRevision = await runTrackCycle({
+    track: afterRecruit,
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: feedbackDeps({
+      nowMs: NOW + 3 * DAY_MS,
+      requestRevision: async () => ({
+        response: { simulated: false },
+        verified: { source: 'fn bot_tick_v2() { /* new stint v2 */ }\n' },
+        codeStatus: null,
+      }),
+      compileRevision: async ({ previousCheckpoint }) => ({
+        checkpoint: {
+          ...previousCheckpoint,
+          prompt_sha256: sha('1'),
+          source_sha256: sha('2'),
+          wasm_sha256: sha('3'),
+        },
+        source: 'fn bot_tick_v2() { /* new stint v2 */ }\n',
+      }),
+    }),
+  });
+
+  const entry = afterRevision.roster[0];
+  assert.equal(entry.submissions_used, 2);
+  assert.equal(entry.artifact.version, 2);
+  assert.equal(entry.artifact.parent_version, 1);
+
+  // Fresh journal for the new stint; the old stint's journal is untouched.
+  const journals = (await fs.readdir(path.join(stateDir, 'revision-journal'))).sort();
+  assert.deepEqual(journals, [
+    `${OLD_JOURNAL_KEY}.json`,
+    `vendor__model-x-${NOW}-v2.json`,
+  ]);
+  const oldJournal = JSON.parse(await fs.readFile(
+    path.join(stateDir, 'revision-journal', `${OLD_JOURNAL_KEY}.json`),
+    'utf8',
+  ));
+  assert.equal(oldJournal.stint, OLD_JOINED);
+  assert.equal(oldJournal.outcome, 'accepted');
+
+  // Fresh ledger record alongside the old stint's — no dedup collision.
+  const submissions = await readSubmissions(stateDir);
+  assert.equal(submissions.length, 2);
+  assert.deepEqual(
+    submissions.map((record) => [record.stint, record.version_attempted, record.outcome]),
+    [[OLD_JOINED, 2, 'accepted'], [new Date(NOW).toISOString(), 2, 'accepted']],
+  );
+  validateTrackSlice(afterRevision, 'L2');
 });

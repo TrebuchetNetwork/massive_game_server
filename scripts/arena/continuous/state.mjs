@@ -1,5 +1,11 @@
 // Continuous Model League — state schema, validation, and atomic IO.
 //
+// Schema v2 (multi-track amendment, 2026-08-24): top-level `tracks` map with
+// one full league slice per intervention track (L0/L1/L2/L3), each carrying
+// its own roster, retired ledger, announcements, day_index, feedback clock,
+// and frozen policy fields. A v1 state file is discarded on load
+// (clean-slate migration — the old single-track shadow state has no value).
+//
 // Mirrors the weekly supervisor's discipline (see weekly_supervisor.mjs):
 // strict schema checks on load, fsync-before-rename atomic writes, and a
 // refusal to run on malformed state. Small helpers are copied, not imported,
@@ -8,8 +14,13 @@
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { TRACKS, trackPolicy } from './league.mjs';
 
-export const SCHEMA_VERSION = 1;
+// The widest submission budget across tracks (L3: 9); per-track validation
+// uses the track's own frozen policy.
+const MAX_SUBMISSIONS_CAP = Math.max(...TRACKS.map((trackId) => trackPolicy(trackId).maxSubmissions));
+
+export const SCHEMA_VERSION = 2;
 export const MAX_ROSTER_SIZE = 10;
 export const MAX_ANNOUNCEMENTS = 200;
 export const STATE_FILENAME = 'state.json';
@@ -90,14 +101,14 @@ function validateArtifact(artifact, context) {
   }
 }
 
-function validateModelRecord(entry, context) {
+function validateModelRecord(entry, context, maxSubmissions = MAX_SUBMISSIONS_CAP) {
   if (!entry || typeof entry !== 'object'
       || !ID_PATTERN.test(String(entry.model_id || ''))
       || !ID_PATTERN.test(String(entry.slug || ''))
       || !isIsoTimestamp(entry.joined_at)
       || !Number.isSafeInteger(entry.submissions_used)
       || entry.submissions_used < 0
-      || entry.submissions_used > 3
+      || entry.submissions_used > maxSubmissions
       || !Number.isFinite(entry.rating)
       || entry.rating < 0
       || entry.rating > 100
@@ -114,8 +125,8 @@ function validateModelRecord(entry, context) {
   validateArtifact(entry.artifact, context);
 }
 
-function validateRetiredEntry(entry, context) {
-  validateModelRecord(entry, context);
+function validateRetiredEntry(entry, context, maxSubmissions) {
+  validateModelRecord(entry, context, maxSubmissions);
   if (!isIsoTimestamp(entry.retired_at)
       || typeof entry.reason !== 'string' || !entry.reason.trim()) {
     throw new Error(`continuous league state has an invalid retired entry for ${context}`);
@@ -125,9 +136,58 @@ function validateRetiredEntry(entry, context) {
 function validateAnnouncement(entry, index) {
   if (!entry || typeof entry !== 'object'
       || typeof entry.type !== 'string' || !entry.type.trim()
-      || !isIsoTimestamp(entry.at)) {
+      || !isIsoTimestamp(entry.at)
+      || (entry.track != null && !TRACKS.includes(entry.track))) {
     throw new Error(`continuous league state has an invalid announcement at index ${index}`);
   }
+}
+
+/** Validate one track slice against its frozen policy. Returns the slice. */
+export function validateTrackSlice(slice, trackId) {
+  if (!TRACKS.includes(trackId)) {
+    throw new Error(`continuous league state has an unknown track: ${trackId}`);
+  }
+  if (!slice || typeof slice !== 'object') {
+    throw new Error(`continuous league track ${trackId} is missing`);
+  }
+  const expected = trackPolicy(trackId);
+  const policy = slice.policy;
+  if (!policy || typeof policy !== 'object'
+      || policy.max_submissions !== expected.maxSubmissions
+      || policy.compile_attempts !== expected.compileAttempts
+      || policy.feedback_interval_ms !== expected.feedbackIntervalMs
+      || policy.max_revisions !== expected.maxRevisions) {
+    throw new Error(`continuous league track ${trackId} has an invalid frozen policy`);
+  }
+  if (!isNonNegativeInt(slice.day_index)) {
+    throw new Error(`continuous league track ${trackId} has an invalid day index`);
+  }
+  if (!Array.isArray(slice.roster) || slice.roster.length > MAX_ROSTER_SIZE) {
+    throw new Error(`continuous league track ${trackId} roster must contain at most ${MAX_ROSTER_SIZE} models`);
+  }
+  slice.roster.forEach((entry) => (
+    validateModelRecord(entry, `${trackId}:${entry?.model_id || 'unknown'}`, policy.max_submissions)
+  ));
+  if (new Set(slice.roster.map((entry) => entry.model_id)).size !== slice.roster.length) {
+    throw new Error(`continuous league track ${trackId} roster has duplicate model IDs`);
+  }
+  if (!Array.isArray(slice.retired)) {
+    throw new Error(`continuous league track ${trackId} has an invalid retired ledger`);
+  }
+  slice.retired.forEach((entry) => (
+    validateRetiredEntry(entry, `${trackId}:${entry?.model_id || 'unknown'}`, policy.max_submissions)
+  ));
+  if (new Set(slice.retired.map((entry) => entry.model_id)).size !== slice.retired.length) {
+    throw new Error(`continuous league track ${trackId} retired ledger has duplicate model IDs`);
+  }
+  if (!Array.isArray(slice.announcements) || slice.announcements.length > MAX_ANNOUNCEMENTS) {
+    throw new Error(`continuous league track ${trackId} announcements must be capped at ${MAX_ANNOUNCEMENTS}`);
+  }
+  slice.announcements.forEach(validateAnnouncement);
+  if (!(slice.last_feedback_at === null || isIsoTimestamp(slice.last_feedback_at))) {
+    throw new Error(`continuous league track ${trackId} has an invalid feedback timestamp`);
+  }
+  return slice;
 }
 
 /** Strictly validate a league state document; returns the state on success. */
@@ -138,39 +198,36 @@ export function validateState(state) {
   if (!LEAGUE_ID_PATTERN.test(String(state.league_id || ''))) {
     throw new Error('continuous league state is missing its league ID');
   }
-  if (!isNonNegativeInt(state.day_index)) {
-    throw new Error('continuous league state has an invalid day index');
+  if (!state.tracks || typeof state.tracks !== 'object' || Array.isArray(state.tracks)
+      || Object.keys(state.tracks).sort().join(',') !== [...TRACKS].sort().join(',')) {
+    throw new Error(`continuous league state must contain exactly the tracks ${TRACKS.join(', ')}`);
   }
-  if (!Array.isArray(state.roster) || state.roster.length > MAX_ROSTER_SIZE) {
-    throw new Error(`continuous league roster must contain at most ${MAX_ROSTER_SIZE} models`);
-  }
-  state.roster.forEach((entry) => validateModelRecord(entry, entry?.model_id || 'unknown'));
-  if (new Set(state.roster.map((entry) => entry.model_id)).size !== state.roster.length) {
-    throw new Error('continuous league roster has duplicate model IDs');
-  }
-  if (!Array.isArray(state.retired)) {
-    throw new Error('continuous league state has an invalid retired ledger');
-  }
-  state.retired.forEach((entry) => (
-    validateRetiredEntry(entry, entry?.model_id || 'unknown')
-  ));
-  if (new Set(state.retired.map((entry) => entry.model_id)).size !== state.retired.length) {
-    throw new Error('continuous league retired ledger has duplicate model IDs');
-  }
-  if (!Array.isArray(state.announcements) || state.announcements.length > MAX_ANNOUNCEMENTS) {
-    throw new Error(`continuous league announcements must be capped at ${MAX_ANNOUNCEMENTS}`);
-  }
-  state.announcements.forEach(validateAnnouncement);
-  if (!(state.last_feedback_at === null || isIsoTimestamp(state.last_feedback_at))) {
-    throw new Error('continuous league state has an invalid feedback timestamp');
-  }
+  for (const trackId of TRACKS) validateTrackSlice(state.tracks[trackId], trackId);
   if (!isIsoTimestamp(state.created_at) || !isIsoTimestamp(state.updated_at)) {
     throw new Error('continuous league state has invalid lifecycle timestamps');
   }
   return state;
 }
 
-/** Create a fresh, valid, empty league state. */
+/** One empty track slice with the track's frozen policy. */
+function createTrackSlice(trackId) {
+  const policy = trackPolicy(trackId);
+  return {
+    day_index: 0,
+    policy: {
+      max_submissions: policy.maxSubmissions,
+      compile_attempts: policy.compileAttempts,
+      feedback_interval_ms: policy.feedbackIntervalMs,
+      max_revisions: policy.maxRevisions,
+    },
+    roster: [],
+    retired: [],
+    announcements: [],
+    last_feedback_at: null,
+  };
+}
+
+/** Create a fresh, valid, empty league state (schema v2, four tracks). */
 export function createState({ now = new Date(), leagueId } = {}) {
   const stamp = now instanceof Date ? now : new Date(now);
   if (!Number.isFinite(stamp.getTime())) throw new Error('createState requires a valid date');
@@ -179,11 +236,7 @@ export function createState({ now = new Date(), leagueId } = {}) {
   return validateState({
     schema_version: SCHEMA_VERSION,
     league_id: id,
-    day_index: 0,
-    roster: [],
-    retired: [],
-    announcements: [],
-    last_feedback_at: null,
+    tracks: Object.fromEntries(TRACKS.map((trackId) => [trackId, createTrackSlice(trackId)])),
     created_at: stamp.toISOString(),
     updated_at: stamp.toISOString(),
   });
@@ -193,17 +246,27 @@ export function statePathFor(stateDirectory) {
   return path.join(stateDirectory, STATE_FILENAME);
 }
 
-/** Load and validate the persisted state, or create + persist a fresh one. */
+/**
+ * Load and validate the persisted state, or create + persist a fresh one.
+ * A schema-v1 state file is discarded (clean-slate migration to the
+ * four-track v2 schema — the pre-amendment shadow state has no value) and
+ * reported via `migrated: true`; any other malformed state is refused.
+ */
 export async function loadOrCreateState(stateDirectory, options = {}) {
   const statePath = statePathFor(stateDirectory);
   await fs.mkdir(stateDirectory, { recursive: true });
   if (await fileExists(statePath)) {
-    const state = validateState(await readJson(statePath));
-    return { statePath, state, created: false };
+    const persisted = await readJson(statePath);
+    if (persisted?.schema_version === 1) {
+      const state = createState(options);
+      await atomicWriteJson(statePath, state);
+      return { statePath, state, created: true, migrated: true };
+    }
+    return { statePath, state: validateState(persisted), created: false, migrated: false };
   }
   const state = createState(options);
   await atomicWriteJson(statePath, state);
-  return { statePath, state, created: true };
+  return { statePath, state, created: true, migrated: false };
 }
 
 /** Validate, then atomically persist the state. */

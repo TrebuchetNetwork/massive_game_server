@@ -1,33 +1,8 @@
 {
-  "hy3": {
-    "emoji": "🐉",
-    "title": "Emberwing",
-    "color": "#fb7185"
-  },
-  "glm-5.2": {
-    "emoji": "🦉",
-    "title": "Sage",
-    "color": "#a78bfa"
-  },
-  "gpt-5.6-luna": {
-    "emoji": "🌙",
-    "title": "Luna",
-    "color": "#10a37f"
-  },
   "claude-opus-5": {
     "emoji": "🐺",
     "title": "Wolfpack",
     "color": "#facc15"
-  },
-  "deepseek-v4-flash-0731": {
-    "emoji": "⚡",
-    "title": "Surge",
-    "color": "#38bdf8"
-  },
-  "gemini-3.6-flash": {
-    "emoji": "💎",
-    "title": "Prism",
-    "color": "#4285f4"
   },
   "nemotron-3-ultra-550b-a55b": {
     "emoji": "🦾",
@@ -39,14 +14,39 @@
     "title": "Surge",
     "color": "#38bdf8"
   },
-  "mimo-v2.5": {
-    "emoji": "🦊",
-    "title": "Kitsune",
-    "color": "#f97316"
+  "hy3": {
+    "emoji": "🐉",
+    "title": "Emberwing",
+    "color": "#fb7185"
   },
   "deepseek-v4-pro": {
     "emoji": "🐋",
     "title": "Abyss",
     "color": "#4d6bfe"
+  },
+  "deepseek-v4-flash-0731": {
+    "emoji": "⚡",
+    "title": "Surge",
+    "color": "#38bdf8"
+  },
+  "glm-5.2": {
+    "emoji": "🦉",
+    "title": "Sage",
+    "color": "#a78bfa"
+  },
+  "mimo-v2.5": {
+    "emoji": "🦊",
+    "title": "Kitsune",
+    "color": "#f97316"
+  },
+  "gpt-5.6-luna": {
+    "emoji": "🌙",
+    "title": "Luna",
+    "color": "#10a37f"
+  },
+  "ox-alpha": {
+    "emoji": "👾",
+    "title": "Glitch",
+    "color": "#c084fc"
   }
 }
