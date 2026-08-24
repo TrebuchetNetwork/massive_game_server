@@ -251,6 +251,32 @@ export function aggregateBattles(records, rosterIds, perModelLimit = 200) {
  * than) the cache, then aggregate. Returns { aggregates, cacheData, stats }.
  * cacheData is serializable and should be persisted by the caller.
  */
+/**
+ * List battle checkpoints as relative names, covering both the legacy flat
+ * layout (`<task>.json`) and the sharded layout (`<2-hex>/<task>.json`) the
+ * runner writes to keep a single directory under ext4's dir_index limit.
+ */
+function listBattleNames(io, dir) {
+  const names = [];
+  for (const entry of io.readdir(dir)) {
+    if (entry.endsWith('.json')) {
+      names.push(entry);
+      continue;
+    }
+    if (!/^[0-9a-f]{2}$/.test(entry)) continue;
+    let inner;
+    try {
+      inner = io.readdir(path.join(dir, entry));
+    } catch {
+      continue; // Not a directory (or vanished) — not a shard.
+    }
+    for (const name of inner) {
+      if (name.endsWith('.json')) names.push(`${entry}/${name}`);
+    }
+  }
+  return names;
+}
+
 export async function scanBattles({
   battlesDir,
   rosterIds,
@@ -261,7 +287,7 @@ export async function scanBattles({
   log = () => {},
 }) {
   const t0 = Date.now();
-  const names = io.readdir(battlesDir).filter((n) => n.endsWith('.json'));
+  const names = listBattleNames(io, battlesDir);
   log(`battles: ${names.length} files listed in ${Date.now() - t0}ms`);
 
   // Records gained a `mo` (mode) field in cache version 2 — older caches are

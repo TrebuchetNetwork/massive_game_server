@@ -63,6 +63,31 @@ function battleCheckpointRecord(mtimeMs, json) {
 }
 
 /**
+ * List battle checkpoints as relative names, covering both the legacy flat
+ * layout (`<task>.json`) and the sharded layout (`<2-hex>/<task>.json`).
+ */
+async function listBattleJsons(io, dir) {
+  const names = [];
+  for (const entry of await io.readdir(dir)) {
+    if (entry.endsWith('.json')) {
+      names.push(entry);
+      continue;
+    }
+    if (!/^[0-9a-f]{2}$/.test(entry)) continue;
+    let inner;
+    try {
+      inner = await io.readdir(path.join(dir, entry));
+    } catch {
+      continue; // Not a shard directory (or vanished).
+    }
+    for (const name of inner) {
+      if (name.endsWith('.json')) names.push(`${entry}/${name}`);
+    }
+  }
+  return names;
+}
+
+/**
  * Sample a roster model's newest battle records across the league's day
  * season directories (newest day first, newest files first within a day),
  * capped at perModelLimit. Returns normalized records:
@@ -106,7 +131,7 @@ export async function sampleModelBattles({
     const battlesDirectory = path.join(seasonDirectory, 'battles');
     let names;
     try {
-      names = (await io.readdir(battlesDirectory)).filter((name) => name.endsWith('.json'));
+      names = await listBattleJsons(io, battlesDirectory);
     } catch {
       continue; // No battles for that day.
     }

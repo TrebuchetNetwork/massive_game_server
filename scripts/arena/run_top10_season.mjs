@@ -2164,12 +2164,17 @@ function validateBattleTaskResult(task, checkpoint) {
 }
 
 async function executeBattleTask(context, task, directory, resume) {
-  const checkpointPath = path.join(directory, `${task.task_id}.json`);
+  // Shard by task_id prefix: a season writes millions of checkpoints and a
+  // single flat directory exhausts ext4's dir_index (ENOSPC on rename).
+  const checkpointPath = path.join(directory, task.task_id.slice(0, 2), `${task.task_id}.json`);
+  const legacyPath = path.join(directory, `${task.task_id}.json`);
   if (resume) {
-    try {
-      return validateBattleTaskResult(task, await readJson(checkpointPath));
-    } catch {
-      // Rerun stale v1 or incomplete checkpoints.
+    for (const candidate of [checkpointPath, legacyPath]) {
+      try {
+        return validateBattleTaskResult(task, await readJson(candidate));
+      } catch {
+        // Rerun stale v1 or incomplete checkpoints.
+      }
     }
   }
   const data = await apiJson({
