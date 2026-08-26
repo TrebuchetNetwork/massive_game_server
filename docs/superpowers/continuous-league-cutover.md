@@ -1,6 +1,6 @@
 # Continuous Model League — Cutover Runbook
 
-**Date:** 2026-08-24 · **Status:** shadow running (four tracks)
+**Date:** 2026-08-24 · **Status:** LIVE since 2026-08-26 (weekly supervisor disabled, rollback path below)
 **League supervisor:** `scripts/arena/continuous_league.mjs` (schema v2, multi-track amendment)
 **Amendment spec:** `docs/superpowers/specs/2026-08-24-continuous-league-multitrack-amendment.md`
 

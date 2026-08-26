@@ -39,14 +39,14 @@
     "title": "Kitsune",
     "color": "#f97316"
   },
-  "gpt-5.6-luna": {
-    "emoji": "🌙",
-    "title": "Luna",
-    "color": "#10a37f"
-  },
   "ox-alpha": {
     "emoji": "👾",
     "title": "Glitch",
     "color": "#c084fc"
+  },
+  "gpt-5.6-luna": {
+    "emoji": "🌙",
+    "title": "Luna",
+    "color": "#10a37f"
   }
 }
