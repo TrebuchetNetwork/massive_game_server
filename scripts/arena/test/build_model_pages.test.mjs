@@ -172,6 +172,7 @@ test('buildPages tolerates a fresh season with no artifact dirs', async () => {
     outDir,
     cachePath: path.join(outDir, 'page-cache.json'),
     toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
   });
   const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
   assert.match(alpha, /No recent duel sample available/);
@@ -203,6 +204,7 @@ test('golden render: 2-model mini roster matches checked-in goldens', async (t) 
     outDir,
     cachePath,
     toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
   });
 
   const expected = ['index.html', 'alpha-one.html', 'beta-two.html', 'models.css', 'mascots.json'];
@@ -252,6 +254,7 @@ test('analyst toplist: fixture commentary renders ranked cards and model quote b
     outDir,
     cachePath: path.join(outDir, 'page-cache.json'),
     toplistPath: path.join(FIXTURES, 'toplist_commentary.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
   });
 
   const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
@@ -304,12 +307,85 @@ test('analyst toplist: absent or malformed file keeps byte-identical goldens', a
       outDir,
       cachePath: path.join(outDir, 'page-cache.json'),
       toplistPath,
+      chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
     });
     for (const f of ['index.html', 'alpha-one.html', 'beta-two.html', 'mascots.json']) {
       assert.equal(
         fs.readFileSync(path.join(outDir, f), 'utf8'),
         fs.readFileSync(path.join(FIXTURES, 'golden', f), 'utf8'),
         `${f} must be byte-identical to the golden when toplist commentary is unusable`,
+      );
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// League Chronicle
+// ---------------------------------------------------------------------------
+
+test('league chronicle: fixture renders chapters in authored order with prose', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-chronicle-'));
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'toplist_commentary.json'),
+    chroniclePath: path.join(FIXTURES, 'chronicle.json'),
+  });
+
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.match(index, /aria-label="League Chronicle"/);
+  // The unusable chapter (no day, empty prose) is dropped silently.
+  assert.ok(!index.includes('This chapter is dropped'));
+  // Three usable chapters, in authored order, day eyebrows and prose intact.
+  assert.equal((index.match(/chronicle__chapter-title/g) || []).length, 3);
+  assert.ok(
+    index.indexOf('Chapter I — The Opening Bell') < index.indexOf('Chapter II — The Bar Falls')
+      && index.indexOf('Chapter II — The Bar Falls') < index.indexOf('Chapter III — New Blood'),
+    'chapters render in authored order',
+  );
+  assert.match(index, /chronicle__day">League days 0–2/);
+  assert.match(index, /Ten fighters walked in on the same morning with the same rules\./);
+  assert.match(index, /Nothing is owed to you here\./);
+  // One drop-cap lead paragraph per chapter; exactly one latest marker, on the last.
+  assert.equal((index.match(/chronicle__prose--lead/g) || []).length, 3);
+  assert.equal((index.match(/chronicle__prose"/g) || []).length, 2);
+  assert.equal((index.match(/chronicle__latest/g) || []).length, 1);
+  const lastChapter = index.split('Chapter III — New Blood')[0];
+  assert.match(lastChapter, /chronicle__latest">latest</);
+  // Narrative hook: above the ranked model list and the Analyst Toplist.
+  assert.ok(index.indexOf('League Chronicle') < index.indexOf('aria-label="Ranked models"'));
+  assert.ok(index.indexOf('League Chronicle') < index.indexOf('Analyst Toplist'));
+  // Chronicle never leaks into the per-model pages.
+  const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
+  assert.ok(!alpha.includes('chronicle__'), 'chronicle is index-only');
+});
+
+test('league chronicle: absent or malformed file keeps byte-identical goldens', async () => {
+  const badDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-chronicle-bad-'));
+  const malformed = path.join(badDir, 'chronicle.json');
+  fs.writeFileSync(malformed, '{not json');
+  const empty = path.join(badDir, 'empty.json');
+  fs.writeFileSync(empty, JSON.stringify({ generated_at: 'x', chapters: [] }));
+
+  for (const chroniclePath of [path.join(FIXTURES, 'no-such-chronicle.json'), malformed, empty]) {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-chronicle-out-'));
+    await buildPages({
+      ratingsPath: path.join(FIXTURES, 'ratings.json'),
+      artifactsRoot: FIXTURES,
+      highlightsPath: path.join(FIXTURES, 'highlights.json'),
+      outDir,
+      cachePath: path.join(outDir, 'page-cache.json'),
+      toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+      chroniclePath,
+    });
+    for (const f of ['index.html', 'alpha-one.html', 'beta-two.html', 'mascots.json']) {
+      assert.equal(
+        fs.readFileSync(path.join(outDir, f), 'utf8'),
+        fs.readFileSync(path.join(FIXTURES, 'golden', f), 'utf8'),
+        `${f} must be byte-identical to the golden when the chronicle is unusable`,
       );
     }
   }
@@ -505,6 +581,7 @@ async function buildWithContinuous(outDir, cmlDir) {
     outDir,
     cachePath: path.join(outDir, 'page-cache.json'),
     toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
     nowMs: NOW_MS,
   });
 }

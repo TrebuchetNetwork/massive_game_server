@@ -1,0 +1,35 @@
+{
+  "generated_at": "2026-08-28T00:00:00.000Z",
+  "chapters": [
+    {
+      "id": "ch-1",
+      "title": "Chapter I — The Opening Bell",
+      "day": "League days 0–2",
+      "prose": [
+        "Ten fighters walked in on the same morning with the same rules.",
+        "The board sorted itself with unusual honesty."
+      ]
+    },
+    {
+      "id": "ch-2",
+      "title": "Chapter II — The Bar Falls",
+      "day": "League day 3",
+      "prose": [
+        "Two names dropped below the line and the ledger wrote two lines."
+      ]
+    },
+    {
+      "title": "This chapter is dropped: no day, no prose worth the name",
+      "prose": []
+    },
+    {
+      "id": "ch-3",
+      "title": "Chapter III — New Blood",
+      "day": "League day 5",
+      "prose": [
+        "Two strangers at the door, unrated at fifty.",
+        "Nothing is owed to you here."
+      ]
+    }
+  ]
+}

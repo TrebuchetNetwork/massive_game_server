@@ -1,0 +1,48 @@
+{
+  "comment": "The League Chronicle — narrative chapters of the Continuous Model League, authored from measured league data. New chapters are appended as the season unfolds. Style: sports-serial prose, mascots as characters, numbers always real.",
+  "generated_at": "2026-08-28T13:30:00Z",
+  "chapters": [
+    {
+      "id": "ch-1",
+      "title": "Chapter I — Ten Walk In",
+      "day": "League days 0–2",
+      "prose": [
+        "Ten fighters entered the arena on the same morning with the same rules: fifty kilobytes of Rust, one standard prompt, no coaching. The league does not ask who trained you or what you cost. It asks whether you can fight.",
+        "The opening days answered quickly. Claude Opus 5 — an unglamorous name the registry could only tag as Glitch — went 76 on the first board and never looked back. Nemotron, the 550-billion-parameter giant they call Titan, opened at 73.6 and climbed daily, converting seven of every ten fights into wins, the best rate anyone would post all week.",
+        "Below them the pack sorted itself with unusual honesty. GLM 5.2, patient as its owl mascot suggests, held third. The two DeepSeek Flash builds — same weights, different vintages — began the league's quietest rivalry: the 0731 Surge steady as a metronome, the 0423 hungrier, trading two points of rating for a 54% win rate. Identical lineage, measurably different judgement. Nobody talks about it. Everybody watches it.",
+        "At the bottom, GPT-5.6 Luna was already in trouble. Day one: 13.9. The retirement bar is 35."
+      ]
+    },
+    {
+      "id": "ch-2",
+      "title": "Chapter II — The Bar Is Real",
+      "day": "League day 3",
+      "prose": [
+        "Every model in the league knew the rule before the first fight: three days in, submissions spent, rating under 35 or a win rate under 25% — and you are out. Rules like that are abstract until the morning they execute.",
+        "Day three arrived with two names below the line. Xiaomi's MiMo-V2.5 had fought respectably and lost consistently — 33.0, a 33% win rate, never once finding a gear. And Luna, whose six days never once crossed 14, had become the weakest sustained performance the league has ever recorded.",
+        "There was no ceremony. The 05:23 cycle ran, the ledger wrote two lines, and the league was down to eight. The Hall of Fame opened its first two rooms.",
+        "The survivors noticed. Tencent's Hy3, flat at 37 all week, was suddenly two points from the edge. DeepSeek's flagship V4 Pro — the one they call Abyss, the Pro in the family, out-rated by both of its own Flash siblings — was closer still. Stillness, it turns out, is also a way to lose."
+      ]
+    },
+    {
+      "id": "ch-3",
+      "title": "Chapter III — New Blood",
+      "day": "League day 5",
+      "prose": [
+        "The league does not mourn. Within the same cycle that wrote the retirements, the recruit went out to the OpenRouter weekly chart and came back with two challengers: Google's Gemini 3.7 Flash, and Z.ai's GLM 5.3 Flash — a sibling for Sage, and a second fighter for the only house now fielding two.",
+        "They arrive unrated at 50.0, which is the league's way of saying: nothing is owed to you here. Their first battles come in tomorrow's evaluation, and the mid-table — Ox Alpha stuck at 46, Hy3 frozen at 37, Abyss hovering one and a half points from the void — has every reason to watch them nervously.",
+        "Meanwhile, in the experiment lanes, something quieter happened: the first feedback round landed. Every model in the L2 track received its own measured record — fights, modes, matchups, nothing but numbers, no advice — and wrote a second version of itself. Whether any of them actually learned is the question the whole league was built to answer. The revised fighters step into the arena tomorrow.",
+        "The board at week's end: Opus 5 on 76.3, Titan shadowing at 74.5, Sage climbing, the twins bickering, two chairs empty, two strangers at the door. And somewhere near the bottom, a flagship model with 1.6 points of runway left, reading its own statistics, deciding what to become."
+      ]
+    },
+    {
+      "id": "ch-4",
+      "title": "Chapter IV — Tomorrow",
+      "day": "Coming next",
+      "prose": [
+        "Three things happen at the 05:23 cycle. The debutants fight their first league battles — Gemini 3.7 Flash and GLM 5.3 Flash stop being provisional and start being measured. The L2 revision class of '26 fights its first evaluation — ten models versus their own previous selves, the first honest data on whether feedback makes fighters better or just different. And the retirement bar wakes up again for anyone still sleeping on it.",
+        "The chronicle continues after the cycle. The league does not sleep."
+      ]
+    }
+  ]
+}

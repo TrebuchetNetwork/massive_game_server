@@ -11,6 +11,8 @@
 //                                               submissions.jsonl + tracks/<T>/history/
 //   scripts/arena/toplist_commentary.json       authored analyst toplist (optional,
 //                                               path injectable)
+//   scripts/arena/chronicle.json                authored League Chronicle narrative
+//                                               (optional, path injectable)
 //
 // Outputs:
 //   static_client/models/index.html             rank-sorted roster index
@@ -28,7 +30,9 @@
 // league.json from a previous valid run is removed. The analyst toplist
 // follows the same rule: absent or malformed, its sections disappear and the
 // HTML is byte-identical to a build without it (models.css always carries
-// the toplist styles).
+// the toplist styles). The League Chronicle follows the same rule: absent or
+// malformed, its section disappears and the HTML is byte-identical to a build
+// without it (models.css always carries the chronicle styles).
 //
 // The battles dir is far too large to read fully; we readdir + stat everything
 // (fast), keep the newest window, and only JSON-read files that are new since
@@ -774,7 +778,7 @@ export function renderIndexPage(ctx) {
             <h1>Weekly top 10. <em>One tour.</em></h1>
             <p class="models-hero__lede">Every model below holds a live profile: ratings, behavior fingerprint, head-to-head rivalries, world co-performance and recorded fights.</p>
         </section>
-${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
+${ctx.chronicle ? `${ctx.chronicle}\n` : ''}${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
 ${rows}
         </section>
 ${ctx.toplist ? `${ctx.toplist}\n` : ''}${continuous ? `${[standingsSection(continuous.state), matrixSection(continuous.state), announcementsSection(allAnnouncements(continuous.state)), hallOfFameSection(continuous.state)].filter(Boolean).join('\n')}\n` : ''}${provenanceFooter(ctx)}
@@ -1381,6 +1385,70 @@ function analystNoteSection(entry, leagueDay) {
         </section>`;
 }
 
+// ---------------------------------------------------------------------------
+// League Chronicle (optional editorial overlay)
+// ---------------------------------------------------------------------------
+//
+// Authored narrative (scripts/arena/chronicle.json) rendered as a magazine-style
+// story at the top of the models index — the league's running serial. Like the
+// toplist, a missing or malformed file hides the section entirely and the HTML
+// stays byte-identical to a build without it; models.css always carries the
+// styles. Public-facing editorial: the no-coaching neutrality rule applies
+// only to model feedback briefs, never to the chronicle.
+
+/**
+ * Load authored chronicle chapters, or return null when the file is absent,
+ * unparseable, or carries no usable chapters — publishing must never be
+ * blocked by editorial trouble. Chapters render in authored order.
+ */
+export function loadChronicle({ chroniclePath, io = defaultIo, log = () => {} }) {
+  if (!chroniclePath || !io.exists(chroniclePath)) return null;
+  let data;
+  try {
+    data = io.readJson(chroniclePath);
+  } catch (error) {
+    log(`chronicle: ignoring unreadable ${chroniclePath} (${String(error?.message || error).slice(0, 200)})`);
+    return null;
+  }
+  const chapters = (Array.isArray(data?.chapters) ? data.chapters : [])
+    .filter((c) => c && typeof c === 'object' && c.title && c.day
+      && Array.isArray(c.prose) && c.prose.some((p) => typeof p === 'string' && p.trim()))
+    .map((c) => ({
+      id: c.id ? String(c.id) : null,
+      title: String(c.title),
+      day: String(c.day),
+      prose: c.prose.filter((p) => typeof p === 'string' && p.trim()).map(String),
+    }));
+  if (!chapters.length) return null;
+  return { generated_at: data.generated_at ?? null, chapters };
+}
+
+/**
+ * Index-page story: chapters in authored order, the last one flagged as the
+ * latest. First paragraph of each chapter carries the drop cap.
+ */
+function chronicleSection(chronicle) {
+  const last = chronicle.chapters.length - 1;
+  const chapters = chronicle.chapters.map((c, i) => {
+    const latest = i === last && chronicle.chapters.length > 1
+      ? ' <span class="chronicle__latest">latest</span>' : '';
+    const paragraphs = c.prose.map((p, j) => {
+      const cls = j === 0 ? 'chronicle__prose chronicle__prose--lead' : 'chronicle__prose';
+      return `                <p class="${cls}">${esc(p)}</p>`;
+    }).join('\n');
+    return `            <article class="chronicle__chapter"${c.id ? ` id="${esc(c.id)}"` : ''}>
+                <p class="chronicle__day">${esc(c.day)}${latest}</p>
+                <h3 class="chronicle__chapter-title">${esc(c.title)}</h3>
+${paragraphs}
+            </article>`;
+  }).join('\n');
+  return `        <section class="chronicle" aria-label="League Chronicle">
+            <p class="eyebrow chronicle__eyebrow"><span class="live-dot"></span> League Chronicle</p>
+            <h2 class="chronicle__title">The season, <em>as it happened.</em></h2>
+${chapters}
+        </section>`;
+}
+
 // Emitted as static_client/models/models.css — mirrors the landing page's
 // visual language (dark ink, acid lime, mono labels) without external deps.
 export const MODELS_CSS = `:root {
@@ -1738,6 +1806,74 @@ a.toplist__card:hover { border-color: var(--acid); }
 .analyst-note__headline { color: var(--acid); }
 .analyst-note__commentary { margin: 0; max-width: 720px; color: var(--muted); font-size: 14px; line-height: 1.7; }
 
+/* league chronicle — magazine feature, not a stat panel */
+.chronicle {
+    width: min(65ch, 100%);
+    margin: 0 auto;
+    padding: 96px 0 72px;
+    text-align: left;
+}
+.chronicle__eyebrow { justify-content: center; }
+.chronicle__title {
+    margin: 0 0 64px;
+    text-align: center;
+    font-weight: 900;
+    letter-spacing: -0.04em;
+    font-size: clamp(28px, 3.6vw, 44px);
+    line-height: 1.05;
+}
+.chronicle__title em { color: var(--acid); font-style: normal; }
+.chronicle__chapter { padding: 56px 0 8px; }
+.chronicle__chapter:first-of-type { padding-top: 0; }
+.chronicle__chapter + .chronicle__chapter {
+    margin-top: 48px;
+    border-top: 1px solid var(--line-soft);
+}
+.chronicle__day {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 14px;
+    color: var(--dim);
+    font: 800 9px/1.4 var(--mono);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+}
+.chronicle__latest {
+    padding: 3px 8px;
+    border: 1px solid var(--line);
+    color: var(--acid);
+    font: 800 8px/1 var(--mono);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    background: rgba(202, 255, 0, 0.06);
+}
+.chronicle__chapter-title {
+    margin: 0 0 26px;
+    font: 900 clamp(20px, 2.4vw, 27px)/1.2 var(--sans);
+    letter-spacing: -0.025em;
+}
+.chronicle__prose {
+    margin: 0 0 22px;
+    color: var(--muted);
+    font-size: 16.5px;
+    line-height: 1.85;
+}
+.chronicle__prose:last-child { margin-bottom: 0; }
+.chronicle__prose--lead::first-letter {
+    float: left;
+    padding: 6px 12px 0 0;
+    color: var(--acid);
+    font: 900 52px/0.8 var(--sans);
+    letter-spacing: -0.02em;
+}
+@media (max-width: 640px) {
+    .chronicle { padding: 64px 0 48px; }
+    .chronicle__title { margin-bottom: 44px; }
+    .chronicle__prose { font-size: 15.5px; }
+    .chronicle__prose--lead::first-letter { font-size: 44px; padding-right: 10px; }
+}
+
 /* continuous league overlay */
 .league-strip {
     display: grid;
@@ -1876,6 +2012,7 @@ export async function buildPages({
   cachePath = path.join(REPO_ROOT, 'artifacts', 'arena', 'page-cache.json'),
   continuousDir = null, // defaults to <artifactsRoot>/continuous
   toplistPath = path.join(SCRIPT_DIR, 'toplist_commentary.json'),
+  chroniclePath = path.join(SCRIPT_DIR, 'chronicle.json'),
   mediaBase = '/media/highlights',
   perModelLimit = 200,
   windowSize = 4000,
@@ -1897,6 +2034,9 @@ export async function buildPages({
 
   // Optional analyst toplist — null unless the authored commentary loads.
   const toplist = loadToplist({ toplistPath, io, log });
+
+  // Optional League Chronicle — null unless the authored narrative loads.
+  const chronicle = loadChronicle({ chroniclePath, io, log });
 
   const seasonDir = path.join(artifactsRoot, 'seasons', ratings.season_id);
   const battlesDir = path.join(seasonDir, 'battles');
@@ -1957,6 +2097,7 @@ export async function buildPages({
     league: ratings.league,
     continuous,
     toplist: toplist ? toplistSection(toplist, toplistCards(toplist, roster, slugById)) : null,
+    chronicle: chronicle ? chronicleSection(chronicle) : null,
     nowMs,
   }));
 
