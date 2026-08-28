@@ -29,6 +29,15 @@ export {
     applyConnectionStatusUi,
     normalizeConnectionErrorDetail,
 } from './connection_status.js';
+export {
+    JOIN_PROGRESS_STAGES,
+    CONTROL_HINTS_STORAGE_KEY,
+    createJoinProgressTracker,
+    applyJoinProgressUi,
+    getControlHintItems,
+    shouldShowControlHints,
+    markControlHintsSeen,
+} from './join_progress.js?v=20260828-joinux1';
 export { emitClientLog, flushPendingClientLogs } from './client_logger.js';
 export { createErrorBoundary } from './ErrorBoundary.js';
 export { createGameRenderer } from './GameRenderer.js';

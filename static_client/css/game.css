@@ -1835,6 +1835,239 @@
             0%, 100% { transform: scale(1); opacity: 0.8; }
             50% { transform: scale(1.4); opacity: 1; }
         }
+
+        /* ===== Staged join progress — neon-glass family ===== */
+        .join-progress {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 85;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            padding: 20px 26px;
+            min-width: 260px;
+            background: linear-gradient(160deg, rgba(14, 20, 26, 0.82), rgba(6, 10, 14, 0.9));
+            border: 1px solid rgba(200, 243, 29, 0.28);
+            border-radius: 16px;
+            backdrop-filter: blur(14px) saturate(1.35);
+            -webkit-backdrop-filter: blur(14px) saturate(1.35);
+            box-shadow:
+                0 14px 34px rgba(0, 0, 0, 0.52),
+                0 0 26px rgba(200, 243, 29, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            color: #E5E7EB;
+        }
+        .join-progress.hidden {
+            display: none;
+        }
+        .join-progress__title {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #dfff73;
+        }
+        .join-progress--error .join-progress__title {
+            color: #fca5a5;
+        }
+        .join-progress__steps {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+        .join-progress__step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #94A3B8;
+            position: relative;
+        }
+        .join-progress__step:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            top: 6px;
+            left: calc(50% + 12px);
+            width: 22px;
+            height: 1px;
+            background: rgba(148, 163, 184, 0.4);
+        }
+        .join-progress__step-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: rgba(148, 163, 184, 0.35);
+            box-shadow: 0 0 8px rgba(148, 163, 184, 0.3);
+        }
+        .join-progress__step--current {
+            color: #E5E7EB;
+        }
+        .join-progress__step--current .join-progress__step-dot {
+            background: #38BDF8;
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.8);
+            animation: statusPulse 1s ease-in-out infinite;
+        }
+        .join-progress__step--done {
+            color: #dfff73;
+        }
+        .join-progress__step--done .join-progress__step-dot {
+            background: #C8F31D;
+            box-shadow: 0 0 12px rgba(200, 243, 29, 0.7);
+        }
+        .join-progress__step--error .join-progress__step-dot {
+            background: #F87171;
+            box-shadow: 0 0 12px rgba(248, 113, 113, 0.7);
+            animation: none;
+        }
+        .join-progress__detail {
+            max-width: 300px;
+            font-size: 12px;
+            line-height: 1.45;
+            text-align: center;
+            color: #CBD5F5;
+        }
+        .join-progress--error .join-progress__detail {
+            color: #fecaca;
+        }
+        .join-progress__retry {
+            padding: 8px 22px;
+            border: 1px solid rgba(200, 243, 29, 0.45);
+            border-radius: 10px;
+            background: rgba(200, 243, 29, 0.12);
+            color: #eaffaf;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            cursor: pointer;
+        }
+        .join-progress__retry:hover {
+            border-color: rgba(200, 243, 29, 0.8);
+            background: rgba(200, 243, 29, 0.22);
+        }
+        .join-progress__retry.hidden {
+            display: none;
+        }
+
+        /* ===== First-visit control hints — neon-glass family ===== */
+        .control-hints {
+            position: fixed;
+            left: 50%;
+            bottom: calc(24px + var(--safe-area-bottom));
+            transform: translateX(-50%);
+            z-index: 95;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            padding: 16px 22px;
+            max-width: min(92vw, 420px);
+            background: linear-gradient(160deg, rgba(14, 20, 26, 0.82), rgba(6, 10, 14, 0.9));
+            border: 1px solid rgba(200, 243, 29, 0.28);
+            border-radius: 16px;
+            backdrop-filter: blur(14px) saturate(1.35);
+            -webkit-backdrop-filter: blur(14px) saturate(1.35);
+            box-shadow:
+                0 14px 34px rgba(0, 0, 0, 0.52),
+                0 0 26px rgba(200, 243, 29, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            color: #E5E7EB;
+        }
+        .control-hints.hidden {
+            display: none;
+        }
+        .control-hints__title {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #dfff73;
+        }
+        .control-hints__list {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 6px 16px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+        .control-hints__item {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+        .control-hints__key {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11px;
+            font-weight: 700;
+            color: #dfff73;
+        }
+        .control-hints__action {
+            color: #CBD5F5;
+        }
+        .control-hints__close {
+            padding: 6px 18px;
+            border: 1px solid rgba(200, 243, 29, 0.45);
+            border-radius: 10px;
+            background: rgba(200, 243, 29, 0.12);
+            color: #eaffaf;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            cursor: pointer;
+        }
+        .control-hints__close:hover {
+            border-color: rgba(200, 243, 29, 0.8);
+            background: rgba(200, 243, 29, 0.22);
+        }
+
+        /* ===== Audio unlock nudge — neon-glass family ===== */
+        .audio-unlock-nudge {
+            position: fixed;
+            right: calc(14px + var(--safe-area-right));
+            top: calc(60px + var(--safe-area-top));
+            z-index: 95;
+            padding: 8px 14px;
+            border: 1px solid rgba(200, 243, 29, 0.35);
+            border-radius: 10px;
+            background: linear-gradient(160deg, rgba(14, 20, 26, 0.85), rgba(6, 10, 14, 0.9));
+            color: #dfff73;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35), 0 0 14px rgba(200, 243, 29, 0.08);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            cursor: pointer;
+            animation: statusPulse 1.6s ease-in-out infinite;
+        }
+        .audio-unlock-nudge.hidden {
+            display: none;
+        }
+        body.mobile-mode .audio-unlock-nudge {
+            top: calc(190px + var(--safe-area-top));
+        }
+
         body.mobile-mode .controls-panel {
             left: calc(10px + var(--safe-area-left));
             top: calc(10px + var(--safe-area-top));

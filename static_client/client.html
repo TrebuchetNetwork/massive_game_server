@@ -13,7 +13,7 @@
           }
         }
     </script>
-    <link rel="stylesheet" href="./css/game.css?v=20260725-mobile-arena2">
+    <link rel="stylesheet" href="./css/game.css?v=20260828-joinux1">
     <script src="./client_logic/arena_telemetry.js?v=20260725-mobile-arena2" defer></script>
 </head>
 <body class="bg-gray-900 text-white min-h-screen overflow-hidden">
@@ -38,6 +38,22 @@
                 <div id="connectionStatusDetail" class="connection-status__detail">Click Connect to join a match</div>
             </div>
         </div>
+        <div id="joinProgressOverlay" class="join-progress hidden" role="status" aria-live="polite" aria-hidden="true">
+            <div class="join-progress__title">Joining arena</div>
+            <ol class="join-progress__steps">
+                <li id="joinProgressStepConnecting" class="join-progress__step" data-stage="connecting"><span class="join-progress__step-dot"></span>Connect</li>
+                <li id="joinProgressStepNegotiating" class="join-progress__step" data-stage="negotiating"><span class="join-progress__step-dot"></span>Negotiate</li>
+                <li id="joinProgressStepSpawning" class="join-progress__step" data-stage="spawning"><span class="join-progress__step-dot"></span>Spawn</li>
+            </ol>
+            <div id="joinProgressDetail" class="join-progress__detail"></div>
+            <button id="joinProgressRetry" class="join-progress__retry hidden" type="button">Retry</button>
+        </div>
+        <div id="controlHintsOverlay" class="control-hints hidden" role="dialog" aria-label="Controls" aria-hidden="true">
+            <div class="control-hints__title">You're in — quick controls</div>
+            <ul id="controlHintsList" class="control-hints__list"></ul>
+            <button id="controlHintsClose" class="control-hints__close" type="button">Got it</button>
+        </div>
+        <button id="audioUnlockNudge" class="audio-unlock-nudge hidden" type="button">🔊 tap for sound</button>
         <button id="arenaEvolutionChip" class="arena-evolution-chip" type="button" aria-haspopup="dialog" aria-controls="arenaRatingsDialog" aria-label="Open model season ratings">
             <span class="arena-evolution-chip__signal"></span>
             <span>Models</span><strong data-client-arena-models>--</strong>
@@ -531,6 +547,13 @@
             removeSyntheticProjectiles,
             applyConnectionStatusUi,
             normalizeConnectionErrorDetail,
+            JOIN_PROGRESS_STAGES,
+            CONTROL_HINTS_STORAGE_KEY,
+            createJoinProgressTracker,
+            applyJoinProgressUi,
+            getControlHintItems,
+            shouldShowControlHints,
+            markControlHintsSeen,
             createErrorBoundary,
             createGameRenderer,
             createProtocolHandler,
@@ -550,7 +573,7 @@
             createUpdateSprites,
             createMapThemes,
             flushPendingClientLogs,
-        } from './client_logic/index.js?v=20260725-mobile-arena2';
+        } from './client_logic/index.js?v=20260828-joinux1';
         const GP = GameProtocol;
         const {
             uiModeParams,
@@ -712,6 +735,18 @@
         const connectionStatusDiv = document.getElementById('connectionStatus');
         const connectionStatusTitle = document.getElementById('connectionStatusTitle');
         const connectionStatusDetail = document.getElementById('connectionStatusDetail');
+        const joinProgressOverlay = document.getElementById('joinProgressOverlay');
+        const joinProgressDetail = document.getElementById('joinProgressDetail');
+        const joinProgressRetryButton = document.getElementById('joinProgressRetry');
+        const joinProgressStageElements = {
+            connecting: document.getElementById('joinProgressStepConnecting'),
+            negotiating: document.getElementById('joinProgressStepNegotiating'),
+            spawning: document.getElementById('joinProgressStepSpawning'),
+        };
+        const controlHintsOverlay = document.getElementById('controlHintsOverlay');
+        const controlHintsList = document.getElementById('controlHintsList');
+        const controlHintsCloseButton = document.getElementById('controlHintsClose');
+        const audioUnlockNudgeButton = document.getElementById('audioUnlockNudge');
         const mobileArenaGate = document.getElementById('mobileArenaGate');
         const mobileArenaJoinButton = document.getElementById('mobileArenaJoinButton');
         const combatOverlayDiv = document.getElementById('combatOverlay');
@@ -1485,6 +1520,110 @@
             mobileArenaJoinButton.innerHTML = `${label} <span aria-hidden="true">↗</span>`;
         }
 
+        // ── Staged join progress, first-visit control hints, audio nudge ──
+        const joinProgressTracker = createJoinProgressTracker();
+        let controlHintsDismissTimerId = null;
+
+        function refreshJoinProgressOverlay() {
+            applyJoinProgressUi({
+                snapshot: joinProgressTracker.snapshot(),
+                overlay: joinProgressOverlay,
+                stageElements: joinProgressStageElements,
+                detailElement: joinProgressDetail,
+                retryButton: joinProgressRetryButton,
+            });
+        }
+
+        function handleControlHintsFirstInput(event) {
+            // Interactions with the hints card itself (e.g. the Got it
+            // button) are handled by their own listeners.
+            if (controlHintsOverlay && event.target && typeof event.target.closest === 'function'
+                && event.target.closest('#controlHintsOverlay')) return;
+            dismissControlHints(true);
+        }
+
+        function dismissControlHints(persist = true) {
+            if (!controlHintsOverlay || controlHintsOverlay.classList.contains('hidden')) return;
+            controlHintsOverlay.classList.add('hidden');
+            controlHintsOverlay.setAttribute('aria-hidden', 'true');
+            if (controlHintsDismissTimerId !== null) {
+                clearTimeout(controlHintsDismissTimerId);
+                controlHintsDismissTimerId = null;
+            }
+            document.removeEventListener('keydown', handleControlHintsFirstInput, true);
+            document.removeEventListener('pointerdown', handleControlHintsFirstInput, true);
+            document.removeEventListener('touchstart', handleControlHintsFirstInput, true);
+            if (persist) {
+                markControlHintsSeen(window.localStorage, CONTROL_HINTS_STORAGE_KEY);
+            }
+        }
+
+        function maybeShowControlHints() {
+            if (!controlHintsOverlay || !controlHintsList) return;
+            if (!shouldShowControlHints(window.localStorage, CONTROL_HINTS_STORAGE_KEY)) return;
+            const isMobileLayout = mobileDynamicsEnabled || document.body.classList.contains('mobile-mode');
+            const items = getControlHintItems(isMobileLayout);
+            controlHintsList.innerHTML = '';
+            for (const item of items) {
+                const li = document.createElement('li');
+                li.className = 'control-hints__item';
+                const keySpan = document.createElement('span');
+                keySpan.className = 'control-hints__key';
+                keySpan.textContent = item.key;
+                const actionSpan = document.createElement('span');
+                actionSpan.className = 'control-hints__action';
+                actionSpan.textContent = item.action;
+                li.appendChild(keySpan);
+                li.appendChild(actionSpan);
+                controlHintsList.appendChild(li);
+            }
+            controlHintsOverlay.classList.remove('hidden');
+            controlHintsOverlay.setAttribute('aria-hidden', 'false');
+            // Auto-dismiss on first gameplay input or after ~6s; either way
+            // the hints never show again (localStorage flag).
+            document.addEventListener('keydown', handleControlHintsFirstInput, true);
+            document.addEventListener('pointerdown', handleControlHintsFirstInput, true);
+            document.addEventListener('touchstart', handleControlHintsFirstInput, { capture: true, passive: true });
+            controlHintsDismissTimerId = setTimeout(() => {
+                controlHintsDismissTimerId = null;
+                dismissControlHints(true);
+            }, 6000);
+        }
+
+        function refreshAudioUnlockNudge() {
+            if (!audioUnlockNudgeButton) return;
+            const ctxState = audioManager && audioManager.audioContext
+                ? audioManager.audioContext.state
+                : null;
+            audioUnlockNudgeButton.classList.toggle('hidden', ctxState !== 'suspended');
+        }
+
+        function handleJoinProgressStatus(statusKey, detailText) {
+            const prevPhase = joinProgressTracker.snapshot().phase;
+            const snap = joinProgressTracker.handleStatus(statusKey, detailText);
+            refreshJoinProgressOverlay();
+            if (snap.phase === 'done' && prevPhase !== 'done') {
+                // Successful join: first-visit hints + audio-unlock affordance.
+                maybeShowControlHints();
+                refreshAudioUnlockNudge();
+            }
+        }
+
+        joinProgressRetryButton?.addEventListener('click', () => {
+            // Same deliberate-retry path as the Connect button (includes the
+            // username gate), so behavior matches desktop and mobile entry.
+            connectButton.click();
+        });
+        controlHintsCloseButton?.addEventListener('click', () => dismissControlHints(true));
+        audioUnlockNudgeButton?.addEventListener('click', () => {
+            if (audioManager && typeof audioManager.requestAudioResume === 'function') {
+                audioManager.requestAudioResume();
+            } else if (audioManager && audioManager.audioContext) {
+                audioManager.audioContext.resume().catch(() => {});
+            }
+            setTimeout(refreshAudioUnlockNudge, 350);
+        });
+
         function applyConnectionStatus(statusKey, detailText = '') {
             const nextStatus = applyConnectionStatusUi({
                 statusKey,
@@ -1503,6 +1642,7 @@
                     document.body.classList.toggle('arena-joining', isArenaJoining);
                     mobileArenaGate?.setAttribute('aria-hidden', String(isArenaActive || isArenaJoining));
                     syncMobileArenaJoinButton(nextKey);
+                    handleJoinProgressStatus(nextKey, nextDetail);
                     if (window.__e2e) {
                         window.__e2e.connectionStatus = { statusKey: nextKey, detailText: nextDetail };
                     }

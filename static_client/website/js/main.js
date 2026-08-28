@@ -366,7 +366,139 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  // Featured fight footage in the hero's arena card. Picks the newest clip
+  // from the highlights index, keeps it muted/looped/playsinline, and
+  // lazy-swaps the source in after load so the video never blocks first
+  // paint. Any failure (no clips, fetch error, decode error, reduced
+  // motion) leaves the CSS simulation untouched.
+  const hydrateHeroFootage = async () => {
+    const field = document.querySelector('.arena-field');
+    if (!field) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    try {
+      const response = await fetch('/media/highlights/index.json', { headers: { Accept: 'application/json' } });
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (!Array.isArray(payload) || payload.length === 0) return;
+
+      const clip = payload
+        .filter((entry) => entry && entry.webm)
+        .sort((a, b) => String(b.webm).localeCompare(String(a.webm)))[0];
+      if (!clip) return;
+
+      const video = document.createElement('video');
+      video.className = 'arena-field__video';
+      video.muted = true;
+      video.loop = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      video.preload = 'none';
+      video.setAttribute('aria-hidden', 'true');
+      video.tabIndex = -1;
+      const still = clip.poster || clip.gif;
+      if (still) video.poster = `/media/highlights/${still}`;
+
+      const teardown = () => {
+        video.remove();
+        field.classList.remove('arena-field--footage');
+      };
+      video.addEventListener('error', teardown);
+      video.addEventListener('stalled', () => {
+        if (video.readyState < 2) teardown();
+      }, { once: true });
+
+      field.classList.add('arena-field--footage');
+      field.prepend(video);
+
+      const topline = document.querySelector('.arena-visual__topline span');
+      if (topline) {
+        topline.textContent = `Latest highlight / ${clip.reason || 'fight replay'}`;
+      }
+
+      // Lazy source swap: only start fetching once the page has painted.
+      const startPlayback = () => {
+        const source = document.createElement('source');
+        source.src = `/media/highlights/${clip.webm}`;
+        source.type = 'video/webm';
+        source.addEventListener('error', teardown);
+        video.append(source);
+        video.preload = 'auto';
+        video.load();
+        video.play().catch(() => {});
+      };
+      if (document.readyState === 'complete') {
+        startPlayback();
+      } else {
+        window.addEventListener('load', startPlayback, { once: true });
+      }
+    } catch (_) {
+      // Hero footage is decorative: keep the CSS simulation on any failure.
+    }
+  };
+
+  // Compact live telemetry strip under the hero. Reads the public overview
+  // plus the league state, refreshes every 30s, and hides on any error.
+  const hydrateLiveStrip = async () => {
+    const strip = document.querySelector('[data-live-strip]');
+    if (!strip) return;
+
+    const pulse = document.createElement('span');
+    const pulseDot = document.createElement('span');
+    const pulseLabel = document.createElement('b');
+    pulse.append(pulseDot, pulseLabel);
+
+    const modelsItem = document.createElement('span');
+    modelsItem.className = 'live-strip__item';
+    const modelsValue = document.createElement('b');
+    modelsItem.append(modelsValue, document.createTextNode(' models active'));
+
+    const flightItem = document.createElement('span');
+    flightItem.className = 'live-strip__item';
+    const flightValue = document.createElement('b');
+    flightItem.append(flightValue, document.createTextNode(' in flight'));
+
+    const dayItem = document.createElement('span');
+    dayItem.className = 'live-strip__item';
+    dayItem.append(document.createTextNode('League day '));
+    const dayValue = document.createElement('b');
+    dayItem.append(dayValue);
+
+    strip.replaceChildren(pulse, modelsItem, flightItem, dayItem);
+
+    const refresh = async () => {
+      try {
+        const [overviewResponse, leagueResponse] = await Promise.all([
+          fetch('/api/public/arena/overview', { headers: { Accept: 'application/json' }, cache: 'no-store' }),
+          fetch('/models/league.json', { headers: { Accept: 'application/json' }, cache: 'no-store' }),
+        ]);
+        if (!overviewResponse.ok || !leagueResponse.ok) throw new Error('live strip unavailable');
+
+        const overviewPayload = await overviewResponse.json();
+        const leaguePayload = await leagueResponse.json();
+        const overview = overviewPayload?.data;
+        if (!overview) throw new Error('live strip payload invalid');
+
+        const inFlight = Number(overview.in_flight_matches) || 0;
+        pulse.className = inFlight > 0 ? 'live-strip__item live-strip__item--live' : 'live-strip__item';
+        pulseDot.className = inFlight > 0 ? 'live-strip__dot' : 'live-strip__dot live-strip__dot--idle';
+        pulseLabel.textContent = inFlight > 0 ? 'Live' : 'Standby';
+        modelsValue.textContent = String(Number(overview.active_models) || 0);
+        flightValue.textContent = String(inFlight);
+        dayValue.textContent = String(Number(leaguePayload?.day_index) || 0).padStart(2, '0');
+
+        strip.hidden = false;
+      } catch (_) {
+        strip.hidden = true;
+      }
+    };
+
+    await refresh();
+    window.setInterval(refresh, 30000);
+  };
+
   hydrateArenaTelemetry();
   hydrateHighlights();
   hydrateLeagueTicker();
+  hydrateHeroFootage();
+  hydrateLiveStrip();
 });
