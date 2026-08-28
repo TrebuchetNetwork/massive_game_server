@@ -171,6 +171,7 @@ test('buildPages tolerates a fresh season with no artifact dirs', async () => {
     highlightsPath: path.join(FIXTURES, 'highlights.json'),
     outDir,
     cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
   });
   const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
   assert.match(alpha, /No recent duel sample available/);
@@ -201,6 +202,7 @@ test('golden render: 2-model mini roster matches checked-in goldens', async (t) 
     highlightsPath: path.join(FIXTURES, 'highlights.json'),
     outDir,
     cachePath,
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
   });
 
   const expected = ['index.html', 'alpha-one.html', 'beta-two.html', 'models.css', 'mascots.json'];
@@ -230,6 +232,87 @@ test('golden render: 2-model mini roster matches checked-in goldens', async (t) 
 
   // No continuous league state under the fixtures root -> no overlay outputs.
   assert.ok(!fs.existsSync(path.join(outDir, 'league.json')), 'league.json requires a valid continuous state');
+
+  // No toplist commentary -> analyst sections hidden.
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.ok(!index.includes('Analyst Toplist'), 'toplist section hidden when commentary is absent');
+  assert.ok(!alpha.includes('analyst-note'), 'analyst quote block hidden when commentary is absent');
+});
+
+// ---------------------------------------------------------------------------
+// Analyst toplist
+// ---------------------------------------------------------------------------
+
+test('analyst toplist: fixture commentary renders ranked cards and model quote blocks', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-toplist-'));
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'toplist_commentary.json'),
+  });
+
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.match(index, /Analyst Toplist/);
+  assert.match(index, /league day 7/);
+  // Cards ordered by rank even though the fixture lists rank 2 first.
+  assert.ok(
+    index.indexOf('Beta takes the crown.') < index.indexOf('Dethroned, but dangerous.'),
+    'toplist cards ordered by rank',
+  );
+  // Roster entries link to their model page (slug prefix match against the
+  // dated canonical slug); the retired gamma gets a subtle league badge.
+  assert.match(index, /<a class="toplist__card" href="beta-two\.html">/);
+  assert.match(index, /<a class="toplist__card" href="alpha-one\.html">/);
+  assert.match(index, /<article class="toplist__card">/);
+  assert.match(index, /toplist__badge">league</);
+  // Mascot emoji + headline land on every card.
+  assert.equal((index.match(/toplist__emoji/g) || []).length, 3);
+  assert.equal((index.match(/toplist__headline/g) || []).length, 3);
+  // Roster-matched cards show the model display name, not the raw entry slug.
+  const toplistBlock = index.split('aria-label="Analyst toplist"')[1].split('</section>')[0];
+  assert.match(toplistBlock, /Test: Beta Two/);
+  assert.match(toplistBlock, /test\/gamma-three/);
+
+  const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
+  assert.match(alpha, /Analyst note · league day 7/);
+  assert.match(alpha, /Dethroned, but dangerous\./);
+  assert.match(alpha, /analyst-note__commentary/);
+  // Quote block sits near the top, before the ratings panels.
+  assert.ok(alpha.indexOf('analyst-note') < alpha.indexOf('Ratings radar'));
+
+  const beta = fs.readFileSync(path.join(outDir, 'beta-two.html'), 'utf8');
+  assert.match(beta, /Analyst note · league day 7/);
+  assert.match(beta, /Beta takes the crown\./);
+});
+
+test('analyst toplist: absent or malformed file keeps byte-identical goldens', async () => {
+  const badDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-toplist-bad-'));
+  const malformed = path.join(badDir, 'toplist.json');
+  fs.writeFileSync(malformed, '{not json');
+  const empty = path.join(badDir, 'empty.json');
+  fs.writeFileSync(empty, JSON.stringify({ league_day: 3, entries: [] }));
+
+  for (const toplistPath of [path.join(FIXTURES, 'no-such-toplist.json'), malformed, empty]) {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-toplist-out-'));
+    await buildPages({
+      ratingsPath: path.join(FIXTURES, 'ratings.json'),
+      artifactsRoot: FIXTURES,
+      highlightsPath: path.join(FIXTURES, 'highlights.json'),
+      outDir,
+      cachePath: path.join(outDir, 'page-cache.json'),
+      toplistPath,
+    });
+    for (const f of ['index.html', 'alpha-one.html', 'beta-two.html', 'mascots.json']) {
+      assert.equal(
+        fs.readFileSync(path.join(outDir, f), 'utf8'),
+        fs.readFileSync(path.join(FIXTURES, 'golden', f), 'utf8'),
+        `${f} must be byte-identical to the golden when toplist commentary is unusable`,
+      );
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -421,6 +504,7 @@ async function buildWithContinuous(outDir, cmlDir) {
     highlightsPath: path.join(FIXTURES, 'highlights.json'),
     outDir,
     cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
     nowMs: NOW_MS,
   });
 }

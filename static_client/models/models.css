@@ -314,6 +314,45 @@ table.mode-grid td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--lin
     .footer p { display: none; }
 }
 
+/* analyst toplist */
+.toplist__grid { display: flex; flex-direction: column; gap: 14px; }
+.toplist__card {
+    display: grid;
+    grid-template-columns: 44px 46px minmax(0, 1fr);
+    align-items: start;
+    gap: 18px;
+    border: 1px solid var(--line-soft);
+    padding: 18px;
+    background: rgba(3, 7, 6, 0.5);
+    text-decoration: none;
+    transition: border-color 140ms ease;
+}
+a.toplist__card:hover { border-color: var(--acid); }
+.toplist__rank { padding-top: 12px; color: var(--dim); font: 800 13px/1 var(--mono); }
+.toplist__card:first-child .toplist__rank { color: var(--acid); }
+.toplist__emoji {
+    width: 40px; height: 40px;
+    display: grid; place-items: center;
+    border: 1px solid var(--line);
+    font-size: 20px;
+    background: rgba(5, 13, 10, 0.6);
+}
+.toplist__model { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 0 6px; }
+.toplist__model b { font-size: 15px; letter-spacing: -0.01em; }
+.toplist__model small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; }
+.toplist__badge {
+    border: 1px solid var(--line-soft);
+    padding: 2px 5px;
+    color: var(--muted);
+    font: 800 8px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.toplist__headline { margin: 0 0 8px; color: var(--acid); font: 800 15px/1.3 var(--sans); letter-spacing: -0.02em; }
+.toplist__commentary { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.analyst-note__headline { color: var(--acid); }
+.analyst-note__commentary { margin: 0; max-width: 720px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+
 /* continuous league overlay */
 .league-strip {
     display: grid;

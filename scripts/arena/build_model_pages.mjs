@@ -9,6 +9,8 @@
 //   artifacts/arena/continuous/                 continuous league overlay (optional):
 //                                               state.json (v2, tracks:{L0..L3}) +
 //                                               submissions.jsonl + tracks/<T>/history/
+//   scripts/arena/toplist_commentary.json       authored analyst toplist (optional,
+//                                               path injectable)
 //
 // Outputs:
 //   static_client/models/index.html             rank-sorted roster index
@@ -23,7 +25,10 @@
 // validation the overlay is skipped entirely and the weekly-league HTML
 // outputs (index.html, <slug>.html, mascots.json) are byte-identical to a
 // build without it; models.css always carries the overlay styles, and a stale
-// league.json from a previous valid run is removed.
+// league.json from a previous valid run is removed. The analyst toplist
+// follows the same rule: absent or malformed, its sections disappear and the
+// HTML is byte-identical to a build without it (models.css always carries
+// the toplist styles).
 //
 // The battles dir is far too large to read fully; we readdir + stat everything
 // (fast), keep the newest window, and only JSON-read files that are new since
@@ -715,7 +720,7 @@ export function renderModelPage(ctx) {
                 ${placementRow}
             </dl>
         </section>
-
+${ctx.analyst ? `\n${ctx.analyst}\n` : ''}
         <section class="panel-grid">
             <article class="panel">
                 <h2>Ratings radar</h2>
@@ -772,7 +777,7 @@ export function renderIndexPage(ctx) {
 ${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
 ${rows}
         </section>
-${continuous ? `${[standingsSection(continuous.state), matrixSection(continuous.state), announcementsSection(allAnnouncements(continuous.state)), hallOfFameSection(continuous.state)].filter(Boolean).join('\n')}\n` : ''}${provenanceFooter(ctx)}
+${ctx.toplist ? `${ctx.toplist}\n` : ''}${continuous ? `${[standingsSection(continuous.state), matrixSection(continuous.state), announcementsSection(allAnnouncements(continuous.state)), hallOfFameSection(continuous.state)].filter(Boolean).join('\n')}\n` : ''}${provenanceFooter(ctx)}
 ${foot}`;
 }
 
@@ -1266,6 +1271,116 @@ ${blocks.join('\n')}
         </section>`;
 }
 
+// ---------------------------------------------------------------------------
+// Analyst toplist (optional editorial overlay)
+// ---------------------------------------------------------------------------
+//
+// Authored commentary (scripts/arena/toplist_commentary.json) rendered as a
+// ranked toplist on the index and a per-model quote block on profile pages.
+// Like the continuous overlay, a missing or malformed file hides the sections
+// entirely and the weekly-league HTML stays byte-identical to a build without
+// it; models.css always carries the styles. This is site-facing editorial —
+// the no-coaching neutrality rule applies only to model feedback briefs,
+// never to public analysis.
+
+/**
+ * Load authored toplist commentary, or return null when the file is absent,
+ * unparseable, or carries no usable entries — publishing must never be
+ * blocked by editorial trouble. Usable entries are rank-sorted.
+ */
+export function loadToplist({ toplistPath, io = defaultIo, log = () => {} }) {
+  if (!toplistPath || !io.exists(toplistPath)) return null;
+  let data;
+  try {
+    data = io.readJson(toplistPath);
+  } catch (error) {
+    log(`toplist: ignoring unreadable ${toplistPath} (${String(error?.message || error).slice(0, 200)})`);
+    return null;
+  }
+  const entries = (Array.isArray(data?.entries) ? data.entries : [])
+    .filter((e) => e && typeof e === 'object' && e.slug && e.headline && e.commentary
+      && Number.isFinite(Number(e.rank)))
+    .map((e) => ({
+      slug: String(e.slug),
+      rank: Number(e.rank),
+      headline: String(e.headline),
+      commentary: String(e.commentary),
+    }))
+    .sort((a, b) => a.rank - b.rank || a.slug.localeCompare(b.slug));
+  if (!entries.length) return null;
+  return {
+    generated_at: data.generated_at ?? null,
+    league_day: data.league_day ?? null,
+    entries,
+  };
+}
+
+/**
+ * Match a weekly-roster model to its toplist entry via slug prefix (entry
+ * slugs are provider-style and undated, e.g. "deepseek/deepseek-v4-flash").
+ * Longest matching entry slug wins so a dated variant ("...-flash-0731") is
+ * not shadowed by its plainer sibling ("...-flash").
+ */
+export function matchToplistEntry(entries, model) {
+  const ids = [model.canonical_slug, model.provider_model, model.model_id]
+    .filter(Boolean).map(String);
+  let best = null;
+  for (const e of entries || []) {
+    if (ids.some((id) => id === e.slug || id.startsWith(`${e.slug}-`) || id.startsWith(`${e.slug}/`))) {
+      if (!best || e.slug.length > best.slug.length) best = e;
+    }
+  }
+  return best;
+}
+
+/** Index-page view of the toplist: rank-sorted cards with mascot + roster link. */
+function toplistCards(toplist, roster, slugById) {
+  return toplist.entries.map((e) => {
+    const model = roster.find((m) => matchToplistEntry([e], m));
+    return {
+      ...e,
+      mascot: mascotFor(e.slug),
+      href: model ? `${slugById.get(model.model_id)}.html` : null,
+      onRoster: Boolean(model),
+      sub: model ? String(model.model_name) : e.slug,
+    };
+  });
+}
+
+function toplistSection(toplist, cards) {
+  const items = cards.map((c) => {
+    const badge = c.onRoster ? '' : '<span class="toplist__badge">league</span>';
+    const inner = `                <span class="toplist__rank">${String(c.rank).padStart(2, '0')}</span>
+                <span class="toplist__emoji" style="border-color:${esc(c.mascot.color)}">${esc(c.mascot.emoji)}</span>
+                <div class="toplist__body">
+                    <p class="toplist__model"><b>${esc(c.mascot.title)}</b><small>${esc(c.sub)}</small>${badge}</p>
+                    <p class="toplist__headline">${esc(c.headline)}</p>
+                    <p class="toplist__commentary">${esc(c.commentary)}</p>
+                </div>`;
+    return c.href
+      ? `            <a class="toplist__card" href="${esc(c.href)}">\n${inner}\n            </a>`
+      : `            <article class="toplist__card">\n${inner}\n            </article>`;
+  }).join('\n');
+  const day = toplist.league_day !== null && toplist.league_day !== undefined
+    ? ` <span class="hof__hint">league day ${fmtInt(toplist.league_day)}</span>` : '';
+  return `        <section class="panel toplist" aria-label="Analyst toplist">
+            <h2>Analyst Toplist${day}</h2>
+            <div class="toplist__grid">
+${items}
+            </div>
+        </section>`;
+}
+
+/** Per-model quote block: headline + commentary + league-day provenance. */
+function analystNoteSection(entry, leagueDay) {
+  const day = leagueDay !== null && leagueDay !== undefined ? ` · league day ${fmtInt(leagueDay)}` : '';
+  return `        <section class="panel analyst-note" aria-label="Analyst note">
+            <p class="eyebrow">Analyst note${day}</p>
+            <h2 class="analyst-note__headline">${esc(entry.headline)}</h2>
+            <p class="analyst-note__commentary">${esc(entry.commentary)}</p>
+        </section>`;
+}
+
 // Emitted as static_client/models/models.css — mirrors the landing page's
 // visual language (dark ink, acid lime, mono labels) without external deps.
 export const MODELS_CSS = `:root {
@@ -1584,6 +1699,45 @@ table.mode-grid td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--lin
     .footer p { display: none; }
 }
 
+/* analyst toplist */
+.toplist__grid { display: flex; flex-direction: column; gap: 14px; }
+.toplist__card {
+    display: grid;
+    grid-template-columns: 44px 46px minmax(0, 1fr);
+    align-items: start;
+    gap: 18px;
+    border: 1px solid var(--line-soft);
+    padding: 18px;
+    background: rgba(3, 7, 6, 0.5);
+    text-decoration: none;
+    transition: border-color 140ms ease;
+}
+a.toplist__card:hover { border-color: var(--acid); }
+.toplist__rank { padding-top: 12px; color: var(--dim); font: 800 13px/1 var(--mono); }
+.toplist__card:first-child .toplist__rank { color: var(--acid); }
+.toplist__emoji {
+    width: 40px; height: 40px;
+    display: grid; place-items: center;
+    border: 1px solid var(--line);
+    font-size: 20px;
+    background: rgba(5, 13, 10, 0.6);
+}
+.toplist__model { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 0 6px; }
+.toplist__model b { font-size: 15px; letter-spacing: -0.01em; }
+.toplist__model small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; }
+.toplist__badge {
+    border: 1px solid var(--line-soft);
+    padding: 2px 5px;
+    color: var(--muted);
+    font: 800 8px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.toplist__headline { margin: 0 0 8px; color: var(--acid); font: 800 15px/1.3 var(--sans); letter-spacing: -0.02em; }
+.toplist__commentary { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.analyst-note__headline { color: var(--acid); }
+.analyst-note__commentary { margin: 0; max-width: 720px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+
 /* continuous league overlay */
 .league-strip {
     display: grid;
@@ -1721,6 +1875,7 @@ export async function buildPages({
   outDir = path.join(REPO_ROOT, 'static_client', 'models'),
   cachePath = path.join(REPO_ROOT, 'artifacts', 'arena', 'page-cache.json'),
   continuousDir = null, // defaults to <artifactsRoot>/continuous
+  toplistPath = path.join(SCRIPT_DIR, 'toplist_commentary.json'),
   mediaBase = '/media/highlights',
   perModelLimit = 200,
   windowSize = 4000,
@@ -1739,6 +1894,9 @@ export async function buildPages({
     io,
     log,
   });
+
+  // Optional analyst toplist — null unless the authored commentary loads.
+  const toplist = loadToplist({ toplistPath, io, log });
 
   const seasonDir = path.join(artifactsRoot, 'seasons', ratings.season_id);
   const battlesDir = path.join(seasonDir, 'battles');
@@ -1798,6 +1956,7 @@ export async function buildPages({
     generated_at: ratings.generated_at,
     league: ratings.league,
     continuous,
+    toplist: toplist ? toplistSection(toplist, toplistCards(toplist, roster, slugById)) : null,
     nowMs,
   }));
 
@@ -1830,6 +1989,7 @@ export async function buildPages({
     const lineage = continuous
       ? lineageSection(continuous.state, m, continuous.submissions, continuous.snapshots) || null
       : null;
+    const toplistEntry = toplist ? matchToplistEntry(toplist.entries, m) : null;
     io.writeFile(path.join(outDir, `${slugById.get(id)}.html`), renderModelPage({
       model: m,
       slug: slugById.get(id),
@@ -1839,6 +1999,7 @@ export async function buildPages({
       partners,
       clips,
       lineage,
+      analyst: toplistEntry ? analystNoteSection(toplistEntry, toplist.league_day) : null,
       slugById,
       metaById,
       mediaBase,

@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-08-20T00:00:00.000Z",
+  "league_day": 7,
+  "entries": [
+    {
+      "slug": "test/alpha-one",
+      "rank": 2,
+      "headline": "Dethroned, but dangerous.",
+      "commentary": "Alpha One gave up the top spot after a bruising week, yet its duel fingerprint is the steadiest on the board. Count it out at your peril."
+    },
+    {
+      "slug": "test/beta-two",
+      "rank": 1,
+      "headline": "Beta takes the crown.",
+      "commentary": "A stunning reversal: Beta Two converted a mid-table slump into a three-day win streak and the league's best rating. The new benchmark."
+    },
+    {
+      "slug": "test/gamma-three",
+      "rank": 3,
+      "headline": "Gone but not forgotten.",
+      "commentary": "Gamma Three retired before this snapshot, but its world-event consistency still haunts the mid-table."
+    }
+  ]
+}

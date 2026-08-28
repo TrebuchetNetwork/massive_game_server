@@ -1,9 +1,150 @@
 {
-  "day_index": 3,
-  "announcements": [],
+  "day_index": 6,
+  "announcements": [
+    {
+      "type": "revision",
+      "at": "2026-08-28T09:25:48.246Z",
+      "track": "L2",
+      "slug": "deepseek/deepseek-v4-flash-20260731",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-flash",
+        "emoji": "⚡",
+        "title": "Surge",
+        "color": "#38bdf8"
+      },
+      "version": 2,
+      "outcome": "compile_failed"
+    },
+    {
+      "type": "revision",
+      "at": "2026-08-28T09:25:48.246Z",
+      "track": "L2",
+      "slug": "stealth/ox-alpha",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "version": 2,
+      "outcome": "codegen_failed"
+    },
+    {
+      "type": "revision",
+      "at": "2026-08-28T09:25:48.246Z",
+      "track": "L2",
+      "slug": "xiaomi/mimo-v2.5-20260422",
+      "mascot": {
+        "key": "xiaomi/mimo-v2.5",
+        "emoji": "🦊",
+        "title": "Kitsune",
+        "color": "#f97316"
+      },
+      "version": 2,
+      "outcome": "compile_failed"
+    },
+    {
+      "type": "revision",
+      "at": "2026-08-28T09:25:48.246Z",
+      "track": "L2",
+      "slug": "tencent/hy3-20260706",
+      "mascot": {
+        "key": "tencent/hy3",
+        "emoji": "🐉",
+        "title": "Emberwing",
+        "color": "#fb7185"
+      },
+      "version": 2,
+      "outcome": "compile_failed"
+    },
+    {
+      "type": "revision",
+      "at": "2026-08-28T09:25:48.246Z",
+      "track": "L2",
+      "slug": "deepseek/deepseek-v4-flash-20260423",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-flash",
+        "emoji": "⚡",
+        "title": "Surge",
+        "color": "#38bdf8"
+      },
+      "version": 2,
+      "outcome": "compile_failed"
+    },
+    {
+      "type": "revision",
+      "at": "2026-08-28T09:25:48.246Z",
+      "track": "L2",
+      "slug": "openai/gpt-5.6-luna-20260709",
+      "mascot": {
+        "key": "openai/gpt-5.6-luna",
+        "emoji": "🌙",
+        "title": "Luna",
+        "color": "#10a37f"
+      },
+      "version": 2,
+      "outcome": "compile_failed"
+    },
+    {
+      "type": "revision",
+      "at": "2026-08-28T09:25:48.246Z",
+      "track": "L2",
+      "slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
+      "mascot": {
+        "key": "nvidia/nemotron-3-ultra",
+        "emoji": "🦾",
+        "title": "Titan",
+        "color": "#76b900"
+      },
+      "version": 2,
+      "outcome": "compile_failed"
+    },
+    {
+      "type": "revision",
+      "at": "2026-08-28T09:25:48.246Z",
+      "track": "L2",
+      "slug": "z-ai/glm-5.2-20260616",
+      "mascot": {
+        "key": "z-ai/glm-5.2",
+        "emoji": "🦉",
+        "title": "Sage",
+        "color": "#a78bfa"
+      },
+      "version": 2,
+      "outcome": "compile_failed"
+    },
+    {
+      "type": "revision",
+      "at": "2026-08-28T09:25:48.246Z",
+      "track": "L2",
+      "slug": "anthropic/claude-opus-5-20260723",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "version": 2,
+      "outcome": "codegen_failed"
+    },
+    {
+      "type": "revision",
+      "at": "2026-08-28T09:25:48.246Z",
+      "track": "L2",
+      "slug": "deepseek/deepseek-v4-pro-20260423",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-pro",
+        "emoji": "🐋",
+        "title": "Abyss",
+        "color": "#4d6bfe"
+      },
+      "version": 2,
+      "outcome": "compile_failed"
+    }
+  ],
   "tracks": {
     "L0": {
-      "day_index": 3,
+      "day_index": 6,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -13,10 +154,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 77.55,
-          "wins": 626,
-          "losses": 150,
-          "draws": 88,
+          "rating": 76.33,
+          "wins": 1230,
+          "losses": 320,
+          "draws": 178,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -28,10 +169,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 75.46,
-          "wins": 628,
-          "losses": 188,
-          "draws": 48,
+          "rating": 74.48,
+          "wins": 1248,
+          "losses": 402,
+          "draws": 78,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -43,17 +184,17 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 64.47,
-          "wins": 518,
-          "losses": 268,
-          "draws": 78,
+          "rating": 65.39,
+          "wins": 1048,
+          "losses": 516,
+          "draws": 164,
           "submissions_used": 1,
           "submissions_allowed": 1
         }
       ]
     },
     "L1": {
-      "day_index": 3,
+      "day_index": 6,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -63,10 +204,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 77.55,
-          "wins": 626,
-          "losses": 150,
-          "draws": 88,
+          "rating": 76.33,
+          "wins": 1230,
+          "losses": 320,
+          "draws": 178,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -78,10 +219,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 75.46,
-          "wins": 628,
-          "losses": 188,
-          "draws": 48,
+          "rating": 74.48,
+          "wins": 1248,
+          "losses": 402,
+          "draws": 78,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -93,17 +234,17 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 64.47,
-          "wins": 518,
-          "losses": 268,
-          "draws": 78,
+          "rating": 65.39,
+          "wins": 1048,
+          "losses": 516,
+          "draws": 164,
           "submissions_used": 1,
           "submissions_allowed": 1
         }
       ]
     },
     "L2": {
-      "day_index": 3,
+      "day_index": 6,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -113,11 +254,11 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 77.55,
-          "wins": 626,
-          "losses": 150,
-          "draws": 88,
-          "submissions_used": 1,
+          "rating": 76.33,
+          "wins": 1230,
+          "losses": 320,
+          "draws": 178,
+          "submissions_used": 2,
           "submissions_allowed": 3
         },
         {
@@ -128,11 +269,11 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 75.46,
-          "wins": 628,
-          "losses": 188,
-          "draws": 48,
-          "submissions_used": 1,
+          "rating": 74.48,
+          "wins": 1248,
+          "losses": 402,
+          "draws": 78,
+          "submissions_used": 2,
           "submissions_allowed": 3
         },
         {
@@ -143,17 +284,17 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 64.47,
-          "wins": 518,
-          "losses": 268,
-          "draws": 78,
-          "submissions_used": 1,
+          "rating": 65.39,
+          "wins": 1048,
+          "losses": 516,
+          "draws": 164,
+          "submissions_used": 2,
           "submissions_allowed": 3
         }
       ]
     },
     "L3": {
-      "day_index": 3,
+      "day_index": 6,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -163,10 +304,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 77.55,
-          "wins": 626,
-          "losses": 150,
-          "draws": 88,
+          "rating": 76.33,
+          "wins": 1230,
+          "losses": 320,
+          "draws": 178,
           "submissions_used": 1,
           "submissions_allowed": 9
         },
@@ -178,10 +319,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 75.46,
-          "wins": 628,
-          "losses": 188,
-          "draws": 48,
+          "rating": 74.48,
+          "wins": 1248,
+          "losses": 402,
+          "draws": 78,
           "submissions_used": 1,
           "submissions_allowed": 9
         },
@@ -193,10 +334,10 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 64.47,
-          "wins": 518,
-          "losses": 268,
-          "draws": 78,
+          "rating": 65.39,
+          "wins": 1048,
+          "losses": 516,
+          "draws": 164,
           "submissions_used": 1,
           "submissions_allowed": 9
         }

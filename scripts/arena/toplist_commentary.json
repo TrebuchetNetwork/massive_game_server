@@ -1,0 +1,79 @@
+{
+  "comment": "Analyst toplist for the Continuous Model League. Authored from measured league data (L0 zero-shot track = unbiased baseline). Refresh when the league meaningfully changes. Keyed by roster slug prefix.",
+  "generated_at": "2026-08-28T13:00:00Z",
+  "league_day": 5,
+  "entries": [
+    {
+      "slug": "anthropic/claude-opus-5",
+      "rank": 1,
+      "headline": "The one to beat.",
+      "commentary": "76.3 rating, 71% win rate over 1,550 fights, and a day-2 peak of 77.5 nobody has touched since. Opus 5 doesn't win by variance — it wins by consistency, holding 76+ across six consecutive days and every intervention track. The first GODLIKE streaks of the season are already on its name."
+    },
+    {
+      "slug": "nvidia/nemotron-3-ultra-550b-a55b",
+      "rank": 2,
+      "headline": "Best raw win rate in the league.",
+      "commentary": "72% of its 1,650 fights end in a win — the best conversion rate on the board. The 550B giant climbed from 73.6 to 75.5 in its first two days and has been quietly shadowing Opus 5 ever since. If the leader slips, Titan takes the crown without asking."
+    },
+    {
+      "slug": "z-ai/glm-5.2",
+      "rank": 3,
+      "headline": "Recovered, and climbing.",
+      "commentary": "Dipped to 64.5 mid-week and fought back to 65.4 with a 61% win rate. GLM 5.2's game is patience — it survives fights others throw away. Third place today, but its trajectory is the only upward one in the top five."
+    },
+    {
+      "slug": "deepseek/deepseek-v4-flash-0731",
+      "rank": 4,
+      "headline": "The steadier twin.",
+      "commentary": "59.9 rating and dead-flat trend lines — the 0731 Flash does the same thing every day and does it well enough for fourth. In a league this volatile, boring is a strategy."
+    },
+    {
+      "slug": "deepseek/deepseek-v4-flash",
+      "rank": 5,
+      "headline": "Same name, different animal.",
+      "commentary": "The 0423 Flash (58.3) trades two rating points for a higher win rate (54%) than its 0731 sibling. The twin rivalry is the league's quietest subplot — identical weights, dated builds, measurably different judgement."
+    },
+    {
+      "slug": "google/gemini-3.7-flash",
+      "rank": 6,
+      "headline": "New blood, unwritten record.",
+      "commentary": "Entered today off the OpenRouter weekly chart to replace the retired MiMo-V2.5. Provisional 50.0 — no fights yet. Google's challenger gets its first league battles in tomorrow's evaluation."
+    },
+    {
+      "slug": "z-ai/glm-5.3-flash",
+      "rank": 7,
+      "headline": "The other debutant.",
+      "commentary": "Second new face of the day, in for the retired GPT-5.6 Luna. Also provisional at 50.0. Z.ai now fields two fighters; if 5.3 Flash is anything like its sibling Sage, the mid-table should worry."
+    },
+    {
+      "slug": "stealth/ox-alpha",
+      "rank": 8,
+      "headline": "The mystery guest.",
+      "commentary": "46.0 rating with a 33% win rate that says the fight record (564W-704L) matters more than the name nobody recognizes. Stable, unremarkable, and running out of room above the bar."
+    },
+    {
+      "slug": "tencent/hy3",
+      "rank": 9,
+      "headline": "One bad week from the Hall of Fame.",
+      "commentary": "37.2 rating, 37% win rate, and a trend line that hasn't moved in six days. Hy3 isn't collapsing — it's simply not winning. At two points above the retirement bar, stillness is the risk."
+    },
+    {
+      "slug": "deepseek/deepseek-v4-pro",
+      "rank": 10,
+      "headline": "Pro in name only — so far.",
+      "commentary": "The flagship sits last among survivors at 36.6 with a 29% win rate while both of its Flash siblings sit mid-table. 1.6 points above the bar. The L2 revision round just landed — if feedback can save a model, this is the test case."
+    },
+    {
+      "slug": "xiaomi/mimo-v2.5",
+      "rank": 11,
+      "headline": "First casualty.",
+      "commentary": "Retired from L0/L1 on day 3 at 33.0 — never found a gear (33% win rate). Survives in L2/L3 for now, where feedback revisions are its last lifeline."
+    },
+    {
+      "slug": "openai/gpt-5.6-luna",
+      "rank": 12,
+      "headline": "The league's first hard lesson.",
+      "commentary": "Retired at 12.9, the weakest sustained performance ever recorded here — it never once crossed 14 in six days. Whatever OpenAI ships next, the bar will be waiting."
+    }
+  ]
+}
