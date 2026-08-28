@@ -143,16 +143,26 @@
             pointer-events: auto;
         }
 
-        /* Controls Panel */
+        /* Controls Panel — neon-glass family (matches .music-player) */
         .controls-panel {
             position: fixed;
             left: calc(20px + var(--safe-area-left));
             top: calc(20px + var(--safe-area-top));
-            background-color: rgba(31, 41, 55, 0.9);
-            border-radius: 8px;
-            padding: 15px;
+            background: linear-gradient(160deg, rgba(14, 20, 26, 0.78), rgba(6, 10, 14, 0.86));
+            border: 1px solid rgba(200, 243, 29, 0.28);
+            border-radius: 16px;
+            padding: 16px;
             max-width: 300px;
-            backdrop-filter: blur(10px);
+            max-height: calc(100vh - 40px - var(--safe-area-top) - var(--safe-area-bottom));
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            backdrop-filter: blur(14px) saturate(1.35);
+            -webkit-backdrop-filter: blur(14px) saturate(1.35);
+            box-shadow:
+                0 14px 34px rgba(0, 0, 0, 0.52),
+                0 0 26px rgba(200, 243, 29, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            color: #E5E7EB;
         }
         .controls-panel.is-hidden {
             display: none;
@@ -162,15 +172,198 @@
             left: calc(20px + var(--safe-area-left));
             top: calc(20px + var(--safe-area-top));
             z-index: 15;
-            background: rgba(15, 23, 42, 0.92);
-            border: 1px solid rgba(148, 163, 184, 0.45);
-            color: #E2E8F0;
+            background: linear-gradient(160deg, rgba(14, 20, 26, 0.85), rgba(6, 10, 14, 0.9));
+            border: 1px solid rgba(200, 243, 29, 0.35);
+            color: #dfff73;
             border-radius: 10px;
             padding: 8px 12px;
-            font-size: 12px;
-            font-weight: 600;
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35), 0 0 14px rgba(200, 243, 29, 0.08);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
             pointer-events: auto;
+            cursor: pointer;
+        }
+        .hud-menu-toggle:hover {
+            border-color: rgba(200, 243, 29, 0.6);
+            background: rgba(200, 243, 29, 0.1);
+            color: #eaffaf;
+        }
+
+        /* ===== Join/menu panel internals — neon-glass family ===== */
+        .controls-panel h1 {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #c8f31d;
+            text-shadow: 0 0 12px rgba(200, 243, 29, 0.45);
+        }
+        .controls-panel label {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: rgba(229, 231, 235, 0.55);
+        }
+        .controls-panel input[type="text"],
+        .controls-panel select {
+            box-sizing: border-box;
+            background: rgba(6, 10, 14, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            border-radius: 10px;
+            color: #E5E7EB;
+            transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+        }
+        .controls-panel input::placeholder {
+            color: rgba(148, 163, 184, 0.45);
+        }
+        .controls-panel input:focus,
+        .controls-panel select:focus {
+            outline: none;
+            background: rgba(10, 16, 20, 0.75);
+            border-color: rgba(200, 243, 29, 0.55);
+            box-shadow: 0 0 0 2px rgba(200, 243, 29, 0.22), 0 0 14px rgba(200, 243, 29, 0.12);
+        }
+        .controls-panel #focusModeButton,
+        .controls-panel #minimizeHudButton,
+        .controls-panel #settingsButton {
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            color: rgba(229, 231, 235, 0.6);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+        }
+        .controls-panel #focusModeButton:hover,
+        .controls-panel #minimizeHudButton:hover,
+        .controls-panel #settingsButton:hover {
+            color: #F8FAFC;
+            border-color: rgba(200, 243, 29, 0.4);
+            background: rgba(200, 243, 29, 0.08);
+        }
+        #connectButton {
+            background: linear-gradient(180deg, #d4ff2e, #a8d312);
+            border: 1px solid rgba(234, 255, 175, 0.75);
+            border-radius: 12px;
+            color: #0a1200;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            box-shadow: 0 4px 16px rgba(200, 243, 29, 0.32), 0 0 20px rgba(200, 243, 29, 0.22);
+            cursor: pointer;
+            transition: background 120ms ease, box-shadow 120ms ease;
+        }
+        #connectButton:hover {
+            background: linear-gradient(180deg, #e2ff55, #b5e21c);
+            box-shadow: 0 6px 20px rgba(200, 243, 29, 0.4), 0 0 26px rgba(200, 243, 29, 0.28);
+        }
+        #authCard {
+            background: rgba(6, 10, 14, 0.5);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 12px;
+        }
+        #authCard > div:first-of-type {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #c8f31d;
+        }
+        #authRequestCodeButton,
+        #authSignOutButton {
+            background: transparent;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            border-radius: 10px;
+            color: rgba(229, 231, 235, 0.75);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+        }
+        #authRequestCodeButton:hover,
+        #authSignOutButton:hover {
+            color: #F8FAFC;
+            border-color: rgba(200, 243, 29, 0.4);
+            background: rgba(200, 243, 29, 0.08);
+        }
+        #authVerifyCodeButton {
+            background: linear-gradient(180deg, #d4ff2e, #a8d312);
+            border: 1px solid rgba(234, 255, 175, 0.75);
+            border-radius: 10px;
+            color: #0a1200;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+        }
+        #authVerifyCodeButton:hover {
+            background: linear-gradient(180deg, #e2ff55, #b5e21c);
+        }
+        #sendChatButton {
+            background: rgba(200, 243, 29, 0.08);
+            border: 1px solid rgba(200, 243, 29, 0.4);
+            border-radius: 12px;
+            color: #dfff73;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background 120ms ease, border-color 120ms ease;
+        }
+        #sendChatButton:hover {
+            background: rgba(200, 243, 29, 0.16);
+            border-color: rgba(200, 243, 29, 0.6);
+        }
+        .controls-panel #controls {
+            border-top: 1px solid rgba(200, 243, 29, 0.14);
+            padding-top: 12px;
+        }
+        .controls-panel h3 {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: rgba(200, 243, 29, 0.75);
+        }
+        .controls-panel details {
+            border-top: 1px solid rgba(148, 163, 184, 0.14);
+            padding-top: 10px;
+        }
+        .controls-panel details summary {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: rgba(229, 231, 235, 0.5);
+        }
+        .controls-panel details summary:hover {
+            color: #dfff73;
+        }
+        .controls-panel #log {
+            background: rgba(6, 10, 14, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 10px;
         }
         .overlay-focus #killFeed,
         .overlay-focus #chatDisplay,

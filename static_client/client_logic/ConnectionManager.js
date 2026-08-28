@@ -626,6 +626,12 @@ export function createConnectionManager(getCtx) {
             loadSettings();
             initRenderAssetCache();
 
+            // Join succeeded — close the join/menu panel the same way the
+            // Hide button does (reopenable via the Menu toggle).
+            if (typeof currentCtx.onJoinSuccess === 'function') {
+                currentCtx.onJoinSuccess();
+            }
+
             // (#30) Reset reconnect state on successful connection so the
             // next disconnect starts with a clean attempt counter.
             if (typeof currentCtx.resetReconnectState === 'function') {

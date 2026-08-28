@@ -5092,6 +5092,10 @@
                 resetReconnectState,
                 // Delegate from ConnectionManager.resetConnectionUI -> client.html resetConnectionUI
                 resetConnectionUIImpl: resetConnectionUI,
+                // Auto-close the join/menu panel once the data channel opens;
+                // it stays reopenable via the Menu toggle. Failed joins never
+                // reach this hook, so errors remain visible in the panel.
+                onJoinSuccess: () => setControlsPanelHidden(true),
             }))
         );
         if (!connectionManager) {
