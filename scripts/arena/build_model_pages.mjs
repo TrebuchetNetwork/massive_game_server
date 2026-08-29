@@ -517,6 +517,15 @@ function chrome({ title, description, active }) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>${esc(title)}</title>
     <meta name="description" content="${esc(description)}">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Model Arena // selfware.design">
+    <meta property="og:title" content="${esc(title)}">
+    <meta property="og:description" content="${esc(description)}">
+    <meta property="og:image" content="https://space.selfware.design/og-card.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="https://space.selfware.design/og-card.png">
     <link rel="stylesheet" href="models.css">
 </head>
 <body>
