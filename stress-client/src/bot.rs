@@ -31,6 +31,8 @@ const GAME_PROTOCOL_VERSION: u32 = 1;
 #[derive(Debug, Serialize, Deserialize)]
 struct SignalingMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
+    protocol_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     sdp: Option<RTCSessionDescription>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ice: Option<IceCandidateJson>,
@@ -195,6 +197,7 @@ pub async fn run_bot(
                                 username_fragment: init.username_fragment,
                             };
                             let msg = SignalingMessage {
+                                protocol_version: Some(GAME_PROTOCOL_VERSION),
                                 sdp: None,
                                 ice: Some(ice_json),
                             };
@@ -241,6 +244,7 @@ pub async fn run_bot(
     peer_connection.set_local_description(offer.clone()).await?;
 
     let offer_msg = SignalingMessage {
+        protocol_version: Some(GAME_PROTOCOL_VERSION),
         sdp: Some(offer),
         ice: None,
     };

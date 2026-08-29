@@ -157,6 +157,29 @@ Run the full backend + frontend scale suite:
 
 Results are written to `artifacts/scale/`.
 
+### Measured concurrent-client capacity (2026-08-29)
+
+Load-tested with the Rust `stress-client` harness (real WebRTC data-channel
+clients, ramped at 2 clients/sec, ~45s full-concurrency hold per stage) against
+a scratch server (`webrtc` 0.17.2, `MGS_MAX_WS_CONNECTIONS_PER_IP=0` to bypass
+the per-IP handshake cap — required for any single-IP load test):
+
+| Concurrent clients | Connection success | DC-open p50 / p95 / max | Game tick at full hold |
+|---|---|---|---|
+| 100 | 100/100 (100%) | 15ms / 26ms / 237ms | ~17/s |
+| 200 | 200/200 (100%) | 16ms / 23ms / 224ms | ~10/s |
+| 300 | 300/300 (100%) | 17ms / 31ms / 230ms | ~7-9/s |
+| 400 | 400/400 (100%) | 18ms / 221ms / 1017ms | ~8/s |
+
+So the server is **tested to 400 concurrent WebRTC clients** for connection
+establishment and session stability (400 is also the design target;
+"400+" beyond that is untested). The historical 60-150s connection-establishment
+tail seen with `webrtc` 0.11 at 120+ clients is gone in 0.17.2 (worst DC-open
+across 400 clients: ~1s; zero 30s timeouts). Known bottleneck: the game tick
+degrades well below the 60/s target as player count grows (~8/s at 400 players
+while using only ~4 of 224 CPU cores), so tick-rate scaling — not connection
+establishment — is now the priority optimization target.
+
 ## UI Validation
 
 Run a full UI validation pass (surface audit screenshots + headless connect/runtime checks):

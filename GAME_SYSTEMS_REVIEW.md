@@ -3,7 +3,7 @@
 **Date:** 2026-02-16  
 **Reviewer:** AI Systems Analyst  
 **Scope:** AI, Physics, Combat Systems  
-**Player Capacity:** 400+ concurrent players/bots
+**Player Capacity:** 400 concurrent players/bots (design target; load-tested to 400 concurrent WebRTC clients with 100% connection success on 2026-08-29 — see README "Scale Validation". Game tick degrades to ~8/s at 400 players, so gameplay quality at that scale is limited by tick-rate scaling, not connectivity)
 
 ---
 
@@ -428,4 +428,4 @@ The game server demonstrates solid architectural foundations with good use of Ru
 - Gameplay: D+ (4/10)
 - Security: C (5/10)
 
-The server can handle 400+ players technically, but gameplay quality degrades significantly without proper collision detection and weapon balance.
+The server can handle 400 concurrent players technically (load-tested 2026-08-29: 400/400 clients connected and completed), but gameplay quality degrades significantly without proper collision detection and weapon balance — and the game tick drops to ~8/s at 400 players, well below the 60/s target.
