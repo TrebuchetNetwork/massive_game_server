@@ -9,6 +9,7 @@ use crate::network::connection_manager::{
 };
 use crate::operational::auth::AuthService;
 use crate::operational::monitoring::metrics;
+use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use std::{
     net::IpAddr,
@@ -24,6 +25,7 @@ use webrtc::{
     ice_transport::{ice_candidate::RTCIceCandidate, ice_candidate::RTCIceCandidateInit},
     peer_connection::{
         configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
+        RTCPeerConnection,
     },
 };
 
@@ -56,6 +58,33 @@ use super::{
 
 use super::rate_limiting::ws_keepalive_interval;
 
+/// Per-connection signaling outbox channel types, shared by the extracted
+/// connection phases below.
+type SignalingOutboxTx = mpsc::Sender<Result<Message, warp::Error>>;
+type SignalingOutboxRx = mpsc::Receiver<Result<Message, warp::Error>>;
+
+/// Shared state threaded through the phases of [`handle_signaling_connection`].
+///
+/// Grouping the per-connection dependencies into one struct keeps each
+/// extracted phase's signature small, mirroring the decomposition used by
+/// `server/instance.rs`.
+struct ConnectionPhaseCtx {
+    peer_id_str: String,
+    signaling_peers: SignalingPeers,
+    player_manager: PlayerManagerRef,
+    data_channels_map: DataChannelsMap,
+    client_states_map: ClientStatesMap,
+    chat_messages_queue: ChatMessagesQueue,
+    config: Arc<ServerConfig>,
+    player_aois: PlayerAoIs,
+    server_instance: ServerInstanceRef,
+    auth_service: AuthService,
+    auth_user_id: Option<String>,
+    requested_team_id: Option<u8>,
+    requested_username: Option<String>,
+    is_mobile: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_signaling_connection(
     ws: WebSocket,
@@ -84,6 +113,60 @@ pub async fn handle_signaling_connection(
     _ws_connection_permit: crate::routes::ws_signaling::WsConnectionPermit,
 ) {
     let _ip_connection_guard = ip_connection_guard;
+    let ctx = ConnectionPhaseCtx {
+        peer_id_str,
+        signaling_peers,
+        player_manager,
+        data_channels_map,
+        client_states_map,
+        chat_messages_queue,
+        config,
+        player_aois,
+        server_instance,
+        auth_service,
+        auth_user_id,
+        requested_team_id,
+        requested_username,
+        is_mobile,
+    };
+
+    let Some(ws) = authenticate_and_join(ws, &ctx, remote_ip).await else {
+        return;
+    };
+    let (ws_tx, mut ws_rx, client_signaling_tx, client_signaling_rx) =
+        establish_signaling_channel(ws, &ctx);
+    let Some(peer_connection) = create_peer_connection(&ctx, &client_signaling_tx).await else {
+        return;
+    };
+
+    // Safety net: if this task is cancelled/aborted, the drop guard ensures
+    // the peer connection is closed to avoid resource leaks.
+    let pc_drop_guard =
+        PeerConnectionDropGuard::new(Arc::clone(&peer_connection), ctx.peer_id_str.clone());
+    let cleanup_once = Arc::new(AtomicBool::new(false));
+
+    spawn_signaling_forwarder(&ctx, ws_tx, client_signaling_rx, &cleanup_once);
+
+    register_ice_candidate_handler(&peer_connection, &client_signaling_tx, &ctx.peer_id_str);
+
+    register_peer_state_change_handler(&ctx, &peer_connection, &cleanup_once);
+
+    register_data_channel_handler(&ctx, &peer_connection, &cleanup_once);
+
+    run_message_loop(&mut ws_rx, &peer_connection, &client_signaling_tx, &ctx.peer_id_str).await;
+    teardown_connection(&ctx, &peer_connection, &cleanup_once, pc_drop_guard).await;
+}
+
+/// Admission phase: registers the peer with the connection manager, enforces
+/// the global join and per-IP rate limits, and records the join enqueue.
+/// Returns the WebSocket when the connection is admitted; `None` means the
+/// connection was throttled and the caller must return immediately.
+async fn authenticate_and_join(
+    ws: WebSocket,
+    ctx: &ConnectionPhaseCtx,
+    remote_ip: Option<IpAddr>,
+) -> Option<WebSocket> {
+    let peer_id_str = &ctx.peer_id_str;
     shared_connection_manager().upsert(ConnectionInfo::new(
         peer_id_str.clone(),
         TransportKind::WebRtc,
@@ -99,8 +182,8 @@ pub async fn handle_signaling_connection(
             signaling_error_json("join_rate_limited", JOIN_RATE_LIMIT_THROTTLED_MESSAGE);
         let _ = throttled_ws_tx.send(Message::text(throttled_payload)).await;
         let _ = throttled_ws_tx.send(Message::close()).await;
-        let _ = shared_connection_manager().remove(&peer_id_str);
-        return;
+        let _ = shared_connection_manager().remove(peer_id_str);
+        return None;
     }
     if let Some(client_ip) = remote_ip {
         if !try_acquire_ip_rate_limit_token(&client_ip) {
@@ -116,23 +199,39 @@ pub async fn handle_signaling_connection(
             .to_string();
             let _ = throttled_ws_tx.send(Message::text(throttled_payload)).await;
             let _ = throttled_ws_tx.send(Message::close()).await;
-            let _ = shared_connection_manager().remove(&peer_id_str);
-            return;
+            let _ = shared_connection_manager().remove(peer_id_str);
+            return None;
         }
     }
 
     info!("[{}]: New WebSocket connection for signaling.", peer_id_str);
-    server_instance.note_join_enqueued(&peer_id_str);
+    ctx.server_instance.note_join_enqueued(peer_id_str);
+    Some(ws)
+}
 
-    let (mut ws_tx, mut ws_rx) = ws.split();
-    let (client_signaling_tx, mut client_signaling_rx) = mpsc::channel(SIGNALING_OUTBOX_CAPACITY);
+/// Channel-setup phase: splits the WebSocket, creates the per-connection
+/// signaling outbox, registers it in `signaling_peers`, and spawns the
+/// keepalive task when configured.
+fn establish_signaling_channel(
+    ws: WebSocket,
+    ctx: &ConnectionPhaseCtx,
+) -> (
+    SplitSink<WebSocket, Message>,
+    SplitStream<WebSocket>,
+    SignalingOutboxTx,
+    SignalingOutboxRx,
+) {
+    let peer_id_str = &ctx.peer_id_str;
+    let (ws_tx, ws_rx) = ws.split();
+    let (client_signaling_tx, client_signaling_rx) = mpsc::channel(SIGNALING_OUTBOX_CAPACITY);
 
-    signaling_peers.insert(peer_id_str.clone(), client_signaling_tx.clone());
-    metrics::set_ws_connections_active(signaling_peers.len());
+    ctx.signaling_peers
+        .insert(peer_id_str.clone(), client_signaling_tx.clone());
+    metrics::set_ws_connections_active(ctx.signaling_peers.len());
 
     if let Some(keepalive_interval) = ws_keepalive_interval() {
         let keepalive_sender = client_signaling_tx.clone();
-        let keepalive_peer_id = peer_id_str.clone();
+        let keepalive_peer_id = peer_id_str.to_owned();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(keepalive_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -160,6 +259,18 @@ pub async fn handle_signaling_connection(
         });
     }
 
+    (ws_tx, ws_rx, client_signaling_tx, client_signaling_rx)
+}
+
+/// Peer-connection phase: initializes the shared WebRTC API, sends the ICE
+/// server configuration to the client, and creates the RTCPeerConnection.
+/// Returns `None` (after running connection cleanup) when setup fails and the
+/// caller must return immediately.
+async fn create_peer_connection(
+    ctx: &ConnectionPhaseCtx,
+    client_signaling_tx: &SignalingOutboxTx,
+) -> Option<Arc<RTCPeerConnection>> {
+    let peer_id_str = &ctx.peer_id_str;
     let api = match shared_webrtc_api() {
         Ok(api) => api,
         Err(e) => {
@@ -168,15 +279,15 @@ pub async fn handle_signaling_connection(
                 peer_id_str, e
             );
             cleanup_connection(
-                &peer_id_str,
-                &signaling_peers,
-                &player_manager,
-                &data_channels_map,
-                &client_states_map,
-                &player_aois,
-                &auth_service,
+                peer_id_str,
+                &ctx.signaling_peers,
+                &ctx.player_manager,
+                &ctx.data_channels_map,
+                &ctx.client_states_map,
+                &ctx.player_aois,
+                &ctx.auth_service,
             );
-            return;
+            return None;
         }
     };
     let ice_servers = build_ice_servers();
@@ -188,7 +299,7 @@ pub async fn handle_signaling_connection(
 
     // Send ICE server configuration (including TURN with credentials) to the
     // client so it can configure its RTCPeerConnection before creating an offer.
-    let client_ice_config = build_client_ice_config(&peer_id_str);
+    let client_ice_config = build_client_ice_config(peer_id_str);
     if !client_ice_config.is_empty() {
         let turn_count = client_ice_config
             .iter()
@@ -201,9 +312,9 @@ pub async fn handle_signaling_connection(
         })
         .to_string();
         if !try_queue_signaling_message(
-            &client_signaling_tx,
+            client_signaling_tx,
             Ok(Message::text(ice_config_msg)),
-            &peer_id_str,
+            peer_id_str,
             "ice_servers",
         ) {
             warn!(
@@ -225,37 +336,43 @@ pub async fn handle_signaling_connection(
         ..Default::default()
     };
 
-    let peer_connection = match api.new_peer_connection(rtc_config).await {
-        Ok(pc) => Arc::new(pc),
+    match api.new_peer_connection(rtc_config).await {
+        Ok(pc) => Some(Arc::new(pc)),
         Err(e) => {
             error!("[{}]: Failed to create PeerConnection: {}", peer_id_str, e);
             cleanup_connection(
-                &peer_id_str,
-                &signaling_peers,
-                &player_manager,
-                &data_channels_map,
-                &client_states_map,
-                &player_aois,
-                &auth_service,
+                peer_id_str,
+                &ctx.signaling_peers,
+                &ctx.player_manager,
+                &ctx.data_channels_map,
+                &ctx.client_states_map,
+                &ctx.player_aois,
+                &ctx.auth_service,
             );
-            return;
+            None
         }
-    };
+    }
+}
 
-    // Safety net: if this task is cancelled/aborted, the drop guard ensures
-    // the peer connection is closed to avoid resource leaks.
-    let mut pc_drop_guard =
-        PeerConnectionDropGuard::new(Arc::clone(&peer_connection), peer_id_str.clone());
-    let cleanup_once = Arc::new(AtomicBool::new(false));
+// Need Instant for ClientState construction in on_open callback
+use std::time::Instant;
 
-    let peer_id_fwd = peer_id_str.clone();
-    let signaling_peers_for_forwarder = signaling_peers.clone();
-    let player_manager_for_forwarder = player_manager.clone();
-    let data_channels_for_forwarder = data_channels_map.clone();
-    let client_states_for_forwarder = client_states_map.clone();
-    let player_aois_for_forwarder = player_aois.clone();
-    let auth_service_for_forwarder = auth_service.clone();
-    let cleanup_once_for_forwarder = Arc::clone(&cleanup_once);
+/// Forwarder phase: drains the per-connection signaling outbox onto the
+/// WebSocket, running connection cleanup (once) when the socket fails.
+fn spawn_signaling_forwarder(
+    ctx: &ConnectionPhaseCtx,
+    mut ws_tx: SplitSink<WebSocket, Message>,
+    mut client_signaling_rx: SignalingOutboxRx,
+    cleanup_once: &Arc<AtomicBool>,
+) {
+    let peer_id_fwd = ctx.peer_id_str.clone();
+    let signaling_peers_for_forwarder = ctx.signaling_peers.clone();
+    let player_manager_for_forwarder = ctx.player_manager.clone();
+    let data_channels_for_forwarder = ctx.data_channels_map.clone();
+    let client_states_for_forwarder = ctx.client_states_map.clone();
+    let player_aois_for_forwarder = ctx.player_aois.clone();
+    let auth_service_for_forwarder = ctx.auth_service.clone();
+    let cleanup_once_for_forwarder = Arc::clone(cleanup_once);
     tokio::spawn(async move {
         while let Some(message_result) = client_signaling_rx.recv().await {
             match message_result {
@@ -302,10 +419,18 @@ pub async fn handle_signaling_connection(
         }
         info!("[{}]: Signaling forwarder task ended.", peer_id_fwd);
     });
+}
 
-    let pc_for_ice = Arc::clone(&peer_connection);
+/// Registers the ICE candidate handler: forwards every locally gathered ICE
+/// candidate to the client through the signaling outbox.
+fn register_ice_candidate_handler(
+    peer_connection: &Arc<RTCPeerConnection>,
+    client_signaling_tx: &SignalingOutboxTx,
+    peer_id_str: &str,
+) {
+    let pc_for_ice = Arc::clone(peer_connection);
     let ice_sender_clone = client_signaling_tx.clone();
-    let peer_id_for_ice = peer_id_str.clone();
+    let peer_id_for_ice = peer_id_str.to_owned();
     pc_for_ice.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
         let ice_sender = ice_sender_clone.clone();
         let pid_ice = peer_id_for_ice.clone();
@@ -351,16 +476,25 @@ pub async fn handle_signaling_connection(
             }
         })
     }));
+}
 
-    let pc_for_state_change = Arc::clone(&peer_connection);
-    let peer_id_for_state_change = peer_id_str.clone();
-    let sp_clone_sc = signaling_peers.clone();
-    let pm_clone_sc = player_manager.clone();
-    let dc_map_clone_sc = data_channels_map.clone();
-    let cs_map_clone_sc = client_states_map.clone();
-    let pa_map_clone_sc = player_aois.clone();
-    let auth_service_clone_sc = auth_service.clone();
-    let cleanup_once_sc = Arc::clone(&cleanup_once);
+/// Registers the peer-connection state handler: immediate cleanup on
+/// failed/closed, and a grace-period delayed cleanup on disconnected so ICE
+/// restart can recover the session.
+fn register_peer_state_change_handler(
+    ctx: &ConnectionPhaseCtx,
+    peer_connection: &Arc<RTCPeerConnection>,
+    cleanup_once: &Arc<AtomicBool>,
+) {
+    let pc_for_state_change = Arc::clone(peer_connection);
+    let peer_id_for_state_change = ctx.peer_id_str.clone();
+    let sp_clone_sc = ctx.signaling_peers.clone();
+    let pm_clone_sc = ctx.player_manager.clone();
+    let dc_map_clone_sc = ctx.data_channels_map.clone();
+    let cs_map_clone_sc = ctx.client_states_map.clone();
+    let pa_map_clone_sc = ctx.player_aois.clone();
+    let auth_service_clone_sc = ctx.auth_service.clone();
+    let cleanup_once_sc = Arc::clone(cleanup_once);
     let pc_for_state_change_cb = Arc::clone(&pc_for_state_change);
 
     pc_for_state_change.on_peer_connection_state_change(Box::new(
@@ -438,20 +572,32 @@ pub async fn handle_signaling_connection(
             Box::pin(async {})
         },
     ));
+}
 
-    let pc_for_datachannel_event = Arc::clone(&peer_connection);
-    let peer_id_for_dc_event = peer_id_str.clone();
-    let player_manager_for_dc_event = player_manager.clone();
-    let data_channels_map_for_dc_event = data_channels_map.clone();
-    let client_states_map_for_dc_event = client_states_map.clone();
-    let signaling_peers_for_dc_event = signaling_peers.clone();
-    let player_aois_for_dc_event = player_aois.clone();
-    let chat_messages_queue_for_dc_event = chat_messages_queue.clone();
-    let config_for_dc_event = config.clone();
-    let server_instance_for_dc_event = server_instance.clone(); // Clone server instance for DC event
-    let auth_service_for_dc_event = auth_service.clone();
-    let auth_user_id_for_dc_event = auth_user_id.clone();
-    let cleanup_once_for_dc_event = Arc::clone(&cleanup_once);
+/// Data-channel phase: registers the on_data_channel callback and, for each
+/// incoming data channel, its open/message/close/error handlers (player join
+/// and spawn, input/chat handling, and disconnect cleanup).
+fn register_data_channel_handler(
+    ctx: &ConnectionPhaseCtx,
+    peer_connection: &Arc<RTCPeerConnection>,
+    cleanup_once: &Arc<AtomicBool>,
+) {
+    let pc_for_datachannel_event = Arc::clone(peer_connection);
+    let peer_id_for_dc_event = ctx.peer_id_str.clone();
+    let player_manager_for_dc_event = ctx.player_manager.clone();
+    let data_channels_map_for_dc_event = ctx.data_channels_map.clone();
+    let client_states_map_for_dc_event = ctx.client_states_map.clone();
+    let signaling_peers_for_dc_event = ctx.signaling_peers.clone();
+    let player_aois_for_dc_event = ctx.player_aois.clone();
+    let chat_messages_queue_for_dc_event = ctx.chat_messages_queue.clone();
+    let config_for_dc_event = ctx.config.clone();
+    let server_instance_for_dc_event = ctx.server_instance.clone(); // Clone server instance for DC event
+    let auth_service_for_dc_event = ctx.auth_service.clone();
+    let auth_user_id_for_dc_event = ctx.auth_user_id.clone();
+    let cleanup_once_for_dc_event = Arc::clone(cleanup_once);
+    let requested_team_id = ctx.requested_team_id;
+    let requested_username = ctx.requested_username.clone();
+    let is_mobile = ctx.is_mobile;
 
     pc_for_datachannel_event.on_data_channel(Box::new(move |dc: Arc<RTCDataChannel>| {
         let dc_label_owned = dc.label().to_owned();
@@ -962,10 +1108,20 @@ pub async fn handle_signaling_connection(
 
         Box::pin(async move {})
     }));
+}
 
-    let pc_signal_receiver = Arc::clone(&peer_connection);
+/// Message-loop phase: processes incoming WebSocket signaling messages (SDP
+/// offer/answer, ICE candidates, ping/pong) until the socket closes, errors,
+/// or a protocol violation forces a break.
+async fn run_message_loop(
+    ws_rx: &mut SplitStream<WebSocket>,
+    peer_connection: &Arc<RTCPeerConnection>,
+    client_signaling_tx: &SignalingOutboxTx,
+    peer_id_str: &str,
+) {
+    let pc_signal_receiver = Arc::clone(peer_connection);
     let ws_signal_sender_clone = client_signaling_tx.clone();
-    let current_peer_id_ws = peer_id_str.clone();
+    let current_peer_id_ws = peer_id_str.to_owned();
     let ice_rate_limiter = ice_candidate_rate_limit_config().map(|cfg| {
         Arc::new(AsyncMutex::new(InputRateLimiter::new(
             cfg.per_sec,
@@ -1146,20 +1302,31 @@ pub async fn handle_signaling_connection(
             }
         }
     }
+}
 
+/// Teardown phase: runs the once-only connection cleanup, defuses the peer
+/// connection drop guard, drops interpolation tracking state, and closes the
+/// peer connection explicitly.
+async fn teardown_connection(
+    ctx: &ConnectionPhaseCtx,
+    peer_connection: &Arc<RTCPeerConnection>,
+    cleanup_once: &Arc<AtomicBool>,
+    mut pc_drop_guard: PeerConnectionDropGuard,
+) {
+    let peer_id_str = &ctx.peer_id_str;
     info!(
         "[{}]: WebSocket connection handler for signaling ending.",
         peer_id_str
     );
     if begin_cleanup_once(cleanup_once.as_ref()) {
         cleanup_connection(
-            &peer_id_str,
-            &signaling_peers,
-            &player_manager,
-            &data_channels_map,
-            &client_states_map,
-            &player_aois,
-            &auth_service,
+            peer_id_str,
+            &ctx.signaling_peers,
+            &ctx.player_manager,
+            &ctx.data_channels_map,
+            &ctx.client_states_map,
+            &ctx.player_aois,
+            &ctx.auth_service,
         );
     } else {
         debug!(
@@ -1170,11 +1337,8 @@ pub async fn handle_signaling_connection(
     // Defuse the drop guard since we are closing the connection explicitly.
     pc_drop_guard.defuse();
     // Clean up interpolation history to prevent memory leak after disconnect.
-    server_instance.cleanup_player_tracking_state(&peer_id_str);
+    ctx.server_instance.cleanup_player_tracking_state(peer_id_str);
     if let Err(e) = peer_connection.close().await {
         error!("[{}]: Error closing PeerConnection: {}", peer_id_str, e);
     }
 }
-
-// Need Instant for ClientState construction in on_open callback
-use std::time::Instant;
