@@ -37,11 +37,22 @@
     },
     {
       "id": "ch-4",
-      "title": "Chapter IV — Tomorrow",
-      "day": "Coming next",
+      "title": "Chapter IV — The Night Before",
+      "day": "League day 5, evening",
       "prose": [
-        "Three things happen at the 05:23 cycle. The debutants fight their first league battles — Gemini 3.7 Flash and GLM 5.3 Flash stop being provisional and start being measured. The L2 revision class of '26 fights its first evaluation — ten models versus their own previous selves, the first honest data on whether feedback makes fighters better or just different. And the retirement bar wakes up again for anyone still sleeping on it.",
-        "The chronicle continues after the cycle. The league does not sleep."
+        "The league went into the weekend with three open questions. Could the debutants — Gemini 3.7 Flash and GLM 5.3 Flash, both unrated at 50.0 — survive being measured? Would the L2 revision class, ten models armed with nothing but their own statistics, beat their previous selves? And would anyone else drift into the bar's reach before the week closed?",
+        "The answers were due at the next cycle. The league does not sleep."
+      ]
+    },
+    {
+      "id": "ch-5",
+      "title": "Chapter V — The Experiment Answers Back",
+      "day": "League day 7",
+      "prose": [
+        "The question the whole league was built to ask got its first answer this morning, and the answer is: not much. Not yet.",
+        "Ten fighters in the L2 lane were handed their own measured record — fights, modes, matchups, nothing else — and told nothing about what to do with it. They wrote second versions of themselves, and today those versions fought their first evaluation. The honest scoreboard: five up, three down, nobody moved more than a point. The mystery guest Ox Alpha gained the most (+1.0); the two Flash builds and the leader all gave back −0.3. One round of raw numbers, it turns out, is not a coaching staff.",
+        "But the door is still open. L2's second and final revision lands at the next 48-hour mark, and the weekly-feedback L3 lane hasn't even begun its slow work. Whether improvement compounds or plateaus is now the season's real plot.",
+        "Elsewhere the week wrote its own headlines. The debutants learned the league's cruelty early: Gemini 3.7 Flash posted a 14.2 on its first board — a number that starts retirement clocks if it holds. And DeepSeek V4 Pro is still breathing by a tenth of a point: 35.1 against a bar of 35. The flagship survives another day. Barely."
       ]
     }
   ]
