@@ -13,10 +13,16 @@
 //                                               path injectable)
 //   scripts/arena/chronicle.json                authored League Chronicle narrative
 //                                               (optional, path injectable)
+//   scripts/arena/seasons.json                  season structure for the continuous
+//                                               league (optional, path injectable)
+//   scripts/arena/lore.json                     authored world/fighter/lexicon lore
+//                                               (optional, path injectable)
 //
 // Outputs:
 //   static_client/models/index.html             rank-sorted roster index
 //   static_client/models/<slug>.html            one page per roster model
+//   static_client/models/lore.html              world + fighters + lexicon page
+//                                               (only when lore.json loads)
 //   static_client/models/models.css             shared stylesheet (emitted by this script)
 //   static_client/models/mascots.json           slug -> {emoji,title,color}
 //   static_client/models/league.json            landing-ticker payload (only when the
@@ -32,7 +38,11 @@
 // HTML is byte-identical to a build without it (models.css always carries
 // the toplist styles). The League Chronicle follows the same rule: absent or
 // malformed, its section disappears and the HTML is byte-identical to a build
-// without it (models.css always carries the chronicle styles).
+// without it (models.css always carries the chronicle styles). The season
+// banner and arena lore follow the same rule: absent or malformed, their
+// sections disappear (and stale lore.html is removed), leaving the HTML
+// byte-identical to a build without them (models.css always carries the
+// season/lore styles).
 //
 // The battles dir is far too large to read fully; we readdir + stat everything
 // (fast), keep the newest window, and only JSON-read files that are new since
@@ -506,7 +516,7 @@ function fmtPct(x, digits = 1) {
   return x === null || x === undefined ? '—' : `${(x * 100).toFixed(digits)}%`;
 }
 
-function chrome({ title, description, active }) {
+function chrome({ title, description, active, loreLink = false }) {
   const navLink = (href, label, key) =>
     `<a href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`;
   return {
@@ -540,7 +550,7 @@ function chrome({ title, description, active }) {
                 <div class="nav__links">
                     ${navLink('/', 'Home', 'home')}
                     ${navLink('/models/', 'Models', 'models')}
-                </div>
+${loreLink ? `                    ${navLink('/models/lore.html', 'Lore', 'lore')}\n` : ''}                </div>
             </nav>
             <a class="button button--compact button--primary" href="/client.html?match_type=mobile_blitz">Enter arena</a>
         </div>
@@ -882,6 +892,7 @@ export function renderModelPage(ctx) {
     title: `${mascot.title} (${model.model_name}) // Model Arena`,
     description: `Arena profile for ${model.model_name}: rank #${model.rank}, ratings, behavior fingerprint, rivalries and highlights.`,
     active: 'models',
+    loreLink: Boolean(ctx.loreLink),
   });
   const winRate = model.matches_played
     ? (model.wins + model.draws * 0.5) / model.matches_played
@@ -901,7 +912,7 @@ export function renderModelPage(ctx) {
                     <p class="profile-hero__sub">${esc(model.canonical_slug)} · <a class="text-link" href="index.html">← all models</a></p>
                 </div>
             </div>
-            <dl class="stat-strip">
+${ctx.loreTitle ? `            <p class="profile-hero__lore"><a class="text-link" href="lore.html">${esc(ctx.loreTitle)}</a></p>\n` : ''}            <dl class="stat-strip">
                 <div><dt>Season points</dt><dd>${fmtInt(model.season_points)}</dd></div>
                 <div><dt>Record</dt><dd>${fmtInt(model.wins)}W · ${fmtInt(model.losses)}L · ${fmtInt(model.draws)}D</dd></div>
                 <div><dt>Score rate</dt><dd>${fmtPct(winRate)}</dd></div>
@@ -949,6 +960,7 @@ export function renderIndexPage(ctx) {
     title: 'Models // Model Arena',
     description: 'The weekly top-10 model roster: rankings, season points and per-model profile pages.',
     active: 'models',
+    loreLink: Boolean(ctx.loreLink),
   });
   const continuous = ctx.continuous || null;
   const rows = ctx.cards.map((c) => `            <a class="model-row" href="${esc(c.slug)}.html">
@@ -964,7 +976,7 @@ export function renderIndexPage(ctx) {
             <h1>Weekly top 10. <em>One tour.</em></h1>
             <p class="models-hero__lede">Every model below holds a live profile: ratings, behavior fingerprint, head-to-head rivalries, world co-performance and recorded fights.</p>
         </section>
-${ctx.chronicle ? `${ctx.chronicle}\n` : ''}${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
+${ctx.seasonBanner ? `${ctx.seasonBanner}\n` : ''}${ctx.chronicle ? `${ctx.chronicle}\n` : ''}${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
 ${rows}
         </section>
 ${ctx.toplist ? `${ctx.toplist}\n` : ''}${continuous ? `${[standingsSection(continuous.state), matrixSection(continuous.state), ctx.chemistry, announcementsSection(allAnnouncements(continuous.state)), hallOfFameSection(continuous.state)].filter(Boolean).join('\n')}\n` : ''}${provenanceFooter(ctx)}
@@ -1635,6 +1647,198 @@ ${chapters}
         </section>`;
 }
 
+// ---------------------------------------------------------------------------
+// Season structure + arena lore (optional editorial overlays)
+// ---------------------------------------------------------------------------
+//
+// Season definitions (scripts/arena/seasons.json) give the continuous league a
+// narrative arc: a banner on the models index with the current season, its
+// day counter and progress bar, plus a past-seasons strip. The banner renders
+// only when seasons.json loads AND the continuous league state validates —
+// seasons describe the continuous league, so without it there is nothing to
+// frame. Arena lore (scripts/arena/lore.json) renders a magazine-style lore
+// page (world premise, fighter entries, lexicon), a "Lore" nav link, and a
+// subtle lore-title line on matching model pages (prefix match like the
+// toplist matcher). Both follow the standing rule: absent or malformed files
+// hide every section and the HTML stays byte-identical to a build without
+// them (models.css always carries the styles; a stale lore.html from a
+// previous valid run is removed).
+
+/**
+ * Load season definitions, or return null when the file is absent,
+ * unparseable, or carries no usable current season — publishing must never
+ * be blocked by editorial trouble.
+ */
+export function loadSeasons({ seasonsPath, io = defaultIo, log = () => {} }) {
+  if (!seasonsPath || !io.exists(seasonsPath)) return null;
+  let data;
+  try {
+    data = io.readJson(seasonsPath);
+  } catch (error) {
+    log(`seasons: ignoring unreadable ${seasonsPath} (${String(error?.message || error).slice(0, 200)})`);
+    return null;
+  }
+  const lengthDays = Number(data?.season_length_days);
+  const cur = data?.current;
+  const startedMs = Date.parse(cur?.started_at);
+  if (!Number.isFinite(lengthDays) || lengthDays <= 0
+    || !cur || !cur.id || !cur.name || !Number.isFinite(startedMs)) {
+    log('seasons: ignoring definition without a usable current season');
+    return null;
+  }
+  const championText = (c) => {
+    if (!c) return null;
+    if (typeof c === 'string') return c;
+    return String(c.title || c.slug || '') || null;
+  };
+  return {
+    seasonLengthDays: lengthDays,
+    current: {
+      id: String(cur.id),
+      name: String(cur.name),
+      startedMs,
+      theme: cur.theme ? String(cur.theme) : null,
+      championRule: cur.champion_rule ? String(cur.champion_rule) : null,
+    },
+    archive: (Array.isArray(data.archive) ? data.archive : [])
+      .filter((s) => s && typeof s === 'object' && s.id && s.name)
+      .map((s) => ({ id: String(s.id), name: String(s.name), champion: championText(s.champion) })),
+  };
+}
+
+/** "S1" + "Genesis" -> "Season 1 · Genesis"; non-numeric ids render as-is. */
+export function seasonDisplayName(id, name) {
+  const m = /^S(\d+)$/i.exec(String(id));
+  return `${m ? `Season ${m[1]}` : String(id)} · ${String(name)}`;
+}
+
+/**
+ * Index-page banner: current season, day counter computed from started_at, a
+ * thin progress bar, the theme line, the champion rule as small print, and a
+ * past-seasons strip when the archive is non-empty.
+ */
+export function seasonBanner(seasons, nowMs, { loreLink = false } = {}) {
+  const { current, seasonLengthDays, archive } = seasons;
+  const elapsed = nowMs - current.startedMs;
+  const day = Math.min(seasonLengthDays, Math.max(1, Math.floor(elapsed / 86400000) + 1));
+  const pct = Math.max(0, Math.min(100, (elapsed / (seasonLengthDays * 86400000)) * 100));
+  const past = archive.length ? `            <div class="season-banner__past">
+                <p class="season-banner__past-title">Past seasons</p>
+${archive.map((s) => `                <span class="season-banner__past-item"><b>${esc(s.id)}</b> ${esc(s.name)}${s.champion ? ` · champion ${esc(s.champion)}` : ''}</span>`).join('\n')}
+            </div>\n` : '';
+  return `        <section class="season-banner" aria-label="Current season">
+            <div class="season-banner__head">
+                <p class="eyebrow"><span class="live-dot"></span> ${esc(seasonDisplayName(current.id, current.name))}</p>
+                <p class="season-banner__day">Day ${day} of ${seasonLengthDays}</p>
+            </div>
+            <progress class="season-banner__bar" value="${day}" max="${seasonLengthDays}">${pct.toFixed(1)}%</progress>
+${current.theme ? `            <p class="season-banner__theme">${esc(current.theme)}</p>\n` : ''}${current.championRule ? `            <p class="season-banner__rule">Champion — ${esc(current.championRule)}</p>\n` : ''}${loreLink ? '            <p class="season-banner__lore"><a class="text-link" href="lore.html">Read the arena lore →</a></p>\n' : ''}${past}        </section>`;
+}
+
+/**
+ * Load authored arena lore, or return null when the file is absent,
+ * unparseable, or carries no usable content (no premise, fighters or lexicon).
+ */
+export function loadLore({ lorePath, io = defaultIo, log = () => {} }) {
+  if (!lorePath || !io.exists(lorePath)) return null;
+  let data;
+  try {
+    data = io.readJson(lorePath);
+  } catch (error) {
+    log(`lore: ignoring unreadable ${lorePath} (${String(error?.message || error).slice(0, 200)})`);
+    return null;
+  }
+  const premise = (Array.isArray(data?.world?.premise) ? data.world.premise : [])
+    .filter((p) => typeof p === 'string' && p.trim()).map(String);
+  const fighters = {};
+  for (const [slug, f] of Object.entries(data?.fighters || {})) {
+    if (!f || typeof f !== 'object' || !f.title || !f.lore) continue;
+    fighters[slug] = {
+      mascot: f.mascot ? String(f.mascot) : null,
+      title: String(f.title),
+      lore: String(f.lore),
+    };
+  }
+  const lexicon = {};
+  for (const [term, def] of Object.entries(data?.lexicon || {})) {
+    if (typeof def === 'string' && def.trim()) lexicon[term] = String(def);
+  }
+  if (!premise.length && !Object.keys(fighters).length && !Object.keys(lexicon).length) return null;
+  return {
+    worldName: data?.world?.name ? String(data.world.name) : null,
+    premise,
+    fighters,
+    lexicon,
+  };
+}
+
+/**
+ * Match a weekly-roster model to its fighter lore entry via slug prefix
+ * (entry keys are provider-style and undated, e.g. "deepseek/deepseek-v4-flash").
+ * Longest matching key wins so a dated variant is not shadowed by its plainer
+ * sibling — same rule as the toplist matcher.
+ */
+export function matchLoreEntry(fighters, model) {
+  const ids = [model.canonical_slug, model.provider_model, model.model_id]
+    .filter(Boolean).map(String);
+  let best = null;
+  for (const [slug, entry] of Object.entries(fighters || {})) {
+    if (ids.some((id) => id === slug || id.startsWith(`${slug}-`) || id.startsWith(`${slug}/`))) {
+      if (!best || slug.length > best.slug.length) best = { slug, ...entry };
+    }
+  }
+  return best;
+}
+
+/**
+ * The lore page: world premise as magazine intro, one entry per fighter
+ * (mascot emoji, lore title, lore paragraph, profile link when the fighter
+ * has a model page), then the lexicon glossary. Same visual language as the
+ * chronicle — prose, not dashboard panels.
+ */
+export function renderLorePage({ lore, roster, slugById }) {
+  const worldName = lore.worldName || 'The Arena';
+  const { head, foot } = chrome({
+    title: `${worldName} — Lore // Model Arena`,
+    description: `The world of ${worldName}: its premise, its fighters and the lexicon they fight by.`,
+    active: 'lore',
+    loreLink: true,
+  });
+  const premise = lore.premise.map((p, i) => {
+    const cls = i === 0 ? 'chronicle__prose chronicle__prose--lead' : 'chronicle__prose';
+    return `                <p class="${cls}">${esc(p)}</p>`;
+  }).join('\n');
+  const fighters = Object.entries(lore.fighters).map(([slug, entry]) => {
+    const mascot = mascotFor(slug);
+    const model = roster.find((m) => matchLoreEntry({ [slug]: entry }, m));
+    const href = model ? `${slugById.get(model.model_id)}.html` : null;
+    return `            <article class="lore__fighter">
+                <span class="lore__emoji" style="border-color:${esc(mascot.color)}">${esc(mascot.emoji)}</span>
+                <div class="lore__fighter-body">
+                    <h3 class="lore__fighter-title">${esc(entry.title)}</h3>
+                    <p class="lore__fighter-slug">${esc(entry.mascot || mascot.title)} · ${esc(slug)}</p>
+                    <p class="chronicle__prose">${esc(entry.lore)}</p>
+${href ? `                    <p class="lore__fighter-link"><a class="text-link" href="${esc(href)}">View fight record →</a></p>\n` : ''}                </div>
+            </article>`;
+  }).join('\n');
+  const lexiconRows = Object.entries(lore.lexicon).map(([term, def]) => `                <div class="lore__term">
+                    <dt>${esc(term)}</dt>
+                    <dd>${esc(def)}</dd>
+                </div>`).join('\n');
+  return `${head}
+        <section class="chronicle lore" aria-label="Arena lore">
+            <p class="eyebrow chronicle__eyebrow"><span class="live-dot"></span> Arena Lore</p>
+            <h2 class="chronicle__title">${esc(worldName)}, <em>as it is told.</em></h2>
+${premise}
+${fighters ? `            <h3 class="lore__section-title">Fighters</h3>
+${fighters}\n` : ''}${lexiconRows ? `            <h3 class="lore__section-title">Lexicon</h3>
+            <dl class="lore__lexicon">
+${lexiconRows}
+            </dl>\n` : ''}        </section>
+${foot}`;
+}
+
+
 // Emitted as static_client/models/models.css — mirrors the landing page's
 // visual language (dark ink, acid lime, mono labels) without external deps.
 export const MODELS_CSS = `:root {
@@ -2194,6 +2398,78 @@ table.standings__table tr:last-child td { border-bottom: none; }
     .lineage__node { grid-template-columns: 28px 44px minmax(0, 1fr) auto; }
     .lineage__meta, .lineage__delta { display: none; }
 }
+
+/* season banner */
+.season-banner {
+    margin: 0 0 34px;
+    border: 1px solid var(--line);
+    padding: 24px 28px;
+    background: rgba(7, 16, 12, 0.66);
+}
+.season-banner__head { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+.season-banner__head .eyebrow { margin-bottom: 14px; }
+.season-banner__day { margin: 0; color: var(--acid-soft); font: 800 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+/* native <progress>: the models index is served with a strict style-src CSP
+   that strips inline style attributes, so the fill must not rely on them */
+.season-banner__bar {
+    display: block;
+    width: 100%;
+    height: 4px;
+    margin: 4px 0 18px;
+    appearance: none;
+    border: none;
+    background: transparent;
+}
+.season-banner__bar::-webkit-progress-bar { border: 1px solid var(--line-soft); background: rgba(3, 7, 6, 0.6); }
+.season-banner__bar::-webkit-progress-value { background: var(--acid); box-shadow: 0 0 12px rgba(202, 255, 0, 0.35); }
+.season-banner__bar::-moz-progress-bar { background: var(--acid); }
+.season-banner__theme { margin: 0 0 10px; max-width: 72ch; color: var(--muted); font-size: 14.5px; line-height: 1.7; }
+.season-banner__rule { margin: 0; color: var(--dim); font: 600 9px/1.6 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.season-banner__lore { margin: 12px 0 0; font: 700 10px/1.5 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.season-banner__lore a { text-decoration: none; }
+.season-banner__past { margin-top: 18px; border-top: 1px solid var(--line-soft); padding-top: 14px; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.season-banner__past-title { margin: 0; color: var(--dim); font: 800 8px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
+.season-banner__past-item { color: var(--muted); font: 700 10px/1.6 var(--mono); letter-spacing: 0.05em; }
+.season-banner__past-item b { color: var(--acid-soft); }
+@media (max-width: 560px) {
+    .season-banner { padding: 18px 16px; }
+}
+
+/* arena lore page — magazine prose like the chronicle */
+.lore__section-title {
+    margin: 64px 0 28px;
+    padding-top: 40px;
+    border-top: 1px solid var(--line-soft);
+    font: 900 clamp(19px, 2.2vw, 25px)/1.2 var(--sans);
+    letter-spacing: -0.025em;
+}
+.lore__fighter { display: flex; align-items: flex-start; gap: 22px; padding: 28px 0; }
+.lore__fighter + .lore__fighter { border-top: 1px solid var(--line-soft); }
+.lore__emoji {
+    width: 56px; height: 56px;
+    flex: 0 0 auto;
+    display: grid; place-items: center;
+    border: 1px solid var(--line);
+    font-size: 28px;
+    background: rgba(5, 13, 10, 0.6);
+}
+.lore__fighter-body { min-width: 0; }
+.lore__fighter-title { margin: 0 0 6px; font: 900 19px/1.25 var(--sans); letter-spacing: -0.02em; }
+.lore__fighter-slug { margin: 0 0 14px; color: var(--dim); font: 700 8px/1.4 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; word-break: break-all; }
+.lore__fighter-link { margin: -6px 0 0; font: 700 10px/1.5 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.lore__fighter-link a { text-decoration: none; }
+.lore__lexicon { margin: 0; }
+.lore__term { padding: 18px 0; border-bottom: 1px solid var(--line-soft); }
+.lore__term:last-child { border-bottom: none; }
+.lore__term dt { margin-bottom: 8px; color: var(--acid); font: 800 13px/1.3 var(--mono); letter-spacing: 0.04em; }
+.lore__term dd { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.7; }
+.profile-hero__lore { margin: 22px 0 0; font: 700 11px/1.4 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.profile-hero__lore a { color: var(--dim); text-decoration: none; transition: color 140ms ease; }
+.profile-hero__lore a:hover { color: var(--acid); }
+@media (max-width: 640px) {
+    .lore__fighter { gap: 14px; }
+    .lore__emoji { width: 44px; height: 44px; font-size: 22px; }
+}
 `;
 
 // ---------------------------------------------------------------------------
@@ -2209,6 +2485,8 @@ export async function buildPages({
   continuousDir = null, // defaults to <artifactsRoot>/continuous
   toplistPath = path.join(SCRIPT_DIR, 'toplist_commentary.json'),
   chroniclePath = path.join(SCRIPT_DIR, 'chronicle.json'),
+  seasonsPath = path.join(SCRIPT_DIR, 'seasons.json'),
+  lorePath = path.join(SCRIPT_DIR, 'lore.json'),
   mediaBase = '/media/highlights',
   perModelLimit = 200,
   windowSize = 4000,
@@ -2242,6 +2520,12 @@ export async function buildPages({
 
   // Optional League Chronicle — null unless the authored narrative loads.
   const chronicle = loadChronicle({ chroniclePath, io, log });
+
+  // Optional season structure — null unless the authored definitions load.
+  const seasons = loadSeasons({ seasonsPath, io, log });
+
+  // Optional arena lore — null unless the authored lore loads.
+  const lore = loadLore({ lorePath, io, log });
 
   const seasonDir = path.join(artifactsRoot, 'seasons', ratings.season_id);
   const battlesDir = path.join(seasonDir, 'battles');
@@ -2308,8 +2592,20 @@ export async function buildPages({
     chemistry: chemistry ? chemistryPairsSection(chemistry, lookupChemistry) : null,
     toplist: toplist ? toplistSection(toplist, toplistCards(toplist, roster, slugById)) : null,
     chronicle: chronicle ? chronicleSection(chronicle) : null,
+    seasonBanner: continuous && seasons
+      ? seasonBanner(seasons, nowMs, { loreLink: Boolean(lore) })
+      : null,
+    loreLink: Boolean(lore),
     nowMs,
   }));
+
+  if (lore) {
+    io.writeFile(path.join(outDir, 'lore.html'), renderLorePage({ lore, roster, slugById }));
+  } else if (io.exists(path.join(outDir, 'lore.html'))) {
+    // Lore inactive (file absent/unusable): drop any stale page from a
+    // previous valid run so the site never serves old lore.
+    io.remove(path.join(outDir, 'lore.html'));
+  }
 
   if (continuous) {
     io.writeFile(
@@ -2344,6 +2640,7 @@ export async function buildPages({
       ? chemistryPartnersSection(chemistryPartnersForModel(chemistry, m), lookupChemistry) || null
       : null;
     const toplistEntry = toplist ? matchToplistEntry(toplist.entries, m) : null;
+    const loreEntry = lore ? matchLoreEntry(lore.fighters, m) : null;
     io.writeFile(path.join(outDir, `${slugById.get(id)}.html`), renderModelPage({
       model: m,
       slug: slugById.get(id),
@@ -2355,6 +2652,8 @@ export async function buildPages({
       lineage,
       chemistry: chemistryPartners,
       analyst: toplistEntry ? analystNoteSection(toplistEntry, toplist.league_day) : null,
+      loreTitle: loreEntry ? loreEntry.title : null,
+      loreLink: Boolean(lore),
       slugById,
       metaById,
       mediaBase,

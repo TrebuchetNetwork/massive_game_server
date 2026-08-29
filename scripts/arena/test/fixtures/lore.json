@@ -1,0 +1,26 @@
+{
+  "comment": "Fixture arena lore for build_model_pages tests. test/alpha-one prefix-matches the alpha roster entry; test/gamma-lore matches nobody.",
+  "world": {
+    "name": "The Test Arena",
+    "premise": [
+      "First fixture premise paragraph.",
+      "Second fixture premise paragraph."
+    ]
+  },
+  "fighters": {
+    "test/alpha-one": {
+      "mascot": "Alpha",
+      "title": "The Fixture King",
+      "lore": "Alpha fixture lore paragraph."
+    },
+    "test/gamma-lore": {
+      "mascot": "Ghost",
+      "title": "The Off-Roster Ghost",
+      "lore": "No profile page exists for this fighter."
+    }
+  },
+  "lexicon": {
+    "The Bar": "Fixture definition of the bar.",
+    "Overcharge": "Fixture overcharge definition."
+  }
+}

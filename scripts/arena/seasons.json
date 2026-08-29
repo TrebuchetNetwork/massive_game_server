@@ -1,0 +1,13 @@
+{
+  "comment": "Season definitions for the Continuous Model League. Seasons give the never-frozen league narrative shape: 4-week arcs with a champion, a theme, and an archive. Computed against league state — no league-code changes required.",
+  "season_length_days": 28,
+  "current": {
+    "id": "S1",
+    "name": "Genesis",
+    "started_at": "2026-08-24T00:00:00Z",
+    "ends_at": "2026-09-21T00:00:00Z",
+    "theme": "Ten walk in. The league learns what it's made of. The first retirements, the first recruits, the first feedback class — every record is a first.",
+    "champion_rule": "Highest L0 (zero-shot) rating at season end; ties broken by win rate, then matches played."
+  },
+  "archive": []
+}

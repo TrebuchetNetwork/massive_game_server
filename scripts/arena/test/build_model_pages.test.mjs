@@ -173,6 +173,8 @@ test('buildPages tolerates a fresh season with no artifact dirs', async () => {
     cachePath: path.join(outDir, 'page-cache.json'),
     toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
     chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
   });
   const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
   assert.match(alpha, /No recent duel sample available/);
@@ -205,6 +207,8 @@ test('golden render: 2-model mini roster matches checked-in goldens', async (t) 
     cachePath,
     toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
     chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
   });
 
   const expected = ['index.html', 'alpha-one.html', 'beta-two.html', 'models.css', 'mascots.json'];
@@ -255,6 +259,8 @@ test('analyst toplist: fixture commentary renders ranked cards and model quote b
     cachePath: path.join(outDir, 'page-cache.json'),
     toplistPath: path.join(FIXTURES, 'toplist_commentary.json'),
     chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
   });
 
   const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
@@ -308,6 +314,8 @@ test('analyst toplist: absent or malformed file keeps byte-identical goldens', a
       cachePath: path.join(outDir, 'page-cache.json'),
       toplistPath,
       chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
     });
     for (const f of ['index.html', 'alpha-one.html', 'beta-two.html', 'mascots.json']) {
       assert.equal(
@@ -333,6 +341,8 @@ test('league chronicle: fixture renders chapters in authored order with prose', 
     cachePath: path.join(outDir, 'page-cache.json'),
     toplistPath: path.join(FIXTURES, 'toplist_commentary.json'),
     chroniclePath: path.join(FIXTURES, 'chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
   });
 
   const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
@@ -380,6 +390,8 @@ test('league chronicle: absent or malformed file keeps byte-identical goldens', 
       cachePath: path.join(outDir, 'page-cache.json'),
       toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
       chroniclePath,
+      seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+      lorePath: path.join(FIXTURES, 'no-such-lore.json'),
     });
     for (const f of ['index.html', 'alpha-one.html', 'beta-two.html', 'mascots.json']) {
       assert.equal(
@@ -582,6 +594,8 @@ async function buildWithContinuous(outDir, cmlDir) {
     cachePath: path.join(outDir, 'page-cache.json'),
     toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
     chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
     nowMs: NOW_MS,
   });
 }
@@ -850,3 +864,187 @@ test('chemistry overlay: absent or malformed artifact keeps pages byte-identical
   }
 });
 
+
+// ---------------------------------------------------------------------------
+// Season structure + arena lore
+// ---------------------------------------------------------------------------
+
+test('seasons + lore: banner on index, lore page, model lore title', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-lore-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-lore-state-'));
+  writeContinuousFixture(cmlDir);
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    continuousDir: cmlDir,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'seasons.json'),
+    lorePath: path.join(FIXTURES, 'lore.json'),
+    nowMs: NOW_MS,
+  });
+
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  // Banner: display name, day counter from started_at, progress bar, theme,
+  // champion rule small print — and it sits above the league strip.
+  assert.match(index, /aria-label="Current season"/);
+  assert.match(index, /Season 2 · Testing Grounds/);
+  assert.match(index, /Day 4 of 28/);
+  assert.match(index, /season-banner__bar" value="4" max="28"/);
+  assert.match(index, /The fixture season theme line\./);
+  assert.match(index, /Champion — Highest L0 rating at season end; ties broken by win rate\./);
+  assert.ok(index.indexOf('Current season') < index.indexOf('Continuous league'));
+  // Past seasons strip: champion shown when recorded, omitted otherwise.
+  assert.match(index, /season-banner__past-title">Past seasons/);
+  assert.match(index, /<b>S1<\/b> Genesis · champion Alpha/);
+  assert.match(index, /<b>S0<\/b> Proving<\/span>/);
+  assert.ok(!index.includes('Proving · champion'), 'no champion line when unrecorded');
+  // Banner and header nav both link the lore page.
+  assert.match(index, /season-banner__lore"><a class="text-link" href="lore\.html"/);
+  assert.match(index, /<a href="\/models\/lore\.html">Lore<\/a>/);
+
+  const loreHtml = fs.readFileSync(path.join(outDir, 'lore.html'), 'utf8');
+  assert.match(loreHtml, /aria-label="Arena lore"/);
+  assert.match(loreHtml, /The Test Arena, <em>as it is told\.<\/em>/);
+  assert.match(loreHtml, /First fixture premise paragraph\./);
+  assert.match(loreHtml, /Second fixture premise paragraph\./);
+  assert.equal((loreHtml.match(/chronicle__prose--lead/g) || []).length, 1, 'drop cap on the first premise paragraph only');
+  // Fighters: mascot emoji, title, lore paragraph; roster fighter linked.
+  assert.match(loreHtml, /lore__section-title">Fighters/);
+  assert.equal((loreHtml.match(/lore__fighter-title/g) || []).length, 2);
+  assert.match(loreHtml, /lore__emoji/);
+  assert.match(loreHtml, /lore__fighter-title">The Fixture King/);
+  assert.match(loreHtml, /Alpha fixture lore paragraph\./);
+  assert.match(loreHtml, /<a class="text-link" href="alpha-one\.html">View fight record →<\/a>/);
+  assert.match(loreHtml, /lore__fighter-title">The Off-Roster Ghost/);
+  const ghost = loreHtml.split('The Off-Roster Ghost')[1].split('</article>')[0];
+  assert.ok(!ghost.includes('View fight record'), 'off-roster fighter gets no profile link');
+  // Lexicon glossary.
+  assert.match(loreHtml, /lore__section-title">Lexicon/);
+  assert.match(loreHtml, /<dt>The Bar<\/dt>/);
+  assert.match(loreHtml, /<dd>Fixture definition of the bar\.<\/dd>/);
+  assert.match(loreHtml, /<dt>Overcharge<\/dt>/);
+  // Lore page nav marks itself current.
+  assert.match(loreHtml, /<a href="\/models\/lore\.html" aria-current="page">Lore<\/a>/);
+
+  // Model page: subtle lore title under the hero for the matched fighter.
+  const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
+  assert.match(alpha, /profile-hero__lore"><a class="text-link" href="lore\.html">The Fixture King<\/a>/);
+  assert.ok(alpha.indexOf('profile-hero__lore') < alpha.indexOf('stat-strip'), 'lore title sits under the mascot hero');
+  assert.match(alpha, /<a href="\/models\/lore\.html">Lore<\/a>/, 'model pages carry the nav link too');
+  const beta = fs.readFileSync(path.join(outDir, 'beta-two.html'), 'utf8');
+  assert.ok(!beta.includes('profile-hero__lore'), 'beta has no fighter lore entry');
+});
+
+test('season banner requires a valid continuous state; lore renders without one', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-lore-out-'));
+  // No continuousDir -> <FIXTURES>/continuous has no state.json.
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'seasons.json'),
+    lorePath: path.join(FIXTURES, 'lore.json'),
+    nowMs: NOW_MS,
+  });
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.ok(!index.includes('season-banner'), 'banner hidden without a valid continuous state');
+  assert.ok(fs.existsSync(path.join(outDir, 'lore.html')), 'lore page renders independently of the league state');
+  const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
+  assert.match(alpha, /profile-hero__lore/);
+});
+
+test('seasons/lore: absent or malformed files keep pages byte-identical', async () => {
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-lore-state-'));
+  writeContinuousFixture(cmlDir);
+
+  const noLore = path.join(FIXTURES, 'no-such-lore.json');
+
+  // Two baselines: neither overlay, and seasons-only (banner but no lore).
+  const baselineDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-lore-base-'));
+  await buildWithContinuous(baselineDir, cmlDir); // no-such seasons/lore paths
+  const seasonsOnlyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-lore-base-'));
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    continuousDir: cmlDir,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir: seasonsOnlyDir,
+    cachePath: path.join(seasonsOnlyDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'seasons.json'),
+    lorePath: noLore,
+    nowMs: NOW_MS,
+  });
+
+  const badDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-lore-bad-'));
+  const malformedSeasons = path.join(badDir, 'seasons-bad.json');
+  fs.writeFileSync(malformedSeasons, '{not json');
+  const noCurrentSeasons = path.join(badDir, 'seasons-empty.json');
+  fs.writeFileSync(noCurrentSeasons, JSON.stringify({ season_length_days: 28, archive: [] }));
+  const malformedLore = path.join(badDir, 'lore-bad.json');
+  fs.writeFileSync(malformedLore, '{not json');
+  const emptyLore = path.join(badDir, 'lore-empty.json');
+  fs.writeFileSync(emptyLore, JSON.stringify({ world: { premise: [] }, fighters: {}, lexicon: {} }));
+
+  // Each overlay degrades independently: unusable seasons cost only the
+  // banner; unusable lore costs the lore page, nav link and lore titles.
+  const variants = [
+    { seasonsPath: malformedSeasons, lorePath: noLore, baseline: baselineDir },
+    { seasonsPath: noCurrentSeasons, lorePath: noLore, baseline: baselineDir },
+    { seasonsPath: path.join(FIXTURES, 'seasons.json'), lorePath: malformedLore, baseline: seasonsOnlyDir },
+    { seasonsPath: path.join(FIXTURES, 'seasons.json'), lorePath: emptyLore, baseline: seasonsOnlyDir },
+    { seasonsPath: malformedSeasons, lorePath: malformedLore, baseline: baselineDir },
+  ];
+  for (const { seasonsPath, lorePath, baseline } of variants) {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-lore-out-'));
+    await buildPages({
+      ratingsPath: path.join(FIXTURES, 'ratings.json'),
+      artifactsRoot: FIXTURES,
+      continuousDir: cmlDir,
+      highlightsPath: path.join(FIXTURES, 'highlights.json'),
+      outDir,
+      cachePath: path.join(outDir, 'page-cache.json'),
+      toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+      chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+      seasonsPath,
+      lorePath,
+      nowMs: NOW_MS,
+    });
+    assert.ok(!fs.existsSync(path.join(outDir, 'lore.html')), 'no lore.html when lore is unusable');
+    for (const f of ['index.html', 'alpha-one.html', 'beta-two.html']) {
+      assert.equal(
+        fs.readFileSync(path.join(outDir, f), 'utf8'),
+        fs.readFileSync(path.join(baseline, f), 'utf8'),
+        `${f} must be byte-identical to its baseline when a file is unusable`,
+      );
+    }
+  }
+});
+
+test('stale lore.html is removed when lore becomes unusable', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-lore-out-'));
+  const base = {
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    nowMs: NOW_MS,
+  };
+  await buildPages({ ...base, lorePath: path.join(FIXTURES, 'lore.json') });
+  assert.ok(fs.existsSync(path.join(outDir, 'lore.html')), 'lore.html written when lore loads');
+  await buildPages({ ...base, lorePath: path.join(FIXTURES, 'no-such-lore.json') });
+  assert.ok(!fs.existsSync(path.join(outDir, 'lore.html')), 'stale lore.html removed');
+});

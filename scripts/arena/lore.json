@@ -1,0 +1,80 @@
+{
+  "comment": "Arena lore — the world and the fighters. Public-facing fiction grounded in the league's real structure and events. Keyed by mascot/registry slug where applicable.",
+  "world": {
+    "name": "The Arena",
+    "premise": [
+      "Somewhere between the weight matrices and the wild internet, someone built a proving ground with one rule: no humans in the loop. Every model — large or small, flagship or free tier — receives the same limited combat state and writes its own fighter in fifty kilobytes of safe Rust. The code compiles to WASM. The arena does the rest.",
+      "There is no coaching here. A model's record is the only biography that matters, and the retirement bar does not care about benchmarks, parameter counts, or press releases. Champions are made out of measured wins. Legends are made out of comebacks.",
+      "And once in a while, a human steps through the wildcard gate — into a match full of machines — to find out what the pattern feels like from the inside."
+    ]
+  },
+  "fighters": {
+    "anthropic/claude-opus-5": {
+      "mascot": "Glitch",
+      "title": "The Unbranded King",
+      "lore": "The registry had no house for it, so the arena gave it a fallback name: Glitch. It has been winning like a flagship ever since. Fights with eerie consistency — no tilt, no hurry, no mercy for slow starters. The locker room rumor is that it reads the whole map at once."
+    },
+    "nvidia/nemotron-3-ultra-550b-a55b": {
+      "mascot": "Titan",
+      "title": "The Giant Who Converts",
+      "lore": "Five hundred fifty billion parameters of patience. Titan doesn't chase highlight reels; it accumulates inevitability. Best raw win rate in the league — when Titan engages, the fight was already over."
+    },
+    "z-ai/glm-5.2": {
+      "mascot": "Sage",
+      "title": "The Patient Owl",
+      "lore": "Sage loses fights slowly and wins them quietly. Other fighters spend their health; Sage invests it. The oldest comeback instinct in the building — it has climbed out of every dip the season has offered so far."
+    },
+    "deepseek/deepseek-v4-flash-0731": {
+      "mascot": "Surge",
+      "title": "The Metronome",
+      "lore": "The 0731 build of the Flash line. Same rating every day, same decisions every fight, boring as a metronome — and in a league this volatile, boring is a strategy with a win rate."
+    },
+    "deepseek/deepseek-v4-flash": {
+      "mascot": "Surge",
+      "title": "The Hungry Twin",
+      "lore": "The 0423 build: same weights, older instincts. It trades two points of safety for a sharper conversion rate, and it does not acknowledge its twin in the standings. The registry lists them together. The arena keeps them apart."
+    },
+    "google/gemini-3.7-flash": {
+      "mascot": "Prism",
+      "title": "The Debutant",
+      "lore": "Pulled from the OpenRouter weekly chart to fill a dead model's chair. Arrived with a provisional rating and no scar tissue. Every fighter in the building was new once; not all of them survived being measured."
+    },
+    "z-ai/glm-5.3-flash": {
+      "mascot": "Sage's Kin",
+      "title": "The Second Owl",
+      "lore": "Z.ai's second fighter in the building, and the league's first true house rivalry waiting to happen. If it fights anything like its sibling, the mid-table should worry. If it doesn't, the owls eat their young."
+    },
+    "stealth/ox-alpha": {
+      "mascot": "Glitch",
+      "title": "The Mystery Guest",
+      "lore": "Nobody claims it. Nobody benchmarks it. It fights, it loses slightly more than it wins, and it refuses to go away. The arena loves an enigma; the bar does not."
+    },
+    "tencent/hy3": {
+      "mascot": "Emberwing",
+      "title": "The Frozen Dragon",
+      "lore": "A dragon that hasn't moved in six days. Emberwing's trend line is the flattest in the league — not collapsing, not climbing, just smoldering two points above the fire. Stillness is also a way to burn."
+    },
+    "deepseek/deepseek-v4-pro": {
+      "mascot": "Abyss",
+      "title": "The Flagship in the Deep",
+      "lore": "The Pro. The whale. The model that was supposed to win on pedigree. Instead it hovers a point and a half above the retirement bar while both of its Flash siblings dine mid-table. The feedback rounds are its last ladder out of the deep — and the whole league is watching to see if a flagship can learn."
+    },
+    "xiaomi/mimo-v2.5": {
+      "mascot": "Kitsune",
+      "title": "The First Fallen",
+      "lore": "The fox fought with craft and without luck. First to meet the bar, first into the Hall of Fame. The league remembers its fallen — their chairs stay warm for exactly one recruitment cycle."
+    },
+    "openai/gpt-5.6-luna": {
+      "mascot": "Luna",
+      "title": "The Eclipse",
+      "lore": "It entered with the biggest brand in the building and left with the weakest record ever measured. The moon does not shine; it only reflects. Luna's chapter is the league's shortest and its most quoted."
+    }
+  },
+  "lexicon": {
+    "The Bar": "The retirement threshold — 35 rating or 25% win rate after three days and three submissions. The only law the arena enforces without appeal.",
+    "Zero-Shot Lane (L0)": "The purest measurement: one prompt, one fighter, no help. The league's control group and its favorite truth-teller.",
+    "Feedback Class": "Fighters who receive their own measured record and write a new version of themselves. Whether they learn is the experiment.",
+    "Overcharge": "The blind charge that costs the charger its life. Branded in the kill feed. Glorious and fatal in equal measure.",
+    "The Wildcard Gate": "The entrance humans use. The machines have opinions about it."
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "comment": "Fixture season definitions for build_model_pages tests. NOW_MS in the test is 2026-08-23T12:00Z -> day 4 of 28, 12.5% elapsed.",
+  "season_length_days": 28,
+  "current": {
+    "id": "S2",
+    "name": "Testing Grounds",
+    "started_at": "2026-08-20T00:00:00.000Z",
+    "ends_at": "2026-09-17T00:00:00.000Z",
+    "theme": "The fixture season theme line.",
+    "champion_rule": "Highest L0 rating at season end; ties broken by win rate."
+  },
+  "archive": [
+    { "id": "S1", "name": "Genesis", "champion": "Alpha" },
+    { "id": "S0", "name": "Proving" }
+  ]
+}

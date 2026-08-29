@@ -555,3 +555,75 @@ table.standings__table tr:last-child td { border-bottom: none; }
     .lineage__node { grid-template-columns: 28px 44px minmax(0, 1fr) auto; }
     .lineage__meta, .lineage__delta { display: none; }
 }
+
+/* season banner */
+.season-banner {
+    margin: 0 0 34px;
+    border: 1px solid var(--line);
+    padding: 24px 28px;
+    background: rgba(7, 16, 12, 0.66);
+}
+.season-banner__head { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+.season-banner__head .eyebrow { margin-bottom: 14px; }
+.season-banner__day { margin: 0; color: var(--acid-soft); font: 800 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+/* native <progress>: the models index is served with a strict style-src CSP
+   that strips inline style attributes, so the fill must not rely on them */
+.season-banner__bar {
+    display: block;
+    width: 100%;
+    height: 4px;
+    margin: 4px 0 18px;
+    appearance: none;
+    border: none;
+    background: transparent;
+}
+.season-banner__bar::-webkit-progress-bar { border: 1px solid var(--line-soft); background: rgba(3, 7, 6, 0.6); }
+.season-banner__bar::-webkit-progress-value { background: var(--acid); box-shadow: 0 0 12px rgba(202, 255, 0, 0.35); }
+.season-banner__bar::-moz-progress-bar { background: var(--acid); }
+.season-banner__theme { margin: 0 0 10px; max-width: 72ch; color: var(--muted); font-size: 14.5px; line-height: 1.7; }
+.season-banner__rule { margin: 0; color: var(--dim); font: 600 9px/1.6 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.season-banner__lore { margin: 12px 0 0; font: 700 10px/1.5 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.season-banner__lore a { text-decoration: none; }
+.season-banner__past { margin-top: 18px; border-top: 1px solid var(--line-soft); padding-top: 14px; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.season-banner__past-title { margin: 0; color: var(--dim); font: 800 8px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
+.season-banner__past-item { color: var(--muted); font: 700 10px/1.6 var(--mono); letter-spacing: 0.05em; }
+.season-banner__past-item b { color: var(--acid-soft); }
+@media (max-width: 560px) {
+    .season-banner { padding: 18px 16px; }
+}
+
+/* arena lore page — magazine prose like the chronicle */
+.lore__section-title {
+    margin: 64px 0 28px;
+    padding-top: 40px;
+    border-top: 1px solid var(--line-soft);
+    font: 900 clamp(19px, 2.2vw, 25px)/1.2 var(--sans);
+    letter-spacing: -0.025em;
+}
+.lore__fighter { display: flex; align-items: flex-start; gap: 22px; padding: 28px 0; }
+.lore__fighter + .lore__fighter { border-top: 1px solid var(--line-soft); }
+.lore__emoji {
+    width: 56px; height: 56px;
+    flex: 0 0 auto;
+    display: grid; place-items: center;
+    border: 1px solid var(--line);
+    font-size: 28px;
+    background: rgba(5, 13, 10, 0.6);
+}
+.lore__fighter-body { min-width: 0; }
+.lore__fighter-title { margin: 0 0 6px; font: 900 19px/1.25 var(--sans); letter-spacing: -0.02em; }
+.lore__fighter-slug { margin: 0 0 14px; color: var(--dim); font: 700 8px/1.4 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; word-break: break-all; }
+.lore__fighter-link { margin: -6px 0 0; font: 700 10px/1.5 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.lore__fighter-link a { text-decoration: none; }
+.lore__lexicon { margin: 0; }
+.lore__term { padding: 18px 0; border-bottom: 1px solid var(--line-soft); }
+.lore__term:last-child { border-bottom: none; }
+.lore__term dt { margin-bottom: 8px; color: var(--acid); font: 800 13px/1.3 var(--mono); letter-spacing: 0.04em; }
+.lore__term dd { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.7; }
+.profile-hero__lore { margin: 22px 0 0; font: 700 11px/1.4 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.profile-hero__lore a { color: var(--dim); text-decoration: none; transition: color 140ms ease; }
+.profile-hero__lore a:hover { color: var(--acid); }
+@media (max-width: 640px) {
+    .lore__fighter { gap: 14px; }
+    .lore__emoji { width: 44px; height: 44px; font-size: 22px; }
+}

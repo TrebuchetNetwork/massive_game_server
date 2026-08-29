@@ -1,6 +1,19 @@
 {
-  "day_index": 6,
+  "day_index": 7,
   "announcements": [
+    {
+      "type": "entrant",
+      "at": "2026-08-29T09:23:17.662Z",
+      "track": "L1",
+      "slug": "z-ai/glm-5.3-flash-20260826",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "provider_rank": 8
+    },
     {
       "type": "revision",
       "at": "2026-08-28T09:25:48.246Z",
@@ -126,25 +139,11 @@
       },
       "version": 2,
       "outcome": "codegen_failed"
-    },
-    {
-      "type": "revision",
-      "at": "2026-08-28T09:25:48.246Z",
-      "track": "L2",
-      "slug": "deepseek/deepseek-v4-pro-20260423",
-      "mascot": {
-        "key": "deepseek/deepseek-v4-pro",
-        "emoji": "🐋",
-        "title": "Abyss",
-        "color": "#4d6bfe"
-      },
-      "version": 2,
-      "outcome": "compile_failed"
     }
   ],
   "tracks": {
     "L0": {
-      "day_index": 6,
+      "day_index": 7,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -154,10 +153,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 76.33,
-          "wins": 1230,
-          "losses": 320,
-          "draws": 178,
+          "rating": 76.74,
+          "wins": 1440,
+          "losses": 362,
+          "draws": 214,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -169,10 +168,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 74.48,
-          "wins": 1248,
-          "losses": 402,
-          "draws": 78,
+          "rating": 73.96,
+          "wins": 1448,
+          "losses": 482,
+          "draws": 86,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -184,17 +183,17 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 65.39,
-          "wins": 1048,
-          "losses": 516,
-          "draws": 164,
+          "rating": 65.28,
+          "wins": 1218,
+          "losses": 602,
+          "draws": 196,
           "submissions_used": 1,
           "submissions_allowed": 1
         }
       ]
     },
     "L1": {
-      "day_index": 6,
+      "day_index": 7,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -204,10 +203,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 76.33,
-          "wins": 1230,
-          "losses": 320,
-          "draws": 178,
+          "rating": 75.81,
+          "wins": 1402,
+          "losses": 378,
+          "draws": 204,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -219,10 +218,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 74.48,
-          "wins": 1248,
-          "losses": 402,
-          "draws": 78,
+          "rating": 73.34,
+          "wins": 1412,
+          "losses": 486,
+          "draws": 86,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -234,17 +233,17 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 65.39,
-          "wins": 1048,
-          "losses": 516,
-          "draws": 164,
+          "rating": 64.57,
+          "wins": 1184,
+          "losses": 606,
+          "draws": 194,
           "submissions_used": 1,
           "submissions_allowed": 1
         }
       ]
     },
     "L2": {
-      "day_index": 6,
+      "day_index": 7,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -254,10 +253,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 76.33,
-          "wins": 1230,
-          "losses": 320,
-          "draws": 178,
+          "rating": 76.49,
+          "wins": 1436,
+          "losses": 368,
+          "draws": 212,
           "submissions_used": 2,
           "submissions_allowed": 3
         },
@@ -269,10 +268,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 74.48,
-          "wins": 1248,
-          "losses": 402,
-          "draws": 78,
+          "rating": 74.36,
+          "wins": 1456,
+          "losses": 474,
+          "draws": 86,
           "submissions_used": 2,
           "submissions_allowed": 3
         },
@@ -284,17 +283,17 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 65.39,
-          "wins": 1048,
-          "losses": 516,
-          "draws": 164,
+          "rating": 65.38,
+          "wins": 1218,
+          "losses": 598,
+          "draws": 200,
           "submissions_used": 2,
           "submissions_allowed": 3
         }
       ]
     },
     "L3": {
-      "day_index": 6,
+      "day_index": 7,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -304,10 +303,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 76.33,
-          "wins": 1230,
-          "losses": 320,
-          "draws": 178,
+          "rating": 76.49,
+          "wins": 1436,
+          "losses": 368,
+          "draws": 212,
           "submissions_used": 1,
           "submissions_allowed": 9
         },
@@ -319,10 +318,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 74.48,
-          "wins": 1248,
-          "losses": 402,
-          "draws": 78,
+          "rating": 74.36,
+          "wins": 1456,
+          "losses": 474,
+          "draws": 86,
           "submissions_used": 1,
           "submissions_allowed": 9
         },
@@ -334,10 +333,10 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 65.39,
-          "wins": 1048,
-          "losses": 516,
-          "draws": 164,
+          "rating": 65.38,
+          "wins": 1218,
+          "losses": 598,
+          "draws": 200,
           "submissions_used": 1,
           "submissions_allowed": 9
         }
