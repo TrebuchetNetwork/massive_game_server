@@ -252,8 +252,16 @@ impl MassiveGameServer {
         let sync_loop_start = Instant::now();
         // AoI update divisor is read once from the environment at startup.
         let aoi_stride = cached_aoi_update_divisor();
-        let update_aoi_this_frame = update_aoi && frame.is_multiple_of(aoi_stride);
-        let connected_client_ids: HashSet<String> = if update_aoi_this_frame {
+        // Cohort scheduling: instead of rebuilding every connected client's AoI
+        // on each `aoi_stride`-th frame (one large spike), each frame rebuilds
+        // only the rotating cohort `sorted_index % aoi_stride == frame % aoi_stride`.
+        // Every client is therefore still refreshed once per `aoi_stride` frames
+        // on average, but the per-frame cost is ~1/aoi_stride of the old spike.
+        let aoi_cohort = (frame % aoi_stride) as usize;
+        // Frames that are multiples of the divisor keep their previous extra
+        // duties (last-sync-position stamp, boundary snapshots) unchanged.
+        let full_aoi_frame = update_aoi && frame.is_multiple_of(aoi_stride);
+        let connected_client_ids: HashSet<String> = if update_aoi {
             let mut connected = HashSet::with_capacity(
                 self.data_channels_map.len() + self.client_states_map.read().len(),
             );
@@ -275,7 +283,7 @@ impl MassiveGameServer {
         self.player_manager
             .for_each_player(|player_id, player_state| {
                 let is_connected_client =
-                    update_aoi_this_frame && connected_client_ids.contains(player_id.as_ref());
+                    update_aoi && connected_client_ids.contains(player_id.as_ref());
 
                 self.spatial_index.update_player_position(
                     player_id.clone(),
@@ -295,6 +303,7 @@ impl MassiveGameServer {
                 ));
             });
 
+        let mut aoi_candidates: Vec<(PlayerID, f32, f32)> = Vec::new();
         for (player_id, x, y, partition_idx, is_connected_client) in players_to_update {
             if let Some(partition) = self.world_partition_manager.get_partition(partition_idx) {
                 let is_newly_entered_partition = !partition.local_players.contains(&player_id);
@@ -302,14 +311,46 @@ impl MassiveGameServer {
             }
 
             if is_connected_client {
-                self.update_player_aoi(&player_id, x, y);
-                self.snapshots
-                    .player_last_sync_positions
-                    .insert(player_id.clone(), (x, y));
+                aoi_candidates.push((player_id, x, y));
             }
         }
 
-        if update_aoi_this_frame && frame.is_multiple_of(30) {
+        // Stable, deterministic cohort assignment: sort by player ID so cohort
+        // membership does not depend on HashSet iteration order.
+        aoi_candidates.sort_by(|a, b| a.0.as_ref().cmp(b.0.as_ref()));
+
+        if full_aoi_frame {
+            // Preserve the previous cadence for last-sync positions exactly:
+            // stamped for all connected clients once per `aoi_stride` frames.
+            for (player_id, x, y) in &aoi_candidates {
+                self.snapshots
+                    .player_last_sync_positions
+                    .insert(player_id.clone(), (*x, *y));
+            }
+        }
+
+        // This frame's rotating cohort (~1/aoi_stride of connected clients).
+        let stride = aoi_stride as usize;
+        let cohort: Vec<&(PlayerID, f32, f32)> = aoi_candidates
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| idx % stride == aoi_cohort)
+            .map(|(_, entry)| entry)
+            .collect();
+
+        if !cohort.is_empty() {
+            // Per-client AoI rebuilds are independent: reads are read-only
+            // (spatial indexes, snapshots, partition maps) and writes go to the
+            // concurrent `player_aois` DashMap, so fan out on the physics pool.
+            use rayon::prelude::*;
+            self.thread_pools.physics_pool.install(|| {
+                cohort.par_iter().for_each(|(player_id, x, y)| {
+                    self.update_player_aoi(player_id, *x, *y);
+                });
+            });
+        }
+
+        if full_aoi_frame && frame.is_multiple_of(30) {
             self.world_partition_manager.update_all_boundary_snapshots();
         }
 

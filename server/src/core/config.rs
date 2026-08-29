@@ -101,7 +101,27 @@ impl Default for ThreadPoolConfig {
         let cores = std::thread::available_parallelism()
             .map(|p| p.get())
             .unwrap_or(4); // fallback
-        thread_pool_config_for_cores(cores)
+        let mut config = thread_pool_config_for_cores(cores);
+        // Explicit override for hosts where the built-in 24-thread budget is
+        // too conservative (e.g. many-core boxes): MGS_THREAD_POOL_BUDGET sets
+        // the total worker budget; the same minimums/weights apply.
+        if let Ok(raw) = std::env::var("MGS_THREAD_POOL_BUDGET") {
+            if let Ok(budget) = raw.parse::<usize>() {
+                if budget >= 5 {
+                    let minimums = [2, 2, 2, 2, 2];
+                    let [physics_threads, networking_threads, game_logic_threads, ai_threads, io_threads] =
+                        allocate_weighted_threads(budget, minimums, [0.24, 0.18, 0.24, 0.20, 0.14]);
+                    config = ThreadPoolConfig {
+                        physics_threads,
+                        networking_threads,
+                        game_logic_threads,
+                        ai_threads,
+                        io_threads,
+                    };
+                }
+            }
+        }
+        config
     }
 }
 
