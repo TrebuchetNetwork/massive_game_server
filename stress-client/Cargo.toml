@@ -11,7 +11,7 @@ repository = "https://github.com/TrebuchetNetwork/massive_game_server"
 tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
 
 # WebRTC (must match server version for interop)
-webrtc = "0.11"
+webrtc = "0.17.2"
 
 # WebSocket for signaling
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }

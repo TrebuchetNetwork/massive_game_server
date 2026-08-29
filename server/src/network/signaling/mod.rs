@@ -110,12 +110,9 @@ mod tests {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use webrtc::{
-        ice_transport::ice_credential_type::RTCIceCredentialType,
-        peer_connection::{
-            peer_connection_state::RTCPeerConnectionState,
-            sdp::session_description::RTCSessionDescription,
-        },
+    use webrtc::peer_connection::{
+        peer_connection_state::RTCPeerConnectionState,
+        sdp::session_description::RTCSessionDescription,
     };
 
     type HmacSha256 = Hmac<Sha256>;
@@ -1110,7 +1107,6 @@ mod tests {
         let ice_servers = build_ice_servers_from_config(&config);
         assert_eq!(ice_servers.len(), 1);
         let turn_server = &ice_servers[0];
-        assert_eq!(turn_server.credential_type, RTCIceCredentialType::Password);
         assert_eq!(turn_server.username, "turn-user");
         assert_eq!(turn_server.credential, "turn-password");
     }

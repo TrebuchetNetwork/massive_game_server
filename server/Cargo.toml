@@ -26,7 +26,7 @@ env_logger = "0.11.8" # Optional, for easier porting of webrtc_shooter_server lo
 
 
 # Networking
-webrtc = "0.11" # Or your preferred version
+webrtc = "0.17.2" # Upgraded from 0.11 (security/stability fixes, latest 0.17.x)
 quinn = "0.11"  # Upgraded for ring/rustls security fixes
 # warp = "0.3" # If needed
 bytes = "1.6" # Or your preferred version
@@ -85,7 +85,7 @@ rand = "0.8"
 anyhow = "1.0.81" # Or your preferred version
 thiserror = "1.0.58" # Or your preferred version
 once_cell = "1.19" # Or your preferred version
-wasmtime = "24.0.6"
+wasmtime = "48.0.1"
 itoa = "1.0"
 shell-escape = "0.1"
 rcgen = "0.13"

@@ -9,7 +9,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tracing::warn;
-use webrtc::ice_transport::{ice_credential_type::RTCIceCredentialType, ice_server::RTCIceServer};
+use webrtc::ice_transport::ice_server::RTCIceServer;
 
 /// HMAC-SHA1 type alias for legacy TURN credential generation.
 type HmacSha1 = Hmac<Sha1>;
@@ -193,7 +193,6 @@ pub(super) fn build_ice_servers_from_config(cfg: &CachedIceConfig) -> Vec<RTCIce
         };
         match cfg.turn_credential_type {
             TurnCredentialType::Password => {
-                turn_server.credential_type = RTCIceCredentialType::Password;
                 if let Some(username) = cfg.turn_username.as_ref() {
                     turn_server.username = username.clone();
                 }
@@ -202,7 +201,6 @@ pub(super) fn build_ice_servers_from_config(cfg: &CachedIceConfig) -> Vec<RTCIce
                 }
             }
             TurnCredentialType::HmacSha256 => {
-                turn_server.credential_type = RTCIceCredentialType::Password;
                 if let Some(secret) = cfg.turn_credential.as_ref() {
                     let suffix = cfg.turn_username.as_deref().unwrap_or("server");
                     let (username, credential) = generate_turn_hmac_credentials(secret, suffix);
@@ -211,7 +209,6 @@ pub(super) fn build_ice_servers_from_config(cfg: &CachedIceConfig) -> Vec<RTCIce
                 }
             }
             TurnCredentialType::HmacSha1Legacy => {
-                turn_server.credential_type = RTCIceCredentialType::Password;
                 if let Some(secret) = cfg.turn_credential.as_ref() {
                     let suffix = cfg.turn_username.as_deref().unwrap_or("server");
                     let (username, credential) = generate_turn_hmac_credentials_with_algorithm(
