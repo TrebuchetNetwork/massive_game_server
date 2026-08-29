@@ -536,12 +536,22 @@ table.standings__table tr:last-child td { border-bottom: none; }
 .lineage__meta { color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
 .lineage__delta { color: var(--muted); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .lineage__at { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+.chem__table { width: 100%; border-collapse: collapse; }
+.chem__table th { color: var(--dim); font: 700 9px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; text-align: left; padding: 0 10px 8px 0; }
+.chem__table td { padding: 8px 10px 8px 0; border-top: 1px solid var(--line-soft); font-size: 13px; }
+.chem__table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.chem__pair { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chem__plus { color: var(--dim); font-weight: 700; }
+.chem__delta--pos { color: var(--acid-soft); font-weight: 700; }
+.chem__delta--neg { color: #fb7185; font-weight: 700; }
+.chem__provisional { color: #facc15; font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; border: 1px solid #facc1555; border-radius: 4px; padding: 3px 5px; white-space: nowrap; }
 @media (max-width: 860px) {
     .league-strip { grid-template-columns: repeat(2, 1fr); }
     .league-strip div:nth-child(odd) { border-left: none; }
     .announce__item { grid-template-columns: 28px 34px minmax(0, 1fr) auto; }
     .announce__text { grid-column: 3 / 5; }
     .matrix__table { display: block; overflow-x: auto; }
+    .chem__table { display: block; overflow-x: auto; }
     .lineage__node { grid-template-columns: 28px 44px minmax(0, 1fr) auto; }
     .lineage__meta, .lineage__delta { display: none; }
 }

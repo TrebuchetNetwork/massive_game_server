@@ -7,14 +7,16 @@ use super::types::{
     ArenaError, ArenaModelView, ArenaOverviewResponse, ArenaReplayView, ClaimMatchResponse,
     ExecuteNextBody, ExecuteNextMatchResponse, ModelHeartbeatBody, QueueMatchBody,
     QueueMatchResponse, QueueRoundRobinBody, QueuedMatch, QueuedMatchView, RegisterModelBody,
-    ReportMatchBody, ReportMatchResponse, SimulateTeamBattleBody, SimulateTeamBattleResponse,
+    ReportMatchBody, ReportMatchResponse, SimulateMixedTeamBattleBody,
+    SimulateMixedTeamBattleResponse, SimulateTeamBattleBody, SimulateTeamBattleResponse,
     SimulateWorldBattleBody, SimulateWorldBattleResponse, UploadModelWasmBody,
     UploadModelWasmResponse,
 };
 use super::{ArenaLeaderboardResponse, ArenaService};
 use crate::operational::bot_sandbox::{
-    ArenaMatchMode, BotMatchExecution, MAX_WORLD_BATTLE_ENTRANTS, MAX_WORLD_BATTLE_ROUNDS,
-    MAX_WORLD_BATTLE_TICKS, MAX_WORLD_SQUAD_SIZE, MIN_WORLD_BATTLE_ENTRANTS,
+    ArenaMatchMode, BotMatchExecution, MAX_TEAM_BATTLE_SIZE, MAX_WORLD_BATTLE_ENTRANTS,
+    MAX_WORLD_BATTLE_ROUNDS, MAX_WORLD_BATTLE_TICKS, MAX_WORLD_SQUAD_SIZE,
+    MIN_WORLD_BATTLE_ENTRANTS,
 };
 use crate::operational::validation::sanitize_model_id;
 use base64::Engine as _;
@@ -862,6 +864,83 @@ impl ArenaService {
             body.max_ticks,
         );
         Ok(SimulateWorldBattleResponse {
+            generated_at: unix_now(),
+            simulation,
+        })
+    }
+
+    pub(super) fn simulate_mixed_team_battle(
+        &self,
+        body: SimulateMixedTeamBattleBody,
+    ) -> Result<SimulateMixedTeamBattleResponse, ArenaError> {
+        let normalize_squad = |raw_models: &[String],
+                               side: &str|
+         -> Result<Vec<String>, ArenaError> {
+            if raw_models.is_empty() || raw_models.len() > MAX_TEAM_BATTLE_SIZE as usize {
+                return Err(ArenaError::InvalidInput(
+                    "invalid_mixed_squad_size",
+                    format!(
+                        "{} must contain between 1 and {} models",
+                        side, MAX_TEAM_BATTLE_SIZE
+                    ),
+                ));
+            }
+            let mut squad = Vec::with_capacity(raw_models.len());
+            let mut seen = std::collections::HashSet::with_capacity(raw_models.len());
+            for raw_model_id in raw_models {
+                let model_id = raw_model_id.trim();
+                if sanitize_model_id(model_id).is_none() {
+                    return Err(ArenaError::InvalidInput(
+                        "invalid_model_id",
+                        format!("model_id '{}' has an invalid format", model_id),
+                    ));
+                }
+                if !seen.insert(model_id.to_owned()) {
+                    return Err(ArenaError::InvalidInput(
+                        "duplicate_mixed_model",
+                        format!("model_id '{}' appears twice in {}", model_id, side),
+                    ));
+                }
+                squad.push(model_id.to_owned());
+            }
+            Ok(squad)
+        };
+        let team_a_models = normalize_squad(&body.team_a_models, "team_a_models")?;
+        let team_b_models = normalize_squad(&body.team_b_models, "team_b_models")?;
+        if team_a_models.len() != team_b_models.len() {
+            return Err(ArenaError::InvalidInput(
+                "invalid_mixed_squad_size",
+                "team_a_models and team_b_models must field equally sized squads".to_owned(),
+            ));
+        }
+
+        let store = self.inner.persistent_store.read();
+        for model_id in team_a_models.iter().chain(team_b_models.iter()) {
+            if !store.models.contains_key(model_id) {
+                return Err(ArenaError::NotFound(
+                    "model_not_found",
+                    format!("model '{}' does not exist", model_id),
+                ));
+            }
+        }
+        drop(store);
+
+        let mode = normalize_match_mode(body.mode.as_deref())?;
+        let mode = ArenaMatchMode::parse(&mode).ok_or_else(|| {
+            ArenaError::InvalidInput("invalid_mode", format!("unsupported match mode '{}'", mode))
+        })?;
+        let rounds = body.rounds.unwrap_or(1);
+        let seed = body.seed.unwrap_or_else(unix_now);
+
+        let simulation = self.inner.bot_sandbox.execute_mixed_team_battle(
+            &team_a_models,
+            &team_b_models,
+            mode,
+            rounds,
+            seed,
+            body.max_ticks,
+        );
+        Ok(SimulateMixedTeamBattleResponse {
             generated_at: unix_now(),
             simulation,
         })

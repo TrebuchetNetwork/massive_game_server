@@ -745,3 +745,108 @@ test('stale league.json is removed when the overlay becomes inactive', async () 
   await buildWithContinuous(cleanOut, emptyCml);
   assert.ok(!fs.existsSync(path.join(cleanOut, 'league.json')));
 });
+
+// ---------------------------------------------------------------------------
+// Mixed-team chemistry overlay
+// ---------------------------------------------------------------------------
+
+/** Write a valid chemistry artifact next to the continuous fixture state. */
+function writeChemistryFixture(cmlDir, artifact) {
+  const dir = path.join(cmlDir, 'chemistry');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, '2026-08-23.json'), JSON.stringify(artifact));
+}
+
+const CHEMISTRY_FIXTURE = {
+  schema_version: 1,
+  kind: 'mixed_team_chemistry',
+  generated_at: '2026-08-23T09:00:00.000Z',
+  league_id: 'cml-test-0001',
+  track: 'L2',
+  k: 2,
+  seed: 1,
+  mode: 'tdm',
+  rounds: 1,
+  max_ticks: 240,
+  models: [
+    { model_id: 'test/alpha-one', rating: 61.5 },
+    { model_id: 'test/beta-two', rating: 45 },
+    { model_id: 'test/epsilon', rating: 44 },
+  ],
+  schedule_complete: true,
+  schedule: [],
+  coverage: {},
+  matches: [],
+  pairs: [
+    { models: ['test/alpha-one', 'test/epsilon'], games_together: 2, wins: 2, draws: 0, losses: 0, win_rate: 1, expected_win_rate: 0.6, rating_delta_vs_expected: 0.4, provisional: true },
+    { models: ['test/alpha-one', 'test/beta-two'], games_together: 4, wins: 3, draws: 0, losses: 1, win_rate: 0.75, expected_win_rate: 0.55, rating_delta_vs_expected: 0.2, provisional: false },
+    { models: ['test/beta-two', 'test/epsilon'], games_together: 3, wins: 1, draws: 0, losses: 2, win_rate: 0.3333, expected_win_rate: 0.5, rating_delta_vs_expected: -0.1667, provisional: false },
+  ],
+  notes: 'test fixture',
+};
+
+test('chemistry overlay: index pair table + per-model works-best-with sections', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-chem-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-chem-state-'));
+  writeContinuousFixture(cmlDir);
+  writeChemistryFixture(cmlDir, CHEMISTRY_FIXTURE);
+  await buildWithContinuous(outDir, cmlDir);
+
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.match(index, /aria-label="Model chemistry pairs"/);
+  assert.match(index, /mixed-team pair win rates · 2026-08-23/);
+  assert.equal((index.match(/chem__pair/g) || []).length, 3, 'one row per pair');
+  // Ordered by pair win rate: alpha+epsilon (100%) first, beta+epsilon last.
+  assert.ok(index.indexOf('Wolfpack</b></span><span class="chem__plus">+</span><span>🐢') > 0);
+  const chem = index.split('aria-label="Model chemistry pairs"')[1].split('</section>')[0];
+  assert.ok(chem.indexOf('chem__delta--pos">+0.400') < chem.indexOf('chem__delta--neg">-0.167'));
+  assert.match(chem, /chem__provisional">provisional/, 'small-sample pair is flagged');
+  assert.match(chem, /Expected win rate derives from solo ratings/);
+
+  // Alpha's page: top-2 partners — Epsilon (100%, provisional) then Beta (75%).
+  const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
+  assert.match(alpha, /<h2>Works best with<\/h2>/);
+  const section = alpha.split('<h2>Works best with</h2>')[1].split('</section>')[0];
+  assert.ok(section.indexOf('Epsilon') < section.indexOf('Orbit'), 'best partner first');
+  assert.match(section, /100% pair win rate/);
+  assert.match(section, /75% pair win rate/);
+  assert.match(section, /2 games together · Δ vs expected \+0.400 · provisional/);
+  assert.match(section, /4 games together · Δ vs expected \+0.200(?! · provisional)/);
+  // Beta has a weekly page -> linked; Epsilon is league-only -> plain span.
+  assert.match(section, /<a class="partner" href="beta-two\.html">/);
+  assert.match(section, /<span class="partner">/);
+  assert.match(section, /pairs with fewer than 3 games are provisional/);
+
+  // Beta's page mirrors the pair stats from its own perspective.
+  const beta = fs.readFileSync(path.join(outDir, 'beta-two.html'), 'utf8');
+  assert.match(beta, /<h2>Works best with<\/h2>/);
+  assert.match(beta.split('<h2>Works best with</h2>')[1], /Wolfpack/);
+});
+
+test('chemistry overlay: absent or malformed artifact keeps pages byte-identical', async () => {
+  const baselineDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-chem-base-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-chem-state-'));
+  writeContinuousFixture(cmlDir);
+  await buildWithContinuous(baselineDir, cmlDir);
+
+  for (const variant of ['malformed', 'wrong-kind']) {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-chem-out-'));
+    if (variant === 'malformed') {
+      const dir = path.join(cmlDir, 'chemistry');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, '2026-08-23.json'), '{not json');
+    } else {
+      writeChemistryFixture(cmlDir, { schema_version: 1, kind: 'something_else', pairs: [] });
+    }
+    await buildWithContinuous(outDir, cmlDir);
+    for (const f of ['index.html', 'alpha-one.html', 'beta-two.html']) {
+      assert.equal(
+        fs.readFileSync(path.join(outDir, f), 'utf8'),
+        fs.readFileSync(path.join(baselineDir, f), 'utf8'),
+        `${f} must be byte-identical when the chemistry artifact is unusable (${variant})`,
+      );
+    }
+    fs.rmSync(path.join(cmlDir, 'chemistry'), { recursive: true, force: true });
+  }
+});
+

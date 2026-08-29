@@ -928,6 +928,123 @@ mod tests {
         ));
     }
 
+    fn test_mixed_service(model_ids: &[&str]) -> ArenaService {
+        let record = |model_id: &str| ArenaModelRecord {
+            model_id: model_id.to_owned(),
+            model_name: model_id.to_owned(),
+            provider: "x".to_owned(),
+            version: "1".to_owned(),
+            active: true,
+            created_at: 1,
+            updated_at: 1,
+            last_seen_at: 1,
+            elo_rating: 1000.0,
+            matches_played: 0,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            cumulative_score: 0,
+        };
+        ArenaService {
+            inner: Arc::new(ArenaInner {
+                store_path: PathBuf::from("/tmp/test_arena_store_unused.json"),
+                redis_store: None,
+                bot_sandbox: BotSandbox::new_from_env(),
+                wasm_dir: PathBuf::from("/tmp/test_arena_wasm"),
+                wasm_max_bytes: DEFAULT_ARENA_WASM_MAX_BYTES,
+                persistent_store: RwLock::new(PersistentArenaStore {
+                    models: model_ids
+                        .iter()
+                        .map(|model_id| ((*model_id).to_owned(), record(model_id)))
+                        .collect(),
+                    completed_matches: Vec::new(),
+                }),
+                pending_matches: Mutex::new(VecDeque::new()),
+                in_flight_matches: DashMap::new(),
+                total_matches_reported: AtomicU64::new(0),
+                worker_runs: AtomicU64::new(0),
+                worker_executed: AtomicU64::new(0),
+                worker_idle: AtomicU64::new(0),
+                worker_failures: AtomicU64::new(0),
+                worker_last_success_at: AtomicU64::new(0),
+                worker_last_failure_at: AtomicU64::new(0),
+                worker_last_error: RwLock::new(None),
+                worker_total_duration_ms: AtomicU64::new(0),
+                worker_total_ticks: AtomicU64::new(0),
+                worker_warning_matches: AtomicU64::new(0),
+                worker_runtime_fallback_matches: AtomicU64::new(0),
+                worker_trap_warnings: AtomicU64::new(0),
+                worker_timeout_warnings: AtomicU64::new(0),
+                worker_draw_matches: AtomicU64::new(0),
+                worker_max_duration_ms: AtomicU64::new(0),
+                worker_min_duration_ms: AtomicU64::new(0),
+                worker_model_win_distribution: RwLock::new(HashMap::new()),
+                replay_sequence: AtomicU64::new(0),
+                replay_history_capacity: DEFAULT_ARENA_REPLAY_HISTORY_CAP,
+                recent_replays: Mutex::new(VecDeque::new()),
+                replay_event_sequence: AtomicU64::new(0),
+                replay_event_history_capacity: DEFAULT_ARENA_REPLAY_EVENT_HISTORY_CAP,
+                replay_match_history_capacity: DEFAULT_ARENA_REPLAY_MATCH_HISTORY_CAP,
+                replay_events: Mutex::new(VecDeque::new()),
+                replay_match_order: Mutex::new(VecDeque::new()),
+                replay_matches: RwLock::new(HashMap::new()),
+                replay_event_tx: broadcast::channel(DEFAULT_ARENA_REPLAY_STREAM_CHANNEL_CAP).0,
+            }),
+        }
+    }
+
+    #[test]
+    fn simulate_mixed_team_battle_validates_and_attributes() {
+        let service = test_mixed_service(&["a", "b", "c", "d"]);
+        let body = |team_a: Vec<&str>, team_b: Vec<&str>| SimulateMixedTeamBattleBody {
+            team_a_models: team_a.iter().map(|id| (*id).to_owned()).collect(),
+            team_b_models: team_b.iter().map(|id| (*id).to_owned()).collect(),
+            mode: Some("tdm".to_owned()),
+            rounds: Some(1),
+            max_ticks: Some(60),
+            seed: Some(7),
+        };
+
+        let result = service
+            .simulate_mixed_team_battle(body(vec!["a", "b"], vec!["c", "d"]))
+            .expect("mixed simulation should succeed");
+        let simulation = result.simulation;
+        assert_eq!(simulation.mode, "mixed_team");
+        assert_eq!(simulation.match_mode, "tdm");
+        assert_eq!(simulation.team_size, 2);
+        assert_eq!(simulation.team_a_models, vec!["a".to_owned(), "b".to_owned()]);
+        assert_eq!(simulation.team_b_models, vec!["c".to_owned(), "d".to_owned()]);
+        assert_eq!(simulation.fighters.len(), 4);
+        assert!(
+            simulation
+                .fighters
+                .iter()
+                .all(|fighter| ["a", "b", "c", "d"].contains(&fighter.model_id.as_str()))
+        );
+        assert_eq!(simulation.draw, simulation.winner_side.is_none());
+
+        let duplicate = service.simulate_mixed_team_battle(body(vec!["a", "a"], vec!["c", "d"]));
+        assert!(matches!(
+            duplicate,
+            Err(ArenaError::InvalidInput("duplicate_mixed_model", _))
+        ));
+
+        let unknown = service.simulate_mixed_team_battle(body(vec!["a", "b"], vec!["c", "zzz"]));
+        assert!(matches!(unknown, Err(ArenaError::NotFound("model_not_found", _))));
+
+        let unequal = service.simulate_mixed_team_battle(body(vec!["a", "b"], vec!["c"]));
+        assert!(matches!(
+            unequal,
+            Err(ArenaError::InvalidInput("invalid_mixed_squad_size", _))
+        ));
+
+        let empty = service.simulate_mixed_team_battle(body(vec![], vec!["c", "d"]));
+        assert!(matches!(
+            empty,
+            Err(ArenaError::InvalidInput("invalid_mixed_squad_size", _))
+        ));
+    }
+
     #[test]
     fn load_persistent_store_falls_back_to_file_when_redis_is_invalid() {
         let nanos = SystemTime::now()

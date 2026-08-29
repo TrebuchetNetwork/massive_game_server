@@ -194,3 +194,34 @@ Supervisor configuration:
 
 `benchmark_10v10.sh` remains as a small two-model diagnostic. It is not a fair
 season evaluator and does not publish multidimensional ratings.
+
+## Mixed-team chemistry
+
+`continuous/chemistry.mjs` answers "which models work best together" with real
+battles — something same-model squad battles cannot measure. It runs a
+deterministic schedule of mixed-squad team battles through the additive
+`/api/arena/matches/simulate_mixed_team_battle` endpoint: each match splits the
+top-N league roster into two mixed squads (default 5v5 from the top 10), every
+fighter driven by its own model's WASM. The schedule guarantees every model
+pair shares a squad at least `--k` times (default 2, 6 matches for 10 models);
+the response attributes eliminations, deaths, and scores per fighter, and the
+runner aggregates per-pair win rates against the win rate expected from the
+models' solo ratings (logistic over mean squad Elo, rating → Elo as
+`(rating − 50) × 8`). Pairs with fewer than 3 games together are marked
+provisional. Results persist to
+`artifacts/arena/continuous/chemistry/<YYYY-MM-DD>.json` and are published by
+`build_model_pages.mjs` as a per-model "Works best with" section and a league
+chemistry pair table. The frozen weekly/league evaluation path is untouched —
+mixed mode is additive.
+
+```bash
+# Preview the schedule without executing battles.
+node scripts/arena/continuous/chemistry.mjs --dry-run
+
+# One chemistry round (K=2) against the local server.
+export ARENA_ADMIN_BEARER_TOKEN_FILE=/secure/path/arena-admin-token
+node scripts/arena/continuous/chemistry.mjs --track L2 --k 2
+
+# Verify the schedule/aggregation logic.
+node --test scripts/arena/continuous/test/chemistry.test.mjs
+```

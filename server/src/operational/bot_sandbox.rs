@@ -19,7 +19,7 @@ const DEFAULT_FUEL_PER_TICK: u64 = 1_000_000;
 const DEFAULT_MAX_TICKS: u32 = 600;
 const DEFAULT_REPLAY_MAX_FRAMES: usize = 1024;
 const MAX_ALLOWED_TICKS: u32 = 5_000;
-const MAX_TEAM_BATTLE_SIZE: u32 = 20;
+pub(crate) const MAX_TEAM_BATTLE_SIZE: u32 = 20;
 const MAX_TEAM_BATTLE_ROUNDS: u32 = 32;
 pub const MIN_WORLD_BATTLE_ENTRANTS: usize = 2;
 pub const MAX_WORLD_BATTLE_ENTRANTS: usize = 16;
@@ -424,6 +424,75 @@ pub struct WorldBattleOutcome {
     pub duration_ms: u64,
 }
 
+/// Per-fighter attribution for a mixed-team battle. One entry exists for
+/// every (side, slot) in the fixture; `model_id` is the model whose program
+/// drove that fighter, which is what makes pair-level chemistry computable.
+#[derive(Debug, Clone, Serialize)]
+pub struct MixedTeamFighterOutcome {
+    pub side: String,
+    pub slot: u32,
+    pub model_id: String,
+    pub runtime: String,
+    pub eliminations: u64,
+    pub deaths: u64,
+    pub personal_score: i64,
+    pub collaboration_score: i64,
+    pub action_counts: TeamActionCounts,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MixedTeamBattleRoundOutcome {
+    pub round: u32,
+    pub seed: u64,
+    pub team_a_objective: i32,
+    pub team_b_objective: i32,
+    pub team_a_score: i32,
+    pub team_b_score: i32,
+    pub winner_side: Option<String>,
+    pub draw: bool,
+    pub duration_ms: u64,
+}
+
+/// Outcome of a two-team battle where each squad is a mix of models: fighter
+/// `slot` on side A is driven by `team_a_models[slot]`'s program. The winner
+/// is reported per side (not per model) since each side fields several
+/// models.
+#[derive(Debug, Clone, Serialize)]
+pub struct MixedTeamBattleOutcome {
+    pub mode: String,
+    pub match_mode: String,
+    pub rules_version: String,
+    pub seed: u64,
+    pub team_a_models: Vec<String>,
+    pub team_b_models: Vec<String>,
+    pub team_size: u32,
+    pub rounds: u32,
+    pub max_ticks: u32,
+    pub team_a_round_wins: u32,
+    pub team_b_round_wins: u32,
+    pub round_draws: u32,
+    pub total_team_a_objective: i64,
+    pub total_team_b_objective: i64,
+    pub total_team_a_score: i64,
+    pub total_team_b_score: i64,
+    pub total_team_a_team_score: i64,
+    pub total_team_b_team_score: i64,
+    pub total_team_a_collaboration_score: i64,
+    pub total_team_b_collaboration_score: i64,
+    pub team_a_action_counts: TeamActionCounts,
+    pub team_b_action_counts: TeamActionCounts,
+    pub winner_side: Option<String>,
+    pub draw: bool,
+    pub fighters: Vec<MixedTeamFighterOutcome>,
+    pub rounds_detail: Vec<MixedTeamBattleRoundOutcome>,
+    pub fallback_count: u64,
+    pub trap_count: u64,
+    pub invalid_action_count: u64,
+    pub fuel_error_count: u64,
+    pub warnings: Vec<String>,
+    pub duration_ms: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BotAction {
     Idle,
@@ -549,6 +618,19 @@ struct TeamFighter {
     collaboration_score: i32,
 }
 
+/// Per-slot round statistics. The frozen same-model team path never reads
+/// these; the mixed-team executor folds them into per-model attribution.
+#[derive(Clone, Default)]
+struct FighterRoundStats {
+    kills: u64,
+    deaths: u64,
+    actions: TeamActionCounts,
+    /// Round-final values (not accumulated): the mixed executor sums them
+    /// across rounds.
+    personal_score: i64,
+    collaboration_score: i64,
+}
+
 #[derive(Default)]
 struct TeamRoundSimulation {
     draws: u32,
@@ -566,6 +648,8 @@ struct TeamRoundSimulation {
     v2_fighters_b: u32,
     faults_a: BotFaultCounts,
     faults_b: BotFaultCounts,
+    fighter_stats_a: Vec<FighterRoundStats>,
+    fighter_stats_b: Vec<FighterRoundStats>,
 }
 
 struct WorldFactionState {
@@ -1179,6 +1263,241 @@ impl BotSandbox {
         }
     }
 
+    /// Executes a two-team battle where each squad is a mix of models:
+    /// fighter `slot` on side A is driven by `team_a_models[slot]`'s program
+    /// (likewise for side B). Both squads must be the same size — the round
+    /// core shares the objective scaling of the frozen same-model path, which
+    /// is defined per team size. Every per-fighter contribution (kills,
+    /// deaths, personal/collaboration score, actions) is attributed to the
+    /// fighter's model so pair-level chemistry can be computed downstream.
+    /// Seeding is deterministic: same rosters + mode + rounds + seed produce
+    /// an identical outcome.
+    pub fn execute_mixed_team_battle(
+        &self,
+        team_a_models: &[String],
+        team_b_models: &[String],
+        mode: ArenaMatchMode,
+        rounds: u32,
+        seed: u64,
+        requested_ticks: Option<u32>,
+    ) -> MixedTeamBattleOutcome {
+        let started_at = Instant::now();
+        let canonicalize = |models: &[String]| -> Vec<String> {
+            let mut seen = std::collections::HashSet::new();
+            models
+                .iter()
+                .map(|model_id| model_id.trim())
+                .filter(|model_id| sanitize_model_id(model_id).is_some())
+                .filter(|model_id| seen.insert((*model_id).to_owned()))
+                .map(ToOwned::to_owned)
+                .take(MAX_TEAM_BATTLE_SIZE as usize)
+                .collect()
+        };
+        let roster_a = canonicalize(team_a_models);
+        let roster_b = canonicalize(team_b_models);
+        let team_size = roster_a.len().min(roster_b.len()) as u32;
+        let roster_a: Vec<String> = roster_a.into_iter().take(team_size as usize).collect();
+        let roster_b: Vec<String> = roster_b.into_iter().take(team_size as usize).collect();
+        let normalized_rounds = rounds.clamp(1, MAX_TEAM_BATTLE_ROUNDS);
+        let max_ticks = requested_ticks
+            .unwrap_or(self.default_max_ticks)
+            .clamp(1, MAX_ALLOWED_TICKS);
+        let respawns = if matches!(mode, ArenaMatchMode::Arena) {
+            0
+        } else {
+            DEFAULT_RESPAWNS_NON_ARENA
+        };
+
+        #[derive(Clone, Default)]
+        struct FighterAggregate {
+            runtime: Option<String>,
+            eliminations: u64,
+            deaths: u64,
+            personal_score: i64,
+            collaboration_score: i64,
+            action_counts: TeamActionCounts,
+        }
+
+        let mut aggregates_a = vec![FighterAggregate::default(); roster_a.len()];
+        let mut aggregates_b = vec![FighterAggregate::default(); roster_b.len()];
+        let mut team_a_round_wins = 0u32;
+        let mut team_b_round_wins = 0u32;
+        let mut round_draws = 0u32;
+        let mut total_team_a_objective = 0i64;
+        let mut total_team_b_objective = 0i64;
+        let mut total_team_a_score = 0i64;
+        let mut total_team_b_score = 0i64;
+        let mut total_team_a_team_score = 0i64;
+        let mut total_team_b_team_score = 0i64;
+        let mut total_team_a_collaboration_score = 0i64;
+        let mut total_team_b_collaboration_score = 0i64;
+        let mut team_a_action_counts = TeamActionCounts::default();
+        let mut team_b_action_counts = TeamActionCounts::default();
+        let mut fault_counts = BotFaultCounts::default();
+        let mut all_warnings = Vec::new();
+        let mut rounds_detail = Vec::with_capacity(normalized_rounds as usize);
+
+        for round in 0..normalized_rounds {
+            let round_started_at = Instant::now();
+            let round_seed = seed ^ ((round as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            let team_a =
+                self.build_mixed_team(&roster_a, respawns, round_seed, 0xA11A, &mut all_warnings);
+            let team_b =
+                self.build_mixed_team(&roster_b, respawns, round_seed, 0xB22B, &mut all_warnings);
+            if round == 0 {
+                for (slot, fighter) in team_a.iter().enumerate() {
+                    aggregates_a[slot].runtime =
+                        Some(mixed_runtime_name(&fighter.runtime).to_owned());
+                }
+                for (slot, fighter) in team_b.iter().enumerate() {
+                    aggregates_b[slot].runtime =
+                        Some(mixed_runtime_name(&fighter.runtime).to_owned());
+                }
+            }
+            let simulation = self.run_team_round(
+                team_a,
+                team_b,
+                mode,
+                team_size,
+                round_seed,
+                max_ticks,
+                &mut all_warnings,
+            );
+
+            total_team_a_objective += simulation.objective_a;
+            total_team_b_objective += simulation.objective_b;
+            total_team_a_score += simulation.personal_a;
+            total_team_b_score += simulation.personal_b;
+            total_team_a_team_score += simulation.team_score_a;
+            total_team_b_team_score += simulation.team_score_b;
+            total_team_a_collaboration_score += simulation.collaboration_a;
+            total_team_b_collaboration_score += simulation.collaboration_b;
+            add_action_counts(&mut team_a_action_counts, &simulation.actions_a);
+            add_action_counts(&mut team_b_action_counts, &simulation.actions_b);
+            add_fault_counts(&mut fault_counts, simulation.faults_a);
+            add_fault_counts(&mut fault_counts, simulation.faults_b);
+            for (slot, stats) in simulation.fighter_stats_a.iter().enumerate() {
+                let aggregate = &mut aggregates_a[slot];
+                aggregate.eliminations = aggregate.eliminations.saturating_add(stats.kills);
+                aggregate.deaths = aggregate.deaths.saturating_add(stats.deaths);
+                aggregate.personal_score += stats.personal_score;
+                aggregate.collaboration_score += stats.collaboration_score;
+                add_action_counts(&mut aggregate.action_counts, &stats.actions);
+            }
+            for (slot, stats) in simulation.fighter_stats_b.iter().enumerate() {
+                let aggregate = &mut aggregates_b[slot];
+                aggregate.eliminations = aggregate.eliminations.saturating_add(stats.kills);
+                aggregate.deaths = aggregate.deaths.saturating_add(stats.deaths);
+                aggregate.personal_score += stats.personal_score;
+                aggregate.collaboration_score += stats.collaboration_score;
+                add_action_counts(&mut aggregate.action_counts, &stats.actions);
+            }
+
+            let round_winner = compare_sides(
+                simulation.objective_a,
+                simulation.objective_b,
+                simulation.team_score_a,
+                simulation.team_score_b,
+            );
+            match round_winner {
+                Some("team_a") => team_a_round_wins = team_a_round_wins.saturating_add(1),
+                Some("team_b") => team_b_round_wins = team_b_round_wins.saturating_add(1),
+                _ => round_draws = round_draws.saturating_add(1),
+            }
+            rounds_detail.push(MixedTeamBattleRoundOutcome {
+                round: round + 1,
+                seed: round_seed,
+                team_a_objective: saturating_i64_to_i32(simulation.objective_a),
+                team_b_objective: saturating_i64_to_i32(simulation.objective_b),
+                team_a_score: saturating_i64_to_i32(simulation.team_score_a),
+                team_b_score: saturating_i64_to_i32(simulation.team_score_b),
+                winner_side: round_winner.map(str::to_owned),
+                draw: round_winner.is_none(),
+                duration_ms: round_started_at.elapsed().as_millis() as u64,
+            });
+        }
+
+        let winner_side = if team_a_round_wins > team_b_round_wins {
+            Some("team_a")
+        } else if team_b_round_wins > team_a_round_wins {
+            Some("team_b")
+        } else {
+            compare_sides(
+                total_team_a_objective,
+                total_team_b_objective,
+                total_team_a_team_score,
+                total_team_b_team_score,
+            )
+        };
+
+        let mut fighters = Vec::with_capacity(roster_a.len() + roster_b.len());
+        for (slot, (model_id, aggregate)) in
+            roster_a.iter().zip(aggregates_a.iter()).enumerate()
+        {
+            fighters.push(MixedTeamFighterOutcome {
+                side: "team_a".to_owned(),
+                slot: slot as u32,
+                model_id: model_id.clone(),
+                runtime: aggregate.runtime.clone().unwrap_or_else(|| "fallback".to_owned()),
+                eliminations: aggregate.eliminations,
+                deaths: aggregate.deaths,
+                personal_score: aggregate.personal_score,
+                collaboration_score: aggregate.collaboration_score,
+                action_counts: aggregate.action_counts.clone(),
+            });
+        }
+        for (slot, (model_id, aggregate)) in
+            roster_b.iter().zip(aggregates_b.iter()).enumerate()
+        {
+            fighters.push(MixedTeamFighterOutcome {
+                side: "team_b".to_owned(),
+                slot: slot as u32,
+                model_id: model_id.clone(),
+                runtime: aggregate.runtime.clone().unwrap_or_else(|| "fallback".to_owned()),
+                eliminations: aggregate.eliminations,
+                deaths: aggregate.deaths,
+                personal_score: aggregate.personal_score,
+                collaboration_score: aggregate.collaboration_score,
+                action_counts: aggregate.action_counts.clone(),
+            });
+        }
+
+        MixedTeamBattleOutcome {
+            mode: "mixed_team".to_owned(),
+            match_mode: mode.as_str().to_owned(),
+            rules_version: ARENA_SIMULATOR_RULES_VERSION.to_owned(),
+            seed,
+            team_a_models: roster_a,
+            team_b_models: roster_b,
+            team_size,
+            rounds: normalized_rounds,
+            max_ticks,
+            team_a_round_wins,
+            team_b_round_wins,
+            round_draws,
+            total_team_a_objective,
+            total_team_b_objective,
+            total_team_a_score,
+            total_team_b_score,
+            total_team_a_team_score,
+            total_team_b_team_score,
+            total_team_a_collaboration_score,
+            total_team_b_collaboration_score,
+            team_a_action_counts,
+            team_b_action_counts,
+            winner_side: winner_side.map(str::to_owned),
+            draw: winner_side.is_none(),
+            fighters,
+            rounds_detail,
+            fallback_count: fault_counts.fallback_count,
+            trap_count: fault_counts.trap_count,
+            invalid_action_count: fault_counts.invalid_action_count,
+            fuel_error_count: fault_counts.fuel_error_count,
+            warnings: all_warnings,
+            duration_ms: started_at.elapsed().as_millis() as u64,
+        }
+    }
+
     /// Executes a genuine shared-world free-for-all. Every model controls one
     /// faction and all faction fighters observe and act in the same tick. The
     /// caller-facing service validates the entrant count and uniqueness; this
@@ -1635,8 +1954,28 @@ impl BotSandbox {
         } else {
             DEFAULT_RESPAWNS_NON_ARENA
         };
-        let mut team_a = self.build_team(model_a_id, team_size, respawns, seed, 0xA11A, warnings);
-        let mut team_b = self.build_team(model_b_id, team_size, respawns, seed, 0xB22B, warnings);
+        let team_a = self.build_team(model_a_id, team_size, respawns, seed, 0xA11A, warnings);
+        let team_b = self.build_team(model_b_id, team_size, respawns, seed, 0xB22B, warnings);
+        self.run_team_round(team_a, team_b, mode, team_size, seed, max_ticks, warnings)
+    }
+
+    /// Shared two-team round core: runs the tick loop over pre-built teams.
+    /// The frozen same-model path reaches this through
+    /// `simulate_interacting_team_round`; the mixed-team path builds one
+    /// fighter per roster model and calls it directly. Besides the team
+    /// aggregates it also records per-slot kills/deaths/actions so callers
+    /// can attribute contributions to individual fighters.
+    #[allow(clippy::too_many_arguments)]
+    fn run_team_round(
+        &self,
+        mut team_a: Vec<TeamFighter>,
+        mut team_b: Vec<TeamFighter>,
+        mode: ArenaMatchMode,
+        team_size: u32,
+        seed: u64,
+        max_ticks: u32,
+        warnings: &mut Vec<String>,
+    ) -> TeamRoundSimulation {
         let mut objectives = MatchObjectiveState::default();
         let mut team_score_a = 0i64;
         let mut team_score_b = 0i64;
@@ -1665,6 +2004,8 @@ impl BotSandbox {
             .iter()
             .filter(|fighter| fighter.runtime.uses_v2())
             .count() as u32;
+        let mut fighter_stats_a = vec![FighterRoundStats::default(); team_a.len()];
+        let mut fighter_stats_b = vec![FighterRoundStats::default(); team_b.len()];
 
         for tick in 0..max_ticks {
             let alive_a = living_count(&team_a);
@@ -1736,6 +2077,7 @@ impl BotSandbox {
                 };
                 if fighter.state.health > 0 {
                     action.record(&mut actions_count_a);
+                    action.record(&mut fighter_stats_a[slot].actions);
                 }
                 actions_a.push(action);
             }
@@ -1754,6 +2096,7 @@ impl BotSandbox {
                 };
                 if fighter.state.health > 0 {
                     action.record(&mut actions_count_b);
+                    action.record(&mut fighter_stats_b[slot].actions);
                 }
                 actions_b.push(action);
             }
@@ -1765,7 +2108,7 @@ impl BotSandbox {
             apply_charge_costs(&mut team_a, &actions_a);
             apply_charge_costs(&mut team_b, &actions_b);
 
-            apply_team_attacks(
+            let kills_by_a = apply_team_attacks(
                 &mut team_a,
                 &mut team_b,
                 &actions_a,
@@ -1775,7 +2118,7 @@ impl BotSandbox {
                 seed,
                 tick,
             );
-            apply_team_attacks(
+            let kills_by_b = apply_team_attacks(
                 &mut team_b,
                 &mut team_a,
                 &actions_b,
@@ -1785,9 +2128,29 @@ impl BotSandbox {
                 seed,
                 tick,
             );
+            for (killer_slot, _) in kills_by_a {
+                if let Some(stats) = fighter_stats_a.get_mut(killer_slot) {
+                    stats.kills = stats.kills.saturating_add(1);
+                }
+            }
+            for (killer_slot, _) in kills_by_b {
+                if let Some(stats) = fighter_stats_b.get_mut(killer_slot) {
+                    stats.kills = stats.kills.saturating_add(1);
+                }
+            }
 
             let eliminated_a = eliminated_indices(&health_before_a, &team_a);
             let eliminated_b = eliminated_indices(&health_before_b, &team_b);
+            for slot in eliminated_a.iter().copied() {
+                if let Some(stats) = fighter_stats_a.get_mut(slot) {
+                    stats.deaths = stats.deaths.saturating_add(1);
+                }
+            }
+            for slot in eliminated_b.iter().copied() {
+                if let Some(stats) = fighter_stats_b.get_mut(slot) {
+                    stats.deaths = stats.deaths.saturating_add(1);
+                }
+            }
             if !eliminated_b.is_empty() {
                 objectives.tdm_elims_a = objectives
                     .tdm_elims_a
@@ -1825,6 +2188,14 @@ impl BotSandbox {
             .zip(team_b.iter())
             .filter(|(a, b)| (a.state.health > 0) == (b.state.health > 0))
             .count() as u32;
+        for (slot, fighter) in team_a.iter().enumerate() {
+            fighter_stats_a[slot].personal_score = i64::from(fighter.state.score);
+            fighter_stats_a[slot].collaboration_score = i64::from(fighter.collaboration_score);
+        }
+        for (slot, fighter) in team_b.iter().enumerate() {
+            fighter_stats_b[slot].personal_score = i64::from(fighter.state.score);
+            fighter_stats_b[slot].collaboration_score = i64::from(fighter.collaboration_score);
+        }
 
         TeamRoundSimulation {
             draws,
@@ -1842,6 +2213,8 @@ impl BotSandbox {
             v2_fighters_b,
             faults_a,
             faults_b,
+            fighter_stats_a,
+            fighter_stats_b,
         }
     }
 
@@ -1866,6 +2239,38 @@ impl BotSandbox {
                         respawns_remaining: respawns,
                     },
                     runtime: self.build_runtime(program.clone(), runtime_seed, warnings),
+                    collaboration_score: 0,
+                }
+            })
+            .collect()
+    }
+
+    /// Builds a heterogeneous squad: fighter `slot` runs `model_ids[slot]`'s
+    /// program. Uses the same runtime policy and per-slot seeding as
+    /// `build_team`, so a mixed battle plays by the exact same rules as the
+    /// frozen same-model team battles.
+    fn build_mixed_team(
+        &self,
+        model_ids: &[String],
+        respawns: i32,
+        seed: u64,
+        team_salt: u64,
+        warnings: &mut Vec<String>,
+    ) -> Vec<TeamFighter> {
+        model_ids
+            .iter()
+            .enumerate()
+            .map(|(slot, model_id)| {
+                let program = self.load_program(model_id);
+                let runtime_seed =
+                    seed ^ team_salt ^ ((slot as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+                TeamFighter {
+                    state: FighterState {
+                        health: 100,
+                        score: 0,
+                        respawns_remaining: respawns,
+                    },
+                    runtime: self.build_runtime(program, runtime_seed, warnings),
                     collaboration_score: 0,
                 }
             })
@@ -2593,6 +2998,12 @@ fn apply_charge_costs(team: &mut [TeamFighter], actions: &[BotAction]) {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Resolves one team's attacks against the other. Returns the kill events as
+/// `(killer_slot, victim_slot)` pairs (slots index into the attacker and
+/// defender slices respectively) so mixed-team callers can attribute
+/// eliminations to the fighter — and thereby the model — that scored them.
+/// Damage, scoring, and collaboration semantics are unchanged.
+#[allow(clippy::too_many_arguments)]
 fn apply_team_attacks(
     attackers: &mut [TeamFighter],
     defenders: &mut [TeamFighter],
@@ -2602,7 +3013,8 @@ fn apply_team_attacks(
     defender_support_targets: &[Vec<usize>],
     seed: u64,
     tick: u32,
-) {
+) -> Vec<(usize, usize)> {
+    let mut kills = Vec::new();
     let mut incoming: Vec<Vec<(usize, i32)>> = vec![Vec::new(); defenders.len()];
     for (attacker_slot, action) in attacker_actions.iter().copied().enumerate() {
         let Some(target_slot) = targets.get(attacker_slot).copied().flatten() else {
@@ -2702,6 +3114,7 @@ fn apply_team_attacks(
             if let Some(killer) = attackers.get_mut(killer_slot) {
                 killer.state.score = killer.state.score.saturating_add(40);
             }
+            kills.push((killer_slot, target_slot));
             for (attacker_slot, _) in effective_by_attacker {
                 if attacker_slot != killer_slot {
                     if let Some(assistant) = attackers.get_mut(attacker_slot) {
@@ -2713,6 +3126,7 @@ fn apply_team_attacks(
             }
         }
     }
+    kills
 }
 
 fn scale_damage(damage: i32, percent: i32) -> i32 {
@@ -3179,6 +3593,31 @@ fn compare_team_round(
     }
 }
 
+/// Side-based equivalent of `compare_team_round` for mixed-team battles,
+/// where a winner cannot be named by a single model id.
+fn compare_sides(objective_a: i64, objective_b: i64, score_a: i64, score_b: i64) -> Option<&'static str> {
+    use std::cmp::Ordering;
+    match objective_a
+        .cmp(&objective_b)
+        .then_with(|| score_a.cmp(&score_b))
+    {
+        Ordering::Greater => Some("team_a"),
+        Ordering::Less => Some("team_b"),
+        Ordering::Equal => None,
+    }
+}
+
+fn mixed_runtime_name(runtime: &BotRuntime) -> &'static str {
+    match runtime {
+        BotRuntime::Fallback { .. } => "fallback",
+        BotRuntime::Wasm {
+            tick_fn: BotTickFunction::V2(_),
+            ..
+        } => "wasm_v2",
+        BotRuntime::Wasm { .. } => "wasm_v1",
+    }
+}
+
 fn saturating_i64_to_i32(value: i64) -> i32 {
     if value > i32::MAX as i64 {
         i32::MAX
@@ -3513,6 +3952,172 @@ mod tests {
         let maximum_actions = 2u64 * 10 * 3 * 120;
         assert!(observed_actions > 0);
         assert!(observed_actions <= maximum_actions);
+    }
+
+    fn deterministic_mixed_telemetry(outcome: &MixedTeamBattleOutcome) -> serde_json::Value {
+        let mut value = serde_json::to_value(outcome).expect("mixed outcome should serialize");
+        remove_duration_telemetry(&mut value);
+        value
+    }
+
+    #[test]
+    fn mixed_team_battle_attributes_every_fighter_to_its_model() {
+        let fixture = V2WasmFixture::new(&["ally_one", "ally_two", "enemy_one", "enemy_two"]);
+        let sandbox = fixture.sandbox();
+        let team_a = vec!["ally_one".to_owned(), "ally_two".to_owned()];
+        let team_b = vec!["enemy_one".to_owned(), "enemy_two".to_owned()];
+        let outcome = sandbox.execute_mixed_team_battle(
+            &team_a,
+            &team_b,
+            ArenaMatchMode::TeamDeathmatch,
+            2,
+            77,
+            Some(120),
+        );
+
+        assert_eq!(outcome.mode, "mixed_team");
+        assert_eq!(outcome.match_mode, "tdm");
+        assert_eq!(outcome.team_size, 2);
+        assert_eq!(outcome.rounds, 2);
+        assert_eq!(outcome.team_a_models, team_a);
+        assert_eq!(outcome.team_b_models, team_b);
+        assert_eq!(outcome.rounds_detail.len(), 2);
+        assert_eq!(outcome.draw, outcome.winner_side.is_none());
+        if let Some(winner) = outcome.winner_side.as_deref() {
+            assert!(winner == "team_a" || winner == "team_b");
+        }
+        assert_eq!(
+            outcome.team_a_round_wins + outcome.team_b_round_wins + outcome.round_draws,
+            2
+        );
+
+        // One fighter entry per (side, slot), each carrying its roster model.
+        assert_eq!(outcome.fighters.len(), 4);
+        for (slot, model_id) in team_a.iter().enumerate() {
+            let fighter = outcome
+                .fighters
+                .iter()
+                .find(|entry| entry.side == "team_a" && entry.slot == slot as u32)
+                .expect("every team_a slot should be attributed");
+            assert_eq!(&fighter.model_id, model_id);
+            assert_eq!(fighter.runtime, "wasm_v2");
+        }
+        for (slot, model_id) in team_b.iter().enumerate() {
+            let fighter = outcome
+                .fighters
+                .iter()
+                .find(|entry| entry.side == "team_b" && entry.slot == slot as u32)
+                .expect("every team_b slot should be attributed");
+            assert_eq!(&fighter.model_id, model_id);
+            assert_eq!(fighter.runtime, "wasm_v2");
+        }
+
+        // Per-fighter sums must reproduce the team totals exactly.
+        let sum = |side: &str,
+                   pick: &dyn Fn(&MixedTeamFighterOutcome) -> i64|
+         -> i64 {
+            outcome
+                .fighters
+                .iter()
+                .filter(|entry| entry.side == side)
+                .map(pick)
+                .sum()
+        };
+        assert_eq!(sum("team_a", &|f| f.personal_score), outcome.total_team_a_score);
+        assert_eq!(sum("team_b", &|f| f.personal_score), outcome.total_team_b_score);
+        assert_eq!(
+            sum("team_a", &|f| f.collaboration_score),
+            outcome.total_team_a_collaboration_score
+        );
+        assert_eq!(
+            sum("team_b", &|f| f.collaboration_score),
+            outcome.total_team_b_collaboration_score
+        );
+        let actions_of = |side: &str| -> u64 {
+            outcome
+                .fighters
+                .iter()
+                .filter(|entry| entry.side == side)
+                .map(|entry| total_actions(&entry.action_counts))
+                .sum()
+        };
+        assert_eq!(actions_of("team_a"), total_actions(&outcome.team_a_action_counts));
+        assert_eq!(actions_of("team_b"), total_actions(&outcome.team_b_action_counts));
+
+        // TDM objectives count eliminations suffered by the opposing side,
+        // so deaths on one side must equal the other side's objective.
+        let deaths_a = sum("team_a", &|f| f.deaths as i64);
+        let deaths_b = sum("team_b", &|f| f.deaths as i64);
+        assert_eq!(deaths_b, outcome.total_team_a_objective);
+        assert_eq!(deaths_a, outcome.total_team_b_objective);
+        // Kills are credited only when an attacker lands the fatal damage;
+        // self-inflicted charge deaths leave a non-negative gap.
+        let kills_a = sum("team_a", &|f| f.eliminations as i64);
+        let kills_b = sum("team_b", &|f| f.eliminations as i64);
+        assert!(kills_a <= deaths_b);
+        assert!(kills_b <= deaths_a);
+    }
+
+    #[test]
+    fn mixed_team_battle_is_deterministic_for_fixed_seed() {
+        let fixture = V2WasmFixture::new(&["mix_a", "mix_b", "mix_c", "mix_d"]);
+        let sandbox = fixture.sandbox();
+        let team_a = vec!["mix_a".to_owned(), "mix_b".to_owned()];
+        let team_b = vec!["mix_c".to_owned(), "mix_d".to_owned()];
+        let first = sandbox.execute_mixed_team_battle(
+            &team_a,
+            &team_b,
+            ArenaMatchMode::Koth,
+            2,
+            1234,
+            Some(150),
+        );
+        let second = sandbox.execute_mixed_team_battle(
+            &team_a,
+            &team_b,
+            ArenaMatchMode::Koth,
+            2,
+            1234,
+            Some(150),
+        );
+        assert_eq!(
+            deterministic_mixed_telemetry(&first),
+            deterministic_mixed_telemetry(&second)
+        );
+        let other_seed = sandbox.execute_mixed_team_battle(
+            &team_a,
+            &team_b,
+            ArenaMatchMode::Koth,
+            2,
+            4321,
+            Some(150),
+        );
+        assert_ne!(
+            deterministic_mixed_telemetry(&first),
+            deterministic_mixed_telemetry(&other_seed)
+        );
+    }
+
+    #[test]
+    fn mixed_team_battle_runs_on_fallback_runtimes_without_wasm() {
+        let sandbox = BotSandbox::new_from_env();
+        let outcome = sandbox.execute_mixed_team_battle(
+            &["no_wasm_a".to_owned(), "no_wasm_b".to_owned()],
+            &["no_wasm_c".to_owned(), "no_wasm_d".to_owned()],
+            ArenaMatchMode::Arena,
+            1,
+            5,
+            Some(80),
+        );
+        assert_eq!(outcome.fighters.len(), 4);
+        assert!(
+            outcome
+                .fighters
+                .iter()
+                .all(|fighter| fighter.runtime == "fallback")
+        );
+        assert!(outcome.fallback_count >= 4);
+        assert_eq!(outcome.draw, outcome.winner_side.is_none());
     }
 
     #[test]

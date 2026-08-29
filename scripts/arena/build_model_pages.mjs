@@ -675,6 +675,183 @@ ${items}
         <p class="metric-note">Co-performance proxy (league never mixes models on a team) — average finishing gap across shared world-FFA events, blended with collaboration rating.</p>`;
 }
 
+// ---------------------------------------------------------------------------
+// Mixed-team chemistry overlay (optional)
+// ---------------------------------------------------------------------------
+//
+// Rendered only when <continuousDir>/chemistry/<date>.json exists and
+// validates loosely (schema v1, kind mixed_team_chemistry, a pairs array).
+// The index gains a chemistry pair table; model pages gain a "Works best
+// with" section (top 2 partners by pair win rate). Sample sizes are small by
+// design — pairs with fewer than 3 games together are marked provisional.
+// Missing or malformed data degrades to byte-identical pages.
+
+export const CHEMISTRY_ARTIFACT_KIND = 'mixed_team_chemistry';
+export const CHEMISTRY_PROVISIONAL_MIN_GAMES = 3;
+export const CHEMISTRY_INDEX_PAIR_LIMIT = 10;
+export const CHEMISTRY_MODEL_PARTNER_LIMIT = 2;
+
+/**
+ * Load the newest chemistry artifact under <continuousDir>/chemistry/, or
+ * null when the directory/file is missing or the shape is not recognized.
+ */
+export function loadChemistry({ continuousDir, io = defaultIo, log = () => {} }) {
+  const chemistryDir = path.join(continuousDir, 'chemistry');
+  if (!io.exists(chemistryDir)) return null;
+  const names = io.readdir(chemistryDir).filter((n) => n.endsWith('.json')).sort();
+  for (const name of [...names].reverse()) {
+    try {
+      const artifact = io.readJson(path.join(chemistryDir, name));
+      if (
+        artifact?.schema_version === 1
+        && artifact?.kind === CHEMISTRY_ARTIFACT_KIND
+        && Array.isArray(artifact?.pairs)
+        && artifact.pairs.every((pair) => (
+          Array.isArray(pair?.models)
+          && pair.models.length === 2
+          && Number.isFinite(Number(pair.games_together))
+          && Number.isFinite(Number(pair.win_rate))
+        ))
+      ) {
+        return artifact;
+      }
+      log(`chemistry: ignoring unrecognized artifact ${name}`);
+    } catch (error) {
+      log(`chemistry: ignoring unreadable artifact ${name} (${String(error?.message || error).slice(0, 120)})`);
+    }
+  }
+  return null;
+}
+
+/**
+ * Display-name lookup for chemistry partner ids. Chemistry pairs reference
+ * continuous-league model ids; this resolves them to weekly-roster mascots
+ * (with a page link when the partner has one) or to the league mascot.
+ */
+export function chemistryLookup({ roster = [], metaById, slugById, continuous }) {
+  const map = new Map();
+  const put = (ids, display) => {
+    for (const id of ids.filter(Boolean).map(String)) {
+      if (!map.has(id)) map.set(id, display);
+    }
+  };
+  for (const model of roster) {
+    const meta = metaById.get(model.model_id);
+    if (!meta) continue;
+    put([model.model_id, model.canonical_slug, model.provider_model], {
+      emoji: meta.emoji,
+      title: meta.title,
+      shortName: meta.shortName,
+      href: slugById.get(model.model_id) ? `${slugById.get(model.model_id)}.html` : null,
+    });
+  }
+  for (const trackId of TRACKS) {
+    const slice = continuous?.state?.tracks?.[trackId];
+    for (const entry of [...(slice?.roster || []), ...(slice?.retired || [])]) {
+      const mascot = entry?.mascot || {};
+      put([entry?.model_id, entry?.slug], {
+        emoji: mascot.emoji || '🥚',
+        title: mascot.title || String(entry?.slug || entry?.model_id || '?'),
+        shortName: String(entry?.slug || entry?.model_id || '?'),
+        href: null,
+      });
+    }
+  }
+  return (partnerId) => map.get(String(partnerId)) || {
+    emoji: '🥚',
+    title: String(partnerId),
+    shortName: String(partnerId),
+    href: null,
+  };
+}
+
+/**
+ * Top partners for one weekly-roster model from the chemistry artifact,
+ * best pair win rate first. Matches the model's model_id/canonical slug/
+ * provider id against pair membership.
+ */
+export function chemistryPartnersForModel(chemistry, model, limit = CHEMISTRY_MODEL_PARTNER_LIMIT) {
+  const ids = new Set(
+    [model?.model_id, model?.canonical_slug, model?.provider_model].filter(Boolean).map(String),
+  );
+  const rows = [];
+  for (const pair of chemistry?.pairs || []) {
+    const [left, right] = pair.models.map(String);
+    let partner = null;
+    if (ids.has(left) && !ids.has(right)) partner = right;
+    else if (ids.has(right) && !ids.has(left)) partner = left;
+    if (!partner) continue;
+    rows.push({
+      partner,
+      games: Number(pair.games_together) || 0,
+      winRate: Number(pair.win_rate) || 0,
+      expected: Number(pair.expected_win_rate) || 0,
+      delta: Number(pair.rating_delta_vs_expected) || 0,
+      provisional: pair.provisional === true,
+    });
+  }
+  rows.sort((a, b) => b.winRate - a.winRate || b.games - a.games || a.partner.localeCompare(b.partner));
+  return rows.slice(0, limit);
+}
+
+const chemDeltaClass = (delta) => (delta >= 0 ? 'pos' : 'neg');
+const chemDeltaText = (delta) => `${delta >= 0 ? '+' : ''}${delta.toFixed(3)}`;
+
+/** Model page section: top partners by real mixed-team win rate. */
+export function chemistryPartnersSection(rows, lookup) {
+  if (!rows.length) return '';
+  const items = rows.map(({ partner, games, winRate, delta, provisional }) => {
+    const meta = lookup(partner);
+    const name = `<span class="partner__name"><b>${esc(meta.title)}</b><small>${esc(meta.shortName)}</small></span>`;
+    const inner = `
+                <span class="partner__emoji">${esc(meta.emoji)}</span>
+                ${name}
+                <span class="partner__score"><b>${fmtPct(winRate, 0)} pair win rate</b><small>${games} game${games === 1 ? '' : 's'} together · Δ vs expected ${chemDeltaText(delta)}${provisional ? ' · provisional' : ''}</small></span>`;
+    return meta.href
+      ? `            <a class="partner" href="${esc(meta.href)}">${inner}\n            </a>`
+      : `            <span class="partner">${inner}\n            </span>`;
+  }).join('\n');
+  return `        <section class="panel">
+            <h2>Works best with</h2>
+            <div class="partners">
+${items}
+            </div>
+            <p class="metric-note">Real mixed-team chemistry — measured from mixed-squad battles where this model shared a team with the partner. Sample sizes are small; pairs with fewer than ${CHEMISTRY_PROVISIONAL_MIN_GAMES} games are provisional.</p>
+        </section>`;
+}
+
+/** Index page table: strongest measured chemistry pairs across the league. */
+export function chemistryPairsSection(chemistry, lookup) {
+  const pairs = (chemistry?.pairs || []).slice(0, CHEMISTRY_INDEX_PAIR_LIMIT);
+  if (!pairs.length) return '';
+  const rows = pairs.map((pair) => {
+    const [leftId, rightId] = pair.models.map(String);
+    const left = lookup(leftId);
+    const right = lookup(rightId);
+    const delta = Number(pair.rating_delta_vs_expected) || 0;
+    const provisional = pair.provisional === true;
+    return `                    <tr>
+                        <td class="chem__pair"><span>${esc(left.emoji)} <b>${esc(left.title)}</b></span><span class="chem__plus">+</span><span>${esc(right.emoji)} <b>${esc(right.title)}</b></span></td>
+                        <td class="num">${fmtInt(pair.games_together)}</td>
+                        <td class="num">${fmtPct(Number(pair.win_rate) || 0, 0)}</td>
+                        <td class="num">${fmtPct(Number(pair.expected_win_rate) || 0, 0)}</td>
+                        <td class="num chem__delta chem__delta--${chemDeltaClass(delta)}">${chemDeltaText(delta)}</td>
+                        <td class="num">${provisional ? '<span class="chem__provisional">provisional</span>' : '—'}</td>
+                    </tr>`;
+  }).join('\n');
+  const date = String(chemistry?.generated_at || '').slice(0, 10);
+  return `        <section class="panel chem" aria-label="Model chemistry pairs">
+            <h2>Model chemistry <span class="hof__hint">mixed-team pair win rates${date ? ` · ${esc(date)}` : ''}</span></h2>
+            <table class="chem__table">
+                <thead><tr><th>Pair</th><th>Games</th><th>Win rate</th><th>Expected</th><th>Δ vs expected</th><th></th></tr></thead>
+                <tbody>
+${rows}
+                </tbody>
+            </table>
+            <p class="metric-note">Measured from mixed-squad battles (each fighter driven by its own model). Expected win rate derives from solo ratings; Δ is actual minus expected. Pairs with fewer than ${CHEMISTRY_PROVISIONAL_MIN_GAMES} games are provisional.</p>
+        </section>`;
+}
+
 function fightsSection(clips, mediaBase) {
   if (!clips.length) return '<p class="empty">No recorded highlights featuring this model yet.</p>';
   const cards = clips.map((clip) => `            <a class="clip" href="${esc(mediaBase)}/${esc(clip.webm)}" target="_blank" rel="noopener">
@@ -757,7 +934,7 @@ ${rivalryTable(agg, ctx.slugById, ctx.metaById)}
             <h2>Plays well alongside</h2>
 ${coPerformanceSection(partners, ctx.metaById, ctx.slugById)}
         </section>
-
+${ctx.chemistry ? `\n${ctx.chemistry}\n` : ''}
         <section class="panel">
             <h2>Fights</h2>
 ${fightsSection(clips, ctx.mediaBase)}
@@ -790,7 +967,7 @@ export function renderIndexPage(ctx) {
 ${ctx.chronicle ? `${ctx.chronicle}\n` : ''}${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
 ${rows}
         </section>
-${ctx.toplist ? `${ctx.toplist}\n` : ''}${continuous ? `${[standingsSection(continuous.state), matrixSection(continuous.state), announcementsSection(allAnnouncements(continuous.state)), hallOfFameSection(continuous.state)].filter(Boolean).join('\n')}\n` : ''}${provenanceFooter(ctx)}
+${ctx.toplist ? `${ctx.toplist}\n` : ''}${continuous ? `${[standingsSection(continuous.state), matrixSection(continuous.state), ctx.chemistry, announcementsSection(allAnnouncements(continuous.state)), hallOfFameSection(continuous.state)].filter(Boolean).join('\n')}\n` : ''}${provenanceFooter(ctx)}
 ${foot}`;
 }
 
@@ -1998,12 +2175,22 @@ table.standings__table tr:last-child td { border-bottom: none; }
 .lineage__meta { color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
 .lineage__delta { color: var(--muted); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .lineage__at { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+.chem__table { width: 100%; border-collapse: collapse; }
+.chem__table th { color: var(--dim); font: 700 9px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; text-align: left; padding: 0 10px 8px 0; }
+.chem__table td { padding: 8px 10px 8px 0; border-top: 1px solid var(--line-soft); font-size: 13px; }
+.chem__table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.chem__pair { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chem__plus { color: var(--dim); font-weight: 700; }
+.chem__delta--pos { color: var(--acid-soft); font-weight: 700; }
+.chem__delta--neg { color: #fb7185; font-weight: 700; }
+.chem__provisional { color: #facc15; font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; border: 1px solid #facc1555; border-radius: 4px; padding: 3px 5px; white-space: nowrap; }
 @media (max-width: 860px) {
     .league-strip { grid-template-columns: repeat(2, 1fr); }
     .league-strip div:nth-child(odd) { border-left: none; }
     .announce__item { grid-template-columns: 28px 34px minmax(0, 1fr) auto; }
     .announce__text { grid-column: 3 / 5; }
     .matrix__table { display: block; overflow-x: auto; }
+    .chem__table { display: block; overflow-x: auto; }
     .lineage__node { grid-template-columns: 28px 44px minmax(0, 1fr) auto; }
     .lineage__meta, .lineage__delta { display: none; }
 }
@@ -2040,6 +2227,15 @@ export async function buildPages({
     io,
     log,
   });
+
+  // Optional mixed-team chemistry overlay — null unless the artifact validates.
+  const chemistry = continuous
+    ? loadChemistry({
+      continuousDir: continuousDir || path.join(artifactsRoot, 'continuous'),
+      io,
+      log,
+    })
+    : null;
 
   // Optional analyst toplist — null unless the authored commentary loads.
   const toplist = loadToplist({ toplistPath, io, log });
@@ -2090,6 +2286,10 @@ export async function buildPages({
     mascot: metaById.get(m.model_id),
   }));
 
+  const lookupChemistry = chemistry
+    ? chemistryLookup({ roster, metaById, slugById, continuous })
+    : null;
+
   io.writeFile(path.join(outDir, 'models.css'), MODELS_CSS);
   io.writeFile(
     path.join(outDir, 'mascots.json'),
@@ -2105,6 +2305,7 @@ export async function buildPages({
     generated_at: ratings.generated_at,
     league: ratings.league,
     continuous,
+    chemistry: chemistry ? chemistryPairsSection(chemistry, lookupChemistry) : null,
     toplist: toplist ? toplistSection(toplist, toplistCards(toplist, roster, slugById)) : null,
     chronicle: chronicle ? chronicleSection(chronicle) : null,
     nowMs,
@@ -2139,6 +2340,9 @@ export async function buildPages({
     const lineage = continuous
       ? lineageSection(continuous.state, m, continuous.submissions, continuous.snapshots) || null
       : null;
+    const chemistryPartners = chemistry
+      ? chemistryPartnersSection(chemistryPartnersForModel(chemistry, m), lookupChemistry) || null
+      : null;
     const toplistEntry = toplist ? matchToplistEntry(toplist.entries, m) : null;
     io.writeFile(path.join(outDir, `${slugById.get(id)}.html`), renderModelPage({
       model: m,
@@ -2149,6 +2353,7 @@ export async function buildPages({
       partners,
       clips,
       lineage,
+      chemistry: chemistryPartners,
       analyst: toplistEntry ? analystNoteSection(toplistEntry, toplist.league_day) : null,
       slugById,
       metaById,

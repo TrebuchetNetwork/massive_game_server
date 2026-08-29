@@ -2,8 +2,8 @@ use super::ratings::{load_ratings_response, ratings_path_from_env};
 use super::types::{
     ApiErrorBody, ApiResponse, ExecuteNextBody, LeaderboardQuery, ModelHeartbeatBody, PendingQuery,
     QueueMatchBody, QueueRoundRobinBody, RegisterModelBody, ReplayEventsQuery, ReplayQuery,
-    ReplayStreamQuery, ReportMatchBody, SimulateTeamBattleBody, SimulateWorldBattleBody,
-    UploadModelWasmBody,
+    ReplayStreamQuery, ReportMatchBody, SimulateMixedTeamBattleBody, SimulateTeamBattleBody,
+    SimulateWorldBattleBody, UploadModelWasmBody,
 };
 use super::ArenaService;
 use serde::Serialize;
@@ -304,6 +304,33 @@ pub fn build_arena_routes(
             },
         );
 
+    let simulate_mixed_team_battle = warp::path!("api" / "arena" / "matches" / "simulate_mixed_team_battle")
+        .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(
+            warp::body::content_length_limit(json_body_limit)
+                .and(warp::body::json::<SimulateMixedTeamBattleBody>())
+                .or(warp::any().map(SimulateMixedTeamBattleBody::default))
+                .unify(),
+        )
+        .and(with_service(service.clone()))
+        .map(
+            |authorization: Option<String>,
+             body: SimulateMixedTeamBattleBody,
+             arena: ArenaService| {
+                if !inline_admin_authorized(authorization.as_deref()) {
+                    return error_response(
+                        "admin_auth_required",
+                        "Admin bearer token required.".to_owned(),
+                    );
+                }
+                match arena.simulate_mixed_team_battle(body) {
+                    Ok(result) => ok_response(result),
+                    Err(err) => error_response(err.code(), err.message()),
+                }
+            },
+        );
+
     let list_pending = warp::path!("api" / "arena" / "matches" / "pending")
         .and(warp::get())
         .and(
@@ -425,6 +452,7 @@ pub fn build_arena_routes(
         .or(execute_next)
         .or(simulate_team_battle)
         .or(simulate_world_battle)
+        .or(simulate_mixed_team_battle)
         .or(list_pending)
         .or(recent_replays)
         .or(replay_events_recent)
@@ -541,6 +569,30 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body: serde_json::Value =
             serde_json::from_slice(response.body()).expect("world auth error should be JSON");
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"]["code"], "admin_auth_required");
+    }
+
+    #[tokio::test]
+    async fn mixed_team_battle_route_exists_and_requires_admin_auth() {
+        let routes = build_arena_routes(ArenaService::new_from_env());
+        let response = warp::test::request()
+            .method("POST")
+            .path("/api/arena/matches/simulate_mixed_team_battle")
+            .json(&serde_json::json!({
+                "team_a_models": ["model_a", "model_b"],
+                "team_b_models": ["model_c", "model_d"],
+                "mode": "tdm",
+                "rounds": 1,
+                "max_ticks": 120,
+                "seed": 104729
+            }))
+            .reply(&routes)
+            .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(response.body()).expect("mixed auth error should be JSON");
         assert_eq!(body["ok"], false);
         assert_eq!(body["error"]["code"], "admin_auth_required");
     }

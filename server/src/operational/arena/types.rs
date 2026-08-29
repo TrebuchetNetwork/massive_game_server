@@ -1,4 +1,6 @@
-use crate::operational::bot_sandbox::{BotMatchOutcome, TeamBattleOutcome, WorldBattleOutcome};
+use crate::operational::bot_sandbox::{
+    BotMatchOutcome, MixedTeamBattleOutcome, TeamBattleOutcome, WorldBattleOutcome,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -281,6 +283,12 @@ pub struct SimulateTeamBattleResponse {
 pub struct SimulateWorldBattleResponse {
     pub generated_at: u64,
     pub simulation: WorldBattleOutcome,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SimulateMixedTeamBattleResponse {
+    pub generated_at: u64,
+    pub simulation: MixedTeamBattleOutcome,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -573,6 +581,16 @@ pub(super) struct SimulateTeamBattleBody {
 pub(super) struct SimulateWorldBattleBody {
     pub(super) model_ids: Vec<String>,
     pub(super) squad_size: Option<u32>,
+    pub(super) rounds: Option<u32>,
+    pub(super) max_ticks: Option<u32>,
+    pub(super) seed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub(super) struct SimulateMixedTeamBattleBody {
+    pub(super) team_a_models: Vec<String>,
+    pub(super) team_b_models: Vec<String>,
+    pub(super) mode: Option<String>,
     pub(super) rounds: Option<u32>,
     pub(super) max_ticks: Option<u32>,
     pub(super) seed: Option<u64>,
