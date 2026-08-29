@@ -54,6 +54,28 @@ async fn concurrent_pickup_collection_has_single_winner() {
     let p1 = add_player(&server, "pickup_p1", 1, 100.0, 100.0);
     let p2 = add_player(&server, "pickup_p2", 2, 102.0, 100.0);
 
+    // The first logic tick transitions Waiting -> Active. Per the fresh-match
+    // contract every participant is revived and fully healed in place at
+    // match start, so mid-match state must be staged after this tick.
+    server.run_game_logic_update(1.0 / 60.0).await;
+    assert_eq!(
+        server.match_info.read().match_state,
+        massive_game_server_core::flatbuffers_generated::game_protocol::MatchStateType::Active,
+        "match should be Active after the first logic tick"
+    );
+    for player_id in [&p1, &p2] {
+        let player = server
+            .player_manager
+            .get_player_state(player_id)
+            .expect("player should be tracked after match start");
+        assert!(player.alive, "match start should revive participants");
+        assert_eq!(
+            player.health, player.max_health,
+            "match start should restore full health"
+        );
+    }
+
+    // Stage mid-match damage now that the match-start reset has run.
     if let Some(mut ps) = server.player_manager.get_player_state_mut(&p1) {
         ps.health = 10;
         ps.max_health = 100;
@@ -63,11 +85,12 @@ async fn concurrent_pickup_collection_has_single_winner() {
         ps.max_health = 100;
     }
 
+    let staged_pickup_id = generate_entity_id();
     {
         let mut pickups = server.pickups.write();
         pickups.clear();
         pickups.push(Pickup::new(
-            generate_entity_id(),
+            staged_pickup_id,
             101.0,
             100.0,
             CorePickupType::Health,
@@ -93,10 +116,15 @@ async fn concurrent_pickup_collection_has_single_winner() {
         .count();
     assert_eq!(winners, 1, "exactly one player should collect the pickup");
 
+    // An active match may spawn additional event pickups on the same tick;
+    // only the staged pickup's outcome is under test.
     let pickups = server.pickups.read();
-    assert_eq!(pickups.len(), 1);
+    let staged = pickups
+        .iter()
+        .find(|pickup| pickup.id == staged_pickup_id)
+        .expect("staged pickup should still be tracked");
     assert!(
-        !pickups[0].is_active,
+        !staged.is_active,
         "pickup should be deactivated after a successful collection"
     );
 }
@@ -143,6 +171,30 @@ async fn weapon_crate_pickup_swaps_active_weapon_and_refills_ammo() {
     let server = setup_test_server();
     let player_id = add_player(&server, "weapon_crate", 1, 200.0, 200.0);
 
+    // The first logic tick transitions Waiting -> Active. The fresh-match
+    // contract respawns every participant in place, which includes resetting
+    // the active weapon to the primary slot with full ammo.
+    server.run_game_logic_update(1.0 / 60.0).await;
+    {
+        let player = server
+            .player_manager
+            .get_player_state(&player_id)
+            .expect("player should be tracked after match start");
+        assert!(player.alive, "match start should revive participants");
+        assert_eq!(
+            player.weapon, player.primary_weapon,
+            "match start should reset the active weapon to the primary slot"
+        );
+        assert_eq!(
+            player.ammo,
+            massive_game_server_core::core::types::PlayerState::get_max_ammo_for_weapon(
+                player.primary_weapon
+            ),
+            "match start should refill primary ammo"
+        );
+    }
+
+    // Stage the mid-match weapon state now that the match-start reset has run.
     if let Some(mut ps) = server.player_manager.get_player_state_mut(&player_id) {
         ps.primary_weapon = ServerWeaponType::Rifle;
         ps.primary_ammo = 5;

@@ -36,11 +36,11 @@ use super::client_state::{ClientState, ClientStatesMap};
 use super::ice_config::{build_client_ice_config, build_ice_servers};
 use super::rate_limiting::{
     acquire_sdp_admission_permit, ice_candidate_rate_limit_config, input_rate_limit_config,
-    signaling_error_json, try_acquire_ip_connection_slot, try_acquire_ip_rate_limit_token,
-    try_acquire_join_rate_limit_token, try_queue_signaling_message, validate_signaling_payload,
-    InputRateLimiter, RTCIceCandidateInitSerde, SignalingMessageJson,
-    DISCONNECTED_CLEANUP_GRACE_SECS, JOIN_RATE_LIMIT_THROTTLED_MESSAGE,
-    MAX_DATACHANNEL_MESSAGE_BYTES, MAX_SIGNALING_TEXT_BYTES, SIGNALING_OUTBOX_CAPACITY,
+    signaling_error_json, try_acquire_ip_rate_limit_token, try_acquire_join_rate_limit_token,
+    try_queue_signaling_message, validate_signaling_payload, InputRateLimiter, IpConnectionGuard,
+    RTCIceCandidateInitSerde, SignalingMessageJson, DISCONNECTED_CLEANUP_GRACE_SECS,
+    JOIN_RATE_LIMIT_THROTTLED_MESSAGE, MAX_DATACHANNEL_MESSAGE_BYTES, MAX_SIGNALING_TEXT_BYTES,
+    SIGNALING_OUTBOX_CAPACITY,
 };
 use super::sanitization::{
     build_welcome_message_bytes, now_millis, sanitize_chat_field, sanitize_username_field,
@@ -74,9 +74,16 @@ pub async fn handle_signaling_connection(
     requested_team_id: Option<u8>,
     requested_username: Option<String>,
     remote_ip: Option<IpAddr>,
+    // Per-IP concurrent-connection slot, acquired pre-upgrade in the /ws route
+    // (`check_ws_ip_connection_cap`) so over-cap clients are rejected at the
+    // HTTP handshake. Held for the rest of this function's lifetime; released
+    // automatically on drop (any return path, including the many early returns
+    // below) via IpConnectionGuard.
+    ip_connection_guard: Option<IpConnectionGuard>,
     is_mobile: bool,
     _ws_connection_permit: crate::routes::ws_signaling::WsConnectionPermit,
 ) {
+    let _ip_connection_guard = ip_connection_guard;
     shared_connection_manager().upsert(ConnectionInfo::new(
         peer_id_str.clone(),
         TransportKind::WebRtc,
@@ -95,10 +102,6 @@ pub async fn handle_signaling_connection(
         let _ = shared_connection_manager().remove(&peer_id_str);
         return;
     }
-    // Holds this IP's concurrent-connection slot for the rest of this
-    // function's lifetime; released automatically on drop (any return path,
-    // including the many early returns below) via IpConnectionGuard.
-    let mut _ip_connection_guard = None;
     if let Some(client_ip) = remote_ip {
         if !try_acquire_ip_rate_limit_token(&client_ip) {
             warn!(
@@ -115,25 +118,6 @@ pub async fn handle_signaling_connection(
             let _ = throttled_ws_tx.send(Message::close()).await;
             let _ = shared_connection_manager().remove(&peer_id_str);
             return;
-        }
-        match try_acquire_ip_connection_slot(&client_ip) {
-            Some(guard) => _ip_connection_guard = Some(guard),
-            None => {
-                warn!(
-                    "[{}]: Join rejected, this IP already holds the maximum concurrent connections (ip={}).",
-                    peer_id_str, client_ip
-                );
-                let (mut throttled_ws_tx, _) = ws.split();
-                let throttled_payload = serde_json::json!({
-                    "error": "ip_connection_limit",
-                    "detail": "Too many simultaneous connections from this IP.",
-                })
-                .to_string();
-                let _ = throttled_ws_tx.send(Message::text(throttled_payload)).await;
-                let _ = throttled_ws_tx.send(Message::close()).await;
-                let _ = shared_connection_manager().remove(&peer_id_str);
-                return;
-            }
         }
     }
 

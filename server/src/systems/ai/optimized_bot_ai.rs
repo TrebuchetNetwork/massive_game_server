@@ -1154,13 +1154,8 @@ impl OptimizedBotAI {
                 };
             }
             ExhibitionBotAction::Defend => {
-                bot_controller.target_position = if game_mode == fb::GameModeType::CaptureTheFlag {
-                    flag_states
-                        .get(&bot_state.team_id)
-                        .map(|flag| flag.position)
-                } else {
-                    Some(Vec2::new(bot_state.x, bot_state.y))
-                };
+                bot_controller.target_position =
+                    Self::exhibition_defend_anchor(bot_state, game_mode, flag_states, enemies);
                 bot_controller.behavior_state = BotBehaviorState::Defending;
                 bot_controller.personality = BotPersonality::Defensive;
             }
@@ -1180,6 +1175,62 @@ impl OptimizedBotAI {
                 }
                 bot_controller.personality = BotPersonality::Balanced;
             }
+        }
+    }
+
+    /// Distance from the nearest living enemy at which a DEFEND directive
+    /// holds the line. Deliberately inside the generic rifle shoot range
+    /// (400) so a defending line still pressures and can be pressured, but
+    /// outside shotgun/melee range so defending remains the safer stance.
+    const EXHIBITION_DEFEND_STANDOFF_RANGE: f32 = 320.0;
+
+    /// Live movement anchor for a DEFEND directive.
+    ///
+    /// The abstract team evaluator has no positions: DEFEND is a mitigation
+    /// stance taken *inside* the fight, never a retreat. Anchoring defenders
+    /// at their own flag base made both low-health teams disengage to
+    /// opposite map edges and stalemate (live replays: teams ~1390 units
+    /// apart for 100% of late-match frames, zero kills in the final minute).
+    /// Hold a forward line at standoff range from the nearest enemy instead;
+    /// damage mitigation still applies through `resolve_exhibition_hit_damage`
+    /// regardless of where the defender stands.
+    fn exhibition_defend_anchor(
+        bot_state: &BotSnapshotOwned,
+        game_mode: fb::GameModeType,
+        flag_states: &HashMap<u8, crate::server::instance::ServerFlagState>,
+        enemies: &[EnemySnapshot],
+    ) -> Option<Vec2> {
+        let mut nearest: Option<(f32, &EnemySnapshot)> = None;
+        for enemy in enemies {
+            let dx = enemy.x - bot_state.x;
+            let dy = enemy.y - bot_state.y;
+            let dist_sq = dx * dx + dy * dy;
+            if nearest.is_none_or(|(best_dist_sq, _)| dist_sq < best_dist_sq) {
+                nearest = Some((dist_sq, enemy));
+            }
+        }
+
+        if let Some((dist_sq, enemy)) = nearest {
+            if dist_sq <= Self::EXHIBITION_DEFEND_STANDOFF_RANGE.powi(2) {
+                // Already on the line: hold the current position.
+                return Some(Vec2::new(bot_state.x, bot_state.y));
+            }
+            // Advance towards the nearest enemy, stopping at standoff range.
+            let dist = dist_sq.sqrt();
+            let advance = (dist - Self::EXHIBITION_DEFEND_STANDOFF_RANGE) / dist;
+            return Some(Vec2::new(
+                bot_state.x + (enemy.x - bot_state.x) * advance,
+                bot_state.y + (enemy.y - bot_state.y) * advance,
+            ));
+        }
+
+        // No living enemy: keep the original objective anchor.
+        if game_mode == fb::GameModeType::CaptureTheFlag {
+            flag_states
+                .get(&bot_state.team_id)
+                .map(|flag| flag.position)
+        } else {
+            Some(Vec2::new(bot_state.x, bot_state.y))
         }
     }
 
@@ -2956,6 +3007,122 @@ mod tests {
             exhibition_action_self_damage(ExhibitionBotAction::Attack),
             0
         );
+    }
+
+    fn positioned_exhibition_bot(x: f32, y: f32) -> BotSnapshotOwned {
+        let mut bot = make_bot_snapshot_for_pickups(50, 10, ServerWeaponType::Rifle);
+        bot.x = x;
+        bot.y = y;
+        bot
+    }
+
+    #[test]
+    fn defend_anchor_advances_towards_distant_enemy_to_standoff_range() {
+        let bot = positioned_exhibition_bot(-700.0, 0.0);
+        let mut enemy = exhibition_enemy("enemy", Some(0));
+        enemy.x = 700.0;
+        enemy.y = 0.0;
+        let enemies = vec![enemy];
+
+        let anchor = OptimizedBotAI::exhibition_defend_anchor(
+            &bot,
+            fb::GameModeType::CaptureTheFlag,
+            &HashMap::new(),
+            &enemies,
+        )
+        .expect("anchor with a living enemy");
+
+        // Stops at standoff range from the enemy, not at the flag base.
+        let dist_to_enemy = (700.0 - anchor.x).hypot(0.0 - anchor.y);
+        assert!(
+            (dist_to_enemy - OptimizedBotAI::EXHIBITION_DEFEND_STANDOFF_RANGE).abs() < 0.01,
+            "anchor should sit at standoff range, got {dist_to_enemy}"
+        );
+        assert!(anchor.x > bot.x, "defender must advance towards the enemy");
+        assert!(anchor.x > -700.0 + 100.0, "defender must not camp its base");
+    }
+
+    #[test]
+    fn defend_anchor_holds_position_when_enemy_already_in_standoff_range() {
+        let bot = positioned_exhibition_bot(0.0, 0.0);
+        let mut enemy = exhibition_enemy("enemy", Some(0));
+        enemy.x = 200.0;
+        enemy.y = 0.0;
+        let enemies = vec![enemy];
+
+        let anchor = OptimizedBotAI::exhibition_defend_anchor(
+            &bot,
+            fb::GameModeType::TeamDeathmatch,
+            &HashMap::new(),
+            &enemies,
+        )
+        .expect("anchor with a living enemy");
+        assert_eq!(anchor, Vec2::new(bot.x, bot.y));
+    }
+
+    #[test]
+    fn defend_anchor_uses_nearest_enemy() {
+        let bot = positioned_exhibition_bot(0.0, 0.0);
+        let mut far = exhibition_enemy("far", Some(0));
+        far.x = -600.0;
+        let mut near = exhibition_enemy("near", Some(1));
+        near.x = 500.0;
+        let enemies = vec![far, near];
+
+        let anchor = OptimizedBotAI::exhibition_defend_anchor(
+            &bot,
+            fb::GameModeType::TeamDeathmatch,
+            &HashMap::new(),
+            &enemies,
+        )
+        .expect("anchor with living enemies");
+        // Nearest enemy is at +500: anchor approaches from the left.
+        let dist_to_near = (500.0 - anchor.x).abs();
+        assert!((dist_to_near - OptimizedBotAI::EXHIBITION_DEFEND_STANDOFF_RANGE).abs() < 0.01);
+        assert!(anchor.x > 0.0);
+    }
+
+    #[test]
+    fn defend_anchor_falls_back_to_flag_only_without_enemies() {
+        let bot = positioned_exhibition_bot(-650.0, 10.0);
+        let flag_position = Vec2::new(-700.0, 0.0);
+        let mut flag_states = HashMap::new();
+        flag_states.insert(
+            1u8,
+            crate::server::instance::ServerFlagState {
+                team_id: 1,
+                status: fb::FlagStatus::AtBase,
+                position: flag_position,
+                carrier_id: None,
+                respawn_timer: 0.0,
+            },
+        );
+
+        let ctf_anchor = OptimizedBotAI::exhibition_defend_anchor(
+            &bot,
+            fb::GameModeType::CaptureTheFlag,
+            &flag_states,
+            &[],
+        )
+        .expect("CTF fallback anchor");
+        assert_eq!(ctf_anchor, flag_position);
+
+        let tdm_anchor = OptimizedBotAI::exhibition_defend_anchor(
+            &bot,
+            fb::GameModeType::TeamDeathmatch,
+            &HashMap::new(),
+            &[],
+        )
+        .expect("non-CTF fallback anchor");
+        assert_eq!(tdm_anchor, Vec2::new(bot.x, bot.y));
+    }
+
+    #[test]
+    fn defend_standoff_stays_inside_rifle_range_but_outside_shotgun_range() {
+        const {
+            assert!(OptimizedBotAI::EXHIBITION_DEFEND_STANDOFF_RANGE < 400.0);
+            assert!(OptimizedBotAI::EXHIBITION_DEFEND_STANDOFF_RANGE > 150.0);
+        }
     }
 
     fn make_bot_snapshot_for_pickups(

@@ -251,13 +251,16 @@ fn ip_rate_limit_config() -> Option<IpRateLimitConfig> {
         .copied()
 }
 
-pub(super) const DEFAULT_MAX_WS_CONNECTIONS_PER_IP: u32 = 12;
+pub(crate) const DEFAULT_MAX_WS_CONNECTIONS_PER_IP: u32 = 12;
 
 /// Holds a source IP's slot in the per-IP concurrent-connection cap for as
 /// long as the connection is alive; releases it on drop so every exit path
 /// out of `handle_signaling_connection` (including early returns) frees the
-/// slot without needing a matching manual release call.
-pub(super) struct IpConnectionGuard(Option<IpAddr>);
+/// slot without needing a matching manual release call. Acquired pre-upgrade
+/// in the `/ws` route (`check_ws_ip_connection_cap`) so over-cap clients are
+/// rejected at the HTTP handshake instead of after a successful 101 upgrade.
+#[derive(Debug)]
+pub struct IpConnectionGuard(Option<IpAddr>);
 
 impl Drop for IpConnectionGuard {
     fn drop(&mut self) {
@@ -297,7 +300,7 @@ fn ip_connection_counts() -> &'static DashMap<IpAddr, u32> {
 /// bounds total connections; this bounds how much of that pool one IP can
 /// claim, so one source can't exhaust the whole server before the join-rate
 /// limiter would otherwise catch it.
-pub(super) fn try_acquire_ip_connection_slot(client_ip: &IpAddr) -> Option<IpConnectionGuard> {
+pub(crate) fn try_acquire_ip_connection_slot(client_ip: &IpAddr) -> Option<IpConnectionGuard> {
     let max = max_ws_connections_per_ip();
     if max == 0 {
         return Some(IpConnectionGuard(None));

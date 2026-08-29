@@ -1,8 +1,9 @@
 use crate::core::config::ServerConfig;
 use crate::core::types::PlayerAoI;
 use crate::network::signaling::{
-    handle_signaling_connection, ChatMessagesQueue, ClientStatesMap, DataChannelsMap,
-    PlayerManagerRef, ServerInstanceRef, SignalingPeers, WorldPartitionManagerRef,
+    handle_signaling_connection, try_acquire_ip_connection_slot, ChatMessagesQueue,
+    ClientStatesMap, DataChannelsMap, IpConnectionGuard, PlayerManagerRef, ServerInstanceRef,
+    SignalingPeers, WorldPartitionManagerRef,
 };
 use crate::operational::admin_auth::resolve_admin_source_ip;
 use crate::operational::auth::AuthService;
@@ -12,7 +13,7 @@ use crate::scaling::HorizontalScalingCoordinator;
 use crate::server::instance::MatchType;
 use dashmap::DashMap;
 use serde::Deserialize;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::{info, warn, Instrument};
@@ -192,6 +193,37 @@ pub fn build_connection_cap_filter(
                 }
             }
         })
+}
+
+/// Pre-upgrade per-IP concurrent-connection cap check for /ws. Returns the
+/// slot guard to hold for the connection's lifetime, or a 429 response that
+/// rejects the upgrade before the WebSocket handshake completes. (Previously
+/// the cap was enforced after the 101 upgrade, so over-cap clients still
+/// fired the browser `open` event before the server closed the socket.)
+pub fn check_ws_ip_connection_cap(
+    client_ip: Option<IpAddr>,
+    peer_id: &str,
+) -> Result<Option<IpConnectionGuard>, warp::reply::Response> {
+    let Some(ip) = client_ip else {
+        return Ok(None);
+    };
+    match try_acquire_ip_connection_slot(&ip) {
+        Some(guard) => Ok(Some(guard)),
+        None => {
+            warn!(
+                "[{}]: WebSocket upgrade rejected, per-IP concurrent connection cap reached (ip={}).",
+                peer_id, ip
+            );
+            Err(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({
+                    "error": "ip_connection_limit",
+                    "detail": "Too many simultaneous connections from this IP.",
+                })),
+                StatusCode::TOO_MANY_REQUESTS,
+            )
+            .into_response())
+        }
+    }
 }
 
 fn normalize_ws_host(raw: &str) -> Option<String> {
@@ -476,6 +508,13 @@ pub fn build_signaling_route(
                 }
                 let socket_ip = remote_addr.map(|addr| addr.ip());
                 let client_ip = resolve_admin_source_ip(socket_ip, &request_headers);
+                // Enforce the per-IP concurrent-connection cap before the
+                // upgrade so over-cap clients get a clean 429 at the HTTP
+                // handshake instead of a successful 101 followed by a close.
+                let ip_connection_guard = match check_ws_ip_connection_cap(client_ip, &peer_id) {
+                    Ok(guard) => guard,
+                    Err(response) => return response,
+                };
                 let remote_context = monitoring_tracing::extract_remote_context(
                     request_headers
                         .get("traceparent")
@@ -520,6 +559,7 @@ pub fn build_signaling_route(
                         requested_team_id,
                         requested_username,
                         client_ip,
+                        ip_connection_guard,
                         is_mobile,
                         ws_connection_permit,
                     )
@@ -547,5 +587,101 @@ pub fn build_signaling_route(
             .boxed()
     } else {
         signaling_route_ws.boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::network::signaling::DEFAULT_MAX_WS_CONNECTIONS_PER_IP;
+    use std::net::Ipv4Addr;
+
+    // The cap's OnceLock reads MGS_MAX_WS_CONNECTIONS_PER_IP once per process;
+    // reading the same env var here keeps the test correct under overrides.
+    fn effective_per_ip_cap() -> u32 {
+        std::env::var("MGS_MAX_WS_CONNECTIONS_PER_IP")
+            .ok()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .unwrap_or(DEFAULT_MAX_WS_CONNECTIONS_PER_IP)
+    }
+
+    #[test]
+    fn cap_check_passes_without_client_ip() {
+        assert!(check_ws_ip_connection_cap(None, "test-peer")
+            .expect("missing client IP must not be capped")
+            .is_none());
+    }
+
+    #[test]
+    fn cap_check_keys_on_forwarded_ip_from_trusted_proxy() {
+        let max = effective_per_ip_cap();
+        if max == 0 {
+            return; // Cap disabled in this environment.
+        }
+        // Simulate ngrok: the direct peer is loopback (trusted proxy) and the
+        // real client IP arrives via X-Forwarded-For.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            warp::http::HeaderValue::from_static("198.51.100.77"),
+        );
+        let socket_ip = Some(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+        let client_ip = resolve_admin_source_ip(socket_ip, &headers);
+        assert_eq!(
+            client_ip,
+            Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 77))),
+            "trusted proxy must resolve the forwarded client IP"
+        );
+
+        // Exhaust the forwarded IP's slots through the pre-upgrade check.
+        let mut guards = Vec::new();
+        for _ in 0..max {
+            guards.push(
+                check_ws_ip_connection_cap(client_ip, "test-peer")
+                    .expect("acquisition within the cap must succeed"),
+            );
+        }
+
+        // The next upgrade from the same forwarded IP is rejected pre-handshake
+        // with HTTP 429.
+        let rejection = check_ws_ip_connection_cap(client_ip, "test-peer")
+            .expect_err("connection beyond the cap must be rejected");
+        assert_eq!(rejection.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // A different forwarded IP (different real client) is unaffected.
+        headers.insert(
+            "x-forwarded-for",
+            warp::http::HeaderValue::from_static("198.51.100.78"),
+        );
+        let other_client_ip = resolve_admin_source_ip(socket_ip, &headers);
+        assert!(
+            check_ws_ip_connection_cap(other_client_ip, "test-peer").is_ok(),
+            "a different client IP must have its own slot pool"
+        );
+
+        // Releasing a connection (guard drop) frees a slot for the capped IP.
+        drop(guards.pop());
+        assert!(
+            check_ws_ip_connection_cap(client_ip, "test-peer").is_ok(),
+            "dropping a guard must release its slot"
+        );
+        drop(guards);
+    }
+
+    #[test]
+    fn cap_check_ignores_forwarded_header_from_untrusted_peer() {
+        // A direct (untrusted) peer must not be able to steer the cap key via
+        // spoofed forwarding headers.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            warp::http::HeaderValue::from_static("198.51.100.99"),
+        );
+        let socket_ip = Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 20)));
+        let client_ip = resolve_admin_source_ip(socket_ip, &headers);
+        assert_eq!(
+            client_ip, socket_ip,
+            "untrusted peer's forwarding headers must be ignored"
+        );
     }
 }

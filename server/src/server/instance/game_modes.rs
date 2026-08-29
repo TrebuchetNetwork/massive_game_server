@@ -654,6 +654,15 @@ impl MassiveGameServer {
                         p_state.deaths = 0;
                         p_state.reset_match_stats();
                         p_state.is_carrying_flag_team_id = 0;
+                        // Every match starts fresh: revive the dead and restore
+                        // full health in place. Health/aliveness otherwise
+                        // carried over between rounds, so a match ending with
+                        // weakened survivors started the next one already
+                        // exhausted — exhibition fighters entered their
+                        // low-health DEFEND stance on the first tick and the
+                        // stalemate persisted from match to match.
+                        let (x, y) = (p_state.x, p_state.y);
+                        p_state.respawn(x, y);
                         p_state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG | FIELD_MISC);
                     });
                     self.kill_feed.write().clear();

@@ -73,6 +73,10 @@ pub use cleanup::{cleanup_connection, handle_dc_send_error};
 pub use client_state::{ClientState, ClientStatesMap, PickupState};
 pub use connection::handle_signaling_connection;
 pub use ice_config::{generate_turn_hmac_credentials, ClientIceServer};
+pub use rate_limiting::IpConnectionGuard;
+pub(crate) use rate_limiting::try_acquire_ip_connection_slot;
+#[cfg(test)]
+pub(crate) use rate_limiting::DEFAULT_MAX_WS_CONNECTIONS_PER_IP;
 pub use webrtc_state::current_webrtc_peer_state_label;
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -677,6 +681,78 @@ mod tests {
         assert!(limiter.try_acquire());
         assert!(limiter.try_acquire());
         assert!(!limiter.try_acquire());
+    }
+
+    // ── Per-IP concurrent connection cap tests ───────────────────────
+
+    // The cap's OnceLock reads MGS_MAX_WS_CONNECTIONS_PER_IP once per process;
+    // reading the same env var here keeps the test correct under overrides.
+    fn effective_per_ip_cap() -> u32 {
+        super::rate_limiting::env_u32(
+            "MGS_MAX_WS_CONNECTIONS_PER_IP",
+            super::rate_limiting::DEFAULT_MAX_WS_CONNECTIONS_PER_IP,
+        )
+    }
+
+    #[test]
+    fn per_ip_connection_cap_enforces_boundary() {
+        let max = effective_per_ip_cap();
+        if max == 0 {
+            return; // Cap disabled in this environment.
+        }
+        let ip: std::net::IpAddr = "203.0.113.101".parse().unwrap();
+        let mut guards = Vec::new();
+        for _ in 0..max {
+            guards.push(
+                super::rate_limiting::try_acquire_ip_connection_slot(&ip)
+                    .expect("acquisition within the cap must succeed"),
+            );
+        }
+        assert!(
+            super::rate_limiting::try_acquire_ip_connection_slot(&ip).is_none(),
+            "connection beyond the per-IP cap must be rejected"
+        );
+        drop(guards);
+    }
+
+    #[test]
+    fn per_ip_connection_cap_is_scoped_per_ip() {
+        let max = effective_per_ip_cap();
+        if max == 0 {
+            return;
+        }
+        let ip_a: std::net::IpAddr = "203.0.113.102".parse().unwrap();
+        let ip_b: std::net::IpAddr = "203.0.113.103".parse().unwrap();
+        let mut guards = Vec::new();
+        for _ in 0..max {
+            guards.push(super::rate_limiting::try_acquire_ip_connection_slot(&ip_a).unwrap());
+        }
+        assert!(super::rate_limiting::try_acquire_ip_connection_slot(&ip_a).is_none());
+        assert!(
+            super::rate_limiting::try_acquire_ip_connection_slot(&ip_b).is_some(),
+            "a different IP must have its own independent slot pool"
+        );
+        drop(guards);
+    }
+
+    #[test]
+    fn per_ip_connection_cap_releases_slot_on_guard_drop() {
+        let max = effective_per_ip_cap();
+        if max == 0 {
+            return;
+        }
+        let ip: std::net::IpAddr = "203.0.113.104".parse().unwrap();
+        let mut guards = Vec::new();
+        for _ in 0..max {
+            guards.push(super::rate_limiting::try_acquire_ip_connection_slot(&ip).unwrap());
+        }
+        assert!(super::rate_limiting::try_acquire_ip_connection_slot(&ip).is_none());
+        drop(guards.pop());
+        assert!(
+            super::rate_limiting::try_acquire_ip_connection_slot(&ip).is_some(),
+            "dropping a guard must release its slot"
+        );
+        drop(guards);
     }
 
     // ── InputRateLimiter tests ───────────────────────────────────────
