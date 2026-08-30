@@ -9,7 +9,11 @@
     "nvidia/nemotron-3-ultra": { "emoji": "🦾", "title": "Titan", "color": "#76b900" },
     "tencent/hy3": { "emoji": "🐉", "title": "Emberwing", "color": "#fb7185" },
     "poolside/laguna-s": { "emoji": "🏝️", "title": "Lagoon", "color": "#2dd4bf" },
-    "xiaomi/mimo-v2.5": { "emoji": "🦊", "title": "Kitsune", "color": "#f97316" }
+    "xiaomi/mimo-v2.5": { "emoji": "🦊", "title": "Kitsune", "color": "#f97316" },
+    "anthropic/claude-opus-5": { "emoji": "👾", "title": "Glitch", "color": "#c084fc" },
+    "google/gemini-3.7-flash": { "emoji": "🛰️", "title": "Orbit", "color": "#60a5fa" },
+    "z-ai/glm-5.3-flash": { "emoji": "🐺", "title": "Wolfpack", "color": "#facc15" },
+    "tencent/hy4-preview": { "emoji": "👾", "title": "Glitch", "color": "#c084fc" }
   },
   "fallbacks": [
     { "emoji": "🤖", "title": "Rookie", "color": "#94a3b8" },

@@ -63,6 +63,8 @@ export function createInputManager({
     toggleSettings,
     setFocusMode,
     getFocusModeEnabled,
+    getDataSaverMode,
+    toggleDataSaverMode,
     // Input timing constants
     INPUT_SEND_RATE,
     BACKGROUND_INPUT_SEND_RATE,
@@ -82,7 +84,6 @@ export function createInputManager({
     AIM_ASSIST_MAX_DISTANCE,
 }) {
     // ── Local state ───────────────────────────────────────────────────
-    let aimSensitivity = parseFloat(localStorage.getItem('aimSensitivity') || '1.0');
     let aimAssistEnabled = localStorage.getItem('aimAssist') !== 'false';
     let touchControlsInitialized = false;
     let virtualCrosshairSprite = null;
@@ -1306,18 +1307,28 @@ export function createInputManager({
         const mobileConnQualityDiv = document.getElementById('mobileConnectionQuality');
 
         if (mobileDataSaverBtn) {
+            const syncDataSaverButton = () => {
+                const active = typeof getDataSaverMode === 'function' ? !!getDataSaverMode() : false;
+                mobileDataSaverBtn.classList.toggle('mobile-button--active', active);
+                mobileDataSaverBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+            };
+            syncDataSaverButton();
             addManagedTouchListener(mobileDataSaverBtn, 'touchstart', (event) => {
+                if (typeof toggleDataSaverMode === 'function') toggleDataSaverMode();
+                syncDataSaverButton();
                 triggerHapticFn(8);
                 event.preventDefault();
             }, { passive: false });
         }
 
         if (mobileAimAssistBtn) {
-            if (aimAssistEnabled) mobileAimAssistBtn.classList.add('mobile-button--active');
+            mobileAimAssistBtn.classList.toggle('mobile-button--active', aimAssistEnabled);
+            mobileAimAssistBtn.setAttribute('aria-pressed', aimAssistEnabled ? 'true' : 'false');
             addManagedTouchListener(mobileAimAssistBtn, 'touchstart', (event) => {
                 aimAssistEnabled = !aimAssistEnabled;
                 localStorage.setItem('aimAssist', aimAssistEnabled);
                 mobileAimAssistBtn.classList.toggle('mobile-button--active', aimAssistEnabled);
+                mobileAimAssistBtn.setAttribute('aria-pressed', aimAssistEnabled ? 'true' : 'false');
                 triggerHapticFn(8);
                 event.preventDefault();
             }, { passive: false });

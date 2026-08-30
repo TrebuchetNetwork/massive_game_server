@@ -211,8 +211,8 @@
                 <button id="mobileAbilityDodge" class="mobile-button" aria-label="Dodge">Dodge</button>
             </div>
             <div class="mobile-controls__settings">
-                <button id="mobileDataSaver" class="mobile-button mobile-button--small">Data Saver</button>
-                <button id="mobileAimAssistToggle" class="mobile-button mobile-button--small">Aim Assist</button>
+                <button id="mobileDataSaver" class="mobile-button mobile-button--small" aria-label="Toggle data saver mode" aria-pressed="false" title="Data saver: caps FPS at 30 and lowers bandwidth on next connect">Data Saver</button>
+                <button id="mobileAimAssistToggle" class="mobile-button mobile-button--small" aria-label="Toggle aim assist" aria-pressed="true">Aim Assist</button>
                 <button id="mobileMusicToggle" class="mobile-button mobile-button--small" aria-label="Toggle music player">♪</button>
                 <button id="mobilePing" class="mobile-button mobile-button--small" aria-label="Send a group-up ping to your team">Ping</button>
                 <div id="mobileConnectionQuality" class="mobile-connection-indicator">
@@ -472,7 +472,6 @@
         </div>
         <div class="setting-group">
             <h4>Controls</h4>
-            <label>Mouse Sensitivity: <input type="range" id="sensitivity" min="0.1" max="3" step="0.1" value="1.0"><span id="sensitivityValue">1.0</span></label>
             <label><input type="checkbox" id="mobileStickyFire"> Mobile Sticky Fire</label>
             <label><input type="checkbox" id="mobileAutoFireAim" checked> Mobile Auto-Fire While Aiming</label>
             <label><input type="checkbox" id="mobileHaptics" checked> Mobile Haptics</label>
@@ -1397,7 +1396,6 @@
         let touchControlsInitialized = false;
 
         // ── Mobile touch enhancements ───────────────────────────────────
-        let aimSensitivity = parseFloat(localStorage.getItem('aimSensitivity') || '1.0');
         let aimAssistEnabled = localStorage.getItem('aimAssist') !== 'false';
         const AIM_ASSIST_MAGNETISM = 0.15; // radians snap-to-nearest-enemy
         const AIM_ASSIST_MAX_DISTANCE = 400;
@@ -2123,6 +2121,23 @@
             return cap;
         }
 
+        function syncMobileDataSaverButton() {
+            const btn = document.getElementById('mobileDataSaver');
+            if (!btn) return;
+            btn.classList.toggle('mobile-button--active', dataSaverMode);
+            btn.setAttribute('aria-pressed', dataSaverMode ? 'true' : 'false');
+        }
+
+        function toggleDataSaverMode() {
+            dataSaverMode = !dataSaverMode;
+            localStorage.setItem('dataSaverMode', String(dataSaverMode));
+            syncMobileDataSaverButton();
+            // The FPS cap reads dataSaverMode live, so it applies immediately;
+            // the lower-bandwidth signaling flag is negotiated on next connect.
+            log(`Data saver ${dataSaverMode ? 'ON: 30 FPS cap, lower bandwidth on next connect.' : 'OFF.'}`, 'info');
+            return dataSaverMode;
+        }
+
 
         let syntheticProjectileCount = 0;
         let lastVisiblePlayers = 0;
@@ -2645,6 +2660,48 @@
         let lastSentInputShooting = false;
         let pingStartTime = 0;
         let ping = 0;
+        // The message-gap value computed in handleParsedMessage() is NOT a
+        // real RTT: with the fast delta path enabled, DeltaState packets
+        // bypass handleParsedMessage(), so the gap between full-parse
+        // messages reads as hundreds (or thousands) of ms even when the
+        // transport RTT is single-digit. Poll the selected ICE candidate
+        // pair's RTT from getStats() and prefer it whenever available;
+        // lastStatsRttMs stays null until the first successful sample, in
+        // which case the legacy gap value is used as a fallback.
+        let lastStatsRttMs = null;
+        const PING_STATS_INTERVAL_MS = 2000;
+        setInterval(() => {
+            if (!peerConnection || typeof peerConnection.getStats !== 'function') {
+                lastStatsRttMs = null;
+                return;
+            }
+            const iceState = peerConnection.iceConnectionState;
+            if (iceState !== 'connected' && iceState !== 'completed') return;
+            peerConnection.getStats().then((stats) => {
+                let selectedPairId = null;
+                stats.forEach((report) => {
+                    if (report.type === 'transport' && report.selectedCandidatePairId) {
+                        selectedPairId = report.selectedCandidatePairId;
+                    }
+                });
+                let pair = selectedPairId ? stats.get(selectedPairId) : null;
+                if (!pair) {
+                    stats.forEach((report) => {
+                        if (!pair && report.type === 'candidate-pair'
+                            && report.state === 'succeeded' && report.nominated) {
+                            pair = report;
+                        }
+                    });
+                }
+                const rttSeconds = pair && typeof pair.currentRoundTripTime === 'number'
+                    ? pair.currentRoundTripTime
+                    : null;
+                if (rttSeconds != null && Number.isFinite(rttSeconds) && rttSeconds >= 0) {
+                    lastStatsRttMs = rttSeconds * 1000;
+                    ping = lastStatsRttMs;
+                }
+            }).catch(() => { /* stats unavailable — keep current value */ });
+        }, PING_STATS_INTERVAL_MS);
         let frameCount = 0;
         let lastFPSUpdate = 0;
         let gameLoopErrorCount = 0;
@@ -2719,7 +2776,6 @@
             gameSettings.screenShake = false;
             gameSettings.showFPS = false;
             gameSettings.showNetworkProfiler = false;
-            gameSettings.sensitivity = Math.min(gameSettings.sensitivity || 1, 0.9);
             gameSettings.mobileAutoFireAim = gameSettings.mobileAutoFireAim !== false;
             gameSettings.mobileHaptics = gameSettings.mobileHaptics !== false;
             setControlsPanelHidden(true);
@@ -3040,6 +3096,7 @@
         const { drawAimingSystem, drawLiteAimingSystem } = aimingSystem;
 
         // Helper for effects profile selection (used by UIManager)
+        const EFFECTS_PROFILE_ORDER = ['high', 'medium', 'dense', 'ultra'];
         function applyEffectsProfile() {
             if (BENCH_MODE) {
                 activeEffectsProfileName = 'ultra';
@@ -3051,6 +3108,15 @@
                 activeEffectsProfileName = 'medium';
             } else {
                 activeEffectsProfileName = 'high';
+            }
+            // Never exceed the device-class ceiling. saveAndApplySettings() and
+            // loadSettings() run after the mobile render profile was applied at
+            // startup; without this clamp they silently re-enable heavier effects
+            // on mid/low devices.
+            const ceiling = mobileProfile?.effectsProfile;
+            if (ceiling &&
+                EFFECTS_PROFILE_ORDER.indexOf(activeEffectsProfileName) < EFFECTS_PROFILE_ORDER.indexOf(ceiling)) {
+                activeEffectsProfileName = ceiling;
             }
         }
 
@@ -3203,6 +3269,8 @@
             toggleSettings,
             setFocusMode,
             getFocusModeEnabled: () => focusModeEnabled,
+            getDataSaverMode: () => dataSaverMode,
+            toggleDataSaverMode,
             INPUT_SEND_RATE,
             BACKGROUND_INPUT_SEND_RATE,
             INPUT_ROTATION_QUANT_STEP,
@@ -5029,15 +5097,14 @@
         });
         document.getElementById('musicEnabled').addEventListener('change', (e) => {
             if (musicPlayer) {
-                musicPlayer.setEnabled(e.target.checked);
+                // Show the player first: setEnabled(true) is a no-op while the
+                // panel is hidden, which previously dead-ended this toggle on
+                // mobile (panel hidden by default) until a manual play press.
                 if (e.target.checked && musicPlayer.playerDiv.classList.contains('hidden')) {
-                    // Show music player when enabling music
                     musicPlayer.show();
                 }
+                musicPlayer.setEnabled(e.target.checked);
             }
-        });
-        document.getElementById('sensitivity').addEventListener('input', (e) => {
-            document.getElementById('sensitivityValue').textContent = parseFloat(e.target.value).toFixed(1);
         });
         document.getElementById('showFPS').addEventListener('change', (e) => {
             fpsCounterDiv.classList.toggle('hidden', !e.target.checked);
@@ -5115,7 +5182,11 @@
             markJoinTimingStage('firstPacketAtMs');
 
             const nowMs = Date.now();
-            if (pingStartTime > 10) {
+            // NOTE: this "ping" is the gap between consecutive full-parse
+            // messages, not an RTT. Fast-path DeltaState packets bypass this
+            // handler, so this value is only a fallback for before the first
+            // getStats() RTT sample arrives; afterwards the poller owns it.
+            if (pingStartTime > 10 && lastStatsRttMs == null) {
                 ping = Math.max(0, nowMs - pingStartTime);
             }
             pingStartTime = nowMs;
@@ -5319,7 +5390,9 @@
         }
 
         closePostMatchButton?.addEventListener('click', () => {
-            triggerPlayAgainFlow();
+            // "Close" should only dismiss the panel; re-queuing is what
+            // "Play Again" is for (both previously ran the same flow).
+            closePostMatchSummary();
         });
         playAgainButton?.addEventListener('click', () => {
             triggerPlayAgainFlow();

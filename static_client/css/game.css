@@ -3623,7 +3623,13 @@
             }
 
             body.mobile-mode #mobileDataSaver {
-                display: none;
+                font-size: 0;
+            }
+
+            body.mobile-mode #mobileDataSaver::after {
+                content: 'DATA';
+                font-size: 10px;
+                letter-spacing: 0.08em;
             }
 
             body.mobile-mode #mobileAimAssistToggle {

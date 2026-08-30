@@ -52,6 +52,8 @@ export function createUIManager(getCtx) {
 
     let lastCountdownBeepSecond = null;
     let lastMatchOutcomeAudioSignature = '';
+    let mobileConnectionQualityEl = null;
+    let lastMobileConnectionQuality = '';
     const POST_MATCH_RECORDS_KEY = 'mgs_post_match_records_v1';
     const POST_MATCH_PERF_HISTORY_KEY = 'mgs_post_match_perf_history_v1';
     const POST_MATCH_PERF_HISTORY_LIMIT = 20;
@@ -2157,6 +2159,7 @@ export function createUIManager(getCtx) {
         }
         ctx.setTextIfChanged(ctx.playerCountSpan, ctx.players.size, 'playerCount');
         ctx.setTextIfChanged(ctx.pingDisplay, Math.round(ctx.ping), 'ping');
+        updateMobileConnectionQuality(ctx.ping);
         if (ctx.networkIndicator) ctx.networkIndicator.update(ctx.ping);
         updateNetworkProfilerUi(performance.now());
 
@@ -2164,6 +2167,24 @@ export function createUIManager(getCtx) {
             const healthPercent = ctx.localPlayerState.health / ctx.localPlayerState.max_health;
             ctx.updateHealthVignette(ctx.healthVignette, healthPercent, ctx.frameNowMs);
         }
+    }
+
+    function updateMobileConnectionQuality(ping) {
+        if (!mobileConnectionQualityEl) {
+            mobileConnectionQualityEl = document.getElementById('mobileConnectionQuality');
+            if (!mobileConnectionQualityEl) return;
+        }
+        // Same thresholds as the desktop NetworkIndicator bars.
+        const quality = !Number.isFinite(ping) || ping < 100 ? 'good' : (ping < 150 ? 'fair' : 'poor');
+        if (quality !== lastMobileConnectionQuality) {
+            lastMobileConnectionQuality = quality;
+            if (quality === 'good') {
+                mobileConnectionQualityEl.removeAttribute('data-quality');
+            } else {
+                mobileConnectionQualityEl.setAttribute('data-quality', quality);
+            }
+        }
+        mobileConnectionQualityEl.title = `Connection: ${quality} (${Math.round(Number(ping) || 0)} ms)`;
     }
 
     function toggleScoreboard(forceShow = null) {
@@ -2257,7 +2278,6 @@ export function createUIManager(getCtx) {
         ctx.gameSettings.showFPS = document.getElementById('showFPS').checked;
         ctx.gameSettings.showNetworkProfiler = !!ctx.showNetworkProfilerCheckbox?.checked;
         ctx.gameSettings.combatUiQuality = ctx.normalizeCombatUiQuality(ctx.combatUiQualitySelect?.value);
-        ctx.gameSettings.sensitivity = parseFloat(document.getElementById('sensitivity').value);
         ctx.gameSettings.mobileStickyFire = !!ctx.mobileStickyFireCheckbox?.checked;
         ctx.gameSettings.mobileAutoFireAim = !!ctx.mobileAutoFireAimCheckbox?.checked;
         ctx.gameSettings.mobileHaptics = !!ctx.mobileHapticsCheckbox?.checked;
@@ -2344,8 +2364,6 @@ export function createUIManager(getCtx) {
             ctx.showNetworkProfilerCheckbox.checked = !!ctx.gameSettings.showNetworkProfiler;
         }
         if (ctx.combatUiQualitySelect) ctx.combatUiQualitySelect.value = ctx.normalizeCombatUiQuality(ctx.gameSettings.combatUiQuality);
-        document.getElementById('sensitivity').value = ctx.gameSettings.sensitivity;
-        document.getElementById('sensitivityValue').textContent = ctx.gameSettings.sensitivity.toFixed(1);
         if (ctx.mobileStickyFireCheckbox) ctx.mobileStickyFireCheckbox.checked = !!ctx.gameSettings.mobileStickyFire;
         if (ctx.mobileAutoFireAimCheckbox) ctx.mobileAutoFireAimCheckbox.checked = !!ctx.gameSettings.mobileAutoFireAim;
         if (ctx.mobileHapticsCheckbox) ctx.mobileHapticsCheckbox.checked = !!ctx.gameSettings.mobileHaptics;

@@ -226,7 +226,7 @@ document.addEventListener('DOMContentLoaded', () => {
             : `${ratings.season_id || 'season live'} · P / T / C / W verified`;
         } else {
           const queued = Number(overview.pending_matches || 0) + Number(overview.in_flight_matches || 0);
-          status.textContent = queued > 0 ? `${queued} fights evolving` : `${overview.active_models || 0} models ready`;
+          status.textContent = queued > 0 ? `${queued} fights evolving` : `${overview.active_models || 0} models registered`;
         }
       }
       if (!renderSeasonRoster(ratings, mascots)) renderRoster(leaderboard.models, mascots);
@@ -450,7 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const modelsItem = document.createElement('span');
     modelsItem.className = 'live-strip__item';
     const modelsValue = document.createElement('b');
-    modelsItem.append(modelsValue, document.createTextNode(' models active'));
+    modelsItem.append(modelsValue, document.createTextNode(' models registered'));
 
     const flightItem = document.createElement('span');
     flightItem.className = 'live-strip__item';

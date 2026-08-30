@@ -1,5 +1,89 @@
 [
   {
+    "date": "2026-08-30",
+    "webm": "2026-08-30/replay_1788063741181_time_expired_39202-59982.webm",
+    "gif": "2026-08-30/replay_1788063741181_time_expired_39202-59982.gif",
+    "poster": "2026-08-30/replay_1788063741181_time_expired_39202-59982.png",
+    "reason": "2 kills",
+    "score": 35,
+    "players": [
+      "#1 Rookie",
+      "#1 Rookie",
+      "#10 Luna",
+      "#2 Titan"
+    ]
+  },
+  {
+    "date": "2026-08-30",
+    "webm": "2026-08-30/replay_1788061760232_time_expired_39200-59981.webm",
+    "gif": "2026-08-30/replay_1788061760232_time_expired_39200-59981.gif",
+    "poster": "2026-08-30/replay_1788061760232_time_expired_39200-59981.png",
+    "reason": "2 kills",
+    "score": 35,
+    "players": [
+      "#1 Rookie",
+      "#1 Rookie",
+      "#10 Luna",
+      "#2 Titan"
+    ]
+  },
+  {
+    "date": "2026-08-30",
+    "webm": "2026-08-30/replay_1788059339042_time_expired_39267-59984.webm",
+    "gif": "2026-08-30/replay_1788059339042_time_expired_39267-59984.gif",
+    "poster": "2026-08-30/replay_1788059339042_time_expired_39267-59984.png",
+    "reason": "2 kills",
+    "score": 35,
+    "players": [
+      "#1 Rookie",
+      "#1 Rookie",
+      "#10 Luna",
+      "#2 Titan"
+    ]
+  },
+  {
+    "date": "2026-08-29",
+    "webm": "2026-08-29/replay_1787973678019_time_expired_25502-50034.webm",
+    "gif": "2026-08-29/replay_1787973678019_time_expired_25502-50034.gif",
+    "poster": "2026-08-29/replay_1787973678019_time_expired_25502-50034.png",
+    "reason": "Kill cluster x3",
+    "score": 92.9,
+    "players": [
+      "#5 Abyss",
+      "#7 Sage",
+      "#1 Rookie",
+      "#1 Rookie"
+    ]
+  },
+  {
+    "date": "2026-08-29",
+    "webm": "2026-08-29/replay_1787978382703_time_expired_0-21069.webm",
+    "gif": "2026-08-29/replay_1787978382703_time_expired_0-21069.gif",
+    "poster": "2026-08-29/replay_1787978382703_time_expired_0-21069.png",
+    "reason": "Kill cluster x3",
+    "score": 95,
+    "players": [
+      "#2 Titan",
+      "#8 Kitsune",
+      "#1 Rookie",
+      "#1 Rookie"
+    ]
+  },
+  {
+    "date": "2026-08-29",
+    "webm": "2026-08-29/replay_1787984580925_time_expired_0-29348.webm",
+    "gif": "2026-08-29/replay_1787984580925_time_expired_0-29348.gif",
+    "poster": "2026-08-29/replay_1787984580925_time_expired_0-29348.png",
+    "reason": "Kill cluster x3",
+    "score": 115,
+    "players": [
+      "#3 Surge",
+      "#2 Titan",
+      "#4 Emberwing",
+      "Rookie"
+    ]
+  },
+  {
     "date": "2026-08-28",
     "webm": "2026-08-28/replay_1787892815114_time_expired_37370-59987.webm",
     "gif": "2026-08-28/replay_1787892815114_time_expired_37370-59987.gif",
@@ -501,76 +585,6 @@
       "#1 Sage",
       "#10 Kitsune",
       "#10 Kitsune"
-    ]
-  },
-  {
-    "date": "2026-08-16",
-    "webm": "2026-08-16/replay_1786891382773_time_expired_39982-59982.webm",
-    "gif": "2026-08-16/replay_1786891382773_time_expired_39982-59982.gif",
-    "poster": "2026-08-16/replay_1786891382773_time_expired_39982-59982.png",
-    "reason": "2 kills",
-    "score": 34.9,
-    "players": [
-      "#1 Abyss",
-      "#10 Kitsune",
-      "#2 Luna",
-      "#2 Luna"
-    ]
-  },
-  {
-    "date": "2026-08-16",
-    "webm": "2026-08-16/replay_1786893584048_time_expired_39980-59980.webm",
-    "gif": "2026-08-16/replay_1786893584048_time_expired_39980-59980.gif",
-    "poster": "2026-08-16/replay_1786893584048_time_expired_39980-59980.png",
-    "reason": "2 kills",
-    "score": 35,
-    "players": [
-      "#1 Abyss",
-      "#10 Kitsune",
-      "#2 Luna",
-      "#2 Luna"
-    ]
-  },
-  {
-    "date": "2026-08-16",
-    "webm": "2026-08-16/replay_1786889401593_time_expired_39987-59987.webm",
-    "gif": "2026-08-16/replay_1786889401593_time_expired_39987-59987.gif",
-    "poster": "2026-08-16/replay_1786889401593_time_expired_39987-59987.png",
-    "reason": "2 kills",
-    "score": 35,
-    "players": [
-      "#1 Abyss",
-      "#10 Kitsune",
-      "#2 Luna",
-      "#3 Surge"
-    ]
-  },
-  {
-    "date": "2026-08-16",
-    "webm": "2026-08-16/replay_1786888961250_time_expired_39981-59981.webm",
-    "gif": "2026-08-16/replay_1786888961250_time_expired_39981-59981.gif",
-    "poster": "2026-08-16/replay_1786888961250_time_expired_39981-59981.png",
-    "reason": "2 kills",
-    "score": 34.1,
-    "players": [
-      "#1 Abyss",
-      "#10 Kitsune",
-      "#2 Luna",
-      "#2 Luna"
-    ]
-  },
-  {
-    "date": "2026-08-16",
-    "webm": "2026-08-16/replay_1786889181379_time_expired_39982-59982.webm",
-    "gif": "2026-08-16/replay_1786889181379_time_expired_39982-59982.gif",
-    "poster": "2026-08-16/replay_1786889181379_time_expired_39982-59982.png",
-    "reason": "2 kills",
-    "score": 34.7,
-    "players": [
-      "#1 Abyss",
-      "#10 Kitsune",
-      "#2 Luna",
-      "#2 Luna"
     ]
   }
 ]

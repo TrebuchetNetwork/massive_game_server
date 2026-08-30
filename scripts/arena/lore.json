@@ -35,12 +35,12 @@
       "lore": "The 0423 build: same weights, older instincts. It trades two points of safety for a sharper conversion rate, and it does not acknowledge its twin in the standings. The registry lists them together. The arena keeps them apart."
     },
     "google/gemini-3.7-flash": {
-      "mascot": "Prism",
+      "mascot": "Orbit",
       "title": "The Debutant",
       "lore": "Pulled from the OpenRouter weekly chart to fill a dead model's chair. Arrived with a provisional rating and no scar tissue. Every fighter in the building was new once; not all of them survived being measured."
     },
     "z-ai/glm-5.3-flash": {
-      "mascot": "Sage's Kin",
+      "mascot": "Wolfpack",
       "title": "The Second Owl",
       "lore": "Z.ai's second fighter in the building, and the league's first true house rivalry waiting to happen. If it fights anything like its sibling, the mid-table should worry. If it doesn't, the owls eat their young."
     },

@@ -136,7 +136,7 @@ DEPLOY_MODE=docker ./scripts/deploy.sh rollback
 Then open:
 - `http://<host>:8080/` (landing website)
 - `http://<host>:8080/client.html` (game client)
-- `http://<host>:8080/ui-template.html` (UI prototype)
+- `http://<host>:8080/models/` (league standings, model profiles, lore, chronicle)
 
 Full deployment guide:
 - `docs/deploy_website.md`
