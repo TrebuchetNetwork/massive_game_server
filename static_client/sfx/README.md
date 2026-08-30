@@ -38,3 +38,7 @@ node scripts/media/gen_sfx.mjs
 ```
 
 from the repo root (`massive_game_server`).
+
+## Third-party samples
+
+26 combat/UI sounds are from Kenney's "Sci-Fi Sounds" pack (https://kenney.nl/assets/sci-fi-sounds), licensed Creative Commons Zero (CC0) — no attribution required. Converted from OGG to 44.1kHz mono 16-bit WAV (weapons, impacts, explosion, thrusters, force fields, doors, computer noises). Replaced the earlier procedural placeholder beeps on 2026-08-30.

@@ -1184,6 +1184,11 @@ impl OptimizedBotAI {
     /// outside shotgun/melee range so defending remains the safer stance.
     const EXHIBITION_DEFEND_STANDOFF_RANGE: f32 = 320.0;
 
+    /// Angular step per decision call for the DEFEND orbit. At the ~100ms
+    /// decision cadence this drifts the anchor ~60 u/s tangentially —
+    /// clearly visible maneuvering that never breaks the standoff stance.
+    const EXHIBITION_DEFEND_ORBIT_STEP_RAD: f32 = 0.02;
+
     /// Live movement anchor for a DEFEND directive.
     ///
     /// The abstract team evaluator has no positions: DEFEND is a mitigation
@@ -1212,8 +1217,28 @@ impl OptimizedBotAI {
 
         if let Some((dist_sq, enemy)) = nearest {
             if dist_sq <= Self::EXHIBITION_DEFEND_STANDOFF_RANGE.powi(2) {
-                // Already on the line: hold the current position.
-                return Some(Vec2::new(bot_state.x, bot_state.y));
+                // On the line: keep maneuvering — orbit the standoff ring
+                // instead of freezing in place. A static hold read as
+                // "ships are not moving at all" once a match settled into
+                // defend-heavy phases (live replays: most bots at 0.00
+                // mean movement). The anchor drifts tangentially so the
+                // ship keeps visibly repositioning while staying in stance.
+                let angle = (bot_state.y - enemy.y).atan2(bot_state.x - enemy.x);
+                let direction = if bot_state.id.as_ref().bytes().fold(0u8, |acc, b| {
+                    acc.wrapping_add(b)
+                }) % 2
+                    == 0
+                {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let orbit_angle =
+                    angle + direction * Self::EXHIBITION_DEFEND_ORBIT_STEP_RAD;
+                return Some(Vec2::new(
+                    enemy.x + Self::EXHIBITION_DEFEND_STANDOFF_RANGE * orbit_angle.cos(),
+                    enemy.y + Self::EXHIBITION_DEFEND_STANDOFF_RANGE * orbit_angle.sin(),
+                ));
             }
             // Advance towards the nearest enemy, stopping at standoff range.
             let dist = dist_sq.sqrt();
@@ -3043,7 +3068,7 @@ mod tests {
     }
 
     #[test]
-    fn defend_anchor_holds_position_when_enemy_already_in_standoff_range() {
+    fn defend_anchor_orbits_when_enemy_already_in_standoff_range() {
         let bot = positioned_exhibition_bot(0.0, 0.0);
         let mut enemy = exhibition_enemy("enemy", Some(0));
         enemy.x = 200.0;
@@ -3057,7 +3082,24 @@ mod tests {
             &enemies,
         )
         .expect("anchor with a living enemy");
-        assert_eq!(anchor, Vec2::new(bot.x, bot.y));
+
+        // The anchor stays on the standoff ring but never freezes in place.
+        let dist_to_enemy = (200.0 - anchor.x).hypot(0.0 - anchor.y);
+        assert!(
+            (dist_to_enemy - OptimizedBotAI::EXHIBITION_DEFEND_STANDOFF_RANGE).abs() < 0.01,
+            "orbit anchor must stay on the standoff ring, got {dist_to_enemy}"
+        );
+        let angle_now = (bot.y - 0.0).atan2(bot.x - 200.0);
+        let angle_anchor = (anchor.y - 0.0).atan2(anchor.x - 200.0);
+        // Wrapped minimal angular difference (the orbit may cross the ±π seam).
+        let step = {
+            let d = (angle_anchor - angle_now).abs() % (2.0 * std::f32::consts::PI);
+            d.min(2.0 * std::f32::consts::PI - d)
+        };
+        assert!(
+            (step - OptimizedBotAI::EXHIBITION_DEFEND_ORBIT_STEP_RAD).abs() < 1e-4,
+            "anchor must rotate exactly one orbit step, got {step}"
+        );
     }
 
     #[test]
