@@ -1170,7 +1170,12 @@ impl OptimizedBotAI {
                     bot_controller.target_position = Some(Vec2::new(ally.x, ally.y));
                     bot_controller.behavior_state = BotBehaviorState::Defending;
                 } else {
-                    bot_controller.target_position = Some(Vec2::new(bot_state.x, bot_state.y));
+                    // No living ally to escort: take the DEFEND anchor instead
+                    // of anchoring at the ship's own position, which froze it
+                    // in place until an ally respawned into view.
+                    bot_controller.target_position = Self::exhibition_defend_anchor(
+                        bot_state, game_mode, flag_states, enemies,
+                    );
                     bot_controller.behavior_state = BotBehaviorState::Defending;
                 }
                 bot_controller.personality = BotPersonality::Balanced;
@@ -1226,17 +1231,9 @@ impl OptimizedBotAI {
                 // mean movement). The anchor drifts tangentially so the
                 // ship keeps visibly repositioning while staying in stance.
                 let angle = (bot_state.y - enemy.y).atan2(bot_state.x - enemy.x);
-                let direction = if bot_state.id.as_ref().bytes().fold(0u8, |acc, b| {
-                    acc.wrapping_add(b)
-                }) % 2
-                    == 0
-                {
-                    1.0
-                } else {
-                    -1.0
-                };
-                let orbit_angle =
-                    angle + direction * Self::EXHIBITION_DEFEND_ORBIT_STEP_RAD;
+                let orbit_angle = angle
+                    + Self::exhibition_orbit_direction(&bot_state.id)
+                        * Self::EXHIBITION_DEFEND_ORBIT_STEP_RAD;
                 return Some(Vec2::new(
                     enemy.x + Self::EXHIBITION_DEFEND_STANDOFF_RANGE * orbit_angle.cos(),
                     enemy.y + Self::EXHIBITION_DEFEND_STANDOFF_RANGE * orbit_angle.sin(),
@@ -1251,14 +1248,59 @@ impl OptimizedBotAI {
             ));
         }
 
-        // No living enemy: keep the original objective anchor.
+        // No living enemy: guard the flag in CTF via a slow orbit; otherwise
+        // drift along a deterministic orbit around the map center. Anchoring
+        // at a fixed point (own position, or parked exactly on the flag)
+        // froze the ship for entire defend phases (live replays: 0.0 u/s,
+        // 100% zero-velocity samples for the full final minute).
         if game_mode == fb::GameModeType::CaptureTheFlag {
             flag_states
                 .get(&bot_state.team_id)
-                .map(|flag| flag.position)
+                .map(|flag| Self::exhibition_orbit_anchor_around(bot_state, flag.position))
         } else {
-            Some(Vec2::new(bot_state.x, bot_state.y))
+            Some(Self::exhibition_idle_orbit_anchor(bot_state))
         }
+    }
+
+    /// Minimum orbit radius around the map center for the no-enemy
+    /// DEFEND/SUPPORT fallback, so the drift stays visible even for a ship
+    /// idling near the exact center.
+    const EXHIBITION_IDLE_ORBIT_MIN_RADIUS: f32 = 200.0;
+
+    /// Stable per-ship orbit direction so paired fighters don't mirror each
+    /// other; derived from the id, not RNG, to keep exhibition decisions
+    /// deterministic.
+    fn exhibition_orbit_direction(id: &PlayerID) -> f32 {
+        if id.as_ref().bytes().fold(0u8, |acc, b| acc.wrapping_add(b)) % 2 == 0 {
+            1.0
+        } else {
+            -1.0
+        }
+    }
+
+    /// Fallback anchor when a stance has nothing to hold against: orbit the
+    /// map center at the ship's current radius. Recomputed from the live
+    /// position each decision, so the ship keeps circling midfield instead
+    /// of freezing.
+    fn exhibition_idle_orbit_anchor(bot_state: &BotSnapshotOwned) -> Vec2 {
+        Self::exhibition_orbit_anchor_around(bot_state, Vec2::new(0.0, 0.0))
+    }
+
+    /// Deterministic orbit anchor around an arbitrary center (map center for
+    /// the idle fallback, the team flag for a CTF guard). Holds the ship's
+    /// current radius from the center, clamped to a minimum so a ship parked
+    /// on the center still gets a visibly moving anchor.
+    fn exhibition_orbit_anchor_around(bot_state: &BotSnapshotOwned, center: Vec2) -> Vec2 {
+        let dx = bot_state.x - center.x;
+        let dy = bot_state.y - center.y;
+        let radius = dx.hypot(dy).max(Self::EXHIBITION_IDLE_ORBIT_MIN_RADIUS);
+        let orbit_angle = dy.atan2(dx)
+            + Self::exhibition_orbit_direction(&bot_state.id)
+                * Self::EXHIBITION_DEFEND_ORBIT_STEP_RAD;
+        Vec2::new(
+            center.x + radius * orbit_angle.cos(),
+            center.y + radius * orbit_angle.sin(),
+        )
     }
 
     /// Select the live enemy occupying the same stable team slot. If that
@@ -3142,6 +3184,8 @@ mod tests {
             },
         );
 
+        // CTF with no enemies: guard the flag from a moving orbit anchor
+        // instead of parking exactly on it (the frozen-ship failure mode).
         let ctf_anchor = OptimizedBotAI::exhibition_defend_anchor(
             &bot,
             fb::GameModeType::CaptureTheFlag,
@@ -3149,8 +3193,20 @@ mod tests {
             &[],
         )
         .expect("CTF fallback anchor");
-        assert_eq!(ctf_anchor, flag_position);
+        let flag_distance =
+            (ctf_anchor.x - flag_position.x).hypot(ctf_anchor.y - flag_position.y);
+        assert!(
+            (flag_distance - OptimizedBotAI::EXHIBITION_IDLE_ORBIT_MIN_RADIUS).abs() < 1.0,
+            "flag guard must orbit at the minimum guard radius, got {flag_distance}"
+        );
+        let ctf_displacement = (ctf_anchor.x - bot.x).hypot(ctf_anchor.y - bot.y);
+        assert!(
+            ctf_displacement > 30.0,
+            "flag guard anchor must lead the ship past waypoint arrival distance, got {ctf_displacement}"
+        );
 
+        // Non-CTF with no enemies: the anchor must orbit the map center, not
+        // pin the ship to its own position (the frozen-ship failure mode).
         let tdm_anchor = OptimizedBotAI::exhibition_defend_anchor(
             &bot,
             fb::GameModeType::TeamDeathmatch,
@@ -3158,7 +3214,29 @@ mod tests {
             &[],
         )
         .expect("non-CTF fallback anchor");
-        assert_eq!(tdm_anchor, Vec2::new(bot.x, bot.y));
+        let displacement = (tdm_anchor.x - bot.x).hypot(tdm_anchor.y - bot.y);
+        assert!(
+            displacement > 30.0,
+            "idle orbit anchor must lead the ship past waypoint arrival distance, got {displacement}"
+        );
+        let bot_radius = bot.x.hypot(bot.y);
+        let anchor_radius = tdm_anchor.x.hypot(tdm_anchor.y);
+        assert!(
+            (anchor_radius - bot_radius).abs() < 1.0,
+            "idle orbit must hold the ship's current radius ({bot_radius}), got {anchor_radius}"
+        );
+    }
+
+    #[test]
+    fn idle_orbit_anchor_enforces_minimum_radius_and_determinism() {
+        let bot = positioned_exhibition_bot(5.0, -3.0);
+        let first = OptimizedBotAI::exhibition_idle_orbit_anchor(&bot);
+        let second = OptimizedBotAI::exhibition_idle_orbit_anchor(&bot);
+        assert_eq!(first, second, "idle orbit anchor must be deterministic");
+        assert!(
+            (first.x.hypot(first.y) - OptimizedBotAI::EXHIBITION_IDLE_ORBIT_MIN_RADIUS).abs() < 1.0,
+            "a center-parked ship must be pushed out to the minimum orbit radius"
+        );
     }
 
     #[test]
