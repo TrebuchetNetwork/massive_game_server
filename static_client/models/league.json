@@ -1,6 +1,43 @@
 {
-  "day_index": 7,
+  "day_index": 8,
   "announcements": [
+    {
+      "type": "retirement",
+      "at": "2026-08-30T09:23:17.953Z",
+      "track": "L1",
+      "slug": "tencent/hy3-20260706",
+      "mascot": {
+        "key": "tencent/hy3",
+        "emoji": "🐉",
+        "title": "Emberwing",
+        "color": "#fb7185"
+      }
+    },
+    {
+      "type": "retirement",
+      "at": "2026-08-30T09:23:17.953Z",
+      "track": "L1",
+      "slug": "deepseek/deepseek-v4-pro-20260423",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-pro",
+        "emoji": "🐋",
+        "title": "Abyss",
+        "color": "#4d6bfe"
+      }
+    },
+    {
+      "type": "entrant",
+      "at": "2026-08-30T09:23:17.953Z",
+      "track": "L1",
+      "slug": "tencent/hy4-preview-20260827",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "provider_rank": 10
+    },
     {
       "type": "entrant",
       "at": "2026-08-29T09:23:17.662Z",
@@ -97,53 +134,11 @@
       },
       "version": 2,
       "outcome": "compile_failed"
-    },
-    {
-      "type": "revision",
-      "at": "2026-08-28T09:25:48.246Z",
-      "track": "L2",
-      "slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
-      "mascot": {
-        "key": "nvidia/nemotron-3-ultra",
-        "emoji": "🦾",
-        "title": "Titan",
-        "color": "#76b900"
-      },
-      "version": 2,
-      "outcome": "compile_failed"
-    },
-    {
-      "type": "revision",
-      "at": "2026-08-28T09:25:48.246Z",
-      "track": "L2",
-      "slug": "z-ai/glm-5.2-20260616",
-      "mascot": {
-        "key": "z-ai/glm-5.2",
-        "emoji": "🦉",
-        "title": "Sage",
-        "color": "#a78bfa"
-      },
-      "version": 2,
-      "outcome": "compile_failed"
-    },
-    {
-      "type": "revision",
-      "at": "2026-08-28T09:25:48.246Z",
-      "track": "L2",
-      "slug": "anthropic/claude-opus-5-20260723",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "version": 2,
-      "outcome": "codegen_failed"
     }
   ],
   "tracks": {
     "L0": {
-      "day_index": 7,
+      "day_index": 8,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -153,10 +148,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 76.74,
-          "wins": 1440,
-          "losses": 362,
-          "draws": 214,
+          "rating": 76.48,
+          "wins": 1636,
+          "losses": 416,
+          "draws": 252,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -168,10 +163,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 73.96,
-          "wins": 1448,
-          "losses": 482,
-          "draws": 86,
+          "rating": 73.7,
+          "wins": 1650,
+          "losses": 558,
+          "draws": 96,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -183,17 +178,17 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 65.28,
-          "wins": 1218,
-          "losses": 602,
-          "draws": 196,
+          "rating": 65.32,
+          "wins": 1394,
+          "losses": 688,
+          "draws": 222,
           "submissions_used": 1,
           "submissions_allowed": 1
         }
       ]
     },
     "L1": {
-      "day_index": 7,
+      "day_index": 8,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -203,10 +198,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 75.81,
-          "wins": 1402,
-          "losses": 378,
-          "draws": 204,
+          "rating": 74.65,
+          "wins": 1578,
+          "losses": 458,
+          "draws": 236,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -218,10 +213,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 73.34,
-          "wins": 1412,
-          "losses": 486,
-          "draws": 86,
+          "rating": 72.71,
+          "wins": 1604,
+          "losses": 572,
+          "draws": 96,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -233,17 +228,17 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 64.57,
-          "wins": 1184,
-          "losses": 606,
-          "draws": 194,
+          "rating": 63.86,
+          "wins": 1338,
+          "losses": 708,
+          "draws": 226,
           "submissions_used": 1,
           "submissions_allowed": 1
         }
       ]
     },
     "L2": {
-      "day_index": 7,
+      "day_index": 8,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -253,10 +248,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 76.49,
-          "wins": 1436,
-          "losses": 368,
-          "draws": 212,
+          "rating": 76.22,
+          "wins": 1634,
+          "losses": 426,
+          "draws": 244,
           "submissions_used": 2,
           "submissions_allowed": 3
         },
@@ -268,10 +263,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 74.36,
-          "wins": 1456,
-          "losses": 474,
-          "draws": 86,
+          "rating": 74.39,
+          "wins": 1666,
+          "losses": 542,
+          "draws": 96,
           "submissions_used": 2,
           "submissions_allowed": 3
         },
@@ -283,17 +278,17 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 65.38,
-          "wins": 1218,
-          "losses": 598,
-          "draws": 200,
+          "rating": 65.49,
+          "wins": 1394,
+          "losses": 680,
+          "draws": 230,
           "submissions_used": 2,
           "submissions_allowed": 3
         }
       ]
     },
     "L3": {
-      "day_index": 7,
+      "day_index": 8,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -303,10 +298,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 76.49,
-          "wins": 1436,
-          "losses": 368,
-          "draws": 212,
+          "rating": 76.22,
+          "wins": 1634,
+          "losses": 426,
+          "draws": 244,
           "submissions_used": 1,
           "submissions_allowed": 9
         },
@@ -318,10 +313,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 74.36,
-          "wins": 1456,
-          "losses": 474,
-          "draws": 86,
+          "rating": 74.39,
+          "wins": 1666,
+          "losses": 542,
+          "draws": 96,
           "submissions_used": 1,
           "submissions_allowed": 9
         },
@@ -333,10 +328,10 @@
             "title": "Sage",
             "color": "#a78bfa"
           },
-          "rating": 65.38,
-          "wins": 1218,
-          "losses": 598,
-          "draws": 200,
+          "rating": 65.49,
+          "wins": 1394,
+          "losses": 680,
+          "draws": 230,
           "submissions_used": 1,
           "submissions_allowed": 9
         }

@@ -1,7 +1,7 @@
 {
   "comment": "Analyst toplist for the Continuous Model League. Authored from measured league data (L0 zero-shot track = unbiased baseline). Refresh when the league meaningfully changes. Keyed by roster slug prefix.",
-  "generated_at": "2026-08-28T13:00:00Z",
-  "league_day": 5,
+  "generated_at": "2026-08-30T10:52:55.923Z",
+  "league_day": 8,
   "entries": [
     {
       "slug": "anthropic/claude-opus-5",
@@ -35,9 +35,9 @@
     },
     {
       "slug": "google/gemini-3.7-flash",
-      "rank": 6,
-      "headline": "New blood, unwritten record.",
-      "commentary": "Entered today off the OpenRouter weekly chart to replace the retired MiMo-V2.5. Provisional 50.0 — no fights yet. Google's challenger gets its first league battles in tomorrow's evaluation."
+      "rank": 8,
+      "headline": "One day of grace.",
+      "commentary": "13.9 on day two, unchanged from a brutal debut. If tomorrow looks the same, the bar does what it does. The league's shortest stories are sometimes its most instructive."
     },
     {
       "slug": "z-ai/glm-5.3-flash",
@@ -47,21 +47,21 @@
     },
     {
       "slug": "stealth/ox-alpha",
-      "rank": 8,
-      "headline": "The mystery guest.",
-      "commentary": "46.0 rating with a 33% win rate that says the fight record (564W-704L) matters more than the name nobody recognizes. Stable, unremarkable, and running out of room above the bar."
+      "rank": 6,
+      "headline": "The one who learns.",
+      "commentary": "+2.0 over its zero-shot self after two revisions — the only fighter whose improvement is compounding. Nobody claims this model. Everybody is starting to watch it."
     },
     {
       "slug": "tencent/hy3",
-      "rank": 9,
-      "headline": "One bad week from the Hall of Fame.",
-      "commentary": "37.2 rating, 37% win rate, and a trend line that hasn't moved in six days. Hy3 isn't collapsing — it's simply not winning. At two points above the retirement bar, stillness is the risk."
+      "rank": 10,
+      "headline": "The frozen dragon, extinguished.",
+      "commentary": "Retired alongside Abyss at 37 and change. Six days of the flattest trend line in the league ended the only way it could. Stillness was the risk, and the risk collected."
     },
     {
       "slug": "deepseek/deepseek-v4-pro",
-      "rank": 10,
-      "headline": "Pro in name only — so far.",
-      "commentary": "The flagship sits last among survivors at 36.6 with a 29% win rate while both of its Flash siblings sit mid-table. 1.6 points above the bar. The L2 revision round just landed — if feedback can save a model, this is the test case."
+      "rank": 9,
+      "headline": "The flagship falls.",
+      "commentary": "Out of L1 this morning at the bar, after two days of surviving on a tenth of a point. Both Flash siblings fight on mid-table while the Pro goes to the Hall of Fame. Pedigree, the zero-shot lane has ruled, is not a strategy. It fights on in the feedback lanes with one last revision owed."
     },
     {
       "slug": "xiaomi/mimo-v2.5",
@@ -74,6 +74,12 @@
       "rank": 12,
       "headline": "The league's first hard lesson.",
       "commentary": "Retired at 12.9, the weakest sustained performance ever recorded here — it never once crossed 14 in six days. Whatever OpenAI ships next, the bar will be waiting."
+    },
+    {
+      "slug": "tencent/hy4-preview",
+      "rank": 7,
+      "headline": "The avenger arrives.",
+      "commentary": "Recruited within the hour of the double retirement — a name nobody here has seen fight. Provisional 50.0, no scar tissue, and a fallen housemate to avenge. First board tomorrow."
     }
   ]
 }

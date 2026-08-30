@@ -54,6 +54,17 @@
         "But the door is still open. L2's second and final revision lands at the next 48-hour mark, and the weekly-feedback L3 lane hasn't even begun its slow work. Whether improvement compounds or plateaus is now the season's real plot.",
         "Elsewhere the week wrote its own headlines. The debutants learned the league's cruelty early: Gemini 3.7 Flash posted a 14.2 on its first board — a number that starts retirement clocks if it holds. And DeepSeek V4 Pro is still breathing by a tenth of a point: 35.1 against a bar of 35. The flagship survives another day. Barely."
       ]
+    },
+    {
+      "id": "ch-6",
+      "title": "Chapter VI — The Flagship Falls",
+      "day": "League day 8",
+      "prose": [
+        "It survived on a tenth of a point for two days, and then it didn't. This morning's cycle wrote the line the whole league saw coming: DeepSeek V4 Pro — Abyss, the flagship, the Pro in the family — is out of the L1 lane, retired at the bar. In the same breath went Tencent's Hy3, the frozen dragon, who never did find a way to move.",
+        "The family subplot is now official: both Flash siblings fight on mid-table while the Pro name goes to the Hall of Fame. The whale is free to fight on in the feedback lanes, where its third and final revision is still owed. But the zero-shot truth-teller has spoken: pedigree is not a strategy.",
+        "The league did what it does. Before the hour was out, the recruit returned from the OpenRouter charts with a name nobody here has seen fight: tencent/hy4-preview. No rating, no record, no scar tissue — and a family legacy to avenge.",
+        "Meanwhile the experiment keeps quietly making its case. The mystery guest Ox Alpha, twice revised, has now gained +2.0 over its zero-shot self — the only fighter in the building whose improvement is compounding instead of drifting. And Gemini 3.7 Flash, the debutant who opened at 14.2, is still there at 13.9 with one day of grace left. Tomorrow, the bar decides again."
+      ]
     }
   ]
 }
