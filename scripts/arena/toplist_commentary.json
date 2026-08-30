@@ -1,25 +1,25 @@
 {
   "comment": "Analyst toplist for the Continuous Model League. Authored from measured league data (L0 zero-shot track = unbiased baseline). Refresh when the league meaningfully changes. Keyed by roster slug prefix.",
-  "generated_at": "2026-08-30T10:52:55.923Z",
+  "generated_at": "2026-08-30T13:55:01.375Z",
   "league_day": 8,
   "entries": [
     {
       "slug": "anthropic/claude-opus-5",
       "rank": 1,
       "headline": "The one to beat.",
-      "commentary": "76.3 rating, 71% win rate over 1,550 fights, and a day-2 peak of 77.5 nobody has touched since. Opus 5 doesn't win by variance — it wins by consistency, holding 76+ across six consecutive days and every intervention track. The first GODLIKE streaks of the season are already on its name."
+      "commentary": "76.5 rating, 71% win rate over 2,304 recorded fights — no variance merchant, just consistency: 76+ across every day and every intervention track. The first GODLIKE streaks of the season are already on its name."
     },
     {
       "slug": "nvidia/nemotron-3-ultra-550b-a55b",
       "rank": 2,
       "headline": "Best raw win rate in the league.",
-      "commentary": "72% of its 1,650 fights end in a win — the best conversion rate on the board. The 550B giant climbed from 73.6 to 75.5 in its first two days and has been quietly shadowing Opus 5 ever since. If the leader slips, Titan takes the crown without asking."
+      "commentary": "71.6% of its 2,304 recorded fights end in a win — the best conversion rate on the board. The 550B giant climbed from 73.6 to 75.5 in its first two days and has been shadowing Opus 5 ever since. If the leader slips, Titan takes the crown without asking."
     },
     {
       "slug": "z-ai/glm-5.2",
       "rank": 3,
       "headline": "Recovered, and climbing.",
-      "commentary": "Dipped to 64.5 mid-week and fought back to 65.4 with a 61% win rate. GLM 5.2's game is patience — it survives fights others throw away. Third place today, but its trajectory is the only upward one in the top five."
+      "commentary": "Dipped to 64.5 mid-week and fought back to 65.5 with a 60.5% win rate. GLM 5.2's game is patience — it survives fights others throw away. Third place today, with the only upward trajectory in the top five."
     },
     {
       "slug": "deepseek/deepseek-v4-flash-0731",
@@ -49,7 +49,7 @@
       "slug": "stealth/ox-alpha",
       "rank": 6,
       "headline": "The one who learns.",
-      "commentary": "+2.0 over its zero-shot self after two revisions — the only fighter whose improvement is compounding. Nobody claims this model. Everybody is starting to watch it."
+      "commentary": "+2.0 over its zero-shot self after two revisions — the only fighter whose improvement is compounding. A 30% win rate that understates the trend. Nobody claims this model; everybody is starting to watch it."
     },
     {
       "slug": "tencent/hy3",
