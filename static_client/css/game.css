@@ -1731,6 +1731,23 @@
         .powerup-indicator { display: flex; align-items: center; gap: 5px; font-size: 12px; padding: 3px 6px; background-color: rgba(55, 65, 81, 0.7); border-radius: 4px; margin-bottom: 3px; }
         .powerup-indicator .icon { font-size: 14px; }
 
+        .combat-hud { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); display: none; flex-direction: column; align-items: center; gap: 4px; z-index: 60; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,0.85); }
+        .combat-hud.combat-hud--visible { display: flex; }
+        body.mobile-mode .combat-hud { display: none !important; } /* mobile has its own combat hud */
+        .combat-hud__weapon { font-size: 0.7rem; letter-spacing: 0.18em; text-transform: uppercase; color: #9CA3AF; }
+        .combat-hud__ammo { font-size: 2rem; font-weight: 700; color: #FDE68A; line-height: 1; }
+        .combat-hud__ammo-max { font-size: 1rem; font-weight: 500; color: #9CA3AF; }
+        .combat-hud__bar { width: 170px; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.15); overflow: hidden; }
+        .combat-hud__bar-fill { height: 100%; width: 100%; background: #FBBF24; border-radius: 3px; transition: width 90ms linear; }
+        .combat-hud--low .combat-hud__ammo { color: #FB923C; }
+        .combat-hud--low .combat-hud__bar-fill { background: #FB923C; }
+        .combat-hud--empty .combat-hud__ammo { color: #F87171; }
+        .combat-hud--empty .combat-hud__bar-fill { background: #EF4444; }
+        .combat-hud__alert { display: none; margin-top: 2px; padding: 4px 14px; border-radius: 6px; font-weight: 800; font-size: 0.95rem; letter-spacing: 0.08em; color: #FEE2E2; background: rgba(153, 27, 27, 0.88); border: 1px solid #F87171; animation: combat-hud-pulse 0.9s ease-in-out infinite; }
+        .combat-hud--empty .combat-hud__alert { display: block; }
+        .combat-hud--reloading .combat-hud__alert { display: block; animation: none; background: rgba(30, 64, 175, 0.88); border-color: #93C5FD; color: #DBEAFE; }
+        @keyframes combat-hud-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.06); opacity: 0.85; } }
+        .scoreboard-team-stats { font-size: 0.8rem; font-weight: 500; color: #9CA3AF; margin-left: 8px; }
         .scoreboard { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 700px; background-color: rgba(17, 24, 39, 0.95); border: 1px solid #374151; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); z-index: 100; color: #E5E7EB; }
         .scoreboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #374151;}
         .scoreboard-header h3 { font-size: 1.5rem; font-weight: bold; color: #93C5FD; }

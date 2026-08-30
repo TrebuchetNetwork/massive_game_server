@@ -24,7 +24,7 @@
           }
         }
     </script>
-    <link rel="stylesheet" href="./css/game.css?v=20260828-joinux1">
+    <link rel="stylesheet" href="./css/game.css?v=20260830-combathud1">
     <script src="./client_logic/arena_telemetry.js?v=20260725-mobile-arena2" defer></script>
 </head>
 <body class="bg-gray-900 text-white min-h-screen overflow-hidden">
@@ -191,6 +191,12 @@
                     <div id="combatMomentumFill" class="combat-momentum__fill"></div>
                 </div>
                 <div id="combatMomentumValue" class="combat-momentum__value">Momentum 0%</div>
+            </div>
+            <div id="combatHud" class="combat-hud" aria-hidden="true">
+                <div class="combat-hud__weapon" id="combatHudWeapon">Pistol</div>
+                <div class="combat-hud__ammo"><span id="combatHudAmmo">10</span><span class="combat-hud__ammo-max" id="combatHudAmmoMax"> / 10</span></div>
+                <div class="combat-hud__bar"><div id="combatHudBarFill" class="combat-hud__bar-fill"></div></div>
+                <div id="combatHudAlert" class="combat-hud__alert">PRESS R TO RELOAD</div>
             </div>
         </div>
         <div id="mobileControls" class="mobile-controls hidden">
@@ -417,22 +423,22 @@
             <div id="ffaScoreboardSection" class="team-section hidden">
                 <h4>Free For All</h4>
                 <table id="ffaPlayersTable">
-                    <thead><tr><th>Rank</th><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr></thead>
+                    <thead><tr><th>Rank</th><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th><th>K/D</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
             <div id="teamScoreboardSection" class="hidden">
                 <div class="team-section team-red">
-                    <h4>Red Team: <span id="scoreboardTeamRedScore">0</span></h4>
+                    <h4>Red Team: <span id="scoreboardTeamRedScore">0</span><span id="scoreboardTeamRedStats" class="scoreboard-team-stats"></span></h4>
                     <table id="redTeamPlayers">
-                        <thead><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr></thead>
+                        <thead><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th><th>K/D</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
                 <div class="team-section team-blue">
-                    <h4>Blue Team: <span id="scoreboardTeamBlueScore">0</span></h4>
+                    <h4>Blue Team: <span id="scoreboardTeamBlueScore">0</span><span id="scoreboardTeamBlueStats" class="scoreboard-team-stats"></span></h4>
                     <table id="blueTeamPlayers">
-                        <thead><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th></tr></thead>
+                        <thead><tr><th>Player</th><th>Score</th><th>Kills</th><th>Deaths</th><th>K/D</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -3124,6 +3130,7 @@
         const uiManager = createUIManager(() => ({
             GP, clamp, log, players, myPlayerId, localPlayerState, matchInfo,
             killFeed, chatMessages, teamColors, weaponColors, weaponNames, ping,
+            getMaxAmmoForWeaponClient,
             gameSettings, uiCache, combatUiState, activeEffectsProfileName,
             postMatchSummaryVisible, postMatchSummarySignature,
             get postMatchSummaryVisible() { return postMatchSummaryVisible; },

@@ -2099,8 +2099,76 @@ export function createUIManager(getCtx) {
         }
     }
 
+    // Bottom-center combat HUD: the sidebar ammo line is easy to miss in a
+    // firefight, so ammo state and the reload call-to-action get a dedicated
+    // in-canvas overlay (desktop only; the mobile HUD covers this on touch).
+    let combatHudRefs = null;
+
+    function getCombatHudRefs() {
+        if (!combatHudRefs) {
+            combatHudRefs = {
+                root: document.getElementById('combatHud'),
+                weapon: document.getElementById('combatHudWeapon'),
+                ammo: document.getElementById('combatHudAmmo'),
+                ammoMax: document.getElementById('combatHudAmmoMax'),
+                barFill: document.getElementById('combatHudBarFill'),
+                alert: document.getElementById('combatHudAlert'),
+            };
+        }
+        return combatHudRefs;
+    }
+
+    function updateCombatHud(ctx) {
+        const refs = getCombatHudRefs();
+        if (!refs.root) return;
+        const st = ctx.myPlayerId ? ctx.localPlayerState : null;
+        const visible = !!(st && st.alive !== false);
+        if (ctx.uiCache.combatHudVisible !== visible) {
+            ctx.uiCache.combatHudVisible = visible;
+            refs.root.classList.toggle('combat-hud--visible', visible);
+            refs.root.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        }
+        if (!visible) return;
+
+        const melee = st.weapon === ctx.GP.WeaponType.Melee;
+        const maxAmmo = melee ? 0 : Math.max(0, Number(ctx.getMaxAmmoForWeaponClient?.(st.weapon)) || 0);
+        const ammo = Math.max(0, Number(st.ammo) || 0);
+        const reloadProgress = Number(st.reload_progress);
+        const reloading = !melee && reloadProgress !== -1 && reloadProgress < 1.0;
+        const empty = !melee && !reloading && ammo === 0;
+        const low = !melee && !reloading && !empty && maxAmmo > 0 && ammo / maxAmmo <= 0.3;
+
+        ctx.setTextIfChanged(refs.weapon, ctx.weaponNames[st.weapon] || 'Unknown', 'combatHudWeapon');
+        ctx.setTextIfChanged(refs.ammo, melee ? '∞' : String(ammo), 'combatHudAmmo');
+        ctx.setTextIfChanged(refs.ammoMax, melee || maxAmmo <= 0 ? '' : ` / ${maxAmmo}`, 'combatHudAmmoMax');
+
+        const stateSignature = `${reloading}:${empty}:${low}`;
+        if (ctx.uiCache.combatHudStateSignature !== stateSignature) {
+            ctx.uiCache.combatHudStateSignature = stateSignature;
+            refs.root.classList.toggle('combat-hud--reloading', reloading);
+            refs.root.classList.toggle('combat-hud--empty', empty);
+            refs.root.classList.toggle('combat-hud--low', low);
+        }
+
+        const clampedProgress = Math.max(0, Math.min(1, reloadProgress));
+        const fillRatio = reloading
+            ? clampedProgress
+            : (melee ? 1 : (maxAmmo > 0 ? Math.min(1, ammo / maxAmmo) : 0));
+        const fillPct = `${Math.round(fillRatio * 100)}%`;
+        if (ctx.uiCache.combatHudFillPct !== fillPct) {
+            ctx.uiCache.combatHudFillPct = fillPct;
+            refs.barFill.style.width = fillPct;
+        }
+
+        const alertText = reloading
+            ? `RELOADING ${Math.round(clampedProgress * 100)}%`
+            : 'PRESS R TO RELOAD';
+        ctx.setTextIfChanged(refs.alert, alertText, 'combatHudAlert');
+    }
+
     function updateGameStatsUI() {
         const ctx = getCtx();
+        updateCombatHud(ctx);
         if (ctx.myPlayerId && ctx.localPlayerState) {
             ctx.setTextIfChanged(ctx.myPlayerIdSpan, ctx.myPlayerId.substring(0, 8), 'myPlayerId');
             const teamText = ctx.localPlayerState.team_id === 1 ? 'Red' :
@@ -2235,6 +2303,7 @@ export function createUIManager(getCtx) {
                 row.insertCell().textContent = p.score;
                 row.insertCell().textContent = p.kills;
                 row.insertCell().textContent = p.deaths;
+                row.insertCell().textContent = formatKdRatio(p.kills, p.deaths);
             });
         } else {
             ffaScoreboardSection.classList.add('hidden');
@@ -2253,6 +2322,10 @@ export function createUIManager(getCtx) {
             document.getElementById('scoreboardTeamRedScore').textContent = redScore;
             document.getElementById('scoreboardTeamBlueScore').textContent = blueScore;
 
+            const teamTotals = {
+                1: { kills: 0, deaths: 0 },
+                2: { kills: 0, deaths: 0 },
+            };
             sortedPlayers.forEach(p => {
                 const tableBody = p.team_id === 1 ? redTeamPlayersTableBody : (p.team_id === 2 ? blueTeamPlayersTableBody : null);
                 if (tableBody) {
@@ -2261,9 +2334,31 @@ export function createUIManager(getCtx) {
                     row.insertCell().textContent = p.score;
                     row.insertCell().textContent = p.kills;
                     row.insertCell().textContent = p.deaths;
+                    row.insertCell().textContent = formatKdRatio(p.kills, p.deaths);
+                    const totals = teamTotals[p.team_id];
+                    totals.kills += Math.max(0, Number(p.kills) || 0);
+                    totals.deaths += Math.max(0, Number(p.deaths) || 0);
                 }
             });
+            const redStatsSpan = document.getElementById('scoreboardTeamRedStats');
+            const blueStatsSpan = document.getElementById('scoreboardTeamBlueStats');
+            if (redStatsSpan) {
+                redStatsSpan.textContent = formatTeamStats(teamTotals[1]);
+            }
+            if (blueStatsSpan) {
+                blueStatsSpan.textContent = formatTeamStats(teamTotals[2]);
+            }
         }
+    }
+
+    function formatKdRatio(kills, deaths) {
+        const k = Math.max(0, Number(kills) || 0);
+        const d = Math.max(0, Number(deaths) || 0);
+        return (d > 0 ? k / d : k).toFixed(2);
+    }
+
+    function formatTeamStats(totals) {
+        return `K ${totals.kills} · D ${totals.deaths} · K/D ${formatKdRatio(totals.kills, totals.deaths)}`;
     }
 
     function saveAndApplySettings() {
