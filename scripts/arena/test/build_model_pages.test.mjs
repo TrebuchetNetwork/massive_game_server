@@ -13,6 +13,7 @@ import {
   buildPages,
   defaultIo,
   matchFights,
+  measuredRivalries,
   scanBattles,
   slugifyRoster,
 } from '../build_model_pages.mjs';
@@ -1047,4 +1048,188 @@ test('stale lore.html is removed when lore becomes unusable', async () => {
   assert.ok(fs.existsSync(path.join(outDir, 'lore.html')), 'lore.html written when lore loads');
   await buildPages({ ...base, lorePath: path.join(FIXTURES, 'no-such-lore.json') });
   assert.ok(!fs.existsSync(path.join(outDir, 'lore.html')), 'stale lore.html removed');
+});
+
+// ---------------------------------------------------------------------------
+// Measured rivalries (full-sample pairwise head-to-head)
+// ---------------------------------------------------------------------------
+
+const C = 'test-0003-gamma-gamma-three';
+const D = 'test-0004-delta-delta-four';
+const E = 'test-0005-epsilon-epsilon-five';
+
+/** Build minimal battle records for a pair: aWins for `a`, bWins for `b`, draws. */
+function pairRecords(a, b, aWins, bWins, draws, startIndex = 0) {
+  const out = [];
+  let i = startIndex;
+  const push = (w, d) => {
+    i += 1;
+    out.push({ f: `r${String(i).padStart(4, '0')}.json`, m: i, mo: 'arena', a, b, w, d, ac: [0, 0, 0, 0, 0], bc: [0, 0, 0, 0, 0] });
+  };
+  for (let k = 0; k < aWins; k++) push(a, false);
+  for (let k = 0; k < bWins; k++) push(b, false);
+  for (let k = 0; k < draws; k++) push(null, true);
+  return out;
+}
+
+test('measuredRivalries picks closest and most one-sided pairs from real records', () => {
+  const records = [
+    ...pairRecords(A, B, 30, 30, 0), // dead-even, 60 fights, topShare 0.500
+    ...pairRecords(B, E, 10, 10, 0, 100), // also 0.500 but only 20 fights (tiebreak)
+    ...pairRecords(A, C, 21, 19, 0, 200), // 0.525
+    ...pairRecords(B, C, 26, 14, 0, 300), // 0.650
+    ...pairRecords(B, D, 33, 17, 0, 400), // 0.660
+    ...pairRecords(A, D, 40, 10, 0, 500), // 0.800
+    ...pairRecords(D, E, 49, 1, 0, 600), // 0.980 — the 98% nemesis pair
+    ...pairRecords(C, D, 19, 0, 0, 700), // 19 fights — under the minimum, excluded
+  ];
+  const r = measuredRivalries(records, [A, B, C, D, E]);
+  assert.ok(r, 'pairs qualify');
+  assert.equal(r.pairsMeasured, 7, 'the 19-fight pair is excluded');
+  assert.equal(r.minGames, 20);
+
+  // Most contested: lowest leader win share; the dead-even 60-fight pair wins
+  // over the equally-even 20-fight pair (ties break to more games first).
+  assert.deepEqual(
+    r.contested.map((e) => [e.leader, e.trailer, e.leaderWins, e.trailerWins, e.games]),
+    [[A, B, 30, 30, 60], [B, E, 10, 10, 20], [A, C, 21, 19, 40]],
+  );
+  assert.equal(r.contested[0].topShare, 0.5);
+
+  // Nemesis matchups: highest leader win share — the 98% pair first.
+  assert.deepEqual(
+    r.nemesis.map((e) => [e.leader, e.trailer, e.leaderWins, e.trailerWins, e.games]),
+    [[D, E, 49, 1, 50], [A, D, 40, 10, 50], [B, D, 33, 17, 50]],
+  );
+  assert.ok(Math.abs(r.nemesis[0].topShare - 0.98) < 1e-12);
+
+  // Per-model closest opponent (leader/trailer orientation is symmetric).
+  const forA = r.mostContestedByModel.get(A);
+  assert.deepEqual([forA.leader, forA.trailer], [A, B], "alpha's closest pair is the dead-even one");
+  const forE = r.mostContestedByModel.get(E);
+  assert.deepEqual([forE.leader, forE.trailer], [B, E], "epsilon's closest pair is its 20-fight tie, not the 98% loss");
+  const forD = r.mostContestedByModel.get(D);
+  assert.deepEqual([forD.leader, forD.trailer], [B, D]);
+});
+
+test('measuredRivalries returns null when no pair reaches the minimum sample', () => {
+  const records = pairRecords(A, B, 10, 9, 0); // 19 fights
+  assert.equal(measuredRivalries(records, [A, B]), null);
+  assert.equal(measuredRivalries([], [A, B]), null);
+});
+
+/**
+ * Synthetic battle checkpoint IO: serves generated duel artifacts for one
+ * battles dir, everything else (ratings, world, highlights) from disk.
+ */
+function ioWithSyntheticBattles(battlesDir, specs) {
+  const files = new Map();
+  let i = 0;
+  for (const spec of specs) {
+    const games = [
+      ...Array.from({ length: spec.aWins }, () => ({ w: spec.a, d: false })),
+      ...Array.from({ length: spec.bWins }, () => ({ w: spec.b, d: false })),
+      ...Array.from({ length: spec.draws || 0 }, () => ({ w: null, d: true })),
+    ];
+    for (const g of games) {
+      i += 1;
+      files.set(`syn${String(i).padStart(4, '0')}.json`, {
+        mtime: 1000 + i,
+        json: {
+          model_a_id: spec.a,
+          model_b_id: spec.b,
+          simulation: {
+            mode: 'arena',
+            winner_model_id: g.w,
+            draw: g.d,
+            team_a_action_counts: { attack: 1 },
+            team_b_action_counts: { defend: 1 },
+          },
+        },
+      });
+    }
+  }
+  return {
+    ...defaultIo,
+    readdir: (dir) => (dir === battlesDir ? [...files.keys()] : defaultIo.readdir(dir)),
+    statMtimeMs: (dir, name) => (dir === battlesDir && files.has(name)
+      ? files.get(name).mtime
+      : defaultIo.statMtimeMs(dir, name)),
+    readJson: (file) => {
+      if (path.dirname(file) === battlesDir && files.has(path.basename(file))) {
+        return files.get(path.basename(file)).json;
+      }
+      return defaultIo.readJson(file);
+    },
+  };
+}
+
+test('measured rivalries: index tables + model-page line render from battle data', async () => {
+  const battlesDir = path.join(FIXTURES, 'seasons', 'test-season-0001', 'battles');
+  const io = ioWithSyntheticBattles(battlesDir, [
+    { a: A, b: B, aWins: 12, bWins: 12, draws: 6 }, // dead-even over 30 fights
+  ]);
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-measured-'));
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
+    io,
+  });
+
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.match(index, /aria-label="Measured rivalries"/);
+  assert.match(index, /Most contested/);
+  assert.match(index, /Nemesis matchups/);
+  // Honesty labels: per-row sample size and the exclusion rule.
+  assert.match(index, /measured over 30 fights · 6 draws/);
+  assert.match(index, /Pairs with fewer than 20 measured fights are excluded — 1 pairs qualify/);
+  // Dead-even score rendered leader-first (12-12), mascot emoji present.
+  const measured = index.split('aria-label="Measured rivalries"')[1].split('</section>')[0];
+  assert.match(measured, /<span class="win">12<\/span>-<span class="loss">12<\/span>/);
+  assert.match(measured, /measured__model/);
+  // Section sits after the ranked model list, before provenance.
+  assert.ok(index.indexOf('Measured rivalries') > index.indexOf('aria-label="Ranked models"'));
+  assert.ok(index.indexOf('Measured rivalries') < index.indexOf('Provenance'));
+
+  // Model pages carry the single most-contested line from their perspective.
+  const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
+  assert.match(alpha, /measured__note">Most contested: vs /);
+  assert.match(alpha, /<span class="win">12<\/span>-<span class="loss">12<\/span> · 6 draws over 30 measured fights\./);
+  assert.ok(alpha.indexOf('measured__note') > alpha.indexOf('<h2>Rivalry grid</h2>'));
+  assert.ok(alpha.indexOf('measured__note') < alpha.indexOf('table class="rivalry"'));
+  const beta = fs.readFileSync(path.join(outDir, 'beta-two.html'), 'utf8');
+  assert.match(beta, /measured__note">Most contested: vs /);
+});
+
+test('measured rivalries: no qualifying pair keeps pages byte-identical to goldens', async () => {
+  // The checked-in fixtures have a single 3-duel pair — under the 20-fight
+  // minimum — so the sections must vanish entirely.
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-measured-off-'));
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
+  });
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.ok(!index.includes('Measured rivalries'), 'index section hidden without qualifying pairs');
+  for (const f of ['index.html', 'alpha-one.html', 'beta-two.html', 'mascots.json']) {
+    assert.equal(
+      fs.readFileSync(path.join(outDir, f), 'utf8'),
+      fs.readFileSync(path.join(FIXTURES, 'golden', f), 'utf8'),
+      `${f} must be byte-identical to the golden when no pair qualifies`,
+    );
+  }
 });

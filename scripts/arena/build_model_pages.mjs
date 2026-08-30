@@ -48,6 +48,14 @@
 // (fast), keep the newest window, and only JSON-read files that are new since
 // the last run (cache keyed on file name + mtime). Heavy IO is injectable so
 // tests run against tiny fixtures.
+//
+// Measured rivalries: from the same kept battle records (no extra IO) we also
+// compute full-sample pairwise head-to-head stats — the league's "most
+// contested" (closest) and "nemesis" (most one-sided) pairs. Unlike the
+// editorial chronicle/lore, every number here is counted from recorded
+// fights; pairs under the minimum sample are excluded. When no pair
+// qualifies, the sections disappear and the HTML stays byte-identical to a
+// build without the feature (models.css always carries the styles).
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -266,6 +274,74 @@ export function aggregateBattles(records, rosterIds, perModelLimit = 200) {
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Measured rivalries (full-sample pairwise head-to-head)
+// ---------------------------------------------------------------------------
+
+export const RIVALRY_MIN_GAMES = 20;
+export const RIVALRY_TOP_N = 3;
+
+/**
+ * Pairwise head-to-head records over the FULL kept battle sample — unlike the
+ * per-model rivalry grid, which is limited to each model's newest
+ * perModelLimit duels, this counts every kept fight between two roster
+ * models. For every pair with at least `minGames` measured fights: leader
+ * (more wins; exact ties break to the lexicographically smaller id),
+ * W-L-D, and topShare = leader wins / games.
+ *
+ * "Most contested" = lowest topShare (ties: more games first), top 3.
+ * "Nemesis matchups" = highest topShare, top 3.
+ * mostContestedByModel maps each model to its single closest qualifying pair.
+ * Returns null when no pair qualifies so callers hide the sections entirely.
+ */
+export function measuredRivalries(records, rosterIds, minGames = RIVALRY_MIN_GAMES) {
+  const rosterSet = new Set(rosterIds);
+  const pairs = new Map(); // "idA idB" (sorted) -> {a, b, wa, wb, d}
+  for (const rec of records) {
+    if (rec.a === rec.b || !rosterSet.has(rec.a) || !rosterSet.has(rec.b)) continue;
+    const [x, y] = rec.a < rec.b ? [rec.a, rec.b] : [rec.b, rec.a];
+    const key = `${x} ${y}`;
+    if (!pairs.has(key)) pairs.set(key, { a: x, b: y, wa: 0, wb: 0, d: 0 });
+    const p = pairs.get(key);
+    if (rec.d) p.d += 1;
+    else if (rec.w === x) p.wa += 1;
+    else if (rec.w === y) p.wb += 1;
+  }
+  const entries = [];
+  for (const [key, p] of pairs) {
+    const games = p.wa + p.wb + p.d;
+    if (games < minGames) continue;
+    const aLeads = p.wa >= p.wb;
+    entries.push({
+      key,
+      leader: aLeads ? p.a : p.b,
+      leaderWins: aLeads ? p.wa : p.wb,
+      trailer: aLeads ? p.b : p.a,
+      trailerWins: aLeads ? p.wb : p.wa,
+      draws: p.d,
+      games,
+      topShare: Math.max(p.wa, p.wb) / games,
+    });
+  }
+  if (!entries.length) return null;
+  const byContested = [...entries].sort((x, y) => x.topShare - y.topShare
+    || y.games - x.games || x.key.localeCompare(y.key));
+  const byNemesis = [...entries].sort((x, y) => y.topShare - x.topShare
+    || y.games - x.games || x.key.localeCompare(y.key));
+  const mostContestedByModel = new Map();
+  for (const e of byContested) {
+    if (!mostContestedByModel.has(e.leader)) mostContestedByModel.set(e.leader, e);
+    if (!mostContestedByModel.has(e.trailer)) mostContestedByModel.set(e.trailer, e);
+  }
+  return {
+    contested: byContested.slice(0, RIVALRY_TOP_N),
+    nemesis: byNemesis.slice(0, RIVALRY_TOP_N),
+    mostContestedByModel,
+    pairsMeasured: entries.length,
+    minGames,
+  };
+}
+
 /**
  * Scan a battles dir: stat everything, read only files missing from (or newer
  * than) the cache, then aggregate. Returns { aggregates, cacheData, stats }.
@@ -363,7 +439,9 @@ export async function scanBattles({
   }
   log(`battles: read ${reads} new files (${records.size} cached/kept) in ${Date.now() - t2}ms`);
 
-  const aggregates = aggregateBattles([...records.values()], rosterIds, perModelLimit);
+  const allRecords = [...records.values()];
+  const aggregates = aggregateBattles(allRecords, rosterIds, perModelLimit);
+  const rivalries = measuredRivalries(allRecords, rosterIds);
 
   // Persist only records that actually feed the sample, plus a margin so the
   // window can slide forward without re-reading history.
@@ -372,6 +450,7 @@ export async function scanBattles({
 
   return {
     aggregates,
+    rivalries,
     cacheData: { version: 2, battlesDir, files: kept },
     stats: { listed: names.length, windowFiles: keep.size, filesRead: reads },
   };
@@ -667,6 +746,71 @@ ${rows.map((r) => r.html).join('\n')}
         </table>`;
 }
 
+/** Mascot + title cell fragment for one side of a measured pair, linked. */
+function measuredSide(id, metaById, slugById) {
+  const meta = metaById.get(id);
+  if (!meta) return esc(id);
+  const inner = `${esc(meta.emoji)} <b>${esc(meta.title)}</b> <small>${esc(meta.shortName)}</small>`;
+  const slug = slugById.get(id);
+  return slug
+    ? `<a class="measured__model" href="${esc(slug)}.html">${inner}</a>`
+    : `<span class="measured__model">${inner}</span>`;
+}
+
+/**
+ * Index-page section: the two extremes of the measured head-to-head table —
+ * closest pairs ("Most contested", lowest leader win share) and most
+ * one-sided pairs ("Nemesis matchups", highest leader win share). Every
+ * number is counted from sampled duel artifacts; pairs under the minimum
+ * sample are excluded, and each row states its sample size.
+ */
+export function measuredRivalriesSection(rivalries, metaById, slugById) {
+  if (!rivalries) return '';
+  const row = (e) => `                    <tr>
+                        <td class="measured__pair">
+                            <span class="measured__names">${measuredSide(e.leader, metaById, slugById)}<span class="measured__score"><span class="win">${fmtInt(e.leaderWins)}</span>-<span class="loss">${fmtInt(e.trailerWins)}</span></span>${measuredSide(e.trailer, metaById, slugById)}</span>
+                            <small>measured over ${fmtInt(e.games)} fights${e.draws ? ` · ${fmtInt(e.draws)} draws` : ''}</small>
+                        </td>
+                        <td class="num">${fmtInt(e.games)}</td>
+                    </tr>`;
+  const table = (title, hint, entries) => `            <article class="measured__table-wrap">
+                <h3>${esc(title)} <small>${esc(hint)}</small></h3>
+                <table class="measured__table">
+                    <thead><tr><th>Pair · score</th><th>Fights</th></tr></thead>
+                    <tbody>
+${entries.map(row).join('\n')}
+                    </tbody>
+                </table>
+            </article>`;
+  return `        <section class="panel measured" aria-label="Measured rivalries">
+            <h2>Measured rivalries <span class="hof__hint">counted from recorded fights — no editorial picks</span></h2>
+            <div class="measured__grid">
+${table('Most contested', 'lowest leader win share', rivalries.contested)}
+${table('Nemesis matchups', 'highest leader win share', rivalries.nemesis)}
+            </div>
+            <p class="metric-note">Head-to-head W-L over the full sampled duel window. Pairs with fewer than ${fmtInt(rivalries.minGames)} measured fights are excluded — ${fmtInt(rivalries.pairsMeasured)} pairs qualify.</p>
+        </section>`;
+}
+
+/**
+ * Model-page line: this model's single closest measured head-to-head, from
+ * its own perspective ("Most contested: vs X, 82-82 over 224 fights").
+ */
+export function measuredContestLine(entry, modelId, metaById, slugById) {
+  if (!entry) return '';
+  const mine = entry.leader === modelId;
+  const otherId = mine ? entry.trailer : entry.leader;
+  const myWins = mine ? entry.leaderWins : entry.trailerWins;
+  const theirWins = mine ? entry.trailerWins : entry.leaderWins;
+  const meta = metaById.get(otherId);
+  if (!meta) return '';
+  const name = `${meta.emoji} ${meta.title} (${meta.shortName})`;
+  const slug = slugById.get(otherId);
+  const linked = slug ? `<a class="text-link" href="${esc(slug)}.html">${esc(name)}</a>` : esc(name);
+  const draws = entry.draws ? ` · ${fmtInt(entry.draws)} draws` : '';
+  return `            <p class="measured__note">Most contested: vs ${linked}, <span class="win">${fmtInt(myWins)}</span>-<span class="loss">${fmtInt(theirWins)}</span>${draws} over ${fmtInt(entry.games)} measured fights.</p>`;
+}
+
 function coPerformanceSection(partnerRows, metaById, slugById) {
   if (!partnerRows.length) {
     return '<p class="empty">No shared world events recorded yet.</p>';
@@ -938,7 +1082,7 @@ ${modeTable(agg)}
 
         <section class="panel">
             <h2>Rivalry grid</h2>
-${rivalryTable(agg, ctx.slugById, ctx.metaById)}
+${ctx.measuredContest ? `${ctx.measuredContest}\n` : ''}${rivalryTable(agg, ctx.slugById, ctx.metaById)}
         </section>
 
         <section class="panel">
@@ -979,7 +1123,7 @@ export function renderIndexPage(ctx) {
 ${ctx.seasonBanner ? `${ctx.seasonBanner}\n` : ''}${ctx.chronicle ? `${ctx.chronicle}\n` : ''}${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
 ${rows}
         </section>
-${ctx.toplist ? `${ctx.toplist}\n` : ''}${continuous ? `${[standingsSection(continuous.state), matrixSection(continuous.state), ctx.chemistry, announcementsSection(allAnnouncements(continuous.state)), hallOfFameSection(continuous.state)].filter(Boolean).join('\n')}\n` : ''}${provenanceFooter(ctx)}
+${ctx.toplist ? `${ctx.toplist}\n` : ''}${continuous ? `${[standingsSection(continuous.state), matrixSection(continuous.state), ctx.chemistry, announcementsSection(allAnnouncements(continuous.state)), hallOfFameSection(continuous.state)].filter(Boolean).join('\n')}\n` : ''}${ctx.measured ? `${ctx.measured}\n` : ''}${provenanceFooter(ctx)}
 ${foot}`;
 }
 
@@ -2388,6 +2532,33 @@ table.standings__table tr:last-child td { border-bottom: none; }
 .chem__delta--pos { color: var(--acid-soft); font-weight: 700; }
 .chem__delta--neg { color: #fb7185; font-weight: 700; }
 .chem__provisional { color: #facc15; font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; border: 1px solid #facc1555; border-radius: 4px; padding: 3px 5px; white-space: nowrap; }
+
+/* measured rivalries */
+.measured__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; }
+.measured__table-wrap h3 { display: flex; align-items: baseline; gap: 9px; margin: 0 0 12px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
+.measured__table-wrap h3 small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; }
+table.measured__table { width: 100%; border-collapse: collapse; }
+table.measured__table th {
+    padding: 0 10px 10px 0;
+    color: var(--dim);
+    font: 700 8px/1 var(--mono);
+    letter-spacing: 0.1em;
+    text-align: left;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--line);
+}
+table.measured__table td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+table.measured__table tr:last-child td { border-bottom: none; }
+.measured__pair { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.measured__names { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; font-size: 13px; }
+.measured__model { text-decoration: none; }
+.measured__model small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; }
+.measured__model:hover b { color: var(--acid); }
+.measured__score { font: 800 11px/1 var(--mono); }
+.measured__pair small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; }
+.measured__note { margin: 0 0 14px; color: var(--muted); font: 700 10px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.measured__note .win { color: var(--acid); }
+.measured__note .loss { color: #fb7185; }
 @media (max-width: 860px) {
     .league-strip { grid-template-columns: repeat(2, 1fr); }
     .league-strip div:nth-child(odd) { border-left: none; }
@@ -2540,6 +2711,7 @@ export async function buildPages({
   // empty sections rather than crashing.
   const emptyBattleScan = {
     aggregates: new Map(),
+    rivalries: null,
     cacheData: { version: 2, battlesDir, files: {} },
     stats: { listed: 0, windowFiles: 0, filesRead: 0 },
   };
@@ -2594,6 +2766,9 @@ export async function buildPages({
     chronicle: chronicle ? chronicleSection(chronicle) : null,
     seasonBanner: continuous && seasons
       ? seasonBanner(seasons, nowMs, { loreLink: Boolean(lore) })
+      : null,
+    measured: battleScan.rivalries
+      ? measuredRivalriesSection(battleScan.rivalries, metaById, slugById)
       : null,
     loreLink: Boolean(lore),
     nowMs,
@@ -2652,6 +2827,9 @@ export async function buildPages({
       lineage,
       chemistry: chemistryPartners,
       analyst: toplistEntry ? analystNoteSection(toplistEntry, toplist.league_day) : null,
+      measuredContest: battleScan.rivalries
+        ? measuredContestLine(battleScan.rivalries.mostContestedByModel.get(id), id, metaById, slugById) || null
+        : null,
       loreTitle: loreEntry ? loreEntry.title : null,
       loreLink: Boolean(lore),
       slugById,

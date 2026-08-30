@@ -545,6 +545,33 @@ table.standings__table tr:last-child td { border-bottom: none; }
 .chem__delta--pos { color: var(--acid-soft); font-weight: 700; }
 .chem__delta--neg { color: #fb7185; font-weight: 700; }
 .chem__provisional { color: #facc15; font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; border: 1px solid #facc1555; border-radius: 4px; padding: 3px 5px; white-space: nowrap; }
+
+/* measured rivalries */
+.measured__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; }
+.measured__table-wrap h3 { display: flex; align-items: baseline; gap: 9px; margin: 0 0 12px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
+.measured__table-wrap h3 small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; }
+table.measured__table { width: 100%; border-collapse: collapse; }
+table.measured__table th {
+    padding: 0 10px 10px 0;
+    color: var(--dim);
+    font: 700 8px/1 var(--mono);
+    letter-spacing: 0.1em;
+    text-align: left;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--line);
+}
+table.measured__table td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+table.measured__table tr:last-child td { border-bottom: none; }
+.measured__pair { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.measured__names { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; font-size: 13px; }
+.measured__model { text-decoration: none; }
+.measured__model small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; }
+.measured__model:hover b { color: var(--acid); }
+.measured__score { font: 800 11px/1 var(--mono); }
+.measured__pair small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; }
+.measured__note { margin: 0 0 14px; color: var(--muted); font: 700 10px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.measured__note .win { color: var(--acid); }
+.measured__note .loss { color: #fb7185; }
 @media (max-width: 860px) {
     .league-strip { grid-template-columns: repeat(2, 1fr); }
     .league-strip div:nth-child(odd) { border-left: none; }
