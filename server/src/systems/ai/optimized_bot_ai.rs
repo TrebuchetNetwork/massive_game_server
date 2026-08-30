@@ -1184,10 +1184,12 @@ impl OptimizedBotAI {
     /// outside shotgun/melee range so defending remains the safer stance.
     const EXHIBITION_DEFEND_STANDOFF_RANGE: f32 = 320.0;
 
-    /// Angular step per decision call for the DEFEND orbit. At the ~100ms
-    /// decision cadence this drifts the anchor ~60 u/s tangentially —
-    /// clearly visible maneuvering that never breaks the standoff stance.
-    const EXHIBITION_DEFEND_ORBIT_STEP_RAD: f32 = 0.02;
+    /// Angular step per decision call for the DEFEND orbit. At the ~2s
+    /// decision cadence this drifts the anchor ~96 units per decision
+    /// (~48 u/s tangential) — well above the 30-unit waypoint arrival
+    /// distance, so defenders continuously chase the moving anchor instead
+    /// of sitting "arrived" in place.
+    const EXHIBITION_DEFEND_ORBIT_STEP_RAD: f32 = 0.3;
 
     /// Live movement anchor for a DEFEND directive.
     ///
