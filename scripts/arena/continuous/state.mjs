@@ -21,7 +21,7 @@ import { TRACKS, trackPolicy } from './league.mjs';
 const MAX_SUBMISSIONS_CAP = Math.max(...TRACKS.map((trackId) => trackPolicy(trackId).maxSubmissions));
 
 export const SCHEMA_VERSION = 2;
-export const MAX_ROSTER_SIZE = 10;
+export const MAX_ROSTER_SIZE = 40;
 export const MAX_ANNOUNCEMENTS = 200;
 export const STATE_FILENAME = 'state.json';
 
@@ -203,6 +203,17 @@ export function validateState(state) {
     throw new Error(`continuous league state must contain exactly the tracks ${TRACKS.join(', ')}`);
   }
   for (const trackId of TRACKS) validateTrackSlice(state.tracks[trackId], trackId);
+  // League-level recruit-failure cooldown ledger (optional for backward
+  // compatibility with v2 states written before it existed): a plain
+  // { model_id: failed_at } map with ISO timestamps.
+  if (state.recruit_failures != null) {
+    if (typeof state.recruit_failures !== 'object' || Array.isArray(state.recruit_failures)
+        || Object.entries(state.recruit_failures).some(([modelId, failedAt]) => (
+          !ID_PATTERN.test(modelId) || !isIsoTimestamp(failedAt)
+        ))) {
+      throw new Error('continuous league state has an invalid recruit failure ledger');
+    }
+  }
   if (!isIsoTimestamp(state.created_at) || !isIsoTimestamp(state.updated_at)) {
     throw new Error('continuous league state has invalid lifecycle timestamps');
   }
@@ -237,6 +248,7 @@ export function createState({ now = new Date(), leagueId } = {}) {
     schema_version: SCHEMA_VERSION,
     league_id: id,
     tracks: Object.fromEntries(TRACKS.map((trackId) => [trackId, createTrackSlice(trackId)])),
+    recruit_failures: {},
     created_at: stamp.toISOString(),
     updated_at: stamp.toISOString(),
   });

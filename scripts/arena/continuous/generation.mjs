@@ -26,6 +26,7 @@ import { arenaApiJson } from '../arena_api_client.mjs';
 import {
   entrantsFromRanking,
   normalizeCodeStatus,
+  reasoningPolicyFromModelMetadata,
   validateGeneratedResponse,
   validateGenerationCheckpoint,
   validateReasoningPolicy,
@@ -468,6 +469,63 @@ export async function reviseFighter({
 }
 
 export const fighterKeyFor = (modelId) => String(modelId).replace(/[^A-Za-z0-9._-]+/g, '__');
+
+const OPENROUTER_WEEKLY_RANKING_URL = 'https://openrouter.ai/api/v1/models?output_modalities=text&sort=top-weekly';
+
+/**
+ * Fetch the live OpenRouter top-weekly ranking for recruit/bootstrap,
+ * tolerant of unusable entries: models whose reasoning metadata cannot
+ * produce a valid capability_minimum_v1 policy (e.g. a mandatory-reasoning
+ * model with broken supported_efforts) are skipped and logged rather than
+ * failing the whole fetch — the league simply cannot field them. Returns
+ * { models } in the runner's normalized ranking shape (provider_rank is the
+ * rank among KEPT models).
+ */
+export async function fetchEligibleRanking({
+  topModels = 60,
+  fetchImpl = fetch,
+  log = () => {},
+} = {}) {
+  if (!Number.isSafeInteger(topModels) || topModels < 1) {
+    throw new Error('topModels must be a positive safe integer');
+  }
+  const response = await fetchImpl(OPENROUTER_WEEKLY_RANKING_URL, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) {
+    throw new Error(`OpenRouter ranking request failed with HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  const raw = Array.isArray(payload?.data) ? payload.data : payload?.models;
+  if (!Array.isArray(raw)) throw new Error('ranking payload does not contain a model list');
+  const models = [];
+  for (const candidate of raw) {
+    if (models.length >= topModels) break;
+    const id = typeof candidate?.id === 'string' ? candidate.id.trim() : '';
+    if (!id) continue;
+    const modalities = candidate?.architecture?.output_modalities;
+    if (Array.isArray(modalities) && !modalities.includes('text')) continue;
+    let reasoningPolicy;
+    try {
+      reasoningPolicy = reasoningPolicyFromModelMetadata(candidate);
+    } catch (error) {
+      log(`ranking: skipping ${id} (${String(error?.message || error).slice(0, 160)})`);
+      continue;
+    }
+    models.push({
+      provider_rank: models.length + 1,
+      id,
+      canonical_slug: typeof candidate.canonical_slug === 'string' ? candidate.canonical_slug.trim() : null,
+      name: typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : id,
+      pricing: candidate.pricing || null,
+      context_length: Number.isFinite(Number(candidate.context_length)) ? Number(candidate.context_length) : null,
+      created: Number.isFinite(Number(candidate.created)) ? Number(candidate.created) : null,
+      reasoning_policy: reasoningPolicy,
+    });
+  }
+  return { models };
+}
 
 export function fighterDirectoryFor(stateDirectory, modelId) {
   return path.join(stateDirectory, 'fighters', fighterKeyFor(modelId));

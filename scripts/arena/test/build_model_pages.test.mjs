@@ -413,14 +413,16 @@ const HEX = (c) => c.repeat(64);
 
 /**
  * Write a valid schema-v2 (four-track) continuous league state directory.
- * Alpha and beta compete in every track with diverging per-track ratings
- * (matrix data); delta retired in L0, gamma retired in L1 (two HoF groups);
- * epsilon fills the rosters so standings top-3 are real. Announcements are
- * spread across tracks (26 total → merged feed caps at 20). Shared
- * submissions.jsonl carries track + stint fields plus a stale-stint record
- * and a torn tail. Alpha's L2 lineage: v1 (entrant) -> v2 accepted -> v3
- * compile_failed; L3 lineage: v1 -> v2 accepted. Per-track history snapshots
- * live under tracks/<T>/history.
+ * Every track has a 12-model roster (alpha + 9 ladder fillers + beta +
+ * epsilon), forming two divisions of 10+2: premier (alpha top) and
+ * challenger (beta, then epsilon — order varies per track). Per-track
+ * ratings diverge so the matrix deltas read +4.0 (alpha), -3.0 (beta),
+ * +3.0 (epsilon), 0.0 (fillers). Delta retired in L0, gamma in L1 (two HoF
+ * groups). Announcements are spread across tracks (26 total → merged feed
+ * caps at 20). Shared submissions.jsonl carries track + stint fields plus a
+ * stale-stint record and a torn tail. Alpha's L2 lineage: v1 (entrant) ->
+ * v2 accepted -> v3 compile_failed; L3 lineage: v1 -> v2 accepted.
+ * Per-track history snapshots live under tracks/<T>/history.
  */
 function writeContinuousFixture(dir) {
   const mascot = (emoji, title, color) => ({ emoji, title, color });
@@ -448,6 +450,15 @@ function writeContinuousFixture(dir) {
     model_id: 'test/epsilon', slug: 'test/epsilon-20260101',
     mascot: mascot('🐢', 'Epsilon', '#facc15'), rating, ...wld(4, 4, 1),
   });
+  // Nine filler models on a fixed rating ladder (60..45) so every track has a
+  // 12-model roster: premier = alpha + 9 fillers, challenger = beta + epsilon.
+  const FILLER_LADDER = [60, 58, 56, 54, 52, 50, 48, 46, 45];
+  const ladderModels = () => FILLER_LADDER.map((rating, i) => entry({
+    model_id: `test/f${String(i + 1).padStart(2, '0')}`,
+    slug: `test/f${String(i + 1).padStart(2, '0')}-20260101`,
+    mascot: mascot('🥚', `F${String(i + 1).padStart(2, '0')}`, '#91a098'),
+    rating, ...wld(5, 5, 0),
+  }));
   const retiredEntry = (name, emoji, rating) => entry({
     model_id: `test/${name}`, slug: `test/${name}-20260101`,
     mascot: mascot(emoji, name[0].toUpperCase() + name.slice(1), '#a78bfa'),
@@ -497,13 +508,13 @@ function writeContinuousFixture(dir) {
     tracks: {
       L0: slice('L0', {
         day_index: 10,
-        roster: [alphaAt(52), betaAt(41), epsilonAt(48)],
+        roster: [alphaAt(66), ...ladderModels(), betaAt(44), epsilonAt(39)],
         retired: [delta],
         announcements: fillers('L0', 0, 11),
       }),
       L1: slice('L1', {
         day_index: 11,
-        roster: [alphaAt(55), betaAt(43), epsilonAt(50)],
+        roster: [alphaAt(67), ...ladderModels(), betaAt(43), epsilonAt(40)],
         retired: [gamma],
         announcements: [
           ...fillers('L1', 11, 21),
@@ -512,7 +523,7 @@ function writeContinuousFixture(dir) {
       }),
       L2: slice('L2', {
         day_index: 12,
-        roster: [alphaAt(61.5, { submissions_used: 2, artifact: artifact(2) }), betaAt(45), epsilonAt(44)],
+        roster: [alphaAt(68, { submissions_used: 2, artifact: artifact(2) }), ...ladderModels(), betaAt(42), epsilonAt(41)],
         announcements: [
           { type: 'entrant', track: 'L2', model_id: 'test/beta-two', slug: 'test/beta-two-20260102', mascot: betaMascot, provider_rank: 7, at: '2026-08-12T12:00:00.000Z' },
           { type: 'revision', track: 'L2', model_id: 'test/alpha-one', slug: 'test/alpha-one-20260101', mascot: alphaMascot, version: 2, outcome: 'accepted', at: '2026-08-15T12:00:00.000Z' },
@@ -522,7 +533,7 @@ function writeContinuousFixture(dir) {
       }),
       L3: slice('L3', {
         day_index: 13,
-        roster: [alphaAt(66, { submissions_used: 2, artifact: artifact(2) }), betaAt(40), epsilonAt(52)],
+        roster: [alphaAt(70, { submissions_used: 2, artifact: artifact(2) }), ...ladderModels(), betaAt(41), epsilonAt(42)],
         announcements: [
           { type: 'revision', track: 'L3', model_id: 'test/alpha-one', slug: 'test/alpha-one-20260101', mascot: alphaMascot, version: 2, outcome: 'accepted', at: '2026-08-18T12:00:00.000Z' },
         ],
@@ -612,34 +623,51 @@ test('continuous overlay: multi-track header, standings, matrix, track-badged fe
   // Header: league id, per-track day index, per-track feedback cadence.
   assert.match(index, /cml-test-0001/);
   assert.match(index, /L0<\/span> Zero-shot/);
-  assert.match(index, /day 10 · 3\/10 slots/);
-  assert.match(index, /day 13 · 3\/10 slots/);
+  assert.match(index, /day 10 · 12\/40 slots/);
+  assert.match(index, /day 13 · 12\/40 slots/);
   assert.match(index, /never revises/);
   assert.match(index, /feedback in 1d 0h/, 'L2 countdown from last_feedback_at + 48h');
   assert.match(index, /feedback in 6d 0h/, 'L3 countdown from last_feedback_at + 7d');
 
-  // Standings: one table per track, rank-sorted by rating, with subs used/allowed.
+  // Standings: one article per track, two division tables each (premier of
+  // 10 + challenger of 2), divisions in order, both rank forms per row.
   assert.equal((index.match(/standings__track/g) || []).length, 4);
+  assert.equal((index.match(/standings__division/g) || []).length, 8, '2 divisions x 4 tracks');
+  assert.match(index, /division-badge--premier">Premier/);
+  assert.match(index, /division-badge--challenger">Challenger/);
   const l3Block = index.split('L3</span> Weekly feedback <small>')[1];
-  assert.ok(l3Block.indexOf('66.0') < l3Block.indexOf('40.0'), 'L3 standings sorted by rating');
+  assert.ok(l3Block.indexOf('Premier') < l3Block.indexOf('Challenger'), 'divisions in order');
+  assert.ok(l3Block.indexOf('70.0') < l3Block.indexOf('41.0'), 'L3 premier sorted by rating');
+  assert.match(index, /#1 · Premier #1/, 'alpha overall + division rank');
+  const l0Block = index.split('L0</span> Zero-shot <small>')[1].split('L1</span> Compile-fix <small>')[0];
+  assert.match(l0Block, /#11 · Challenger #1/, 'beta overall + division rank');
+  assert.match(l0Block, /#12 · Challenger #2/, 'epsilon overall + division rank');
   assert.match(index, /2\/3/, 'L2 submissions used/allowed');
   assert.match(index, /2\/9/, 'L3 submissions used/allowed');
 
-  // Experiment matrix: model x track ratings + L3-L0 delta, sorted by delta.
+  // Experiment matrix: rows in L0 rating order with division tags and a
+  // boundary separator at the premier/challenger transition; Δ column kept.
   assert.match(index, /Experiment matrix/);
   assert.match(index, /Δ feedback/);
   const matrix = index.split('<section class="panel matrix"')[1].split('<section class="panel announce"')[0];
-  const alphaRow = matrix.split('🦊</span> <b>Alpha</b>')[1].split('</tr>')[0];
-  for (const cell of ['52.0', '55.0', '61.5', '66.0']) assert.ok(alphaRow.includes(cell), `alpha matrix cell ${cell}`);
-  assert.ok(alphaRow.includes('matrix__delta--pos">+14.0'), 'alpha L3-L0 delta');
-  const betaRow = matrix.split('🐙</span> <b>Beta</b>')[1].split('</tr>')[0];
-  assert.ok(betaRow.includes('matrix__delta--neg">-1.0'), 'beta L3-L0 delta');
+  const matrixRows = matrix.split('<tr class="matrix__row');
+  const alphaRow = matrixRows.find((r) => r.includes('<b>Alpha</b>'));
+  for (const cell of ['66.0', '67.0', '68.0', '70.0']) assert.ok(alphaRow.includes(cell), `alpha matrix cell ${cell}`);
+  assert.ok(alphaRow.includes('matrix__delta--pos">+4.0'), 'alpha L3-L0 delta');
+  assert.ok(alphaRow.includes('division-badge--premier'), 'alpha tagged premier');
+  const betaRow = matrixRows.find((r) => r.includes('<b>Beta</b>'));
+  for (const cell of ['44.0', '43.0', '42.0', '41.0']) assert.ok(betaRow.includes(cell), `beta matrix cell ${cell}`);
+  assert.ok(betaRow.includes('matrix__delta--neg">-3.0'), 'beta L3-L0 delta');
+  assert.ok(betaRow.includes('division-badge--challenger'), 'beta tagged challenger');
+  const boundaryRow = matrixRows.find((r) => r.startsWith(' matrix__row--boundary'));
+  assert.ok(boundaryRow && boundaryRow.includes('<b>Beta</b>'), 'division boundary on the first challenger row');
   assert.ok(
-    matrix.indexOf('<b>Alpha</b>') < matrix.indexOf('<b>Epsilon</b>')
-      && matrix.indexOf('<b>Epsilon</b>') < matrix.indexOf('<b>Beta</b>'),
-    'matrix rows sorted by feedback delta',
+    matrix.indexOf('<b>Alpha</b>') < matrix.indexOf('<b>F01</b>')
+      && matrix.indexOf('<b>F09</b>') < matrix.indexOf('<b>Beta</b>')
+      && matrix.indexOf('<b>Beta</b>') < matrix.indexOf('<b>Epsilon</b>'),
+    'matrix rows sorted by L0 rating',
   );
-  assert.match(matrix, /32\.0 🪦/, 'retired cell keeps final rating with marker');
+  assert.match(matrix, /30\.0 🪦/, 'retired cell keeps final rating with marker');
 
   // Feed: merged across tracks, capped at 20, newest first, track-badged.
   const feedItems = index.match(/<li class="announce__item /g) || [];
@@ -677,7 +705,8 @@ test('continuous overlay: multi-track header, standings, matrix, track-badged fe
   }
   assert.equal(league.tracks.L0.day_index, 10);
   assert.equal(league.tracks.L3.day_index, 13);
-  assert.equal(league.tracks.L3.standings[0].rating, 66);
+  assert.equal(league.tracks.L3.standings[0].rating, 70);
+  assert.equal(league.tracks.L0.standings[1].slug, 'test/f01-20260101');
   assert.equal(league.tracks.L3.standings[0].submissions_allowed, 9);
 });
 

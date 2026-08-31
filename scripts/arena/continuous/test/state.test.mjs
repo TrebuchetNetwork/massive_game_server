@@ -154,7 +154,7 @@ test('validateState enforces the per-track roster size cap', () => {
   }
   validateState(state);
   track.roster.push(rosterEntry({ model_id: 'vendor/model-overflow' }));
-  assert.throws(() => validateState(state), /at most 10/);
+  assert.throws(() => validateState(state), /at most 40/);
 });
 
 test('validateState rejects duplicate roster model IDs within a track', () => {

@@ -265,3 +265,26 @@ test('feedback cadence per track policy', () => {
   assert.equal(feedbackDue(threeDaysAgo, NOW, trackPolicy('L3')), false);
   assert.equal(feedbackDue(eightDaysAgo, NOW, trackPolicy('L3')), true);
 });
+
+test('eligibleChallengers skips models whose generation failed within 7 days', () => {
+  const state = stateWith();
+  const ranking = [
+    { id: 'vendor/failed-recently', canonical_slug: 'vendor/failed-recently-20260101' },
+    { id: 'vendor/failed-long-ago', canonical_slug: 'vendor/failed-long-ago-20260101' },
+    { id: 'vendor/never-failed', canonical_slug: 'vendor/never-failed-20260101' },
+    { id: 'vendor/failed-by-slug', canonical_slug: 'vendor/slug-only-20260101' },
+  ];
+  const failures = {
+    'vendor/failed-recently': new Date(NOW - 2 * DAY_MS).toISOString(),
+    'vendor/failed-long-ago': new Date(NOW - 8 * DAY_MS).toISOString(),
+    'vendor/slug-only-20260101': new Date(NOW - 1 * DAY_MS).toISOString(),
+  };
+  const eligible = eligibleChallengers(ranking, state, NOW, failures);
+  assert.deepEqual(
+    eligible.map((entry) => entry.id),
+    ['vendor/failed-long-ago', 'vendor/never-failed'],
+  );
+  // Without the ledger nothing is cooldown-excluded.
+  assert.equal(eligibleChallengers(ranking, state, NOW).length, 4);
+  assert.equal(eligibleChallengers(ranking, state, NOW, {}).length, 4);
+});

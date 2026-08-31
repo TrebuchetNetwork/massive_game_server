@@ -482,3 +482,32 @@ test('compileFighterSource honors the L1 policy: up to 3 attempts', async () => 
   assert.equal(failedCalls, 3);
   assert.equal(alwaysFail.compileAttempts, 3);
 });
+
+test('fetchEligibleRanking skips models with unusable reasoning metadata', async () => {
+  const { fetchEligibleRanking } = await import('../generation.mjs');
+  const payload = {
+    data: [
+      { id: 'vendor/good-1', canonical_slug: 'vendor/good-1-20260101', name: 'Good 1', supported_parameters: [] },
+      {
+        id: 'vendor/broken-reasoning',
+        name: 'Broken',
+        supported_parameters: ['reasoning'],
+        reasoning: { mandatory: true }, // supported_efforts missing entirely
+      },
+      { id: 'vendor/good-2', name: 'Good 2', supported_parameters: ['reasoning'], reasoning: {} },
+      { id: 'vendor/non-text', name: 'NoText', architecture: { output_modalities: ['image'] } },
+    ],
+  };
+  const skipped = [];
+  const ranking = await fetchEligibleRanking({
+    topModels: 10,
+    fetchImpl: async () => ({ ok: true, json: async () => payload }),
+    log: (line) => skipped.push(line),
+  });
+  assert.deepEqual(ranking.models.map((model) => model.id), ['vendor/good-1', 'vendor/good-2']);
+  assert.deepEqual(ranking.models.map((model) => model.provider_rank), [1, 2]);
+  assert.equal(ranking.models[0].reasoning_policy.mode, 'unsupported');
+  assert.equal(ranking.models[1].reasoning_policy.mode, 'disabled');
+  assert.ok(skipped.some((line) => line.includes('vendor/broken-reasoning')));
+  assert.ok(!skipped.some((line) => line.includes('vendor/non-text')));
+});

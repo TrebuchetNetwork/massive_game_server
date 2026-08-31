@@ -5,7 +5,12 @@
 **Amendment spec:** `docs/superpowers/specs/2026-08-24-continuous-league-multitrack-amendment.md`
 
 The continuous league runs in **shadow mode** alongside the weekly league,
-as **four parallel intervention tracks**:
+as **four parallel intervention tracks** with **40 models per track** in a
+4-division pyramid (premier/challenger/contender/prospect, 10 each).
+Divisions are derived state — recomputed from ratings every cycle, so
+promotion/relegation needs no bookkeeping. Battles run within divisions:
+4 division-seasons per track per day, 16 per full cycle (same 1440-battle
+density per division as a weekly epoch).
 
 | Track | Generation | Compile recovery | Gameplay feedback |
 |---|---|---|---|
@@ -32,7 +37,8 @@ live mode and retires the weekly supervisor.
 | Shadow state | `artifacts/arena/continuous-shadow/state.json` (schema v2, `tracks` map) |
 | Per-track data | `continuous-shadow/tracks/<TRACK>/{fighters,rankings,history,revision-journal}/` |
 | Submission ledger | `continuous-shadow/submissions.jsonl` — shared, append-only, records carry `track` and `stint` (the stint's `joined_at`, so a re-recruited model's lineage never collides with its previous stint) |
-| Eval seasons | `artifacts/arena/seasons/continuous-<league_id>-<TRACK>-day<N>/` |
+| Eval seasons | `artifacts/arena/seasons/continuous-<league_id>-<TRACK>-day<N>-<division>/` |
+| Top-40 seeding | `node scripts/arena/continuous/bootstrap_top40.mjs [--force]` — fills the roster to 40/track from the live ranking (one codegen per new model, artifact copied to all 4 tracks; existing entries kept) |
 | Env | `~/.config/massive-game-server/arena-weekly.env` (API base, admin token file) |
 
 ## Monitoring
@@ -40,9 +46,10 @@ live mode and retires the weekly supervisor.
 - Shadow cycle logs: `journalctl --user -u massive-game-continuous-league-shadow.service`
 - Weekly supervisor: `journalctl --user -u massive-game-arena-weekly.service`
 - Sanity: every track's `day_index` increments daily; every roster model has
-  288 matches per track-day; per-track `announcements[]` carry `track`;
-  `tracks/L2|L3/submissions` activity follows each track's cadence (L2: ≥48h,
-  L3: 7d; L0/L1 never revise).
+  288 matches per track-day (its division's 1440-battle round-robin);
+  history snapshots record each entry's division for that day; per-track
+  `announcements[]` carry `track`; `tracks/L2|L3/submissions` activity
+  follows each track's cadence (L2: ≥48h, L3: 7d; L0/L1 never revise).
 
 ## Pre-cutover checklist (shadow health, 2+ days)
 

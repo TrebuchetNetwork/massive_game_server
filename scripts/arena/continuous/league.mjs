@@ -9,6 +9,10 @@ export const RETIRE_WINRATE = 0.25;
 export const RETIRE_MIN_DAYS = 3;
 export const FEEDBACK_INTERVAL_MS = 48 * 60 * 60 * 1000;
 export const RETIRE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+// A model whose recruit-time generation failed is not retried for 7 days
+// (mirrors the retire cooldown): re-attempting a broken codegen output every
+// cycle burns paid provider calls on a likely-repeat failure.
+export const RECRUIT_FAILURE_COOLDOWN_MS = RETIRE_COOLDOWN_MS;
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -103,11 +107,14 @@ export function daysInLeague(model, nowMs) {
 /**
  * Filter a live OpenRouter ranking (array of `{ id, canonical_slug, ... }`,
  * best first) down to eligible challengers: drop models currently on the
- * roster and models retired within the last 7 days. Ranking order is
+ * roster, models retired within the last 7 days, and models whose
+ * recruit-time generation failed within the last 7 days
+ * (`recruitFailures`: league-level `{ model_id: failed_at }` map; matched
+ * against both the provider id and the canonical slug). Ranking order is
  * preserved. Matching checks both the provider id and the canonical slug
  * against roster/retired `model_id` and `slug`.
  */
-export function eligibleChallengers(rankingModels, state, nowMs) {
+export function eligibleChallengers(rankingModels, state, nowMs, recruitFailures = {}) {
   const excluded = new Set();
   for (const entry of state?.roster || []) {
     excluded.add(entry.model_id);
@@ -124,7 +131,14 @@ export function eligibleChallengers(rankingModels, state, nowMs) {
     const id = String(entry?.id || '');
     if (!id) return false;
     const slug = String(entry?.canonical_slug || '');
-    return !excluded.has(id) && !(slug && excluded.has(slug));
+    if (excluded.has(id) || (slug && excluded.has(slug))) return false;
+    for (const key of [id, slug].filter(Boolean)) {
+      const failedAt = Date.parse(recruitFailures?.[key] || '');
+      if (Number.isFinite(failedAt) && Number(nowMs) - failedAt < RECRUIT_FAILURE_COOLDOWN_MS) {
+        return false;
+      }
+    }
+    return true;
   });
 }
 

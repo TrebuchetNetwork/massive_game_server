@@ -181,7 +181,7 @@ test('evaluate folds season results into ratings and appends a history snapshot'
   const { args, env } = runnerCalls[0];
   assert.ok(args.includes('--evaluate-only'));
   assert.ok(args.includes('--no-publish'));
-  assert.ok(args.includes('continuous-cml-test-L2-day0'));
+  assert.ok(args.includes('continuous-cml-test-L2-day0-premier'));
   assert.match(env.ARENA_SEEDS, /^\d+,\d+,\d+,\d+$/);
   assert.equal(env.ARENA_TOP_MODELS, '10');
 
@@ -190,17 +190,17 @@ test('evaluate folds season results into ratings and appends a history snapshot'
     'utf8',
   ));
   assert.equal(history.length, 1);
-  assert.equal(history[0].season_id, 'continuous-cml-test-L2-day0');
+  assert.equal(history[0].season_id, 'continuous-cml-test-L2-day0-premier');
   assert.equal(history[0].day_index, 0);
   assert.equal(history[0].roster.length, 10);
   assert.equal(history[0].roster[0].rating, next.roster[0].rating);
 
-  const seasonDir = path.join(rootDir, 'artifacts/arena/seasons', 'continuous-cml-test-L2-day0');
+  const seasonDir = path.join(rootDir, 'artifacts/arena/seasons', 'continuous-cml-test-L2-day0-premier');
   assert.equal((await fs.readdir(path.join(seasonDir, 'generations'))).length, 10);
   assert.equal((await fs.readdir(path.join(seasonDir, 'sources'))).length, 10);
 
   const ranking = JSON.parse(await fs.readFile(
-    path.join(stateDir, 'rankings', 'continuous-cml-test-L2-day0.json'),
+    path.join(stateDir, 'rankings', 'continuous-cml-test-L2-day0-premier.json'),
     'utf8',
   ));
   assert.equal(ranking.models.length, 10);
@@ -245,19 +245,12 @@ test('retires an exhausted model below the bar with an announcement', async () =
     deps: {
       nowMs: NOW,
       log: (line) => logs.push(line),
+      fetchRanking: async () => ({
+        // Only the roster/retired models are ranked: nothing to recruit.
+        models: ['vendor/failing', 'vendor/healthy']
+          .map((id, index) => rankingEntry(id, index + 1)),
+      }),
       runRunner: async (args, options) => {
-        if (args.includes('--dry-run')) {
-          // Only the roster/retired models are ranked: nothing to recruit.
-          return {
-            stdout: JSON.stringify({
-              ranking: {
-                models: ['vendor/failing', 'vendor/healthy']
-                  .map((id, index) => rankingEntry(id, index + 1)),
-              },
-            }),
-            stderr: '',
-          };
-        }
         return fakeEvaluateRunner(rootDir, {
           'vendor/failing': { wins: 0, losses: 4, draws: 0, matches_played: 4 },
           'vendor/healthy': { wins: 4, losses: 0, draws: 0, matches_played: 4 },
@@ -319,10 +312,7 @@ test('recruits eligible challengers into open slots', async () => {
     deps: {
       nowMs: NOW,
       log: (line) => logs.push(line),
-      runRunner: async (args) => {
-        assert.deepEqual(args, ['--dry-run']);
-        return { stdout: JSON.stringify({ ranking: { models: rankingModels } }), stderr: '' };
-      },
+      fetchRanking: async () => ({ models: rankingModels }),
       generateFighter: async ({ entrant }) => {
         generatedFor.push(entrant.provider_model);
         return {
@@ -391,10 +381,7 @@ test('recruit failure leaves the slot open without consuming a submission', asyn
     deps: {
       nowMs: NOW,
       log: (line) => logs.push(line),
-      runRunner: async () => ({
-        stdout: JSON.stringify({ ranking: { models: rankingModels } }),
-        stderr: '',
-      }),
+      fetchRanking: async () => ({ models: rankingModels }),
       generateFighter: async () => {
         throw new Error('code generation unavailable');
       },
@@ -447,6 +434,9 @@ test('shadow mode skips recruit and resolves an isolated state directory', async
       runRunner: async () => {
         throw new Error('runner must not be called for an empty shadow roster');
       },
+      fetchRanking: async () => {
+        throw new Error('ranking must not be fetched in shadow');
+      },
     },
   });
   assert.equal(next.roster.length, 0);
@@ -455,7 +445,7 @@ test('shadow mode skips recruit and resolves an isolated state directory', async
   validateTrackSlice(next, 'L2');
 });
 
-test('recruit dry-run failure skips recruit without failing the cycle', async () => {
+test('recruit ranking fetch failure skips recruit without failing the cycle', async () => {
   const { stateDir, rootDir } = await tempDirs();
   const keeper = model({
     model_id: 'vendor/model-0',
@@ -478,8 +468,8 @@ test('recruit dry-run failure skips recruit without failing the cycle', async ()
     deps: {
       nowMs: NOW,
       log: (line) => logs.push(line),
-      runRunner: async () => {
-        throw new Error('season runner exited with code 1: OpenRouter ranking request failed with HTTP 500');
+      fetchRanking: async () => {
+        throw new Error('OpenRouter ranking request failed with HTTP 500');
       },
     },
   });
@@ -509,7 +499,7 @@ test('history append is idempotent per day_index on a retried cycle', async () =
     at: '2026-08-23T00:00:00.000Z',
     league_id: 'cml-test',
     day_index: 0,
-    season_id: 'continuous-cml-test-L2-day0',
+    season_id: 'continuous-cml-test-L2-day0-premier',
     roster: [],
   };
   await fs.writeFile(path.join(historyDir, '2026-08-23.json'), JSON.stringify([seeded]));
@@ -530,12 +520,8 @@ test('history append is idempotent per day_index on a retried cycle', async () =
     deps: {
       nowMs: NOW,
       log: () => {},
-      runRunner: async (args, options) => {
-        if (args.includes('--dry-run')) {
-          return { stdout: JSON.stringify({ ranking: { models: [] } }), stderr: '' };
-        }
-        return fakeEvaluateRunner(rootDir, results, runnerCalls)(args, options);
-      },
+      fetchRanking: async () => ({ models: [] }),
+      runRunner: fakeEvaluateRunner(rootDir, results, runnerCalls),
       publishFighter: async () => {},
       adminToken: 'test-token',
       apiBase: 'http://127.0.0.1:9',
@@ -570,9 +556,6 @@ const REBOUND_CODE_STATUS = {
 function staleCheckpointRunner(rootDir, resultsByModel, runnerCalls, { alwaysStale = false } = {}) {
   let evaluateAttempts = 0;
   return async (args, options) => {
-    if (args.includes('--dry-run')) {
-      return { stdout: JSON.stringify({ ranking: { models: [] } }), stderr: '' };
-    }
     evaluateAttempts += 1;
     if (alwaysStale || evaluateAttempts === 1) {
       throw new Error(
@@ -611,6 +594,7 @@ test('stale checkpoints trigger a recompile-only rebind and one evaluate retry',
     deps: {
       nowMs: NOW,
       log: (line) => logs.push(line),
+      fetchRanking: async () => ({ models: [] }),
       runRunner: staleCheckpointRunner(rootDir, results, runnerCalls),
       publishFighter: async () => {},
       recompileFighter: async ({ entrant }) => {
@@ -668,6 +652,7 @@ test('an unfixable contract change fails closed with a manual rebind error', asy
       deps: {
         nowMs: NOW,
         log: () => {},
+        fetchRanking: async () => ({ models: [] }),
         runRunner: staleCheckpointRunner(rootDir, {}, [], { alwaysStale: true }),
         publishFighter: async () => {},
         recompileFighter: async ({ entrant }) => {
@@ -704,15 +689,13 @@ test('a shadow directory equal to the live directory is refused', async () => {
 
 // --- Task 3: feedback / revision rounds -------------------------------------
 
-const DAY_ONLY_RANKING = {
-  ranking: { models: [rankingEntry('vendor/model-0', 1)] },
-};
+const DAY_ONLY_RANKING = { models: [rankingEntry('vendor/model-0', 1)] };
 
 function feedbackDeps(overrides = {}) {
   return {
     nowMs: NOW,
     log: () => {},
-    runRunner: async () => ({ stdout: JSON.stringify(DAY_ONLY_RANKING), stderr: '' }),
+    fetchRanking: async () => DAY_ONLY_RANKING,
     sampleBattles: async () => [],
     adminToken: 'test-token',
     apiBase: 'http://127.0.0.1:9',
@@ -1308,10 +1291,7 @@ test('--track runs only the selected track', async () => {
     deps: {
       nowMs: NOW,
       log: (line) => logs.push(line),
-      runRunner: async () => ({
-        stdout: JSON.stringify({ ranking: { models: [rankingEntry('vendor/model-0', 1)] } }),
-        stderr: '',
-      }),
+      fetchRanking: async () => ({ models: [rankingEntry('vendor/model-0', 1)] }),
       adminToken: 'test-token',
       apiBase: 'http://127.0.0.1:9',
     },
@@ -1405,10 +1385,7 @@ test('L0 recruit passes compileAttempts=1 and a failed compile means no entry', 
     deps: {
       nowMs: NOW,
       log: () => {},
-      runRunner: async () => ({
-        stdout: JSON.stringify({ ranking: { models: [rankingEntry('vendor/new-1', 1)] } }),
-        stderr: '',
-      }),
+      fetchRanking: async () => ({ models: [rankingEntry('vendor/new-1', 1)] }),
       generateFighter: async ({ compileAttempts }) => {
         seenAttempts = compileAttempts;
         throw new Error('fighter compilation failed: error[E0308]');
@@ -1438,10 +1415,7 @@ test('L1 recruit passes compileAttempts=3', async () => {
     deps: {
       nowMs: NOW,
       log: () => {},
-      runRunner: async () => ({
-        stdout: JSON.stringify({ ranking: { models: [rankingEntry('vendor/new-1', 1)] } }),
-        stderr: '',
-      }),
+      fetchRanking: async () => ({ models: [rankingEntry('vendor/new-1', 1)] }),
       generateFighter: async ({ compileAttempts }) => {
         seenAttempts = compileAttempts;
         throw new Error('still broken');
@@ -1653,10 +1627,7 @@ test('retire then re-recruit starts a fresh stint with its own journal and ledge
     trackDirectory: stateDir,
     rootDirectory: rootDir,
     deps: feedbackDeps({
-      runRunner: async () => ({
-        stdout: JSON.stringify({ ranking: { models: [rankingEntry('vendor/model-x', 1)] } }),
-        stderr: '',
-      }),
+      fetchRanking: async () => ({ models: [rankingEntry('vendor/model-x', 1)] }),
       generateFighter: async () => ({
         checkpoint: {
           provider_model: 'vendor/model-x',
@@ -1726,4 +1697,236 @@ test('retire then re-recruit starts a fresh stint with its own journal and ledge
     [[OLD_JOINED, 2, 'accepted'], [new Date(NOW).toISOString(), 2, 'accepted']],
   );
   validateTrackSlice(afterRevision, 'L2');
+});
+
+// --- 40-model divisions ------------------------------------------------------
+
+test('divisionSlices partitions by rating with slug tie-break', async () => {
+  const { divisionSlices } = await import('../../continuous_league.mjs');
+  const roster = [
+    model({ model_id: 'vendor/b', slug: 'b', rating: 50 }),
+    model({ model_id: 'vendor/a', slug: 'a', rating: 50 }),
+    model({ model_id: 'vendor/c', slug: 'c', rating: 90 }),
+    model({ model_id: 'vendor/d', slug: 'd', rating: 10 }),
+  ];
+  const slices = divisionSlices(roster, 2);
+  assert.deepEqual(slices.map((slice) => slice.name), ['premier', 'challenger']);
+  // rating desc; the 50-50 tie breaks by slug ascending (a before b).
+  assert.deepEqual(slices[0].models.map((entry) => entry.slug), ['c', 'a']);
+  assert.deepEqual(slices[1].models.map((entry) => entry.slug), ['b', 'd']);
+
+  // A full 40-model roster yields four divisions of ten.
+  const forty = Array.from({ length: 40 }, (_, index) => model({
+    model_id: `vendor/m${String(index).padStart(2, '0')}`,
+    slug: `m${String(index).padStart(2, '0')}`,
+    rating: 100 - index,
+  }));
+  const four = divisionSlices(forty);
+  assert.deepEqual(four.map((slice) => slice.name), ['premier', 'challenger', 'contender', 'prospect']);
+  assert.ok(four.every((slice) => slice.models.length === 10));
+  assert.equal(four[0].models[0].rating, 100);
+  assert.equal(four[3].models[9].rating, 61);
+});
+
+test('evaluate runs one season per division with per-division season ids', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const roster = Array.from({ length: 40 }, (_, index) => model({
+    model_id: `vendor/m${String(index).padStart(2, '0')}`,
+    slug: `m${String(index).padStart(2, '0')}`,
+    rating: 100 - index,
+    wins: 0,
+    losses: 0,
+    draws: 0,
+    matches: 0,
+  }));
+  for (const entry of roster) await makeFighter(stateDir, entry.model_id);
+  const state = stateWith({ roster, last_feedback_at: new Date(NOW).toISOString() });
+
+  const runnerCalls = [];
+  const results = Object.fromEntries(roster.map((entry) => [
+    entry.model_id,
+    { wins: 3, losses: 1, draws: 0, matches_played: 4 },
+  ]));
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: {
+      nowMs: NOW,
+      log: () => {},
+      fetchRanking: async () => ({ models: roster.map((entry, index) => rankingEntry(entry.model_id, index + 1)) }),
+      runRunner: fakeEvaluateRunner(rootDir, results, runnerCalls),
+      publishFighter: async () => {},
+      adminToken: 'test-token',
+      apiBase: 'http://127.0.0.1:9',
+    },
+  });
+
+  assert.equal(runnerCalls.length, 4);
+  const seasonIds = runnerCalls.map((call) => call.args[call.args.indexOf('--season-id') + 1]);
+  assert.deepEqual(seasonIds, [
+    'continuous-cml-test-L2-day0-premier',
+    'continuous-cml-test-L2-day0-challenger',
+    'continuous-cml-test-L2-day0-contender',
+    'continuous-cml-test-L2-day0-prospect',
+  ]);
+  // Ratings accumulated across the division seasons: every model played 4.
+  assert.ok(next.roster.every((entry) => entry.matches === 4 && entry.wins === 3));
+  assert.equal(next.day_index, 1);
+
+  // History snapshot records the post-evaluate division of each entry.
+  const history = JSON.parse(await fs.readFile(
+    path.join(stateDir, 'history', '2026-08-23.json'),
+    'utf8',
+  ));
+  assert.equal(history.length, 1);
+  const divisions = history[0].roster.map((entry) => entry.division);
+  assert.equal(divisions.filter((name) => name === 'premier').length, 10);
+  assert.equal(divisions.filter((name) => name === 'challenger').length, 10);
+  assert.equal(divisions.filter((name) => name === 'contender').length, 10);
+  assert.equal(divisions.filter((name) => name === 'prospect').length, 10);
+  validateTrackSlice(next, 'L2');
+});
+
+test('recruit fills only open slots, in ranking order beyond the roster', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const keeper = model({
+    model_id: 'vendor/model-0',
+    joined_at: new Date(NOW).toISOString(),
+    days_in_league: 0,
+  });
+  const rankingModels = [
+    rankingEntry('vendor/model-0', 1),
+    ...Array.from({ length: 4 }, (_, index) => rankingEntry(`vendor/new-${index + 1}`, index + 2)),
+  ];
+  const generatedFor = [];
+  const next = await runTrackCycle({
+    track: stateWith({
+      roster: [keeper],
+      last_feedback_at: new Date(NOW).toISOString(),
+    }),
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: {
+      nowMs: NOW,
+      log: () => {},
+      fetchRanking: async () => ({ models: rankingModels }),
+      generateFighter: async ({ entrant }) => {
+        generatedFor.push(entrant.provider_model);
+        return {
+          checkpoint: {
+            wasm_sha256: sha('d'),
+            source_sha256: sha('e'),
+            prompt_sha256: sha('f'),
+          },
+          source: 'fn bot_tick_v2() {}\n',
+        };
+      },
+      adminToken: 'test-token',
+      apiBase: 'http://127.0.0.1:9',
+    },
+  });
+  // The roster model is skipped; the four challengers enter in ranking order.
+  assert.deepEqual(generatedFor, ['vendor/new-1', 'vendor/new-2', 'vendor/new-3', 'vendor/new-4']);
+  assert.equal(next.roster.length, 5);
+  validateTrackSlice(next, 'L2');
+});
+
+test('a recruit generation failure is recorded in the cooldown ledger and skips the model for 7 days', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const recruitFailures = {};
+  const rankingModels = [rankingEntry('vendor/new-1', 1), rankingEntry('vendor/new-2', 2)];
+  const deps = {
+    nowMs: NOW,
+    log: () => {},
+    fetchRanking: async () => ({ models: rankingModels }),
+    generateFighter: async ({ entrant }) => {
+      if (entrant.provider_model === 'vendor/new-1') {
+        throw new Error('fighter compilation failed: error[E0308]');
+      }
+      return {
+        checkpoint: { wasm_sha256: sha('d'), source_sha256: sha('e'), prompt_sha256: sha('f') },
+        source: 'fn bot_tick_v2() {}\n',
+      };
+    },
+    adminToken: 'test-token',
+    apiBase: 'http://127.0.0.1:9',
+  };
+  const track = stateWith({
+    roster: [],
+    last_feedback_at: new Date(NOW).toISOString(),
+  });
+  const first = await runTrackCycle({
+    track,
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    recruitFailures,
+    rootDirectory: rootDir,
+    deps,
+  });
+  // new-1 failed and was recorded; new-2 entered.
+  assert.equal(recruitFailures['vendor/new-1'], new Date(NOW).toISOString());
+  assert.equal(recruitFailures['vendor/new-2'], undefined);
+  assert.deepEqual(first.roster.map((entry) => entry.model_id), ['vendor/new-2']);
+
+  // Next day: new-1 is cooldown-skipped (not re-attempted).
+  let attempted = [];
+  const second = await runTrackCycle({
+    track: first,
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    recruitFailures,
+    rootDirectory: rootDir,
+    deps: {
+      ...deps,
+      nowMs: NOW + DAY_MS,
+      generateFighter: async ({ entrant }) => {
+        attempted.push(entrant.provider_model);
+        throw new Error('must not be re-attempted within the cooldown');
+      },
+    },
+  });
+  assert.deepEqual(attempted, []);
+  assert.deepEqual(second.roster.map((entry) => entry.model_id), ['vendor/new-2']);
+  validateTrackSlice(second, 'L2');
+});
+
+test('a ranking fetch failure records nothing in the cooldown ledger', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const recruitFailures = {};
+  await runTrackCycle({
+    track: stateWith({
+      roster: [],
+      last_feedback_at: new Date(NOW).toISOString(),
+    }),
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    recruitFailures,
+    rootDirectory: rootDir,
+    deps: {
+      nowMs: NOW,
+      log: () => {},
+      fetchRanking: async () => {
+        throw new Error('OpenRouter ranking request failed with HTTP 500');
+      },
+    },
+  });
+  assert.deepEqual(recruitFailures, {});
 });

@@ -1264,11 +1264,41 @@ export function latestAnnouncements(announcements, limit) {
     .slice(0, limit);
 }
 
-/** Roster of one track slice, rank-sorted by rating (ties: model id). */
+// Division pyramid — mirror of divisionSlices in continuous_league.mjs
+// (copied, not imported: the supervisor module runs its own service loop).
+// Divisions are DERIVED from the roster (rating desc, slug tiebreak) and
+// never persisted; the league evaluates one season per division per day.
+export const DIVISION_SIZE = 10;
+export const DIVISION_NAMES = Object.freeze(['premier', 'challenger', 'contender', 'prospect']);
+
+/** Partition a track roster into rating-ordered division slices. */
+export function divisionSlices(roster, size = DIVISION_SIZE) {
+  const sorted = [...(Array.isArray(roster) ? roster : [])].sort((a, b) => (
+    (Number(b.rating) || 0) - (Number(a.rating) || 0)
+    || String(a.slug).localeCompare(String(b.slug))
+  ));
+  const slices = [];
+  for (let index = 0; index < sorted.length; index += size) {
+    const name = DIVISION_NAMES[index / size] ?? `division-${index / size + 1}`;
+    slices.push({ name, models: sorted.slice(index, index + size), offset: index });
+  }
+  return slices;
+}
+
+/** Display label for a division key: 'premier' -> 'Premier', 'division-5' -> 'Division 5'. */
+export function divisionLabel(name) {
+  return DIVISION_NAMES.includes(name)
+    ? name[0].toUpperCase() + name.slice(1)
+    : String(name).replace(/^division-/, 'Division ');
+}
+
+function divisionBadge(name) {
+  return `<span class="division-badge division-badge--${esc(name)}">${esc(divisionLabel(name))}</span>`;
+}
+
+/** Roster of one track slice, rank-sorted exactly like divisionSlices. */
 export function trackStandings(trackSlice) {
-  return [...(trackSlice?.roster || [])]
-    .sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0)
-      || String(a.model_id).localeCompare(String(b.model_id)));
+  return divisionSlices(trackSlice?.roster).flatMap((d) => d.models);
 }
 
 /**
@@ -1387,25 +1417,34 @@ function standingsSection(state) {
   const tables = TRACKS.map((trackId) => {
     const slice = state.tracks[trackId];
     const allowed = slice.policy.max_submissions;
-    const rows = trackStandings(slice).map((e, i) => `                    <tr>
-                        <td class="num">${String(i + 1).padStart(2, '0')}</td>
-                        <td><span class="standings__emoji">${esc(e.mascot.emoji)}</span> <b>${esc(e.mascot.title)}</b></td>
-                        <td class="num standings__rating">${Number(e.rating).toFixed(1)}</td>
-                        <td class="num"><span class="win">${fmtInt(e.wins)}</span>‑<span class="loss">${fmtInt(e.losses)}</span>‑${fmtInt(e.draws)}</td>
-                        <td class="num">${e.submissions_used}/${allowed}</td>
-                    </tr>`).join('\n');
+    const divisions = divisionSlices(slice.roster).map((division) => {
+      const rows = division.models.map((e, i) => {
+        const overall = division.offset + i + 1;
+        return `                        <tr>
+                            <td class="num standings__rank">#${overall} · ${esc(divisionLabel(division.name))} #${i + 1}</td>
+                            <td><span class="standings__emoji">${esc(e.mascot.emoji)}</span> <b>${esc(e.mascot.title)}</b></td>
+                            <td class="num standings__rating">${Number(e.rating).toFixed(1)}</td>
+                            <td class="num"><span class="win">${fmtInt(e.wins)}</span>‑<span class="loss">${fmtInt(e.losses)}</span>‑${fmtInt(e.draws)}</td>
+                            <td class="num">${e.submissions_used}/${allowed}</td>
+                        </tr>`;
+      }).join('\n');
+      return `                <div class="standings__division">
+                    <h4>${divisionBadge(division.name)}</h4>
+                    <table class="standings__table">
+                        <thead><tr><th>Rank</th><th>Model</th><th>Rating</th><th>W‑L‑D</th><th>Subs</th></tr></thead>
+                        <tbody>
+${rows}
+                        </tbody>
+                    </table>
+                </div>`;
+    }).join('\n');
     return `            <article class="standings__track">
                 <h3>${trackBadge(trackId)} ${esc(TRACK_LABELS[trackId])} <small>day ${fmtInt(slice.day_index)}</small></h3>
-                <table class="standings__table">
-                    <thead><tr><th>#</th><th>Model</th><th>Rating</th><th>W‑L‑D</th><th>Subs</th></tr></thead>
-                    <tbody>
-${rows}
-                    </tbody>
-                </table>
+${divisions}
             </article>`;
   }).join('\n');
   return `        <section class="panel standings" aria-label="Per-track standings">
-            <h2>Track standings</h2>
+            <h2>Track standings <span class="hof__hint">divisions of ${DIVISION_SIZE}, derived from rating</span></h2>
             <div class="standings__grid">
 ${tables}
             </div>
@@ -1415,18 +1454,26 @@ ${tables}
 /**
  * Experiment matrix: model × track ratings, plus the cross-track delta
  * (L3 − L0) per model — how much weekly feedback helps that model. Rows are
- * sorted by that delta (best feedback responders first); models missing a
- * track cell sort after, by best available rating. Retired cells keep their
- * final rating, marked 🪦.
+ * sorted by L0 rating desc (slug tiebreak, matching the division derivation);
+ * each row carries its L0 division tag and a subtle separator marks division
+ * boundaries. Models without an L0 cell sort after, by best available rating.
+ * Retired cells keep their final rating, marked 🪦.
  */
 function matrixSection(state) {
+  // L0 division membership is derived from the ACTIVE roster only (retired
+  // models hold no division); key by model_id for badge lookup.
+  const l0DivisionById = new Map();
+  for (const division of divisionSlices(state.tracks.L0?.roster)) {
+    for (const e of division.models) l0DivisionById.set(String(e.model_id), division.name);
+  }
+
   const byModel = new Map(); // modelKey -> { mascot, cells: {track -> {rating, retired}} }
   for (const trackId of TRACKS) {
     const slice = state.tracks[trackId];
     for (const [list, retired] of [[slice.roster, false], [slice.retired, true]]) {
       for (const e of list) {
         const key = String(e.model_id);
-        if (!byModel.has(key)) byModel.set(key, { mascot: e.mascot, slug: e.slug, cells: {} });
+        if (!byModel.has(key)) byModel.set(key, { key, mascot: e.mascot, slug: e.slug, cells: {} });
         byModel.get(key).cells[trackId] = { rating: Number(e.rating), retired };
       }
     }
@@ -1435,15 +1482,23 @@ function matrixSection(state) {
   const rows = [...byModel.values()].map((row) => {
     const l0 = row.cells.L0?.rating;
     const l3 = row.cells.L3?.rating;
-    return { ...row, delta: l0 !== undefined && l3 !== undefined ? l3 - l0 : null };
+    return {
+      ...row,
+      delta: l0 !== undefined && l3 !== undefined ? l3 - l0 : null,
+      division: l0DivisionById.get(row.key) ?? null,
+    };
   }).sort((a, b) => {
-    if (a.delta !== null && b.delta !== null) return b.delta - a.delta;
-    if (a.delta !== null) return -1;
-    if (b.delta !== null) return 1;
+    const la = a.cells.L0?.rating;
+    const lb = b.cells.L0?.rating;
+    if (la !== undefined && lb !== undefined) {
+      return lb - la || String(a.slug).localeCompare(String(b.slug));
+    }
+    if (la !== undefined) return -1;
+    if (lb !== undefined) return 1;
     const best = (r) => Math.max(...TRACKS.map((t) => r.cells[t]?.rating ?? -1));
-    return best(b) - best(a);
+    return best(b) - best(a) || String(a.slug).localeCompare(String(b.slug));
   });
-  const body = rows.map((row) => {
+  const body = rows.map((row, i) => {
     const cells = TRACKS.map((trackId) => {
       const cell = row.cells[trackId];
       if (!cell) return '                        <td class="num matrix__cell matrix__cell--empty">—</td>';
@@ -1452,14 +1507,18 @@ function matrixSection(state) {
     const delta = row.delta === null
       ? '<td class="num matrix__delta">—</td>'
       : `<td class="num matrix__delta matrix__delta--${row.delta >= 0 ? 'pos' : 'neg'}">${row.delta >= 0 ? '+' : ''}${row.delta.toFixed(1)}</td>`;
-    return `                    <tr>
-                        <td class="matrix__model"><span><span class="standings__emoji">${esc(row.mascot.emoji)}</span> <b>${esc(row.mascot.title)}</b></span><small>${esc(row.slug)}</small></td>
+    const badge = row.division ? `${divisionBadge(row.division)} ` : '';
+    const boundary = row.division && i > 0 && rows[i - 1].division !== row.division
+      ? ' matrix__row--boundary'
+      : '';
+    return `                    <tr class="matrix__row${boundary}">
+                        <td class="matrix__model"><span>${badge}<span class="standings__emoji">${esc(row.mascot.emoji)}</span> <b>${esc(row.mascot.title)}</b></span><small>${esc(row.slug)}</small></td>
 ${cells}
                         ${delta}
                     </tr>`;
   }).join('\n');
   return `        <section class="panel matrix" aria-label="Experiment matrix">
-            <h2>Experiment matrix <span class="hof__hint">rating per track · Δ = L3 − L0</span></h2>
+            <h2>Experiment matrix <span class="hof__hint">rating per track · Δ = L3 − L0 · rows in L0 division order</span></h2>
             <table class="matrix__table">
                 <thead><tr><th>Model</th>${TRACKS.map((t) => `<th>${trackBadge(t)}</th>`).join('')}<th>Δ feedback</th></tr></thead>
                 <tbody>
@@ -2432,7 +2491,23 @@ a.toplist__card:hover { border-color: var(--acid); }
 }
 .track-badge--L0 { color: var(--muted); border-color: var(--line-soft); background: transparent; }
 .track-badge--L3 { color: var(--acid); border-color: var(--line); box-shadow: inset 0 0 10px rgba(202, 255, 0, 0.08); }
-.standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: 18px; }
+.division-badge {
+    display: inline-block;
+    border: 1px solid var(--line-soft);
+    padding: 2px 6px;
+    color: var(--muted);
+    font: 800 8px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: rgba(3, 7, 6, 0.5);
+}
+.division-badge--premier { color: var(--acid); border-color: var(--line); background: rgba(202, 255, 0, 0.06); }
+.division-badge--challenger { color: var(--cyan); border-color: rgba(0, 224, 255, 0.25); }
+.standings__division + .standings__division { margin-top: 18px; }
+.standings__division h4 { margin: 0 0 8px; }
+.standings__rank { white-space: nowrap; color: var(--dim); }
+table.matrix__table tr.matrix__row--boundary td { border-top: 1px solid var(--line); }
+.standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; }
 .standings__track h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
 .standings__track h3 small { margin-left: auto; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; }
 table.standings__table { width: 100%; border-collapse: collapse; }

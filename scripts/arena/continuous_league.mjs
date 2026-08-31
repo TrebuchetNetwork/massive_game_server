@@ -10,11 +10,14 @@
 // leagues sharing one state document; a failure in one track never blocks
 // the others. Per track, the cycle is:
 //
-//   1. evaluate — round-robin battles among the track roster via
-//      run_top10_season.mjs --evaluate-only (season id
-//      continuous-<league_id>-<track>-day<day_index>, 4 deterministic seeds),
-//      then applyBattleRatings, day_index/days_in_league bookkeeping, and a
-//      compact snapshot appended to tracks/<track>/history/<YYYY-MM-DD>.json
+//   1. evaluate — partition the track roster (up to 40) into rating-derived
+//      divisions of 10 (premier/challenger/contender/prospect; derived
+//      state, recomputed every cycle) and battle each division as its own
+//      season via run_top10_season.mjs --evaluate-only (season id
+//      continuous-<league_id>-<track>-day<day_index>-<division>, 4
+//      deterministic seeds), then applyBattleRatings per division,
+//      day_index/days_in_league bookkeeping, and a compact snapshot with
+//      per-entry division appended to tracks/<track>/history/<YYYY-MM-DD>.json
 //      (idempotent per day_index). Stale fighter checkpoints after a server
 //      contract change trigger one recompile-only rebind + retry; if the
 //      contract change is not reparable that way, the track fails closed
@@ -84,6 +87,7 @@ import {
   compileFighterSource,
   compileRevision,
   entrantFromChallenger,
+  fetchEligibleRanking,
   fighterKeyFor,
   generateFighter,
   loadCodeStatus,
@@ -103,6 +107,33 @@ const DEFAULT_STATE_DIR = path.join(ROOT_DIR, 'artifacts/arena/continuous');
 const MAX_ERROR_CHARS = 2_000;
 const SEASON_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
 const EVALUATION_SEED_COUNT = 4;
+const DIVISION_SIZE = 10;
+// Division names in rank order: derived state, recomputed from ratings every
+// cycle — promotion/relegation is just ratings moving (no schema fields).
+const DIVISION_NAMES = Object.freeze(['premier', 'challenger', 'contender', 'prospect']);
+// Live ranking fetch size for recruit/bootstrap: the 40 roster slots plus a
+// buffer for roster/recently-retired exclusions.
+const RANKING_FETCH_TOP_N = 60;
+
+/**
+ * Partition a track roster into rating-ordered division slices of
+ * DIVISION_SIZE. Sort: rating desc, tie-break slug ascending (deterministic).
+ * Returns [{ name, models }] — a roster smaller than the division size
+ * yields fewer/smaller divisions; division membership is derived state and
+ * never persisted.
+ */
+export function divisionSlices(roster, size = DIVISION_SIZE) {
+  const sorted = [...(Array.isArray(roster) ? roster : [])].sort((a, b) => (
+    (Number(b.rating) || 0) - (Number(a.rating) || 0)
+    || String(a.slug).localeCompare(String(b.slug))
+  ));
+  const slices = [];
+  for (let index = 0; index < sorted.length; index += size) {
+    const name = DIVISION_NAMES[index / size] ?? `division-${index / size + 1}`;
+    slices.push({ name, models: sorted.slice(index, index + size) });
+  }
+  return slices;
+}
 
 function parseArgs(argv) {
   const flags = { once: false, shadow: false, track: null };
@@ -195,6 +226,17 @@ async function appendHistorySnapshot(trackDirectory, snapshot) {
  * server side), then run the season runner in --evaluate-only mode with four
  * deterministic seeds and fold the resulting season.json into the roster.
  */
+/**
+ * Step 1 — evaluate. Partition the track roster into rating-derived
+ * divisions (4×10 for a full roster), then battle each division as its own
+ * season: build a runner-shaped ranking file from the division's fighter
+ * records, materialize the season's generation layout, publish the day's
+ * derived arena model ids (battles resolve <model_id>.wasm server side),
+ * run the season runner in --evaluate-only mode with four deterministic
+ * seeds, and fold the division's season.json back into the roster. Divisions
+ * are derived state — a model's division is recomputed from ratings every
+ * cycle, so promotion/relegation needs no bookkeeping.
+ */
 async function evaluateRoster({
   track,
   leagueId,
@@ -207,76 +249,97 @@ async function evaluateRoster({
   nowMs,
 }) {
   const runRunner = deps.runRunner ?? runSeasonRunner;
-  const seasonId = seasonIdFor(leagueId, trackId, track.day_index);
-  const seasonDirectory = path.join(rootDirectory, 'artifacts/arena/seasons', seasonId);
-
-  const fighters = [];
-  const models = [];
-  for (const [index, entry] of track.roster.entries()) {
-    const fighter = deps.readFighter
-      ? await deps.readFighter(trackDirectory, entry.model_id)
-      : await readFighterRecord(trackDirectory, entry.model_id);
-    fighters.push(fighter);
-    models.push(rankingModelFromMeta(fighter.meta, index + 1));
-  }
-  const ranking = {
-    schema_version: 1,
-    retrieved_at: new Date(nowMs).toISOString(),
-    source: 'continuous-league-roster',
-    window: 'weekly',
-    sort: 'top-weekly',
-    models,
-  };
-  const rankingPath = path.join(trackDirectory, 'rankings', `${seasonId}.json`);
-  await atomicWriteJson(rankingPath, ranking);
-  const entrants = entrantsFromRanking(ranking, seasonId);
-
   const adminToken = deps.adminToken ?? await readAdminToken();
   const apiBase = deps.apiBase ?? apiBaseFromEnv();
-  for (const [index, entrant] of entrants.entries()) {
-    await materializeSeasonFighter({ seasonDirectory, entrant, fighter: fighters[index] });
-    if (deps.publishFighter) {
-      await deps.publishFighter({ apiBase, adminToken, entrant, source: fighters[index].source });
-    } else {
-      await compileFighterSource({
-        apiBase,
-        adminToken,
-        entrant,
-        source: fighters[index].source,
-        attempts: policy.compileAttempts,
-        apiClient: deps.apiClient ?? arenaApiJson,
-      });
-    }
-  }
-
   const seeds = deterministicSeedPack(
     isoWeekId(new Date(deps.leagueCreatedAt ?? nowMs)),
     track.day_index,
     EVALUATION_SEED_COUNT,
   );
-  await runRunner(
-    ['--ranking-file', rankingPath, '--season-id', seasonId, '--evaluate-only', '--no-publish'],
-    {
-      env: {
-        ARENA_SEEDS: seeds.join(','),
-        ARENA_TOP_MODELS: String(models.length),
-      },
-    },
-  );
+  const seasonIds = [];
 
-  const seasonJson = await readJson(path.join(seasonDirectory, 'season.json'));
-  track.roster = applyBattleRatings(track.roster, seasonJson);
+  for (const division of divisionSlices(track.roster)) {
+    if (division.models.length < 2) {
+      log(`evaluate: ${division.name} division skipped (${division.models.length} model, need at least 2)`);
+      continue;
+    }
+    const seasonId = `${seasonIdFor(leagueId, trackId, track.day_index)}-${division.name}`;
+    if (!SEASON_ID_PATTERN.test(seasonId)) {
+      throw new Error(`continuous season ID is invalid: ${seasonId.slice(0, 160)}`);
+    }
+    const seasonDirectory = path.join(rootDirectory, 'artifacts/arena/seasons', seasonId);
+
+    const fighters = [];
+    const models = [];
+    for (const [index, entry] of division.models.entries()) {
+      const fighter = deps.readFighter
+        ? await deps.readFighter(trackDirectory, entry.model_id)
+        : await readFighterRecord(trackDirectory, entry.model_id);
+      fighters.push(fighter);
+      models.push(rankingModelFromMeta(fighter.meta, index + 1));
+    }
+    const ranking = {
+      schema_version: 1,
+      retrieved_at: new Date(nowMs).toISOString(),
+      source: 'continuous-league-roster',
+      window: 'weekly',
+      sort: 'top-weekly',
+      models,
+    };
+    const rankingPath = path.join(trackDirectory, 'rankings', `${seasonId}.json`);
+    await atomicWriteJson(rankingPath, ranking);
+    const entrants = entrantsFromRanking(ranking, seasonId);
+
+    for (const [index, entrant] of entrants.entries()) {
+      await materializeSeasonFighter({ seasonDirectory, entrant, fighter: fighters[index] });
+      if (deps.publishFighter) {
+        await deps.publishFighter({ apiBase, adminToken, entrant, source: fighters[index].source });
+      } else {
+        await compileFighterSource({
+          apiBase,
+          adminToken,
+          entrant,
+          source: fighters[index].source,
+          attempts: policy.compileAttempts,
+          apiClient: deps.apiClient ?? arenaApiJson,
+        });
+      }
+    }
+
+    await runRunner(
+      ['--ranking-file', rankingPath, '--season-id', seasonId, '--evaluate-only', '--no-publish'],
+      {
+        env: {
+          ARENA_SEEDS: seeds.join(','),
+          ARENA_TOP_MODELS: String(models.length),
+        },
+      },
+    );
+
+    const seasonJson = await readJson(path.join(seasonDirectory, 'season.json'));
+    const rated = applyBattleRatings(division.models, seasonJson);
+    const ratedById = new Map(rated.map((entry) => [entry.model_id, entry]));
+    track.roster = track.roster.map((entry) => ratedById.get(entry.model_id) ?? entry);
+    seasonIds.push(seasonId);
+    log(`evaluate: ${seasonId} complete (${models.length} models, seeds ${seeds.join('/')})`);
+  }
+
   const completedDay = track.day_index;
   track.day_index += 1;
+  const divisionById = new Map();
+  for (const division of divisionSlices(track.roster)) {
+    for (const entry of division.models) divisionById.set(entry.model_id, division.name);
+  }
   const historyPath = await appendHistorySnapshot(trackDirectory, {
     at: new Date(nowMs).toISOString(),
     league_id: leagueId,
     track: trackId,
     day_index: completedDay,
-    season_id: seasonId,
+    season_id: seasonIds.join(','),
     roster: track.roster.map((entry) => ({
       model_id: entry.model_id,
       slug: entry.slug,
+      division: divisionById.get(entry.model_id) ?? null,
       rating: entry.rating,
       wins: entry.wins,
       losses: entry.losses,
@@ -285,7 +348,7 @@ async function evaluateRoster({
     })),
   });
   log(
-    `evaluate: ${seasonId} complete (${models.length} models, seeds ${seeds.join('/')}); `
+    `evaluate: ${seasonIds.length} division season(s) complete; `
     + `snapshot appended to ${path.relative(rootDirectory, historyPath)}`,
   );
 }
@@ -809,16 +872,17 @@ async function feedbackRevisions({
 }
 
 /**
- * Step 4 — recruit. Take the next eligible challengers from a fresh
- * --dry-run ranking and generate a bot for each through the server admin
- * API with the track's compile-attempt policy (L0: one attempt, a failed
- * compile means no entry; L1+: up to 3 attempts). A generation failure
- * consumes no submission: the model simply never enters the roster and is
- * retried on the next cycle. The same challenger model may be recruited by
- * every track independently. A dry-run/ranking failure (OpenRouter outage,
- * malformed plan) skips the whole recruit step per spec — "skip cycle step,
- * never block the loop" — so the evaluate results already folded into the
- * track are still persisted.
+ * Step 4 — recruit. Take the next eligible challengers from a fresh live
+ * OpenRouter top-weekly ranking (fetched via fetchEligibleRanking with a
+ * buffer beyond the 40 roster slots; the runner's --dry-run caps at 32) and
+ * generate a bot for each through the server admin API with the track's
+ * compile-attempt policy (L0: one attempt, a failed compile means no entry;
+ * L1+: up to 3 attempts). A generation failure consumes no submission: the
+ * model simply never enters the roster and is retried on the next cycle.
+ * The same challenger model may be recruited by every track independently.
+ * A ranking fetch failure (OpenRouter outage, malformed payload) skips the
+ * whole recruit step per spec — "skip cycle step, never block the loop" — so
+ * the evaluate results already folded into the track are still persisted.
  */
 async function recruitChallengers({
   track,
@@ -826,29 +890,33 @@ async function recruitChallengers({
   trackId,
   policy,
   trackDirectory,
+  recruitFailures = null,
   deps,
   log,
   nowMs,
 }) {
   const openSlots = MAX_ROSTER_SIZE - track.roster.length;
   if (openSlots < 1) return;
-  const runRunner = deps.runRunner ?? runSeasonRunner;
+  const fetchRanking = deps.fetchRanking
+    ?? (() => fetchEligibleRanking({ topModels: RANKING_FETCH_TOP_N }));
   let rankingModels;
   try {
-    const { stdout } = await runRunner(['--dry-run'], {});
-    const plan = JSON.parse(stdout);
-    if (!Array.isArray(plan?.ranking?.models)) {
-      throw new Error('season dry-run did not return a ranking');
+    const ranking = await fetchRanking();
+    if (!Array.isArray(ranking?.models)) {
+      throw new Error('live ranking did not return a model list');
     }
-    rankingModels = plan.ranking.models;
+    rankingModels = ranking.models;
   } catch (error) {
+    // A ranking-fetch failure penalizes no model: nothing is recorded in
+    // the recruit-failure cooldown ledger here.
     log(
       `recruit: skipped, live ranking unavailable: `
       + `${String(error?.message || error).slice(0, 300)}`,
     );
     return;
   }
-  const challengers = eligibleChallengers(rankingModels, track, nowMs).slice(0, openSlots);
+  const challengers = eligibleChallengers(rankingModels, track, nowMs, recruitFailures ?? {})
+    .slice(0, openSlots);
   if (challengers.length === 0) {
     log('recruit: no eligible challengers in the live ranking');
     return;
@@ -934,6 +1002,9 @@ async function recruitChallengers({
       });
       log(`recruit: ${providerId} enters track ${trackId} (submission 1/${policy.maxSubmissions})`);
     } catch (error) {
+      // Generation failure cooldown: the model is not retried for 7 days
+      // (the league-level ledger is persisted with the end-of-cycle state).
+      if (recruitFailures) recruitFailures[providerId] = at;
       log(
         `recruit: generation failed for ${providerId}: `
         + `${String(error?.message || error).slice(0, 300)}; slot stays open`,
@@ -953,6 +1024,7 @@ export async function runTrackCycle({
   flags,
   stateDirectory,
   trackDirectory,
+  recruitFailures = null,
   rootDirectory = ROOT_DIR,
   deps = {},
 }) {
@@ -1019,6 +1091,7 @@ export async function runTrackCycle({
       trackId,
       policy,
       trackDirectory,
+      recruitFailures,
       deps,
       log,
       nowMs,
@@ -1046,6 +1119,9 @@ export async function runCycle({
   const nowMs = deps.nowMs ?? Date.now();
   const errorLog = deps.errorLog
     ?? ((line) => process.stderr.write(`[arena-continuous] ${line}\n`));
+  // League-level recruit-failure cooldown ledger (added in the top-40
+  // expansion; absent in states written before it).
+  state.recruit_failures ??= {};
   for (const trackId of trackIds) {
     const track = state.tracks[trackId];
     const trackDirectory = trackDirectoryFor(stateDirectory, trackId);
@@ -1057,6 +1133,7 @@ export async function runCycle({
         flags,
         stateDirectory,
         trackDirectory,
+        recruitFailures: state.recruit_failures,
         rootDirectory,
         deps: { ...deps, leagueCreatedAt: state.created_at },
       });
@@ -1069,6 +1146,7 @@ export async function runCycle({
           flags,
           stateDirectory,
           trackDirectory,
+          recruitFailures: state.recruit_failures,
           rootDirectory,
           deps: { ...deps, leagueCreatedAt: state.created_at },
         });
