@@ -170,6 +170,18 @@ impl MassiveGameServer {
         2
     }
 
+    /// Total kills across all non-spectator participants right now; sampled
+    /// at mode-phase boundaries to attribute kill tempo per phase.
+    fn current_total_kills(&self) -> u32 {
+        let mut total: u32 = 0;
+        self.player_manager.for_each_player(|_id, player_state| {
+            if !player_state.is_spectator {
+                total = total.saturating_add(player_state.kills.max(0) as u32);
+            }
+        });
+        total
+    }
+
     fn game_mode_label(mode: fb::GameModeType) -> &'static str {
         match mode {
             fb::GameModeType::FreeForAll => "FreeForAll",
@@ -626,6 +638,13 @@ impl MassiveGameServer {
                     } else if dynamic_mode_transitions {
                         match_info_guard.game_mode = fb::GameModeType::FreeForAll;
                     }
+                    let opening_mode = match_info_guard.game_mode;
+                    match_info_guard.mode_phases.clear();
+                    match_info_guard.mode_phases.push(ModePhaseMarker {
+                        game_mode: opening_mode,
+                        started_at_secs: 0.0,
+                        kills_at_start: 0,
+                    });
                     info!(
                         "Match starting! Mode: {:?}, players={}, connected_clients={}, effective_participants={}",
                         match_info_guard.game_mode,
@@ -708,6 +727,14 @@ impl MassiveGameServer {
                     {
                         let previous_mode = match_info_guard.game_mode;
                         match_info_guard.game_mode = fb::GameModeType::TeamDeathmatch;
+                        let phase_started_at =
+                            (self.match_duration_secs - match_info_guard.time_remaining).max(0.0);
+                        let phase_kills = self.current_total_kills();
+                        match_info_guard.mode_phases.push(ModePhaseMarker {
+                            game_mode: fb::GameModeType::TeamDeathmatch,
+                            started_at_secs: phase_started_at,
+                            kills_at_start: phase_kills,
+                        });
                         info!(
                             "Dynamic mode transition: {} -> {}",
                             Self::game_mode_label(previous_mode),
@@ -765,6 +792,14 @@ impl MassiveGameServer {
                     {
                         let previous_mode = match_info_guard.game_mode;
                         match_info_guard.game_mode = fb::GameModeType::CaptureTheFlag;
+                        let phase_started_at =
+                            (self.match_duration_secs - match_info_guard.time_remaining).max(0.0);
+                        let phase_kills = self.current_total_kills();
+                        match_info_guard.mode_phases.push(ModePhaseMarker {
+                            game_mode: fb::GameModeType::CaptureTheFlag,
+                            started_at_secs: phase_started_at,
+                            kills_at_start: phase_kills,
+                        });
                         self.initialize_ctf_flags(&mut match_info_guard);
                         info!(
                             "Dynamic mode transition: {} -> {}",

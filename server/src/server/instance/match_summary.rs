@@ -14,12 +14,13 @@ impl MassiveGameServer {
     }
 
     pub(super) fn capture_match_end_summary(&self, reason: &str) {
-        let (game_mode, time_remaining, team_scores) = {
+        let (game_mode, time_remaining, team_scores, mode_phases) = {
             let match_info = self.match_info.read();
             (
                 match_info.game_mode,
                 match_info.time_remaining,
                 match_info.team_scores.clone(),
+                match_info.mode_phases.clone(),
             )
         };
 
@@ -85,14 +86,72 @@ impl MassiveGameServer {
             _ => 0,
         };
 
+        let match_duration = (self.match_duration_secs - time_remaining)
+            .clamp(0.0, self.match_duration_secs);
+        let total_kills: u32 = players.iter().map(|stats| stats.kills.max(0) as u32).sum();
+        let kills_per_minute = if match_duration > 1.0 {
+            total_kills as f32 / (match_duration / 60.0)
+        } else {
+            0.0
+        };
+        let final_score_margin = match game_mode {
+            fb::GameModeType::TeamDeathmatch | fb::GameModeType::CaptureTheFlag => {
+                let mut scores: Vec<i32> = team_scores.values().copied().collect();
+                scores.sort_unstable_by(|a, b| b.cmp(a));
+                match scores.as_slice() {
+                    [first, second, ..] => first - second,
+                    _ => 0,
+                }
+            }
+            // FFA and friends: gap between the top two players (list is
+            // already sorted by score descending).
+            _ => match players.as_slice() {
+                [first, second, ..] => first.score - second.score,
+                _ => 0,
+            },
+        };
+
+        let phases: Vec<MatchPhaseSummary> = mode_phases
+            .iter()
+            .enumerate()
+            .map(|(index, marker)| {
+                let end_secs = mode_phases
+                    .get(index + 1)
+                    .map(|next| next.started_at_secs)
+                    .unwrap_or(match_duration)
+                    .max(marker.started_at_secs);
+                let kills_at_end = mode_phases
+                    .get(index + 1)
+                    .map(|next| next.kills_at_start)
+                    .unwrap_or(total_kills)
+                    .max(marker.kills_at_start);
+                let duration_secs = end_secs - marker.started_at_secs;
+                let kills = kills_at_end - marker.kills_at_start;
+                MatchPhaseSummary {
+                    game_mode: format!("{:?}", marker.game_mode),
+                    started_at_secs: marker.started_at_secs,
+                    duration_secs,
+                    kills,
+                    kills_per_minute: if duration_secs > 1.0 {
+                        kills as f32 / (duration_secs / 60.0)
+                    } else {
+                        0.0
+                    },
+                }
+            })
+            .collect();
+
         let summary = MatchEndSummary {
             generated_at_ms: self.get_server_timestamp_ms(),
             reason: reason.to_string(),
             map_name: self.map_name.clone(),
             game_mode: format!("{:?}", game_mode),
-            match_duration: (self.match_duration_secs - time_remaining)
-                .clamp(0.0, self.match_duration_secs),
+            match_duration,
             winning_team,
+            total_kills,
+            kills_per_minute,
+            final_score_margin,
+            phases,
             players,
             mvp_kills,
             mvp_damage,

@@ -253,6 +253,29 @@ fn persist_latest_match_end_summary_to_redis(
         })
 }
 
+/// Rotate the append-only summary history once it exceeds this size (~10
+/// days of blitz matches); one previous generation is kept as `.1`.
+const MATCH_SUMMARY_HISTORY_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+fn append_match_summary_history(store_dir: &Path, payload: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    fs::create_dir_all(store_dir).map_err(|err| err.to_string())?;
+    let path = store_dir.join("match_summaries.jsonl");
+    if let Ok(metadata) = fs::metadata(&path) {
+        if metadata.len() >= MATCH_SUMMARY_HISTORY_MAX_BYTES {
+            let rotated = store_dir.join("match_summaries.jsonl.1");
+            fs::rename(&path, rotated).map_err(|err| err.to_string())?;
+        }
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|err| err.to_string())?;
+    file.write_all(payload).map_err(|err| err.to_string())?;
+    file.write_all(b"\n").map_err(|err| err.to_string())
+}
+
 pub(super) fn persist_latest_match_end_summary(
     store_dir: &Path,
     redis_url: Option<&str>,
@@ -261,6 +284,12 @@ pub(super) fn persist_latest_match_end_summary(
 ) -> Result<(), String> {
     let payload = serde_json::to_vec(summary).map_err(|err| err.to_string())?;
     let payload_str = std::str::from_utf8(&payload).map_err(|err| err.to_string())?;
+    // Every finished match appends one line of history for per-mode
+    // excitement analysis; `latest_summary.json` alone is overwritten each
+    // match and cannot answer "which mode is the most dynamic".
+    if let Err(err) = append_match_summary_history(store_dir, &payload) {
+        tracing::warn!("failed to append match summary history: {}", err);
+    }
     let normalized_redis_key = redis_key.trim();
     if let Some(redis_url) = redis_url
         .map(str::trim)
@@ -443,6 +472,10 @@ mod tests {
             game_mode: "FreeForAll".to_owned(),
             match_duration: 120.0,
             winning_team: 0,
+            total_kills: 5,
+            kills_per_minute: 2.5,
+            final_score_margin: 200,
+            phases: Vec::new(),
             players: vec![PlayerMatchStats {
                 player_id: "player-1".to_owned(),
                 player_name: "Player One".to_owned(),

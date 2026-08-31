@@ -110,6 +110,26 @@ pub struct ServerMatchInfo {
     pub late_phase_zone_surge_triggered: bool,
     pub late_phase_final_stand_triggered: bool,
     pub flag_states: HashMap<u8, ServerFlagState>, // team_id of flag -> state
+    /// One entry per dynamic-mode phase this match (a fixed-mode match has
+    /// exactly one). Lets the end-of-match summary attribute kill tempo to
+    /// each game mode instead of the mode the match happened to end in.
+    pub mode_phases: Vec<ModePhaseMarker>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModePhaseMarker {
+    pub game_mode: fb::GameModeType,
+    pub started_at_secs: f32,
+    pub kills_at_start: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MatchPhaseSummary {
+    pub game_mode: String,
+    pub started_at_secs: f32,
+    pub duration_secs: f32,
+    pub kills: u32,
+    pub kills_per_minute: f32,
 }
 
 impl Default for ServerMatchInfo {
@@ -134,6 +154,7 @@ impl Default for ServerMatchInfo {
             late_phase_zone_surge_triggered: false,
             late_phase_final_stand_triggered: false,
             flag_states: HashMap::new(),
+            mode_phases: Vec::new(),
         }
     }
 }
@@ -305,6 +326,21 @@ pub struct MatchEndSummary {
     pub game_mode: String,
     pub match_duration: f32,
     pub winning_team: u8,
+    /// Combined kills across all participants, for excitement scoring.
+    #[serde(default)]
+    pub total_kills: u32,
+    /// Kill tempo over the played duration; the primary excitement signal.
+    #[serde(default)]
+    pub kills_per_minute: f32,
+    /// Closeness at the end: winning minus runner-up score (team score in
+    /// team modes, top-two player scores otherwise). Small margin = tense.
+    #[serde(default)]
+    pub final_score_margin: i32,
+    /// Per-mode phases of the match with kill tempo attributed to each, so
+    /// dynamic-transition matches (FFA -> TDM -> CTF) can be compared mode
+    /// by mode instead of by the mode the match ended in.
+    #[serde(default)]
+    pub phases: Vec<MatchPhaseSummary>,
     pub players: Vec<PlayerMatchStats>,
     pub mvp_kills: Option<String>,
     pub mvp_damage: Option<String>,
