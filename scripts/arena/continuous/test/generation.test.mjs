@@ -511,3 +511,53 @@ test('fetchEligibleRanking skips models with unusable reasoning metadata', async
   assert.ok(skipped.some((line) => line.includes('vendor/broken-reasoning')));
   assert.ok(!skipped.some((line) => line.includes('vendor/non-text')));
 });
+
+test('revision validates with a checkpoint-derived entrant even when provider_rank moved', async () => {
+  const { entrantFromCheckpoint } = await import('../generation.mjs');
+  const requests = [];
+  const apiClient = reviseApiClient(requests);
+  const previous = await generatePrevious(apiClient);
+
+  // The checkpoint pins the rank of its bootstrap-day ranking (e.g. 35);
+  // by revision time the model sits at a different division position.
+  const previousCheckpoint = { ...previous.previousCheckpoint, provider_rank: 35 };
+  const entrant = entrantFromCheckpoint(previousCheckpoint);
+  assert.equal(entrant.provider_rank, 35);
+
+  const { checkpoint, source } = await reviseFighter({
+    apiBase: 'http://127.0.0.1:9',
+    adminToken: 'test-token',
+    entrant,
+    source: previous.previousSource,
+    brief: 'neutral stats brief',
+    previousCheckpoint,
+    apiClient,
+    now: () => '2026-08-31T00:00:00.000Z',
+  });
+
+  // The revised checkpoint keeps the pinned rank and validates against the
+  // checkpoint-derived entrant…
+  const { normalizeCodeStatus } = await import('../../run_top10_season.mjs');
+  const status = normalizeCodeStatus(CODE_STATUS_WITH_REVISION);
+  validateGenerationCheckpoint(checkpoint, entrant, source, status);
+  assert.equal(checkpoint.provider_rank, 35);
+  assert.equal(checkpoint.revision_of, previousCheckpoint.source_sha256);
+
+  // …but the bug shape — an entrant missing provider_rank — fails the audit.
+  const { provider_rank: _dropped, ...ranklessEntrant } = entrant;
+  assert.throws(
+    () => validateGenerationCheckpoint(checkpoint, ranklessEntrant, source, status),
+    /stale or unverified/,
+  );
+
+  // Source integrity is still enforced: a tampered source fails the audit.
+  assert.throws(
+    () => validateGenerationCheckpoint(
+      checkpoint,
+      entrant,
+      'fn bot_tick_v2() { /* tampered */ }\n',
+      status,
+    ),
+    /stale or unverified/,
+  );
+});

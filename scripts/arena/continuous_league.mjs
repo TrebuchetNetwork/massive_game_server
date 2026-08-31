@@ -87,6 +87,7 @@ import {
   compileFighterSource,
   compileRevision,
   entrantFromChallenger,
+  entrantFromCheckpoint,
   fetchEligibleRanking,
   fighterKeyFor,
   generateFighter,
@@ -388,12 +389,7 @@ async function rebindFighters({ track, policy, trackDirectory, deps, log }) {
     const fighter = deps.readFighter
       ? await deps.readFighter(trackDirectory, entry.model_id)
       : await readFighterRecord(trackDirectory, entry.model_id);
-    const entrant = {
-      model_id: fighter.checkpoint.model_id,
-      model_name: fighter.checkpoint.model_name,
-      provider_model: fighter.checkpoint.provider_model,
-      canonical_slug: fighter.checkpoint.canonical_slug,
-    };
+    const entrant = entrantFromCheckpoint(fighter.checkpoint);
     const wasm = deps.recompileFighter
       ? await deps.recompileFighter({ apiBase, adminToken, entrant, source: fighter.source })
       : await compileFighterSource({
@@ -514,9 +510,10 @@ function retireExhausted({ track, trackId, policy, log, nowMs }) {
 /**
  * Append one submission ledger record to the shared submissions.jsonl
  * (append-only, one file per league state dir, records carry `track`).
- * Idempotent per (track, model_id, version_attempted): version numbers are
- * monotonically increasing per model per track, so the triple is a natural
- * idempotency key and a retried cycle can never duplicate a lineage record.
+ * Idempotent per (track, model_id, version_attempted, stint, submission):
+ * the tuple is a natural idempotency key (a failed attempt retries the same
+ * version under a new submission ordinal), so a retried cycle can never
+ * duplicate a lineage record.
  */
 async function appendSubmissionRecord(stateDirectory, record) {
   const target = path.join(stateDirectory, 'submissions.jsonl');
@@ -534,6 +531,7 @@ async function appendSubmissionRecord(stateDirectory, record) {
     && entry?.model_id === record.model_id
     && entry?.version_attempted === record.version_attempted
     && (entry?.stint ?? null) === (record.stint ?? null)
+    && (entry?.submission ?? null) === (record.submission ?? null)
   ));
   if (duplicate) return;
   await fs.appendFile(target, `${JSON.stringify(record)}\n`, { mode: 0o600 });
@@ -552,11 +550,11 @@ async function appendSubmissionRecord(stateDirectory, record) {
  * and without the discriminator its old finalized journals would be
  * re-applied to the new stint.
  */
-function revisionJournalPath(trackDirectory, modelId, joinedAt, versionAttempted) {
+function revisionJournalPath(trackDirectory, modelId, joinedAt, versionAttempted, submission) {
   return path.join(
     trackDirectory,
     'revision-journal',
-    `${fighterKeyFor(modelId)}-${Date.parse(joinedAt)}-v${versionAttempted}.json`,
+    `${fighterKeyFor(modelId)}-${Date.parse(joinedAt)}-v${versionAttempted}-s${submission}.json`,
   );
 }
 
@@ -601,11 +599,19 @@ async function reviseModel({
   at,
 }) {
   const versionAttempted = entry.artifact.version + 1;
+  // Submission ordinal of THIS attempt (initial generation is submission 1,
+  // so the first revision is submission 2). A failed attempt keeps the
+  // artifact version unchanged, so (stint, model, version_attempted) alone
+  // would collide with the previous failed attempt's finalized journal and
+  // the crash-recovery re-apply path would consume the submission twice;
+  // the ordinal keeps every attempt's journal and ledger key distinct.
+  const submission = entry.submissions_used + 1;
   const journalPath = revisionJournalPath(
     trackDirectory,
     entry.model_id,
     entry.joined_at,
     versionAttempted,
+    submission,
   );
   let journal = await readJson(journalPath).catch(() => null);
 
@@ -660,6 +666,7 @@ async function reviseModel({
       model_id: entry.model_id,
       slug: entry.slug,
       stint: entry.joined_at,
+      submission,
       version_attempted: versionAttempted,
       parent_version: entry.artifact.version,
       prompt_sha256: checkpoint?.prompt_sha256 ?? entry.artifact.prompt_sha256,
@@ -723,6 +730,7 @@ async function reviseModel({
         day_index: track.day_index,
         model_id: entry.model_id,
         stint: entry.joined_at,
+        submission,
         version_attempted: versionAttempted,
         parent_version: entry.artifact.version,
         started_at: at,
@@ -732,13 +740,7 @@ async function reviseModel({
       };
       await atomicWriteJson(journalPath, journal);
       const fighter = await readFighter();
-      const entrant = {
-        model_id: fighter.checkpoint.model_id,
-        model_name: fighter.checkpoint.model_name,
-        provider_model: fighter.checkpoint.provider_model,
-        canonical_slug: fighter.checkpoint.canonical_slug,
-        reasoning_policy: fighter.checkpoint.reasoning_policy,
-      };
+      const entrant = entrantFromCheckpoint(fighter.checkpoint);
       const request = deps.requestRevision
         ? await deps.requestRevision({ apiBase, adminToken, entrant, source: fighter.source, brief })
         : await requestRevision({
@@ -770,13 +772,7 @@ async function reviseModel({
     }
     if (journal.phase === 'revised') {
       const fighter = await readFighter();
-      const entrant = {
-        model_id: fighter.checkpoint.model_id,
-        model_name: fighter.checkpoint.model_name,
-        provider_model: fighter.checkpoint.provider_model,
-        canonical_slug: fighter.checkpoint.canonical_slug,
-        reasoning_policy: fighter.checkpoint.reasoning_policy,
-      };
+      const entrant = entrantFromCheckpoint(fighter.checkpoint);
       const request = {
         response: journal.request.response,
         verified: journal.request.verified,

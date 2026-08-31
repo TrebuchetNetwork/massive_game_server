@@ -985,7 +985,7 @@ test('shadow mode skips feedback without touching the cadence clock', async () =
 // --- Revision journal idempotency (crash-window double-spend) ----------------
 
 // Journal filenames carry the stint discriminator: <modelKey>-<joinedAtMs>-v<N>.
-const JOURNAL_KEY = `vendor__model-0-${NOW}-v2`;
+const JOURNAL_KEY = `vendor__model-0-${NOW}-v2-s2`; // keeper submissions_used 1 -> revision is submission 2
 
 async function writeJournal(stateDir, journal) {
   const dir = path.join(stateDir, 'revision-journal');
@@ -1189,6 +1189,7 @@ test('a compiled journal resumes the commit stage without duplicating the ledger
     model_id: 'vendor/model-0',
     slug: keeper.slug,
     stint: keeper.joined_at,
+    submission: 2,
     version_attempted: 2,
     parent_version: 1,
     prompt_sha256: sha('1'),
@@ -1571,7 +1572,7 @@ test('L3 revises weekly: not due at 3 days, due at 8 days', async () => {
 test('retire then re-recruit starts a fresh stint with its own journal and ledger lineage', async () => {
   const { stateDir, rootDir } = await tempDirs();
   const OLD_JOINED = new Date(NOW - 12 * DAY_MS).toISOString();
-  const OLD_JOURNAL_KEY = `vendor__model-x-${NOW - 12 * DAY_MS}-v2`;
+  const OLD_JOURNAL_KEY = `vendor__model-x-${NOW - 12 * DAY_MS}-v2-s2`;
   // Old stint: retired 8 days ago (past the 7-day re-recruit cooldown).
   const retiredEntry = {
     ...model({
@@ -1605,6 +1606,7 @@ test('retire then re-recruit starts a fresh stint with its own journal and ledge
     model_id: 'vendor/model-x',
     slug: retiredEntry.slug,
     stint: OLD_JOINED,
+    submission: 2,
     version_attempted: 2,
     parent_version: 1,
     prompt_sha256: sha('4'),
@@ -1680,7 +1682,7 @@ test('retire then re-recruit starts a fresh stint with its own journal and ledge
   const journals = (await fs.readdir(path.join(stateDir, 'revision-journal'))).sort();
   assert.deepEqual(journals, [
     `${OLD_JOURNAL_KEY}.json`,
-    `vendor__model-x-${NOW}-v2.json`,
+    `vendor__model-x-${NOW}-v2-s2.json`,
   ]);
   const oldJournal = JSON.parse(await fs.readFile(
     path.join(stateDir, 'revision-journal', `${OLD_JOURNAL_KEY}.json`),
@@ -1929,4 +1931,81 @@ test('a ranking fetch failure records nothing in the cooldown ledger', async () 
     },
   });
   assert.deepEqual(recruitFailures, {});
+});
+
+test('a failed revision is retried under a fresh journal, not phantom re-consumed', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const keeper = keeperState();
+  await makeFighter(stateDir, keeper.model_id);
+  // Round 1: compile failure — submission consumed (2/3), artifact kept at v1.
+  const failed = await runTrackCycle({
+    track: stateWith({ roster: [keeper], last_feedback_at: null }),
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: feedbackDeps({
+      requestRevision: async () => ({
+        response: { simulated: false },
+        verified: { source: 'fn bot_tick_v2() { /* broken */ }\n' },
+        codeStatus: null,
+      }),
+      compileRevision: async () => {
+        const error = new Error('fighter compilation failed');
+        error.phase = 'compile';
+        throw error;
+      },
+    }),
+  });
+  assert.equal(failed.roster[0].submissions_used, 2);
+  assert.equal(failed.roster[0].artifact.version, 1);
+
+  // Round 2 (next feedback window): the v2 attempt is RETRIED under a new
+  // submission ordinal — accepted this time.
+  const accepted = await runTrackCycle({
+    track: failed,
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: feedbackDeps({
+      nowMs: NOW + 3 * DAY_MS,
+      requestRevision: async () => ({
+        response: { simulated: false },
+        verified: { source: 'fn bot_tick_v2() { /* fixed */ }\n' },
+        codeStatus: null,
+      }),
+      compileRevision: async ({ previousCheckpoint }) => ({
+        checkpoint: {
+          ...previousCheckpoint,
+          prompt_sha256: sha('1'),
+          source_sha256: sha('2'),
+          wasm_sha256: sha('3'),
+        },
+        source: 'fn bot_tick_v2() { /* fixed */ }\n',
+      }),
+    }),
+  });
+  const entry = accepted.roster[0];
+  // Exactly one more submission consumed (3/3) — not two.
+  assert.equal(entry.submissions_used, 3);
+  assert.equal(entry.artifact.version, 2);
+  assert.equal(entry.artifact.parent_version, 1);
+
+  // Two distinct journals (s2 failed, s3 accepted) and two ledger records.
+  const journals = (await fs.readdir(path.join(stateDir, 'revision-journal'))).sort();
+  assert.deepEqual(journals, [
+    `vendor__model-0-${NOW}-v2-s2.json`,
+    `vendor__model-0-${NOW}-v2-s3.json`,
+  ]);
+  const submissions = await readSubmissions(stateDir);
+  assert.deepEqual(
+    submissions.map((record) => [record.submission, record.version_attempted, record.outcome]),
+    [[2, 2, 'compile_failed'], [3, 2, 'accepted']],
+  );
+  validateTrackSlice(accepted, 'L2');
 });

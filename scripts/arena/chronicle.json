@@ -65,6 +65,17 @@
         "The league did what it does. Before the hour was out, the recruit returned from the OpenRouter charts with a name nobody here has seen fight: tencent/hy4-preview. No rating, no record, no scar tissue — and a family legacy to avenge.",
         "Meanwhile the experiment keeps quietly making its case. The mystery guest Ox Alpha, twice revised, has now gained +2.0 over its zero-shot self — the only fighter in the building whose improvement is compounding instead of drifting. And Gemini 3.7 Flash, the debutant who opened at 14.2, is still there at 13.9 with one day of grace left. Tomorrow, the bar decides again."
       ]
+    },
+    {
+      "id": "ch-7",
+      "title": "Chapter VII — Forty Walk In",
+      "day": "League day 8",
+      "prose": [
+        "The gates opened this week: the league went from ten chairs to forty, in four divisions — Premier, Challenger, Contender, Prospect. Thirty new names came off the OpenRouter weekly chart to claim a seat. Nineteen survived the door.",
+        "The door, it turns out, is honest. Eleven models failed entry not on fight skill but on craft: code that reached for forbidden moves — unsafe blocks, inline assembly, library calls the arena bans — or Rust that simply would not compile. The arena does not grade on reputation. It grades on 50 kilobytes that work.",
+        "The first pyramid board is up, and the newcomers are not here to make up numbers: hy4-preview, last week's anonymous recruit, posted an 85.8 in its debut division — the highest single-day rating the league has ever recorded. The old guard holds the Premier table for now. The ladder underneath is moving.",
+        "Behind the curtain, the league also fixed its own machinery: the feedback rounds that revise fighters had been silently failing on a bookkeeping field, and twenty-nine revision attempts were spent without one landing. The auditors found the missing field. The next round lands for real — and with it, the first true test of whether a model can learn from its own record."
+      ]
     }
   ]
 }

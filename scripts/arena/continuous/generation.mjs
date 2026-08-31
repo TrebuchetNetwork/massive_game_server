@@ -470,6 +470,29 @@ export async function reviseFighter({
 
 export const fighterKeyFor = (modelId) => String(modelId).replace(/[^A-Za-z0-9._-]+/g, '__');
 
+/**
+ * Rebuild the runner-shaped entrant from a stored fighter checkpoint for the
+ * revision/rebind flows. Every identity field the checkpoint audit compares
+ * (validateCheckpointAudit in run_top10_season.mjs) must round-trip —
+ * including provider_rank: it is pinned in the checkpoint at generation time
+ * and the audit requires checkpoint.provider_rank === entrant.provider_rank.
+ * (An earlier reconstruction dropped provider_rank, which made every
+ * revision self-check fail with "generation checkpoint is stale or
+ * unverified". The daily ranking position is league bookkeeping; evaluate
+ * re-points it per day in materializeSeasonFighter, so carrying the pinned
+ * value here is consistent and safe.)
+ */
+export function entrantFromCheckpoint(checkpoint) {
+  return {
+    provider_rank: checkpoint.provider_rank,
+    model_id: checkpoint.model_id,
+    model_name: checkpoint.model_name,
+    provider_model: checkpoint.provider_model,
+    canonical_slug: checkpoint.canonical_slug,
+    reasoning_policy: checkpoint.reasoning_policy,
+  };
+}
+
 const OPENROUTER_WEEKLY_RANKING_URL = 'https://openrouter.ai/api/v1/models?output_modalities=text&sort=top-weekly';
 
 /**
