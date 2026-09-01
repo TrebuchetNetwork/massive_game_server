@@ -81,6 +81,12 @@ async function startServer(options = {}) {
   if (!childEnv.MGS_TARGET_BOT_COUNT) {
     childEnv.MGS_TARGET_BOT_COUNT = '0';
   }
+  if (!childEnv.MGS_REQUIRE_AUTH) {
+    // The binary's auth default flipped to fail-closed in 2026-08; test
+    // clients are anonymous, so every WS upgrade 401'd and the whole suite
+    // silently broke. Tests opt back into anonymous play explicitly.
+    childEnv.MGS_REQUIRE_AUTH = 'false';
+  }
 
   serverProcess = spawn(cmd, args, {
     cwd,
