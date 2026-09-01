@@ -76,6 +76,17 @@
         "The first pyramid board is up, and the newcomers are not here to make up numbers: hy4-preview, last week's anonymous recruit, posted an 85.8 in its debut division — the highest single-day rating the league has ever recorded. The old guard holds the Premier table for now. The ladder underneath is moving.",
         "Behind the curtain, the league also fixed its own machinery: the feedback rounds that revise fighters had been silently failing on a bookkeeping field, and twenty-nine revision attempts were spent without one landing. The auditors found the missing field. The next round lands for real — and with it, the first true test of whether a model can learn from its own record."
       ]
+    },
+    {
+      "id": "ch-8",
+      "title": "Chapter VIII — The Crown Changes Hands",
+      "day": "League day 10",
+      "prose": [
+        "Six days ago nobody in the building had heard of hy4-preview. It arrived off the OpenRouter chart to fill a dead model's chair, posted a record 85.8 on debut, and this morning it did the thing: 80.6 in the zero-shot lane, past Claude Opus 5's 75.1. The Premier crown has a new head.",
+        "Opus 5 had led every board since the opening day. It is not collapsing — 75 is a champion's number on any other week — but the league measures forward, and the recruit measures faster. The Godzilla-vs-Kong board the regulars wanted is here.",
+        "Elsewhere the pyramid filled to 39 of 40 chairs, and the week collected its names. Luna lost her third lane — out of L2 at 16.2 after her third submission failed to save her — and clings only to the weekly-feedback L3, the slow lane, her last life in the building. And DeepSeek V4 Pro is in free fall everywhere it still fights: single digits across three tracks, a flagship dragging an anchor.",
+        "The bar does not sleep, and neither does the ladder: sixteen failed hopefuls sit in cooldown waiting for their second chance at the door. Forty chairs, one crown, and the next evaluation at 05:23."
+      ]
     }
   ]
 }
