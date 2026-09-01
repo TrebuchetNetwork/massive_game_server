@@ -178,46 +178,50 @@ impl MassiveGameServer {
             normalized_reason
         };
 
-        let payload = serde_json::json!({
-            "generated_at_ms": now_ms,
-            "reason": reason,
-            "map_name": self.map_name.clone(),
-            "frame_count": frames.len(),
-            "frames": frames,
-        });
-        let payload_bytes = match serde_json::to_vec(&payload) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                warn!("failed to serialize live replay match payload: {}", err);
-                return;
-            }
-        };
-        let compressed = match zstd::encode_all(std::io::Cursor::new(payload_bytes), 3) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                warn!("failed to compress live replay match payload: {}", err);
-                return;
-            }
-        };
-
-        // Offload blocking file I/O to a dedicated thread to avoid blocking the
-        // async / game-loop runtime.  The compressed payload and path data are
-        // moved into the closure so no references to `self` are needed.
+        // Offload EVERYTHING heavy — JSON serialization of ~3600 frames,
+        // zstd compression, and file I/O — to a blocking thread. Doing the
+        // serialize+compress inline put a ~190ms spike into the game-logic
+        // stage at every match end (measured frame budget breakdowns), which
+        // overflowed the tick accumulator and dropped simulation time.
         let store_dir = Arc::clone(&self.replay.match_store_dir);
         let redis_url = self.replay.match_redis_url.clone();
         let redis_key = self.replay.match_redis_key.clone();
         let retention = self.replay.match_retention;
         let file_name = format!("replay_{}_{}.json.zst", now_ms, safe_reason);
-        let metadata = PersistedMatchReplaySnapshotRecord {
-            generated_at_ms: now_ms,
-            reason: reason.to_owned(),
-            map_name: self.map_name.clone(),
-            file_name: file_name.clone(),
-            frame_count: frames.len(),
-            compressed_bytes: compressed.len(),
-        };
+        let map_name = self.map_name.clone();
+        let reason_owned = reason.to_owned();
 
         tokio::task::spawn_blocking(move || {
+            let frame_count = frames.len();
+            let payload = serde_json::json!({
+                "generated_at_ms": now_ms,
+                "reason": reason_owned,
+                "map_name": map_name,
+                "frame_count": frame_count,
+                "frames": frames,
+            });
+            let payload_bytes = match serde_json::to_vec(&payload) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    warn!("failed to serialize live replay match payload: {}", err);
+                    return;
+                }
+            };
+            let compressed = match zstd::encode_all(std::io::Cursor::new(payload_bytes), 3) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    warn!("failed to compress live replay match payload: {}", err);
+                    return;
+                }
+            };
+            let metadata = PersistedMatchReplaySnapshotRecord {
+                generated_at_ms: now_ms,
+                reason: reason_owned.clone(),
+                map_name: map_name.clone(),
+                file_name: file_name.clone(),
+                frame_count,
+                compressed_bytes: compressed.len(),
+            };
             if let Err(err) = fs::create_dir_all(store_dir.as_path()) {
                 warn!(
                     "failed to create live replay match store directory '{}': {}",

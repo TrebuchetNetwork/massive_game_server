@@ -18,14 +18,13 @@ impl MassiveGameServer {
             .unwrap_or_default()
             .as_millis() as u64;
 
-        // Collect events efficiently
-        let mut events = Vec::with_capacity(100);
-        while let Some(event) = self.global_game_events.pop() {
-            events.push(event);
-            if events.len() >= 100 {
-                break;
-            }
-        }
+        // Collect events. The old 100-event cap drained at most ~6k events/s
+        // (100 x 60 broadcasts), which dense 24-bot combat outproduced — the
+        // queue pinned at max_events and dropped everything new
+        // indiscriminately (70k+ drops observed live). Drain a much larger
+        // batch; per-client delivery is still bounded downstream by
+        // max_delta_events_per_client and AoI filtering.
+        let events = self.global_game_events.pop_batch(2048);
 
         // Snapshot destroyed walls
         let destroyed_wall_ids = self
