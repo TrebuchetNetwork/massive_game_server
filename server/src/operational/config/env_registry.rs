@@ -74,6 +74,8 @@ pub struct InstanceEnv {
     pub join_initial_state_chunking_enabled: bool,
     pub join_authoritative_aoi_snapshot_enabled: bool,
     pub dynamic_mode_transitions_enabled: bool,
+    pub coop_gauntlet_enabled: bool,
+    pub gauntlet_ally_bots: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -352,6 +354,11 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
     );
     let dynamic_mode_transitions_enabled =
         parse_bool_with_default("MGS_DYNAMIC_MODE_TRANSITIONS", false, &mut errors);
+    // Co-op gauntlet: humans + the exhibition model roster share team 1
+    // against a generic bot wave on team 2, fixed TeamDeathmatch.
+    let coop_gauntlet_enabled = parse_bool_with_default("MGS_COOP_GAUNTLET", false, &mut errors);
+    let gauntlet_ally_bots =
+        parse_usize_with_default("MGS_GAUNTLET_ALLY_BOTS", 10, &mut errors);
     let quic_primary = parse_bool_with_default("MGS_QUIC_PRIMARY", false, &mut errors);
     let quic_primary_only_flag =
         parse_bool_with_default("MGS_QUIC_PRIMARY_ONLY", false, &mut errors);
@@ -560,6 +567,8 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
             join_initial_state_chunking_enabled,
             join_authoritative_aoi_snapshot_enabled,
             dynamic_mode_transitions_enabled,
+            coop_gauntlet_enabled,
+            gauntlet_ally_bots,
         },
         feature_flags: FeatureFlagsEnv {
             store_path: feature_flag_store_path,

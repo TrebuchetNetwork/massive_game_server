@@ -232,6 +232,8 @@ fn default_instance_env_config() -> InstanceEnv {
         join_initial_state_chunking_enabled: true,
         join_authoritative_aoi_snapshot_enabled: false,
         dynamic_mode_transitions_enabled: false,
+        coop_gauntlet_enabled: false,
+        gauntlet_ally_bots: 10,
     }
 }
 
@@ -285,6 +287,14 @@ fn join_authoritative_aoi_snapshot_enabled() -> bool {
 
 fn dynamic_mode_transitions_enabled() -> bool {
     instance_env_config().dynamic_mode_transitions_enabled
+}
+
+pub(crate) fn coop_gauntlet_enabled() -> bool {
+    instance_env_config().coop_gauntlet_enabled
+}
+
+pub(crate) fn gauntlet_ally_bots() -> usize {
+    instance_env_config().gauntlet_ally_bots
 }
 
 async fn send_packet_batch_over_channel(
@@ -858,7 +868,13 @@ impl MassiveGameServer {
             return None;
         }
 
-        let requested_balanced_team = requested_team.filter(|team| *team == 1 || *team == 2);
+        // Co-op gauntlet: every human fights alongside the model roster on
+        // team 1, regardless of the requested team.
+        let requested_balanced_team = if coop_gauntlet_enabled() && !requested_spectator {
+            Some(1)
+        } else {
+            requested_team.filter(|team| *team == 1 || *team == 2)
+        };
         let peer_id_short: String = peer_id.chars().take(6).collect();
         let fallback_username = format!("QPlayer_{}", peer_id_short);
         let username = username_override

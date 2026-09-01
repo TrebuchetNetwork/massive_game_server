@@ -601,8 +601,9 @@ impl MassiveGameServer {
             .saturating_add(connected_quic_peer_count());
         let effective_participant_count = player_count;
         let fortress_attack_defend_mode = self.fortress_attack_defend_map();
+        let coop_gauntlet = coop_gauntlet_enabled() && !fortress_attack_defend_mode;
         let dynamic_mode_transitions =
-            dynamic_mode_transitions_enabled() && !fortress_attack_defend_mode;
+            dynamic_mode_transitions_enabled() && !fortress_attack_defend_mode && !coop_gauntlet;
 
         match match_info_guard.match_state {
             fb::MatchStateType::Waiting => {
@@ -635,6 +636,11 @@ impl MassiveGameServer {
                     match_info_guard.late_phase_final_stand_triggered = false;
                     if fortress_attack_defend_mode {
                         match_info_guard.game_mode = fb::GameModeType::CaptureTheFlag;
+                    } else if coop_gauntlet {
+                        // Humans + model roster vs the wave is a team fight
+                        // from the first tick; an FFA opening would turn the
+                        // allies on each other.
+                        match_info_guard.game_mode = fb::GameModeType::TeamDeathmatch;
                     } else if dynamic_mode_transitions {
                         match_info_guard.game_mode = fb::GameModeType::FreeForAll;
                     }

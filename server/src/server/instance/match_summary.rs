@@ -100,7 +100,9 @@ impl MassiveGameServer {
                 scores.sort_unstable_by(|a, b| b.cmp(a));
                 match scores.as_slice() {
                     [first, second, ..] => first - second,
-                    _ => 0,
+                    // Only one team ever scored: the margin is its full lead.
+                    [only] => *only,
+                    [] => 0,
                 }
             }
             // FFA and friends: gap between the top two players (list is

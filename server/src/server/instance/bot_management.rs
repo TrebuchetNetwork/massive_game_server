@@ -349,6 +349,27 @@ impl MassiveGameServer {
         // for every single bot spawn).
         let (mut team1_player_count, mut team2_player_count) = self.team_player_counts();
 
+        // Co-op gauntlet: the first `gauntlet_ally_bots` bots are exhibition
+        // model fighters on team 1 (the humans' side); everything beyond that
+        // is the generic wave on team 2.
+        let coop_gauntlet = coop_gauntlet_enabled();
+        let gauntlet_ally_target = gauntlet_ally_bots();
+        let mut team1_bot_count = if coop_gauntlet {
+            let mut count = 0usize;
+            for entry in self.bot_players.iter() {
+                if self
+                    .player_manager
+                    .get_player_state(entry.key())
+                    .is_some_and(|state| state.team_id == 1)
+                {
+                    count += 1;
+                }
+            }
+            count
+        } else {
+            0
+        };
+
         for _i in 0..count_to_add {
             let current_total_players = self.player_manager.player_count();
             let max_players = self.effective_max_players();
@@ -377,7 +398,13 @@ impl MassiveGameServer {
 
             let bot_player_id_str = format!("bot_{}", uuid::Uuid::new_v4());
 
-            let team_id = if team1_player_count <= team2_player_count {
+            let team_id = if coop_gauntlet {
+                if team1_bot_count < gauntlet_ally_target {
+                    1
+                } else {
+                    2
+                }
+            } else if team1_player_count <= team2_player_count {
                 1
             } else {
                 2
@@ -419,12 +446,18 @@ impl MassiveGameServer {
                 spawn_pos.y,
             ) {
                 let exhibition_team_slot = self.next_exhibition_team_slot(team_id);
-                let exhibition_assignment = self.arena_exhibition.attach_bot(
-                    player_id_arc.clone(),
-                    team_id,
-                    exhibition_team_slot,
-                    seed ^ bot_name_num,
-                );
+                // Gauntlet wave bots stay generic on purpose: only the
+                // humans' team 1 fields model fighters.
+                let exhibition_assignment = if coop_gauntlet && team_id != 1 {
+                    None
+                } else {
+                    self.arena_exhibition.attach_bot(
+                        player_id_arc.clone(),
+                        team_id,
+                        exhibition_team_slot,
+                        seed ^ bot_name_num,
+                    )
+                };
                 let visible_bot_name = exhibition_assignment
                     .as_ref()
                     .map(|assignment| assignment.fighter.display_name())
@@ -444,6 +477,7 @@ impl MassiveGameServer {
                 // re-scan all players on each iteration.
                 if team_id == 1 {
                     team1_player_count += 1;
+                    team1_bot_count += 1;
                 } else {
                     team2_player_count += 1;
                 }

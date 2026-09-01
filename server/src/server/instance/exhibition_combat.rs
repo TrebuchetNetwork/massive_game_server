@@ -192,6 +192,27 @@ impl MassiveGameServer {
                 .is_some_and(|supporter| supporter.alive && !supporter.is_spectator)
         });
 
+        // Co-op gauntlet: the ABI's rate-limited damage exchange only binds
+        // exhibition fighters against each other. Against the generic wave
+        // (or any non-exhibition target) a model fighter fights with normal
+        // weapon damage — otherwise ~5 effective DPS vs the wave's full DPS
+        // left the entire roster at zero kills (first gauntlet match: 0-58).
+        if crate::server::instance::coop_gauntlet_enabled() {
+            let target_is_exhibition = self
+                .bot_players
+                .get(target_id)
+                .is_some_and(|controller| controller.arena_model_id.is_some());
+            if !target_is_exhibition {
+                let attacker_is_exhibition = self
+                    .bot_players
+                    .get(attacker_id)
+                    .is_some_and(|controller| controller.arena_model_id.is_some());
+                if attacker_is_exhibition {
+                    return normal_damage.max(0);
+                }
+            }
+        }
+
         let raw_damage = match self.bot_players.get_mut(attacker_id) {
             Some(mut controller) if controller.arena_model_id.is_some() => {
                 let Some(action) = controller.arena_action else {

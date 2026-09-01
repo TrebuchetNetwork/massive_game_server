@@ -692,7 +692,13 @@ fn register_data_channel_handler(
                     let _ = dc_reject.close().await;
                 });
             }
-            let requested_balanced_team = requested_team_on_open.filter(|team| *team == 1 || *team == 2);
+            // Co-op gauntlet: humans always join the model roster's team 1.
+            let requested_balanced_team =
+                if crate::server::instance::coop_gauntlet_enabled() && !requested_spectator {
+                    Some(1)
+                } else {
+                    requested_team_on_open.filter(|team| *team == 1 || *team == 2)
+                };
             if !requested_spectator
                 && !server_instance_on_open.ensure_human_join_capacity_for_team(
                     &current_peer_id_on_open_cb,
