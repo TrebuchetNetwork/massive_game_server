@@ -3,5 +3,6 @@ pub mod app;
 pub mod health;
 pub mod master_map;
 pub mod rejections;
+pub mod scoreboard;
 pub mod static_files;
 pub mod ws_signaling;

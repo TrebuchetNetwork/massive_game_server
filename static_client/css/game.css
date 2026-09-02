@@ -1303,6 +1303,33 @@
             margin-bottom: 6px;
         }
 
+        .post-match-verdict {
+            text-align: center;
+            font-size: 30px;
+            font-weight: 900;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 10px 12px 4px;
+            line-height: 1.15;
+            animation: post-match-verdict-pop 480ms cubic-bezier(0.2, 1.4, 0.4, 1);
+        }
+        .post-match-verdict__sub {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.22em;
+            color: #9CA3AF;
+            margin-top: 2px;
+        }
+        .post-match-verdict--win { color: #FBBF24; text-shadow: 0 0 24px rgba(251, 191, 36, 0.45); }
+        .post-match-verdict--loss { color: #F87171; text-shadow: 0 0 24px rgba(248, 113, 113, 0.35); }
+        .post-match-verdict--neutral { color: #93C5FD; text-shadow: 0 0 20px rgba(147, 197, 253, 0.3); }
+        @keyframes post-match-verdict-pop {
+            0% { transform: scale(0.7); opacity: 0; }
+            60% { transform: scale(1.08); opacity: 1; }
+            100% { transform: scale(1); }
+        }
+
         .post-match-callout {
             opacity: 0;
             transform: translateY(-6px) scale(0.96);

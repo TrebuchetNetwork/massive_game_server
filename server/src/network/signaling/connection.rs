@@ -865,6 +865,12 @@ fn register_data_channel_handler(
             let input_rate_limiter_on_msg = input_rate_limiter.clone();
 
             Box::pin(async move {
+                // Gameplay traffic counts as liveness. Only WS text messages
+                // touched the connection before, so a WebRTC player whose
+                // signaling socket went quiet after the handshake was evicted
+                // by the idle-connection sweep 120s in — while actively
+                // sending inputs on the data channel.
+                shared_connection_manager().touch(&pid_msg_inner_str);
                 metrics::record_network_bytes("ingress_data_channel", msg.data.len());
                 if msg.data.len() > MAX_DATACHANNEL_MESSAGE_BYTES {
                     metrics::record_input_validation_failed("oversized_data_channel_message");

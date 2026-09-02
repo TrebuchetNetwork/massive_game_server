@@ -287,6 +287,12 @@ async fn main() -> anyhow::Result<()> {
         .map(warp::reply::Reply::into_response)
         .or(build_master_map_route(master_map.clone()))
         .map(warp::reply::Reply::into_response)
+        .or(
+            massive_game_server_core::routes::scoreboard::build_match_scoreboard_route(
+                game_server_instance.clone(),
+            ),
+        )
+        .map(warp::reply::Reply::into_response)
         .boxed();
     // Routes that should not be subject to HTTP CORS middleware:
     // - WebSocket signaling has explicit origin/transport guards.

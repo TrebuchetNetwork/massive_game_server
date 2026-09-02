@@ -341,6 +341,11 @@ pub struct MatchEndSummary {
     /// by mode instead of by the mode the match ended in.
     #[serde(default)]
     pub phases: Vec<MatchPhaseSummary>,
+    /// True when this match ran the co-op gauntlet configuration, so
+    /// telemetry can separate gauntlet TDM from regular TDM and the client
+    /// can flavor its victory screen.
+    #[serde(default)]
+    pub coop_gauntlet: bool,
     pub players: Vec<PlayerMatchStats>,
     pub mvp_kills: Option<String>,
     pub mvp_damage: Option<String>,

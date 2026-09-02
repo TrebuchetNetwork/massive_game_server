@@ -154,6 +154,7 @@ impl MassiveGameServer {
             kills_per_minute,
             final_score_margin,
             phases,
+            coop_gauntlet: coop_gauntlet_enabled(),
             players,
             mvp_kills,
             mvp_damage,

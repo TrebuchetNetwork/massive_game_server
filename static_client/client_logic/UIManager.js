@@ -655,6 +655,52 @@ export function createUIManager(getCtx) {
         const localTeamId = toInt(ctx.localPlayerState?.team_id, 0);
         const localName = String(ctx.localPlayerState?.username || '').trim();
         const winnerText = winnerTeam > 0 ? `Winner: Team ${winnerTeam}` : 'Winner: Draw / FFA';
+
+        // Big verdict banner: the match needs a "moment", not just a table.
+        const verdictDiv = document.getElementById('postMatchVerdict');
+        if (verdictDiv) {
+            const isGauntlet = !!summaryPayload.coop_gauntlet;
+            const summaryPlayersList = Array.isArray(summaryPayload.players) ? summaryPayload.players : [];
+            const margin = Math.abs(Number(summaryPayload.final_score_margin) || 0);
+            let verdictText = '';
+            let verdictSub = '';
+            let verdictTone = 'neutral';
+            if (winnerTeam > 0 && localTeamId > 0) {
+                const won = winnerTeam === localTeamId;
+                if (isGauntlet) {
+                    verdictText = won ? 'THE ALLIANCE HELD' : 'THE WAVE PREVAILED';
+                    verdictSub = won
+                        ? 'You and the models beat back the wave'
+                        : 'The wave broke through — regroup and re-enter';
+                } else {
+                    verdictText = won ? 'VICTORY' : 'DEFEAT';
+                    verdictSub = margin > 0 ? `Final margin: ${margin}` : 'Decided on the tiebreaker';
+                }
+                verdictTone = won ? 'win' : 'loss';
+            } else if (winnerTeam > 0) {
+                verdictText = `TEAM ${winnerTeam} WINS`;
+                verdictTone = 'neutral';
+            } else if (summaryPlayersList.length > 0) {
+                const topPlayer = summaryPlayersList[0];
+                const topName = String(topPlayer?.player_name || topPlayer?.playerName || '').trim();
+                const localWonFfa = !!localName && topName === localName;
+                verdictText = localWonFfa ? 'CHAMPION' : (topName ? `${topName} WINS` : 'DRAW');
+                verdictTone = localWonFfa ? 'win' : 'neutral';
+            }
+            if (verdictText) {
+                verdictDiv.replaceChildren(document.createTextNode(verdictText));
+                if (verdictSub) {
+                    const sub = document.createElement('span');
+                    sub.className = 'post-match-verdict__sub';
+                    sub.textContent = verdictSub;
+                    verdictDiv.appendChild(sub);
+                }
+                verdictDiv.className = `post-match-verdict post-match-verdict--${verdictTone}`;
+                verdictDiv.hidden = false;
+            } else {
+                verdictDiv.hidden = true;
+            }
+        }
         const reasonText = reasonRaw.charAt(0).toUpperCase() + reasonRaw.slice(1);
         ctx.postMatchMetaDiv.textContent = `${modeName} \u00b7 ${winnerText} \u00b7 ${minutes}:${seconds.toString().padStart(2, '0')} \u00b7 ${reasonText}`;
 
@@ -2255,6 +2301,52 @@ export function createUIManager(getCtx) {
         mobileConnectionQualityEl.title = `Connection: ${quality} (${Math.round(Number(ping) || 0)} ms)`;
     }
 
+    // AoI replication only streams nearby players, so ctx.players covers a
+    // fraction of a large match. While the scoreboard is open, poll the
+    // server's full-roster endpoint and prefer it (fall back to AoI data if
+    // the fetch fails or goes stale).
+    const FULL_ROSTER_POLL_MS = 2000;
+    const FULL_ROSTER_FRESH_MS = 6000;
+    let fullRosterPlayers = null;
+    let fullRosterFetchedAt = 0;
+    let fullRosterPollTimer = null;
+
+    async function fetchFullRosterScoreboard() {
+        try {
+            const response = await fetch('/api/public/match/scoreboard', {
+                headers: { Accept: 'application/json' },
+            });
+            if (!response.ok) return;
+            const payload = await response.json();
+            if (!payload || !Array.isArray(payload.players)) return;
+            fullRosterPlayers = payload.players;
+            fullRosterFetchedAt = performance.now();
+            updateScoreboard();
+        } catch (_) {
+            /* keep the AoI fallback */
+        }
+    }
+
+    function setFullRosterPolling(active) {
+        if (active && fullRosterPollTimer === null) {
+            fetchFullRosterScoreboard();
+            fullRosterPollTimer = setInterval(fetchFullRosterScoreboard, FULL_ROSTER_POLL_MS);
+        } else if (!active && fullRosterPollTimer !== null) {
+            clearInterval(fullRosterPollTimer);
+            fullRosterPollTimer = null;
+        }
+    }
+
+    function scoreboardPlayers(ctx) {
+        if (
+            fullRosterPlayers
+            && performance.now() - fullRosterFetchedAt < FULL_ROSTER_FRESH_MS
+        ) {
+            return fullRosterPlayers;
+        }
+        return Array.from(ctx.players.values());
+    }
+
     function toggleScoreboard(forceShow = null) {
         const ctx = getCtx();
         if (forceShow === true) {
@@ -2264,7 +2356,9 @@ export function createUIManager(getCtx) {
         } else {
             ctx.scoreboardDiv.classList.toggle('hidden');
         }
-        if (!ctx.scoreboardDiv.classList.contains('hidden')) {
+        const visible = !ctx.scoreboardDiv.classList.contains('hidden');
+        setFullRosterPolling(visible);
+        if (visible) {
             updateScoreboard();
         }
     }
@@ -2273,7 +2367,7 @@ export function createUIManager(getCtx) {
         const ctx = getCtx();
         if (!ctx.matchInfo || ctx.scoreboardDiv.classList.contains('hidden')) return;
 
-        const sortedPlayers = Array.from(ctx.players.values()).sort((a, b) => b.score - a.score);
+        const sortedPlayers = scoreboardPlayers(ctx).sort((a, b) => b.score - a.score);
         const scoreboardContentDiv = document.getElementById('scoreboardContent');
 
         const ffaScoreboardSection = document.getElementById('ffaScoreboardSection');
