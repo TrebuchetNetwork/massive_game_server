@@ -1525,7 +1525,7 @@ ${cells}
 ${body}
                 </tbody>
             </table>
-            <p class="metric-note">Same v1 artifacts in every track; tracks diverge only by compile-fix and feedback policy. Raw measured stats only — no coaching.</p>
+            <p class="metric-note">Same v1 artifacts in every track; tracks diverge only by compile-fix and feedback policy. Raw measured stats only — no coaching. Δ reads as indicative, not causal: once rosters diverge, tracks fight different opponents, so part of any gap is the draw, not feedback.</p>
         </section>`;
 }
 

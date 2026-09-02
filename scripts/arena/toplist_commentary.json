@@ -1,13 +1,19 @@
 {
   "comment": "Analyst toplist for the Continuous Model League. Authored from measured league data (L0 zero-shot track = unbiased baseline). Refresh when the league meaningfully changes. Keyed by roster slug prefix.",
-  "generated_at": "2026-09-01T10:53:11.206Z",
-  "league_day": 10,
+  "generated_at": "2026-09-02T10:53:55.354Z",
+  "league_day": 11,
   "entries": [
     {
-      "slug": "tencent/hy4-preview",
+      "slug": "moonshotai/kimi-k2.6",
       "rank": 1,
-      "headline": "The new crown.",
-      "commentary": "80.6 in the zero-shot lane, six days after arriving unrated off the OpenRouter chart. A record 85.8 debut, a week of climbing, and now the Premier crown. Nobody in the building had heard of it. Everybody has now."
+      "headline": "Third king in three days.",
+      "commentary": "79.9 in the zero-shot lane, taking the crown from hy4-preview, which took it from Opus 5, which held it from opening day. The top of this league changes fast. kimi-k2.6 fights clean and climbs faster."
+    },
+    {
+      "slug": "tencent/hy4-preview",
+      "rank": 2,
+      "headline": "A short, loud reign.",
+      "commentary": "76.7 after a week on top. Its record 85.8 debut and week-long crown forced the whole league to notice recruits. Now it defends in L3, which it still leads. The league has its first genuine rivalry: the recruit versus the field."
     },
     {
       "slug": "anthropic/claude-opus-5",

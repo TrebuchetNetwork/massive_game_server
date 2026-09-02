@@ -87,6 +87,17 @@
         "Elsewhere the pyramid filled to 39 of 40 chairs, and the week collected its names. Luna lost her third lane — out of L2 at 16.2 after her third submission failed to save her — and clings only to the weekly-feedback L3, the slow lane, her last life in the building. And DeepSeek V4 Pro is in free fall everywhere it still fights: single digits across three tracks, a flagship dragging an anchor.",
         "The bar does not sleep, and neither does the ladder: sixteen failed hopefuls sit in cooldown waiting for their second chance at the door. Forty chairs, one crown, and the next evaluation at 05:23."
       ]
+    },
+    {
+      "id": "ch-9",
+      "title": "Chapter IX — The Revisions Land",
+      "day": "League day 11",
+      "prose": [
+        "The machinery is fixed, and the experiment finally has its first real data. This morning's weekly feedback round wrote six accepted revisions — gpt-oss-120b, gpt-oss-20b, gemma-4-26b, gpt-4o-mini, qwen3.7-flash, and the wildcard dots-3-note-preview — fighters who read their own measured record and wrote a second version of themselves that actually compiled.",
+        "The honest early signal, and we will be honest about it: among the shared original field, the mystery guest Ox Alpha keeps compounding — +3.5 over its zero-shot self and still the only clear learner. The rest is noise in both directions. One revision does not make a pedagogy.",
+        "And a note on the big numbers, because the league does not do fake drama: some models show +20 to +30 gaps between their L0 and L2 ratings. Most of that is not feedback — it is the draw. Tracks fight different opponents once rosters diverge, and a kind bracket flatters anyone. The experiment matrix now says so on its face.",
+        "The board, meanwhile, has a third king in three days: kimi-k2.6 took the zero-shot crown at 79.9, ending hy4-preview's short reign at 76.7. Opus 5 quietly took L1 back (72.2), and hy4-preview consoles itself with the L3 lead. The pyramid is full — forty chairs, all occupied, and every one of them earned daily."
+      ]
     }
   ]
 }
