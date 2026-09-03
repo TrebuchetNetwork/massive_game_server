@@ -9,7 +9,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 use wasmtime::{
     Config, Engine, ExternType, Module, Store, StoreLimits, StoreLimitsBuilder, TypedFunc, ValType,
 };
@@ -2436,6 +2436,14 @@ impl BotSandbox {
         )
     }
 
+    /// Immutable sibling copy of a contract-verified published artifact,
+    /// insulated from the continuous league's in-place revision writes.
+    fn published_archive_path(&self, safe_model_id: &str) -> PathBuf {
+        self.wasm_dir
+            .join("published_archive")
+            .join(format!("{}.wasm", safe_model_id))
+    }
+
     fn load_program_with_expected_artifact(
         &self,
         model_id: &str,
@@ -2458,7 +2466,34 @@ impl BotSandbox {
             };
         };
 
-        let path = self.wasm_dir.join(format!("{}.wasm", safe_model_id));
+        let mut path = self.wasm_dir.join(format!("{}.wasm", safe_model_id));
+        // The continuous league's accepted revisions overwrite artifacts in
+        // place, so the working file can drift from the published contract
+        // mid-season. Verified published bytes are archived on first load
+        // (below); if the working file no longer matches the expected size,
+        // fall back to the archived copy — the digest check downstream still
+        // fails closed if the archive is wrong too.
+        if let Some((expected_bytes, _)) = expected_artifact {
+            let working_len = fs::metadata(&path)
+                .ok()
+                .filter(|metadata| metadata.is_file())
+                .and_then(|metadata| usize::try_from(metadata.len()).ok());
+            if working_len != Some(expected_bytes) {
+                let archive_path = self.published_archive_path(&safe_model_id);
+                let archive_len = fs::metadata(&archive_path)
+                    .ok()
+                    .filter(|metadata| metadata.is_file())
+                    .and_then(|metadata| usize::try_from(metadata.len()).ok());
+                if archive_len == Some(expected_bytes) {
+                    info!(
+                        "Working wasm for model '{}' no longer matches the published contract; \
+                         loading the archived published artifact instead.",
+                        model_id
+                    );
+                    path = archive_path;
+                }
+            }
+        }
         if !path.exists() {
             self.module_cache.write().remove(&path);
             return BotProgram::Fallback {
@@ -2555,6 +2590,30 @@ impl BotSandbox {
                                 },
                             );
                             drop(cache);
+                            // Archive contract-verified bytes so a later
+                            // in-place revision cannot strand the published
+                            // roster (write-once per artifact version).
+                            if expected_artifact.is_some() {
+                                let archive_path = self.published_archive_path(&safe_model_id);
+                                if path != archive_path {
+                                    let archive_len = fs::metadata(&archive_path)
+                                        .ok()
+                                        .and_then(|metadata| {
+                                            usize::try_from(metadata.len()).ok()
+                                        });
+                                    if archive_len != Some(bytes.len()) {
+                                        if let Some(parent) = archive_path.parent() {
+                                            let _ = fs::create_dir_all(parent);
+                                        }
+                                        if let Err(err) = fs::write(&archive_path, &bytes) {
+                                            warn!(
+                                                "failed to archive published wasm for '{}': {}",
+                                                model_id, err
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                             BotProgram::Wasm {
                                 module,
                                 source_path: path,

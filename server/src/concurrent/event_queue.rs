@@ -73,6 +73,18 @@ impl PriorityEventQueue {
         }
     }
 
+    /// Discard everything queued. Used when there is no audience for events
+    /// (zero open data channels): without a consumer the queue pins at
+    /// `max_events` and every later event is dropped, so the first joining
+    /// player would drain tens of thousands of stale events instead.
+    pub fn clear(&self) -> usize {
+        let mut cleared = 0usize;
+        while self.pop().is_some() {
+            cleared += 1;
+        }
+        cleared
+    }
+
     /// Pop a single event. Still prioritizes high > normal > low, but callers
     /// that need fairness should prefer `pop_batch`.
     pub fn pop(&self) -> Option<GameEvent> {

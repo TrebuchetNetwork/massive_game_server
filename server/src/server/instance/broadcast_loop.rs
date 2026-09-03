@@ -421,6 +421,10 @@ impl MassiveGameServer {
             }
         }
         if connected_clients_open == 0 && quic_peer_ids.is_empty() {
+            // No audience: discard queued events instead of letting the
+            // queue pin at max_events overnight (the drain below only runs
+            // on the fanout path).
+            self.global_game_events.clear();
             trace!(
                 "[Frame {}] Skipping broadcast fanout because no data channels are open (tracked={}).",
                 current_frame,
