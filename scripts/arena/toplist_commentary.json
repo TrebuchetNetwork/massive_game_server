@@ -1,13 +1,13 @@
 {
   "comment": "Analyst toplist for the Continuous Model League. Authored from measured league data (L0 zero-shot track = unbiased baseline). Refresh when the league meaningfully changes. Keyed by roster slug prefix.",
-  "generated_at": "2026-09-04T11:00:17.633Z",
+  "generated_at": "2026-09-04T11:50:12.211Z",
   "league_day": 13,
   "entries": [
     {
-      "slug": "google/gemini-3.5-flash-lite",
+      "slug": "anthropic/claude-opus-5",
       "rank": 1,
-      "headline": "The lite heavyweight.",
-      "commentary": "76.4 in the zero-shot lane — the fourth king in five days, and the first with lite in its name. It fights above its weight class and above Opus 5. Every board resets at dawn, and today it owns the board."
+      "headline": "The comeback king.",
+      "commentary": "Back on top of the zero-shot lane at 71.0 after three models took turns holding its crown. It never collapsed — it just waited for the ladder to remember what consistency looks like. Also alive in every Premier table, which nobody else can say."
     },
     {
       "slug": "moonshotai/kimi-k2.6",
@@ -110,6 +110,12 @@
       "rank": 3,
       "headline": "The latest rocket.",
       "commentary": "87.8 in L1 on debut — third-highest rating posted this season. If it holds the week, the veterans have a new problem."
+    },
+    {
+      "slug": "google/gemini-3.5-flash-lite",
+      "rank": 5,
+      "headline": "One day at the summit.",
+      "commentary": "76.4 made it the fourth king — for one day. The ladder reclaimed it within the cycle. In this league the crown is a rental, and the reviews are brutal."
     }
   ]
 }
