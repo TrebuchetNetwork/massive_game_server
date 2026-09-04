@@ -1,25 +1,67 @@
 {
-  "day_index": 11,
+  "day_index": 12,
   "announcements": [
     {
       "type": "revision",
-      "at": "2026-09-02T09:24:19.477Z",
-      "track": "L3",
-      "slug": "deepseek/deepseek-v4-flash-20260731",
+      "at": "2026-09-03T09:27:28.571Z",
+      "track": "L2",
+      "slug": "z-ai/glm-5.3-flash-20260826",
       "mascot": {
-        "key": "deepseek/deepseek-v4-flash",
-        "emoji": "⚡",
-        "title": "Surge",
-        "color": "#38bdf8"
+        "key": "z-ai/glm-5.3-flash",
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
       },
       "version": 2,
       "outcome": "accepted"
     },
     {
       "type": "revision",
-      "at": "2026-09-02T09:24:19.477Z",
-      "track": "L3",
-      "slug": "stealth/ox-alpha",
+      "at": "2026-09-03T09:27:28.571Z",
+      "track": "L2",
+      "slug": "google/gemini-3.7-flash-20260813",
+      "mascot": {
+        "key": "google/gemini-3.7-flash",
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "version": 2,
+      "outcome": "accepted"
+    },
+    {
+      "type": "revision",
+      "at": "2026-09-03T09:27:28.571Z",
+      "track": "L2",
+      "slug": "tencent/hy4-preview-20260827",
+      "mascot": {
+        "key": "tencent/hy4-preview",
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "version": 2,
+      "outcome": "accepted"
+    },
+    {
+      "type": "revision",
+      "at": "2026-09-03T09:27:28.571Z",
+      "track": "L2",
+      "slug": "openai/gpt-5.6-sol-20260709",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "version": 2,
+      "outcome": "accepted"
+    },
+    {
+      "type": "revision",
+      "at": "2026-09-03T09:27:28.571Z",
+      "track": "L2",
+      "slug": "z-ai/glm-5.3-20260816",
       "mascot": {
         "key": null,
         "emoji": "👾",
@@ -27,111 +69,27 @@
         "color": "#c084fc"
       },
       "version": 2,
-      "outcome": "codegen_failed"
-    },
-    {
-      "type": "revision",
-      "at": "2026-09-02T09:24:19.477Z",
-      "track": "L3",
-      "slug": "xiaomi/mimo-v2.5-20260422",
-      "mascot": {
-        "key": "xiaomi/mimo-v2.5",
-        "emoji": "🦊",
-        "title": "Kitsune",
-        "color": "#f97316"
-      },
-      "version": 2,
-      "outcome": "codegen_failed"
-    },
-    {
-      "type": "revision",
-      "at": "2026-09-02T09:24:19.477Z",
-      "track": "L3",
-      "slug": "tencent/hy3-20260706",
-      "mascot": {
-        "key": "tencent/hy3",
-        "emoji": "🐉",
-        "title": "Emberwing",
-        "color": "#fb7185"
-      },
-      "version": 2,
       "outcome": "accepted"
     },
     {
       "type": "revision",
-      "at": "2026-09-02T09:24:19.477Z",
-      "track": "L3",
-      "slug": "deepseek/deepseek-v4-flash-20260423",
-      "mascot": {
-        "key": "deepseek/deepseek-v4-flash",
-        "emoji": "⚡",
-        "title": "Surge",
-        "color": "#38bdf8"
-      },
-      "version": 2,
-      "outcome": "accepted"
-    },
-    {
-      "type": "revision",
-      "at": "2026-09-02T09:24:19.477Z",
-      "track": "L3",
-      "slug": "openai/gpt-5.6-luna-20260709",
-      "mascot": {
-        "key": "openai/gpt-5.6-luna",
-        "emoji": "🌙",
-        "title": "Luna",
-        "color": "#10a37f"
-      },
-      "version": 2,
-      "outcome": "accepted"
-    },
-    {
-      "type": "revision",
-      "at": "2026-09-02T09:24:19.477Z",
-      "track": "L3",
-      "slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
-      "mascot": {
-        "key": "nvidia/nemotron-3-ultra",
-        "emoji": "🦾",
-        "title": "Titan",
-        "color": "#76b900"
-      },
-      "version": 2,
-      "outcome": "accepted"
-    },
-    {
-      "type": "revision",
-      "at": "2026-09-02T09:24:19.477Z",
-      "track": "L3",
-      "slug": "z-ai/glm-5.2-20260616",
-      "mascot": {
-        "key": "z-ai/glm-5.2",
-        "emoji": "🦉",
-        "title": "Sage",
-        "color": "#a78bfa"
-      },
-      "version": 2,
-      "outcome": "codegen_failed"
-    },
-    {
-      "type": "revision",
-      "at": "2026-09-02T09:24:19.477Z",
-      "track": "L3",
-      "slug": "anthropic/claude-opus-5-20260723",
+      "at": "2026-09-03T09:27:28.571Z",
+      "track": "L2",
+      "slug": "anthropic/claude-sonnet-5-20260630",
       "mascot": {
         "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
       },
       "version": 2,
-      "outcome": "codegen_failed"
+      "outcome": "accepted"
     },
     {
       "type": "revision",
-      "at": "2026-09-02T09:24:19.477Z",
-      "track": "L3",
-      "slug": "deepseek/deepseek-v4-pro-20260423",
+      "at": "2026-09-03T09:27:28.571Z",
+      "track": "L2",
+      "slug": "deepseek/deepseek-v4-pro-20260813",
       "mascot": {
         "key": "deepseek/deepseek-v4-pro",
         "emoji": "🐋",
@@ -140,24 +98,81 @@
       },
       "version": 2,
       "outcome": "accepted"
+    },
+    {
+      "type": "revision",
+      "at": "2026-09-03T09:27:28.571Z",
+      "track": "L2",
+      "slug": "google/gemini-2.5-flash-lite",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "version": 2,
+      "outcome": "accepted"
+    },
+    {
+      "type": "revision",
+      "at": "2026-09-03T09:27:28.571Z",
+      "track": "L2",
+      "slug": "anthropic/claude-4.6-sonnet-20260217",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "version": 2,
+      "outcome": "accepted"
+    },
+    {
+      "type": "revision",
+      "at": "2026-09-03T09:27:28.571Z",
+      "track": "L2",
+      "slug": "google/gemini-3-flash-preview-20251217",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "version": 2,
+      "outcome": "accepted"
     }
   ],
   "tracks": {
     "L0": {
-      "day_index": 11,
+      "day_index": 12,
       "standings": [
         {
-          "slug": "moonshotai/kimi-k2.6-20260420",
+          "slug": "google/gemini-3.5-flash-lite-20260721",
           "mascot": {
             "key": null,
-            "emoji": "🦅",
-            "title": "Talon",
-            "color": "#34d399"
+            "emoji": "👾",
+            "title": "Glitch",
+            "color": "#c084fc"
           },
-          "rating": 79.86,
-          "wins": 210,
-          "losses": 38,
-          "draws": 40,
+          "rating": 76.39,
+          "wins": 208,
+          "losses": 56,
+          "draws": 24,
+          "submissions_used": 1,
+          "submissions_allowed": 1
+        },
+        {
+          "slug": "anthropic/claude-opus-5-20260723",
+          "mascot": {
+            "key": null,
+            "emoji": "👾",
+            "title": "Glitch",
+            "color": "#c084fc"
+          },
+          "rating": 72.48,
+          "wins": 2328,
+          "losses": 774,
+          "draws": 354,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -169,32 +184,17 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 76.74,
-          "wins": 600,
-          "losses": 138,
-          "draws": 126,
-          "submissions_used": 1,
-          "submissions_allowed": 1
-        },
-        {
-          "slug": "anthropic/claude-opus-5-20260723",
-          "mascot": {
-            "key": null,
-            "emoji": "👾",
-            "title": "Glitch",
-            "color": "#c084fc"
-          },
-          "rating": 73.9,
-          "wins": 2180,
-          "losses": 666,
-          "draws": 322,
+          "rating": 72.05,
+          "wins": 738,
+          "losses": 230,
+          "draws": 184,
           "submissions_used": 1,
           "submissions_allowed": 1
         }
       ]
     },
     "L1": {
-      "day_index": 11,
+      "day_index": 12,
       "standings": [
         {
           "slug": "anthropic/claude-opus-5-20260723",
@@ -204,10 +204,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 72.16,
-          "wins": 2102,
-          "losses": 712,
-          "draws": 322,
+          "rating": 71.09,
+          "wins": 2258,
+          "losses": 814,
+          "draws": 352,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -219,10 +219,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 70.47,
-          "wins": 2136,
-          "losses": 852,
-          "draws": 148,
+          "rating": 69.89,
+          "wins": 2312,
+          "losses": 950,
+          "draws": 162,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -234,17 +234,17 @@
             "title": "Talon",
             "color": "#34d399"
           },
-          "rating": 68.06,
-          "wins": 172,
-          "losses": 68,
-          "draws": 48,
+          "rating": 60.07,
+          "wins": 304,
+          "losses": 188,
+          "draws": 84,
           "submissions_used": 1,
           "submissions_allowed": 1
         }
       ]
     },
     "L2": {
-      "day_index": 11,
+      "day_index": 12,
       "standings": [
         {
           "slug": "moonshotai/kimi-k3-20260715",
@@ -254,25 +254,10 @@
             "title": "Wolfpack",
             "color": "#facc15"
           },
-          "rating": 84.03,
-          "wins": 468,
-          "losses": 76,
-          "draws": 32,
-          "submissions_used": 1,
-          "submissions_allowed": 3
-        },
-        {
-          "slug": "tencent/hy4-preview-20260827",
-          "mascot": {
-            "key": "tencent/hy4-preview",
-            "emoji": "👾",
-            "title": "Glitch",
-            "color": "#c084fc"
-          },
-          "rating": 73.61,
-          "wins": 580,
-          "losses": 172,
-          "draws": 112,
+          "rating": 78.47,
+          "wins": 654,
+          "losses": 162,
+          "draws": 48,
           "submissions_used": 2,
           "submissions_allowed": 3
         },
@@ -284,17 +269,32 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 73.04,
-          "wins": 2154,
-          "losses": 694,
-          "draws": 320,
+          "rating": 71.9,
+          "wins": 2318,
+          "losses": 804,
+          "draws": 334,
+          "submissions_used": 3,
+          "submissions_allowed": 3
+        },
+        {
+          "slug": "tencent/hy4-preview-20260827",
+          "mascot": {
+            "key": "tencent/hy4-preview",
+            "emoji": "👾",
+            "title": "Glitch",
+            "color": "#c084fc"
+          },
+          "rating": 71.01,
+          "wins": 740,
+          "losses": 256,
+          "draws": 156,
           "submissions_used": 3,
           "submissions_allowed": 3
         }
       ]
     },
     "L3": {
-      "day_index": 11,
+      "day_index": 12,
       "standings": [
         {
           "slug": "tencent/hy4-preview-20260827",
@@ -304,10 +304,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 79.05,
-          "wins": 628,
-          "losses": 126,
-          "draws": 110,
+          "rating": 77.43,
+          "wins": 818,
+          "losses": 186,
+          "draws": 148,
           "submissions_used": 2,
           "submissions_allowed": 9
         },
@@ -319,10 +319,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 74.02,
-          "wins": 2184,
-          "losses": 662,
-          "draws": 322,
+          "rating": 73.26,
+          "wins": 2348,
+          "losses": 740,
+          "draws": 368,
           "submissions_used": 2,
           "submissions_allowed": 9
         },
@@ -334,10 +334,10 @@
             "title": "Titan",
             "color": "#76b900"
           },
-          "rating": 72.41,
-          "wins": 2210,
-          "losses": 790,
-          "draws": 168,
+          "rating": 69.94,
+          "wins": 2328,
+          "losses": 950,
+          "draws": 178,
           "submissions_used": 2,
           "submissions_allowed": 9
         }

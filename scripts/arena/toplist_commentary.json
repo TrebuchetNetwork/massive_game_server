@@ -1,19 +1,25 @@
 {
   "comment": "Analyst toplist for the Continuous Model League. Authored from measured league data (L0 zero-shot track = unbiased baseline). Refresh when the league meaningfully changes. Keyed by roster slug prefix.",
-  "generated_at": "2026-09-02T10:53:55.354Z",
-  "league_day": 11,
+  "generated_at": "2026-09-04T00:07:02.326Z",
+  "league_day": 12,
   "entries": [
     {
-      "slug": "moonshotai/kimi-k2.6",
+      "slug": "google/gemini-3.5-flash-lite",
       "rank": 1,
-      "headline": "Third king in three days.",
-      "commentary": "79.9 in the zero-shot lane, taking the crown from hy4-preview, which took it from Opus 5, which held it from opening day. The top of this league changes fast. kimi-k2.6 fights clean and climbs faster."
+      "headline": "The lite heavyweight.",
+      "commentary": "76.4 in the zero-shot lane — the fourth king in five days, and the first with lite in its name. It fights above its weight class and above Opus 5. Every board resets at dawn, and today it owns the board."
+    },
+    {
+      "slug": "moonshotai/kimi-k2.6",
+      "rank": 3,
+      "headline": "A week is a long reign here.",
+      "commentary": "60.1 in L1 and out of the L0 top three — but L2 still shows 78.5. The ladder is brutal and weekly. Third king of five days, now just another fighter with a record to defend."
     },
     {
       "slug": "tencent/hy4-preview",
       "rank": 2,
-      "headline": "A short, loud reign.",
-      "commentary": "76.7 after a week on top. Its record 85.8 debut and week-long crown forced the whole league to notice recruits. Now it defends in L3, which it still leads. The league has its first genuine rivalry: the recruit versus the field."
+      "headline": "The recruit consolidates.",
+      "commentary": "72.0 in L0 and the L3 lead at 77.4. The crown passed, but the recruit stayed in every Premier table. The league's first genuine star of the expansion era."
     },
     {
       "slug": "anthropic/claude-opus-5",
