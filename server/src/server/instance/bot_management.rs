@@ -538,7 +538,13 @@ impl MassiveGameServer {
             return;
         }
         let mut candidates = self.bot_eviction_candidates();
-        candidates.sort_by_key(|(_, rating, _, _)| *rating);
+        // Gauntlet: a shrinking population (wave reset after a loss, humans
+        // joining) must thin the team-2 wave before touching the team-1
+        // model roster, otherwise a lost wave would also strip the allies.
+        let protect_allies = coop_gauntlet_enabled();
+        candidates.sort_by_key(|(_, rating, team_id, _)| {
+            (protect_allies && *team_id == 1, *rating)
+        });
 
         let mut removed_count = 0usize;
         for (bot_key, _, _, _) in candidates {

@@ -24,7 +24,7 @@
           }
         }
     </script>
-    <link rel="stylesheet" href="./css/game.css?v=20260830-combathud1">
+    <link rel="stylesheet" href="./css/game.css?v=20260903-gauntletwave1">
     <script src="./client_logic/arena_telemetry.js?v=20260725-mobile-arena2" defer></script>
 </head>
 <body class="bg-gray-900 text-white min-h-screen overflow-hidden">
@@ -418,6 +418,7 @@
     <div id="scoreboard" class="scoreboard hidden">
         <div class="scoreboard-header">
             <h3>Match Scoreboard</h3>
+            <span id="scoreboardGauntletWave" class="scoreboard-gauntlet-wave" hidden></span>
             <button id="scoreboardCloseButton" type="button" class="close-btn" aria-label="Close scoreboard">×</button>
         </div>
         <div id="scoreboardContent" class="scoreboard-teams">
@@ -4540,6 +4541,9 @@
                     e2e.mapTheme = activeMapTheme?.name || null;
                     e2e.modeIntroText = gameModeIntroDiv?.textContent || '';
                     e2e.modeIntroVisible = !!gameModeIntroDiv?.classList.contains('mode-intro--visible');
+                    e2e.modeIntroUntilMs = Number(combatUiState.modeIntroUntilMs) || 0;
+                    e2e.ultraPerformanceModeLive = !!ultraPerformanceMode;
+                    e2e.gauntletWaveIntroAt = Number(combatUiState.gauntletWaveIntro?.atMs) || 0;
                     e2e.objectiveUrgencyText = objectiveUrgencyDiv?.textContent || '';
                     e2e.objectiveUrgencyVisible = !!objectiveUrgencyDiv?.classList.contains('objective-urgency--visible');
                     e2e.tipsToastText = tipsToastDiv?.textContent || '';

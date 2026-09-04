@@ -434,9 +434,18 @@ export function createCombatFeedback(getCtx) {
             } else if (ctx.matchInfo.game_mode === ctx.GP.GameModeType.CaptureTheFlag) {
                 introText = 'CTF: Steal the enemy flag and return it to base (+100).';
             }
+            // Gauntlet: the wave announcement (from the `gauntlet_wave`
+            // system event) outranks the generic TDM intro when it arrived
+            // around this match start.
+            const waveIntro = ctx.combatUiState.gauntletWaveIntro;
+            let introHoldMs = 3000;
+            if (waveIntro && waveIntro.text && Math.abs(currentTime - Number(waveIntro.atMs)) < 20000) {
+                introText = waveIntro.text;
+                introHoldMs = 6000;
+            }
             if (introText) {
                 ctx.gameModeIntroDiv.textContent = introText;
-                ctx.combatUiState.modeIntroUntilMs = currentTime + 3000;
+                ctx.combatUiState.modeIntroUntilMs = currentTime + introHoldMs;
                 ctx.gameModeIntroDiv.classList.add('mode-intro--visible');
             }
         }
@@ -1237,7 +1246,14 @@ export function createCombatFeedback(getCtx) {
             clearDamageDirectionIndicators();
             hideObjectiveArrows();
             if (ctx.tipsToastDiv) ctx.tipsToastDiv.classList.remove('tips-toast--visible');
-            if (ctx.gameModeIntroDiv) ctx.gameModeIntroDiv.classList.remove('mode-intro--visible');
+            // The match/wave intro is a one-line announcement that must
+            // survive this reduced-presentation path: it fires at match
+            // start, when the local player may still be flagged dead from
+            // the previous round, and in ultra-performance mode.
+            if (ctx.gameModeIntroDiv) {
+                const introHeld = Number(ctx.combatUiState.modeIntroUntilMs) > currentTime;
+                ctx.gameModeIntroDiv.classList.toggle('mode-intro--visible', introHeld);
+            }
             if (ctx.boundaryWarningDiv) ctx.boundaryWarningDiv.classList.remove('boundary-warning--visible');
             if (ctx.combatRadialHudDiv) ctx.combatRadialHudDiv.style.opacity = '0';
             if (ctx.combatUiState.radialHudCache) {

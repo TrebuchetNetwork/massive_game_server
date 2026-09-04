@@ -76,6 +76,12 @@ pub struct InstanceEnv {
     pub dynamic_mode_transitions_enabled: bool,
     pub coop_gauntlet_enabled: bool,
     pub gauntlet_ally_bots: usize,
+    /// Wave-1 size; `None` derives it from `target_bot_count - allies`.
+    pub gauntlet_wave_base: Option<usize>,
+    /// Extra wave bots per consecutive wave held.
+    pub gauntlet_wave_step: usize,
+    /// Wave-size ceiling.
+    pub gauntlet_wave_max: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -359,6 +365,20 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
     let coop_gauntlet_enabled = parse_bool_with_default("MGS_COOP_GAUNTLET", false, &mut errors);
     let gauntlet_ally_bots =
         parse_usize_with_default("MGS_GAUNTLET_ALLY_BOTS", 10, &mut errors);
+    // Wave escalation: each wave held adds `step` bots (up to `max`) and the
+    // mechanics tier ramps Easy -> Normal -> Hard with the streak.
+    let gauntlet_wave_base =
+        parse_optional_u64("MGS_GAUNTLET_WAVE_BASE", &mut errors).map(|value| value as usize);
+    let gauntlet_wave_step = parse_usize_with_default(
+        "MGS_GAUNTLET_WAVE_STEP",
+        crate::server::instance::DEFAULT_GAUNTLET_WAVE_STEP,
+        &mut errors,
+    );
+    let gauntlet_wave_max = parse_usize_with_default(
+        "MGS_GAUNTLET_WAVE_MAX",
+        crate::server::instance::DEFAULT_GAUNTLET_WAVE_MAX,
+        &mut errors,
+    );
     let quic_primary = parse_bool_with_default("MGS_QUIC_PRIMARY", false, &mut errors);
     let quic_primary_only_flag =
         parse_bool_with_default("MGS_QUIC_PRIMARY_ONLY", false, &mut errors);
@@ -569,6 +589,9 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
             dynamic_mode_transitions_enabled,
             coop_gauntlet_enabled,
             gauntlet_ally_bots,
+            gauntlet_wave_base,
+            gauntlet_wave_step,
+            gauntlet_wave_max,
         },
         feature_flags: FeatureFlagsEnv {
             store_path: feature_flag_store_path,

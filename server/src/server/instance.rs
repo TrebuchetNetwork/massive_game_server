@@ -80,6 +80,11 @@ mod constants;
 mod entity_store;
 mod exhibition_combat;
 mod game_modes;
+mod gauntlet;
+pub(crate) use gauntlet::{
+    gauntlet_status, gauntlet_wave_tier_index, GauntletMatchOutcome, DEFAULT_GAUNTLET_WAVE_MAX,
+    DEFAULT_GAUNTLET_WAVE_STEP,
+};
 mod input_runtime;
 mod join_stage;
 mod killstreaks;
@@ -234,6 +239,9 @@ fn default_instance_env_config() -> InstanceEnv {
         dynamic_mode_transitions_enabled: false,
         coop_gauntlet_enabled: false,
         gauntlet_ally_bots: 10,
+        gauntlet_wave_base: None,
+        gauntlet_wave_step: DEFAULT_GAUNTLET_WAVE_STEP,
+        gauntlet_wave_max: DEFAULT_GAUNTLET_WAVE_MAX,
     }
 }
 
@@ -295,6 +303,18 @@ pub(crate) fn coop_gauntlet_enabled() -> bool {
 
 pub(crate) fn gauntlet_ally_bots() -> usize {
     instance_env_config().gauntlet_ally_bots
+}
+
+fn gauntlet_wave_base() -> Option<usize> {
+    instance_env_config().gauntlet_wave_base
+}
+
+fn gauntlet_wave_step() -> usize {
+    instance_env_config().gauntlet_wave_step
+}
+
+fn gauntlet_wave_max() -> usize {
+    instance_env_config().gauntlet_wave_max
 }
 
 async fn send_packet_batch_over_channel(
@@ -597,9 +617,15 @@ impl MassiveGameServer {
             wall_spatial_index.size()
         );
 
-        let initial_target_bot_count = runtime
+        let configured_target_bot_count = runtime
             .target_bot_count
             .unwrap_or(if cfg!(debug_assertions) { 8 } else { 20 });
+        // In the co-op gauntlet the bot target follows the persisted wave
+        // streak (allies + current wave size) rather than the static env.
+        let initial_target_bot_count = gauntlet::bootstrap_gauntlet(
+            Path::new(&runtime.live_replay_match_store_dir),
+            configured_target_bot_count as usize,
+        ) as u64;
         let human_priority_enabled = runtime.human_priority_enabled;
         let reserved_human_slots = if human_priority_enabled {
             runtime.reserved_human_slots.min(effective_max_players)

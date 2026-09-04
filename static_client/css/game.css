@@ -1778,6 +1778,22 @@
         .scoreboard { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 700px; background-color: rgba(17, 24, 39, 0.95); border: 1px solid #374151; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); z-index: 100; color: #E5E7EB; }
         .scoreboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #374151;}
         .scoreboard-header h3 { font-size: 1.5rem; font-weight: bold; color: #93C5FD; }
+        .scoreboard-gauntlet-wave {
+            margin-left: auto;
+            margin-right: 14px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(251, 191, 36, 0.45);
+            background: rgba(251, 191, 36, 0.12);
+            color: #FCD34D;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .scoreboard-gauntlet-wave--normal { border-color: rgba(96, 165, 250, 0.5); background: rgba(96, 165, 250, 0.12); color: #93C5FD; }
+        .scoreboard-gauntlet-wave--hard { border-color: rgba(248, 113, 113, 0.55); background: rgba(248, 113, 113, 0.14); color: #FCA5A5; }
         .close-btn { cursor: pointer; font-size: 1.8rem; color: #9CA3AF; transition: color 0.2s; }
         .close-btn:hover { color: #F9FAFB; }
         .scoreboard-teams { display: grid; grid-template-columns: 1fr; gap: 20px; } /* Default to 1 column for FFA */

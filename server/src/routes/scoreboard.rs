@@ -56,6 +56,7 @@ pub fn build_match_scoreboard_route(
                 "game_mode": game_mode,
                 "time_remaining": time_remaining,
                 "coop_gauntlet": crate::server::instance::coop_gauntlet_enabled(),
+                "gauntlet_wave": crate::server::instance::gauntlet_status(),
                 "team_scores": team_scores_json,
                 "players": players,
             }))

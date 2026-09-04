@@ -346,6 +346,10 @@ pub struct MatchEndSummary {
     /// can flavor its victory screen.
     #[serde(default)]
     pub coop_gauntlet: bool,
+    /// Gauntlet wave verdict and streak transition; `None` outside the
+    /// gauntlet.
+    #[serde(default)]
+    pub gauntlet: Option<GauntletMatchOutcome>,
     pub players: Vec<PlayerMatchStats>,
     pub mvp_kills: Option<String>,
     pub mvp_damage: Option<String>,

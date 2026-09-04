@@ -143,6 +143,14 @@ impl MassiveGameServer {
             })
             .collect();
 
+        // Settle the gauntlet streak before the summary goes out so the
+        // verdict screen can narrate the run and announce the next wave.
+        let gauntlet = if coop_gauntlet_enabled() {
+            Some(self.record_gauntlet_match_result(&team_scores))
+        } else {
+            None
+        };
+
         let summary = MatchEndSummary {
             generated_at_ms: self.get_server_timestamp_ms(),
             reason: reason.to_string(),
@@ -155,6 +163,7 @@ impl MassiveGameServer {
             final_score_margin,
             phases,
             coop_gauntlet: coop_gauntlet_enabled(),
+            gauntlet,
             players,
             mvp_kills,
             mvp_damage,

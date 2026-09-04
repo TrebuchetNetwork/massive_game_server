@@ -477,6 +477,7 @@ mod tests {
             final_score_margin: 200,
             phases: Vec::new(),
             coop_gauntlet: false,
+            gauntlet: None,
             players: vec![PlayerMatchStats {
                 player_id: "player-1".to_owned(),
                 player_name: "Player One".to_owned(),

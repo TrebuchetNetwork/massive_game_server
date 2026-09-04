@@ -2054,12 +2054,17 @@ impl OptimizedBotAI {
         let personality = bot_controller.personality;
         // UUID-derived difficulty would confound model strategy comparisons.
         // All exhibition fighters use the same fixed mechanics tier. In the
-        // co-op gauntlet the generic wave is uniformly Easy: with random
-        // tiers a 14-20 bot wave focus-firing 10 fighters won 51-9.
+        // co-op gauntlet the generic wave shares one tier that escalates
+        // with the alliance's streak (wave 1 is Easy: with random tiers a
+        // 14-20 bot wave focus-firing 10 fighters won 51-9).
         let difficulty = if bot_controller.arena_model_id.is_some() {
             BotDifficultyTier::Normal
         } else if crate::server::instance::coop_gauntlet_enabled() {
-            BotDifficultyTier::Easy
+            match crate::server::instance::gauntlet_wave_tier_index() {
+                0 => BotDifficultyTier::Easy,
+                1 => BotDifficultyTier::Normal,
+                _ => BotDifficultyTier::Hard,
+            }
         } else {
             BotDifficultyTier::from_bot_id(&bot_state.id)
         };

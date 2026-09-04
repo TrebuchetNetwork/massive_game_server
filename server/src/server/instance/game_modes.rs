@@ -694,6 +694,20 @@ impl MassiveGameServer {
                     // Publish after releasing the match write lock so a
                     // slow/hung Redis cannot stall the tick loop.
                     drop(match_info_guard);
+                    if coop_gauntlet {
+                        // Tell everyone which wave just started so the HUD
+                        // can show the escalation without opening Tab.
+                        let wave = self.current_gauntlet_wave();
+                        info!(
+                            "Gauntlet wave {} begins: {} {} bots vs the alliance",
+                            wave.wave_number, wave.wave_size, wave.tier
+                        );
+                        if let Some(packet) =
+                            self.build_system_event_packet("gauntlet_wave", Some(&wave))
+                        {
+                            self.enqueue_direct_packet_for_all_players(packet);
+                        }
+                    }
                     if let Some(url) = redis_url {
                         crate::server::epoch::publish_epoch(&url, &epoch);
                     }

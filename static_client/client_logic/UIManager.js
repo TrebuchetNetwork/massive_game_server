@@ -669,9 +669,27 @@ export function createUIManager(getCtx) {
                 const won = winnerTeam === localTeamId;
                 if (isGauntlet) {
                     verdictText = won ? 'THE ALLIANCE HELD' : 'THE WAVE PREVAILED';
-                    verdictSub = won
-                        ? 'You and the models beat back the wave'
-                        : 'The wave broke through — regroup and re-enter';
+                    const run = summaryPayload.gauntlet;
+                    const fought = run?.wave_fought;
+                    const next = run?.next_wave;
+                    if (fought && next) {
+                        const foughtNumber = Math.max(1, Number(fought.wave_number) || 1);
+                        const nextSize = Math.max(0, Number(next.wave_size) || 0);
+                        const nextTier = String(next.tier || '').trim();
+                        const streakAfter = Math.max(0, Number(run.streak_after) || 0);
+                        if (won) {
+                            verdictSub = `Wave ${foughtNumber} held · next: ${nextSize} ships${nextTier ? `, ${nextTier}` : ''}`;
+                            if (run.new_record && streakAfter > 1) {
+                                verdictSub += ` · new record: ${streakAfter} in a row`;
+                            }
+                        } else {
+                            verdictSub = `Fell on wave ${foughtNumber} · the gauntlet resets to wave 1`;
+                        }
+                    } else {
+                        verdictSub = won
+                            ? 'You and the models beat back the wave'
+                            : 'The wave broke through — regroup and re-enter';
+                    }
                 } else {
                     verdictText = won ? 'VICTORY' : 'DEFEAT';
                     verdictSub = margin > 0 ? `Final margin: ${margin}` : 'Decided on the tiebreaker';
@@ -1307,6 +1325,30 @@ export function createUIManager(getCtx) {
                 try { navigator.vibrate([14, 12, 16]); } catch (_) {}
             }
             ctx.log(`Wall slam impact registered (speed=${impactSpeed.toFixed(1)}).`, 'warn');
+            return true;
+        }
+
+        if (eventName === 'gauntlet_wave' && payload && typeof payload === 'object') {
+            gauntletWaveStatus = { ...(gauntletWaveStatus || {}), ...payload };
+            renderScoreboardGauntletWave();
+            const number = Math.max(1, Number(payload.wave_number) || 1);
+            const size = Math.max(0, Number(payload.wave_size) || 0);
+            const tier = String(payload.tier || '').trim();
+            const introText = `WAVE ${number} INCOMING · ${size} ships${tier ? ` · ${tier}` : ''}`;
+            // The objective banner is rewritten every few hundred ms by
+            // pickup/zone announcements, so a wave notice there is clobbered
+            // instantly. The mode-intro overlay is held for its duration.
+            const nowMs = Date.now();
+            if (ctx.combatUiState) {
+                ctx.combatUiState.gauntletWaveIntro = { text: introText, atMs: nowMs };
+                ctx.combatUiState.modeIntroUntilMs = nowMs + 6000;
+            }
+            const introDiv = document.getElementById('gameModeIntro');
+            if (introDiv) {
+                introDiv.textContent = introText;
+                introDiv.classList.add('mode-intro--visible');
+            }
+            ctx.log(`Gauntlet wave ${number} started (${size} ${tier || 'wave'} bots).`, 'info');
             return true;
         }
 
@@ -2310,6 +2352,41 @@ export function createUIManager(getCtx) {
     let fullRosterPlayers = null;
     let fullRosterFetchedAt = 0;
     let fullRosterPollTimer = null;
+    // Latest gauntlet wave/streak from either the scoreboard poll or the
+    // match-start `gauntlet_wave` system event.
+    let gauntletWaveStatus = null;
+
+    function formatGauntletWave(wave) {
+        if (!wave || typeof wave !== 'object') return '';
+        const number = Math.max(1, Number(wave.wave_number) || 1);
+        const size = Math.max(0, Number(wave.wave_size) || 0);
+        const tier = String(wave.tier || '').trim();
+        let text = `Wave ${number} · ${size} ships`;
+        if (tier) text += ` · ${tier}`;
+        const best = Number(wave.best_streak);
+        if (Number.isFinite(best) && best > 0) text += ` · best ${best}`;
+        return text;
+    }
+
+    function gauntletTierClass(wave) {
+        const tier = String(wave?.tier || '').toLowerCase();
+        if (tier === 'hard') return 'scoreboard-gauntlet-wave--hard';
+        if (tier === 'normal') return 'scoreboard-gauntlet-wave--normal';
+        return '';
+    }
+
+    function renderScoreboardGauntletWave() {
+        const badge = document.getElementById('scoreboardGauntletWave');
+        if (!badge) return;
+        const text = formatGauntletWave(gauntletWaveStatus);
+        if (!text) {
+            badge.hidden = true;
+            return;
+        }
+        badge.textContent = text;
+        badge.className = `scoreboard-gauntlet-wave ${gauntletTierClass(gauntletWaveStatus)}`.trim();
+        badge.hidden = false;
+    }
 
     async function fetchFullRosterScoreboard() {
         try {
@@ -2321,6 +2398,11 @@ export function createUIManager(getCtx) {
             if (!payload || !Array.isArray(payload.players)) return;
             fullRosterPlayers = payload.players;
             fullRosterFetchedAt = performance.now();
+            if (payload.gauntlet_wave && typeof payload.gauntlet_wave === 'object') {
+                gauntletWaveStatus = payload.gauntlet_wave;
+            } else if (!payload.coop_gauntlet) {
+                gauntletWaveStatus = null;
+            }
             updateScoreboard();
         } catch (_) {
             /* keep the AoI fallback */
@@ -2369,6 +2451,7 @@ export function createUIManager(getCtx) {
 
         const sortedPlayers = scoreboardPlayers(ctx).sort((a, b) => b.score - a.score);
         const scoreboardContentDiv = document.getElementById('scoreboardContent');
+        renderScoreboardGauntletWave();
 
         const ffaScoreboardSection = document.getElementById('ffaScoreboardSection');
         const teamScoreboardSection = document.getElementById('teamScoreboardSection');
