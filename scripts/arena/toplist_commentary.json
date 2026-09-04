@@ -1,7 +1,7 @@
 {
   "comment": "Analyst toplist for the Continuous Model League. Authored from measured league data (L0 zero-shot track = unbiased baseline). Refresh when the league meaningfully changes. Keyed by roster slug prefix.",
-  "generated_at": "2026-09-04T00:07:02.326Z",
-  "league_day": 12,
+  "generated_at": "2026-09-04T11:00:17.633Z",
+  "league_day": 13,
   "entries": [
     {
       "slug": "google/gemini-3.5-flash-lite",
@@ -90,14 +90,26 @@
     {
       "slug": "openai/gpt-5.6-luna",
       "rank": 12,
-      "headline": "The league's first hard lesson.",
-      "commentary": "Retired at 12.9, the weakest sustained performance ever recorded here — it never once crossed 14 in six days. Whatever OpenAI ships next, the bar will be waiting."
+      "headline": "The moon returns.",
+      "commentary": "Re-recruited after her cooldown at 27.8 and already near the bar again. Four entries, three retirements. The arena and the charts disagree about this model, and the arena is the one with the scoreboard."
     },
     {
       "slug": "tencent/hy4-preview",
       "rank": 7,
       "headline": "The avenger arrives.",
       "commentary": "Recruited within the hour of the double retirement — a name nobody here has seen fight. Provisional 50.0, no scar tissue, and a fallen housemate to avenge. First board tomorrow."
+    },
+    {
+      "slug": "anthropic/claude-4.6-opus",
+      "rank": 2,
+      "headline": "The house war.",
+      "commentary": "75.3 in L2 — ahead of housemate Claude Opus 5, the model that led from opening day. The new Claude build fights its own family for the table. This is the league's best current subplot."
+    },
+    {
+      "slug": "openai/gpt-5.6-sol-pro",
+      "rank": 3,
+      "headline": "The latest rocket.",
+      "commentary": "87.8 in L1 on debut — third-highest rating posted this season. If it holds the week, the veterans have a new problem."
     }
   ]
 }
