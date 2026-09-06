@@ -37,6 +37,12 @@
 //      generated through the server admin API (the runner only generates
 //      full rosters) with the track's compile-attempt policy (L0: 1, L1+: 3).
 //      Skipped entirely in --shadow mode.
+//   5. fast lane — once per cycle across the whole league (after every
+//      track's retire step): scout the OpenRouter catalog for models created
+//      in the last 14 days and recruit at most 2/day total (shared artifact
+//      copied to all tracks; full tracks displace their bottom-rated
+//      ≥3-day model through the normal retirement path). Skipped in
+//      --shadow mode.
 //
 // --track <ID> runs a single track. --shadow mode never touches the live
 // state dir: it uses <stateDir>-shadow (or ARENA_CONTINUOUS_SHADOW_DIR).
@@ -73,9 +79,11 @@ import {
   TRACKS,
   applyBattleRatings,
   daysInLeague,
+  displacementCandidate,
   eligibleChallengers,
   feedbackDue,
   nextVersion,
+  scoutNewReleases,
   shouldRetire,
   trackPolicy,
   winRate,
@@ -89,6 +97,7 @@ import {
   entrantFromChallenger,
   entrantFromCheckpoint,
   fetchEligibleRanking,
+  fetchModelCatalog,
   fighterKeyFor,
   generateFighter,
   loadCodeStatus,
@@ -467,6 +476,35 @@ async function evaluateWithRebind(context) {
   }
 }
 
+/**
+ * Move one roster entry into the track's retired ledger with a reason and a
+ * final-stats announcement — the single retirement path shared by the
+ * retirement bar and fast-lane displacement (so publishing/Hall-of-Fame sees
+ * one shape).
+ */
+function retireModelEntry({ track, trackId, entry, reason, at, log }) {
+  track.retired.push({ ...entry, retired_at: at, reason });
+  track.announcements.push({
+    type: 'retirement',
+    track: trackId,
+    model_id: entry.model_id,
+    slug: entry.slug,
+    mascot: entry.mascot,
+    reason,
+    stats: {
+      rating: entry.rating,
+      wins: entry.wins,
+      losses: entry.losses,
+      draws: entry.draws,
+      matches: entry.matches,
+      days_in_league: entry.days_in_league,
+      submissions_used: entry.submissions_used,
+    },
+    at,
+  });
+  log(`retire: ${entry.model_id} (${reason})`);
+}
+
 /** Step 2 — retire track models under the bar into the track's hall of fame. */
 function retireExhausted({ track, trackId, policy, log, nowMs }) {
   const at = new Date(nowMs).toISOString();
@@ -483,26 +521,7 @@ function retireExhausted({ track, trackId, policy, log, nowMs }) {
     }
     const reason = `${entry.days_in_league} days in track ${trackId}, `
       + `submissions ${entry.submissions_used}/${policy.maxSubmissions}: ${reasons.join(' and ')}`;
-    track.retired.push({ ...entry, retired_at: at, reason });
-    track.announcements.push({
-      type: 'retirement',
-      track: trackId,
-      model_id: entry.model_id,
-      slug: entry.slug,
-      mascot: entry.mascot,
-      reason,
-      stats: {
-        rating: entry.rating,
-        wins: entry.wins,
-        losses: entry.losses,
-        draws: entry.draws,
-        matches: entry.matches,
-        days_in_league: entry.days_in_league,
-        submissions_used: entry.submissions_used,
-      },
-      at,
-    });
-    log(`retire: ${entry.model_id} (${reason})`);
+    retireModelEntry({ track, trackId, entry, reason, at, log });
   }
   track.roster = staying;
 }
@@ -1098,6 +1117,152 @@ export async function runTrackCycle({
   return track;
 }
 
+/** Error classification for the fast-lane cost guard: OpenRouter
+ * 402/403/429 (payment/auth/rate-limit) means the failure is not the
+ * model's fault — skip without recording into the cooldown ledger. */
+const PROVIDER_PAYMENT_OR_RATE_LIMIT = /\b(402|403|429)\b|payment|insufficient|rate.?limit/i;
+
+/**
+ * New-release fast lane (league-level, once per daily cycle, after every
+ * track's retire step). Scouts the OpenRouter catalog for models created in
+ * the last 14 days (not on any roster, not recently retired, not in the
+ * recruit-failure cooldown) and recruits at most FAST_LANE_DAILY_CAP per day
+ * across the WHOLE league: one codegen per model, the compiled artifact
+ * copied to all four tracks. A full track displaces its bottom-rated model
+ * with ≥3 days tenure through the normal retirement path; a full track with
+ * no tenured model is simply not joined. Payment/rate-limit failures skip
+ * without a cooldown entry; genuine codegen/compile failures record into
+ * recruit_failures per the existing 7-day cooldown.
+ */
+async function fastLaneRecruit({ state, stateDirectory, rootDirectory, deps, log, nowMs }) {
+  const fetchCatalog = deps.fetchCatalog ?? (() => fetchModelCatalog({ log: () => {} }));
+  let catalogModels;
+  try {
+    const catalog = await fetchCatalog();
+    if (!Array.isArray(catalog?.models)) throw new Error('catalog did not return a model list');
+    catalogModels = catalog.models;
+  } catch (error) {
+    log(`fast lane: skipped, catalog unavailable: ${String(error?.message || error).slice(0, 300)}`);
+    return;
+  }
+  state.recruit_failures ??= {};
+  const candidates = scoutNewReleases(catalogModels, state, nowMs, {
+    recruitFailures: state.recruit_failures,
+  });
+  if (candidates.length === 0) {
+    log('fast lane: no eligible new releases');
+    return;
+  }
+  const adminToken = deps.adminToken ?? await readAdminToken();
+  const apiBase = deps.apiBase ?? apiBaseFromEnv();
+  const at = new Date(nowMs).toISOString();
+  for (const challenger of candidates) {
+    const providerId = String(challenger.id);
+    const slug = String(challenger.canonical_slug || providerId);
+    let generated;
+    try {
+      const entrant = entrantFromChallenger(
+        challenger,
+        `continuous-${state.league_id}-fastlane`,
+        at,
+      );
+      generated = deps.generateFighter
+        ? await deps.generateFighter({ apiBase, adminToken, entrant })
+        : await generateFighter({
+          apiBase,
+          adminToken,
+          entrant,
+          compileAttempts: 3,
+          apiClient: deps.apiClient ?? arenaApiJson,
+        });
+    } catch (error) {
+      if (PROVIDER_PAYMENT_OR_RATE_LIMIT.test(String(error?.message || error))) {
+        log(`fast lane: ${providerId} skipped (provider payment/rate-limit; not recorded)`);
+      } else {
+        state.recruit_failures[providerId] = at;
+        log(
+          `fast lane: generation failed for ${providerId}: `
+          + `${String(error?.message || error).slice(0, 300)}; recorded in the cooldown ledger`,
+        );
+      }
+      continue;
+    }
+    const meta = {
+      model_id: providerId,
+      slug,
+      model_name: challenger.name || providerId,
+      reasoning_policy: { ...challenger.reasoning_policy },
+      pricing: challenger.pricing ?? null,
+      context_length: challenger.context_length ?? null,
+      created: challenger.created ?? null,
+    };
+    const mascot = mascotFor(providerId);
+    for (const trackId of TRACKS) {
+      const track = state.tracks[trackId];
+      const trackDirectory = trackDirectoryFor(stateDirectory, trackId);
+      if (track.roster.length >= MAX_ROSTER_SIZE) {
+        const displaced = displacementCandidate(track.roster);
+        if (!displaced) {
+          log(`fast lane: track ${trackId} is full with no tenured model; ${providerId} not added`);
+          continue;
+        }
+        track.roster = track.roster.filter((entry) => entry.model_id !== displaced.model_id);
+        retireModelEntry({
+          track,
+          trackId,
+          entry: displaced,
+          reason: `displaced by fresh challenger ${providerId}`,
+          at,
+          log,
+        });
+      }
+      if (deps.writeFighter) {
+        await deps.writeFighter(trackDirectory, providerId, {
+          checkpoint: generated.checkpoint,
+          source: generated.source,
+          meta,
+        });
+      } else {
+        await writeFighterRecord(trackDirectory, providerId, {
+          checkpoint: generated.checkpoint,
+          source: generated.source,
+          meta,
+        });
+      }
+      track.roster.push({
+        model_id: providerId,
+        slug,
+        mascot,
+        joined_at: at,
+        submissions_used: 1,
+        artifact: {
+          wasm_sha256: generated.checkpoint.wasm_sha256,
+          source_sha256: generated.checkpoint.source_sha256,
+          prompt_sha256: generated.checkpoint.prompt_sha256,
+          version: 1,
+          parent_version: null,
+        },
+        rating: 50,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        matches: 0,
+        days_in_league: 0,
+        status: 'active',
+      });
+      track.announcements.push({
+        type: 'fresh_challenger',
+        track: trackId,
+        model_id: providerId,
+        slug,
+        mascot,
+        at,
+      });
+      log(`fast lane: ${providerId} enters track ${trackId}`);
+    }
+  }
+}
+
 /**
  * Run one cycle across the league's tracks (all four, or just flags.track).
  * Tracks are isolated: a failure in one track is logged and the remaining
@@ -1113,6 +1278,7 @@ export async function runCycle({
 }) {
   const trackIds = flags.track ? [flags.track] : TRACKS;
   const nowMs = deps.nowMs ?? Date.now();
+  const log = deps.log ?? ((line) => process.stdout.write(`[arena-continuous] ${line}\n`));
   const errorLog = deps.errorLog
     ?? ((line) => process.stderr.write(`[arena-continuous] ${line}\n`));
   // League-level recruit-failure cooldown ledger (added in the top-40
@@ -1153,6 +1319,20 @@ export async function runCycle({
       }
     }
   }
+
+  // New-release fast lane: once per cycle across the whole league, after
+  // every track's retire step. Skipped in shadow mode (no codegen calls),
+  // and its failures never block the cycle's state write.
+  if (flags.shadow) {
+    log('shadow: fast lane skipped');
+  } else {
+    try {
+      await fastLaneRecruit({ state, stateDirectory, rootDirectory, deps, log, nowMs });
+    } catch (error) {
+      errorLog(`fast lane: failed: ${String(error?.message || error).slice(0, MAX_ERROR_CHARS)}`);
+    }
+  }
+
   state.updated_at = new Date(nowMs).toISOString();
   return state;
 }

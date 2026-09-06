@@ -7,13 +7,16 @@ import {
   MAX_SUBMISSIONS,
   RETIRE_COOLDOWN_MS,
   applyBattleRatings,
+  displacementCandidate,
   eligibleChallengers,
   feedbackDue,
   nextVersion,
+  scoutNewReleases,
   shouldRetire,
   trackPolicy,
   winRate,
 } from '../league.mjs';
+import { createState } from '../state.mjs';
 
 const NOW = Date.parse('2026-08-23T00:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -287,4 +290,61 @@ test('eligibleChallengers skips models whose generation failed within 7 days', (
   // Without the ledger nothing is cooldown-excluded.
   assert.equal(eligibleChallengers(ranking, state, NOW).length, 4);
   assert.equal(eligibleChallengers(ranking, state, NOW, {}).length, 4);
+});
+
+// --- New-release fast lane ---------------------------------------------------
+
+function catalogEntry(id, createdMs, slug = null) {
+  return {
+    id,
+    canonical_slug: slug ?? `${id}-20260831`,
+    name: `Vendor: ${id}`,
+    created: Math.floor(createdMs / 1000),
+  };
+}
+
+test('scoutNewReleases filters window, exclusions, ordering, and the daily cap', () => {
+  const state = createState({ now: new Date(NOW), leagueId: 'cml-scout' });
+  state.tracks.L1.roster.push(model({ model_id: 'vendor/on-roster' }));
+  state.tracks.L3.retired.push({
+    ...model({ model_id: 'vendor/retired-recently' }),
+    retired_at: new Date(NOW - 2 * DAY_MS).toISOString(),
+    reason: 'bar',
+  });
+  const catalog = [
+    catalogEntry('vendor/old-20d', NOW - 20 * DAY_MS),
+    catalogEntry('vendor/newest', NOW - 1 * DAY_MS),
+    catalogEntry('vendor/on-roster', NOW - 2 * DAY_MS),
+    catalogEntry('vendor/retired-recently', NOW - 3 * DAY_MS),
+    catalogEntry('vendor/middle', NOW - 5 * DAY_MS),
+    catalogEntry('vendor/older-13d', NOW - 13 * DAY_MS),
+    catalogEntry('vendor/cooldown', NOW - 4 * DAY_MS),
+    catalogEntry('vendor/future', NOW + DAY_MS),
+    catalogEntry('vendor/no-created', 0),
+  ];
+  const failures = { 'vendor/cooldown': new Date(NOW - DAY_MS).toISOString() };
+  const picks = scoutNewReleases(catalog, state, NOW, { recruitFailures: failures });
+  // newest-first, capped at 2; the 13d-old model would be third.
+  assert.deepEqual(picks.map((entry) => entry.id), ['vendor/newest', 'vendor/middle']);
+  const all = scoutNewReleases(catalog, state, NOW, { cap: 10, recruitFailures: failures });
+  assert.deepEqual(all.map((entry) => entry.id), ['vendor/newest', 'vendor/middle', 'vendor/older-13d']);
+});
+
+test('displacementCandidate picks the bottom-rated tenured model only', () => {
+  const sub = (id, rating) => model({
+    model_id: id,
+    rating,
+    joined_at: new Date(NOW).toISOString(),
+    days_in_league: 0,
+  });
+  // All sub-tenure: nobody may be displaced.
+  assert.equal(displacementCandidate([sub('vendor/a', 10), sub('vendor/b', 90)]), null);
+  const tenured = [
+    sub('vendor/a', 10),
+    model({ model_id: 'vendor/old-high', rating: 90, days_in_league: 5 }),
+    model({ model_id: 'vendor/old-low', rating: 20, days_in_league: 4 }),
+  ];
+  // Bottom-rated WITH tenure >= 3 days: vendor/old-low (not vendor/a at 10).
+  assert.equal(displacementCandidate(tenured).model_id, 'vendor/old-low');
+  assert.equal(displacementCandidate([]), null);
 });

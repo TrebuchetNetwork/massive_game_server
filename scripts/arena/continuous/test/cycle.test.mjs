@@ -1293,6 +1293,7 @@ test('--track runs only the selected track', async () => {
       nowMs: NOW,
       log: (line) => logs.push(line),
       fetchRanking: async () => ({ models: [rankingEntry('vendor/model-0', 1)] }),
+      fetchCatalog: async () => ({ models: [] }),
       adminToken: 'test-token',
       apiBase: 'http://127.0.0.1:9',
     },
@@ -2008,4 +2009,200 @@ test('a failed revision is retried under a fresh journal, not phantom re-consume
     [[2, 2, 'compile_failed'], [3, 2, 'accepted']],
   );
   validateTrackSlice(accepted, 'L2');
+});
+
+// --- New-release fast lane (cycle wiring) ------------------------------------
+
+function catalogModel(id, createdMs, slug = null) {
+  return {
+    provider_rank: 1,
+    id,
+    canonical_slug: slug ?? `${id}-20260831`,
+    name: `Vendor: ${id}`,
+    pricing: null,
+    context_length: 1000000,
+    created: Math.floor(createdMs / 1000),
+    reasoning_policy: { ...REASONING_POLICY },
+  };
+}
+
+function fastLaneDeps(catalog, overrides = {}) {
+  return {
+    nowMs: NOW,
+    log: () => {},
+    errorLog: () => {},
+    fetchRanking: async () => ({ models: [] }),
+    fetchCatalog: async () => ({ models: catalog }),
+    generateFighter: async ({ entrant }) => ({
+      checkpoint: {
+        wasm_sha256: sha('d'),
+        source_sha256: sha('e'),
+        prompt_sha256: sha('f'),
+      },
+      source: 'fn bot_tick_v2() {}\n',
+    }),
+    adminToken: 'test-token',
+    apiBase: 'http://127.0.0.1:9',
+    ...overrides,
+  };
+}
+
+function fastLaneState() {
+  const state = createState({ now: new Date(NOW), leagueId: 'cml-test' });
+  const keeper = model({
+    model_id: 'vendor/keeper',
+    joined_at: new Date(NOW).toISOString(),
+    days_in_league: 0,
+  });
+  for (const trackId of ALL_TRACKS) {
+    state.tracks[trackId].roster.push({ ...keeper });
+    state.tracks[trackId].last_feedback_at = new Date(NOW).toISOString();
+  }
+  return state;
+}
+
+test('fast lane recruits up to 2 new releases into all tracks with one artifact each', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const state = fastLaneState();
+  const catalog = [
+    catalogModel('vendor/newest', NOW - DAY_MS),
+    catalogModel('vendor/middle', NOW - 3 * DAY_MS),
+    catalogModel('vendor/too-old', NOW - 20 * DAY_MS),
+    catalogModel('vendor/keeper', NOW - 2 * DAY_MS),
+  ];
+  const generatedFor = [];
+  const next = await runCycle({
+    state,
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: fastLaneDeps(catalog, {
+      generateFighter: async ({ entrant }) => {
+        generatedFor.push(entrant.provider_model);
+        return fastLaneDeps([]).generateFighter({ entrant });
+      },
+    }),
+  });
+
+  // ≤2/day, newest first, one codegen per model (not four).
+  assert.deepEqual(generatedFor, ['vendor/newest', 'vendor/middle']);
+  for (const trackId of ALL_TRACKS) {
+    const roster = next.tracks[trackId].roster;
+    assert.equal(roster.length, 3, trackId);
+    for (const id of ['vendor/newest', 'vendor/middle']) {
+      const entry = roster.find((candidate) => candidate.model_id === id);
+      assert.equal(entry.submissions_used, 1);
+      assert.equal(entry.artifact.version, 1);
+      assert.equal(entry.rating, 50);
+    }
+    const announcements = next.tracks[trackId].announcements.filter((a) => a.type === 'fresh_challenger');
+    assert.deepEqual(announcements.map((a) => a.model_id), ['vendor/newest', 'vendor/middle'], trackId);
+    assert.equal(announcements[0].track, trackId);
+    // Shared artifact copied into this track's fighter store.
+    const fighter = JSON.parse(await fs.readFile(
+      path.join(stateDir, 'tracks', trackId, 'fighters', 'vendor__newest', 'checkpoint.json'),
+      'utf8',
+    ));
+    assert.equal(fighter.wasm_sha256, sha('d'));
+  }
+  assert.deepEqual(Object.keys(next.recruit_failures), []);
+  validateState(next);
+});
+
+test('fast lane displaces the bottom-rated tenured model in full tracks only', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const state = fastLaneState();
+  const bottom = model({
+    model_id: 'vendor/bottom',
+    rating: 40,
+    wins: 5,
+    losses: 5,
+    matches: 10,
+    joined_at: new Date(NOW - 5 * DAY_MS).toISOString(),
+    days_in_league: 5,
+  });
+  state.tracks.L0.roster = [
+    ...Array.from({ length: 39 }, (_, index) => model({
+      model_id: `vendor/fill-${index}`,
+      rating: 90 - index,
+      joined_at: new Date(NOW - 5 * DAY_MS).toISOString(),
+    })),
+    bottom,
+  ];
+  // L1 is also full, but every model is sub-tenure: no displacement allowed.
+  state.tracks.L1.roster = Array.from({ length: 40 }, (_, index) => model({
+    model_id: `vendor/young-${index}`,
+    rating: 90 - index,
+    joined_at: new Date(NOW).toISOString(),
+    days_in_league: 0,
+  }));
+  const catalog = [catalogModel('vendor/fresh', NOW - DAY_MS)];
+  const next = await runCycle({
+    state,
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: fastLaneDeps(catalog),
+  });
+
+  // L0: bottom displaced through the normal retirement path, fresh added.
+  const l0 = next.tracks.L0;
+  assert.equal(l0.roster.length, 40);
+  assert.ok(l0.roster.some((entry) => entry.model_id === 'vendor/fresh'));
+  assert.ok(!l0.roster.some((entry) => entry.model_id === 'vendor/bottom'));
+  assert.equal(l0.retired.length, 1);
+  assert.equal(l0.retired[0].model_id, 'vendor/bottom');
+  assert.equal(l0.retired[0].reason, 'displaced by fresh challenger vendor/fresh');
+  const retirement = l0.announcements.find((a) => a.type === 'retirement');
+  assert.equal(retirement.reason, 'displaced by fresh challenger vendor/fresh');
+  assert.equal(retirement.stats.rating, 40);
+
+  // L1: full with no tenured model — not joined, nobody displaced.
+  const l1 = next.tracks.L1;
+  assert.equal(l1.roster.length, 40);
+  assert.ok(!l1.roster.some((entry) => entry.model_id === 'vendor/fresh'));
+  assert.equal(l1.retired.length, 0);
+
+  // Sub-full tracks just add.
+  assert.ok(next.tracks.L2.roster.some((entry) => entry.model_id === 'vendor/fresh'));
+  assert.ok(next.tracks.L3.roster.some((entry) => entry.model_id === 'vendor/fresh'));
+  validateState(next);
+});
+
+test('fast lane cost guards: payment errors skip unrecorded, genuine failures record', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const state = fastLaneState();
+  const catalog = [catalogModel('vendor/fresh', NOW - DAY_MS)];
+  // 402 payment required: no roster change, nothing recorded.
+  const payment = await runCycle({
+    state,
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: fastLaneDeps(catalog, {
+      generateFighter: async () => {
+        throw new Error('POST /api/arena/code/generate failed with HTTP 402');
+      },
+    }),
+  });
+  assert.equal(payment.tracks.L2.roster.length, 1);
+  assert.deepEqual(Object.keys(payment.recruit_failures), []);
+  validateState(payment);
+
+  // Genuine compile failure: recorded in the cooldown ledger.
+  const { stateDir: stateDir2, rootDir: rootDir2 } = await tempDirs();
+  const genuine = await runCycle({
+    state: fastLaneState(),
+    flags: { shadow: false },
+    stateDirectory: stateDir2,
+    rootDirectory: rootDir2,
+    deps: fastLaneDeps(catalog, {
+      generateFighter: async () => {
+        throw new Error('fighter compilation failed: error[E0308]');
+      },
+    }),
+  });
+  assert.equal(genuine.tracks.L2.roster.length, 1);
+  assert.equal(genuine.recruit_failures['vendor/fresh'], new Date(NOW).toISOString());
+  validateState(genuine);
 });

@@ -14,6 +14,83 @@ export const RETIRE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 // cycle burns paid provider calls on a likely-repeat failure.
 export const RECRUIT_FAILURE_COOLDOWN_MS = RETIRE_COOLDOWN_MS;
 
+// New-release fast lane: models created within this window qualify as fresh
+// challengers; at most FAST_LANE_DAILY_CAP enter the league per daily cycle
+// (shared across all four tracks, one artifact copied per track).
+export const NEW_RELEASE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+export const FAST_LANE_DAILY_CAP = 2;
+
+const entryKeys = (id, slug) => [id, slug].filter(Boolean).map(String);
+
+function recentlyFailed(id, slug, recruitFailures, nowMs) {
+  for (const key of entryKeys(id, slug)) {
+    const failedAt = Date.parse(recruitFailures?.[key] || '');
+    if (Number.isFinite(failedAt) && Number(nowMs) - failedAt < RECRUIT_FAILURE_COOLDOWN_MS) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Scout the OpenRouter catalog for new-release challengers. Candidates are
+ * models whose `created` unix timestamp falls inside the last
+ * NEW_RELEASE_WINDOW_MS, excluding every model on ANY track's roster, any
+ * model retired within the last 7 days (in any track), and any model in the
+ * recruit-failure cooldown. Returns at most `cap` entries, newest first
+ * (ties broken by id for determinism). Pure: no IO, no mutation.
+ */
+export function scoutNewReleases(
+  catalogModels,
+  state,
+  nowMs,
+  { cap = FAST_LANE_DAILY_CAP, recruitFailures = {} } = {},
+) {
+  const excluded = new Set();
+  for (const track of Object.values(state?.tracks || {})) {
+    for (const entry of track?.roster || []) {
+      excluded.add(entry.model_id);
+      excluded.add(entry.slug);
+    }
+    for (const entry of track?.retired || []) {
+      const retiredAt = Date.parse(entry.retired_at || '');
+      if (Number.isFinite(retiredAt) && Number(nowMs) - retiredAt < RETIRE_COOLDOWN_MS) {
+        excluded.add(entry.model_id);
+        excluded.add(entry.slug);
+      }
+    }
+  }
+  return (Array.isArray(catalogModels) ? catalogModels : [])
+    .filter((entry) => {
+      const id = String(entry?.id || '');
+      if (!id || /:batch$/.test(id)) return false; // batch-endpoint duplicates, not new models
+      const createdMs = Number(entry?.created) * 1000;
+      if (!Number.isFinite(createdMs) || createdMs <= 0) return false;
+      if (createdMs > Number(nowMs)) return false;
+      if (Number(nowMs) - createdMs > NEW_RELEASE_WINDOW_MS) return false;
+      const slug = String(entry?.canonical_slug || '');
+      if (excluded.has(id) || (slug && excluded.has(slug))) return false;
+      return !recentlyFailed(id, slug, recruitFailures, nowMs);
+    })
+    .sort((a, b) => Number(b.created) - Number(a.created)
+      || String(a.id).localeCompare(String(b.id)))
+    .slice(0, cap);
+}
+
+/**
+ * Pick the model a full track displaces for a fresh challenger: the
+ * bottom-rated roster entry with at least RETIRE_MIN_DAYS tenure (rating
+ * ascending, slug descending for determinism). Returns null when the roster
+ * has no tenured model — sub-tenure models are never displaced.
+ */
+export function displacementCandidate(roster) {
+  const eligible = (Array.isArray(roster) ? roster : [])
+    .filter((entry) => (entry?.days_in_league ?? 0) >= RETIRE_MIN_DAYS);
+  if (eligible.length === 0) return null;
+  return eligible.sort((a, b) => (Number(a.rating) || 0) - (Number(b.rating) || 0)
+    || String(b.slug).localeCompare(String(a.slug)))[0];
+}
+
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**

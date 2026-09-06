@@ -494,6 +494,67 @@ export function entrantFromCheckpoint(checkpoint) {
 }
 
 const OPENROUTER_WEEKLY_RANKING_URL = 'https://openrouter.ai/api/v1/models?output_modalities=text&sort=top-weekly';
+const OPENROUTER_CATALOG_URL = 'https://openrouter.ai/api/v1/models?output_modalities=text';
+
+/** OpenRouter key for catalog reads: env, then env-pointed file; optional. */
+async function readOpenRouterKey({ env = process.env, readFile = fs.readFile } = {}) {
+  const direct = String(env.OPENROUTER_API_KEY || '').trim();
+  if (direct) return direct;
+  const filePath = String(env.OPENROUTER_API_KEY_FILE || '').trim();
+  if (!filePath) return null;
+  try {
+    return (await readFile(filePath, 'utf8')).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeOpenRouterModel(candidate, providerRank, log, context) {
+  const id = typeof candidate?.id === 'string' ? candidate.id.trim() : '';
+  if (!id) return null;
+  const modalities = candidate?.architecture?.output_modalities;
+  if (Array.isArray(modalities) && !modalities.includes('text')) return null;
+  let reasoningPolicy;
+  try {
+    reasoningPolicy = reasoningPolicyFromModelMetadata(candidate);
+  } catch (error) {
+    log(`${context}: skipping ${id} (${String(error?.message || error).slice(0, 160)})`);
+    return null;
+  }
+  return {
+    provider_rank: providerRank,
+    id,
+    canonical_slug: typeof candidate.canonical_slug === 'string' ? candidate.canonical_slug.trim() : null,
+    name: typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : id,
+    pricing: candidate.pricing || null,
+    context_length: Number.isFinite(Number(candidate.context_length)) ? Number(candidate.context_length) : null,
+    created: Number.isFinite(Number(candidate.created)) ? Number(candidate.created) : null,
+    reasoning_policy: reasoningPolicy,
+  };
+}
+
+async function fetchOpenRouterModels({ url, topModels, fetchImpl, log, context }) {
+  const headers = { Accept: 'application/json' };
+  const apiKey = await readOpenRouterKey();
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const response = await fetchImpl(url, {
+    headers,
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) {
+    throw new Error(`OpenRouter ${context} request failed with HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  const raw = Array.isArray(payload?.data) ? payload.data : payload?.models;
+  if (!Array.isArray(raw)) throw new Error(`${context} payload does not contain a model list`);
+  const models = [];
+  for (const candidate of raw) {
+    if (models.length >= topModels) break;
+    const normalized = normalizeOpenRouterModel(candidate, models.length + 1, log, context);
+    if (normalized) models.push(normalized);
+  }
+  return models;
+}
 
 /**
  * Fetch the live OpenRouter top-weekly ranking for recruit/bootstrap,
@@ -512,41 +573,35 @@ export async function fetchEligibleRanking({
   if (!Number.isSafeInteger(topModels) || topModels < 1) {
     throw new Error('topModels must be a positive safe integer');
   }
-  const response = await fetchImpl(OPENROUTER_WEEKLY_RANKING_URL, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(30_000),
+  const models = await fetchOpenRouterModels({
+    url: OPENROUTER_WEEKLY_RANKING_URL,
+    topModels,
+    fetchImpl,
+    log,
+    context: 'ranking',
   });
-  if (!response.ok) {
-    throw new Error(`OpenRouter ranking request failed with HTTP ${response.status}`);
-  }
-  const payload = await response.json();
-  const raw = Array.isArray(payload?.data) ? payload.data : payload?.models;
-  if (!Array.isArray(raw)) throw new Error('ranking payload does not contain a model list');
-  const models = [];
-  for (const candidate of raw) {
-    if (models.length >= topModels) break;
-    const id = typeof candidate?.id === 'string' ? candidate.id.trim() : '';
-    if (!id) continue;
-    const modalities = candidate?.architecture?.output_modalities;
-    if (Array.isArray(modalities) && !modalities.includes('text')) continue;
-    let reasoningPolicy;
-    try {
-      reasoningPolicy = reasoningPolicyFromModelMetadata(candidate);
-    } catch (error) {
-      log(`ranking: skipping ${id} (${String(error?.message || error).slice(0, 160)})`);
-      continue;
-    }
-    models.push({
-      provider_rank: models.length + 1,
-      id,
-      canonical_slug: typeof candidate.canonical_slug === 'string' ? candidate.canonical_slug.trim() : null,
-      name: typeof candidate.name === 'string' && candidate.name.trim() ? candidate.name.trim() : id,
-      pricing: candidate.pricing || null,
-      context_length: Number.isFinite(Number(candidate.context_length)) ? Number(candidate.context_length) : null,
-      created: Number.isFinite(Number(candidate.created)) ? Number(candidate.created) : null,
-      reasoning_policy: reasoningPolicy,
-    });
-  }
+  return { models };
+}
+
+/**
+ * Fetch the OpenRouter model catalog (entries carry `created` unix
+ * timestamps) for the new-release fast lane, with the same key the
+ * generation path uses when one is configured. Same tolerance as the
+ * ranking fetch: entries with unusable reasoning metadata are skipped and
+ * logged. Returns { models } (catalog order).
+ */
+export async function fetchModelCatalog({
+  topModels = 500,
+  fetchImpl = fetch,
+  log = () => {},
+} = {}) {
+  const models = await fetchOpenRouterModels({
+    url: OPENROUTER_CATALOG_URL,
+    topModels,
+    fetchImpl,
+    log,
+    context: 'catalog',
+  });
   return { models };
 }
 
