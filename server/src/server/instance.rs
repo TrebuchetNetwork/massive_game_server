@@ -238,6 +238,7 @@ fn default_instance_env_config() -> InstanceEnv {
         join_authoritative_aoi_snapshot_enabled: false,
         dynamic_mode_transitions_enabled: false,
         coop_gauntlet_enabled: false,
+        coop_gauntlet_on_demand: false,
         gauntlet_ally_bots: 10,
         gauntlet_wave_base: None,
         gauntlet_wave_step: DEFAULT_GAUNTLET_WAVE_STEP,
@@ -297,8 +298,20 @@ fn dynamic_mode_transitions_enabled() -> bool {
     instance_env_config().dynamic_mode_transitions_enabled
 }
 
-pub(crate) fn coop_gauntlet_enabled() -> bool {
+/// Gauntlet configured at all (always-on or on-demand).
+pub(crate) fn coop_gauntlet_configured() -> bool {
     instance_env_config().coop_gauntlet_enabled
+}
+
+fn coop_gauntlet_on_demand() -> bool {
+    instance_env_config().coop_gauntlet_on_demand
+}
+
+/// Gauntlet rules in force right now. Always-on servers answer the config
+/// flag; on-demand servers answer the activation decided at the last match
+/// reset (see `gauntlet::sync_gauntlet_activation`).
+pub(crate) fn coop_gauntlet_enabled() -> bool {
+    coop_gauntlet_configured() && (!coop_gauntlet_on_demand() || gauntlet::gauntlet_active())
 }
 
 pub(crate) fn gauntlet_ally_bots() -> usize {
@@ -949,6 +962,9 @@ impl MassiveGameServer {
             } else {
                 return None;
             };
+        if created && !requested_spectator {
+            self.note_human_joined();
+        }
 
         if let Some(mut player_state) = self
             .player_manager

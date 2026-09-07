@@ -756,6 +756,9 @@ fn register_data_channel_handler(
                 "[{}] Player spawned at ({}, {})",
                 current_peer_id_on_open_cb, initial_spawn_pos.x, initial_spawn_pos.y
             );
+            if !requested_spectator {
+                server_instance_on_open.note_human_joined();
+            }
 
             if let Some(mut p_state_entry) =
                 player_manager_on_open.get_player_state_mut(&new_player_id_arc_for_team)

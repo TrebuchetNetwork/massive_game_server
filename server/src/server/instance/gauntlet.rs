@@ -14,6 +14,10 @@
 use super::*;
 use std::sync::atomic::{AtomicU32, AtomicU8};
 
+/// On-demand: when a human joins a running non-gauntlet match, the match is
+/// wound down to this many seconds so the gauntlet can form.
+const ON_DEMAND_FAST_FORWARD_SECS: f32 = 12.0;
+
 /// Default per-wave size increment when `MGS_GAUNTLET_WAVE_STEP` is unset.
 pub(crate) const DEFAULT_GAUNTLET_WAVE_STEP: usize = 2;
 /// Default wave-size ceiling when `MGS_GAUNTLET_WAVE_MAX` is unset:
@@ -138,11 +142,20 @@ static WAVE_TIER: AtomicU8 = AtomicU8::new(GauntletWaveTier::Easy as u8);
 /// Wave-1 size resolved at bootstrap (env override or configured target
 /// minus allies); later waves grow from it.
 static BASE_WAVE_SIZE: AtomicU32 = AtomicU32::new(0);
+/// Bot target from env/defaults, restored when the on-demand gauntlet stands
+/// down and the league rotation takes the floor again.
+static CONFIGURED_TARGET_BOT_COUNT: AtomicU32 = AtomicU32::new(0);
+/// On-demand activation: gauntlet rules apply to the current/next match.
+static GAUNTLET_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Current wave mechanics tier as `GauntletWaveTier as u8` (0 Easy, 1
 /// Normal, 2 Hard). Read every bot tick, so kept atomic.
 pub(crate) fn gauntlet_wave_tier_index() -> u8 {
     WAVE_TIER.load(AtomicOrdering::Relaxed)
+}
+
+pub(super) fn gauntlet_active() -> bool {
+    GAUNTLET_ACTIVE.load(AtomicOrdering::Relaxed)
 }
 
 fn progress_file_path(store_dir: &Path) -> PathBuf {
@@ -185,9 +198,14 @@ fn save_progress(store_dir: &Path, progress: &GauntletProgress) -> Result<(), St
 /// target the server should start with. Called once from the constructor
 /// before the initial bot spawn; a no-op passthrough outside the gauntlet.
 pub(super) fn bootstrap_gauntlet(store_dir: &Path, configured_target_bot_count: usize) -> usize {
-    if !coop_gauntlet_enabled() {
+    if !coop_gauntlet_configured() {
         return configured_target_bot_count;
     }
+    CONFIGURED_TARGET_BOT_COUNT.store(configured_target_bot_count as u32, AtomicOrdering::Relaxed);
+    // Always-on servers start under gauntlet rules; on-demand servers boot
+    // with nobody connected, so the rotation runs until a human joins.
+    let start_active = !coop_gauntlet_on_demand();
+    GAUNTLET_ACTIVE.store(start_active, AtomicOrdering::Relaxed);
     let allies = gauntlet_ally_bots();
     let base = gauntlet_wave_base()
         .unwrap_or_else(|| configured_target_bot_count.saturating_sub(allies))
@@ -201,11 +219,21 @@ pub(super) fn bootstrap_gauntlet(store_dir: &Path, configured_target_bot_count: 
         AtomicOrdering::Relaxed,
     );
     info!(
-        "Co-op gauntlet resumed at wave {} ({} {} bots vs {} allies; streak={}, best={})",
-        wave.wave_number, wave.wave_size, wave.tier, allies, progress.streak, progress.best_streak
+        "Co-op gauntlet resumed at wave {} ({} {} bots vs {} allies; streak={}, best={}, {})",
+        wave.wave_number,
+        wave.wave_size,
+        wave.tier,
+        allies,
+        progress.streak,
+        progress.best_streak,
+        if start_active { "active" } else { "on demand: waiting for a human" }
     );
     *PROGRESS.write() = progress;
-    allies.saturating_add(wave.wave_size)
+    if start_active {
+        allies.saturating_add(wave.wave_size)
+    } else {
+        configured_target_bot_count
+    }
 }
 
 pub(super) fn gauntlet_wave_config() -> GauntletWaveConfig {
@@ -276,6 +304,100 @@ impl MassiveGameServer {
     /// Wave the alliance is currently facing (or about to face).
     pub(super) fn current_gauntlet_wave(&self) -> GauntletWave {
         gauntlet_wave_config().wave_for_streak(PROGRESS.read().streak)
+    }
+
+    /// Connected non-spectator humans.
+    pub(super) fn human_participant_count(&self) -> usize {
+        let mut count = 0usize;
+        self.player_manager.for_each_player(|player_id, state| {
+            if !state.is_spectator && !self.bot_players.contains_key(player_id) {
+                count += 1;
+            }
+        });
+        count
+    }
+
+    /// On-demand gauntlet: decide, at a match reset, whether the next match
+    /// runs under gauntlet rules (a human is here) or the league rotation
+    /// (nobody is). On a flip the bot population is rebuilt so team
+    /// composition (allies on team 1, generic wave on team 2, or balanced
+    /// exhibition teams) matches the new rules, and humans are moved onto
+    /// team 1 when the gauntlet forms. Must be called without the match
+    /// info lock held.
+    pub(super) fn sync_gauntlet_activation(&self) {
+        if !coop_gauntlet_configured() || !coop_gauntlet_on_demand() {
+            return;
+        }
+        let humans = self.human_participant_count();
+        let want_active = humans > 0;
+        let was_active = GAUNTLET_ACTIVE.swap(want_active, AtomicOrdering::Relaxed);
+        if was_active == want_active {
+            return;
+        }
+
+        let allies = gauntlet_ally_bots();
+        let next_target = if want_active {
+            let wave = self.current_gauntlet_wave();
+            info!(
+                "Gauntlet forming: {} human(s) present -> wave {} ({} {} bots) vs {} allies",
+                humans, wave.wave_number, wave.wave_size, wave.tier, allies
+            );
+            allies.saturating_add(wave.wave_size)
+        } else {
+            info!("Gauntlet standing down: no humans connected -> league rotation resumes");
+            CONFIGURED_TARGET_BOT_COUNT.load(AtomicOrdering::Relaxed) as usize
+        };
+        self.target_bot_count
+            .store(next_target as u64, AtomicOrdering::Relaxed);
+
+        if want_active {
+            // Every human joins the model roster's side; their spawn moves
+            // with them so nobody starts the run inside the wave's base.
+            let mut humans_to_move: Vec<PlayerID> = Vec::new();
+            self.player_manager.for_each_player(|player_id, state| {
+                if !state.is_spectator
+                    && !self.bot_players.contains_key(player_id)
+                    && state.team_id != 1
+                {
+                    humans_to_move.push(player_id.clone());
+                }
+            });
+            for player_id in humans_to_move {
+                let spawn = self
+                    .respawn_manager
+                    .get_respawn_position(self, &player_id, Some(1), &[]);
+                if let Some(mut state) = self.player_manager.get_player_state_mut(&player_id) {
+                    state.team_id = 1;
+                    state.is_carrying_flag_team_id = 0;
+                    state.respawn(spawn.x, spawn.y);
+                    state.mark_field_changed(FIELD_SCORE_STATS | FIELD_FLAG | FIELD_MISC);
+                }
+            }
+        }
+
+        // Rebuild the bot population under the new rules; the population
+        // manager refills to the new target on the following ticks.
+        let bot_count = self.bot_players.len();
+        self.remove_bots(bot_count);
+    }
+
+    /// A human just joined. In on-demand mode with the rotation running,
+    /// wind the current match down so the gauntlet can form instead of
+    /// making them sit through up to five minutes of spectator content.
+    pub fn note_human_joined(&self) {
+        if !coop_gauntlet_configured() || !coop_gauntlet_on_demand() || gauntlet_active() {
+            return;
+        }
+        let mut match_info = self.match_info.write();
+        if match_info.match_state == fb::MatchStateType::Active
+            && match_info.time_remaining > ON_DEMAND_FAST_FORWARD_SECS
+        {
+            info!(
+                "Human joined during the rotation: winding the match down from {:.0}s to {:.0}s so the gauntlet can form",
+                match_info.time_remaining, ON_DEMAND_FAST_FORWARD_SECS
+            );
+            match_info.time_remaining = ON_DEMAND_FAST_FORWARD_SECS;
+        }
     }
 
     /// Records the result of a finished gauntlet match, persists the streak

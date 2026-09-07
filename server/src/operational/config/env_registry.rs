@@ -75,6 +75,9 @@ pub struct InstanceEnv {
     pub join_authoritative_aoi_snapshot_enabled: bool,
     pub dynamic_mode_transitions_enabled: bool,
     pub coop_gauntlet_enabled: bool,
+    /// Gauntlet only while a human is playing; otherwise the league rotation
+    /// runs for spectators and highlights.
+    pub coop_gauntlet_on_demand: bool,
     pub gauntlet_ally_bots: usize,
     /// Wave-1 size; `None` derives it from `target_bot_count - allies`.
     pub gauntlet_wave_base: Option<usize>,
@@ -363,6 +366,11 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
     // Co-op gauntlet: humans + the exhibition model roster share team 1
     // against a generic bot wave on team 2, fixed TeamDeathmatch.
     let coop_gauntlet_enabled = parse_bool_with_default("MGS_COOP_GAUNTLET", false, &mut errors);
+    // On demand: with nobody connected the exhibition runs the (far more
+    // dynamic) league rotation; the gauntlet forms for the next match once a
+    // human joins and stands down after they leave.
+    let coop_gauntlet_on_demand =
+        parse_bool_with_default("MGS_COOP_GAUNTLET_ON_DEMAND", false, &mut errors);
     let gauntlet_ally_bots =
         parse_usize_with_default("MGS_GAUNTLET_ALLY_BOTS", 10, &mut errors);
     // Wave escalation: each wave held adds `step` bots (up to `max`) and the
@@ -588,6 +596,7 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
             join_authoritative_aoi_snapshot_enabled,
             dynamic_mode_transitions_enabled,
             coop_gauntlet_enabled,
+            coop_gauntlet_on_demand,
             gauntlet_ally_bots,
             gauntlet_wave_base,
             gauntlet_wave_step,

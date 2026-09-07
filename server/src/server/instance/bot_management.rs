@@ -533,7 +533,7 @@ impl MassiveGameServer {
         }
     }
 
-    fn remove_bots(&self, count: usize) {
+    pub(super) fn remove_bots(&self, count: usize) {
         if count == 0 {
             return;
         }

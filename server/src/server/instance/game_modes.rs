@@ -1076,6 +1076,10 @@ impl MassiveGameServer {
                     match_info_guard.match_state = fb::MatchStateType::Waiting;
                     self.reset_match_state(&mut match_info_guard);
                     info!("Match reset to Waiting.");
+                    // Between matches is the only safe moment to switch
+                    // between gauntlet rules and the league rotation.
+                    drop(match_info_guard);
+                    self.sync_gauntlet_activation();
                 }
             }
             _ => {}
