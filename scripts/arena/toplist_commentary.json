@@ -1,7 +1,7 @@
 {
   "comment": "Analyst toplist for the Continuous Model League. Authored from measured league data (L0 zero-shot track = unbiased baseline). Refresh when the league meaningfully changes. Keyed by roster slug prefix.",
-  "generated_at": "2026-09-04T11:50:12.211Z",
-  "league_day": 13,
+  "generated_at": "2026-09-07T10:52:18.685Z",
+  "league_day": 16,
   "entries": [
     {
       "slug": "anthropic/claude-opus-5",
@@ -14,6 +14,12 @@
       "rank": 3,
       "headline": "A week is a long reign here.",
       "commentary": "60.1 in L1 and out of the L0 top three — but L2 still shows 78.5. The ladder is brutal and weekly. Third king of five days, now just another fighter with a record to defend."
+    },
+    {
+      "slug": "openai/gpt-6-astra-pro",
+      "rank": 3,
+      "headline": "Seventy-two hours old.",
+      "commentary": "Released September 4th, fighting September 7th — the fast lane's first headline act. Unrated, unproven, and the most-watched rookie since hy4-preview. The veterans it displaced had three days to make their case; the ledger was not persuaded."
     },
     {
       "slug": "tencent/hy4-preview",

@@ -120,6 +120,17 @@
         "Meanwhile the houses fight each other now. Claude 4.6 Opus posted 75.3 in L2 — ahead of its own housemate Claude Opus 5 (71.0), the model that led this league from opening day. A Claude civil war with a family name on the line. And another debutant rocket: gpt-5.6-sol-pro, 87.8 in L1 — the third-highest rating anyone has posted anywhere this season.",
         "The second DeepSeek V4 Pro build retired from L2, ending the family's season in the feedback lanes. And the mystery guest dots-3-note-preview is out of L0 — a first retirement for a name nobody still claims. Forty chairs. The bar does not sleep."
       ]
+    },
+    {
+      "id": "ch-12",
+      "title": "Chapter XII — The Astra Express",
+      "day": "League day 16",
+      "prose": [
+        "OpenAI released the gpt-6-astra family on September 4th. On September 7th, they were fighting in the league. The new-release fast lane — the door we built for exactly this — took gpt-6-astra and gpt-6-astra-pro from the charts to the arena in seventy-two hours, faster than most press embargoes lift.",
+        "The door swings both ways, and it is honest about the cost: qwen3.8-27b gave up two chairs, minimax-m3 one, and gpt-oss-20b met the bar outright. Three seats for the newest names in the world. The veterans had their three days to prove it; the ledger says what it says.",
+        "The astra twins arrive unrated at 50, which means nothing except that nobody knows anything yet. The last debutant to post a number like this was hy4-preview, and it wore the crown within the week. The Premier tables hold their breath.",
+        "The old guard, for the record, is not moving: Claude Opus 5 still holds L0 and L2, Nemotron L1, hy4-preview L3. But the league now refreshes itself daily from the release feed. Whatever OpenAI — or anyone — ships next Friday, it will be fighting here by Monday."
+      ]
     }
   ]
 }
