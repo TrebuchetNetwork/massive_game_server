@@ -982,7 +982,14 @@ impl OptimizedBotAI {
                             input.shooting
                         );
                     }
-                    player_state_entry.queue_input(input);
+                    // Sequence from the live counters, not the snapshot: the
+                    // snapshot's processed counter can trail the queued one
+                    // after an input was dropped while the bot was dead.
+                    let mut input = input;
+                    input.sequence = player_state_entry.next_server_input_sequence();
+                    if !player_state_entry.queue_input(input) {
+                        metrics::record_arena_exhibition_runtime_event("bot_input_rejected");
+                    }
                 }
             }
         }

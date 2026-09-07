@@ -320,6 +320,19 @@ impl PlayerState {
     /// - `sequence == 0` (reserved/invalid)
     /// - `sequence <= last_queued_input_sequence` (replay / duplicate)
     /// - `sequence > last_queued_input_sequence + MAX_INPUT_SEQUENCE_GAP` (suspicious jump)
+    /// Next sequence a server-driven (bot) input must carry to be accepted
+    /// by [`Self::queue_input`]. Derived from both counters: an input that
+    /// was queued but never applied (e.g. popped while dead) leaves
+    /// `last_queued_input_sequence` ahead of `last_processed_input_sequence`,
+    /// and deriving from the processed counter alone then produces a
+    /// permanently rejected duplicate.
+    pub fn next_server_input_sequence(&self) -> u32 {
+        self.last_processed_input_sequence
+            .max(self.last_queued_input_sequence)
+            .wrapping_add(1)
+            .max(1)
+    }
+
     pub fn queue_input(&mut self, input: PlayerInputData) -> bool {
         let seq = input.sequence;
         if seq == 0 {
@@ -1946,6 +1959,62 @@ mod tests {
             ping_y: 0.0,
         });
         assert!(!accepted);
+    }
+
+    fn input_with_sequence(sequence: u32) -> PlayerInputData {
+        PlayerInputData {
+            timestamp: 1,
+            sequence,
+            move_forward: true,
+            move_backward: false,
+            move_left: false,
+            move_right: false,
+            shooting: false,
+            reload: false,
+            rotation: 0.0,
+            melee_attack: false,
+            change_weapon_slot: 0,
+            use_ability_slot: 0,
+            ping_x: 0.0,
+            ping_y: 0.0,
+        }
+    }
+
+    /// Regression: a bot input queued but never applied (popped while the
+    /// bot was dead) left the queued counter one ahead of the processed
+    /// one. Sequencing from the processed counter alone then produced a
+    /// permanently rejected duplicate — the post-death bot freeze.
+    #[test]
+    fn server_input_sequence_recovers_after_dropped_input() {
+        let mut p = make_player("bot");
+        // Normal cadence: processed and queued advance together.
+        assert!(p.queue_input(input_with_sequence(p.next_server_input_sequence())));
+        p.input_queue.pop_front();
+        p.last_processed_input_sequence = 1;
+        assert_eq!(p.next_server_input_sequence(), 2);
+
+        // Input 2 is queued, popped while dead, never applied.
+        assert!(p.queue_input(input_with_sequence(2)));
+        p.input_queue.pop_front();
+        assert_eq!(p.last_queued_input_sequence, 2);
+        assert_eq!(p.last_processed_input_sequence, 1);
+
+        // Old derivation (processed + 1 = 2) is a duplicate and is rejected.
+        assert!(!p.queue_input(input_with_sequence(
+            p.last_processed_input_sequence.wrapping_add(1)
+        )));
+        // The counter-aware derivation is accepted.
+        let next = p.next_server_input_sequence();
+        assert_eq!(next, 3);
+        assert!(p.queue_input(input_with_sequence(next)));
+    }
+
+    #[test]
+    fn server_input_sequence_never_yields_zero() {
+        let mut p = make_player("bot");
+        p.last_processed_input_sequence = u32::MAX;
+        p.last_queued_input_sequence = u32::MAX;
+        assert_eq!(p.next_server_input_sequence(), 1);
     }
 
     // ── Health tracker race condition tests ──────────────────────────

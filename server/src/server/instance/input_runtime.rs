@@ -769,6 +769,16 @@ impl MassiveGameServer {
         if !player_state.alive {
             player_state.velocity_x = 0.0;
             player_state.velocity_y = 0.0;
+            // Consume the sequence even though the input is ignored. Bots
+            // derive their next sequence from `last_processed_input_sequence`,
+            // so an input popped while the bot was dead used to leave
+            // `last_queued_input_sequence` one ahead forever: every later bot
+            // input was rejected as a duplicate and the ship froze for life
+            // after its first death (live replays: whole rosters at 0.0 u/s,
+            // 0-kill matches within ~2h of every restart).
+            if input.sequence > player_state.last_processed_input_sequence {
+                player_state.last_processed_input_sequence = input.sequence;
+            }
             return;
         }
 

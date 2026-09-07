@@ -35,6 +35,13 @@ pub fn build_match_scoreboard_route(
                     "score": state.score,
                     "is_bot": state.is_bot,
                     "alive": state.alive,
+                    "bot_behavior": state.bot_behavior,
+                    // Liveness diagnostics: a queued counter stuck ahead of
+                    // the processed one means the player's inputs are being
+                    // rejected (the post-death bot freeze).
+                    "input_seq_processed": state.last_processed_input_sequence,
+                    "input_seq_queued": state.last_queued_input_sequence,
+                    "speed": (state.velocity_x * state.velocity_x + state.velocity_y * state.velocity_y).sqrt(),
                 }));
             });
             players.sort_by(|left, right| {

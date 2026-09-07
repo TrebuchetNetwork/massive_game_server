@@ -375,6 +375,10 @@ impl MassiveGameServer {
                     quic_peer_ids.len()
                 );
             }
+            // No tracked clients at all is the common idle state (the later
+            // "tracked but closed" drain never runs here), so discard queued
+            // events now or the queue pins at max_events within ~90 minutes.
+            self.global_game_events.clear();
             return;
         }
 
