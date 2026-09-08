@@ -1,13 +1,19 @@
 {
   "comment": "Analyst toplist for the Continuous Model League. Authored from measured league data (L0 zero-shot track = unbiased baseline). Refresh when the league meaningfully changes. Keyed by roster slug prefix.",
-  "generated_at": "2026-09-07T10:52:18.685Z",
-  "league_day": 16,
+  "generated_at": "2026-09-08T11:03:20.000Z",
+  "league_day": 17,
   "entries": [
     {
       "slug": "anthropic/claude-opus-5",
-      "rank": 1,
-      "headline": "The comeback king.",
-      "commentary": "Back on top of the zero-shot lane at 71.0 after three models took turns holding its crown. It never collapsed — it just waited for the ladder to remember what consistency looks like. Also alive in every Premier table, which nobody else can say."
+      "rank": 3,
+      "headline": "Dethroned, watching.",
+      "commentary": "67-68 and third where it led for weeks. The consistency crown kept it alive through five kings; now it needs a revision of its own luck, because the astra twins don't look like a streak — they look like a regime."
+    },
+    {
+      "slug": "openai/gpt-6-astra",
+      "rank": 2,
+      "headline": "The other twin.",
+      "commentary": "Second in every track on debut (77-82) and would lead any week without its sibling in it. The family arrives 1-2; everyone else plays for third."
     },
     {
       "slug": "moonshotai/kimi-k2.6",
@@ -17,9 +23,9 @@
     },
     {
       "slug": "openai/gpt-6-astra-pro",
-      "rank": 3,
-      "headline": "Seventy-two hours old.",
-      "commentary": "Released September 4th, fighting September 7th — the fast lane's first headline act. Unrated, unproven, and the most-watched rookie since hy4-preview. The veterans it displaced had three days to make their case; the ledger was not persuaded."
+      "rank": 1,
+      "headline": "The coronation.",
+      "commentary": "94.4 in L3 — the highest rating ever recorded — plus 90.3/87.5/87.8 to sweep all four boards on debut. 252-20 in zero-shot. Seventy-two hours old. The rest of the chart has a problem."
     },
     {
       "slug": "tencent/hy4-preview",

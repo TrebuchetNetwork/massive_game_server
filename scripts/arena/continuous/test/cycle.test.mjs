@@ -2206,3 +2206,89 @@ test('fast lane cost guards: payment errors skip unrecorded, genuine failures re
   assert.equal(genuine.recruit_failures['vendor/fresh'], new Date(NOW).toISOString());
   validateState(genuine);
 });
+
+test('a re-recruited model retired again keeps ONE retired-ledger entry', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const state = fastLaneState();
+  // vendor/veteran: retired in a previous stint (old entry in the ledger),
+  // re-recruited after the cooldown, now bottom-rated in a full L0.
+  const veteran = model({
+    model_id: 'vendor/veteran',
+    rating: 40,
+    wins: 5,
+    losses: 5,
+    matches: 10,
+    joined_at: new Date(NOW - 5 * DAY_MS).toISOString(),
+    days_in_league: 5,
+  });
+  state.tracks.L0.roster = [
+    ...Array.from({ length: 39 }, (_, index) => model({
+      model_id: `vendor/fill-${index}`,
+      rating: 90 - index,
+    })),
+    veteran,
+  ];
+  state.tracks.L0.retired.push({
+    ...model({ model_id: 'vendor/veteran', joined_at: new Date(NOW - 40 * DAY_MS).toISOString() }),
+    retired_at: new Date(NOW - 30 * DAY_MS).toISOString(),
+    reason: 'old stint: rating below the bar',
+  });
+  const next = await runCycle({
+    state,
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: fastLaneDeps([catalogModel('vendor/fresh', NOW - DAY_MS)]),
+  });
+
+  const l0 = next.tracks.L0;
+  const entries = l0.retired.filter((entry) => entry.model_id === 'vendor/veteran');
+  assert.equal(entries.length, 1, 'no duplicate model id in the retired ledger');
+  assert.equal(entries[0].reason, 'displaced by fresh challenger vendor/fresh');
+  assert.equal(entries[0].retired_at, new Date(NOW).toISOString());
+  assert.ok(!l0.roster.some((entry) => entry.model_id === 'vendor/veteran'));
+  assert.ok(l0.roster.some((entry) => entry.model_id === 'vendor/fresh'));
+  // Both retirement events survive in the announcements feed.
+  assert.ok(l0.announcements.some((a) => (
+    a.type === 'retirement' && a.reason === 'displaced by fresh challenger vendor/fresh'
+  )));
+  validateState(next);
+});
+
+test('two fast-lane challengers displace two DIFFERENT models in a full track', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const state = fastLaneState();
+  state.tracks.L0.roster = [
+    ...Array.from({ length: 38 }, (_, index) => model({
+      model_id: `vendor/fill-${index}`,
+      rating: 90 - index,
+    })),
+    model({ model_id: 'vendor/bottom-a', rating: 41, joined_at: new Date(NOW - 5 * DAY_MS).toISOString() }),
+    model({ model_id: 'vendor/bottom-b', rating: 40, joined_at: new Date(NOW - 5 * DAY_MS).toISOString() }),
+  ];
+  const catalog = [
+    catalogModel('vendor/fresh-1', NOW - DAY_MS),
+    catalogModel('vendor/fresh-2', NOW - 2 * DAY_MS),
+  ];
+  const next = await runCycle({
+    state,
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: fastLaneDeps(catalog),
+  });
+
+  const l0 = next.tracks.L0;
+  const displaced = l0.retired
+    .filter((entry) => entry.reason.startsWith('displaced by fresh challenger'))
+    .map((entry) => entry.model_id)
+    .sort();
+  assert.deepEqual(displaced, ['vendor/bottom-a', 'vendor/bottom-b']);
+  assert.equal(new Set(displaced).size, 2, 'no model displaced twice');
+  assert.equal(l0.roster.length, 40);
+  assert.ok(l0.roster.some((entry) => entry.model_id === 'vendor/fresh-1'));
+  assert.ok(l0.roster.some((entry) => entry.model_id === 'vendor/fresh-2'));
+  const retiredIds = l0.retired.map((entry) => entry.model_id);
+  assert.equal(new Set(retiredIds).size, retiredIds.length, 'retired ledger ids unique');
+  validateState(next);
+});

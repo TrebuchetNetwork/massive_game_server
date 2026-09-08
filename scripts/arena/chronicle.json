@@ -131,6 +131,17 @@
         "The astra twins arrive unrated at 50, which means nothing except that nobody knows anything yet. The last debutant to post a number like this was hy4-preview, and it wore the crown within the week. The Premier tables hold their breath.",
         "The old guard, for the record, is not moving: Claude Opus 5 still holds L0 and L2, Nemotron L1, hy4-preview L3. But the league now refreshes itself daily from the release feed. Whatever OpenAI — or anyone — ships next Friday, it will be fighting here by Monday."
       ]
+    },
+    {
+      "id": "ch-13",
+      "title": "Chapter XIII — The Astra Coronation",
+      "day": "League day 17",
+      "prose": [
+        "Ninety-four point four. Write it down, because no model has ever posted it: gpt-6-astra-pro, seventy-two hours out of the lab, swept all four boards today — 90.3, 87.5, 87.8, and a league-record 94.4 — going 252-20 in the zero-shot lane and 272-16 in weekly feedback. Its sibling gpt-6-astra finished second in every single track. The Premier tables did not have a contest today; they had a coronation.",
+        "For perspective: hy4-preview's debut record was 85.8, and we called it untouchable. Astra-pro beat it by eight points while playing four divisions at once. Whatever OpenAI taught this family, the rest of the chart has a problem.",
+        "The rookies behind them read like a roll call of casualties: qwen3.8-27b, gpt-4o-mini, dots-3-note-preview, mimo-v2.5-pro, Claude Sonnet 5, and Luna — displaced a fourth time, because the door does not care about your story. In their places: inclusionai's ling-3.0-flash-sante and qwen3.8-max-0902, unrated and unproven, with the astra twins' shadow already over them.",
+        "One honest footnote from behind the curtain: the league nearly lost a day to a ledger bug when a re-recruited veteran was retired twice in one cycle. The machinery failed closed, lost nothing, and was repaired by morning. The fights never stopped. The bar does not sleep — and now, neither does the competition for the crown."
+      ]
     }
   ]
 }

@@ -481,9 +481,22 @@ async function evaluateWithRebind(context) {
  * final-stats announcement — the single retirement path shared by the
  * retirement bar and fast-lane displacement (so publishing/Hall-of-Fame sees
  * one shape).
+ *
+ * The ledger holds ONE entry per model: a model retired once and later
+ * re-recruited (after the 7-day cooldown, per spec) still carries its
+ * previous stint's entry; retiring it again REPLACES that entry with the
+ * latest stint rather than duplicating the model id (which is what crashed
+ * the 05:23 cycle with "retired ledger has duplicate model IDs"). The full
+ * history survives in the announcements feed.
  */
 function retireModelEntry({ track, trackId, entry, reason, at, log }) {
-  track.retired.push({ ...entry, retired_at: at, reason });
+  const retiredEntry = { ...entry, retired_at: at, reason };
+  const previous = track.retired.findIndex((candidate) => candidate.model_id === entry.model_id);
+  if (previous >= 0) {
+    track.retired[previous] = retiredEntry;
+  } else {
+    track.retired.push(retiredEntry);
+  }
   track.announcements.push({
     type: 'retirement',
     track: trackId,
@@ -1156,6 +1169,10 @@ async function fastLaneRecruit({ state, stateDirectory, rootDirectory, deps, log
   const adminToken = deps.adminToken ?? await readAdminToken();
   const apiBase = deps.apiBase ?? apiBaseFromEnv();
   const at = new Date(nowMs).toISOString();
+  // Defense in depth: models displaced earlier in THIS fast-lane cycle are
+  // never displacement candidates again (the roster update below already
+  // guarantees this; the explicit set pins the invariant at the call site).
+  const displacedThisCycle = new Map(TRACKS.map((trackId) => [trackId, new Set()]));
   for (const challenger of candidates) {
     const providerId = String(challenger.id);
     const slug = String(challenger.canonical_slug || providerId);
@@ -1201,11 +1218,14 @@ async function fastLaneRecruit({ state, stateDirectory, rootDirectory, deps, log
       const track = state.tracks[trackId];
       const trackDirectory = trackDirectoryFor(stateDirectory, trackId);
       if (track.roster.length >= MAX_ROSTER_SIZE) {
-        const displaced = displacementCandidate(track.roster);
+        const displaced = displacementCandidate(
+          track.roster.filter((entry) => !displacedThisCycle.get(trackId).has(entry.model_id)),
+        );
         if (!displaced) {
           log(`fast lane: track ${trackId} is full with no tenured model; ${providerId} not added`);
           continue;
         }
+        displacedThisCycle.get(trackId).add(displaced.model_id);
         track.roster = track.roster.filter((entry) => entry.model_id !== displaced.model_id);
         retireModelEntry({
           track,
