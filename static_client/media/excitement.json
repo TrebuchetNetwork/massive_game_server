@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-09-07T10:01:48.549Z",
+  "matches": 2244,
+  "modes": [
+    {
+      "mode": "TeamDeathmatch",
+      "phases": 2244,
+      "minutes": 8675.3,
+      "kills": 3584,
+      "kills_per_minute": 0.41,
+      "avg_final_margin": 1.6,
+      "excitement": 0.41
+    },
+    {
+      "mode": "FreeForAll",
+      "phases": 652,
+      "minutes": 782.5,
+      "kills": 67,
+      "kills_per_minute": 0.09,
+      "avg_final_margin": null,
+      "excitement": 0.09
+    },
+    {
+      "mode": "CaptureTheFlag",
+      "phases": 652,
+      "minutes": 456.4,
+      "kills": 27,
+      "kills_per_minute": 0.06,
+      "avg_final_margin": 0,
+      "excitement": 0.06
+    }
+  ]
+}
