@@ -222,6 +222,20 @@ impl MassiveGameServer {
             broadcast_timed_out_flag = timed_broadcast_future.await.is_err();
             broadcast_elapsed_duration = b_start_inner.elapsed();
         } else {
+            // Nobody is watching, so the broadcast (the queue's only consumer)
+            // never runs. Drain here or the queue pins at max_events within
+            // ~90 minutes of idle combat and the next player to join is fed a
+            // backlog of stale events — thousands of explosions, hits and kill
+            // feed entries from hours ago, delivered over the first frames of
+            // their session. The drain inside the broadcast itself is
+            // unreachable in this state because this branch skips the call.
+            let discarded = self.global_game_events.clear();
+            if discarded > 0 && frame.is_multiple_of(600) {
+                debug!(
+                    "[Frame {}] Discarded {} events queued with no audience.",
+                    frame, discarded
+                );
+            }
             broadcast_elapsed_duration = broadcast_start_time.elapsed();
             broadcast_timed_out_flag = false;
         }

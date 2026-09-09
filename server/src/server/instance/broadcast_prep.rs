@@ -24,6 +24,18 @@ impl MassiveGameServer {
         // indiscriminately (70k+ drops observed live). Drain a much larger
         // batch; per-client delivery is still bounded downstream by
         // max_delta_events_per_client and AoI filtering.
+        // Safety net: a backlog this deep can only mean events accumulated
+        // without a consumer. Replaying them would spawn thousands of stale
+        // effects and sounds on every connected client, so drop the backlog
+        // instead of streaming it out over the next frames.
+        const STALE_EVENT_BACKLOG_LIMIT: usize = 4096;
+        if self.global_game_events.len() > STALE_EVENT_BACKLOG_LIMIT {
+            let discarded = self.global_game_events.clear();
+            warn!(
+                "Discarded {} stale queued events (backlog over {}) rather than replaying them to clients.",
+                discarded, STALE_EVENT_BACKLOG_LIMIT
+            );
+        }
         let events = self.global_game_events.pop_batch(2048);
 
         // Snapshot destroyed walls
