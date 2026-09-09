@@ -1,5 +1,5 @@
 use crate::core::types::PlayerID;
-use crate::operational::arena::ratings::{load_ratings_response, ratings_path_from_env};
+use crate::operational::arena::ratings::{exhibition_roster_path_from_env, load_ratings_response};
 use crate::operational::bot_sandbox::{
     BotSandbox, ExhibitionBotAction, ExhibitionBotObservation, ExhibitionBotRuntime,
 };
@@ -166,7 +166,7 @@ impl ArenaExhibition {
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_PREPARED_RUNTIMES_PER_FIGHTER)
             .min(MAX_PREPARED_RUNTIMES_PER_FIGHTER);
-        let ratings_path = ratings_path_from_env();
+        let ratings_path = exhibition_roster_path_from_env();
         // Capture the version before reading/building so a concurrent publish
         // is guaranteed to look newer to the background refresher.
         let modified_at = file_modified_at(&ratings_path);
@@ -594,6 +594,21 @@ impl ArenaExhibition {
                 "Arena exhibition kept its previous generation because the published roster was not fully loadable"
             );
             metrics::record_arena_exhibition_runtime_event("generation_prepare_incomplete");
+            // Keeping the previous generation is correct, but the pending
+            // rotation must not be left behind with it: `rotation` gates
+            // `active_round_ready()`, and a round that never becomes ready
+            // benches every fighter — a benched fighter emits no movement at
+            // all, so an unloadable publish froze the entire fleet in place
+            // until restart (observed 2026-09-08, whole roster parked at
+            // spawn). Advance the rotation on the verified generation we
+            // already have so rounds keep running on real model code.
+            if rotation_changed && !current_fighters.is_empty() {
+                return self.advance_rotation_on_current_generation(
+                    current_generation,
+                    current_rotation,
+                    target_rotation,
+                );
+            }
             return ExhibitionRefreshOutcome::RetryRequired;
         }
         if candidate_fighters.is_empty() {
@@ -651,6 +666,35 @@ impl ArenaExhibition {
             fighters = roster.fighters.len(),
             active_runtimes = runtimes.len(),
             "Arena exhibition committed a prepared generation"
+        );
+        ExhibitionRefreshOutcome::Refreshed
+    }
+
+    /// Accept a round rotation without rebuilding the roster. Used when a
+    /// newly published roster cannot be loaded: the already-verified fighters
+    /// keep playing (and keep their identities honest, since they are still
+    /// running their own published wasm) instead of being benched forever
+    /// waiting for a generation that will never prepare.
+    fn advance_rotation_on_current_generation(
+        &self,
+        expected_generation: u64,
+        expected_rotation: u64,
+        target_rotation: u64,
+    ) -> ExhibitionRefreshOutcome {
+        let mut roster = self.roster.write();
+        if roster.generation != expected_generation
+            || roster.rotation != expected_rotation
+            || roster.round_active
+        {
+            return ExhibitionRefreshOutcome::RetryRequired;
+        }
+        roster.rotation = target_rotation;
+        metrics::record_arena_exhibition_runtime_event("rotation_advanced_without_reload");
+        warn!(
+            generation = roster.generation,
+            rotation = roster.rotation,
+            fighters = roster.fighters.len(),
+            "Arena exhibition advanced the round on its existing verified generation because the published roster was not loadable"
         );
         ExhibitionRefreshOutcome::Refreshed
     }

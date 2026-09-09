@@ -38,6 +38,21 @@ pub(crate) fn ratings_path_from_env() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_ARENA_RATINGS_PATH))
 }
 
+/// Roster the *live* exhibition fields. Separate from the public ratings
+/// path because the continuous league republishes the ratings file with its
+/// own schema (raw OpenRouter ids, no local artifacts), which the live
+/// exhibition cannot load — on 2026-09-08 that publish left every fighter
+/// benched and motionless. The site keeps reading the league file; the
+/// arena keeps a frozen, artifact-verified roster of its own.
+pub(crate) fn exhibition_roster_path_from_env() -> PathBuf {
+    std::env::var("MGS_ARENA_EXHIBITION_ROSTER_PATH")
+        .ok()
+        .map(|raw| raw.trim().to_owned())
+        .filter(|raw| !raw.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(ratings_path_from_env)
+}
+
 pub(crate) fn load_ratings_response(path: &Path) -> ArenaRatingsResponse {
     match read_ratings_snapshot(path).and_then(validate_ratings_snapshot) {
         Ok(snapshot) => ArenaRatingsResponse {
