@@ -35,10 +35,42 @@ const BASE = process.env.MGS_BASE_URL || 'http://127.0.0.1:8080';
 const TOKEN_FILE = process.env.MGS_ADMIN_TOKEN_FILE
   || path.join(homedir(), '.config/massive-game-server/secrets/arena-admin-bearer-token');
 const KEY_FILE = process.env.OPENROUTER_KEY_FILE || path.join(homedir(), '.secrets/openrouter-arena.key');
-const MODELS = {
-  1: process.env.GENERAL_MODEL_TEAM1 || 'anthropic/claude-opus-5',
-  2: process.env.GENERAL_MODEL_TEAM2 || 'openai/gpt-6-astra',
-};
+// Which models get to command. Explicit env wins; otherwise two are drawn
+// from the current league top list, rotating per run so command duty passes
+// around the roster instead of always falling to the same pair.
+const MODEL_POOL_FILE = process.env.GENERAL_MODEL_POOL_FILE
+  || path.join(path.dirname(new URL(import.meta.url).pathname), '../../data/arena_ratings.json');
+const FALLBACK_POOL = ['anthropic/claude-opus-5', 'openai/gpt-6-astra', 'google/gemini-3.1-pro-preview', 'z-ai/glm-5.2'];
+
+async function loadModelPool() {
+  const explicit = (process.env.GENERAL_MODEL_POOL || '').split(',').map((m) => m.trim()).filter(Boolean);
+  if (explicit.length >= 2) return explicit;
+  try {
+    const snapshot = JSON.parse(await readFile(MODEL_POOL_FILE, 'utf8'));
+    const ids = (snapshot.roster || [])
+      .map((f) => f.model_id)
+      .filter((id) => typeof id === 'string' && id.includes('/'));
+    if (ids.length >= 2) return ids;
+  } catch (_) { /* fall through */ }
+  return FALLBACK_POOL;
+}
+
+/// Deterministic slot: which of the day's runs this is, so the four daily
+/// runs field four different pairings and the rotation advances day to day.
+function rotationSlot(now = new Date()) {
+  const dayIndex = Math.floor(now.getTime() / 86400000);
+  return dayIndex * 4 + Math.floor(now.getHours() / 6);
+}
+
+function pickModels(pool, slot) {
+  const n = pool.length;
+  const first = pool[((slot * 2) % n + n) % n];
+  let second = pool[(((slot * 2) + 1) % n + n) % n];
+  if (second === first) second = pool[(((slot * 2) + 2) % n + n) % n];
+  return { 1: process.env.GENERAL_MODEL_TEAM1 || first, 2: process.env.GENERAL_MODEL_TEAM2 || second };
+}
+
+let MODELS = { 1: 'anthropic/claude-opus-5', 2: 'openai/gpt-6-astra' };
 // Reasoning + vision runs roughly 1.3k tokens per call; at two teams that is
 // about $0.04 a cycle on frontier models. 30s keeps a commanded match near
 // $5/hour. Lower it for a showcase, not for an all-day run.
@@ -213,6 +245,24 @@ function parseOrder(raw) {
 }
 
 async function askGeneral(key, model, briefing, png) {
+  // Not every model accepts images; on failure retry once, text only, so a
+  // text-capable general still gets to command.
+  try {
+    return await askGeneralOnce(key, model, briefing, png);
+  } catch (err) {
+    if (!png) throw err;
+    log(`  ${model}: vision call failed (${String(err).slice(0, 90)}); retrying text-only`);
+    return askGeneralOnce(key, model, briefing, null);
+  }
+}
+
+async function askGeneralOnce(key, model, briefing, png) {
+  const userContent = png
+    ? [
+        { type: 'text', text: briefing },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${png.toString('base64')}` } },
+      ]
+    : briefing;
   const body = {
     model,
     // Reasoning models spend most of their completion budget thinking; a
@@ -221,13 +271,7 @@ async function askGeneral(key, model, briefing, png) {
     temperature: 0.4,
     messages: [
       { role: 'system', content: SYSTEM_BRIEF },
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: briefing },
-          { type: 'image_url', image_url: { url: `data:image/png;base64,${png.toString('base64')}` } },
-        ],
-      },
+      { role: 'user', content: userContent },
     ],
   };
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -311,8 +355,10 @@ async function cycle(token, key, calls) {
 }
 
 (async () => {
-  const [token, key] = await Promise.all([readSecret(TOKEN_FILE), readSecret(KEY_FILE)]);
-  log(`generals worker: team1=${MODELS[1]} team2=${MODELS[2]} interval=${INTERVAL_MS}ms${DRY_RUN ? ' (dry-run)' : ''}`);
+  const [token, key, pool] = await Promise.all([readSecret(TOKEN_FILE), readSecret(KEY_FILE), loadModelPool()]);
+  const slot = rotationSlot();
+  MODELS = pickModels(pool, slot);
+  log(`generals worker: team1=${MODELS[1]} team2=${MODELS[2]} (pool=${pool.length}, slot=${slot}) interval=${INTERVAL_MS}ms${MAX_CALLS ? ` maxCalls=${MAX_CALLS}` : ''}${DRY_RUN ? ' (dry-run)' : ''}`);
   let calls = 0;
   for (;;) {
     try {
