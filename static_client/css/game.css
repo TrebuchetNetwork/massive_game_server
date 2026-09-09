@@ -1778,6 +1778,14 @@
         .scoreboard { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 700px; background-color: rgba(17, 24, 39, 0.95); border: 1px solid #374151; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); z-index: 100; color: #E5E7EB; }
         .scoreboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #374151;}
         .scoreboard-header h3 { font-size: 1.5rem; font-weight: bold; color: #93C5FD; }
+        .scoreboard-generals { margin: 0 0 12px; display: grid; gap: 4px; }
+        .scoreboard-general {
+            font-size: 0.82rem; line-height: 1.35; padding: 5px 9px; border-radius: 8px;
+            border-left: 3px solid #6B7280; background: rgba(55, 65, 81, 0.35); color: #D1D5DB;
+        }
+        .scoreboard-general--team1 { border-left-color: #60A5FA; }
+        .scoreboard-general--team2 { border-left-color: #F87171; }
+        .scoreboard-general b { color: #F9FAFB; font-weight: 700; }
         .scoreboard-gauntlet-wave {
             margin-left: auto;
             margin-right: 14px;

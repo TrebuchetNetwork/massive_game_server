@@ -538,6 +538,7 @@ impl OptimizedBotAI {
         let team2_base = MassiveGameServer::get_flag_base_position(2);
         let team1_enemy_flag_pos = flag_states.get(&2).map(|f| f.position);
         let team2_enemy_flag_pos = flag_states.get(&1).map(|f| f.position);
+        let generals_enabled = crate::server::instance::generals_enabled();
         let commander_waypoint_team1 = server_instance.commander_primary_waypoint_for_team(1);
         let commander_waypoint_team2 = server_instance.commander_primary_waypoint_for_team(2);
         let commander_attack_bias_team1 = server_instance.commander_attack_bias_for_team(1);
@@ -905,6 +906,25 @@ impl OptimizedBotAI {
                         bot_controller.target_position,
                         lod_tier
                     );
+                }
+
+                // A general's mass call outranks a fighter's own movement,
+                // but never its action: the model still chooses how it
+                // fights, the general chooses where the line is. Only
+                // committing or extracting the team qualifies (see
+                // `overrides_fighter_movement`), so a general cannot
+                // micromanage individual ships.
+                if generals_enabled && bot_controller.arena_model_id.is_some() {
+                    if let Some(order) = server_instance.general_order_for_team(bot_snapshot.team_id)
+                    {
+                        if order.posture.overrides_fighter_movement() {
+                            let ordered = order.target();
+                            if bot_controller.target_position != Some(ordered) {
+                                bot_controller.target_position = Some(ordered);
+                                Self::invalidate_path(bot_controller);
+                            }
+                        }
+                    }
                 }
 
                 // Check if bot is stuck before generating input

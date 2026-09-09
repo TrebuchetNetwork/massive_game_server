@@ -236,7 +236,7 @@ impl MassiveGameServer {
         spawned.len()
     }
 
-    fn register_commander_waypoint(
+    pub(super) fn register_commander_waypoint(
         &self,
         commander_id: &PlayerID,
         team_id: u8,

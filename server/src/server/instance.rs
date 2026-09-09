@@ -36,6 +36,9 @@ use crate::server::pickup_pipeline::{
     apply_pickup_effect, collect_pickup_candidates, PickupCollectionCandidate,
 };
 use crate::state_sync::interpolation::InterpolationBuffer;
+use crate::systems::ai::generals::{
+    validate_order, GeneralOrder, GeneralOrderBoard, GeneralOrderError, GeneralOrderRequest,
+};
 use crate::systems::ai::optimized_bot_ai::OptimizedBotAI;
 use crate::systems::respawn::{RespawnManager, WallRespawnManager};
 use crate::world::map_generator::MapGenerator;
@@ -81,6 +84,7 @@ mod entity_store;
 mod exhibition_combat;
 mod game_modes;
 mod gauntlet;
+mod general_orders;
 pub(crate) use gauntlet::{
     gauntlet_status, gauntlet_wave_tier_index, GauntletMatchOutcome, DEFAULT_GAUNTLET_WAVE_MAX,
     DEFAULT_GAUNTLET_WAVE_STEP,
@@ -237,6 +241,7 @@ fn default_instance_env_config() -> InstanceEnv {
         join_initial_state_chunking_enabled: true,
         join_authoritative_aoi_snapshot_enabled: false,
         dynamic_mode_transitions_enabled: false,
+        generals_enabled: false,
         coop_gauntlet_enabled: false,
         coop_gauntlet_on_demand: false,
         gauntlet_ally_bots: 10,
@@ -296,6 +301,11 @@ fn join_authoritative_aoi_snapshot_enabled() -> bool {
 
 fn dynamic_mode_transitions_enabled() -> bool {
     instance_env_config().dynamic_mode_transitions_enabled
+}
+
+/// Generals class enabled: commanding models may redirect their team.
+pub(crate) fn generals_enabled() -> bool {
+    instance_env_config().generals_enabled
 }
 
 /// Gauntlet configured at all (always-on or on-demand).
@@ -396,6 +406,11 @@ pub struct MassiveGameServer {
     pub wall_respawn_manager: Arc<WallRespawnManager>,
 
     pub bot_players: Arc<DashMap<PlayerID, BotController>>,
+    /// Standing team orders issued by commanding models (the generals
+    /// class). Written by the ops order route, read by the bot AI and the
+    /// public scoreboard.
+    pub general_orders: Arc<ParkingLotRwLock<GeneralOrderBoard>>,
+    pub general_order_sequence: Arc<AtomicU64>,
     /// Strict weekly-model runtimes used only for human-facing exhibition
     /// matches. This state never reports results to the official arena.
     pub(crate) arena_exhibition: Arc<ArenaExhibition>,
@@ -736,6 +751,8 @@ impl MassiveGameServer {
             respawn_manager,
             wall_respawn_manager,
             bot_players: Arc::new(DashMap::new()),
+            general_orders: Arc::new(ParkingLotRwLock::new(GeneralOrderBoard::default())),
+            general_order_sequence: Arc::new(AtomicU64::new(0)),
             arena_exhibition: Arc::new(ArenaExhibition::new_from_env()),
             target_bot_count: Arc::new(AtomicU64::new(initial_target_bot_count)),
             bot_name_counter: Arc::new(AtomicU64::new(0)),

@@ -74,6 +74,8 @@ pub struct InstanceEnv {
     pub join_initial_state_chunking_enabled: bool,
     pub join_authoritative_aoi_snapshot_enabled: bool,
     pub dynamic_mode_transitions_enabled: bool,
+    /// Generals class: commanding models issue mass calls their team obeys.
+    pub generals_enabled: bool,
     pub coop_gauntlet_enabled: bool,
     /// Gauntlet only while a human is playing; otherwise the league rotation
     /// runs for spectators and highlights.
@@ -365,6 +367,7 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
         parse_bool_with_default("MGS_DYNAMIC_MODE_TRANSITIONS", false, &mut errors);
     // Co-op gauntlet: humans + the exhibition model roster share team 1
     // against a generic bot wave on team 2, fixed TeamDeathmatch.
+    let generals_enabled = parse_bool_with_default("MGS_GENERALS_ENABLED", false, &mut errors);
     let coop_gauntlet_enabled = parse_bool_with_default("MGS_COOP_GAUNTLET", false, &mut errors);
     // On demand: with nobody connected the exhibition runs the (far more
     // dynamic) league rotation; the gauntlet forms for the next match once a
@@ -595,6 +598,7 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
             join_initial_state_chunking_enabled,
             join_authoritative_aoi_snapshot_enabled,
             dynamic_mode_transitions_enabled,
+            generals_enabled,
             coop_gauntlet_enabled,
             coop_gauntlet_on_demand,
             gauntlet_ally_bots,

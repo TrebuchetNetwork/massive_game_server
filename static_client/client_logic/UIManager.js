@@ -1331,6 +1331,7 @@ export function createUIManager(getCtx) {
         if (eventName === 'gauntlet_wave' && payload && typeof payload === 'object') {
             gauntletWaveStatus = { ...(gauntletWaveStatus || {}), ...payload };
             renderScoreboardGauntletWave();
+        renderScoreboardGeneralOrders();
             const number = Math.max(1, Number(payload.wave_number) || 1);
             const size = Math.max(0, Number(payload.wave_size) || 0);
             const tier = String(payload.tier || '').trim();
@@ -1349,6 +1350,32 @@ export function createUIManager(getCtx) {
                 introDiv.classList.add('mode-intro--visible');
             }
             ctx.log(`Gauntlet wave ${number} started (${size} ${tier || 'wave'} bots).`, 'info');
+            return true;
+        }
+
+        if (eventName === 'general_order' && payload && typeof payload === 'object') {
+            const teamId = Number(payload.team_id) || 0;
+            const localTeam = toInt(ctx.localPlayerState?.team_id, 0);
+            const name = String(payload.model_name || payload.model_id || 'General').trim();
+            const posture = String(payload.posture || '').replace(/_/g, ' ').toUpperCase();
+            const rationale = String(payload.rationale || '').trim();
+            const mine = teamId > 0 && teamId === localTeam;
+            const line = `${mine ? 'YOUR GENERAL' : `TEAM ${teamId} GENERAL`} \u00b7 ${name}: ${posture}`;
+            latestGeneralOrders.set(teamId, payload);
+            renderScoreboardGeneralOrders();
+            // The mode-intro overlay is the one banner that survives the
+            // reduced-presentation path, so a call is never silently dropped.
+            const nowMs = Date.now();
+            if (ctx.combatUiState) {
+                ctx.combatUiState.gauntletWaveIntro = { text: line, atMs: nowMs };
+                ctx.combatUiState.modeIntroUntilMs = nowMs + 5000;
+            }
+            const introDiv = document.getElementById('gameModeIntro');
+            if (introDiv) {
+                introDiv.textContent = rationale ? `${line} \u2014 ${rationale}` : line;
+                introDiv.classList.add('mode-intro--visible');
+            }
+            ctx.log(`${line}${rationale ? ` (${rationale})` : ''}`, 'info');
             return true;
         }
 
@@ -2355,6 +2382,34 @@ export function createUIManager(getCtx) {
     // Latest gauntlet wave/streak from either the scoreboard poll or the
     // match-start `gauntlet_wave` system event.
     let gauntletWaveStatus = null;
+    // Standing mass calls from the commanding models, keyed by team.
+    const latestGeneralOrders = new Map();
+
+    function renderScoreboardGeneralOrders() {
+        const host = document.getElementById('scoreboardGeneralOrders');
+        if (!host) return;
+        const orders = [...latestGeneralOrders.values()]
+            .filter((o) => o && Number(o.expires_at_ms || 0) > Date.now())
+            .sort((a, b) => Number(a.team_id) - Number(b.team_id));
+        if (!orders.length) {
+            host.hidden = true;
+            host.replaceChildren();
+            return;
+        }
+        host.replaceChildren();
+        for (const o of orders) {
+            const row = document.createElement('div');
+            row.className = `scoreboard-general scoreboard-general--team${Number(o.team_id) || 0}`;
+            const who = document.createElement('b');
+            who.textContent = `Team ${o.team_id} general \u00b7 ${String(o.model_name || o.model_id || '')}: `;
+            row.appendChild(who);
+            row.appendChild(document.createTextNode(
+                `${String(o.posture || '').replace(/_/g, ' ').toUpperCase()}${o.rationale ? ` \u2014 ${o.rationale}` : ''}`
+            ));
+            host.appendChild(row);
+        }
+        host.hidden = false;
+    }
 
     function formatGauntletWave(wave) {
         if (!wave || typeof wave !== 'object') return '';
@@ -2398,6 +2453,11 @@ export function createUIManager(getCtx) {
             if (!payload || !Array.isArray(payload.players)) return;
             fullRosterPlayers = payload.players;
             fullRosterFetchedAt = performance.now();
+            if (Array.isArray(payload.general_orders)) {
+                latestGeneralOrders.clear();
+                for (const o of payload.general_orders) latestGeneralOrders.set(Number(o.team_id), o);
+                renderScoreboardGeneralOrders();
+            }
             if (payload.gauntlet_wave && typeof payload.gauntlet_wave === 'object') {
                 gauntletWaveStatus = payload.gauntlet_wave;
             } else if (!payload.coop_gauntlet) {

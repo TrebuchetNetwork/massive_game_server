@@ -64,6 +64,9 @@ pub fn build_match_scoreboard_route(
                 "time_remaining": time_remaining,
                 "coop_gauntlet": crate::server::instance::coop_gauntlet_enabled(),
                 "coop_gauntlet_armed": crate::server::instance::coop_gauntlet_configured(),
+                // Standing mass calls from the commanding models, so
+                // spectators can see who is giving orders and what they said.
+                "general_orders": server.active_general_orders(),
                 "gauntlet_wave": crate::server::instance::gauntlet_status(),
                 "team_scores": team_scores_json,
                 "players": players,

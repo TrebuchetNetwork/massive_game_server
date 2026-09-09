@@ -1,5 +1,6 @@
 use crate::operational::backup::BackupManager;
 use crate::server::instance::{LiveReplayDisputeRequest, MassiveGameServer};
+use crate::systems::ai::generals::GeneralOrderRequest;
 
 use serde::Deserialize;
 use std::sync::Arc;
@@ -163,6 +164,47 @@ pub fn build_ops_admin_routes(
         })
         .boxed();
 
+    // Generals: a commanding model posts one mass call for its team. The
+    // model call itself happens in a worker outside the tick, so a slow or
+    // failed completion can never stall the simulation.
+    let server_for_general_order = server.clone();
+    let general_order_route = warp::path!("api" / "ops" / "general" / "order")
+        .and(warp::post())
+        .and(warp::body::json::<GeneralOrderRequest>())
+        .and(warp::any().map(move || server_for_general_order.clone()))
+        .map(
+            |request: GeneralOrderRequest, server_inst: Arc<MassiveGameServer>| {
+                match server_inst.apply_general_order(request) {
+                    Ok(order) => warp::reply::with_status(
+                        warp::reply::json(&serde_json::json!({ "ok": true, "order": order })),
+                        warp::http::StatusCode::OK,
+                    )
+                    .into_response(),
+                    Err(err) => warp::reply::with_status(
+                        warp::reply::json(
+                            &serde_json::json!({ "ok": false, "error": err.to_string() }),
+                        ),
+                        warp::http::StatusCode::BAD_REQUEST,
+                    )
+                    .into_response(),
+                }
+            },
+        )
+        .boxed();
+
+    let server_for_general_orders = server.clone();
+    let general_orders_route = warp::path!("api" / "ops" / "general" / "orders")
+        .and(warp::get())
+        .and(warp::any().map(move || server_for_general_orders.clone()))
+        .map(|server_inst: Arc<MassiveGameServer>| {
+            warp::reply::json(&serde_json::json!({
+                "ok": true,
+                "orders": server_inst.active_general_orders(),
+            }))
+            .into_response()
+        })
+        .boxed();
+
     join_stage_report_route
         .or(join_stage_reset_route)
         .unify()
@@ -179,6 +221,10 @@ pub fn build_ops_admin_routes(
         .or(match_type_route)
         .unify()
         .or(backup_latest_route)
+        .unify()
+        .or(general_order_route)
+        .unify()
+        .or(general_orders_route)
         .unify()
         .boxed()
 }
