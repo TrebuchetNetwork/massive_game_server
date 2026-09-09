@@ -143,7 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
       name.textContent = `${mascot ? `${mascot.emoji} ` : ''}${formatModelName(model.model_name || model.provider_model)}`;
       const provider = document.createElement('small');
       provider.textContent = Number(model.epochs_played) > 0
-        ? `OpenRouter #${model.provider_rank || '–'} / ${model.season_points || 0} pts / ${model.epochs_played} epochs`
+        ? `OpenRouter #${model.provider_rank || '–'} / ${model.season_points || 0} pts / day ${model.epochs_played}`
         : `OpenRouter #${model.provider_rank || '–'} / ${model.evaluation_engagements || 0} fights`;
       identity.append(name, provider);
 
@@ -222,7 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (status) {
         if (ratedSeason) {
           status.textContent = ratings.league?.epochs_completed
-            ? `${ratings.league.week_id} · ${ratings.league.epochs_completed} epochs · tour live`
+            ? `season 1 · day ${ratings.league.epochs_completed} · live`
             : `${ratings.season_id || 'season live'} · P / T / C / W verified`;
         } else {
           const queued = Number(overview.pending_matches || 0) + Number(overview.in_flight_matches || 0);
