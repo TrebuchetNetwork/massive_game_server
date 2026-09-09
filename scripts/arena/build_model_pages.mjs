@@ -28,12 +28,19 @@
 //   static_client/models/league.json            landing-ticker payload (only when the
 //                                               continuous league state validates)
 //   artifacts/arena/page-cache.json             incremental battle-sample cache
+//   data/arena_ratings.json                     (CLI runs only) republished from
+//                                               the continuous league's L0 track when its
+//                                               state validates; the previous weekly file is
+//                                               preserved once as arena_ratings.weekly.json
+//                                               next to it and stays the page-generation input
 //
 // When the continuous league state is absent or fails its own schema
 // validation the overlay is skipped entirely and the weekly-league HTML
 // outputs (index.html, <slug>.html, mascots.json) are byte-identical to a
-// build without it; models.css always carries the overlay styles, and a stale
-// league.json from a previous valid run is removed. The analyst toplist
+// build without it; models.css always carries the overlay styles, a stale
+// league.json from a previous valid run is removed, and the ratings publish
+// file (when a publishRatingsPath is configured) is left untouched. The
+// analyst toplist
 // follows the same rule: absent or malformed, its sections disappear and the
 // HTML is byte-identical to a build without it (models.css always carries
 // the toplist styles). The League Chronicle follows the same rule: absent or
@@ -1340,6 +1347,211 @@ export function leagueTickerPayload(state) {
     day_index: Math.max(...TRACKS.map((trackId) => state.tracks[trackId].day_index)),
     announcements,
     tracks,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Ratings republish: continuous L0 track -> ratings-shaped snapshot
+// ---------------------------------------------------------------------------
+//
+// The weekly league supervisor is disabled, so the weekly publish file that
+// /api/public/arena/ratings serves would otherwise freeze. When the continuous
+// league state validates, buildPages can additionally emit a snapshot with the
+// exact top-level shape the server's ratings endpoint validates
+// (server/src/operational/arena/ratings.rs), built from the L0 (zero-shot)
+// track — the league's public baseline. Field mappings the continuous state
+// cannot supply are documented in methodology.notes.
+
+export const CONTINUOUS_RATINGS_ORIGIN = 'continuous-league-l0';
+// Mirrors the weekly publish file (and the server's hard cap).
+export const CONTINUOUS_RATINGS_SOURCE_LIMIT = 51200;
+const CONTINUOUS_POINTS_MAX = 100000;
+const CONTINUOUS_POINTS_STEP = 1000;
+
+/** Backup path next to the publish target: arena_ratings.json -> arena_ratings.weekly.json. */
+export function weeklyBackupPathFor(publishPath) {
+  return String(publishPath).replace(/\.json$/, '.weekly.json');
+}
+
+/**
+ * ISO-8601 week id (YYYY-Www) for a timestamp — the league view's week label.
+ * Mirror of isoWeekId in weekly_supervisor.mjs (copied, not imported: that
+ * module runs its own service loop — same convention as divisionSlices).
+ */
+export function isoWeekId(nowMs) {
+  const date = new Date(nowMs);
+  const thursday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  thursday.setUTCDate(thursday.getUTCDate() + 3 - ((thursday.getUTCDay() + 6) % 7));
+  const firstThursday = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 4));
+  firstThursday.setUTCDate(firstThursday.getUTCDate() + 3 - ((firstThursday.getUTCDay() + 6) % 7));
+  const week = 1 + Math.round((thursday - firstThursday) / 604800000);
+  return `${thursday.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+/** "openai/gpt-6-astra-pro-20260903" -> "Openai: Gpt 6 Astra Pro" (weekly-name fallback). */
+export function humanizeModelName(slug) {
+  const text = String(slug || '');
+  const slash = text.indexOf('/');
+  const provider = slash === -1 ? '' : text.slice(0, slash);
+  const tail = (slash === -1 ? text : text.slice(slash + 1)).replace(/-\d{8}$/, '').replace(/:free$/, '');
+  const words = tail.split('-').filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+  const vendor = provider ? provider[0].toUpperCase() + provider.slice(1) : '';
+  return vendor && slash !== -1 ? `${vendor}: ${words}` : (words || text);
+}
+
+/**
+ * Build a ratings-compatible snapshot (same shape the weekly supervisor used
+ * to publish) from the continuous league's validated state, or null when the
+ * L0 track cannot produce a server-valid roster yet (day 0, or no entry with
+ * a recorded match). The weekly roster is only used to carry over display
+ * metadata (model_name, provider_rank) for models that were part of it.
+ */
+export function continuousRatingsSnapshot({ state, weeklyRoster = [], nowMs = Date.now() } = {}) {
+  const slice = state?.tracks?.L0;
+  if (!slice || !Number.isSafeInteger(slice.day_index) || slice.day_index < 1) return null;
+  const dayIndex = slice.day_index;
+  const generatedAt = new Date(nowMs).toISOString();
+
+  // Public baseline: the L0 roster in the site's standings order (rating
+  // desc, slug tiebreak), minus entries with no recorded match — the server
+  // requires matches_played > 0 and wins+losses+draws == matches_played.
+  const standings = trackStandings(slice)
+    .filter((e) => Number(e?.matches) > 0 && Number.isFinite(Number(e?.rating)));
+  if (!standings.length) return null;
+
+  const weeklyById = new Map();
+  for (const w of Array.isArray(weeklyRoster) ? weeklyRoster : []) {
+    for (const key of [w?.canonical_slug, w?.provider_model, w?.model_id]) {
+      if (key && !weeklyById.has(String(key))) weeklyById.set(String(key), w);
+    }
+  }
+  const weeklyFor = (e) => weeklyById.get(String(e.slug)) || weeklyById.get(String(e.model_id)) || null;
+
+  // provider_rank: keep the weekly OpenRouter rank where the model was part
+  // of that roster; newcomers take the lowest rank nobody else claims (the
+  // server requires nonzero, unique provider ranks).
+  const usedProviderRanks = new Set();
+  for (const e of standings) {
+    const rank = Number(weeklyFor(e)?.provider_rank);
+    if (Number.isSafeInteger(rank) && rank > 0) usedProviderRanks.add(rank);
+  }
+  let nextFreeRank = 1;
+  const providerRankFor = (e) => {
+    const rank = Number(weeklyFor(e)?.provider_rank);
+    if (Number.isSafeInteger(rank) && rank > 0) return rank;
+    while (usedProviderRanks.has(nextFreeRank)) nextFreeRank += 1;
+    usedProviderRanks.add(nextFreeRank);
+    return nextFreeRank;
+  };
+
+  const compileAttempts = Math.min(100, Math.max(1, Number(slice.policy?.compile_attempts) || 1));
+  const roster = standings.map((e, index) => {
+    const weekly = weeklyFor(e);
+    const rating = Math.round(Number(e.rating) * 100) / 100;
+    return {
+      rank: index + 1,
+      provider_rank: providerRankFor(e),
+      model_id: String(e.model_id),
+      model_name: weekly?.model_name || humanizeModelName(e.slug),
+      provider_model: String(weekly?.provider_model || e.model_id),
+      canonical_slug: String(weekly?.canonical_slug || e.slug),
+      // The continuous league publishes one blended 0-100 rating; every axis
+      // mirrors it and the methodology weights below are concentrated on the
+      // personal axis (1/0/0, duel 1/0) so overall/strategy stay consistent.
+      personal_rating: rating,
+      team_rating: rating,
+      collaboration_rating: rating,
+      overall_rating: rating,
+      world_rating: rating,
+      strategy_rating: rating,
+      // Byte sizes are placeholders — the continuous artifact ledger binds
+      // integrity via the source/wasm digests, not via published sizes.
+      source_bytes: 1,
+      source_limit_bytes: CONTINUOUS_RATINGS_SOURCE_LIMIT,
+      source_sha256: e.artifact.source_sha256,
+      compiled: true,
+      wasm_bytes: 1,
+      wasm_sha256: e.artifact.wasm_sha256,
+      compile_attempts: compileAttempts,
+      simulated: false,
+      wins: e.wins,
+      losses: e.losses,
+      draws: e.draws,
+      matches_played: e.matches,
+      evaluation_engagements: e.matches,
+      // season_points = round(rating x 1000): the continuous league does not
+      // score weekly-style epoch points; see methodology.notes.
+      season_points: Math.round(rating * 1000),
+      epochs_played: dayIndex,
+      epoch_wins: 0,
+      best_epoch_rank: index + 1,
+      last_epoch_rank: index + 1,
+      integrity_status: 'verified_wasm',
+    };
+  });
+
+  const ledgerSha256 = createHash('sha256').update(JSON.stringify(
+    roster.map((r) => [r.model_id, r.rank, r.overall_rating, r.wins, r.losses, r.draws]),
+  )).digest('hex');
+  // The continuous league does not publish seed sets; the methodology carries
+  // one league-derived placeholder seed (the schema requires a non-empty set).
+  const leagueSeed = Number(`0x${createHash('sha256').update(String(state.league_id)).digest('hex').slice(0, 13)}`);
+
+  return {
+    schema_version: 1,
+    active: true,
+    origin: CONTINUOUS_RATINGS_ORIGIN,
+    season_id: String(state.league_id),
+    generated_at: generatedAt,
+    ranking: {
+      source: 'continuous league state.json — L0 zero-shot track (public baseline)',
+      window: `continuous-day-${dayIndex}`,
+      retrieved_at: generatedAt,
+    },
+    methodology: {
+      prompt_sha256: standings[0].artifact.prompt_sha256,
+      source_limit_bytes: CONTINUOUS_RATINGS_SOURCE_LIMIT,
+      modes: [...MODE_ORDER],
+      seed_sets: [leagueSeed],
+      team_size: 10,
+      rounds: 1,
+      personal_weight: 1,
+      team_weight: 0,
+      collaboration_weight: 0,
+      duel_strategy_weight: 1,
+      world_strategy_weight: 0,
+      world_squad_size: 0,
+      world_max_ticks: 0,
+      collaboration_kind: 'team_context_v2',
+      notes: [
+        `Provenance: continuous league ${state.league_id}, L0 (zero-shot) track, day ${dayIndex} — replaces the frozen weekly publish file.`,
+        'The continuous league publishes one blended 0-100 rating; all six axes mirror it and the weights are concentrated on the personal axis (1/0/0, duel strategy 1/0).',
+        'season_points = round(rating x 1000) — the continuous league does not score weekly-style epoch points; points_by_rank is a fixed descending table kept for shape compatibility.',
+        'epochs_played = the league day index for every entry (including mid-season joiners); epoch_wins is unused (0); best/last_epoch_rank mirror the current standing.',
+        'source_bytes/wasm_bytes are 1-byte placeholders; fighter integrity binds via source_sha256/wasm_sha256 from the continuous artifact ledger. evaluation_engagements = matches_played (lower bound).',
+        'model_name/provider_rank are carried over from the last weekly roster where the slug matches; newcomers get a slug-derived name and the lowest unclaimed provider_rank.',
+        'seed_sets carries a single league-id-derived placeholder; the continuous league does not publish its per-day seeds.',
+      ],
+    },
+    integrity: {
+      verified: true,
+      track: 'L0',
+      day_index: dayIndex,
+      roster_size: roster.length,
+      ledger_sha256: ledgerSha256,
+    },
+    roster,
+    league: {
+      format: 'continuous_l0_daily_v1',
+      week_id: isoWeekId(nowMs),
+      frozen_at: generatedAt,
+      epochs_completed: dayIndex,
+      total_seed_count: 1,
+      points_by_rank: roster.map((_, index) => CONTINUOUS_POINTS_MAX - index * CONTINUOUS_POINTS_STEP),
+      standings_order: ['season_points', 'epoch_wins', 'strategy_rating'],
+      ledger_sha256: ledgerSha256,
+      recent_epochs: [],
+    },
   };
 }
 
@@ -2729,6 +2941,7 @@ export async function buildPages({
   outDir = path.join(REPO_ROOT, 'static_client', 'models'),
   cachePath = path.join(REPO_ROOT, 'artifacts', 'arena', 'page-cache.json'),
   continuousDir = null, // defaults to <artifactsRoot>/continuous
+  publishRatingsPath = null, // when set, republish ratings from the continuous L0 track
   toplistPath = path.join(SCRIPT_DIR, 'toplist_commentary.json'),
   chroniclePath = path.join(SCRIPT_DIR, 'chronicle.json'),
   seasonsPath = path.join(SCRIPT_DIR, 'seasons.json'),
@@ -2740,7 +2953,18 @@ export async function buildPages({
   io = defaultIo,
   log = () => {},
 } = {}) {
-  const ratings = io.readJson(ratingsPath);
+  const rawRatings = io.readJson(ratingsPath);
+  // Once the publish file has flipped to continuous provenance, page
+  // generation keeps reading the preserved weekly snapshot so /models/ stays
+  // anchored to the season its battle artifacts belong to.
+  let ratings = rawRatings;
+  if (rawRatings?.origin === CONTINUOUS_RATINGS_ORIGIN && publishRatingsPath) {
+    const backupPath = weeklyBackupPathFor(publishRatingsPath);
+    if (io.exists(backupPath)) {
+      ratings = io.readJson(backupPath);
+      log('ratings: publish file is continuous-provenance — pages use the preserved weekly snapshot');
+    }
+  }
   const roster = [...ratings.roster].sort((a, b) => a.rank - b.rank);
   const rosterIds = roster.map((m) => m.model_id);
   const slugById = slugifyRoster(roster);
@@ -2868,6 +3092,26 @@ export async function buildPages({
     io.remove(path.join(outDir, 'league.json'));
   }
 
+  // Republish the public ratings file from the continuous L0 baseline. The
+  // weekly publish file is preserved once as a sidecar backup so future runs
+  // keep their original page-generation input. Absent/invalid continuous
+  // state — or a state that cannot produce a server-valid snapshot — leaves
+  // the publish file exactly as it is.
+  if (continuous && publishRatingsPath) {
+    const snapshot = continuousRatingsSnapshot({ state: continuous.state, weeklyRoster: roster, nowMs });
+    if (snapshot) {
+      const backupPath = weeklyBackupPathFor(publishRatingsPath);
+      if (!io.exists(backupPath) && rawRatings?.origin !== CONTINUOUS_RATINGS_ORIGIN) {
+        io.writeFile(backupPath, `${JSON.stringify(rawRatings, null, 2)}\n`);
+        log(`ratings: preserved weekly publish file at ${backupPath}`);
+      }
+      io.writeFile(publishRatingsPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+      log(`ratings: republished ${publishRatingsPath} from continuous L0 day ${snapshot.league.epochs_completed} (${snapshot.roster.length} models)`);
+    } else {
+      log('ratings: continuous L0 snapshot not emittable (day 0 or no matched models) — publish file untouched');
+    }
+  }
+
   const collabById = new Map(roster.map((m) => [m.model_id, Number(m.collaboration_rating ?? 50)]));
   for (const m of roster) {
     const id = m.model_id;
@@ -2932,7 +3176,13 @@ if (isMain) {
   // non-default state directory (e.g. the shadow state before cutover).
   const dirFlag = process.argv.indexOf('--continuous-dir');
   const continuousDir = dirFlag !== -1 ? process.argv[dirFlag + 1] : undefined;
-  buildPages({ continuousDir: continuousDir || undefined, log: (msg) => console.error(`[build_model_pages] ${msg}`) })
+  buildPages({
+    continuousDir: continuousDir || undefined,
+    // Keep /api/public/arena/ratings fresh from the continuous L0 baseline
+    // now that the weekly supervisor (its previous publisher) is disabled.
+    publishRatingsPath: path.join(REPO_ROOT, 'data', 'arena_ratings.json'),
+    log: (msg) => console.error(`[build_model_pages] ${msg}`),
+  })
     .then(({ slugs, battleStats }) => {
       console.error(`[build_model_pages] done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${JSON.stringify(battleStats)}`);
       for (const [id, slug] of Object.entries(slugs)) console.log(`${slug}\t${id}`);

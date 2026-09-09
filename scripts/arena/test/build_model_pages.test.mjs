@@ -8,14 +8,17 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
+  CONTINUOUS_RATINGS_ORIGIN,
   aggregateBattles,
   baseSlug,
   buildPages,
   defaultIo,
+  isoWeekId,
   matchFights,
   measuredRivalries,
   scanBattles,
   slugifyRoster,
+  weeklyBackupPathFor,
 } from '../build_model_pages.mjs';
 import { trackPolicy } from '../continuous/league.mjs';
 
@@ -1260,5 +1263,239 @@ test('measured rivalries: no qualifying pair keeps pages byte-identical to golde
       fs.readFileSync(path.join(FIXTURES, 'golden', f), 'utf8'),
       `${f} must be byte-identical to the golden when no pair qualifies`,
     );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Ratings republish (continuous L0 -> ratings-shaped publish file)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reimplementation of the key assertions the server applies in
+ * server/src/operational/arena/ratings.rs (validate_ratings_snapshot). If the
+ * emitted file passes these, the endpoint will serve it instead of falling
+ * back to no_active_season.
+ */
+function assertServerRatingsShape(doc) {
+  const SHA256 = /^[0-9a-f]{64}$/;
+  const isTimestamp = (v) => typeof v === 'string' && v.trim() === v && v.length > 0 && v.length <= 64
+    && v.includes('T') && (v.endsWith('Z') || /[+-]/.test(v.slice(v.indexOf('T') + 9)));
+
+  assert.equal(doc.schema_version, 1, 'schema_version must be 1');
+  assert.equal(doc.active, true, 'active must be true');
+  assert.match(doc.season_id, /^[A-Za-z0-9\-_.:]{1,128}$/, 'season_id charset/length');
+  assert.ok(isTimestamp(doc.generated_at), 'generated_at rfc3339 shape');
+
+  const { ranking, methodology: m, league, roster } = doc;
+  assert.ok(ranking.source.trim().length > 0 && ranking.source.length <= 512, 'ranking.source');
+  assert.ok(ranking.window.trim().length > 0 && ranking.window.length <= 64, 'ranking.window');
+  assert.ok(isTimestamp(ranking.retrieved_at), 'ranking.retrieved_at');
+
+  assert.match(m.prompt_sha256, SHA256, 'prompt_sha256');
+  assert.ok(m.source_limit_bytes > 0 && m.source_limit_bytes <= 51200, 'source_limit_bytes');
+  assert.ok(m.modes.length >= 1 && m.modes.length <= 16 && new Set(m.modes).size === m.modes.length, 'modes');
+  assert.ok(m.seed_sets.length >= 1 && m.seed_sets.length <= 10000
+    && new Set(m.seed_sets).size === m.seed_sets.length, 'seed_sets');
+  assert.ok(m.team_size >= 1 && m.team_size <= 100, 'team_size');
+  assert.ok(m.rounds >= 1 && m.rounds <= 10000, 'rounds');
+  const weights = [m.personal_weight, m.team_weight, m.collaboration_weight];
+  assert.ok(weights.every((w) => Number.isFinite(w) && w >= 0 && w <= 1)
+    && Math.abs(weights.reduce((a, b) => a + b, 0) - 1) <= 0.001, 'rating weights sum to 1');
+  const strategyWeights = [m.duel_strategy_weight, m.world_strategy_weight];
+  assert.ok(strategyWeights.every((w) => Number.isFinite(w) && w >= 0 && w <= 1)
+    && Math.abs(strategyWeights.reduce((a, b) => a + b, 0) - 1) <= 0.001, 'strategy weights sum to 1');
+  if (m.world_strategy_weight > 0) {
+    assert.ok(m.world_squad_size >= 1 && m.world_squad_size <= 5, 'world_squad_size');
+    assert.ok(m.world_max_ticks >= 1 && m.world_max_ticks <= 2000, 'world_max_ticks');
+  }
+  assert.ok(m.collaboration_kind.trim().length > 0 && m.collaboration_kind.length <= 128, 'collaboration_kind');
+  assert.ok(m.notes.length <= 16 && m.notes.every((n) => n.trim().length > 0 && n.length <= 512), 'notes');
+
+  assert.ok(Array.isArray(roster) && roster.length >= 1 && roster.length <= 1000, 'roster size');
+  const n = roster.length;
+  const ranks = new Set(); const providerRanks = new Set();
+  const modelIds = new Set(); const providerModels = new Set();
+  for (const e of roster) {
+    assert.ok(e.rank > 0 && !ranks.has(e.rank), 'unique nonzero rank'); ranks.add(e.rank);
+    assert.ok(e.provider_rank > 0 && !providerRanks.has(e.provider_rank), 'unique nonzero provider_rank');
+    providerRanks.add(e.provider_rank);
+    assert.ok(e.model_id.trim().length > 0 && !modelIds.has(e.model_id), 'unique model_id');
+    modelIds.add(e.model_id);
+    assert.ok(e.provider_model.trim().length > 0 && !providerModels.has(e.provider_model), 'unique provider_model');
+    providerModels.add(e.provider_model);
+    assert.ok(e.model_name.trim().length > 0, 'model_name');
+    for (const key of ['personal_rating', 'team_rating', 'collaboration_rating', 'overall_rating', 'world_rating', 'strategy_rating']) {
+      assert.ok(Number.isFinite(e[key]) && e[key] >= 0 && e[key] <= 100, `${key} within [0,100]`);
+    }
+    const expectedOverall = e.personal_rating * m.personal_weight
+      + e.team_rating * m.team_weight + e.collaboration_rating * m.collaboration_weight;
+    assert.ok(Math.abs(e.overall_rating - expectedOverall) <= 0.05, 'overall rating consistent with weights');
+    if (m.world_strategy_weight > 0) {
+      const expectedStrategy = e.overall_rating * m.duel_strategy_weight + e.world_rating * m.world_strategy_weight;
+      assert.ok(Math.abs(e.strategy_rating - expectedStrategy) <= 0.05, 'strategy rating consistent');
+    } else {
+      assert.ok(e.strategy_rating === 0 || Math.abs(e.strategy_rating - e.overall_rating) <= 0.05,
+        'strategy rating falls back to overall');
+    }
+    assert.equal(e.source_limit_bytes, m.source_limit_bytes, 'entry source limit matches methodology');
+    assert.ok(e.source_bytes <= e.source_limit_bytes, 'source_bytes within limit');
+    assert.match(e.source_sha256, SHA256, 'source_sha256');
+    assert.equal(e.compiled, true, 'compiled');
+    assert.equal(e.simulated, false, 'not simulated');
+    assert.ok(e.wasm_bytes > 0 && e.wasm_bytes <= 2 * 1024 * 1024, 'wasm_bytes range');
+    if (e.wasm_sha256 != null) assert.match(e.wasm_sha256, SHA256, 'wasm_sha256 lowercase');
+    assert.ok(e.compile_attempts >= 1 && e.compile_attempts <= 100, 'compile_attempts range');
+    assert.equal(e.wins + e.losses + e.draws, e.matches_played, 'match record adds up');
+    assert.ok(e.matches_played > 0 && e.evaluation_engagements >= e.matches_played, 'engagements cover matches');
+    assert.equal(e.integrity_status, 'verified_wasm', 'integrity_status');
+    if (league) {
+      assert.equal(e.epochs_played, league.epochs_completed, 'epochs_played matches league');
+      assert.ok(e.epoch_wins <= e.epochs_played, 'epoch_wins bounded');
+      assert.ok(e.best_epoch_rank >= 1 && e.best_epoch_rank <= n, 'best_epoch_rank range');
+      assert.ok(e.last_epoch_rank >= 1 && e.last_epoch_rank <= n, 'last_epoch_rank range');
+      assert.ok(e.season_points <= Math.max(...league.points_by_rank) * e.epochs_played, 'season_points cap');
+    }
+  }
+  const sorted = [...roster].sort((a, b) => a.rank - b.rank);
+  sorted.forEach((e, i) => assert.equal(e.rank, i + 1, 'ranks contiguous from 1'));
+
+  if (league) {
+    for (let i = 0; i + 1 < sorted.length; i++) {
+      const [left, right] = [sorted[i], sorted[i + 1]];
+      assert.ok(!(left.season_points < right.season_points
+        || (left.season_points === right.season_points && left.epoch_wins < right.epoch_wins)
+        || (left.season_points === right.season_points && left.epoch_wins === right.epoch_wins
+          && left.strategy_rating < right.strategy_rating)), 'league standings order');
+    }
+    assert.match(league.week_id, /^\d{4}-W(0[1-9]|[1-4][0-9]|5[0-3])$/, 'ISO week id');
+    assert.ok(isTimestamp(league.frozen_at), 'league.frozen_at');
+    assert.ok(league.epochs_completed > 0 && league.total_seed_count > 0, 'league counters');
+    assert.equal(league.points_by_rank.length, n, 'points table covers the roster');
+    assert.ok(league.points_by_rank.every((p) => p <= 1_000_000), 'points cap');
+    for (let i = 0; i + 1 < league.points_by_rank.length; i++) {
+      assert.ok(league.points_by_rank[i] >= league.points_by_rank[i + 1], 'points non-increasing');
+    }
+    assert.deepEqual(league.standings_order, ['season_points', 'epoch_wins', 'strategy_rating'], 'standings_order');
+    assert.match(league.ledger_sha256, SHA256, 'ledger_sha256');
+    assert.ok(league.recent_epochs.length <= 64, 'recent_epochs cap');
+  }
+}
+
+/** buildPages with ratingsPath == publishRatingsPath, seeded with the weekly fixture. */
+async function buildWithRatingsPublish(outDir, cmlDir, dataDir) {
+  const publishPath = path.join(dataDir, 'arena_ratings.json');
+  if (!fs.existsSync(publishPath)) fs.copyFileSync(path.join(FIXTURES, 'ratings.json'), publishPath);
+  await buildPages({
+    ratingsPath: publishPath,
+    publishRatingsPath: publishPath,
+    artifactsRoot: FIXTURES,
+    continuousDir: cmlDir,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
+    nowMs: NOW_MS,
+  });
+  return publishPath;
+}
+
+test('isoWeekId produces ISO-8601 week labels', () => {
+  assert.equal(isoWeekId(Date.parse('2026-09-09T00:00:00.000Z')), '2026-W37');
+  assert.equal(isoWeekId(Date.parse('2026-01-01T00:00:00.000Z')), '2026-W01');
+  assert.equal(isoWeekId(Date.parse('2025-12-29T00:00:00.000Z')), '2026-W01');
+  assert.equal(isoWeekId(NOW_MS), '2026-W34');
+});
+
+test('ratings republish: valid continuous state emits a server-valid L0 snapshot', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-ratings-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-ratings-cml-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-ratings-data-'));
+  writeContinuousFixture(cmlDir);
+
+  const publishPath = await buildWithRatingsPublish(outDir, cmlDir, dataDir);
+  const doc = JSON.parse(fs.readFileSync(publishPath, 'utf8'));
+
+  assertServerRatingsShape(doc);
+
+  // Provenance + content from the L0 track of the fixture state.
+  assert.equal(doc.origin, CONTINUOUS_RATINGS_ORIGIN);
+  assert.equal(doc.season_id, 'cml-test-0001');
+  assert.equal(doc.generated_at, new Date(NOW_MS).toISOString());
+  assert.equal(doc.league.epochs_completed, 10, 'L0 day index becomes epochs_completed');
+  assert.equal(doc.league.week_id, '2026-W34');
+  assert.equal(doc.roster.length, 12, 'full L0 roster (all fixture entries have matches)');
+  assert.equal(doc.roster[0].model_id, 'test/alpha-one', 'L0 rating leader first');
+  assert.equal(doc.roster[0].overall_rating, 66);
+  assert.equal(doc.roster[0].strategy_rating, 66);
+  assert.equal(doc.roster[0].season_points, 66000, 'season_points = rating x 1000');
+  assert.equal(doc.roster[0].epochs_played, 10);
+  assert.equal(doc.roster[0].matches_played, 11);
+
+  // Weekly display metadata carries over where the slug matches the weekly roster.
+  assert.equal(doc.roster[0].model_name, 'Test: Alpha One');
+  assert.equal(doc.roster[0].provider_rank, 1);
+  assert.equal(doc.roster[0].provider_model, 'test/alpha-one');
+  assert.equal(doc.roster[0].canonical_slug, 'test/alpha-one-20260101');
+  const beta = doc.roster.find((r) => r.model_id === 'test/beta-two');
+  assert.equal(beta.model_name, 'Test: Beta Two');
+  assert.equal(beta.provider_rank, 2);
+
+  // Newcomers (no weekly match) get a slug-derived name and a fresh provider_rank.
+  const filler = doc.roster.find((r) => r.model_id === 'test/f01');
+  assert.equal(filler.model_name, 'Test: F01');
+  assert.ok(![1, 2].includes(filler.provider_rank), 'newcomer rank must not collide with weekly ranks');
+
+  // The weekly publish file is preserved once as a sidecar backup.
+  const backupPath = weeklyBackupPathFor(publishPath);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(backupPath, 'utf8')),
+    JSON.parse(fs.readFileSync(path.join(FIXTURES, 'ratings.json'), 'utf8')),
+    'backup holds the pre-publish weekly file',
+  );
+
+  // Second run: the publish file is now continuous-provenance, so page
+  // generation must switch back to the preserved weekly snapshot — pages and
+  // the republished file are byte-identical to the first run.
+  const firstIndex = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  const firstPublish = fs.readFileSync(publishPath, 'utf8');
+  const firstBackup = fs.readFileSync(backupPath, 'utf8');
+  await buildWithRatingsPublish(outDir, cmlDir, dataDir);
+  assert.equal(fs.readFileSync(path.join(outDir, 'index.html'), 'utf8'), firstIndex,
+    'pages stay weekly-driven once the publish file flips provenance');
+  assert.equal(fs.readFileSync(publishPath, 'utf8'), firstPublish, 'republish is deterministic');
+  assert.equal(fs.readFileSync(backupPath, 'utf8'), firstBackup, 'backup is never rewritten');
+});
+
+test('ratings republish: absent, invalid, or un-emittable state leaves the publish file untouched', async () => {
+  const weeklyBytes = fs.readFileSync(path.join(FIXTURES, 'ratings.json'), 'utf8');
+
+  const variants = {
+    // No continuous state at all.
+    absent: (cmlDir) => {},
+    // State that fails the league's own schema validation.
+    invalid: (cmlDir) => fs.writeFileSync(path.join(cmlDir, 'state.json'), JSON.stringify({ schema_version: 99 })),
+    // Valid state, but the L0 track is still on day 0 — no server-valid
+    // snapshot can be built (epochs_completed must be > 0).
+    'day-zero': (cmlDir) => {
+      writeContinuousFixture(cmlDir);
+      const statePath = path.join(cmlDir, 'state.json');
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      state.tracks.L0.day_index = 0;
+      fs.writeFileSync(statePath, JSON.stringify(state));
+    },
+  };
+
+  for (const [label, prepare] of Object.entries(variants)) {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), `modelpages-ratings-${label}-out-`));
+    const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), `modelpages-ratings-${label}-cml-`));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), `modelpages-ratings-${label}-data-`));
+    prepare(cmlDir);
+
+    const publishPath = await buildWithRatingsPublish(outDir, cmlDir, dataDir);
+    assert.equal(fs.readFileSync(publishPath, 'utf8'), weeklyBytes, `${label}: publish file untouched`);
+    assert.ok(!fs.existsSync(weeklyBackupPathFor(publishPath)), `${label}: no backup written without a publish`);
   }
 });
