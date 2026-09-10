@@ -70,6 +70,24 @@ function pickModels(pool, slot) {
   return { 1: process.env.GENERAL_MODEL_TEAM1 || first, 2: process.env.GENERAL_MODEL_TEAM2 || second };
 }
 
+/// Which sides get a general this session.
+///
+/// By default exactly ONE, alternating with the rotation slot. Both teams
+/// field the same ten fighter models, so commanding a single side turns every
+/// commanded match into a controlled A/B — same map, same roster, same
+/// conditions, one difference — instead of a comparison across time windows.
+/// Alternating the side cancels out any spawn-side advantage.
+/// Set GENERAL_COMMAND_TEAMS=1,2 to command both (a showcase, not an
+/// experiment).
+function commandTeams(slot) {
+  const explicit = (process.env.GENERAL_COMMAND_TEAMS || '')
+    .split(',').map((t) => Number(t.trim())).filter((t) => t === 1 || t === 2);
+  if (explicit.length) return [...new Set(explicit)];
+  return [(slot % 2 === 0) ? 1 : 2];
+}
+
+let COMMAND_TEAMS = [1];
+
 let MODELS = { 1: 'anthropic/claude-opus-5', 2: 'openai/gpt-6-astra' };
 // Reasoning + vision runs roughly 1.3k tokens per call; at two teams that is
 // about $0.04 a cycle on frontier models. 30s keeps a commanded match near
@@ -316,7 +334,7 @@ async function cycle(token, key, calls) {
   const { ships, board } = await battlefield(token);
   if (!ships.length) { log('no live frame yet; skipping cycle'); return calls; }
 
-  for (const teamId of [1, 2]) {
+  for (const teamId of COMMAND_TEAMS) {
     if (MAX_CALLS && calls >= MAX_CALLS) { log(`call budget ${MAX_CALLS} reached`); return calls; }
     const model = MODELS[teamId];
     const { text } = summarise(ships, board, teamId);
@@ -358,7 +376,10 @@ async function cycle(token, key, calls) {
   const [token, key, pool] = await Promise.all([readSecret(TOKEN_FILE), readSecret(KEY_FILE), loadModelPool()]);
   const slot = rotationSlot();
   MODELS = pickModels(pool, slot);
-  log(`generals worker: team1=${MODELS[1]} team2=${MODELS[2]} (pool=${pool.length}, slot=${slot}) interval=${INTERVAL_MS}ms${MAX_CALLS ? ` maxCalls=${MAX_CALLS}` : ''}${DRY_RUN ? ' (dry-run)' : ''}`);
+  COMMAND_TEAMS = commandTeams(slot);
+  const commanding = COMMAND_TEAMS.map((t) => `team${t}=${MODELS[t]}`).join(' ');
+  const uncommanded = [1, 2].filter((t) => !COMMAND_TEAMS.includes(t));
+  log(`generals worker: ${commanding}${uncommanded.length ? ` (team${uncommanded[0]} uncommanded — control)` : ''} (pool=${pool.length}, slot=${slot}) interval=${INTERVAL_MS}ms${MAX_CALLS ? ` maxCalls=${MAX_CALLS}` : ''}${DRY_RUN ? ' (dry-run)' : ''}`);
   let calls = 0;
   for (;;) {
     try {

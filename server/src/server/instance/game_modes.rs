@@ -645,6 +645,9 @@ impl MassiveGameServer {
                         match_info_guard.game_mode = fb::GameModeType::FreeForAll;
                     }
                     let opening_mode = match_info_guard.game_mode;
+                    // Attribution is per match: the previous match's record is
+                    // closed out, while any standing order keeps running.
+                    self.general_orders.write().begin_match();
                     match_info_guard.mode_phases.clear();
                     match_info_guard.mode_phases.push(ModePhaseMarker {
                         game_mode: opening_mode,

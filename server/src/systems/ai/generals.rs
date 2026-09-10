@@ -221,15 +221,56 @@ pub fn validate_order(
     })
 }
 
-/// Standing orders, one per team.
+/// What one general did over the course of a single match. Recorded on the
+/// match summary so a commanded match can be compared against an
+/// uncommanded one after the fact.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GeneralMatchRecord {
+    pub team_id: u8,
+    pub model_id: String,
+    pub model_name: String,
+    /// Orders that landed during this match.
+    pub orders: u32,
+}
+
+/// Standing orders, one per team, plus a per-match tally.
 #[derive(Debug, Default)]
 pub struct GeneralOrderBoard {
     orders: HashMap<u8, GeneralOrder>,
+    match_tally: HashMap<u8, GeneralMatchRecord>,
 }
 
 impl GeneralOrderBoard {
     pub fn set(&mut self, order: GeneralOrder) {
+        let entry = self
+            .match_tally
+            .entry(order.team_id)
+            .or_insert_with(|| GeneralMatchRecord {
+                team_id: order.team_id,
+                model_id: order.model_id.clone(),
+                model_name: order.model_name.clone(),
+                orders: 0,
+            });
+        // A session can change which model commands a side mid-match; the
+        // most recent one owns the record.
+        entry.model_id = order.model_id.clone();
+        entry.model_name = order.model_name.clone();
+        entry.orders = entry.orders.saturating_add(1);
         self.orders.insert(order.team_id, order);
+    }
+
+    /// Which sides were commanded during the match just played, and by whom.
+    /// Sorted by team so the record is stable.
+    pub fn match_records(&self) -> Vec<GeneralMatchRecord> {
+        let mut records: Vec<GeneralMatchRecord> = self.match_tally.values().cloned().collect();
+        records.sort_by_key(|record| record.team_id);
+        records
+    }
+
+    /// Called at match start: the previous match's attribution is finished
+    /// with, but any standing order keeps running into the new match.
+    pub fn begin_match(&mut self) {
+        self.match_tally.clear();
     }
 
     pub fn active_for_team(&self, team_id: u8, now_ms: u64) -> Option<&GeneralOrder> {
@@ -373,6 +414,37 @@ mod tests {
         assert!(board.active(expires).is_empty());
         board.prune(expires);
         assert!(board.active(1_500).is_empty(), "pruned order does not come back");
+    }
+
+    #[test]
+    fn match_records_attribute_orders_per_side_and_reset_between_matches() {
+        let (min, max) = bounds();
+        let mut board = GeneralOrderBoard::default();
+        assert!(board.match_records().is_empty());
+
+        board.set(validate_order(&request("mass_attack"), 1_000, 1, min, max).unwrap());
+        board.set(validate_order(&request("retreat"), 2_000, 2, min, max).unwrap());
+        let mut enemy = request("hold");
+        enemy.team_id = 2;
+        enemy.model_id = "openai/gpt-6-astra".to_owned();
+        enemy.model_name = Some("GPT-6 Astra".to_owned());
+        board.set(validate_order(&enemy, 3_000, 3, min, max).unwrap());
+
+        let records = board.match_records();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].team_id, 1);
+        assert_eq!(records[0].orders, 2, "both team-1 orders counted");
+        assert_eq!(records[0].model_id, "anthropic/claude-opus-5");
+        assert_eq!(records[1].team_id, 2);
+        assert_eq!(records[1].orders, 1);
+        assert_eq!(records[1].model_name, "GPT-6 Astra");
+
+        // Expiry must not erase attribution: the match still happened.
+        assert!(board.active(1_000_000).is_empty());
+        assert_eq!(board.match_records().len(), 2);
+
+        board.begin_match();
+        assert!(board.match_records().is_empty(), "new match starts unattributed");
     }
 
     #[test]

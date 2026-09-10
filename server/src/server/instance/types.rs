@@ -350,6 +350,11 @@ pub struct MatchEndSummary {
     /// gauntlet.
     #[serde(default)]
     pub gauntlet: Option<GauntletMatchOutcome>,
+    /// Which sides a general commanded during this match, and how many
+    /// orders landed. Empty when nobody was commanding — that is the
+    /// control group for judging whether command helps.
+    #[serde(default)]
+    pub generals: Vec<GeneralMatchRecord>,
     pub players: Vec<PlayerMatchStats>,
     pub mvp_kills: Option<String>,
     pub mvp_damage: Option<String>,

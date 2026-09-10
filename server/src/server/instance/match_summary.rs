@@ -164,6 +164,7 @@ impl MassiveGameServer {
             phases,
             coop_gauntlet: coop_gauntlet_enabled(),
             gauntlet,
+            generals: self.general_orders.read().match_records(),
             players,
             mvp_kills,
             mvp_damage,

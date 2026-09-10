@@ -37,7 +37,8 @@ use crate::server::pickup_pipeline::{
 };
 use crate::state_sync::interpolation::InterpolationBuffer;
 use crate::systems::ai::generals::{
-    validate_order, GeneralOrder, GeneralOrderBoard, GeneralOrderError, GeneralOrderRequest,
+    validate_order, GeneralMatchRecord, GeneralOrder, GeneralOrderBoard, GeneralOrderError,
+    GeneralOrderRequest,
 };
 use crate::systems::ai::optimized_bot_ai::OptimizedBotAI;
 use crate::systems::respawn::{RespawnManager, WallRespawnManager};
