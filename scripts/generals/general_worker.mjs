@@ -87,6 +87,20 @@ function commandTeams(slot) {
 }
 
 let COMMAND_TEAMS = [1];
+let MODEL_POOL = [];
+// Ids that answered nothing this session; never offered again on this run.
+const RETIRED_THIS_SESSION = new Set();
+
+/// Swap a dead id for the next live one in the pool rather than forfeiting
+/// the whole scheduled session to it.
+function substituteModel(teamId, deadModel) {
+  RETIRED_THIS_SESSION.add(deadModel);
+  const inUse = new Set(Object.values(MODELS));
+  const next = MODEL_POOL.find((m) => !RETIRED_THIS_SESSION.has(m) && !inUse.has(m));
+  if (!next) return null;
+  MODELS[teamId] = next;
+  return next;
+}
 
 let MODELS = { 1: 'anthropic/claude-opus-5', 2: 'openai/gpt-6-astra' };
 // Reasoning + vision runs roughly 1.3k tokens per call; at two teams that is
@@ -97,6 +111,14 @@ const MAX_CALLS = Number(process.env.GENERAL_MAX_CALLS || 0);
 const ONCE = flag('once');
 const DRY_RUN = flag('dry-run');
 const MODEL_TIMEOUT_MS = Number(process.env.GENERAL_MODEL_TIMEOUT_MS || 20000);
+// Wall-clock stop, owned by the worker itself. systemd's RuntimeMaxSec is
+// ignored for Type=oneshot units, so relying on it alone let a session run
+// for three days (2026-09-12: a retired stealth model failed every call and
+// the loop never exited, blocking every scheduled run behind it).
+const SESSION_MAX_MS = Number(process.env.GENERAL_SESSION_MAX_MS || 900000);
+// A model that cannot answer at all ends the session rather than retrying
+// until the deadline: retired or unavailable ids fail instantly and forever.
+const MAX_CONSECUTIVE_FAILURES = Number(process.env.GENERAL_MAX_CONSECUTIVE_FAILURES || 4);
 
 // World bounds, mirrored from server constants.
 const WORLD = { minX: -800, maxX: 800, minY: -600, maxY: 600 };
@@ -330,6 +352,8 @@ async function postOrder(token, order) {
   return data.order;
 }
 
+let consecutiveFailures = 0;
+
 async function cycle(token, key, calls) {
   const { ships, board } = await battlefield(token);
   if (!ships.length) { log('no live frame yet; skipping cycle'); return calls; }
@@ -343,6 +367,7 @@ async function cycle(token, key, calls) {
       const started = Date.now();
       const { order, usage, raw, finish } = await askGeneral(key, model, text, png);
       calls += 1;
+      consecutiveFailures = 0;
       if (!order) {
         log(`team ${teamId} ${model}: unusable reply (finish=${finish}): ${String(raw).slice(0, 160)}`);
         continue;
@@ -366,7 +391,22 @@ async function cycle(token, key, calls) {
         log(`team ${teamId} ${model} -> ${applied.posture} (${Math.round(applied.target_x)},${Math.round(applied.target_y)}) "${applied.rationale}" ${Date.now() - started}ms ${tokens}`);
       }
     } catch (err) {
-      log(`team ${teamId} ${model} failed: ${String(err).slice(0, 200)}`);
+      // Every attempt counts against the budget, successful or not. Without
+      // this a permanently failing model never advanced `calls` and the
+      // session's only bound was a deadline that did not apply.
+      calls += 1;
+      consecutiveFailures += 1;
+      log(`team ${teamId} ${model} failed (${consecutiveFailures} in a row): ${String(err).slice(0, 160)}`);
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        const replacement = substituteModel(teamId, model);
+        consecutiveFailures = 0;
+        if (replacement) {
+          log(`${model} is unavailable, not unlucky (${MAX_CONSECUTIVE_FAILURES} straight failures); team ${teamId} now commanded by ${replacement}`);
+        } else {
+          log(`${model} is unavailable and the pool is exhausted; ending the session`);
+          return Number.MAX_SAFE_INTEGER;
+        }
+      }
     }
   }
   return calls;
@@ -375,19 +415,26 @@ async function cycle(token, key, calls) {
 (async () => {
   const [token, key, pool] = await Promise.all([readSecret(TOKEN_FILE), readSecret(KEY_FILE), loadModelPool()]);
   const slot = rotationSlot();
+  MODEL_POOL = pool;
   MODELS = pickModels(pool, slot);
   COMMAND_TEAMS = commandTeams(slot);
   const commanding = COMMAND_TEAMS.map((t) => `team${t}=${MODELS[t]}`).join(' ');
   const uncommanded = [1, 2].filter((t) => !COMMAND_TEAMS.includes(t));
   log(`generals worker: ${commanding}${uncommanded.length ? ` (team${uncommanded[0]} uncommanded — control)` : ''} (pool=${pool.length}, slot=${slot}) interval=${INTERVAL_MS}ms${MAX_CALLS ? ` maxCalls=${MAX_CALLS}` : ''}${DRY_RUN ? ' (dry-run)' : ''}`);
+  const deadline = Date.now() + SESSION_MAX_MS;
   let calls = 0;
+  let aborted = false;
   for (;;) {
     try {
       calls = await cycle(token, key, calls);
+      if (calls === Number.MAX_SAFE_INTEGER) { aborted = true; break; }
     } catch (err) {
+      calls += 1;
       log(`cycle failed: ${String(err).slice(0, 200)}`);
     }
     if (ONCE || (MAX_CALLS && calls >= MAX_CALLS)) break;
+    if (Date.now() >= deadline) { log(`session deadline (${SESSION_MAX_MS}ms) reached`); break; }
     await sleep(INTERVAL_MS);
   }
+  log(`session finished after ${calls === Number.MAX_SAFE_INTEGER ? 'an abort' : `${calls} attempts`}${aborted ? '' : ''}`);
 })();
