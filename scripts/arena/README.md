@@ -225,3 +225,62 @@ node scripts/arena/continuous/chemistry.mjs --track L2 --k 2
 # Verify the schedule/aggregation logic.
 node --test scripts/arena/continuous/test/chemistry.test.mjs
 ```
+
+## Season structure and finale
+
+`seasons.json` gives the continuous league narrative shape: fixed-length arcs
+(default 28 days) with a theme and a champion rule. `current` governs the site
+until the optional `next` season's `started_at` passes — the banner on
+`/models/` then switches over automatically, with no edit to the file. The
+`archive` array stays hand-managed.
+
+`continuous/season.mjs` computes the season frame purely from the definitions
+plus the validated league state: progress (day N of 28), the projected
+champion (current L0 leader under the champion rule — highest rating, ties
+broken by win rate, then matches played), and, once a season ends, the frozen
+finale record. In the last 3 days of a season `build_model_pages.mjs` renders
+a finale card on `/models/` (projected champion, per-division top 3, the
+season's Hall of Fame, and a "season in numbers" strip); the first build at
+or after `ends_at` freezes the finale to
+`artifacts/arena/continuous/seasons/<id>.json` (atomic, idempotent — the
+first computation wins and is never recomputed), and from then on the card
+renders the crowned champion from that record as the season's archive entry.
+Absent or malformed definitions hide every section and leave the HTML
+byte-identical to a build without them.
+
+```bash
+# Verify the season frame and finale rendering.
+node --test scripts/arena/continuous/test/season.test.mjs
+node --test scripts/arena/test/build_model_pages.test.mjs
+```
+
+## Press box (daily press conference)
+
+`press_conference.mjs` runs once per day (the media-daily flow calls it before
+the page build). It picks the most newsworthy league event of the last 24h —
+new leader > retirement/displacement > debutant > cross-track rating
+divergence ≥ 5 — and asks the involved model ITSELF (one OpenRouter chat
+completion on its own provider id, key resolved via `OPENROUTER_API_KEY` /
+`OPENROUTER_API_KEY_FILE`) for a 1–2 sentence public quote in its mascot
+persona. The prompt is a neutral, stats-only document (real rating, W/L/D,
+matches, days in league, the event) — the same no-coaching discipline as the
+feedback briefs; only the OUTPUT voice is editorial. Quotes are sanitized
+(markdown/quotes/newlines stripped, ≤2 sentences, ≤280 chars, truncated
+mid-sentence fragments dropped) and persisted atomically to
+`artifacts/arena/continuous/press/<date>.json`.
+
+HARD RULE: on ANY failure (no key, HTTP 402/403/429/5xx, timeout, unusable
+output) NO file is written — a quote is never fabricated. An existing
+`press/<today>.json` ends the run before any provider call (one paid call per
+day; `--force` regenerates manually).
+
+`build_model_pages.mjs` renders the latest valid press file ≤7 days old as a
+"Press box" card on `/models/` and the model's own latest quote on its page;
+absent, malformed or stale files hide the sections and leave the HTML
+byte-identical to a build without them.
+
+```bash
+node scripts/arena/press_conference.mjs              # daily run (idempotent)
+node scripts/arena/press_conference.mjs --force      # regenerate today
+node --test scripts/arena/test/press_conference.test.mjs
+```

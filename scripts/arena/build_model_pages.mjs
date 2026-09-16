@@ -17,6 +17,9 @@
 //                                               league (optional, path injectable)
 //   scripts/arena/lore.json                     authored world/fighter/lexicon lore
 //                                               (optional, path injectable)
+//   artifacts/arena/continuous/press/<date>.json  daily generated press-conference
+//                                               quotes (optional; latest ≤7 days
+//                                               rendered as the Press box)
 //
 // Outputs:
 //   static_client/models/index.html             rank-sorted roster index
@@ -28,6 +31,10 @@
 //   static_client/models/league.json            landing-ticker payload (only when the
 //                                               continuous league state validates)
 //   artifacts/arena/page-cache.json             incremental battle-sample cache
+//   artifacts/arena/continuous/seasons/<id>.json
+//                                               frozen season finale record, written
+//                                               once by the first build at/after a
+//                                               season's ends_at and never recomputed
 //   data/arena_ratings.json                     (CLI runs only) republished from
 //                                               the continuous league's L0 track when its
 //                                               state validates; the previous weekly file is
@@ -49,7 +56,11 @@
 // banner and arena lore follow the same rule: absent or malformed, their
 // sections disappear (and stale lore.html is removed), leaving the HTML
 // byte-identical to a build without them (models.css always carries the
-// season/lore styles).
+// season/lore styles). The Press box (artifacts/arena/continuous/press/*.json,
+// written by scripts/arena/press_conference.mjs) follows the same rule: no
+// usable press file ≤7 days old, its sections disappear and the HTML is
+// byte-identical to a build without it (models.css always carries the press
+// styles).
 //
 // The battles dir is far too large to read fully; we readdir + stat everything
 // (fast), keep the newest window, and only JSON-read files that are new since
@@ -72,6 +83,14 @@ import { fileURLToPath } from 'node:url';
 import { mascotFor } from './mascots.mjs';
 import { TRACKS } from './continuous/league.mjs';
 import { MAX_ROSTER_SIZE, validateState } from './continuous/state.mjs';
+import {
+  computeSeasonView,
+  freezeRecord,
+  resolveSeasonFrame,
+  seasonWindow,
+  validateFinaleRecord,
+  winRate,
+} from './continuous/season.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..', '..');
@@ -1072,7 +1091,7 @@ ${ctx.loreTitle ? `            <p class="profile-hero__lore"><a class="text-link
                 ${placementRow}
             </dl>
         </section>
-${ctx.analyst ? `\n${ctx.analyst}\n` : ''}
+${ctx.analyst ? `\n${ctx.analyst}\n` : ''}${ctx.press ? `${ctx.press}\n` : ''}
         <section class="panel-grid">
             <article class="panel">
                 <h2>Ratings radar</h2>
@@ -1127,7 +1146,7 @@ export function renderIndexPage(ctx) {
             <h1>Weekly top 10. <em>One tour.</em></h1>
             <p class="models-hero__lede">Every model below holds a live profile: ratings, behavior fingerprint, head-to-head rivalries, world co-performance and recorded fights.</p>
         </section>
-${ctx.seasonBanner ? `${ctx.seasonBanner}\n` : ''}${ctx.chronicle ? `${ctx.chronicle}\n` : ''}${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
+${ctx.seasonBanner ? `${ctx.seasonBanner}\n` : ''}${ctx.seasonFinale ? `${ctx.seasonFinale}\n` : ''}${ctx.chronicle ? `${ctx.chronicle}\n` : ''}${ctx.pressBox ? `${ctx.pressBox}\n` : ''}${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">
 ${rows}
         </section>
 ${ctx.toplist ? `${ctx.toplist}\n` : ''}${continuous ? `${[standingsSection(continuous.state), matrixSection(continuous.state), ctx.chemistry, announcementsSection(allAnnouncements(continuous.state)), hallOfFameSection(continuous.state)].filter(Boolean).join('\n')}\n` : ''}${ctx.measured ? `${ctx.measured}\n` : ''}${provenanceFooter(ctx)}
@@ -2063,6 +2082,144 @@ ${chapters}
 }
 
 // ---------------------------------------------------------------------------
+// Press box (optional generated overlay)
+// ---------------------------------------------------------------------------
+//
+// Daily post-match press conference (scripts/arena/press_conference.mjs):
+// one quote per day, spoken by the involved model itself, persisted as
+// <continuousDir>/press/<date>.json. The index renders the latest quote as a
+// Press box card; a model page renders its own latest quote. Files older than
+// PRESS_MAX_AGE_MS (or malformed) are ignored — with no usable file the
+// sections disappear and the HTML stays byte-identical to a build without the
+// feature; models.css always carries the styles. Unlike the chronicle the
+// quote is machine-generated, but only ever from a real provider response —
+// press_conference writes NO file when generation fails.
+
+export const PRESS_MAX_AGE_MS = 7 * 24 * 3_600_000;
+const PRESS_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}\.json$/;
+
+/** Validate one press record; returns a normalized copy or null. */
+function normalizePressEntry(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const quote = typeof data.quote === 'string' ? data.quote.trim() : '';
+  if (!quote || quote.length > 400) return null;
+  if (typeof data.model_id !== 'string' || !data.model_id) return null;
+  if (typeof data.slug !== 'string' || !data.slug) return null;
+  if (!Number.isFinite(Date.parse(data.generated_at))) return null;
+  if (typeof data.prompt_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(data.prompt_sha256)) return null;
+  const event = data.event;
+  if (!event || typeof event !== 'object'
+    || typeof event.type !== 'string' || !event.type
+    || typeof event.caption !== 'string' || !event.caption.trim()) return null;
+  const mascot = data.mascot && typeof data.mascot === 'object'
+    && typeof data.mascot.emoji === 'string' && typeof data.mascot.title === 'string'
+    && typeof data.mascot.color === 'string'
+    ? { emoji: data.mascot.emoji, title: data.mascot.title, color: data.mascot.color }
+    : null;
+  return {
+    event: {
+      type: event.type,
+      track: typeof event.track === 'string' ? event.track : null,
+      caption: event.caption.trim(),
+    },
+    model_id: data.model_id,
+    slug: data.slug,
+    mascot,
+    quote,
+    generated_at: data.generated_at,
+    prompt_sha256: data.prompt_sha256,
+  };
+}
+
+/**
+ * Load press files from <continuousDir>/press, newest first, keeping only
+ * valid records no older than maxAgeMs. Returns { latest, entries } or null.
+ */
+export function loadPress({
+  continuousDir,
+  io = defaultIo,
+  log = () => {},
+  nowMs = Date.now(),
+  maxAgeMs = PRESS_MAX_AGE_MS,
+}) {
+  const dir = path.join(continuousDir, 'press');
+  if (!continuousDir || !io.exists(dir)) return null;
+  let names;
+  try {
+    names = io.readdir(dir).filter((n) => PRESS_FILE_PATTERN.test(n)).sort().reverse();
+  } catch {
+    return null;
+  }
+  const cutoff = nowMs - maxAgeMs;
+  const entries = [];
+  for (const name of names) {
+    let data;
+    try {
+      data = io.readJson(path.join(dir, name));
+    } catch {
+      log(`press: ignoring unreadable ${name}`);
+      continue;
+    }
+    const entry = normalizePressEntry(data);
+    if (!entry) {
+      log(`press: ignoring malformed ${name}`);
+      continue;
+    }
+    if (Date.parse(entry.generated_at) < cutoff) continue; // stale — too old to publish
+    entries.push(entry);
+  }
+  if (!entries.length) return null;
+  entries.sort((a, b) => Date.parse(b.generated_at) - Date.parse(a.generated_at));
+  return { latest: entries[0], entries };
+}
+
+/** A roster model's latest press quote, matched via canonical slug / ids. */
+export function pressForModel(press, model) {
+  if (!press) return null;
+  return press.entries.find((e) => e.slug === model.canonical_slug
+    || e.model_id === model.model_id
+    || (model.provider_model && e.model_id === model.provider_model)) || null;
+}
+
+const PRESS_EVENT_LABELS = {
+  leader_change: 'New leader',
+  retirement: 'Retirement',
+  debutant: 'Debut',
+  divergence: 'Track divergence',
+};
+
+/** Index card: the league's latest quote, whoever spoke it. */
+function pressBoxSection(entry) {
+  const mascot = entry.mascot || { emoji: '🎤', title: 'Press', color: 'var(--dim)' };
+  const label = PRESS_EVENT_LABELS[entry.event.type] || entry.event.type;
+  const date = String(entry.generated_at).slice(0, 10);
+  return `        <section class="press-box" aria-label="Press box">
+            <p class="eyebrow press-box__eyebrow"><span class="live-dot"></span> Press box · ${esc(label)}</p>
+            <figure class="press-box__card">
+                <span class="press-box__emoji" style="border-color:${esc(mascot.color)}">${esc(mascot.emoji)}</span>
+                <blockquote class="press-box__quote">
+                    <p class="press-box__text"><em>${esc(entry.quote)}</em></p>
+                    <figcaption class="press-box__caption">
+                        <b>${esc(mascot.title)}</b> · ${esc(baseSlug(entry.slug))} — ${esc(entry.event.caption)}
+                        <span class="press-box__date">${esc(date)}</span>
+                    </figcaption>
+                </blockquote>
+            </figure>
+        </section>`;
+}
+
+/** Model-page panel: the model's own latest quote. */
+function modelPressSection(entry) {
+  const label = PRESS_EVENT_LABELS[entry.event.type] || entry.event.type;
+  const date = String(entry.generated_at).slice(0, 10);
+  return `        <section class="panel press-quote" aria-label="Press box">
+            <p class="eyebrow">Press box · ${esc(label)} · ${esc(date)}</p>
+            <blockquote class="press-quote__text"><em>${esc(entry.quote)}</em></blockquote>
+            <p class="press-quote__caption">${esc(entry.event.caption)}</p>
+        </section>`;
+}
+
+// ---------------------------------------------------------------------------
 // Season structure + arena lore (optional editorial overlays)
 // ---------------------------------------------------------------------------
 //
@@ -2094,13 +2251,29 @@ export function loadSeasons({ seasonsPath, io = defaultIo, log = () => {} }) {
     return null;
   }
   const lengthDays = Number(data?.season_length_days);
-  const cur = data?.current;
-  const startedMs = Date.parse(cur?.started_at);
-  if (!Number.isFinite(lengthDays) || lengthDays <= 0
-    || !cur || !cur.id || !cur.name || !Number.isFinite(startedMs)) {
+  const parseSeason = (s) => {
+    const startedMs = Date.parse(s?.started_at);
+    if (!s || !s.id || !s.name || !Number.isFinite(startedMs)) return null;
+    // ends_at is authoritative; fall back to started_at + season_length_days.
+    let endsMs = Date.parse(s.ends_at);
+    if (!Number.isFinite(endsMs) || endsMs <= startedMs) endsMs = startedMs + lengthDays * 86400000;
+    return {
+      id: String(s.id),
+      name: String(s.name),
+      startedMs,
+      endsMs,
+      totalDays: lengthDays,
+      theme: s.theme ? String(s.theme) : null,
+      championRule: s.champion_rule ? String(s.champion_rule) : null,
+    };
+  };
+  const current = Number.isFinite(lengthDays) && lengthDays > 0 ? parseSeason(data?.current) : null;
+  if (!current) {
     log('seasons: ignoring definition without a usable current season');
     return null;
   }
+  const next = parseSeason(data?.next);
+  if (data?.next && !next) log('seasons: ignoring unusable next season definition');
   const championText = (c) => {
     if (!c) return null;
     if (typeof c === 'string') return c;
@@ -2108,13 +2281,8 @@ export function loadSeasons({ seasonsPath, io = defaultIo, log = () => {} }) {
   };
   return {
     seasonLengthDays: lengthDays,
-    current: {
-      id: String(cur.id),
-      name: String(cur.name),
-      startedMs,
-      theme: cur.theme ? String(cur.theme) : null,
-      championRule: cur.champion_rule ? String(cur.champion_rule) : null,
-    },
+    current,
+    next,
     archive: (Array.isArray(data.archive) ? data.archive : [])
       .filter((s) => s && typeof s === 'object' && s.id && s.name)
       .map((s) => ({ id: String(s.id), name: String(s.name), champion: championText(s.champion) })),
@@ -2130,10 +2298,13 @@ export function seasonDisplayName(id, name) {
 /**
  * Index-page banner: current season, day counter computed from started_at, a
  * thin progress bar, the theme line, the champion rule as small print, and a
- * past-seasons strip when the archive is non-empty.
+ * past-seasons strip when the archive is non-empty. When seasons.json carries
+ * a `next` season whose started_at has passed, the banner switches to it
+ * automatically (resolveSeasonFrame) — nothing hardcodes a season id.
  */
 export function seasonBanner(seasons, nowMs, { loreLink = false } = {}) {
-  const { current, seasonLengthDays, archive } = seasons;
+  const { seasonLengthDays, archive } = seasons;
+  const current = resolveSeasonFrame(seasons, nowMs).current;
   const elapsed = nowMs - current.startedMs;
   const day = Math.min(seasonLengthDays, Math.max(1, Math.floor(elapsed / 86400000) + 1));
   const pct = Math.max(0, Math.min(100, (elapsed / (seasonLengthDays * 86400000)) * 100));
@@ -2148,6 +2319,156 @@ ${archive.map((s) => `                <span class="season-banner__past-item"><b>
             </div>
             <progress class="season-banner__bar" value="${day}" max="${seasonLengthDays}">${pct.toFixed(1)}%</progress>
 ${current.theme ? `            <p class="season-banner__theme">${esc(current.theme)}</p>\n` : ''}${current.championRule ? `            <p class="season-banner__rule">Champion — ${esc(current.championRule)}</p>\n` : ''}${loreLink ? '            <p class="season-banner__lore"><a class="text-link" href="lore.html">Read the arena lore →</a></p>\n' : ''}${past}        </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Season finale (countdown + frozen champion)
+// ---------------------------------------------------------------------------
+//
+// In the last COUNTDOWN_DAYS of a season the index gains a finale card: the
+// projected champion (live L0 leader under the champion rule), per-division
+// top 3, the season's Hall of Fame and a "season in numbers" strip. At
+// ends_at the first build freezes the finale to
+// <continuousDir>/seasons/<id>.json (atomic write, idempotent — an existing
+// record is never recomputed), and from then on the card renders from that
+// frozen record: the crowned champion, immune to later league play. The
+// frozen card stays on the index as the season's archive entry until the
+// next season enters its own countdown. Same standing rule as the other
+// editorial overlays: without a valid seasons.json + continuous state the
+// section disappears and the HTML is byte-identical to a build without it.
+
+/** Path of the persisted finale record for a season. */
+export function seasonFinalePath(continuousDir, seasonId) {
+  return path.join(continuousDir, 'seasons', `${seasonId}.json`);
+}
+
+/** Read a frozen finale record, or null when absent/unusable (the caller refreezes). */
+function loadFrozenFinale({ file, seasonId, io, log }) {
+  if (!io.exists(file)) return null;
+  try {
+    return validateFinaleRecord(io.readJson(file), seasonId);
+  } catch (error) {
+    log(`seasons: ignoring invalid finale record ${file} (${String(error?.message || error).slice(0, 200)})`);
+    return null;
+  }
+}
+
+/**
+ * Resolve the finale input for the index page, or null when the section is
+ * hidden (mid-season, no ended predecessor, or nothing to crown). Precedence:
+ * an ended current season is crowned first; then a current season in its
+ * final countdown renders live; then the displaced previous season keeps its
+ * frozen card as the archive entry. Freezing happens here — the first build
+ * at/after ends_at writes the record and every later build just reads it.
+ */
+export function seasonFinale({ seasons, state, continuousDir, nowMs, io = defaultIo, log = () => {} }) {
+  const frame = resolveSeasonFrame(seasons, nowMs);
+  const currentWindow = seasonWindow(frame.current, nowMs);
+
+  const crown = (season) => {
+    const file = seasonFinalePath(continuousDir, season.id);
+    let record = loadFrozenFinale({ file, seasonId: season.id, io, log });
+    if (!record) {
+      record = freezeRecord({ season, state, nowMs, tracks: TRACKS });
+      if (!record) {
+        log(`seasons: ${season.id} ended with no L0 roster to crown — finale hidden`);
+        return null;
+      }
+      io.writeFile(file, `${JSON.stringify(record, null, 2)}\n`);
+      log(`seasons: froze ${season.id} finale — champion ${record.champion.slug} -> ${file}`);
+    }
+    return { mode: 'crowned', season, record };
+  };
+
+  if (currentWindow.status === 'ended') return crown(frame.current);
+  if (currentWindow.phase === 'countdown') {
+    const view = computeSeasonView({ season: frame.current, state, nowMs, tracks: TRACKS });
+    if (!view.projected) return null;
+    return { mode: 'countdown', season: frame.current, view };
+  }
+  if (frame.previous) return crown(frame.previous);
+  return null;
+}
+
+const finaleDate = (ms) => new Date(ms).toISOString().slice(0, 10);
+// Live state entries carry wins/matches; frozen snapshots carry win_rate.
+const finaleWinRate = (e) => (Number.isFinite(e.win_rate) ? e.win_rate : winRate(e));
+
+/**
+ * Render the finale card. Countdown mode projects from the live view;
+ * crowned mode renders exclusively from the frozen record.
+ */
+export function seasonFinaleSection(finale) {
+  if (!finale) return null;
+  const crowned = finale.mode === 'crowned';
+  const { season } = finale;
+  const source = crowned ? finale.record : finale.view;
+  const champion = crowned ? finale.record.champion : finale.view.projected;
+  const retirements = crowned
+    ? finale.record.retirements
+    : finale.view.retirements.map(({ track, entry }) => ({ track, ...entry }));
+  const numbers = crowned ? finale.record.numbers : null;
+  const totalFights = crowned ? numbers.total_fights : source.numbers.totalFights;
+  const modelsDebuted = crowned ? numbers.models_debuted : source.numbers.modelsDebuted;
+  const modelsRetired = crowned ? numbers.models_retired : source.numbers.modelsRetired;
+  const days = crowned ? numbers.days : source.numbers.days;
+
+  const championBlock = `            <article class="finale__champion${crowned ? ' finale__champion--crowned' : ''}">
+                <span class="finale__emoji" style="border-color:${esc(champion.mascot.color)}">${esc(champion.mascot.emoji)}</span>
+                <div class="finale__champion-body">
+                    <p class="finale__tag">${crowned ? '👑 Season champion' : 'Projected champion'}</p>
+                    <h3>${esc(champion.mascot.title)}</h3>
+                    <p class="finale__slug">${esc(champion.model_id)}</p>
+                    <dl class="finale__stats">
+                        <div><dt>L0 rating</dt><dd>${Number(champion.rating).toFixed(1)}</dd></div>
+                        <div><dt>Record</dt><dd>${fmtInt(champion.wins)}W · ${fmtInt(champion.losses)}L · ${fmtInt(champion.draws)}D</dd></div>
+                        <div><dt>Win rate</dt><dd>${(finaleWinRate(champion) * 100).toFixed(1)}%</dd></div>
+                    </dl>
+                    <p class="finale__note">${crowned
+    ? `crowned ${finaleDate(season.endsMs)} · record frozen ${finaleDate(Date.parse(finale.record.frozen_at))} — later league play belongs to the next season`
+    : `${source.window.daysRemaining} day${source.window.daysRemaining === 1 ? '' : 's'} left — the L0 leader at ${finaleDate(season.endsMs)} takes the crown`}</p>
+                </div>
+            </article>`;
+
+  const divisionBlocks = source.divisions.map((d) => `                <div class="finale__division">
+                    <h4>${divisionBadge(d.name)}</h4>
+                    <ol class="finale__division-list">
+${d.models.map((m) => `                        <li><span class="standings__emoji">${esc(m.mascot.emoji)}</span> <b>${esc(m.mascot.title)}</b> <span class="finale__division-rating">${Number(m.rating).toFixed(1)}</span></li>`).join('\n')}
+                    </ol>
+                </div>`).join('\n');
+
+  const hofCards = retirements.map((r) => `                <article class="hof__card">
+                    <span class="hof__emoji" style="border-color:${esc(r.mascot.color)}">${esc(r.mascot.emoji)}</span>
+                    <div class="hof__id">
+                        <b>${esc(r.mascot.title)}</b>
+                        <small>${trackBadge(r.track)} ${esc(r.slug)}</small>
+                    </div>
+                    <dl class="hof__stats">
+                        <div><dt>Days in league</dt><dd>${fmtInt(r.days_in_league)}</dd></div>
+                        <div><dt>Final rating</dt><dd>${Number(r.rating).toFixed(1)}</dd></div>
+                        <div><dt>Record</dt><dd><span class="win">${fmtInt(r.wins)}</span>W · <span class="loss">${fmtInt(r.losses)}</span>L · ${fmtInt(r.draws)}D</dd></div>
+                    </dl>
+                    <p class="hof__reason">${esc(r.reason)}</p>
+                </article>`).join('\n');
+
+  return `        <section class="panel finale" aria-label="Season finale">
+            <h2>${esc(seasonDisplayName(season.id, season.name))} <span class="hof__hint">${crowned ? 'final — champion crowned' : `final countdown · ${source.window.daysRemaining} day${source.window.daysRemaining === 1 ? '' : 's'} left`}</span></h2>
+            <div class="finale__grid">
+${championBlock}
+                <div class="finale__divisions">
+${divisionBlocks}
+                </div>
+            </div>
+            <dl class="finale__numbers">
+                <div><dt>Fights</dt><dd>${fmtInt(totalFights)}</dd></div>
+                <div><dt>Models debuted</dt><dd>${fmtInt(modelsDebuted)}</dd></div>
+                <div><dt>Models retired</dt><dd>${fmtInt(modelsRetired)}</dd></div>
+                <div><dt>Days</dt><dd>${fmtInt(days)} / ${fmtInt(season.totalDays)}</dd></div>
+            </dl>
+${retirements.length ? `            <h3 class="finale__subtitle">Season Hall of Fame <span class="hof__hint">every retirement this season</span></h3>
+            <div class="hof__grid">
+${hofCards}
+            </div>\n` : ''}        </section>`;
 }
 
 /**
@@ -2679,6 +3000,66 @@ a.toplist__card:hover { border-color: var(--acid); }
     .chronicle__prose--lead::first-letter { font-size: 44px; padding-right: 10px; }
 }
 
+/* press box — the daily generated quote, one voice at a time */
+.press-box {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 0 0 8px;
+    text-align: center;
+}
+.press-box__eyebrow { justify-content: center; }
+.press-box__card {
+    display: flex;
+    align-items: flex-start;
+    gap: 18px;
+    margin: 26px 0 0;
+    border: 1px solid var(--line-soft);
+    padding: 26px 30px;
+    background: rgba(7, 16, 12, 0.66);
+    text-align: left;
+}
+.press-box__emoji {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 52px;
+    height: 52px;
+    border: 1px solid var(--dim);
+    border-radius: 50%;
+    font-size: 26px;
+}
+.press-box__quote { margin: 0; min-width: 0; }
+.press-box__text {
+    margin: 0;
+    color: var(--white);
+    font: 400 19px/1.5 var(--serif, Georgia, serif);
+}
+.press-box__caption {
+    margin: 14px 0 0;
+    color: var(--dim);
+    font: 600 10px/1.7 var(--mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.press-box__caption b { color: var(--acid-soft); }
+.press-box__date { margin-left: 10px; color: var(--dim); }
+.press-quote__text {
+    margin: 0;
+    color: var(--white);
+    font: 400 17px/1.55 var(--serif, Georgia, serif);
+}
+.press-quote__caption {
+    margin: 14px 0 0;
+    color: var(--dim);
+    font: 600 9px/1.7 var(--mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+@media (max-width: 640px) {
+    .press-box__card { flex-direction: column; padding: 22px; }
+    .press-box__text { font-size: 17px; }
+}
+
 /* continuous league overlay */
 .league-strip {
     display: grid;
@@ -2893,6 +3274,63 @@ table.measured__table tr:last-child td { border-bottom: none; }
     .season-banner { padding: 18px 16px; }
 }
 
+/* season finale — countdown card, then the frozen champion card */
+.finale__grid { display: grid; grid-template-columns: minmax(300px, 5fr) minmax(300px, 7fr); gap: 22px; margin-bottom: 20px; }
+.finale__champion {
+    display: flex; align-items: flex-start; gap: 20px;
+    border: 1px solid var(--line-soft);
+    padding: 22px;
+    background: rgba(3, 7, 6, 0.5);
+}
+.finale__champion--crowned { border-color: var(--line); background: rgba(202, 255, 0, 0.05); }
+.finale__emoji {
+    width: 64px; height: 64px;
+    flex: 0 0 auto;
+    display: grid; place-items: center;
+    border: 1px solid var(--line);
+    font-size: 32px;
+    background: rgba(5, 13, 10, 0.6);
+}
+.finale__champion-body { min-width: 0; }
+.finale__tag { margin: 0 0 6px; color: var(--acid-soft); font: 800 9px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
+.finale__champion h3 { margin: 0 0 4px; font: 900 22px/1.2 var(--sans); letter-spacing: -0.02em; }
+.finale__slug { margin: 0 0 14px; color: var(--dim); font: 700 8px/1.4 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; word-break: break-all; }
+.finale__stats { display: flex; flex-wrap: wrap; gap: 12px 26px; margin: 0; }
+.finale__stats dd { white-space: nowrap; }
+.finale__stats dt { margin-bottom: 6px; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.finale__stats dd { margin: 0; color: var(--white); font: 800 11px/1.3 var(--mono); }
+.finale__note { margin: 14px 0 0; color: var(--dim); font: 600 8px/1.6 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.finale__divisions { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; align-content: start; }
+.finale__division { border: 1px solid var(--line-soft); padding: 14px 16px; background: rgba(3, 7, 6, 0.5); }
+.finale__division h4 { margin: 0 0 10px; }
+.finale__division-list { margin: 0; padding: 0; list-style: none; counter-reset: finale-rank; }
+.finale__division-list li {
+    counter-increment: finale-rank;
+    display: flex; align-items: baseline; gap: 7px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 12px;
+}
+.finale__division-list li:last-child { border-bottom: none; }
+.finale__division-list li::before { content: counter(finale-rank) "."; color: var(--dim); font: 700 9px/1 var(--mono); }
+.finale__division-rating { margin-left: auto; color: var(--acid-soft); font: 800 10px/1 var(--mono); }
+.finale__numbers {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 0;
+    margin: 0 0 6px;
+    border-top: 1px solid var(--line-soft);
+    border-bottom: 1px solid var(--line-soft);
+}
+.finale__numbers div { padding: 14px 16px; border-left: 1px solid var(--line-soft); }
+.finale__numbers div:first-child { border-left: none; }
+.finale__numbers dt { margin-bottom: 6px; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.finale__numbers dd { margin: 0; color: var(--white); font: 800 15px/1.2 var(--mono); }
+.finale__subtitle { margin: 22px 0 14px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
+@media (max-width: 860px) {
+    .finale__grid { grid-template-columns: 1fr; }
+    .finale__numbers { grid-template-columns: repeat(2, 1fr); }
+    .finale__numbers div:nth-child(odd) { border-left: none; }
+}
+
 /* arena lore page — magazine prose like the chronicle */
 .lore__section-title {
     margin: 64px 0 28px;
@@ -2994,8 +3432,23 @@ export async function buildPages({
   // Optional season structure — null unless the authored definitions load.
   const seasons = loadSeasons({ seasonsPath, io, log });
 
+  // Season finale — countdown card near the end of a season; frozen champion
+  // card once it ends. Resolving it may persist the ended season's frozen
+  // record under <continuousDir>/seasons/ (first build after ends_at wins).
+  const resolvedContinuousDir = continuousDir || path.join(artifactsRoot, 'continuous');
+  const finale = continuous && seasons
+    ? seasonFinale({
+      seasons, state: continuous.state, continuousDir: resolvedContinuousDir, nowMs, io, log,
+    })
+    : null;
+
   // Optional arena lore — null unless the authored lore loads.
   const lore = loadLore({ lorePath, io, log });
+
+  // Optional Press box — null unless a usable press file ≤7 days old exists.
+  // Independent of the continuous overlay's validity: a quote that was
+  // generated while the league was healthy stays publishable.
+  const press = loadPress({ continuousDir: resolvedContinuousDir, io, log, nowMs });
 
   const seasonDir = path.join(artifactsRoot, 'seasons', ratings.season_id);
   const battlesDir = path.join(seasonDir, 'battles');
@@ -3066,6 +3519,8 @@ export async function buildPages({
     seasonBanner: continuous && seasons
       ? seasonBanner(seasons, nowMs, { loreLink: Boolean(lore) })
       : null,
+    seasonFinale: finale ? seasonFinaleSection(finale) : null,
+    pressBox: press ? pressBoxSection(press.latest) : null,
     measured: battleScan.rivalries
       ? measuredRivalriesSection(battleScan.rivalries, metaById, slugById)
       : null,
@@ -3146,6 +3601,7 @@ export async function buildPages({
       lineage,
       chemistry: chemistryPartners,
       analyst: toplistEntry ? analystNoteSection(toplistEntry, toplist.league_day) : null,
+      press: pressForModel(press, m) ? modelPressSection(pressForModel(press, m)) : null,
       measuredContest: battleScan.rivalries
         ? measuredContestLine(battleScan.rivalries.mostContestedByModel.get(id), id, metaById, slugById) || null
         : null,

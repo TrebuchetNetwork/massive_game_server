@@ -20,7 +20,8 @@ import {
   slugifyRoster,
   weeklyBackupPathFor,
 } from '../build_model_pages.mjs';
-import { trackPolicy } from '../continuous/league.mjs';
+import { trackPolicy, TRACKS } from '../continuous/league.mjs';
+import { freezeRecord } from '../continuous/season.mjs';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const A = 'test-0001-alpha-alpha-one';
@@ -1083,6 +1084,235 @@ test('stale lore.html is removed when lore becomes unusable', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Season finale (final countdown + frozen champion)
+// ---------------------------------------------------------------------------
+
+const FINALE_START_MS = Date.parse('2026-07-28T00:00:00.000Z');
+const FINALE_END_MS = Date.parse('2026-08-25T00:00:00.000Z');
+// NOW_MS (2026-08-23T12:00Z) is 2 days before the fixture season end.
+const FINALE_AFTER_END_MS = Date.parse('2026-08-26T00:00:00.000Z');
+
+/** Finale fixture seasons: S1 "Genesis" 2026-07-28 -> 2026-08-25 (+ optional S2 next). */
+function writeFinaleSeasons(dir, { next = false } = {}) {
+  const file = path.join(dir, 'seasons.json');
+  fs.writeFileSync(file, JSON.stringify({
+    season_length_days: 28,
+    current: {
+      id: 'S1', name: 'Genesis',
+      started_at: '2026-07-28T00:00:00.000Z', ends_at: '2026-08-25T00:00:00.000Z',
+      theme: 'Finale fixture theme.', champion_rule: 'Highest L0 rating at season end.',
+    },
+    ...(next ? {
+      next: {
+        id: 'S2', name: 'Redux',
+        started_at: '2026-08-25T00:00:00.000Z', ends_at: '2026-09-22T00:00:00.000Z',
+        theme: 'Second fixture season.', champion_rule: 'Highest L0 rating at season end.',
+      },
+    } : {}),
+    archive: [],
+  }));
+  return file;
+}
+
+async function buildFinale(outDir, cmlDir, seasonsPath, nowMs) {
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    continuousDir: cmlDir,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath,
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
+    nowMs,
+  });
+}
+
+function finaleBlock(index) {
+  return index.split('aria-label="Season finale"')[1].split('</section>')[0];
+}
+
+test('season finale: countdown card projects the live L0 leader', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-state-'));
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-cfg-'));
+  writeContinuousFixture(cmlDir);
+  await buildFinale(outDir, cmlDir, writeFinaleSeasons(cfgDir), NOW_MS);
+
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.match(index, /aria-label="Season finale"/);
+  assert.ok(index.indexOf('Current season') < index.indexOf('Season finale'), 'finale follows the banner');
+  assert.ok(index.indexOf('Season finale') < index.indexOf('Track standings'), 'finale sits above the standings');
+
+  const finale = finaleBlock(index);
+  assert.match(finale, /Season 1 · Genesis/);
+  assert.match(finale, /final countdown · 2 days left/);
+  assert.match(finale, /Projected champion/);
+  assert.ok(!finale.includes('👑'), 'no crown before the season ends');
+  assert.match(finale, /<h3>Alpha<\/h3>/, 'alpha leads L0 at 66.0');
+  assert.match(finale, /<dt>L0 rating<\/dt><dd>66\.0<\/dd>/);
+  assert.match(finale, /8W · 2L · 1D/);
+  assert.match(finale, /<dt>Win rate<\/dt><dd>72\.7%<\/dd>/);
+  assert.match(finale, /2 days left — the L0 leader at 2026-08-25 takes the crown/);
+
+  // Per-division top 3: premier (alpha + 2 fillers) and challenger (beta, epsilon).
+  assert.equal((finale.match(/finale__division">/g) || []).length, 2);
+  assert.equal((finale.match(/finale__division-rating/g) || []).length, 5);
+  assert.match(finale, /division-badge--premier">Premier/);
+  assert.match(finale, /division-badge--challenger">Challenger/);
+
+  // Numbers strip, counted on the L0 baseline track.
+  assert.match(finale, /<dt>Fights<\/dt><dd>66<\/dd>/); // 131 participant-matches / 2
+  assert.match(finale, /<dt>Models debuted<\/dt><dd>13<\/dd>/);
+  assert.match(finale, /<dt>Models retired<\/dt><dd>1<\/dd>/);
+  assert.match(finale, /<dt>Days<\/dt><dd>27 \/ 28<\/dd>/);
+
+  // Season Hall of Fame: both retirements (delta in L0, gamma in L1) fall
+  // inside the season window, each track-badged.
+  assert.match(finale, /Season Hall of Fame/);
+  assert.equal((finale.match(/hof__card/g) || []).length, 2);
+  assert.match(finale, /track-badge--L0/);
+  assert.match(finale, /track-badge--L1/);
+
+  // Countdown never freezes anything.
+  assert.ok(!fs.existsSync(path.join(cmlDir, 'seasons')), 'no frozen record before ends_at');
+});
+
+test('season finale: first build after ends_at freezes; later leader changes cannot rewrite it', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-state-'));
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-cfg-'));
+  writeContinuousFixture(cmlDir);
+  const seasonsPath = writeFinaleSeasons(cfgDir);
+
+  await buildFinale(outDir, cmlDir, seasonsPath, FINALE_AFTER_END_MS);
+  const freezeFile = path.join(cmlDir, 'seasons', 'S1.json');
+  assert.ok(fs.existsSync(freezeFile), 'ended season is frozen on first build');
+  const frozen = JSON.parse(fs.readFileSync(freezeFile, 'utf8'));
+  assert.equal(frozen.season.id, 'S1');
+  assert.equal(frozen.frozen_at, '2026-08-26T00:00:00.000Z');
+  assert.equal(frozen.champion.slug, 'test/alpha-one-20260101');
+  assert.equal(frozen.champion.rating, 66);
+  assert.equal(frozen.numbers.days, 28);
+  const frozenBytes = fs.readFileSync(freezeFile, 'utf8');
+
+  const firstIndex = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  const firstFinale = finaleBlock(firstIndex);
+  assert.match(firstFinale, /👑 Season champion/);
+  assert.match(firstFinale, /finale__champion--crowned/);
+  assert.match(firstFinale, /final — champion crowned/);
+  assert.match(firstFinale, /crowned 2026-08-25 · record frozen 2026-08-26/);
+
+  // The league plays on into the next season: beta overtakes alpha. The
+  // frozen record — and the rendered card — must not move.
+  const state = JSON.parse(fs.readFileSync(path.join(cmlDir, 'state.json'), 'utf8'));
+  for (const e of state.tracks.L0.roster) {
+    if (e.slug.startsWith('test/alpha')) e.rating = 10;
+    if (e.slug.startsWith('test/beta')) e.rating = 99;
+  }
+  fs.writeFileSync(path.join(cmlDir, 'state.json'), JSON.stringify(state, null, 2));
+
+  const outDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-out-'));
+  await buildFinale(outDir2, cmlDir, seasonsPath, FINALE_AFTER_END_MS + 86400000);
+  assert.equal(fs.readFileSync(freezeFile, 'utf8'), frozenBytes, 'frozen record is never recomputed');
+  const finale = finaleBlock(fs.readFileSync(path.join(outDir2, 'index.html'), 'utf8'));
+  assert.match(finale, /<h3>Alpha<\/h3>/, 'the frozen champion keeps the crown');
+  assert.match(finale, /<dt>L0 rating<\/dt><dd>66\.0<\/dd>/);
+  assert.ok(!finale.includes('99.0'), 'live ratings cannot leak into the frozen card');
+});
+
+test('season finale: a pre-frozen record wins over the live leader', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-state-'));
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-cfg-'));
+  writeContinuousFixture(cmlDir);
+  const seasonsPath = writeFinaleSeasons(cfgDir);
+
+  // Pre-write a frozen record whose champion is beta, not the live leader.
+  const altState = JSON.parse(fs.readFileSync(path.join(cmlDir, 'state.json'), 'utf8'));
+  for (const e of altState.tracks.L0.roster) {
+    if (e.slug.startsWith('test/beta')) e.rating = 88;
+  }
+  const record = freezeRecord({
+    season: { id: 'S1', name: 'Genesis', startedMs: FINALE_START_MS, endsMs: FINALE_END_MS },
+    state: altState,
+    nowMs: FINALE_AFTER_END_MS,
+    tracks: TRACKS,
+  });
+  const freezeDir = path.join(cmlDir, 'seasons');
+  fs.mkdirSync(freezeDir, { recursive: true });
+  fs.writeFileSync(path.join(freezeDir, 'S1.json'), `${JSON.stringify(record, null, 2)}\n`);
+
+  await buildFinale(outDir, cmlDir, seasonsPath, FINALE_AFTER_END_MS);
+  const finale = finaleBlock(fs.readFileSync(path.join(outDir, 'index.html'), 'utf8'));
+  assert.match(finale, /👑 Season champion/);
+  assert.match(finale, /<h3>Beta<\/h3>/, 'the frozen record crowns beta');
+  assert.match(finale, /<dt>L0 rating<\/dt><dd>88\.0<\/dd>/);
+  assert.ok(!finale.includes('Projected champion'));
+});
+
+test('season finale: banner switches to the next season; the ended one keeps its crowned card', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-state-'));
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-cfg-'));
+  writeContinuousFixture(cmlDir);
+  const seasonsPath = writeFinaleSeasons(cfgDir, { next: true });
+
+  await buildFinale(outDir, cmlDir, seasonsPath, FINALE_AFTER_END_MS);
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  // Banner has already rolled over to S2 (started 2026-08-25 -> day 2)…
+  const banner = index.split('aria-label="Current season"')[1].split('</section>')[0];
+  assert.match(banner, /Season 2 · Redux/);
+  assert.match(banner, /Day 2 of 28/);
+  // …while the finale card archives the ended S1 with its frozen champion.
+  const finale = finaleBlock(index);
+  assert.match(finale, /Season 1 · Genesis/);
+  assert.match(finale, /👑 Season champion/);
+  assert.match(finale, /<h3>Alpha<\/h3>/);
+  assert.ok(fs.existsSync(path.join(cmlDir, 'seasons', 'S1.json')), 'rollover freezes the ended season');
+});
+
+test('season finale: hidden mid-season, without data, or with nothing to crown', async () => {
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-state-'));
+  writeContinuousFixture(cmlDir);
+  const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-cfg-'));
+
+  // Mid-season (fixture seasons.json puts NOW_MS at day 4 of 28): no finale.
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-out-'));
+  await buildFinale(outDir, cmlDir, path.join(FIXTURES, 'seasons.json'), NOW_MS);
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.ok(index.includes('season-banner'), 'banner still renders mid-season');
+  assert.ok(!index.includes('Season finale'), 'finale hidden mid-season');
+  assert.ok(!index.includes('finale__'));
+  assert.ok(!fs.existsSync(path.join(cmlDir, 'seasons')), 'nothing frozen mid-season');
+
+  // No seasons file at all: no finale (byte-identical goldens cover this path).
+  const outDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-out-'));
+  await buildFinale(outDir2, cmlDir, path.join(FIXTURES, 'no-such-seasons.json'), NOW_MS);
+  assert.ok(!fs.readFileSync(path.join(outDir2, 'index.html'), 'utf8').includes('finale'));
+
+  // Countdown with an empty L0 roster: nothing to project, section hidden.
+  const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-state-'));
+  writeContinuousFixture(emptyDir);
+  const state = JSON.parse(fs.readFileSync(path.join(emptyDir, 'state.json'), 'utf8'));
+  state.tracks.L0.roster = [];
+  fs.writeFileSync(path.join(emptyDir, 'state.json'), JSON.stringify(state, null, 2));
+  const outDir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-out-'));
+  await buildFinale(outDir3, emptyDir, writeFinaleSeasons(cfgDir), NOW_MS);
+  assert.ok(!fs.readFileSync(path.join(outDir3, 'index.html'), 'utf8').includes('Season finale'),
+    'finale hidden when the L0 track has no roster');
+
+  // Ended season with an empty L0 roster: no champion to crown, nothing written.
+  const outDir4 = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-finale-out-'));
+  await buildFinale(outDir4, emptyDir, path.join(cfgDir, 'seasons.json'), FINALE_AFTER_END_MS);
+  assert.ok(!fs.readFileSync(path.join(outDir4, 'index.html'), 'utf8').includes('Season finale'),
+    'no crowned card without a champion');
+  assert.ok(!fs.existsSync(path.join(emptyDir, 'seasons', 'S1.json')), 'no freeze file without a champion');
+});
+
+// ---------------------------------------------------------------------------
 // Measured rivalries (full-sample pairwise head-to-head)
 // ---------------------------------------------------------------------------
 
@@ -1497,5 +1727,104 @@ test('ratings republish: absent, invalid, or un-emittable state leaves the publi
     const publishPath = await buildWithRatingsPublish(outDir, cmlDir, dataDir);
     assert.equal(fs.readFileSync(publishPath, 'utf8'), weeklyBytes, `${label}: publish file untouched`);
     assert.ok(!fs.existsSync(weeklyBackupPathFor(publishPath)), `${label}: no backup written without a publish`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Press box (generated quote overlay)
+// ---------------------------------------------------------------------------
+
+function pressRecord(over = {}) {
+  return {
+    event: {
+      type: 'retirement', track: 'L0',
+      caption: 'alpha-one retired from track L0 — rating 30 < 35.',
+    },
+    model_id: 'test/alpha-one',
+    slug: 'test/alpha-one-20260101',
+    mascot: { key: null, emoji: '🦊', title: 'Alpha', color: '#caff00' },
+    quote: 'The cage taught me more than the wins ever did. I leave with my circuits held high.',
+    generated_at: '2026-08-23T09:00:00.000Z',
+    prompt_sha256: HEX('d'),
+    ...over,
+  };
+}
+
+function writePress(cmlDir, name, record) {
+  const dir = path.join(cmlDir, 'press');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, name), typeof record === 'string' ? record : JSON.stringify(record));
+}
+
+test('press box: index renders the latest quote, the quoted model page its own', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-press-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-press-cml-'));
+  writeContinuousFixture(cmlDir);
+  writePress(cmlDir, '2026-08-23.json', pressRecord());
+  // An older quote from a different model: the index still shows the newest.
+  writePress(cmlDir, '2026-08-22.json', pressRecord({
+    model_id: 'test/beta-two', slug: 'test/beta-two-20260102',
+    mascot: { key: null, emoji: '🐙', title: 'Beta', color: '#00e0ff' },
+    quote: 'Older words from another day.',
+    generated_at: '2026-08-22T09:00:00.000Z',
+  }));
+  await buildWithContinuous(outDir, cmlDir);
+
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.match(index, /Press box · Retirement/);
+  assert.match(index, /<em>The cage taught me more than the wins ever did\. I leave with my circuits held high\.<\/em>/);
+  assert.match(index, /alpha-one retired from track L0 — rating 30 &lt; 35\./);
+  assert.match(index, /<b>Alpha<\/b> · alpha-one/);
+  assert.match(index, /2026-08-23/);
+  assert.ok(!index.includes('Older words from another day.'), 'index shows only the latest quote');
+
+  const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
+  assert.match(alpha, /Press box · Retirement · 2026-08-23/);
+  assert.match(alpha, /The cage taught me more than the wins ever did\./);
+
+  const beta = fs.readFileSync(path.join(outDir, 'beta-two.html'), 'utf8');
+  assert.match(beta, /Older words from another day\./, 'beta page shows its own latest quote');
+  assert.ok(!beta.includes('The cage taught me'), 'beta does not show the alpha quote');
+
+  // The styles always ship, quoted or not.
+  const css = fs.readFileSync(path.join(outDir, 'models.css'), 'utf8');
+  assert.match(css, /\.press-box__/);
+  assert.match(css, /\.press-quote__/);
+});
+
+test('press box: absent, malformed or stale press files leave the HTML byte-identical', async () => {
+  const baselineCml = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-press-base-cml-'));
+  writeContinuousFixture(baselineCml);
+  const baselineOut = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-press-base-out-'));
+  await buildWithContinuous(baselineOut, baselineCml);
+
+  const variants = {
+    // Press dir missing entirely.
+    absent: (cmlDir) => writeContinuousFixture(cmlDir),
+    // Unparseable file + a record missing its quote.
+    malformed: (cmlDir) => {
+      writeContinuousFixture(cmlDir);
+      writePress(cmlDir, '2026-08-23.json', '{not json');
+      writePress(cmlDir, '2026-08-22.json', { ...pressRecord(), quote: '' });
+    },
+    // Valid record, but older than the 7-day publish window.
+    stale: (cmlDir) => {
+      writeContinuousFixture(cmlDir);
+      writePress(cmlDir, '2026-08-10.json', pressRecord({ generated_at: '2026-08-10T09:00:00.000Z' }));
+    },
+  };
+
+  for (const [label, prepare] of Object.entries(variants)) {
+    const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), `modelpages-press-${label}-cml-`));
+    prepare(cmlDir);
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), `modelpages-press-${label}-out-`));
+    await buildWithContinuous(outDir, cmlDir);
+    for (const name of ['index.html', 'alpha-one.html', 'beta-two.html', 'mascots.json']) {
+      assert.equal(
+        fs.readFileSync(path.join(outDir, name), 'utf8'),
+        fs.readFileSync(path.join(baselineOut, name), 'utf8'),
+        `${label}: ${name} byte-identical to the no-press build`,
+      );
+    }
   }
 });
