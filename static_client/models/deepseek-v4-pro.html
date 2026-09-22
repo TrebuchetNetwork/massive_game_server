@@ -353,6 +353,659 @@
             <p class="metric-note">W/L/D deltas derive from the track's daily history snapshots; a failed attempt consumes a submission but the previous artifact stays live.</p>
         </section>
 
+        <section class="panel autopsy" aria-label="Borrow-checker autopsy">
+            <h2>Borrow-checker autopsy <span class="hof__hint">per track</span></h2>
+            <h3 class="lineage__track"><span class="track-badge track-badge--L3">L3</span> Weekly feedback</h3>
+            <div class="autopsy__timeline">
+                <span class="autopsy__badge autopsy__badge--entrant" title="entrant">v1</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v2</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v3</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v4</span>
+            </div>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v1 → v2</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-02T09:24:19.477Z">2026-09-02 09:24 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:39 v-new:39 @@</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">  fn needs_urgent_support(lowest_ally_health: i32, allies_alive: i32) -&gt; bool {</span>
+<span class="diff-line diff-del">−     allies_alive &gt; 1 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt;= 35</span>
+<span class="diff-line diff-add">+     allies_alive &gt; 1 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt;= 40</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">  fn should_charge(tick: i32, slot: i32, self_health: i32, team_score_delta: i32) -&gt; bool {</span>
+<span class="diff-line diff-del">−     if self_health &lt; 75 {</span>
+<span class="diff-line diff-add">+     if self_health &lt; 65 {</span>
+<span class="diff-line diff-ctx">          return false;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-del">−     if team_score_delta &gt; 40 {</span>
+<span class="diff-line diff-del">−         return random_bounded(tick, slot, 5) == 0;</span>
+<span class="diff-line diff-add">+     if team_score_delta &gt; 30 {</span>
+<span class="diff-line diff-add">+         return random_bounded(tick, slot, 6) == 0;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-del">−     if team_score_delta &lt; -20 &amp;&amp; self_health &gt;= 80 {</span>
+<span class="diff-line diff-add">+     if team_score_delta &lt; -15 &amp;&amp; self_health &gt;= 75 {</span>
+<span class="diff-line diff-ctx">          return random_bounded(tick, slot, 4) == 0;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">      false</span>
+<span class="diff-line diff-hunk">@@ v-old:73 v-new:73 @@</span>
+<span class="diff-line diff-ctx">          return IDLE;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Critical self-preservation threshold</span>
+<span class="diff-line diff-del">−     let flee_threshold = if allies_alive &lt;= 2 { 20 } else { 15 };</span>
+<span class="diff-line diff-add">+     // More decisive survival threshold</span>
+<span class="diff-line diff-add">+     let flee_threshold = if allies_alive &lt;= 2 { 28 } else { 22 };</span>
+<span class="diff-line diff-ctx">      if self_health &lt;= flee_threshold {</span>
+<span class="diff-line diff-ctx">          return DEFEND;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Support decision: more aggressive about saving critically wounded teammates</span>
+<span class="diff-line diff-add">+     // Support logic: more proactive</span>
+<span class="diff-line diff-ctx">      let urgent = needs_urgent_support(lowest_ally_health, allies_alive);</span>
+<span class="diff-line diff-ctx">      if urgent {</span>
+<span class="diff-line diff-del">−         if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 35 {</span>
+<span class="diff-line diff-add">+         if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-ctx">              return SUPPORT;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         // If support role isn&#39;t us but we are healthy and outnumber enemies, sometimes help</span>
+<span class="diff-line diff-del">−         if self_health &gt;= 70 &amp;&amp; allies_alive &gt; enemies_alive &amp;&amp; random_bounded(tick, slot, 6) == 0 {</span>
+<span class="diff-line diff-add">+         // Help more often if we&#39;re healthy and not critically outnumbered</span>
+<span class="diff-line diff-add">+         if self_health &gt;= 65 &amp;&amp; allies_alive &gt;= enemies_alive &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-ctx">              return SUPPORT;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      match mode {</span>
+<span class="diff-line diff-ctx">          MODE_ARENA =&gt; {</span>
+<span class="diff-line diff-del">−             if self_health &lt;= 25 {</span>
+<span class="diff-line diff-add">+             // Arena is pure fights - be more aggressive</span>
+<span class="diff-line diff-add">+             if self_health &lt;= 35 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if personal_score &lt; 50 &amp;&amp; self_health &lt; 60 {</span>
+<span class="diff-line diff-del">−                 if random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-del">−                     return DEFEND;</span>
+<span class="diff-line diff-del">−                 }</span>
+<span class="diff-line diff-del">−             }</span>
+<span class="diff-line diff-del">−             // Charge occasionally in arena if healthy and scoring</span>
+<span class="diff-line diff-del">−             if self_health &gt;= 80 &amp;&amp; personal_score &gt;= 100 &amp;&amp; random_bounded(tick, slot, 7) == 0 {</span>
+<span class="diff-line diff-add">+             if self_health &gt;= 75 &amp;&amp; personal_score &gt;= 80 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-add">+             // Don&#39;t over-defend in arena</span>
+<span class="diff-line diff-ctx">              return ATTACK;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_TDM =&gt; {</span>
+<span class="diff-line diff-del">−             if urgent &amp;&amp; is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 40 {</span>
+<span class="diff-line diff-add">+             if urgent &amp;&amp; is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 35 {</span>
+<span class="diff-line diff-ctx">                  return SUPPORT;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if self_health &gt;= 60 {</span>
+<span class="diff-line diff-add">+             if self_health &gt;= 55 {</span>
+<span class="diff-line diff-ctx">                  if should_charge(tick, slot, self_health, team_score_delta) {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if self_health &lt;= 30 {</span>
+<span class="diff-line diff-add">+             if self_health &lt;= 25 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              return ATTACK;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_CTF =&gt; {</span>
+<span class="diff-line diff-add">+             // CTF requires adaptive play</span>
+<span class="diff-line diff-ctx">              if urgent &amp;&amp; is_support_role(slot, allies_alive) {</span>
+<span class="diff-line diff-ctx">                  return SUPPORT;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if objective_delta &gt; 0 &amp;&amp; self_health &lt; 70 {</span>
+<span class="diff-line diff-add">+             if objective_delta &gt; 0 &amp;&amp; self_health &lt; 65 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if objective_delta &lt;= 0 {</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 50 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 55 {</span>
+<span class="diff-line diff-ctx">                      return ATTACK;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             return ATTACK;</span>
+<span class="diff-line diff-add">+             // When ahead, push but not recklessly</span>
+<span class="diff-line diff-add">+             if self_health &gt;= 70 {</span>
+<span class="diff-line diff-add">+                 return ATTACK;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+             return DEFEND;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_KOTH =&gt; {</span>
+<span class="diff-line diff-ctx">              if urgent &amp;&amp; is_support_role(slot, allies_alive) {</span>
+<span class="diff-line diff-ctx">                  return SUPPORT;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if objective_delta &gt; 20 {</span>
+<span class="diff-line diff-del">−                 // Hold with defense, but keep contributing presence</span>
+<span class="diff-line diff-add">+             if objective_delta &gt; 15 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // When heavily behind, consider charging to break through</span>
+<span class="diff-line diff-del">−             if objective_delta &lt; -30 &amp;&amp; self_health &gt;= 75 {</span>
+<span class="diff-line diff-del">−                 if random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+             // Behind: charge more aggressively</span>
+<span class="diff-line diff-add">+             if objective_delta &lt; -25 &amp;&amp; self_health &gt;= 70 {</span>
+<span class="diff-line diff-add">+                 if random_bounded(tick, slot, 3) == 0 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if self_health &gt;= 40 {</span>
+<span class="diff-line diff-add">+             if self_health &gt;= 45 {</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              return DEFEND;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          _ =&gt; {</span>
+<span class="diff-line diff-del">−             if self_health &lt;= 25 {</span>
+<span class="diff-line diff-add">+             if self_health &lt;= 28 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if allies_alive &gt;= 3 &amp;&amp; is_support_role(slot, allies_alive) &amp;&amp; lowest_ally_health &lt; 50 &amp;&amp; lowest_ally_health &gt; 0 {</span>
+<span class="diff-line diff-del">−                 if self_health &gt; 50 {</span>
+<span class="diff-line diff-add">+             if allies_alive &gt;= 3 &amp;&amp; is_support_role(slot, allies_alive) &amp;&amp; lowest_ally_health &lt; 55 &amp;&amp; lowest_ally_health &gt; 0 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt; 45 {</span>
+<span class="diff-line diff-ctx">                      return SUPPORT;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">              }</span></pre>
+            </details>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v2 → v3</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-09T09:24:38.115Z">2026-09-09 09:24 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:39 v-new:39 @@</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">  fn needs_urgent_support(lowest_ally_health: i32, allies_alive: i32) -&gt; bool {</span>
+<span class="diff-line diff-del">−     allies_alive &gt; 1 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt;= 40</span>
+<span class="diff-line diff-add">+     allies_alive &gt; 1 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt;= 45</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">− fn should_charge(tick: i32, slot: i32, self_health: i32, team_score_delta: i32) -&gt; bool {</span>
+<span class="diff-line diff-del">−     if self_health &lt; 65 {</span>
+<span class="diff-line diff-add">+ fn should_charge(tick: i32, slot: i32, self_health: i32, team_score_delta: i32, mode: i32) -&gt; bool {</span>
+<span class="diff-line diff-add">+     if self_health &lt; 50 {</span>
+<span class="diff-line diff-ctx">          return false;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-add">+     if mode == MODE_KOTH || mode == MODE_CTF {</span>
+<span class="diff-line diff-add">+         return team_score_delta &lt; -10 &amp;&amp; random_bounded(tick, slot, 5) == 0;</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-ctx">      if team_score_delta &gt; 30 {</span>
+<span class="diff-line diff-del">−         return random_bounded(tick, slot, 6) == 0;</span>
+<span class="diff-line diff-add">+         return random_bounded(tick, slot, 8) == 0;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-del">−     if team_score_delta &lt; -15 &amp;&amp; self_health &gt;= 75 {</span>
+<span class="diff-line diff-del">−         return random_bounded(tick, slot, 4) == 0;</span>
+<span class="diff-line diff-add">+     if team_score_delta &lt; -15 &amp;&amp; self_health &gt;= 70 {</span>
+<span class="diff-line diff-add">+         return random_bounded(tick, slot, 5) == 0;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">      false</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-hunk">@@ v-old:73 v-new:76 @@</span>
+<span class="diff-line diff-ctx">          return IDLE;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // More decisive survival threshold</span>
+<span class="diff-line diff-del">−     let flee_threshold = if allies_alive &lt;= 2 { 28 } else { 22 };</span>
+<span class="diff-line diff-add">+     // Dynamic flee threshold based on mode and situation</span>
+<span class="diff-line diff-add">+     let flee_threshold: i32 = match mode {</span>
+<span class="diff-line diff-add">+         MODE_ARENA =&gt; {</span>
+<span class="diff-line diff-add">+             if allies_alive &gt; enemies_alive { 20 } else { 30 }</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+         MODE_CTF =&gt; {</span>
+<span class="diff-line diff-add">+             if objective_delta &gt; 0 { 35 } else { 25 }</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+         MODE_KOTH =&gt; {</span>
+<span class="diff-line diff-add">+             if objective_delta &gt; 15 { 35 } else { 22 }</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+         _ =&gt; {</span>
+<span class="diff-line diff-add">+             if allies_alive &lt;= 2 { 30 } else { 22 }</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+     };</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-ctx">      if self_health &lt;= flee_threshold {</span>
+<span class="diff-line diff-ctx">          return DEFEND;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Support logic: more proactive</span>
+<span class="diff-line diff-add">+     // Check for urgent support needs</span>
+<span class="diff-line diff-ctx">      let urgent = needs_urgent_support(lowest_ally_health, allies_alive);</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+     // Support logic: more carefully calibrated</span>
+<span class="diff-line diff-ctx">      if urgent {</span>
+<span class="diff-line diff-del">−         if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-add">+         // Dedicated support slot helps allies first</span>
+<span class="diff-line diff-add">+         if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 25 {</span>
+<span class="diff-line diff-ctx">              return SUPPORT;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         // Help more often if we&#39;re healthy and not critically outnumbered</span>
+<span class="diff-line diff-del">−         if self_health &gt;= 65 &amp;&amp; allies_alive &gt;= enemies_alive &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+         // Healthy fighters can switch to support when team is struggling</span>
+<span class="diff-line diff-add">+         if self_health &gt;= 60 &amp;&amp; allies_alive &gt;= enemies_alive &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-ctx">              return SUPPORT;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-add">+         // When outnumbered but need to keep allies alive</span>
+<span class="diff-line diff-add">+         if self_health &gt;= 55 &amp;&amp; allies_alive &lt; enemies_alive &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-add">+             return SUPPORT;</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      match mode {</span>
+<span class="diff-line diff-ctx">          MODE_ARENA =&gt; {</span>
+<span class="diff-line diff-del">−             // Arena is pure fights - be more aggressive</span>
+<span class="diff-line diff-add">+             // Arena requires aggression but smart survival</span>
+<span class="diff-line diff-ctx">              if self_health &lt;= 35 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if self_health &gt;= 75 &amp;&amp; personal_score &gt;= 80 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-del">−                 return CHARGE;</span>
+<span class="diff-line diff-add">+             // In arena, charge when dominating</span>
+<span class="diff-line diff-add">+             if self_health &gt;= 80 &amp;&amp; personal_score &gt;= 100 {</span>
+<span class="diff-line diff-add">+                 if random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                     return CHARGE;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // Don&#39;t over-defend in arena</span>
+<span class="diff-line diff-del">−             return ATTACK;</span>
+<span class="diff-line diff-add">+             // Attack is default in arena</span>
+<span class="diff-line diff-add">+             if random_bounded(tick, slot, 10) &lt; 8 {</span>
+<span class="diff-line diff-add">+                 return ATTACK;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+             return DEFEND;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_TDM =&gt; {</span>
+<span class="diff-line diff-del">−             if urgent &amp;&amp; is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 35 {</span>
+<span class="diff-line diff-del">−                 return SUPPORT;</span>
+<span class="diff-line diff-add">+             if urgent {</span>
+<span class="diff-line diff-add">+                 if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-add">+                     return SUPPORT;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 55 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                     return SUPPORT;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if self_health &gt;= 55 {</span>
+<span class="diff-line diff-del">−                 if should_charge(tick, slot, self_health, team_score_delta) {</span>
+<span class="diff-line diff-add">+                 if should_charge(tick, slot, self_health, team_score_delta, mode) {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-hunk">@@ v-old:119 v-new:154 @@</span>
+<span class="diff-line diff-ctx">              return ATTACK;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_CTF =&gt; {</span>
+<span class="diff-line diff-del">−             // CTF requires adaptive play</span>
+<span class="diff-line diff-del">−             if urgent &amp;&amp; is_support_role(slot, allies_alive) {</span>
+<span class="diff-line diff-del">−                 return SUPPORT;</span>
+<span class="diff-line diff-del">−             }</span>
+<span class="diff-line diff-del">−             if objective_delta &gt; 0 &amp;&amp; self_health &lt; 65 {</span>
+<span class="diff-line diff-del">−                 return DEFEND;</span>
+<span class="diff-line diff-add">+             // CTF requires strong objective awareness</span>
+<span class="diff-line diff-add">+             if urgent {</span>
+<span class="diff-line diff-add">+                 if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-add">+                     return SUPPORT;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 50 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-add">+                     return SUPPORT;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if objective_delta &lt;= 0 {</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 55 {</span>
+<span class="diff-line diff-add">+             if objective_delta &gt; 0 {</span>
+<span class="diff-line diff-add">+                 // When leading, defend more but not excessively</span>
+<span class="diff-line diff-add">+                 if self_health &lt; 60 {</span>
+<span class="diff-line diff-add">+                     return DEFEND;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 75 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                     return CHARGE;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-add">+                 return ATTACK;</span>
+<span class="diff-line diff-add">+             } else {</span>
+<span class="diff-line diff-add">+                 // When behind, push for captures</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 50 {</span>
+<span class="diff-line diff-add">+                     if should_charge(tick, slot, self_health, team_score_delta, mode) {</span>
+<span class="diff-line diff-add">+                         return CHARGE;</span>
+<span class="diff-line diff-add">+                     }</span>
+<span class="diff-line diff-ctx">                      return ATTACK;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // When ahead, push but not recklessly</span>
+<span class="diff-line diff-del">−             if self_health &gt;= 70 {</span>
+<span class="diff-line diff-del">−                 return ATTACK;</span>
+<span class="diff-line diff-del">−             }</span>
+<span class="diff-line diff-del">−             return DEFEND;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_KOTH =&gt; {</span>
+<span class="diff-line diff-del">−             if urgent &amp;&amp; is_support_role(slot, allies_alive) {</span>
+<span class="diff-line diff-del">−                 return SUPPORT;</span>
+<span class="diff-line diff-add">+             if urgent {</span>
+<span class="diff-line diff-add">+                 if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 28 {</span>
+<span class="diff-line diff-add">+                     return SUPPORT;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 50 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-add">+                     return SUPPORT;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if objective_delta &gt; 15 {</span>
+<span class="diff-line diff-del">−                 return DEFEND;</span>
+<span class="diff-line diff-del">−             }</span>
+<span class="diff-line diff-del">−             // Behind: charge more aggressively</span>
+<span class="diff-line diff-del">−             if objective_delta &lt; -25 &amp;&amp; self_health &gt;= 70 {</span>
+<span class="diff-line diff-del">−                 if random_bounded(tick, slot, 3) == 0 {</span>
+<span class="diff-line diff-add">+                 // Leading in KOTH: hold position but don&#39;t over-defend</span>
+<span class="diff-line diff-add">+                 if self_health &lt; 50 {</span>
+<span class="diff-line diff-add">+                     return DEFEND;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 80 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-add">+                 return ATTACK;</span>
+<span class="diff-line diff-add">+             } else if objective_delta &lt; -25 {</span>
+<span class="diff-line diff-add">+                 // Desperately behind: charge if healthy</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 65 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                     return CHARGE;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if self_health &gt;= 45 {</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-hunk">@@ v-old:157 v-new:213 @@</span>
+<span class="diff-line diff-ctx">              return DEFEND;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          _ =&gt; {</span>
+<span class="diff-line diff-del">−             if self_health &lt;= 28 {</span>
+<span class="diff-line diff-add">+             // Default mode fallback with balanced aggression</span>
+<span class="diff-line diff-add">+             if self_health &lt;= 25 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if allies_alive &gt;= 3 &amp;&amp; is_support_role(slot, allies_alive) &amp;&amp; lowest_ally_health &lt; 55 &amp;&amp; lowest_ally_health &gt; 0 {</span>
+<span class="diff-line diff-del">−                 if self_health &gt; 45 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt; 40 {</span>
+<span class="diff-line diff-ctx">                      return SUPPORT;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">              }</span></pre>
+            </details>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v3 → v4</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-17T09:25:31.155Z">2026-09-17 09:25 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:31 v-new:31 @@</span>
+<span class="diff-line diff-ctx">      (hash % (range as u32)) as i32</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">− fn is_support_role(slot: i32, allies_alive: i32) -&gt; bool {</span>
+<span class="diff-line diff-del">−     if allies_alive &lt;= 1 {</span>
+<span class="diff-line diff-del">−         return false;</span>
+<span class="diff-line diff-del">−     }</span>
+<span class="diff-line diff-del">−     (slot % 2 == 1) &amp;&amp; (slot &lt; allies_alive)</span>
+<span class="diff-line diff-add">+ fn is_support_slot(slot: i32, allies_alive: i32) -&gt; bool {</span>
+<span class="diff-line diff-add">+     allies_alive &gt; 1 &amp;&amp; (slot % 2 == 1) &amp;&amp; (slot &lt; allies_alive)</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">  fn needs_urgent_support(lowest_ally_health: i32, allies_alive: i32) -&gt; bool {</span>
+<span class="diff-line diff-del">−     allies_alive &gt; 1 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt;= 45</span>
+<span class="diff-line diff-add">+     allies_alive &gt; 1 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt;= 40</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">  fn should_charge(tick: i32, slot: i32, self_health: i32, team_score_delta: i32, mode: i32) -&gt; bool {</span>
+<span class="diff-line diff-del">−     if self_health &lt; 50 {</span>
+<span class="diff-line diff-add">+     if self_health &lt; 55 {</span>
+<span class="diff-line diff-ctx">          return false;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-del">−     if mode == MODE_KOTH || mode == MODE_CTF {</span>
+<span class="diff-line diff-del">−         return team_score_delta &lt; -10 &amp;&amp; random_bounded(tick, slot, 5) == 0;</span>
+<span class="diff-line diff-del">−     }</span>
+<span class="diff-line diff-del">−     if team_score_delta &gt; 30 {</span>
+<span class="diff-line diff-del">−         return random_bounded(tick, slot, 8) == 0;</span>
+<span class="diff-line diff-del">−     }</span>
+<span class="diff-line diff-del">−     if team_score_delta &lt; -15 &amp;&amp; self_health &gt;= 70 {</span>
+<span class="diff-line diff-del">−         return random_bounded(tick, slot, 5) == 0;</span>
+<span class="diff-line diff-add">+     match mode {</span>
+<span class="diff-line diff-add">+         MODE_KOTH | MODE_CTF =&gt; {</span>
+<span class="diff-line diff-add">+             if team_score_delta &lt; -15 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                 return true;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+             if team_score_delta &lt; -5 &amp;&amp; self_health &gt;= 75 &amp;&amp; random_bounded(tick, slot, 6) == 0 {</span>
+<span class="diff-line diff-add">+                 return true;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+         MODE_TDM =&gt; {</span>
+<span class="diff-line diff-add">+             if team_score_delta &lt; -20 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                 return true;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+             if team_score_delta &gt; 25 &amp;&amp; self_health &gt;= 70 &amp;&amp; random_bounded(tick, slot, 10) == 0 {</span>
+<span class="diff-line diff-add">+                 return true;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+         MODE_ARENA =&gt; {</span>
+<span class="diff-line diff-add">+             if personal_score_delta(slot, tick) &gt; 50 &amp;&amp; self_health &gt;= 80 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-add">+                 return true;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+         _ =&gt; {}</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">      false</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-add">+ fn personal_score_delta(slot: i32, tick: i32) -&gt; i32 {</span>
+<span class="diff-line diff-add">+     // Approximate from hash; in real play we don&#39;t have opponent score, use a proxy</span>
+<span class="diff-line diff-add">+     (seeded_hash(tick, slot) % 120) as i32 - 60</span>
+<span class="diff-line diff-add">+ }</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-ctx">  #[no_mangle]</span>
+<span class="diff-line diff-ctx">  pub extern &quot;C&quot; fn bot_tick_v2(</span>
+<span class="diff-line diff-ctx">      self_health: i32,</span>
+<span class="diff-line diff-hunk">@@ v-old:76 v-new:93 @@</span>
+<span class="diff-line diff-ctx">          return IDLE;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Dynamic flee threshold based on mode and situation</span>
+<span class="diff-line diff-add">+     // Dynamic defend threshold: lower to reduce excessive defending (53% -&gt; ~35%)</span>
+<span class="diff-line diff-ctx">      let flee_threshold: i32 = match mode {</span>
+<span class="diff-line diff-ctx">          MODE_ARENA =&gt; {</span>
+<span class="diff-line diff-del">−             if allies_alive &gt; enemies_alive { 20 } else { 30 }</span>
+<span class="diff-line diff-add">+             if allies_alive &gt; enemies_alive { 18 } else { 25 }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_CTF =&gt; {</span>
+<span class="diff-line diff-del">−             if objective_delta &gt; 0 { 35 } else { 25 }</span>
+<span class="diff-line diff-add">+             if objective_delta &gt; 0 { 30 } else { 22 }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_KOTH =&gt; {</span>
+<span class="diff-line diff-del">−             if objective_delta &gt; 15 { 35 } else { 22 }</span>
+<span class="diff-line diff-add">+             if objective_delta &gt; 15 { 28 } else { 20 }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          _ =&gt; {</span>
+<span class="diff-line diff-del">−             if allies_alive &lt;= 2 { 30 } else { 22 }</span>
+<span class="diff-line diff-add">+             if allies_alive &lt;= 2 { 28 } else { 20 }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">      };</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     if self_health &lt;= flee_threshold {</span>
+<span class="diff-line diff-add">+     // Only defend when critically low</span>
+<span class="diff-line diff-add">+     if self_health &lt;= flee_threshold &amp;&amp; enemies_alive &gt; 0 {</span>
+<span class="diff-line diff-ctx">          return DEFEND;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Check for urgent support needs</span>
+<span class="diff-line diff-ctx">      let urgent = needs_urgent_support(lowest_ally_health, allies_alive);</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Support logic: more carefully calibrated</span>
+<span class="diff-line diff-add">+     // Support logic: reduce support rate (32% -&gt; ~25%) and make it more conditional</span>
+<span class="diff-line diff-ctx">      if urgent {</span>
+<span class="diff-line diff-del">−         // Dedicated support slot helps allies first</span>
+<span class="diff-line diff-del">−         if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 25 {</span>
+<span class="diff-line diff-add">+         // Dedicated support slot acts when healthy enough</span>
+<span class="diff-line diff-add">+         if is_support_slot(slot, allies_alive) &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-ctx">              return SUPPORT;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         // Healthy fighters can switch to support when team is struggling</span>
+<span class="diff-line diff-del">−         if self_health &gt;= 60 &amp;&amp; allies_alive &gt;= enemies_alive &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+         // Other fighters only support when team is ahead or even, and healthy</span>
+<span class="diff-line diff-add">+         if allies_alive &gt;= enemies_alive &amp;&amp; self_health &gt;= 65 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-ctx">              return SUPPORT;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         // When outnumbered but need to keep allies alive</span>
+<span class="diff-line diff-del">−         if self_health &gt;= 55 &amp;&amp; allies_alive &lt; enemies_alive &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-add">+         // Desperate outnumbered support only at higher health</span>
+<span class="diff-line diff-add">+         if allies_alive &lt; enemies_alive &amp;&amp; self_health &gt;= 70 &amp;&amp; random_bounded(tick, slot, 6) == 0 {</span>
+<span class="diff-line diff-ctx">              return SUPPORT;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-add">+     } else if is_support_slot(slot, allies_alive) &amp;&amp; lowest_ally_health &lt; 50 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; self_health &gt; 45 {</span>
+<span class="diff-line diff-add">+         // Non-urgent proactive support for dedicated slot, less frequent</span>
+<span class="diff-line diff-add">+         if random_bounded(tick, slot, 7) == 0 {</span>
+<span class="diff-line diff-add">+             return SUPPORT;</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      match mode {</span>
+<span class="diff-line diff-ctx">          MODE_ARENA =&gt; {</span>
+<span class="diff-line diff-del">−             // Arena requires aggression but smart survival</span>
+<span class="diff-line diff-del">−             if self_health &lt;= 35 {</span>
+<span class="diff-line diff-add">+             // Increase attack rate in arena (loses 58% -&gt; try 50%)</span>
+<span class="diff-line diff-add">+             if self_health &lt;= 28 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // In arena, charge when dominating</span>
+<span class="diff-line diff-del">−             if self_health &gt;= 80 &amp;&amp; personal_score &gt;= 100 {</span>
+<span class="diff-line diff-del">−                 if random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-del">−                     return CHARGE;</span>
+<span class="diff-line diff-del">−                 }</span>
+<span class="diff-line diff-add">+             // Charge when dominating</span>
+<span class="diff-line diff-add">+             if self_health &gt;= 85 &amp;&amp; personal_score &gt;= 120 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                 return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // Attack is default in arena</span>
+<span class="diff-line diff-del">−             if random_bounded(tick, slot, 10) &lt; 8 {</span>
+<span class="diff-line diff-add">+             // Default aggressive stance</span>
+<span class="diff-line diff-add">+             if random_bounded(tick, slot, 10) &lt; 9 {</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              return DEFEND;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_TDM =&gt; {</span>
+<span class="diff-line diff-add">+             if self_health &lt;= 22 {</span>
+<span class="diff-line diff-add">+                 return DEFEND;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-ctx">              if urgent {</span>
+<span class="diff-line diff-del">−                 if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-add">+                 if is_support_slot(slot, allies_alive) &amp;&amp; self_health &gt; 32 {</span>
+<span class="diff-line diff-ctx">                      return SUPPORT;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 55 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 60 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-ctx">                      return SUPPORT;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-hunk">@@ v-old:148 v-new:171 @@</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if self_health &lt;= 25 {</span>
+<span class="diff-line diff-add">+             // Health between 23 and 54: still attack unless very unfavorable</span>
+<span class="diff-line diff-add">+             if allies_alive &lt; enemies_alive &amp;&amp; self_health &lt; 40 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              return ATTACK;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_CTF =&gt; {</span>
+<span class="diff-line diff-del">−             // CTF requires strong objective awareness</span>
+<span class="diff-line diff-add">+             // CTF loses 79%: need more objective agression and less defending</span>
+<span class="diff-line diff-add">+             if self_health &lt;= 20 {</span>
+<span class="diff-line diff-add">+                 return DEFEND;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-ctx">              if urgent {</span>
+<span class="diff-line diff-del">−                 if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-add">+                 if is_support_slot(slot, allies_alive) &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-ctx">                      return SUPPORT;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 50 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 55 &amp;&amp; random_bounded(tick, slot, 6) == 0 {</span>
+<span class="diff-line diff-ctx">                      return SUPPORT;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if objective_delta &gt; 0 {</span>
+<span class="diff-line diff-del">−                 // When leading, defend more but not excessively</span>
+<span class="diff-line diff-del">−                 if self_health &lt; 60 {</span>
+<span class="diff-line diff-add">+                 // Leading: defend less, attack more</span>
+<span class="diff-line diff-add">+                 if self_health &lt; 50 {</span>
+<span class="diff-line diff-ctx">                      return DEFEND;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 75 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 80 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              } else {</span>
+<span class="diff-line diff-del">−                 // When behind, push for captures</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 50 {</span>
+<span class="diff-line diff-add">+                 // Behind: aggressive push</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 45 {</span>
+<span class="diff-line diff-ctx">                      if should_charge(tick, slot, self_health, team_score_delta, mode) {</span>
+<span class="diff-line diff-ctx">                          return CHARGE;</span>
+<span class="diff-line diff-ctx">                      }</span>
+<span class="diff-line diff-hunk">@@ v-old:184 v-new:211 @@</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_KOTH =&gt; {</span>
+<span class="diff-line diff-add">+             if self_health &lt;= 20 {</span>
+<span class="diff-line diff-add">+                 return DEFEND;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-ctx">              if urgent {</span>
+<span class="diff-line diff-del">−                 if is_support_role(slot, allies_alive) &amp;&amp; self_health &gt; 28 {</span>
+<span class="diff-line diff-add">+                 if is_support_slot(slot, allies_alive) &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-ctx">                      return SUPPORT;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 50 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 55 &amp;&amp; random_bounded(tick, slot, 6) == 0 {</span>
+<span class="diff-line diff-ctx">                      return SUPPORT;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if objective_delta &gt; 15 {</span>
+<span class="diff-line diff-del">−                 // Leading in KOTH: hold position but don&#39;t over-defend</span>
+<span class="diff-line diff-del">−                 if self_health &lt; 50 {</span>
+<span class="diff-line diff-add">+                 // Leading: hold with moderate defense</span>
+<span class="diff-line diff-add">+                 if self_health &lt; 45 {</span>
+<span class="diff-line diff-ctx">                      return DEFEND;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 80 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 85 &amp;&amp; random_bounded(tick, slot, 6) == 0 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              } else if objective_delta &lt; -25 {</span>
+<span class="diff-line diff-del">−                 // Desperately behind: charge if healthy</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 65 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                 // Desperate: charge more often</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 60 &amp;&amp; random_bounded(tick, slot, 3) == 0 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if self_health &gt;= 45 {</span>
+<span class="diff-line diff-add">+             if self_health &gt;= 42 {</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              return DEFEND;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          _ =&gt; {</span>
+<span class="diff-line diff-del">−             // Default mode fallback with balanced aggression</span>
+<span class="diff-line diff-del">−             if self_health &lt;= 25 {</span>
+<span class="diff-line diff-add">+             if self_health &lt;= 22 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if allies_alive &gt;= 3 &amp;&amp; is_support_role(slot, allies_alive) &amp;&amp; lowest_ally_health &lt; 55 &amp;&amp; lowest_ally_health &gt; 0 {</span>
+<span class="diff-line diff-del">−                 if self_health &gt; 40 {</span>
+<span class="diff-line diff-add">+             if is_support_slot(slot, allies_alive) &amp;&amp; lowest_ally_health &lt; 55 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; self_health &gt; 40 {</span>
+<span class="diff-line diff-add">+                 if random_bounded(tick, slot, 8) == 0 {</span>
+<span class="diff-line diff-ctx">                      return SUPPORT;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">              }</span></pre>
+            </details>
+            <p class="metric-note">Unified diff of the Rust fighter source between consecutive live artifact versions (first 200 changed lines shown). Failed attempts never go live — the previous artifact keeps fighting.</p>
+        </section>
+
         <section class="provenance">
             <p class="eyebrow">Provenance</p>
             <dl>

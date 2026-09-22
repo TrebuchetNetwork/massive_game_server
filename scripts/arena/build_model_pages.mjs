@@ -81,6 +81,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { mascotFor } from './mascots.mjs';
+import { AUTOPSY_MAX_CHANGED_LINES, autopsyFor, loadAutopsies, revisionDiffs } from './autopsy.mjs';
 import { TRACKS } from './continuous/league.mjs';
 import { MAX_ROSTER_SIZE, validateState } from './continuous/state.mjs';
 import {
@@ -1120,7 +1121,7 @@ ${ctx.chemistry ? `\n${ctx.chemistry}\n` : ''}
             <h2>Fights</h2>
 ${fightsSection(clips, ctx.mediaBase)}
         </section>
-${ctx.lineage ? `\n${ctx.lineage}\n` : ''}
+${ctx.lineage ? `\n${ctx.lineage}\n` : ''}${ctx.autopsy ? `\n${ctx.autopsy}\n` : ''}
 ${provenanceFooter(ctx)}
 ${foot}`;
 }
@@ -1904,6 +1905,92 @@ ${items}
             <h2>Submission lineage <span class="hof__hint">per track</span></h2>
 ${blocks.join('\n')}
             <p class="metric-note">W/L/D deltas derive from the track's daily history snapshots; a failed attempt consumes a submission but the previous artifact stays live.</p>
+        </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Borrow-checker autopsy (optional continuous overlay)
+// ---------------------------------------------------------------------------
+//
+// How a model fixes its own code: per track, the accepted version lineage
+// (v1 entrant → v2/v3… revisions) with a unified diff of the Rust source
+// between consecutive live artifacts, plus the stats context of each
+// revision (compile attempts, outcome) and failed attempts as timeline
+// badges. Sources are resolved by autopsy.mjs from the fighter record
+// (current version), the revision journals (accepted revisions + the v1
+// digest via checkpoint.revision_of) and the season day source snapshots
+// (the complete historical archive). Pure HTML/CSS — <details> expands the
+// diff, no JS. Absent data (no accepted revisions, or sources not archived)
+// hides the section or degrades the block, keeping no-autopsy builds
+// byte-identical; models.css always carries the styles.
+
+const DIFF_LINE_CLASS = { add: 'diff-add', del: 'diff-del', same: 'diff-ctx', meta: 'diff-meta' };
+const DIFF_LINE_PREFIX = { add: '+', del: '−', same: ' ', meta: '' };
+
+function autopsyDiffPre(diff) {
+  const parts = [];
+  for (const hunk of diff.hunks) {
+    parts.push(`<span class="diff-line diff-hunk">@@ v-old:${hunk.oldStart} v-new:${hunk.newStart} @@</span>`);
+    for (const line of hunk.lines) {
+      const cls = DIFF_LINE_CLASS[line.type] || 'diff-ctx';
+      const prefix = DIFF_LINE_PREFIX[line.type] ?? ' ';
+      parts.push(`<span class="diff-line ${cls}">${prefix} ${esc(line.text)}</span>`);
+    }
+  }
+  return `<pre class="autopsy__pre">${parts.join('\n')}</pre>`;
+}
+
+/** One expandable revision block: vN → vN+1 with stats context + diff. */
+function autopsyRevisionDetails(d) {
+  const stats = `compile attempts ${d.compileAttempts} · ${esc(d.outcome)} · <time datetime="${esc(d.at)}">${esc(fmtLeagueTs(d.at))}</time>`;
+  let body;
+  if (d.status === 'diff') {
+    body = autopsyDiffPre(d.diff);
+  } else if (d.status === 'unchanged') {
+    body = '                <p class="autopsy__note">No source change — the accepted revision is byte-identical to its parent (recompiled, not rewritten).</p>';
+  } else {
+    body = '                <p class="autopsy__note">Source not archived for one side of this revision — the diff is unrecoverable from the durable stores.</p>';
+  }
+  return `            <details class="autopsy__diff autopsy__diff--${esc(d.status)}">
+                <summary><span class="autopsy__range">v${d.from} → v${d.to}</span> <span class="autopsy__stats">${stats}</span></summary>
+${body}
+            </details>`;
+}
+
+/**
+ * Autopsy section for one weekly-roster model, grouped per track: version
+ * timeline with outcome badges (failed attempts included), then one
+ * expandable diff block per accepted revision. Returns '' when the model has
+ * no accepted revision on any track.
+ */
+export function autopsySection(state, model, autopsies) {
+  const blocks = [];
+  for (const trackId of TRACKS) {
+    const slice = state.tracks[trackId];
+    const entry = slice ? findContinuousEntry(slice, model) : null;
+    const found = autopsyFor(autopsies, trackId, entry);
+    if (!found) continue;
+    const { autopsy, failures } = found;
+    const badge = (version, outcome) => `                <span class="autopsy__badge autopsy__badge--${esc(outcome)}" title="${esc(outcome)}">v${version}</span>`;
+    const timeline = [
+      ...autopsy.versions.map((v) => ({ version: v.version, outcome: v.outcome, at: v.at })),
+      ...failures,
+    ]
+      .sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')) || a.version - b.version)
+      .map((n) => badge(n.version, n.outcome))
+      .join('\n                <span class="autopsy__arrow" aria-hidden="true">→</span>\n');
+    const revisions = revisionDiffs(autopsy).map(autopsyRevisionDetails).join('\n');
+    blocks.push(`            <h3 class="lineage__track">${trackBadge(trackId)} ${esc(TRACK_LABELS[trackId])}</h3>
+            <div class="autopsy__timeline">
+${timeline}
+            </div>
+${revisions}`);
+  }
+  if (!blocks.length) return '';
+  return `        <section class="panel autopsy" aria-label="Borrow-checker autopsy">
+            <h2>Borrow-checker autopsy <span class="hof__hint">per track</span></h2>
+${blocks.join('\n')}
+            <p class="metric-note">Unified diff of the Rust fighter source between consecutive live artifact versions (first ${AUTOPSY_MAX_CHANGED_LINES} changed lines shown). Failed attempts never go live — the previous artifact keeps fighting.</p>
         </section>`;
 }
 
@@ -3191,6 +3278,48 @@ table.standings__table tr:last-child td { border-bottom: none; }
 .lineage__meta { color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
 .lineage__delta { color: var(--muted); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .lineage__at { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+.autopsy__timeline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 14px; }
+.autopsy__badge {
+    display: inline-block;
+    padding: 4px 9px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.06em;
+    background: rgba(5, 13, 10, 0.6);
+}
+.autopsy__badge--entrant { color: var(--acid-soft); border-color: var(--acid-soft); }
+.autopsy__badge--accepted { color: var(--acid); border-color: var(--acid); }
+.autopsy__badge--compile_failed,
+.autopsy__badge--codegen_failed,
+.autopsy__badge--interrupted { color: #fb7185; border-color: rgba(251, 113, 133, 0.45); text-decoration: line-through; }
+.autopsy__arrow { color: var(--dim); font-size: 11px; }
+.autopsy__diff { margin: 0 0 10px; border: 1px solid var(--line-soft); background: rgba(3, 7, 6, 0.5); }
+.autopsy__diff summary {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 10px 14px;
+    cursor: pointer;
+    list-style: none;
+}
+.autopsy__diff summary::-webkit-details-marker { display: none; }
+.autopsy__diff summary::before { content: '▸'; color: var(--dim); font-size: 10px; }
+.autopsy__diff[open] summary::before { content: '▾'; }
+.autopsy__range { color: var(--acid-soft); font: 800 11px/1 var(--mono); letter-spacing: 0.05em; }
+.autopsy__stats { color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.autopsy__pre {
+    margin: 0;
+    padding: 10px 0 12px;
+    border-top: 1px solid var(--line-soft);
+    overflow-x: auto;
+    font: 400 11px/1.55 var(--mono);
+}
+.diff-line { display: block; padding: 0 14px; white-space: pre; }
+.diff-add { color: #86efac; background: rgba(34, 197, 94, 0.09); }
+.diff-del { color: #fda4af; background: rgba(244, 63, 94, 0.09); }
+.diff-ctx { color: var(--muted); }
+.diff-hunk { color: var(--dim); font-weight: 700; padding: 6px 14px; }
+.diff-meta { color: var(--dim); font-style: italic; padding: 6px 14px; }
+.autopsy__note { margin: 0; padding: 10px 14px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; }
 .chem__table { width: 100%; border-collapse: collapse; }
 .chem__table th { color: var(--dim); font: 700 9px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; text-align: left; padding: 0 10px 8px 0; }
 .chem__table td { padding: 8px 10px 8px 0; border-top: 1px solid var(--line-soft); font-size: 13px; }
@@ -3408,11 +3537,27 @@ export async function buildPages({
   const slugById = slugifyRoster(roster);
 
   // Optional continuous league overlay — null unless the state validates.
+  const effectiveContinuousDir = continuousDir || path.join(artifactsRoot, 'continuous');
   const continuous = loadContinuousLeague({
-    continuousDir: continuousDir || path.join(artifactsRoot, 'continuous'),
+    continuousDir: effectiveContinuousDir,
     io,
     log,
   });
+
+  // Optional borrow-checker autopsy overlay — per-track version lineage with
+  // resolved sources, keyed by (track, model_id, stint). Empty map when the
+  // overlay is inactive or no source store is readable.
+  const autopsies = continuous
+    ? loadAutopsies({
+      artifactsRoot,
+      continuousDir: effectiveContinuousDir,
+      state: continuous.state,
+      submissions: continuous.submissions,
+      trackIds: TRACKS,
+      io,
+      log,
+    })
+    : null;
 
   // Optional mixed-team chemistry overlay — null unless the artifact validates.
   const chemistry = continuous
@@ -3585,6 +3730,9 @@ export async function buildPages({
     const lineage = continuous
       ? lineageSection(continuous.state, m, continuous.submissions, continuous.snapshots) || null
       : null;
+    const autopsy = continuous && autopsies
+      ? autopsySection(continuous.state, m, autopsies) || null
+      : null;
     const chemistryPartners = chemistry
       ? chemistryPartnersSection(chemistryPartnersForModel(chemistry, m), lookupChemistry) || null
       : null;
@@ -3599,6 +3747,7 @@ export async function buildPages({
       partners,
       clips,
       lineage,
+      autopsy,
       chemistry: chemistryPartners,
       analyst: toplistEntry ? analystNoteSection(toplistEntry, toplist.league_day) : null,
       press: pressForModel(press, m) ? modelPressSection(pressForModel(press, m)) : null,

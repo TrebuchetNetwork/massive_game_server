@@ -353,6 +353,364 @@
             <p class="metric-note">W/L/D deltas derive from the track's daily history snapshots; a failed attempt consumes a submission but the previous artifact stays live.</p>
         </section>
 
+        <section class="panel autopsy" aria-label="Borrow-checker autopsy">
+            <h2>Borrow-checker autopsy <span class="hof__hint">per track</span></h2>
+            <h3 class="lineage__track"><span class="track-badge track-badge--L3">L3</span> Weekly feedback</h3>
+            <div class="autopsy__timeline">
+                <span class="autopsy__badge autopsy__badge--entrant" title="entrant">v1</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--codegen_failed" title="codegen_failed">v2</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v2</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v3</span>
+            </div>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v1 → v2</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-09T09:24:38.115Z">2026-09-09 09:24 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:18 v-new:18 @@</span>
+<span class="diff-line diff-ctx">      let aa = allies_alive.max(1);</span>
+<span class="diff-line diff-ctx">      let ea = enemies_alive.max(0);</span>
+<span class="diff-line diff-ctx">      let t = tick.max(0);</span>
+<span class="diff-line diff-add">+     let parity = aa - ea;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-add">+     // No enemies: focus objectives.</span>
+<span class="diff-line diff-ctx">      if ea == 0 {</span>
+<span class="diff-line diff-ctx">          return match mode {</span>
+<span class="diff-line diff-del">−             3 =&gt; if objective_delta &lt;= 0 { 2 } else { 0 },</span>
+<span class="diff-line diff-del">−             2 =&gt; if objective_delta &lt; 0 { 2 } else { 0 },</span>
+<span class="diff-line diff-add">+             3 =&gt; if objective_delta &lt; 0 { 3 } else { 0 },</span>
+<span class="diff-line diff-add">+             2 =&gt; if objective_delta &lt; 0 { 3 } else { 0 },</span>
+<span class="diff-line diff-add">+             1 =&gt; 0,</span>
+<span class="diff-line diff-ctx">              _ =&gt; 0,</span>
+<span class="diff-line diff-ctx">          };</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Finisher: CHARGE always &gt;=15, ATTACK always &gt;=9.</span>
+<span class="diff-line diff-add">+     // Finishing target: CHARGE for 10-15 range, ATTACK for 1-9.</span>
+<span class="diff-line diff-ctx">      if th &gt; 0 &amp;&amp; th &lt;= 9 { return 1; }</span>
+<span class="diff-line diff-ctx">      if th &gt; 0 &amp;&amp; th &lt;= 15 { return 3; }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Disengage when near death: DEFEND.</span>
+<span class="diff-line diff-del">−     if sh &lt;= 12 &amp;&amp; th &gt; 15 { return 2; }</span>
+<span class="diff-line diff-del">− </span>
+<span class="diff-line diff-del">−     let parity = aa - ea;</span>
+<span class="diff-line diff-add">+     // Critical low health: DEFEND to survive.</span>
+<span class="diff-line diff-add">+     if sh &lt;= 8 { return 2; }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     if mode == 3 {</span>
+<span class="diff-line diff-del">−         if objective_delta &lt; -5 &amp;&amp; sh &lt;= 50 { return 2; }</span>
+<span class="diff-line diff-del">−         if objective_delta &lt; 0 { return 3; }</span>
+<span class="diff-line diff-del">−         if objective_delta &gt;= 0 &amp;&amp; sh &lt;= 22 { return 2; }</span>
+<span class="diff-line diff-del">−         if th &gt; 0 &amp;&amp; th &lt;= 24 &amp;&amp; sh &gt;= 40 { return 3; }</span>
+<span class="diff-line diff-del">−         if objective_delta &gt; 0 &amp;&amp; sh &lt;= 40 { return 2; }</span>
+<span class="diff-line diff-del">−         if parity &gt;= 0 &amp;&amp; sh &gt;= 45 { return 3; }</span>
+<span class="diff-line diff-del">−         return 1;</span>
+<span class="diff-line diff-add">+     // TEAM SUPPORT: heal allies in critical condition.</span>
+<span class="diff-line diff-add">+     if aa &gt;= 2 &amp;&amp; la &gt; 0 &amp;&amp; la &lt;= 15 &amp;&amp; sh &gt;= 25 {</span>
+<span class="diff-line diff-add">+         let support_slot = if aa &gt;= 4 { 2 } else if aa &gt;= 2 { 1 } else { 0 };</span>
+<span class="diff-line diff-add">+         if slot == support_slot { return 4; }</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-add">+     // Capture The Flag (mode 2).</span>
+<span class="diff-line diff-ctx">      if mode == 2 {</span>
+<span class="diff-line diff-del">−         if objective_delta &lt; -3 { return 3; }</span>
+<span class="diff-line diff-add">+         if objective_delta &lt; -5 &amp;&amp; sh &lt;= 40 { return 2; }</span>
+<span class="diff-line diff-ctx">          if objective_delta &lt; 0 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 25 { 1 } else { 3 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 20 { 2 } else if sh &gt;= 50 { 3 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         if objective_delta &gt; 3 { return 2; }</span>
+<span class="diff-line diff-del">−         if t &gt;= 10 &amp;&amp; objective_delta &gt;= 0 &amp;&amp; sh &gt;= 55 { return 3; }</span>
+<span class="diff-line diff-del">−         if la &gt; 0 &amp;&amp; la &lt;= 20 &amp;&amp; aa &gt;= 2 &amp;&amp; slot == 1 {</span>
+<span class="diff-line diff-del">−             return 4;</span>
+<span class="diff-line diff-add">+         if objective_delta &gt; 5 { return 1; }</span>
+<span class="diff-line diff-add">+         if objective_delta &gt; 0 {</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 15 { 2 } else if parity &gt; 0 { 1 } else { 2 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         if parity &lt; 0 &amp;&amp; sh &gt;= 50 { return 3; }</span>
+<span class="diff-line diff-del">−         if parity &gt;= 0 { return 2; }</span>
+<span class="diff-line diff-del">−         return if sh &gt;= 30 { 1 } else { 2 };</span>
+<span class="diff-line diff-add">+         // Neutral flag state - advance.</span>
+<span class="diff-line diff-add">+         if sh &gt;= 65 &amp;&amp; (parity &gt;= 0 || t &gt;= 10) { return 3; }</span>
+<span class="diff-line diff-add">+         if sh &gt;= 40 &amp;&amp; parity &gt;= 0 { return 1; }</span>
+<span class="diff-line diff-add">+         if sh &gt;= 30 { return 1; }</span>
+<span class="diff-line diff-add">+         return 2;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     if mode == 1 &amp;&amp; aa &gt;= 2 {</span>
+<span class="diff-line diff-del">−         let support_slot = if aa &gt;= 4 { 2 } else { 1 };</span>
+<span class="diff-line diff-del">−         let is_support = slot == support_slot;</span>
+<span class="diff-line diff-del">− </span>
+<span class="diff-line diff-del">−         if is_support &amp;&amp; la &gt; 0 &amp;&amp; la &lt;= 22 { return 4; }</span>
+<span class="diff-line diff-add">+     // King of the Hill (mode 3).</span>
+<span class="diff-line diff-add">+     if mode == 3 {</span>
+<span class="diff-line diff-add">+         if objective_delta &lt; -5 &amp;&amp; sh &lt;= 50 { return 2; }</span>
+<span class="diff-line diff-add">+         if objective_delta &lt; 0 {</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 25 { 2 } else if sh &gt;= 45 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+         if objective_delta &gt;= 0 &amp;&amp; sh &lt;= 15 { return 2; }</span>
+<span class="diff-line diff-add">+         if objective_delta &gt; 0 &amp;&amp; sh &lt;= 30 { return 2; }</span>
+<span class="diff-line diff-add">+         if parity &gt; 0 &amp;&amp; sh &gt;= 40 { return 3; }</span>
+<span class="diff-line diff-add">+         if sh &gt;= 55 { return 3; }</span>
+<span class="diff-line diff-add">+         if sh &gt;= 25 { return 1; }</span>
+<span class="diff-line diff-add">+         return 2;</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-add">+     // Team Deathmatch (mode 1).</span>
+<span class="diff-line diff-add">+     if mode == 1 &amp;&amp; aa &gt;= 2 {</span>
+<span class="diff-line diff-ctx">          if team_score_delta &lt; -5 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 25 { 2 } else { 3 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 20 { 2 } else if sh &gt;= 50 { 3 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          if team_score_delta &lt; 0 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 20 { 2 } else { if sh &gt;= 55 { 3 } else { 1 } };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 15 { 2 } else if sh &gt;= 50 { 3 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          if team_score_delta &gt; 5 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 30 { 2 } else { 1 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 25 { 2 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          if team_score_delta &gt; 0 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 24 { 2 } else { 1 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 20 { 2 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          if parity &gt; 0 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 18 { 2 } else { 1 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 15 { 2 } else if sh &gt;= 55 { 3 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         if parity &lt; 0 &amp;&amp; sh &gt;= 50 { return 3; }</span>
+<span class="diff-line diff-del">−         return if sh &lt;= 20 { 2 } else { 1 };</span>
+<span class="diff-line diff-add">+         if parity &lt; 0 &amp;&amp; sh &gt;= 45 { return 3; }</span>
+<span class="diff-line diff-add">+         return if sh &lt;= 15 { 2 } else { 1 };</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      // Arena (mode 0) / fallback duel.</span>
+<span class="diff-line diff-del">−     if sh &gt;= 80 { return 3; }</span>
+<span class="diff-line diff-add">+     // Early game: build CHARGE.</span>
+<span class="diff-line diff-add">+     if t &lt;= 3 &amp;&amp; sh &gt;= 40 { return 3; }</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+     if sh &gt;= 85 {</span>
+<span class="diff-line diff-add">+         return if th &lt;= 40 { 1 } else { 3 };</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-ctx">      if sh &gt;= 60 {</span>
+<span class="diff-line diff-del">−         return if th &lt;= 30 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+         return if th &lt;= 20 { 3 } else if th &lt;= 40 { 1 } else { 3 };</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-del">−     if sh &gt;= 35 {</span>
+<span class="diff-line diff-del">−         if th &lt;= 20 { return 3; }</span>
+<span class="diff-line diff-add">+     if sh &gt;= 40 {</span>
+<span class="diff-line diff-add">+         if th &lt;= 30 { return 3; }</span>
+<span class="diff-line diff-ctx">          if parity &gt; 0 { return 3; }</span>
+<span class="diff-line diff-ctx">          if parity &lt; -1 { return 2; }</span>
+<span class="diff-line diff-ctx">          return 1;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-del">−     if sh &gt;= 18 {</span>
+<span class="diff-line diff-add">+     if sh &gt;= 20 {</span>
+<span class="diff-line diff-ctx">          if parity &gt; 0 &amp;&amp; th &lt;= 40 { return 1; }</span>
+<span class="diff-line diff-add">+         if parity &gt;= 0 { return 1; }</span>
+<span class="diff-line diff-ctx">          return 2;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">      return 2;</span></pre>
+            </details>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v2 → v3</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-17T09:25:31.155Z">2026-09-17 09:25 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:20 v-new:20 @@</span>
+<span class="diff-line diff-ctx">      let t = tick.max(0);</span>
+<span class="diff-line diff-ctx">      let parity = aa - ea;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // No enemies: focus objectives.</span>
+<span class="diff-line diff-add">+     // No enemies: push objectives.</span>
+<span class="diff-line diff-ctx">      if ea == 0 {</span>
+<span class="diff-line diff-ctx">          return match mode {</span>
+<span class="diff-line diff-del">−             3 =&gt; if objective_delta &lt; 0 { 3 } else { 0 },</span>
+<span class="diff-line diff-del">−             2 =&gt; if objective_delta &lt; 0 { 3 } else { 0 },</span>
+<span class="diff-line diff-del">−             1 =&gt; 0,</span>
+<span class="diff-line diff-del">−             _ =&gt; 0,</span>
+<span class="diff-line diff-add">+             3 =&gt; if objective_delta &lt;= 0 { 3 } else { 3 },</span>
+<span class="diff-line diff-add">+             2 =&gt; if objective_delta &lt;= 0 { 3 } else { 1 },</span>
+<span class="diff-line diff-add">+             1 =&gt; 3,</span>
+<span class="diff-line diff-add">+             _ =&gt; 3,</span>
+<span class="diff-line diff-ctx">          };</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Finishing target: CHARGE for 10-15 range, ATTACK for 1-9.</span>
+<span class="diff-line diff-del">−     if th &gt; 0 &amp;&amp; th &lt;= 9 { return 1; }</span>
+<span class="diff-line diff-del">−     if th &gt; 0 &amp;&amp; th &lt;= 15 { return 3; }</span>
+<span class="diff-line diff-add">+     // Finishing target: CHARGE only if safe-ish at higher ranges, ATTACK at 1-9.</span>
+<span class="diff-line diff-add">+     if th &gt; 0 &amp;&amp; th &lt;= 9 {</span>
+<span class="diff-line diff-add">+         return 1;</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-add">+     if th &gt; 0 &amp;&amp; th &lt;= 15 {</span>
+<span class="diff-line diff-add">+         return if sh &gt;= 25 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-add">+     if th &gt; 0 &amp;&amp; th &lt;= 25 &amp;&amp; sh &gt;= 55 {</span>
+<span class="diff-line diff-add">+         return 3;</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      // Critical low health: DEFEND to survive.</span>
+<span class="diff-line diff-del">−     if sh &lt;= 8 { return 2; }</span>
+<span class="diff-line diff-add">+     if sh &lt;= 6 {</span>
+<span class="diff-line diff-add">+         return 2;</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // TEAM SUPPORT: heal allies in critical condition.</span>
+<span class="diff-line diff-del">−     if aa &gt;= 2 &amp;&amp; la &gt; 0 &amp;&amp; la &lt;= 15 &amp;&amp; sh &gt;= 25 {</span>
+<span class="diff-line diff-del">−         let support_slot = if aa &gt;= 4 { 2 } else if aa &gt;= 2 { 1 } else { 0 };</span>
+<span class="diff-line diff-add">+     // TEAM SUPPORT: heal allies in critical condition, dedicated support slot.</span>
+<span class="diff-line diff-add">+     if aa &gt;= 2 &amp;&amp; la &gt; 0 &amp;&amp; la &lt;= 12 &amp;&amp; sh &gt;= 35 {</span>
+<span class="diff-line diff-add">+         let support_slot = if aa &gt;= 4 { 2 } else { 1 };</span>
+<span class="diff-line diff-ctx">          if slot == support_slot { return 4; }</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      // Capture The Flag (mode 2).</span>
+<span class="diff-line diff-ctx">      if mode == 2 {</span>
+<span class="diff-line diff-del">−         if objective_delta &lt; -5 &amp;&amp; sh &lt;= 40 { return 2; }</span>
+<span class="diff-line diff-add">+         if objective_delta &lt; -8 &amp;&amp; sh &lt;= 55 { return 2; }</span>
+<span class="diff-line diff-add">+         if objective_delta &lt; -3 {</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 20 { 2 } else if sh &gt;= 60 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-ctx">          if objective_delta &lt; 0 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 20 { 2 } else if sh &gt;= 50 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 25 { 2 } else if parity &gt;= 0 { 1 } else { 2 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         if objective_delta &gt; 5 { return 1; }</span>
+<span class="diff-line diff-add">+         if objective_delta &gt;= 0 &amp;&amp; sh &lt;= 15 { return 2; }</span>
+<span class="diff-line diff-add">+         if objective_delta &gt; 8 {</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 25 { 2 } else { 1 };</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+         if objective_delta &gt; 3 {</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 20 { 2 } else if parity &gt; 0 { 1 } else { 1 };</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-ctx">          if objective_delta &gt; 0 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 15 { 2 } else if parity &gt; 0 { 1 } else { 2 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 20 { 2 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         // Neutral flag state - advance.</span>
+<span class="diff-line diff-del">−         if sh &gt;= 65 &amp;&amp; (parity &gt;= 0 || t &gt;= 10) { return 3; }</span>
+<span class="diff-line diff-del">−         if sh &gt;= 40 &amp;&amp; parity &gt;= 0 { return 1; }</span>
+<span class="diff-line diff-del">−         if sh &gt;= 30 { return 1; }</span>
+<span class="diff-line diff-add">+         // Neutral flag state - push forward aggressively.</span>
+<span class="diff-line diff-add">+         if sh &gt;= 55 { return 3; }</span>
+<span class="diff-line diff-add">+         if sh &gt;= 35 &amp;&amp; parity &gt;= 0 { return 3; }</span>
+<span class="diff-line diff-add">+         if sh &gt;= 25 { return 1; }</span>
+<span class="diff-line diff-ctx">          return 2;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      // King of the Hill (mode 3).</span>
+<span class="diff-line diff-ctx">      if mode == 3 {</span>
+<span class="diff-line diff-del">−         if objective_delta &lt; -5 &amp;&amp; sh &lt;= 50 { return 2; }</span>
+<span class="diff-line diff-add">+         if objective_delta &lt; -8 &amp;&amp; sh &lt;= 55 { return 2; }</span>
+<span class="diff-line diff-add">+         if objective_delta &lt; -3 {</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 30 { 2 } else if sh &gt;= 55 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-ctx">          if objective_delta &lt; 0 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 25 { 2 } else if sh &gt;= 45 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 35 { 2 } else if sh &gt;= 50 { 3 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         if objective_delta &gt;= 0 &amp;&amp; sh &lt;= 15 { return 2; }</span>
+<span class="diff-line diff-del">−         if objective_delta &gt; 0 &amp;&amp; sh &lt;= 30 { return 2; }</span>
+<span class="diff-line diff-del">−         if parity &gt; 0 &amp;&amp; sh &gt;= 40 { return 3; }</span>
+<span class="diff-line diff-del">−         if sh &gt;= 55 { return 3; }</span>
+<span class="diff-line diff-add">+         if objective_delta &gt;= 0 &amp;&amp; sh &lt;= 18 { return 2; }</span>
+<span class="diff-line diff-add">+         if objective_delta &gt; 3 &amp;&amp; sh &lt;= 30 { return 2; }</span>
+<span class="diff-line diff-add">+         if objective_delta &gt; 0 {</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 22 { 2 } else if sh &gt;= 50 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+         if parity &gt; 0 &amp;&amp; sh &gt;= 35 { return 3; }</span>
+<span class="diff-line diff-add">+         if sh &gt;= 50 { return 3; }</span>
+<span class="diff-line diff-ctx">          if sh &gt;= 25 { return 1; }</span>
+<span class="diff-line diff-ctx">          return 2;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      // Team Deathmatch (mode 1).</span>
+<span class="diff-line diff-ctx">      if mode == 1 &amp;&amp; aa &gt;= 2 {</span>
+<span class="diff-line diff-del">−         if team_score_delta &lt; -5 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 20 { 2 } else if sh &gt;= 50 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+         if team_score_delta &lt; -8 {</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 20 { 2 } else if sh &gt;= 55 { 3 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-add">+         if team_score_delta &lt; -3 {</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 18 { 2 } else if sh &gt;= 50 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-ctx">          if team_score_delta &lt; 0 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 15 { 2 } else if sh &gt;= 50 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 20 { 2 } else if parity &gt; 0 { 1 } else { 2 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         if team_score_delta &gt; 5 {</span>
+<span class="diff-line diff-add">+         if team_score_delta &gt; 8 {</span>
+<span class="diff-line diff-ctx">              return if sh &lt;= 25 { 2 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-add">+         if team_score_delta &gt; 3 {</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 22 { 2 } else { 1 };</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-ctx">          if team_score_delta &gt; 0 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 20 { 2 } else { 1 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 18 { 2 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          if parity &gt; 0 {</span>
+<span class="diff-line diff-del">−             return if sh &lt;= 15 { 2 } else if sh &gt;= 55 { 3 } else { 1 };</span>
+<span class="diff-line diff-add">+             return if sh &lt;= 15 { 2 } else if sh &gt;= 50 { 3 } else { 1 };</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         if parity &lt; 0 &amp;&amp; sh &gt;= 45 { return 3; }</span>
+<span class="diff-line diff-add">+         if parity &lt; 0 &amp;&amp; sh &gt;= 50 { return 3; }</span>
+<span class="diff-line diff-add">+         if parity &lt; 0 { return 2; }</span>
+<span class="diff-line diff-ctx">          return if sh &lt;= 15 { 2 } else { 1 };</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      // Arena (mode 0) / fallback duel.</span>
+<span class="diff-line diff-del">−     // Early game: build CHARGE.</span>
+<span class="diff-line diff-del">−     if t &lt;= 3 &amp;&amp; sh &gt;= 40 { return 3; }</span>
+<span class="diff-line diff-add">+     // Key lesson: over-defending loses arena. Press the attack.</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-add">+     // Extreme high health: press attack hard.</span>
+<span class="diff-line diff-ctx">      if sh &gt;= 85 {</span>
+<span class="diff-line diff-del">−         return if th &lt;= 40 { 1 } else { 3 };</span>
+<span class="diff-line diff-add">+         return if th &lt;= 35 { 1 } else { 3 };</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-del">−     if sh &gt;= 60 {</span>
+<span class="diff-line diff-del">−         return if th &lt;= 20 { 3 } else if th &lt;= 40 { 1 } else { 3 };</span>
+<span class="diff-line diff-add">+     if sh &gt;= 70 {</span>
+<span class="diff-line diff-add">+         if th &lt;= 20 { return 3; }</span>
+<span class="diff-line diff-add">+         if th &lt;= 40 { return 1; }</span>
+<span class="diff-line diff-add">+         if parity &gt;= 0 { return 3; }</span>
+<span class="diff-line diff-add">+         return 1;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-add">+     if sh &gt;= 55 {</span>
+<span class="diff-line diff-add">+         if th &lt;= 15 { return 3; }</span>
+<span class="diff-line diff-add">+         if th &lt;= 35 { return 1; }</span>
+<span class="diff-line diff-add">+         if parity &gt; 0 { return 3; }</span>
+<span class="diff-line diff-add">+         if parity &lt; -1 { return 2; }</span>
+<span class="diff-line diff-add">+         return 1;</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-ctx">      if sh &gt;= 40 {</span>
+<span class="diff-line diff-ctx">          if th &lt;= 30 { return 3; }</span>
+<span class="diff-line diff-ctx">          if parity &gt; 0 { return 3; }</span>
+<span class="diff-line diff-del">−         if parity &lt; -1 { return 2; }</span>
+<span class="diff-line diff-add">+         if parity &lt; -2 { return 2; }</span>
+<span class="diff-line diff-ctx">          return 1;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-del">−     if sh &gt;= 20 {</span>
+<span class="diff-line diff-del">−         if parity &gt; 0 &amp;&amp; th &lt;= 40 { return 1; }</span>
+<span class="diff-line diff-add">+     if sh &gt;= 25 {</span>
+<span class="diff-line diff-add">+         if parity &gt; 0 &amp;&amp; th &lt;= 45 { return 1; }</span>
+<span class="diff-line diff-ctx">          if parity &gt;= 0 { return 1; }</span>
+<span class="diff-line diff-del">−         return 2;</span>
+<span class="diff-line diff-add">+         if th &lt;= 15 &amp;&amp; sh &gt;= 35 { return 3; }</span>
+<span class="diff-line diff-add">+         return 1;</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-add">+     if sh &gt;= 15 {</span>
+<span class="diff-line diff-add">+         if parity &gt; 0 &amp;&amp; th &lt;= 30 { return 1; }</span>
+<span class="diff-line diff-add">+         return 1;</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-add">+     if sh &gt;= 8 {</span>
+<span class="diff-line diff-add">+         return if parity &gt;= 0 { 1 } else { 2 };</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">      return 2;</span>
+<span class="diff-line diff-ctx">  }</span></pre>
+            </details>
+            <p class="metric-note">Unified diff of the Rust fighter source between consecutive live artifact versions (first 200 changed lines shown). Failed attempts never go live — the previous artifact keeps fighting.</p>
+        </section>
+
         <section class="provenance">
             <p class="eyebrow">Provenance</p>
             <dl>

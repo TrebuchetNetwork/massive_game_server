@@ -254,6 +254,33 @@ node --test scripts/arena/continuous/test/season.test.mjs
 node --test scripts/arena/test/build_model_pages.test.mjs
 ```
 
+## Borrow-checker autopsy (revision diffs on model pages)
+
+`autopsy.mjs` reconstructs how a model fixes its own code across artifact
+revisions. The lineage comes from `submissions.jsonl` (accepted records:
+version, parent_version, source_sha256, compile_attempts, outcome, at); the
+v1 digest comes from the accepting journal's `checkpoint.revision_of`.
+Sources are resolved BY SHA256, never by filename, from three stores:
+`tracks/<T>/fighters/<key>/source.rs` (current version only), the
+`tracks/<T>/revision-journal/*.json` accepted journals (full revised source),
+and the `seasons/continuous-*/sources/*.rs` day snapshots (the complete
+historical archive — every artifact that fought a season day). A compact
+LCS-based unified diff (no npm deps, 3 context lines, first ~200 changed
+lines) renders per consecutive accepted pair; identical bytes across versions
+are marked "no source change", unarchived sources degrade to a note.
+
+`build_model_pages.mjs` renders a per-track "Borrow-checker autopsy" section
+on each model page: a version timeline with outcome badges (failed attempts
+included) plus one expandable `<details>` diff block per revision with its
+ledger stats context. Pure HTML/CSS, no JS. Models without a resolvable
+revision lineage hide the section and leave the HTML byte-identical to a
+build without it.
+
+```bash
+node --test scripts/arena/autopsy.test.mjs
+node --test scripts/arena/test/build_model_pages.test.mjs
+```
+
 ## Press box (daily press conference)
 
 `press_conference.mjs` runs once per day (the media-daily flow calls it before

@@ -353,6 +353,440 @@
             <p class="metric-note">W/L/D deltas derive from the track's daily history snapshots; a failed attempt consumes a submission but the previous artifact stays live.</p>
         </section>
 
+        <section class="panel autopsy" aria-label="Borrow-checker autopsy">
+            <h2>Borrow-checker autopsy <span class="hof__hint">per track</span></h2>
+            <h3 class="lineage__track"><span class="track-badge track-badge--L3">L3</span> Weekly feedback</h3>
+            <div class="autopsy__timeline">
+                <span class="autopsy__badge autopsy__badge--entrant" title="entrant">v1</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v2</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v3</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v4</span>
+            </div>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v1 → v2</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-02T09:24:19.477Z">2026-09-02 09:24 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:16 v-new:16 @@</span>
+<span class="diff-line diff-ctx">          return 0;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Ultra-aggressive baseline to counter passive opponents</span>
+<span class="diff-line diff-ctx">      if mode == 2 {</span>
+<span class="diff-line diff-del">−         // CTF: pure aggression - flag capture wins games</span>
+<span class="diff-line diff-add">+         // CTF: aggressive flag play, use Support to sustain pushes</span>
+<span class="diff-line diff-ctx">          let role = slot % 3;</span>
+<span class="diff-line diff-ctx">          let late_game = tick &gt; 180 || objective_delta.abs() &gt; 40;</span>
+<span class="diff-line diff-add">+         let have_flag_advantage = objective_delta &gt; 10;</span>
+<span class="diff-line diff-ctx">          </span>
+<span class="diff-line diff-ctx">          match role {</span>
+<span class="diff-line diff-ctx">              0 =&gt; {</span>
+<span class="diff-line diff-del">−                 // Primary attacker - always push</span>
+<span class="diff-line diff-del">−                 if self_health &lt; 12 { 2 } else { 3 }</span>
+<span class="diff-line diff-add">+                 // Primary attacker</span>
+<span class="diff-line diff-add">+                 if self_health &lt; 12 { 2 }</span>
+<span class="diff-line diff-add">+                 else if have_flag_advantage &amp;&amp; self_health &gt; 40 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 35 { 4 }</span>
+<span class="diff-line diff-add">+                 else { 3 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              1 =&gt; {</span>
+<span class="diff-line diff-del">−                 // Secondary attacker - push unless team collapsing</span>
+<span class="diff-line diff-add">+                 // Secondary attacker</span>
+<span class="diff-line diff-ctx">                  if self_health &lt; 15 { 2 }</span>
+<span class="diff-line diff-ctx">                  else if enemies_alive &gt;= allies_alive + 2 &amp;&amp; objective_delta &lt; -30 { 2 }</span>
+<span class="diff-line diff-add">+                 else if self_health &gt; 50 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 30 { 4 }</span>
+<span class="diff-line diff-ctx">                  else { 3 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              _ =&gt; {</span>
+<span class="diff-line diff-del">−                 // Flex attacker - maximize flag presence</span>
+<span class="diff-line diff-add">+                 // Flex attacker</span>
+<span class="diff-line diff-ctx">                  if self_health &lt; 15 { 2 }</span>
+<span class="diff-line diff-ctx">                  else if late_game &amp;&amp; objective_delta &lt; 0 &amp;&amp; self_health &lt; 35 { 2 }</span>
+<span class="diff-line diff-add">+                 else if self_health &gt; 55 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 25 { 4 }</span>
+<span class="diff-line diff-ctx">                  else { 3 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">      } else if mode == 3 {</span>
+<span class="diff-line diff-del">−         // KOTH: dominate the hill with numbers and aggression</span>
+<span class="diff-line diff-add">+         // KOTH: hyper-aggressive hill control with kill securing</span>
+<span class="diff-line diff-ctx">          let hill_control = objective_delta;</span>
+<span class="diff-line diff-ctx">          let contested = hill_control.abs() &lt; 30;</span>
+<span class="diff-line diff-ctx">          let winning_comfortably = hill_control &gt; 40;</span>
+<span class="diff-line diff-ctx">          let losing_badly = hill_control &lt; -40;</span>
+<span class="diff-line diff-ctx">          </span>
+<span class="diff-line diff-ctx">          if self_health &lt; 18 {</span>
+<span class="diff-line diff-del">−             2 // Emergency survival</span>
+<span class="diff-line diff-add">+             2</span>
+<span class="diff-line diff-add">+         } else if target_health &gt; 0 &amp;&amp; target_health &lt;= 25 &amp;&amp; self_health &gt; 15 {</span>
+<span class="diff-line diff-add">+             3 // Kill secure on hill</span>
+<span class="diff-line diff-ctx">          } else if contested {</span>
+<span class="diff-line diff-del">−             // Hill contested - maximum presence and damage</span>
+<span class="diff-line diff-ctx">              if lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 20 &amp;&amp; self_health &gt; 40 &amp;&amp; allies_alive &gt; 2 {</span>
+<span class="diff-line diff-del">−                 4 // Keep key ally alive for presence</span>
+<span class="diff-line diff-add">+                 4</span>
+<span class="diff-line diff-ctx">              } else {</span>
+<span class="diff-line diff-del">−                 3 // CHARGE for max damage + presence</span>
+<span class="diff-line diff-add">+                 3</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">          } else if winning_comfortably &amp;&amp; enemies_alive &lt;= 2 {</span>
+<span class="diff-line diff-del">−             3 // Close out aggressively</span>
+<span class="diff-line diff-add">+             3</span>
+<span class="diff-line diff-ctx">          } else if losing_badly {</span>
+<span class="diff-line diff-del">−             3 // Desperate aggression to flip hill</span>
+<span class="diff-line diff-add">+             3</span>
+<span class="diff-line diff-ctx">          } else {</span>
+<span class="diff-line diff-del">−             1 // Standard pressure</span>
+<span class="diff-line diff-add">+             3 // Constant pressure on hill</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">      } else {</span>
+<span class="diff-line diff-del">−         // TDM / Arena / World: hyper-aggressive elimination</span>
+<span class="diff-line diff-add">+         // TDM / Arena / World: balanced aggression with survival</span>
+<span class="diff-line diff-ctx">          let outnumbered = enemies_alive &gt; allies_alive;</span>
+<span class="diff-line diff-ctx">          let severely_outnumbered = enemies_alive &gt;= allies_alive + 2;</span>
+<span class="diff-line diff-ctx">          let winning = team_score_delta &gt; 30;</span>
+<span class="diff-line diff-ctx">          let critical = self_health &lt; 15;</span>
+<span class="diff-line diff-ctx">          let low_health = self_health &lt; 35;</span>
+<span class="diff-line diff-add">+         let healthy = self_health &gt; 50;</span>
+<span class="diff-line diff-add">+         let very_healthy = self_health &gt; 70;</span>
+<span class="diff-line diff-ctx">          </span>
+<span class="diff-line diff-del">−         // Kill secure priority</span>
+<span class="diff-line diff-add">+         // Kill secure - highest priority when safe</span>
+<span class="diff-line diff-ctx">          if target_health &gt; 0 &amp;&amp; target_health &lt;= 20 &amp;&amp; self_health &gt; 12 {</span>
+<span class="diff-line diff-del">−             3 // CHARGE for guaranteed kill</span>
+<span class="diff-line diff-add">+             3</span>
+<span class="diff-line diff-ctx">          } else if critical {</span>
+<span class="diff-line diff-del">−             2 // Only defend at critical health</span>
+<span class="diff-line diff-add">+             2</span>
+<span class="diff-line diff-ctx">          } else if severely_outnumbered &amp;&amp; low_health {</span>
+<span class="diff-line diff-del">−             2 // Survival when badly outnumbered + damaged</span>
+<span class="diff-line diff-add">+             2</span>
+<span class="diff-line diff-ctx">          } else if lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 18 &amp;&amp; self_health &gt; 45 &amp;&amp; allies_alive &gt; 1 {</span>
+<span class="diff-line diff-del">−             4 // Emergency support only for nearly-dead allies</span>
+<span class="diff-line diff-add">+             4</span>
+<span class="diff-line diff-ctx">          } else if outnumbered &amp;&amp; self_health &lt; 30 {</span>
+<span class="diff-line diff-del">−             2 // Cautious when outnumbered and hurt</span>
+<span class="diff-line diff-add">+             2</span>
+<span class="diff-line diff-ctx">          } else if winning &amp;&amp; enemies_alive &lt;= 2 &amp;&amp; self_health &gt; 35 {</span>
+<span class="diff-line diff-del">−             3 // Finish game aggressively</span>
+<span class="diff-line diff-add">+             3</span>
+<span class="diff-line diff-ctx">          } else if mode == 0 &amp;&amp; tick &gt; 150 {</span>
+<span class="diff-line diff-del">−             // Arena late game: all-in aggression</span>
+<span class="diff-line diff-add">+             // Arena late game</span>
+<span class="diff-line diff-ctx">              if self_health &gt; 25 { 3 } else { 1 }</span>
+<span class="diff-line diff-add">+         } else if very_healthy &amp;&amp; enemies_alive &lt;= allies_alive {</span>
+<span class="diff-line diff-add">+             // Safe to be maximally aggressive</span>
+<span class="diff-line diff-add">+             3</span>
+<span class="diff-line diff-add">+         } else if healthy &amp;&amp; !outnumbered {</span>
+<span class="diff-line diff-add">+             // Standard aggression</span>
+<span class="diff-line diff-add">+             3</span>
+<span class="diff-line diff-add">+         } else if self_health &gt; 35 {</span>
+<span class="diff-line diff-add">+             // Moderate pressure</span>
+<span class="diff-line diff-add">+             1</span>
+<span class="diff-line diff-ctx">          } else {</span>
+<span class="diff-line diff-del">−             // Default: relentless offense</span>
+<span class="diff-line diff-del">−             if self_health &gt; 50 { 3 } else { 1 }</span>
+<span class="diff-line diff-add">+             // Damaged - play safe</span>
+<span class="diff-line diff-add">+             2</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  }</span></pre>
+            </details>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v2 → v3</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-09T09:24:38.115Z">2026-09-09 09:24 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:16 v-new:16 @@</span>
+<span class="diff-line diff-ctx">          return 0;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-add">+     let total_allies = allies_alive + 1;</span>
+<span class="diff-line diff-add">+     let total_enemies = enemies_alive + 1;</span>
+<span class="diff-line diff-add">+     let outnumbered = total_enemies &gt; total_allies;</span>
+<span class="diff-line diff-add">+     let severely_outnumbered = total_enemies &gt;= total_allies + 2;</span>
+<span class="diff-line diff-add">+     let winning = team_score_delta &gt; 20;</span>
+<span class="diff-line diff-add">+     let losing = team_score_delta &lt; -20;</span>
+<span class="diff-line diff-add">+     let late_game = tick &gt; 180;</span>
+<span class="diff-line diff-add">+     let has_target = target_health &gt; 0;</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+     // Kill secure - priority across all modes</span>
+<span class="diff-line diff-add">+     if has_target &amp;&amp; target_health &lt;= 20 &amp;&amp; self_health &gt; 12 {</span>
+<span class="diff-line diff-add">+         return 3;</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-add">+     if has_target &amp;&amp; target_health &lt;= 35 &amp;&amp; self_health &gt; 25 &amp;&amp; !severely_outnumbered {</span>
+<span class="diff-line diff-add">+         return 3;</span>
+<span class="diff-line diff-add">+     }</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-ctx">      if mode == 2 {</span>
+<span class="diff-line diff-del">−         // CTF: aggressive flag play, use Support to sustain pushes</span>
+<span class="diff-line diff-add">+         // CTF: maintain undefeated record, refine roles</span>
+<span class="diff-line diff-ctx">          let role = slot % 3;</span>
+<span class="diff-line diff-del">−         let late_game = tick &gt; 180 || objective_delta.abs() &gt; 40;</span>
+<span class="diff-line diff-del">−         let have_flag_advantage = objective_delta &gt; 10;</span>
+<span class="diff-line diff-del">−         </span>
+<span class="diff-line diff-add">+         let have_flag_advantage = objective_delta &gt; 15;</span>
+<span class="diff-line diff-add">+         let flag_crisis = objective_delta &lt; -20;</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-ctx">          match role {</span>
+<span class="diff-line diff-ctx">              0 =&gt; {</span>
+<span class="diff-line diff-del">−                 // Primary attacker</span>
+<span class="diff-line diff-del">−                 if self_health &lt; 12 { 2 }</span>
+<span class="diff-line diff-del">−                 else if have_flag_advantage &amp;&amp; self_health &gt; 40 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 35 { 4 }</span>
+<span class="diff-line diff-del">−                 else { 3 }</span>
+<span class="diff-line diff-add">+                 // Flag carrier / primary attacker</span>
+<span class="diff-line diff-add">+                 if self_health &lt; 15 {</span>
+<span class="diff-line diff-add">+                     2</span>
+<span class="diff-line diff-add">+                 } else if flag_crisis &amp;&amp; self_health &gt; 25 {</span>
+<span class="diff-line diff-add">+                     3 // Desperate offense</span>
+<span class="diff-line diff-add">+                 } else if have_flag_advantage &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 30 &amp;&amp; self_health &gt; 35 {</span>
+<span class="diff-line diff-add">+                     4 // Sustain the push</span>
+<span class="diff-line diff-add">+                 } else if late_game &amp;&amp; objective_delta &lt;= 0 &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-add">+                     3 // Late game pressure</span>
+<span class="diff-line diff-add">+                 } else {</span>
+<span class="diff-line diff-add">+                     3</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              1 =&gt; {</span>
+<span class="diff-line diff-del">−                 // Secondary attacker</span>
+<span class="diff-line diff-del">−                 if self_health &lt; 15 { 2 }</span>
+<span class="diff-line diff-del">−                 else if enemies_alive &gt;= allies_alive + 2 &amp;&amp; objective_delta &lt; -30 { 2 }</span>
+<span class="diff-line diff-del">−                 else if self_health &gt; 50 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 30 { 4 }</span>
+<span class="diff-line diff-del">−                 else { 3 }</span>
+<span class="diff-line diff-add">+                 // Escort / secondary</span>
+<span class="diff-line diff-add">+                 if self_health &lt; 18 {</span>
+<span class="diff-line diff-add">+                     2</span>
+<span class="diff-line diff-add">+                 } else if flag_crisis {</span>
+<span class="diff-line diff-add">+                     3</span>
+<span class="diff-line diff-add">+                 } else if lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 25 &amp;&amp; self_health &gt; 40 {</span>
+<span class="diff-line diff-add">+                     4</span>
+<span class="diff-line diff-add">+                 } else {</span>
+<span class="diff-line diff-add">+                     3</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              _ =&gt; {</span>
+<span class="diff-line diff-del">−                 // Flex attacker</span>
+<span class="diff-line diff-del">−                 if self_health &lt; 15 { 2 }</span>
+<span class="diff-line diff-del">−                 else if late_game &amp;&amp; objective_delta &lt; 0 &amp;&amp; self_health &lt; 35 { 2 }</span>
+<span class="diff-line diff-del">−                 else if self_health &gt; 55 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 25 { 4 }</span>
+<span class="diff-line diff-del">−                 else { 3 }</span>
+<span class="diff-line diff-add">+                 // Flex / disruption</span>
+<span class="diff-line diff-add">+                 if self_health &lt; 15 {</span>
+<span class="diff-line diff-add">+                     2</span>
+<span class="diff-line diff-add">+                 } else if flag_crisis {</span>
+<span class="diff-line diff-add">+                     3</span>
+<span class="diff-line diff-add">+                 } else if lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 35 &amp;&amp; self_health &gt; 45 {</span>
+<span class="diff-line diff-add">+                     4</span>
+<span class="diff-line diff-add">+                 } else if late_game &amp;&amp; self_health &gt; 40 {</span>
+<span class="diff-line diff-add">+                     3</span>
+<span class="diff-line diff-add">+                 } else {</span>
+<span class="diff-line diff-add">+                     1 // Roam and disrupt</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">      } else if mode == 3 {</span>
+<span class="diff-line diff-del">−         // KOTH: hyper-aggressive hill control with kill securing</span>
+<span class="diff-line diff-add">+         // KOTH: fix 21% loss rate - better hill control</span>
+<span class="diff-line diff-ctx">          let hill_control = objective_delta;</span>
+<span class="diff-line diff-del">−         let contested = hill_control.abs() &lt; 30;</span>
+<span class="diff-line diff-del">−         let winning_comfortably = hill_control &gt; 40;</span>
+<span class="diff-line diff-del">−         let losing_badly = hill_control &lt; -40;</span>
+<span class="diff-line diff-del">−         </span>
+<span class="diff-line diff-del">−         if self_health &lt; 18 {</span>
+<span class="diff-line diff-add">+         let contested = hill_control.abs() &lt; 25;</span>
+<span class="diff-line diff-add">+         let winning_hill = hill_control &gt; 30;</span>
+<span class="diff-line diff-add">+         let losing_hill = hill_control &lt; -30;</span>
+<span class="diff-line diff-add">+         let critical = self_health &lt; 20;</span>
+<span class="diff-line diff-add">+         let low = self_health &lt; 40;</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+         if critical {</span>
+<span class="diff-line diff-ctx">              2</span>
+<span class="diff-line diff-del">−         } else if target_health &gt; 0 &amp;&amp; target_health &lt;= 25 &amp;&amp; self_health &gt; 15 {</span>
+<span class="diff-line diff-add">+         } else if has_target &amp;&amp; target_health &lt;= 30 &amp;&amp; self_health &gt; 18 {</span>
+<span class="diff-line diff-ctx">              3 // Kill secure on hill</span>
+<span class="diff-line diff-ctx">          } else if contested {</span>
+<span class="diff-line diff-del">−             if lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 20 &amp;&amp; self_health &gt; 40 &amp;&amp; allies_alive &gt; 2 {</span>
+<span class="diff-line diff-add">+             if lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 30 &amp;&amp; self_health &gt; 45 &amp;&amp; total_allies &gt; 2 {</span>
+<span class="diff-line diff-ctx">                  4</span>
+<span class="diff-line diff-add">+             } else if losing_hill &amp;&amp; self_health &gt; 35 {</span>
+<span class="diff-line diff-add">+                 3 // Must contest</span>
+<span class="diff-line diff-add">+             } else if winning_hill &amp;&amp; total_enemies &lt;= 2 &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-add">+                 3</span>
+<span class="diff-line diff-ctx">              } else {</span>
+<span class="diff-line diff-add">+                 3 // Hold hill</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+         } else if winning_hill {</span>
+<span class="diff-line diff-add">+             if total_enemies &lt;= 1 &amp;&amp; self_health &gt; 25 {</span>
+<span class="diff-line diff-add">+                 3 // Hunt stragglers</span>
+<span class="diff-line diff-add">+             } else if low &amp;&amp; total_enemies &gt; 1 {</span>
+<span class="diff-line diff-add">+                 1 // Hold position, poke</span>
+<span class="diff-line diff-add">+             } else {</span>
+<span class="diff-line diff-ctx">                  3</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−         } else if winning_comfortably &amp;&amp; enemies_alive &lt;= 2 {</span>
+<span class="diff-line diff-del">−             3</span>
+<span class="diff-line diff-del">−         } else if losing_badly {</span>
+<span class="diff-line diff-del">−             3</span>
+<span class="diff-line diff-add">+         } else if losing_hill {</span>
+<span class="diff-line diff-add">+             if self_health &gt; 50 || (self_health &gt; 30 &amp;&amp; total_allies &gt;= total_enemies) {</span>
+<span class="diff-line diff-add">+                 3 // Coordinated push</span>
+<span class="diff-line diff-add">+             } else if self_health &gt; 25 {</span>
+<span class="diff-line diff-add">+                 1 // Poke and wait for team</span>
+<span class="diff-line diff-add">+             } else {</span>
+<span class="diff-line diff-add">+                 2</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-ctx">          } else {</span>
+<span class="diff-line diff-del">−             3 // Constant pressure on hill</span>
+<span class="diff-line diff-add">+             3</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">      } else {</span>
+<span class="diff-line diff-del">−         // TDM / Arena / World: balanced aggression with survival</span>
+<span class="diff-line diff-del">−         let outnumbered = enemies_alive &gt; allies_alive;</span>
+<span class="diff-line diff-del">−         let severely_outnumbered = enemies_alive &gt;= allies_alive + 2;</span>
+<span class="diff-line diff-del">−         let winning = team_score_delta &gt; 30;</span>
+<span class="diff-line diff-del">−         let critical = self_health &lt; 15;</span>
+<span class="diff-line diff-del">−         let low_health = self_health &lt; 35;</span>
+<span class="diff-line diff-del">−         let healthy = self_health &gt; 50;</span>
+<span class="diff-line diff-del">−         let very_healthy = self_health &gt; 70;</span>
+<span class="diff-line diff-del">−         </span>
+<span class="diff-line diff-del">−         // Kill secure - highest priority when safe</span>
+<span class="diff-line diff-del">−         if target_health &gt; 0 &amp;&amp; target_health &lt;= 20 &amp;&amp; self_health &gt; 12 {</span>
+<span class="diff-line diff-del">−             3</span>
+<span class="diff-line diff-del">−         } else if critical {</span>
+<span class="diff-line diff-del">−             2</span>
+<span class="diff-line diff-del">−         } else if severely_outnumbered &amp;&amp; low_health {</span>
+<span class="diff-line diff-del">−             2</span>
+<span class="diff-line diff-del">−         } else if lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 18 &amp;&amp; self_health &gt; 45 &amp;&amp; allies_alive &gt; 1 {</span>
+<span class="diff-line diff-del">−             4</span>
+<span class="diff-line diff-del">−         } else if outnumbered &amp;&amp; self_health &lt; 30 {</span>
+<span class="diff-line diff-del">−             2</span>
+<span class="diff-line diff-del">−         } else if winning &amp;&amp; enemies_alive &lt;= 2 &amp;&amp; self_health &gt; 35 {</span>
+<span class="diff-line diff-del">−             3</span>
+<span class="diff-line diff-del">−         } else if mode == 0 &amp;&amp; tick &gt; 150 {</span>
+<span class="diff-line diff-del">−             // Arena late game</span>
+<span class="diff-line diff-del">−             if self_health &gt; 25 { 3 } else { 1 }</span>
+<span class="diff-line diff-del">−         } else if very_healthy &amp;&amp; enemies_alive &lt;= allies_alive {</span>
+<span class="diff-line diff-del">−             // Safe to be maximally aggressive</span>
+<span class="diff-line diff-del">−             3</span>
+<span class="diff-line diff-del">−         } else if healthy &amp;&amp; !outnumbered {</span>
+<span class="diff-line diff-del">−             // Standard aggression</span>
+<span class="diff-line diff-del">−             3</span>
+<span class="diff-line diff-del">−         } else if self_health &gt; 35 {</span>
+<span class="diff-line diff-del">−             // Moderate pressure</span>
+<span class="diff-line diff-del">−             1</span>
+<span class="diff-line diff-add">+         // TDM / Arena / World: fix 61% TDM loss rate</span>
+<span class="diff-line diff-add">+         let critical = self_health &lt; 20;</span>
+<span class="diff-line diff-add">+         let low = self_health &lt; 40;</span>
+<span class="diff-line diff-add">+         let healthy = self_health &gt; 55;</span>
+<span class="diff-line diff-add">+         let very_healthy = self_health &gt; 75;</span>
+<span class="diff-line diff-add">+         let score_deficit = -team_score_delta;</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+         if critical {</span>
+<span class="diff-line diff-add">+             if has_target &amp;&amp; target_health &lt;= 25 {</span>
+<span class="diff-line diff-add">+                 3 // Trade kill</span>
+<span class="diff-line diff-add">+             } else {</span>
+<span class="diff-line diff-add">+                 2</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+         } else if severely_outnumbered {</span>
+<span class="diff-line diff-add">+             if low {</span>
+<span class="diff-line diff-add">+                 2</span>
+<span class="diff-line diff-add">+             } else if has_target &amp;&amp; target_health &lt;= 30 {</span>
+<span class="diff-line diff-add">+                 3 // Thin their numbers</span>
+<span class="diff-line diff-add">+             } else if total_allies &gt; 1 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 30 &amp;&amp; self_health &gt; 45 {</span>
+<span class="diff-line diff-add">+                 4</span>
+<span class="diff-line diff-add">+             } else {</span>
+<span class="diff-line diff-add">+                 1 // Poke, don&#39;t commit</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+         } else if outnumbered {</span>
+<span class="diff-line diff-add">+             if low &amp;&amp; !has_target {</span>
+<span class="diff-line diff-add">+                 2</span>
+<span class="diff-line diff-add">+             } else if has_target &amp;&amp; target_health &lt;= 35 &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-add">+                 3</span>
+<span class="diff-line diff-add">+             } else if healthy &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 25 &amp;&amp; total_allies &gt; 1 {</span>
+<span class="diff-line diff-add">+                 4</span>
+<span class="diff-line diff-add">+             } else {</span>
+<span class="diff-line diff-add">+                 1 // Trade efficiently</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+         } else if winning {</span>
+<span class="diff-line diff-add">+             if late_game &amp;&amp; total_enemies &lt;= 2 &amp;&amp; self_health &gt; 25 {</span>
+<span class="diff-line diff-add">+                 3 // Close it out</span>
+<span class="diff-line diff-add">+             } else if very_healthy {</span>
+<span class="diff-line diff-add">+                 3</span>
+<span class="diff-line diff-add">+             } else if healthy {</span>
+<span class="diff-line diff-add">+                 1 // Safe pressure</span>
+<span class="diff-line diff-add">+             } else {</span>
+<span class="diff-line diff-add">+                 1</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+         } else if losing {</span>
+<span class="diff-line diff-add">+             if has_target &amp;&amp; target_health &lt;= 40 &amp;&amp; self_health &gt; 35 {</span>
+<span class="diff-line diff-add">+                 3 // Desperate picks</span>
+<span class="diff-line diff-add">+             } else if very_healthy &amp;&amp; total_allies &gt;= total_enemies {</span>
+<span class="diff-line diff-add">+                 3</span>
+<span class="diff-line diff-add">+             } else if healthy &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 30 &amp;&amp; self_health &gt; 50 {</span>
+<span class="diff-line diff-meta"> … diff truncated after 200 changed lines …</span></pre>
+            </details>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v3 → v4</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-17T09:25:31.155Z">2026-09-17 09:25 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:24 v-new:24 @@</span>
+<span class="diff-line diff-ctx">      let losing = team_score_delta &lt; -20;</span>
+<span class="diff-line diff-ctx">      let late_game = tick &gt; 180;</span>
+<span class="diff-line diff-ctx">      let has_target = target_health &gt; 0;</span>
+<span class="diff-line diff-add">+     let healthy = self_health &gt; 55;</span>
+<span class="diff-line diff-add">+     let very_healthy = self_health &gt; 75;</span>
+<span class="diff-line diff-add">+     let low = self_health &lt; 40;</span>
+<span class="diff-line diff-add">+     let critical = self_health &lt; 20;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      // Kill secure - priority across all modes</span>
+<span class="diff-line diff-ctx">      if has_target &amp;&amp; target_health &lt;= 20 &amp;&amp; self_health &gt; 12 {</span>
+<span class="diff-line diff-hunk">@@ v-old:87 v-new:91 @@</span>
+<span class="diff-line diff-ctx">          let contested = hill_control.abs() &lt; 25;</span>
+<span class="diff-line diff-ctx">          let winning_hill = hill_control &gt; 30;</span>
+<span class="diff-line diff-ctx">          let losing_hill = hill_control &lt; -30;</span>
+<span class="diff-line diff-del">−         let critical = self_health &lt; 20;</span>
+<span class="diff-line diff-del">−         let low = self_health &lt; 40;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">          if critical {</span>
+<span class="diff-line diff-ctx">              2</span>
+<span class="diff-line diff-hunk">@@ v-old:125 v-new:127 @@</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">      } else {</span>
+<span class="diff-line diff-ctx">          // TDM / Arena / World: fix 61% TDM loss rate</span>
+<span class="diff-line diff-del">−         let critical = self_health &lt; 20;</span>
+<span class="diff-line diff-del">−         let low = self_health &lt; 40;</span>
+<span class="diff-line diff-del">−         let healthy = self_health &gt; 55;</span>
+<span class="diff-line diff-del">−         let very_healthy = self_health &gt; 75;</span>
+<span class="diff-line diff-ctx">          let score_deficit = -team_score_delta;</span>
+<span class="diff-line diff-add">+         let winning_big = team_score_delta &gt; 50;</span>
+<span class="diff-line diff-add">+         let losing_big = team_score_delta &lt; -50;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">          if critical {</span>
+<span class="diff-line diff-ctx">              if has_target &amp;&amp; target_health &lt;= 25 {</span>
+<span class="diff-line diff-hunk">@@ v-old:154 v-new:154 @@</span>
+<span class="diff-line diff-ctx">                  3</span>
+<span class="diff-line diff-ctx">              } else if healthy &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; lowest_ally_health &lt; 25 &amp;&amp; total_allies &gt; 1 {</span>
+<span class="diff-line diff-ctx">                  4</span>
+<span class="diff-line diff-add">+             } else if mode == 0 &amp;&amp; late_game {</span>
+<span class="diff-line diff-add">+                 // Arena late game - must fight</span>
+<span class="diff-line diff-add">+                 if self_health &gt; 30 { 3 } else { 1 }</span>
+<span class="diff-line diff-ctx">              } else {</span>
+<span class="diff-line diff-ctx">                  1 // Trade efficiently</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">          } else if winning {</span>
+<span class="diff-line diff-del">−             if late_game &amp;&amp; total_enemies &lt;= 2 &amp;&amp; self_health &gt; 25 {</span>
+<span class="diff-line diff-add">+             if losing_big &amp;&amp; self_health &gt; 30 {</span>
+<span class="diff-line diff-add">+                 3 // Desperate comeback</span>
+<span class="diff-line diff-add">+             } else if late_game &amp;&amp; total_enemies &lt;= 2 &amp;&amp; self_health &gt; 25 {</span>
+<span class="diff-line diff-ctx">                  3 // Close it out</span>
+<span class="diff-line diff-ctx">              } else if very_healthy {</span>
+<span class="diff-line diff-ctx">                  3</span>
+<span class="diff-line diff-hunk">@@ v-old:177 v-new:182 @@</span>
+<span class="diff-line diff-ctx">              } else if mode == 0 &amp;&amp; late_game {</span>
+<span class="diff-line diff-ctx">                  // Arena late game - must fight</span>
+<span class="diff-line diff-ctx">                  if self_health &gt; 30 { 3 } else { 1 }</span>
+<span class="diff-line diff-add">+             } else if losing_big &amp;&amp; self_health &gt; 25 &amp;&amp; has_target {</span>
+<span class="diff-line diff-add">+                 3 // All-in</span>
+<span class="diff-line diff-ctx">              } else {</span>
+<span class="diff-line diff-ctx">                  1</span>
+<span class="diff-line diff-ctx">              }</span></pre>
+            </details>
+            <p class="metric-note">Unified diff of the Rust fighter source between consecutive live artifact versions (first 200 changed lines shown). Failed attempts never go live — the previous artifact keeps fighting.</p>
+        </section>
+
         <section class="provenance">
             <p class="eyebrow">Provenance</p>
             <dl>

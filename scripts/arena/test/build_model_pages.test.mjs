@@ -20,6 +20,7 @@ import {
   slugifyRoster,
   weeklyBackupPathFor,
 } from '../build_model_pages.mjs';
+import { sha256 } from '../autopsy.mjs';
 import { trackPolicy, TRACKS } from '../continuous/league.mjs';
 import { freezeRecord } from '../continuous/season.mjs';
 
@@ -749,6 +750,128 @@ test('continuous overlay: model page renders per-track submission lineage', asyn
   assert.equal((beta.match(/lineage__track/g) || []).length, 4);
   assert.ok(beta.includes('lineage__version">v1<'));
   assert.ok(!beta.includes('lineage__version">v2<'));
+});
+
+// ---------------------------------------------------------------------------
+// Borrow-checker autopsy overlay
+// ---------------------------------------------------------------------------
+
+const AUTOPSY_V1 = 'pub fn tick() -> i32 {\n    1\n}\n';
+const AUTOPSY_V2 = 'pub fn tick() -> i32 {\n    // revised\n    2\n}\n';
+
+/**
+ * Extend the continuous fixture with the autopsy source stores for alpha's
+ * L2 lineage: the fighter record holds the current (v2) source, the revision
+ * journal carries the v2 source plus the v1 digest (checkpoint.revision_of),
+ * and the v1 source survives only in a season day snapshot under a SEPARATE
+ * artifacts root (the shared FIXTURES root must stay autopsy-free so the
+ * other continuous tests keep their no-autopsy output).
+ */
+function writeAutopsyStores(cmlDir, artifactsRoot) {
+  const stint = '2026-08-10T12:00:00.000Z';
+  fs.writeFileSync(path.join(cmlDir, 'submissions.jsonl'), `${JSON.stringify({
+    track: 'L2', model_id: 'test/alpha-one', slug: 'test/alpha-one-20260101', stint,
+    version_attempted: 2, parent_version: 1, prompt_sha256: HEX('c'), brief_sha256: null,
+    source_sha256: sha256(AUTOPSY_V2), wasm_sha256: HEX('a'), compile_attempts: 2,
+    outcome: 'accepted', at: '2026-08-15T12:00:00.000Z',
+  })}\n`);
+
+  const fighterDir = path.join(cmlDir, 'tracks', 'L2', 'fighters', 'test__alpha-one');
+  fs.mkdirSync(fighterDir, { recursive: true });
+  fs.writeFileSync(path.join(fighterDir, 'source.rs'), AUTOPSY_V2);
+
+  const journalDir = path.join(cmlDir, 'tracks', 'L2', 'revision-journal');
+  fs.mkdirSync(journalDir, { recursive: true });
+  fs.writeFileSync(path.join(journalDir, `test__alpha-one-${Date.parse(stint)}-v2-s2.json`), JSON.stringify({
+    schema_version: 1, track: 'L2', model_id: 'test/alpha-one', stint,
+    version_attempted: 2, parent_version: 1, outcome: 'accepted', source: AUTOPSY_V2,
+    checkpoint: { source_sha256: sha256(AUTOPSY_V2), wasm_sha256: HEX('a'), revision_of: sha256(AUTOPSY_V1) },
+  }));
+
+  const seasonSources = path.join(artifactsRoot, 'seasons', 'continuous-cml-test-0001-L2-day4-premier', 'sources');
+  fs.mkdirSync(seasonSources, { recursive: true });
+  fs.writeFileSync(path.join(seasonSources, 'orw-test-01-abcd-test-alpha-one.rs'), AUTOPSY_V1);
+}
+
+async function buildWithAutopsy(outDir, cmlDir, artifactsRoot) {
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot,
+    continuousDir: cmlDir,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
+    nowMs: NOW_MS,
+  });
+}
+
+test('continuous overlay: model page renders the borrow-checker autopsy', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
+  const artifactsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-autopsy-artifacts-'));
+  writeContinuousFixture(cmlDir);
+  writeAutopsyStores(cmlDir, artifactsRoot);
+  await buildWithAutopsy(outDir, cmlDir, artifactsRoot);
+
+  const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
+  assert.match(alpha, /Borrow-checker autopsy/);
+  // Version timeline: entrant badge, accepted badge, arrow separators.
+  assert.ok(alpha.includes('autopsy__badge--entrant" title="entrant">v1<'), 'timeline shows the v1 entrant');
+  assert.ok(alpha.includes('autopsy__badge--accepted" title="accepted">v2<'), 'timeline shows the accepted v2');
+  assert.ok(alpha.includes('autopsy__arrow'));
+  // Only L2 has a resolvable lineage — one timeline, one diff block.
+  assert.equal((alpha.match(/autopsy__timeline/g) || []).length, 1);
+  assert.equal((alpha.match(/autopsy__diff--diff/g) || []).length, 1);
+  // The expandable revision block carries the stats context from the ledger.
+  assert.ok(alpha.includes('autopsy__range">v1 → v2<'));
+  assert.match(alpha, /compile attempts 2 · accepted · <time/);
+  // Unified diff, syntax-tinted per line class.
+  assert.ok(alpha.includes('class="diff-line diff-hunk">@@ v-old:1 v-new:1 @@'));
+  assert.ok(alpha.includes('class="diff-line diff-del">−     1<'));
+  assert.ok(alpha.includes('class="diff-line diff-add">+     // revised<'));
+  assert.ok(alpha.includes('class="diff-line diff-add">+     2<'));
+  assert.ok(alpha.includes('class="diff-line diff-ctx">  }<'));
+
+  // Beta has no submissions at all: no section.
+  const beta = fs.readFileSync(path.join(outDir, 'beta-two.html'), 'utf8');
+  assert.ok(!beta.includes('Borrow-checker autopsy'));
+});
+
+test('autopsy absent-data: unresolvable sources keep output byte-identical', async () => {
+  // Two builds over the SAME artifacts root (battle scans identical): one
+  // with the plain continuous fixture, one additionally carrying source
+  // stores whose contents match no ledger sha. Neither build can resolve a
+  // single lineage source, so both must hide the section and produce
+  // byte-identical pages.
+  const outA = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
+  const outB = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
+  const cmlA = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
+  const cmlB = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
+  writeContinuousFixture(cmlA);
+  writeContinuousFixture(cmlB);
+  const fighterDir = path.join(cmlB, 'tracks', 'L2', 'fighters', 'test__alpha-one');
+  fs.mkdirSync(fighterDir, { recursive: true });
+  fs.writeFileSync(path.join(fighterDir, 'source.rs'), 'pub fn decoy() -> i32 { 0 }\n');
+  const journalDir = path.join(cmlB, 'tracks', 'L2', 'revision-journal');
+  fs.mkdirSync(journalDir, { recursive: true });
+  fs.writeFileSync(path.join(journalDir, 'test__alpha-one-1-v2-s2.json'), JSON.stringify({
+    track: 'L2', model_id: 'test/alpha-one', stint: '2026-08-10T12:00:00.000Z',
+    version_attempted: 2, outcome: 'accepted', source: 'pub fn decoy() -> i32 { 0 }\n',
+    checkpoint: { source_sha256: HEX('d'), revision_of: HEX('e') },
+  }));
+  await buildWithAutopsy(outA, cmlA, FIXTURES);
+  await buildWithAutopsy(outB, cmlB, FIXTURES);
+
+  for (const f of ['index.html', 'alpha-one.html', 'beta-two.html']) {
+    const a = fs.readFileSync(path.join(outA, f), 'utf8');
+    const b = fs.readFileSync(path.join(outB, f), 'utf8');
+    assert.ok(!a.includes('autopsy'), `${f} carries no autopsy markup without resolvable sources`);
+    assert.equal(a, b, `${f} is byte-identical regardless of source-store presence`);
+  }
 });
 
 test('invalid continuous state falls back to byte-identical weekly output', async () => {

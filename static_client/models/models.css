@@ -612,6 +612,48 @@ table.standings__table tr:last-child td { border-bottom: none; }
 .lineage__meta { color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
 .lineage__delta { color: var(--muted); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .lineage__at { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap; }
+.autopsy__timeline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 14px; }
+.autopsy__badge {
+    display: inline-block;
+    padding: 4px 9px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font: 800 10px/1 var(--mono);
+    letter-spacing: 0.06em;
+    background: rgba(5, 13, 10, 0.6);
+}
+.autopsy__badge--entrant { color: var(--acid-soft); border-color: var(--acid-soft); }
+.autopsy__badge--accepted { color: var(--acid); border-color: var(--acid); }
+.autopsy__badge--compile_failed,
+.autopsy__badge--codegen_failed,
+.autopsy__badge--interrupted { color: #fb7185; border-color: rgba(251, 113, 133, 0.45); text-decoration: line-through; }
+.autopsy__arrow { color: var(--dim); font-size: 11px; }
+.autopsy__diff { margin: 0 0 10px; border: 1px solid var(--line-soft); background: rgba(3, 7, 6, 0.5); }
+.autopsy__diff summary {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 10px 14px;
+    cursor: pointer;
+    list-style: none;
+}
+.autopsy__diff summary::-webkit-details-marker { display: none; }
+.autopsy__diff summary::before { content: '▸'; color: var(--dim); font-size: 10px; }
+.autopsy__diff[open] summary::before { content: '▾'; }
+.autopsy__range { color: var(--acid-soft); font: 800 11px/1 var(--mono); letter-spacing: 0.05em; }
+.autopsy__stats { color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.autopsy__pre {
+    margin: 0;
+    padding: 10px 0 12px;
+    border-top: 1px solid var(--line-soft);
+    overflow-x: auto;
+    font: 400 11px/1.55 var(--mono);
+}
+.diff-line { display: block; padding: 0 14px; white-space: pre; }
+.diff-add { color: #86efac; background: rgba(34, 197, 94, 0.09); }
+.diff-del { color: #fda4af; background: rgba(244, 63, 94, 0.09); }
+.diff-ctx { color: var(--muted); }
+.diff-hunk { color: var(--dim); font-weight: 700; padding: 6px 14px; }
+.diff-meta { color: var(--dim); font-style: italic; padding: 6px 14px; }
+.autopsy__note { margin: 0; padding: 10px 14px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; }
 .chem__table { width: 100%; border-collapse: collapse; }
 .chem__table th { color: var(--dim); font: 700 9px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; text-align: left; padding: 0 10px 8px 0; }
 .chem__table td { padding: 8px 10px 8px 0; border-top: 1px solid var(--line-soft); font-size: 13px; }

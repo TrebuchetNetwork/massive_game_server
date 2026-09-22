@@ -353,6 +353,495 @@
             <p class="metric-note">W/L/D deltas derive from the track's daily history snapshots; a failed attempt consumes a submission but the previous artifact stays live.</p>
         </section>
 
+        <section class="panel autopsy" aria-label="Borrow-checker autopsy">
+            <h2>Borrow-checker autopsy <span class="hof__hint">per track</span></h2>
+            <h3 class="lineage__track"><span class="track-badge track-badge--L3">L3</span> Weekly feedback</h3>
+            <div class="autopsy__timeline">
+                <span class="autopsy__badge autopsy__badge--entrant" title="entrant">v1</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--codegen_failed" title="codegen_failed">v2</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v2</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v3</span>
+            </div>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v1 → v2</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-09T09:24:38.115Z">2026-09-09 09:24 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:20 v-new:20 @@</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      let _ = personal_score;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Dead or invalid snapshot: do nothing harmful.</span>
+<span class="diff-line diff-ctx">      if self_health &lt;= 0 {</span>
+<span class="diff-line diff-ctx">          return IDLE;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-ctx">      let hp = self_health.max(0).min(100000);</span>
+<span class="diff-line diff-ctx">      let thp = target_health.max(0);</span>
+<span class="diff-line diff-ctx">      let allies = allies_alive.max(1);</span>
+<span class="diff-line diff-hunk">@@ v-old:32 v-new:32 @@</span>
+<span class="diff-line diff-ctx">      let s = slot.max(0);</span>
+<span class="diff-line diff-ctx">      let t = tick.max(0);</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // No enemies left: hold objective presence where it matters.</span>
+<span class="diff-line diff-add">+     // Nothing to fight: hold ground / patch up the team.</span>
+<span class="diff-line diff-ctx">      if enemies == 0 {</span>
+<span class="diff-line diff-ctx">          return match mode {</span>
+<span class="diff-line diff-ctx">              2 =&gt; CHARGE,</span>
+<span class="diff-line diff-ctx">              3 =&gt; DEFEND,</span>
+<span class="diff-line diff-ctx">              _ =&gt; {</span>
+<span class="diff-line diff-del">−                 if ally_low &gt; 0 &amp;&amp; ally_low &lt; 60 {</span>
+<span class="diff-line diff-add">+                 if ally_low &gt; 0 &amp;&amp; ally_low &lt; 55 {</span>
+<span class="diff-line diff-ctx">                      SUPPORT</span>
+<span class="diff-line diff-ctx">                  } else {</span>
+<span class="diff-line diff-ctx">                      DEFEND</span>
+<span class="diff-line diff-hunk">@@ v-old:47 v-new:47 @@</span>
+<span class="diff-line diff-ctx">          };</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // ---- Finishing logic: secure eliminations whenever cheaply possible. ----</span>
+<span class="diff-line diff-del">−     // CHARGE expected ~15..18, ATTACK ~9..12.</span>
+<span class="diff-line diff-del">−     let can_finish_attack = thp &gt; 0 &amp;&amp; thp &lt;= 9;</span>
+<span class="diff-line diff-del">−     let can_finish_charge = thp &gt; 0 &amp;&amp; thp &lt;= 15 &amp;&amp; hp &gt; 10;</span>
+<span class="diff-line diff-del">− </span>
+<span class="diff-line diff-del">−     if can_finish_attack {</span>
+<span class="diff-line diff-add">+     // ---- Finishing logic: always cash in kills. ----</span>
+<span class="diff-line diff-add">+     if thp &gt; 0 &amp;&amp; thp &lt;= 10 {</span>
+<span class="diff-line diff-ctx">          return ATTACK;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-del">−     if can_finish_charge {</span>
+<span class="diff-line diff-add">+     if thp &gt; 0 &amp;&amp; thp &lt;= 18 &amp;&amp; hp &gt; 12 {</span>
+<span class="diff-line diff-ctx">          return CHARGE;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // ---- Support decision (collaboration dimension). ----</span>
+<span class="diff-line diff-del">−     // Support only when the ally is genuinely in danger and likely to be hit,</span>
+<span class="diff-line diff-del">−     // so prevented damage is real. Split credit: only one designated supporter.</span>
+<span class="diff-line diff-del">−     let supporters_needed = if ally_low &gt; 0 &amp;&amp; ally_low &lt;= 45 &amp;&amp; enemies &gt; 0 {</span>
+<span class="diff-line diff-del">−         1</span>
+<span class="diff-line diff-del">−     } else {</span>
+<span class="diff-line diff-del">−         0</span>
+<span class="diff-line diff-del">−     };</span>
+<span class="diff-line diff-del">−     // Deterministic supporter election: lowest-slot healthy fighter.</span>
+<span class="diff-line diff-del">−     let is_designated_supporter = supporters_needed &gt; 0</span>
+<span class="diff-line diff-del">−         &amp;&amp; allies &gt;= 2</span>
+<span class="diff-line diff-del">−         &amp;&amp; hp &gt;= ally_low</span>
+<span class="diff-line diff-del">−         &amp;&amp; (s % allies.max(1)) == (t / 7) % allies.max(1);</span>
+<span class="diff-line diff-add">+     let outnumbered = enemies &gt; allies;</span>
+<span class="diff-line diff-add">+     let advantage = allies &gt; enemies;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // A very low ally with several enemies alive is worth shielding.</span>
+<span class="diff-line diff-del">−     let urgent_support = ally_low &gt; 0 &amp;&amp; ally_low &lt;= 25 &amp;&amp; enemies &gt;= 1;</span>
+<span class="diff-line diff-add">+     // Deterministic role rotation so the squad never fully turtles.</span>
+<span class="diff-line diff-add">+     let rot = allies.max(1);</span>
+<span class="diff-line diff-add">+     let role = (s + t / 11) % rot;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // ---- Self-preservation. ----</span>
+<span class="diff-line diff-del">−     let respawns = mode != 0; // arena and world have no respawns (world uses mode 1 though)</span>
+<span class="diff-line diff-del">−     let world_like = mode == 1 &amp;&amp; enemies &gt;= allies * 2 &amp;&amp; allies &gt;= 2;</span>
+<span class="diff-line diff-del">−     let low_thresh = if world_like {</span>
+<span class="diff-line diff-del">−         30</span>
+<span class="diff-line diff-del">−     } else if respawns {</span>
+<span class="diff-line diff-del">−         18</span>
+<span class="diff-line diff-del">−     } else {</span>
+<span class="diff-line diff-del">−         26</span>
+<span class="diff-line diff-del">−     };</span>
+<span class="diff-line diff-add">+     // Designated supporter: exactly one, and only for genuinely hurt allies.</span>
+<span class="diff-line diff-add">+     let support_wanted = ally_low &gt; 0 &amp;&amp; ally_low &lt;= 38 &amp;&amp; allies &gt;= 2 &amp;&amp; hp &gt;= 45;</span>
+<span class="diff-line diff-add">+     let is_supporter = support_wanted &amp;&amp; role == 0 &amp;&amp; hp &gt; ally_low;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     let outnumbered = enemies &gt; allies;</span>
+<span class="diff-line diff-del">−     let critical = hp &lt;= low_thresh || (hp &lt;= low_thresh + 12 &amp;&amp; outnumbered);</span>
+<span class="diff-line diff-add">+     // ---- Self-preservation thresholds (much tighter than before). ----</span>
+<span class="diff-line diff-add">+     // Defending too often was costing arena/koth games: passive play lets the</span>
+<span class="diff-line diff-add">+     // enemy accumulate objective and score. Only turtle when truly dying.</span>
+<span class="diff-line diff-add">+     let panic_thresh = if outnumbered { 26 } else { 18 };</span>
+<span class="diff-line diff-add">+     let dying = hp &lt;= panic_thresh;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     if critical {</span>
+<span class="diff-line diff-del">−         // Survive: 40% incoming. Also gives objective presence/block value.</span>
+<span class="diff-line diff-del">−         // But if we can trade a kill instead, we already returned above.</span>
+<span class="diff-line diff-del">−         if mode == 0 || mode == 1 {</span>
+<span class="diff-line diff-del">−             return DEFEND;</span>
+<span class="diff-line diff-add">+     if dying {</span>
+<span class="diff-line diff-add">+         // Even while dying, finish a weak target rather than cower.</span>
+<span class="diff-line diff-add">+         if thp &gt; 0 &amp;&amp; thp &lt;= 26 {</span>
+<span class="diff-line diff-add">+             return ATTACK;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          return DEFEND;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     if urgent_support &amp;&amp; (is_designated_supporter || allies == 2) {</span>
+<span class="diff-line diff-add">+     if is_supporter &amp;&amp; ally_low &lt;= 30 {</span>
+<span class="diff-line diff-ctx">          return SUPPORT;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // ---- Mode-specific behaviour. ----</span>
+<span class="diff-line diff-ctx">      match mode {</span>
+<span class="diff-line diff-add">+         // ---------- Capture the flag ----------</span>
+<span class="diff-line diff-ctx">          2 =&gt; {</span>
+<span class="diff-line diff-del">−             // Capture the flag: pushers and blockers.</span>
+<span class="diff-line diff-del">−             // Push threshold scales with team size; keep majority pushing.</span>
+<span class="diff-line diff-del">−             let losing_objective = objective_delta &lt; 0;</span>
+<span class="diff-line diff-del">−             let role = (s + t / 16) % allies.max(1);</span>
+<span class="diff-line diff-del">−             let blockers = if losing_objective { 0 } else { allies / 4 };</span>
+<span class="diff-line diff-del">−             if role &lt; blockers &amp;&amp; hp &lt; 70 {</span>
+<span class="diff-line diff-del">−                 return DEFEND; // block 3, tanky</span>
+<span class="diff-line diff-add">+             let losing = objective_delta &lt; 0;</span>
+<span class="diff-line diff-add">+             // Push hard; only heavily damaged, non-critical bots hold back.</span>
+<span class="diff-line diff-add">+             if losing || objective_delta &lt;= 0 {</span>
+<span class="diff-line diff-add">+                 if hp &gt;= 30 {</span>
+<span class="diff-line diff-add">+                     return CHARGE;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-add">+                 return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // CHARGE pushes 4 but costs 4 hp; safe when healthy.</span>
+<span class="diff-line diff-del">−             if hp &gt;= 45 {</span>
+<span class="diff-line diff-del">−                 return CHARGE;</span>
+<span class="diff-line diff-add">+             // Ahead: keep pushing but let one bot screen.</span>
+<span class="diff-line diff-add">+             if role == 0 &amp;&amp; hp &lt; 55 {</span>
+<span class="diff-line diff-add">+                 return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // Still contribute push while protecting a bit.</span>
+<span class="diff-line diff-del">−             if thp &gt; 0 &amp;&amp; thp &lt;= 30 {</span>
+<span class="diff-line diff-del">−                 return ATTACK;</span>
+<span class="diff-line diff-add">+             if hp &gt;= 35 {</span>
+<span class="diff-line diff-add">+                 return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             DEFEND</span>
+<span class="diff-line diff-add">+             ATTACK</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+         // ---------- King of the hill ----------</span>
+<span class="diff-line diff-ctx">          3 =&gt; {</span>
+<span class="diff-line diff-del">−             // King of the hill: DEFEND gives presence 3 and survivability.</span>
+<span class="diff-line diff-del">−             // Mix in damage to remove enemy presence.</span>
+<span class="diff-line diff-del">−             let ahead = objective_delta &gt; 40 &amp;&amp; team_score_delta &gt;= 0;</span>
+<span class="diff-line diff-del">−             if ahead &amp;&amp; hp &lt; 85 {</span>
+<span class="diff-line diff-add">+             // Previously ~half the team just sat on DEFEND; enemies were never</span>
+<span class="diff-line diff-add">+             // cleared so presence stayed contested. Now: clear enemies first,</span>
+<span class="diff-line diff-add">+             // hold only with a minority or when comfortably ahead.</span>
+<span class="diff-line diff-add">+             let big_lead = objective_delta &gt; 60 &amp;&amp; team_score_delta &gt;= 0;</span>
+<span class="diff-line diff-add">+             if big_lead {</span>
+<span class="diff-line diff-add">+                 if hp &lt; 70 {</span>
+<span class="diff-line diff-add">+                     return DEFEND;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-add">+                 if thp &gt; 0 {</span>
+<span class="diff-line diff-add">+                     return ATTACK;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // Split: some fighters hold (DEFEND=3 presence), others clear.</span>
+<span class="diff-line diff-del">−             let holders = (allies + 1) / 2;</span>
+<span class="diff-line diff-del">−             let role = (s + t / 12) % allies.max(1);</span>
+<span class="diff-line diff-del">−             if role &lt; holders {</span>
+<span class="diff-line diff-add">+             let holders = if allies &gt;= 4 { 1 } else { 0 };</span>
+<span class="diff-line diff-add">+             if role &lt; holders &amp;&amp; hp &lt;= 60 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if hp &gt;= 50 &amp;&amp; thp &gt; 25 {</span>
+<span class="diff-line diff-add">+             if hp &gt;= 40 &amp;&amp; thp &gt; 20 {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              ATTACK</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+         // ---------- Team deathmatch / world ----------</span>
+<span class="diff-line diff-ctx">          1 =&gt; {</span>
+<span class="diff-line diff-del">−             // Team deathmatch or the shared world event.</span>
+<span class="diff-line diff-del">−             if world_like {</span>
+<span class="diff-line diff-del">−                 // Free-for-all: survival is heavily weighted in placement.</span>
+<span class="diff-line diff-del">−                 // Stay alive while still contributing damage.</span>
+<span class="diff-line diff-del">−                 if hp &lt;= 55 {</span>
+<span class="diff-line diff-add">+             let swarm = enemies &gt;= allies * 2 &amp;&amp; allies &gt;= 2;</span>
+<span class="diff-line diff-add">+             if swarm {</span>
+<span class="diff-line diff-add">+                 if hp &lt;= 32 {</span>
+<span class="diff-line diff-ctx">                      return DEFEND;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-del">−                 if ally_low &gt; 0 &amp;&amp; ally_low &lt;= 40 &amp;&amp; is_designated_supporter {</span>
+<span class="diff-line diff-add">+                 if is_supporter {</span>
+<span class="diff-line diff-ctx">                      return SUPPORT;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-del">−                 if hp &gt;= 80 &amp;&amp; thp &gt; 20 {</span>
+<span class="diff-line diff-add">+                 if hp &gt;= 65 &amp;&amp; thp &gt; 22 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if is_designated_supporter &amp;&amp; ally_low &lt;= 40 {</span>
+<span class="diff-line diff-add">+             if is_supporter &amp;&amp; ally_low &lt;= 35 {</span>
+<span class="diff-line diff-ctx">                  return SUPPORT;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // Respawns exist: aggression pays.</span>
+<span class="diff-line diff-del">−             if hp &gt;= 44 &amp;&amp; thp &gt; 18 {</span>
+<span class="diff-line diff-add">+             if hp &gt;= 34 &amp;&amp; thp &gt; 20 {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              ATTACK</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+         // ---------- Arena (no respawns) ----------</span>
+<span class="diff-line diff-ctx">          _ =&gt; {</span>
+<span class="diff-line diff-del">−             // Arena: no respawns, focus fire, protect health.</span>
+<span class="diff-line diff-del">−             if is_designated_supporter &amp;&amp; ally_low &lt;= 35 {</span>
+<span class="diff-line diff-add">+             // Arena was the worst mode (42% losses) because of over-defending:</span>
+<span class="diff-line diff-add">+             // trading damage evenly loses to aggressive focus-fire bots.</span>
+<span class="diff-line diff-add">+             // Strategy: relentless focus fire, defend only in a real crisis.</span>
+<span class="diff-line diff-add">+             if is_supporter &amp;&amp; ally_low &lt;= 28 &amp;&amp; hp &gt;= 55 {</span>
+<span class="diff-line diff-ctx">                  return SUPPORT;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // Pressing hard when we outnumber; careful when even/behind.</span>
+<span class="diff-line diff-del">−             let advantage = allies &gt; enemies;</span>
+<span class="diff-line diff-del">−             if advantage &amp;&amp; hp &gt;= 40 &amp;&amp; thp &gt; 15 {</span>
+<span class="diff-line diff-del">−                 return CHARGE;</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+             // Press the advantage hard; a numbers lead snowballs with no respawns.</span>
+<span class="diff-line diff-add">+             if advantage {</span>
+<span class="diff-line diff-add">+                 if hp &gt;= 28 &amp;&amp; thp &gt; 18 {</span>
+<span class="diff-line diff-add">+                     return CHARGE;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-add">+                 return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if hp &gt;= 70 &amp;&amp; thp &gt; 20 {</span>
+<span class="diff-line diff-del">−                 return CHARGE;</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+             // Even fight: charge is the better damage-per-tick trade when healthy.</span>
+<span class="diff-line diff-add">+             if !outnumbered {</span>
+<span class="diff-line diff-add">+                 if hp &gt;= 45 &amp;&amp; thp &gt; 20 {</span>
+<span class="diff-line diff-add">+                     return CHARGE;</span>
+<span class="diff-line diff-add">+                 }</span>
+<span class="diff-line diff-add">+                 return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if hp &lt;= 40 &amp;&amp; !advantage &amp;&amp; thp &gt; 40 {</span>
+<span class="diff-line diff-add">+ </span>
+<span class="diff-line diff-add">+             // Outnumbered: mix in some blocking but keep dealing damage,</span>
+<span class="diff-line diff-add">+             // otherwise we simply get whittled down while contributing nothing.</span>
+<span class="diff-line diff-add">+             if hp &lt;= 34 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-add">+             }</span>
+<span class="diff-line diff-add">+             if hp &gt;= 62 &amp;&amp; thp &gt; 24 {</span>
+<span class="diff-line diff-add">+                 return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              ATTACK</span>
+<span class="diff-line diff-ctx">          }</span></pre>
+            </details>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v2 → v3</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-17T09:25:31.155Z">2026-09-17 09:25 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:32 v-new:32 @@</span>
+<span class="diff-line diff-ctx">      let s = slot.max(0);</span>
+<span class="diff-line diff-ctx">      let t = tick.max(0);</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Nothing to fight: hold ground / patch up the team.</span>
+<span class="diff-line diff-add">+     // No enemies present: brief regroup/support, otherwise keep pressure up.</span>
+<span class="diff-line diff-ctx">      if enemies == 0 {</span>
+<span class="diff-line diff-add">+         if ally_low &gt; 0 &amp;&amp; ally_low &lt; 50 &amp;&amp; allies &gt;= 2 {</span>
+<span class="diff-line diff-add">+             return SUPPORT;</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-ctx">          return match mode {</span>
+<span class="diff-line diff-ctx">              2 =&gt; CHARGE,</span>
+<span class="diff-line diff-del">−             3 =&gt; DEFEND,</span>
+<span class="diff-line diff-del">−             _ =&gt; {</span>
+<span class="diff-line diff-del">−                 if ally_low &gt; 0 &amp;&amp; ally_low &lt; 55 {</span>
+<span class="diff-line diff-del">−                     SUPPORT</span>
+<span class="diff-line diff-del">−                 } else {</span>
+<span class="diff-line diff-del">−                     DEFEND</span>
+<span class="diff-line diff-del">−                 }</span>
+<span class="diff-line diff-del">−             }</span>
+<span class="diff-line diff-add">+             3 =&gt; CHARGE,</span>
+<span class="diff-line diff-add">+             _ =&gt; DEFEND,</span>
+<span class="diff-line diff-ctx">          };</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      // ---- Finishing logic: always cash in kills. ----</span>
+<span class="diff-line diff-del">−     if thp &gt; 0 &amp;&amp; thp &lt;= 10 {</span>
+<span class="diff-line diff-add">+     if thp &gt; 0 &amp;&amp; thp &lt;= 12 {</span>
+<span class="diff-line diff-ctx">          return ATTACK;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-del">−     if thp &gt; 0 &amp;&amp; thp &lt;= 18 &amp;&amp; hp &gt; 12 {</span>
+<span class="diff-line diff-add">+     if thp &gt; 0 &amp;&amp; thp &lt;= 22 &amp;&amp; hp &gt; 10 {</span>
+<span class="diff-line diff-ctx">          return CHARGE;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      let outnumbered = enemies &gt; allies;</span>
+<span class="diff-line diff-ctx">      let advantage = allies &gt; enemies;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Deterministic role rotation so the squad never fully turtles.</span>
+<span class="diff-line diff-add">+     // Deterministic rotation keeps behavior varied but never all-turtle.</span>
+<span class="diff-line diff-ctx">      let rot = allies.max(1);</span>
+<span class="diff-line diff-del">−     let role = (s + t / 11) % rot;</span>
+<span class="diff-line diff-del">− </span>
+<span class="diff-line diff-del">−     // Designated supporter: exactly one, and only for genuinely hurt allies.</span>
+<span class="diff-line diff-del">−     let support_wanted = ally_low &gt; 0 &amp;&amp; ally_low &lt;= 38 &amp;&amp; allies &gt;= 2 &amp;&amp; hp &gt;= 45;</span>
+<span class="diff-line diff-del">−     let is_supporter = support_wanted &amp;&amp; role == 0 &amp;&amp; hp &gt; ally_low;</span>
+<span class="diff-line diff-add">+     let role = (s + t / 9) % rot;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // ---- Self-preservation thresholds (much tighter than before). ----</span>
+<span class="diff-line diff-del">−     // Defending too often was costing arena/koth games: passive play lets the</span>
+<span class="diff-line diff-del">−     // enemy accumulate objective and score. Only turtle when truly dying.</span>
+<span class="diff-line diff-del">−     let panic_thresh = if outnumbered { 26 } else { 18 };</span>
+<span class="diff-line diff-del">−     let dying = hp &lt;= panic_thresh;</span>
+<span class="diff-line diff-add">+     // Exactly one designated supporter, and only for genuinely hurt allies.</span>
+<span class="diff-line diff-add">+     let support_wanted = ally_low &gt; 0 &amp;&amp; ally_low &lt;= 32 &amp;&amp; allies &gt;= 3 &amp;&amp; hp &gt;= 55;</span>
+<span class="diff-line diff-add">+     let is_supporter = support_wanted &amp;&amp; role == 0 &amp;&amp; hp &gt; ally_low + 20;</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     if dying {</span>
+<span class="diff-line diff-del">−         // Even while dying, finish a weak target rather than cower.</span>
+<span class="diff-line diff-del">−         if thp &gt; 0 &amp;&amp; thp &lt;= 26 {</span>
+<span class="diff-line diff-add">+     // ---- Self-preservation: very tight. Defending burns tempo. ----</span>
+<span class="diff-line diff-add">+     // Previous build defended 76% of ticks which lost even fights outright.</span>
+<span class="diff-line diff-add">+     // Only block when truly about to die, and even then alternate with attacks</span>
+<span class="diff-line diff-add">+     // so we still contribute damage instead of being free XP.</span>
+<span class="diff-line diff-add">+     let panic = if outnumbered { 20 } else { 14 };</span>
+<span class="diff-line diff-add">+     if hp &lt;= panic {</span>
+<span class="diff-line diff-add">+         // Trade back on alternating ticks rather than pure turtling.</span>
+<span class="diff-line diff-add">+         if thp &gt; 0 &amp;&amp; thp &lt;= 34 {</span>
+<span class="diff-line diff-ctx">              return ATTACK;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-del">−         return DEFEND;</span>
+<span class="diff-line diff-add">+         if (t &amp; 1) == 0 {</span>
+<span class="diff-line diff-add">+             return DEFEND;</span>
+<span class="diff-line diff-add">+         }</span>
+<span class="diff-line diff-add">+         return ATTACK;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     if is_supporter &amp;&amp; ally_low &lt;= 30 {</span>
+<span class="diff-line diff-add">+     if is_supporter &amp;&amp; ally_low &lt;= 26 {</span>
+<span class="diff-line diff-ctx">          return SUPPORT;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      match mode {</span>
+<span class="diff-line diff-ctx">          // ---------- Capture the flag ----------</span>
+<span class="diff-line diff-ctx">          2 =&gt; {</span>
+<span class="diff-line diff-del">−             let losing = objective_delta &lt; 0;</span>
+<span class="diff-line diff-del">−             // Push hard; only heavily damaged, non-critical bots hold back.</span>
+<span class="diff-line diff-del">−             if losing || objective_delta &lt;= 0 {</span>
+<span class="diff-line diff-del">−                 if hp &gt;= 30 {</span>
+<span class="diff-line diff-add">+             if objective_delta &lt;= 0 {</span>
+<span class="diff-line diff-add">+                 if hp &gt;= 24 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // Ahead: keep pushing but let one bot screen.</span>
+<span class="diff-line diff-del">−             if role == 0 &amp;&amp; hp &lt; 55 {</span>
+<span class="diff-line diff-add">+             // Ahead: still contest, only the rotating screen holds when hurt.</span>
+<span class="diff-line diff-add">+             if role == 0 &amp;&amp; hp &lt; 40 &amp;&amp; allies &gt;= 3 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if hp &gt;= 35 {</span>
+<span class="diff-line diff-add">+             if hp &gt;= 28 {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              ATTACK</span>
+<span class="diff-line diff-hunk">@@ v-old:107 v-new:104 @@</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">          // ---------- King of the hill ----------</span>
+<span class="diff-line diff-ctx">          3 =&gt; {</span>
+<span class="diff-line diff-del">−             // Previously ~half the team just sat on DEFEND; enemies were never</span>
+<span class="diff-line diff-del">−             // cleared so presence stayed contested. Now: clear enemies first,</span>
+<span class="diff-line diff-del">−             // hold only with a minority or when comfortably ahead.</span>
+<span class="diff-line diff-del">−             let big_lead = objective_delta &gt; 60 &amp;&amp; team_score_delta &gt;= 0;</span>
+<span class="diff-line diff-add">+             let big_lead = objective_delta &gt; 80 &amp;&amp; team_score_delta &gt;= 0;</span>
+<span class="diff-line diff-ctx">              if big_lead {</span>
+<span class="diff-line diff-del">−                 if hp &lt; 70 {</span>
+<span class="diff-line diff-add">+                 if hp &lt; 45 {</span>
+<span class="diff-line diff-ctx">                      return DEFEND;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-del">−                 if thp &gt; 0 {</span>
+<span class="diff-line diff-del">−                     return ATTACK;</span>
+<span class="diff-line diff-add">+                 if hp &gt;= 55 &amp;&amp; thp &gt; 25 {</span>
+<span class="diff-line diff-add">+                     return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-del">−                 return DEFEND;</span>
+<span class="diff-line diff-del">−             }</span>
+<span class="diff-line diff-del">−             let holders = if allies &gt;= 4 { 1 } else { 0 };</span>
+<span class="diff-line diff-del">−             if role &lt; holders &amp;&amp; hp &lt;= 60 {</span>
+<span class="diff-line diff-del">−                 return DEFEND;</span>
+<span class="diff-line diff-add">+                 return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if hp &gt;= 40 &amp;&amp; thp &gt; 20 {</span>
+<span class="diff-line diff-add">+             // Clearing enemies is how the point gets held. Almost never sit.</span>
+<span class="diff-line diff-add">+             if hp &gt;= 30 &amp;&amp; thp &gt; 22 {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              ATTACK</span>
+<span class="diff-line diff-hunk">@@ v-old:134 v-new:125 @@</span>
+<span class="diff-line diff-ctx">          1 =&gt; {</span>
+<span class="diff-line diff-ctx">              let swarm = enemies &gt;= allies * 2 &amp;&amp; allies &gt;= 2;</span>
+<span class="diff-line diff-ctx">              if swarm {</span>
+<span class="diff-line diff-del">−                 if hp &lt;= 32 {</span>
+<span class="diff-line diff-add">+                 if hp &lt;= 24 {</span>
+<span class="diff-line diff-ctx">                      return DEFEND;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-del">−                 if is_supporter {</span>
+<span class="diff-line diff-del">−                     return SUPPORT;</span>
+<span class="diff-line diff-del">−                 }</span>
+<span class="diff-line diff-del">−                 if hp &gt;= 65 &amp;&amp; thp &gt; 22 {</span>
+<span class="diff-line diff-add">+                 if hp &gt;= 55 &amp;&amp; thp &gt; 24 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if is_supporter &amp;&amp; ally_low &lt;= 35 {</span>
+<span class="diff-line diff-del">−                 return SUPPORT;</span>
+<span class="diff-line diff-del">−             }</span>
+<span class="diff-line diff-del">−             if hp &gt;= 34 &amp;&amp; thp &gt; 20 {</span>
+<span class="diff-line diff-add">+             if hp &gt;= 30 &amp;&amp; thp &gt; 20 {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              ATTACK</span>
+<span class="diff-line diff-hunk">@@ v-old:156 v-new:141 @@</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">          // ---------- Arena (no respawns) ----------</span>
+<span class="diff-line diff-ctx">          _ =&gt; {</span>
+<span class="diff-line diff-del">−             // Arena was the worst mode (42% losses) because of over-defending:</span>
+<span class="diff-line diff-del">−             // trading damage evenly loses to aggressive focus-fire bots.</span>
+<span class="diff-line diff-del">−             // Strategy: relentless focus fire, defend only in a real crisis.</span>
+<span class="diff-line diff-del">−             if is_supporter &amp;&amp; ally_low &lt;= 28 &amp;&amp; hp &gt;= 55 {</span>
+<span class="diff-line diff-add">+             // Arena was the worst mode; passivity turned wins into draws and</span>
+<span class="diff-line diff-add">+             // losses. With no respawns, winning the damage race first matters</span>
+<span class="diff-line diff-add">+             // more than survival padding. Focus fire relentlessly.</span>
+<span class="diff-line diff-add">+             if is_supporter &amp;&amp; ally_low &lt;= 22 &amp;&amp; hp &gt;= 70 {</span>
+<span class="diff-line diff-ctx">                  return SUPPORT;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−             // Press the advantage hard; a numbers lead snowballs with no respawns.</span>
+<span class="diff-line diff-add">+             // Numbers lead snowballs: press without hesitation.</span>
+<span class="diff-line diff-ctx">              if advantage {</span>
+<span class="diff-line diff-del">−                 if hp &gt;= 28 &amp;&amp; thp &gt; 18 {</span>
+<span class="diff-line diff-add">+                 if hp &gt;= 20 &amp;&amp; thp &gt; 16 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−             // Even fight: charge is the better damage-per-tick trade when healthy.</span>
+<span class="diff-line diff-ctx">              if !outnumbered {</span>
+<span class="diff-line diff-del">−                 if hp &gt;= 45 &amp;&amp; thp &gt; 20 {</span>
+<span class="diff-line diff-add">+                 // Even fight: charge on healthy ticks, attack otherwise.</span>
+<span class="diff-line diff-add">+                 if hp &gt;= 30 &amp;&amp; thp &gt; 18 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−             // Outnumbered: mix in some blocking but keep dealing damage,</span>
+<span class="diff-line diff-del">−             // otherwise we simply get whittled down while contributing nothing.</span>
+<span class="diff-line diff-del">−             if hp &lt;= 34 {</span>
+<span class="diff-line diff-add">+             // Outnumbered: alternate a block into the pressure instead of</span>
+<span class="diff-line diff-add">+             // parking on DEFEND, which previously produced 8 draws and 20 losses.</span>
+<span class="diff-line diff-add">+             if hp &lt;= 26 &amp;&amp; (t % 3) == 0 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if hp &gt;= 62 &amp;&amp; thp &gt; 24 {</span>
+<span class="diff-line diff-add">+             if hp &gt;= 50 &amp;&amp; thp &gt; 22 {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              ATTACK</span></pre>
+            </details>
+            <p class="metric-note">Unified diff of the Rust fighter source between consecutive live artifact versions (first 200 changed lines shown). Failed attempts never go live — the previous artifact keeps fighting.</p>
+        </section>
+
         <section class="provenance">
             <p class="eyebrow">Provenance</p>
             <dl>
