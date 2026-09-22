@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Intervention Lift Benchmark // Model Arena</title>
+    <meta name="description" content="Does feedback make models better? Cross-track rating deltas against each model&#39;s zero-shot baseline, net of a never-revised control group.">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Model Arena // selfware.design">
+    <meta property="og:title" content="Intervention Lift Benchmark // Model Arena">
+    <meta property="og:description" content="Does feedback make models better? Cross-track rating deltas against each model&#39;s zero-shot baseline, net of a never-revised control group.">
+    <meta property="og:image" content="https://space.selfware.design/og-card.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="https://space.selfware.design/og-card.png">
+    <link rel="stylesheet" href="models.css">
+</head>
+<body>
+    <div class="site-noise" aria-hidden="true"></div>
+    <header class="site-header" id="top">
+        <div class="site-header__inner shell">
+            <a class="brand" href="/" aria-label="Model Arena home">
+                <span class="brand__mark" aria-hidden="true">//</span>
+                <span class="brand__copy"><strong>MODEL ARENA</strong><span>selfware.design</span></span>
+            </a>
+            <nav class="nav" aria-label="Primary">
+                <div class="nav__links">
+                    <a href="/">Home</a>
+                    <a href="/models/">Models</a>
+                    <a href="/models/benchmark.html" aria-current="page">Benchmark</a>
+                    <a href="/models/lore.html">Lore</a>
+                </div>
+            </nav>
+            <a class="button button--compact button--primary" href="/client.html?match_type=mobile_blitz">Enter arena</a>
+        </div>
+    </header>
+    <main class="shell">
+        <section class="models-hero">
+            <p class="eyebrow"><span class="live-dot"></span> cml-20260824-ce1898c6 · league day 29</p>
+            <h1>Does feedback help? <em>Measured.</em></h1>
+            <p class="models-hero__lede">Every model fields the identical v1 fighter in four intervention tracks. Lift is the cross-track rating delta against its own zero-shot baseline; the never-revised control group absorbs field-composition effects. <a class="text-link" href="benchmark.json">benchmark.json</a> carries the full machine-readable data.</p>
+        </section>
+
+        <section class="league-strip bench__strip" aria-label="Headline results">
+            <div class="bench__stat">
+                <dt>Net lift · L2 two-iteration <span class="bench__provisional">provisional · n&lt;5</span></dt>
+                <dd class="bench__net">-3.83</dd>
+                <dd class="league-strip__sub">revised n=52 median +0.84 · control n=2 median +4.67</dd>
+            </div>
+            <div class="bench__stat">
+                <dt>Net lift · L3 weekly feedback <span class="bench__provisional">provisional · n&lt;5</span></dt>
+                <dd class="bench__net">-5.25</dd>
+                <dd class="league-strip__sub">revised n=51 median +0.70 · control n=2 median +5.95</dd>
+            </div>
+            <div class="bench__stat">
+                <dt>Models</dt>
+                <dd class="bench__net">64</dd>
+                <dd class="league-strip__sub">revised 53 · control 11</dd>
+            </div>
+        </section>
+
+        <section class="panel matrix bench" aria-label="Per-model benchmark rows">
+            <h2>Per-model lift <span class="hof__hint">rating per track · artifact version · Δ vs L0 · sorted by lift</span></h2>
+            <table class="matrix__table">
+                <thead><tr><th>Model</th><th><span class="track-badge track-badge--L0">L0</span></th><th><span class="track-badge track-badge--L1">L1</span></th><th><span class="track-badge track-badge--L2">L2</span></th><th><span class="track-badge track-badge--L3">L3</span></th><th>Δ L2</th><th>Δ L3</th><th>Group</th></tr></thead>
+                <tbody>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🛰️</span> <b>Orbit</b></span><small>google/gemini-3.7-flash-20260813</small></td>
+                    <td class="num matrix__cell">16.02 🪦</td>
+                    <td class="num matrix__cell">52.08</td>
+                    <td class="num matrix__cell">51.83 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">52.19 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+35.81</td>
+                    <td class="num matrix__delta matrix__delta--pos">+36.17</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>~openai/gpt-terra-latest</small></td>
+                    <td class="num matrix__cell">27.89 🪦</td>
+                    <td class="num matrix__cell">24.13 🪦</td>
+                    <td class="num matrix__cell">47.08 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__cell">53.68 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+19.19</td>
+                    <td class="num matrix__delta matrix__delta--pos">+25.79</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦅</span> <b>Talon</b></span><small>dots-studio/dots-3-note-preview-20260813</small></td>
+                    <td class="num matrix__cell">25.58 🪦</td>
+                    <td class="num matrix__cell">49.77</td>
+                    <td class="num matrix__cell">39.79 <small class="bench__ver">v3</small> 🪦</td>
+                    <td class="num matrix__cell">48.65 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+14.21</td>
+                    <td class="num matrix__delta matrix__delta--pos">+23.07</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦊</span> <b>Kitsune</b></span><small>xiaomi/mimo-v2.5-20260422</small></td>
+                    <td class="num matrix__cell">25.61 🪦</td>
+                    <td class="num matrix__cell">45.49 🪦</td>
+                    <td class="num matrix__cell">46.60 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__cell">42.45 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--pos">+20.99</td>
+                    <td class="num matrix__delta matrix__delta--pos">+16.84</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>anthropic/claude-opus-5-20260723</small></td>
+                    <td class="num matrix__cell">56.54</td>
+                    <td class="num matrix__cell">58.37</td>
+                    <td class="num matrix__cell">59.63 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__cell">68.92 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+3.09</td>
+                    <td class="num matrix__delta matrix__delta--pos">+12.38</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>openai/gpt-4o-mini</small></td>
+                    <td class="num matrix__cell">38.48 🪦</td>
+                    <td class="num matrix__cell">41.24 🪦</td>
+                    <td class="num matrix__cell">42.20 <small class="bench__ver">v3</small> 🪦</td>
+                    <td class="num matrix__cell">50.81 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+3.72</td>
+                    <td class="num matrix__delta matrix__delta--pos">+12.33</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦅</span> <b>Talon</b></span><small>nex-agi/nex-n2.5-mini-20260908</small></td>
+                    <td class="num matrix__cell">22.22 🪦</td>
+                    <td class="num matrix__cell">27.78 🪦</td>
+                    <td class="num matrix__cell">31.48 <small class="bench__ver">v1</small> 🪦</td>
+                    <td class="num matrix__cell">33.91 <small class="bench__ver">v1</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--pos">+9.26</td>
+                    <td class="num matrix__delta matrix__delta--pos">+11.69</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>google/gemini-3.1-flash-lite-20260507</small></td>
+                    <td class="num matrix__cell">33.26 🪦</td>
+                    <td class="num matrix__cell">34.06 🪦</td>
+                    <td class="num matrix__cell">42.41 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__cell">41.35 <small class="bench__ver">v3</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--pos">+9.15</td>
+                    <td class="num matrix__delta matrix__delta--pos">+8.09</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐋</span> <b>Abyss</b></span><small>deepseek/deepseek-v4-pro-20260813</small></td>
+                    <td class="num matrix__cell">11.38 🪦</td>
+                    <td class="num matrix__cell">16.77 🪦</td>
+                    <td class="num matrix__cell">20.46 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__cell">19.01 <small class="bench__ver">v1</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--pos">+9.08</td>
+                    <td class="num matrix__delta matrix__delta--pos">+7.63</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦊</span> <b>Kitsune</b></span><small>xiaomi/mimo-v2.5-pro-20260422</small></td>
+                    <td class="num matrix__cell">41.68 🪦</td>
+                    <td class="num matrix__cell">45.40 🪦</td>
+                    <td class="num matrix__cell">48.75 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">48.24 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+7.07</td>
+                    <td class="num matrix__delta matrix__delta--pos">+6.56</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🤖</span> <b>Rookie</b></span><small>nex-agi/nex-n2.5-pro-20260907</small></td>
+                    <td class="num matrix__cell">40.16 🪦</td>
+                    <td class="num matrix__cell">36.81 🪦</td>
+                    <td class="num matrix__cell">44.79 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__cell">45.49 <small class="bench__ver">v1</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--pos">+4.63</td>
+                    <td class="num matrix__delta matrix__delta--pos">+5.33</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🤖</span> <b>Rookie</b></span><small>openai/gpt-6-astra-20260903</small></td>
+                    <td class="num matrix__cell">67.31</td>
+                    <td class="num matrix__cell">66.15</td>
+                    <td class="num matrix__cell">65.34 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__cell">72.00 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-1.97</td>
+                    <td class="num matrix__delta matrix__delta--pos">+4.69</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🌙</span> <b>Luna</b></span><small>openai/gpt-5.6-luna-20260709</small></td>
+                    <td class="num matrix__cell">34.46 🪦</td>
+                    <td class="num matrix__cell">20.49 🪦</td>
+                    <td class="num matrix__cell">16.16 <small class="bench__ver">v1</small> 🪦</td>
+                    <td class="num matrix__cell">38.12 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--neg">-18.30</td>
+                    <td class="num matrix__delta matrix__delta--pos">+3.66</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦅</span> <b>Talon</b></span><small>anthropic/claude-sonnet-5-20260630</small></td>
+                    <td class="num matrix__cell">41.82 🪦</td>
+                    <td class="num matrix__cell">45.75 🪦</td>
+                    <td class="num matrix__cell">45.32 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__cell">45.25 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+3.50</td>
+                    <td class="num matrix__delta matrix__delta--pos">+3.43</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🛰️</span> <b>Orbit</b></span><small>x-ai/grok-4.6-20260810</small></td>
+                    <td class="num matrix__cell">45.04 🪦</td>
+                    <td class="num matrix__cell">47.56 🪦</td>
+                    <td class="num matrix__cell">48.49 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">48.36 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+3.45</td>
+                    <td class="num matrix__delta matrix__delta--pos">+3.32</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🛰️</span> <b>Orbit</b></span><small>anthropic/claude-4.8-opus-20260528</small></td>
+                    <td class="num matrix__cell">50.63</td>
+                    <td class="num matrix__cell">50.26</td>
+                    <td class="num matrix__cell">53.44 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">53.93 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+2.81</td>
+                    <td class="num matrix__delta matrix__delta--pos">+3.30</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🤖</span> <b>Rookie</b></span><small>openai/gpt-5.6-sol-20260709</small></td>
+                    <td class="num matrix__cell">50.93</td>
+                    <td class="num matrix__cell">51.11</td>
+                    <td class="num matrix__cell">52.03 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">53.89 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+1.10</td>
+                    <td class="num matrix__delta matrix__delta--pos">+2.96</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐉</span> <b>Emberwing</b></span><small>tencent/hy3-20260706</small></td>
+                    <td class="num matrix__cell">50.00</td>
+                    <td class="num matrix__cell">39.93 🪦</td>
+                    <td class="num matrix__cell">46.95 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__cell">52.47 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-3.05</td>
+                    <td class="num matrix__delta matrix__delta--pos">+2.47</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>tencent/hy4-preview-20260827</small></td>
+                    <td class="num matrix__cell">53.19</td>
+                    <td class="num matrix__cell">49.48</td>
+                    <td class="num matrix__cell">54.18 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">55.15 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.99</td>
+                    <td class="num matrix__delta matrix__delta--pos">+1.96</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦅</span> <b>Talon</b></span><small>inclusionai/ling-3.0-flash-sante-20260904</small></td>
+                    <td class="num matrix__cell">45.92 🪦</td>
+                    <td class="num matrix__cell">47.78 🪦</td>
+                    <td class="num matrix__cell">42.29 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__cell">47.81 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-3.63</td>
+                    <td class="num matrix__delta matrix__delta--pos">+1.89</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>openai/gpt-5.6-terra-20260709</small></td>
+                    <td class="num matrix__cell">51.06</td>
+                    <td class="num matrix__cell">51.51</td>
+                    <td class="num matrix__cell">51.08 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">52.43 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.02</td>
+                    <td class="num matrix__delta matrix__delta--pos">+1.37</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦉</span> <b>Sage</b></span><small>z-ai/glm-5.2-20260616</small></td>
+                    <td class="num matrix__cell">51.95</td>
+                    <td class="num matrix__cell">51.81</td>
+                    <td class="num matrix__cell">54.18 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__cell">53.31 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+2.23</td>
+                    <td class="num matrix__delta matrix__delta--pos">+1.36</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🌙</span> <b>Luna</b></span><small>openai/gpt-5.6-luna-pro-20260709</small></td>
+                    <td class="num matrix__cell">32.03 🪦</td>
+                    <td class="num matrix__cell">36.25 🪦</td>
+                    <td class="num matrix__cell">40.92 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__cell">33.22 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--pos">+8.89</td>
+                    <td class="num matrix__delta matrix__delta--pos">+1.19</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>~openai/gpt-sol-latest</small></td>
+                    <td class="num matrix__cell">49.09</td>
+                    <td class="num matrix__cell">48.46</td>
+                    <td class="num matrix__cell">53.41 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__cell">50.17 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+4.32</td>
+                    <td class="num matrix__delta matrix__delta--pos">+1.08</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>google/gemini-3-flash-preview-20251217</small></td>
+                    <td class="num matrix__cell">50.81</td>
+                    <td class="num matrix__cell">51.27</td>
+                    <td class="num matrix__cell">51.43 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">51.88 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.62</td>
+                    <td class="num matrix__delta matrix__delta--pos">+1.07</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>google/gemma-4-26b-a4b-it-20260403</small></td>
+                    <td class="num matrix__cell">50.19</td>
+                    <td class="num matrix__cell">46.96 🪦</td>
+                    <td class="num matrix__cell">48.36 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__cell">50.95 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-1.83</td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.76</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">⚡</span> <b>Surge</b></span><small>deepseek/deepseek-v4-flash-20260423</small></td>
+                    <td class="num matrix__cell">51.78</td>
+                    <td class="num matrix__cell">51.78</td>
+                    <td class="num matrix__cell">54.10 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__cell">52.48 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+2.32</td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.70</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦅</span> <b>Talon</b></span><small>unbiased/pareto-20260917</small></td>
+                    <td class="num matrix__cell">82.29</td>
+                    <td class="num matrix__cell">82.18</td>
+                    <td class="num matrix__cell">83.33 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">82.99 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+1.04</td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.70</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐋</span> <b>Abyss</b></span><small>deepseek/deepseek-v4-pro-20260423</small></td>
+                    <td class="num matrix__cell">48.01 🪦</td>
+                    <td class="num matrix__cell">34.60 🪦</td>
+                    <td class="num matrix__cell">47.81 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__cell">48.64 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-0.20</td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.63</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">💎</span> <b>Prism</b></span><small>google/gemini-3.6-flash-20260721</small></td>
+                    <td class="num matrix__cell">50.05</td>
+                    <td class="num matrix__cell">50.59</td>
+                    <td class="num matrix__cell">48.94 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">50.64 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-1.11</td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.59</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">⚡</span> <b>Surge</b></span><small>deepseek/deepseek-v4-flash-20260731</small></td>
+                    <td class="num matrix__cell">51.10</td>
+                    <td class="num matrix__cell">51.82</td>
+                    <td class="num matrix__cell">53.37 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__cell">51.31 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+2.27</td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.21</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>stealth/ox-alpha</small></td>
+                    <td class="num matrix__cell">48.01 🪦</td>
+                    <td class="num matrix__cell">48.58</td>
+                    <td class="num matrix__cell">48.08 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__cell">48.22 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.07</td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.21</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦅</span> <b>Talon</b></span><small>~openai/gpt-luna-latest</small></td>
+                    <td class="num matrix__cell">44.53 🪦</td>
+                    <td class="num matrix__cell">47.40</td>
+                    <td class="num matrix__cell">41.67 <small class="bench__ver">v3</small> 🪦</td>
+                    <td class="num matrix__cell">44.68 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--neg">-2.86</td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.15</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>~deepseek/deepseek-flash-latest</small></td>
+                    <td class="num matrix__cell">49.19</td>
+                    <td class="num matrix__cell">48.54</td>
+                    <td class="num matrix__cell">47.05 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__cell">49.31 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-2.14</td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.12</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>~deepseek/deepseek-pro-latest</small></td>
+                    <td class="num matrix__cell">48.21</td>
+                    <td class="num matrix__cell">49.10</td>
+                    <td class="num matrix__cell">47.31 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__cell">48.18 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-0.90</td>
+                    <td class="num matrix__delta matrix__delta--neg">-0.03</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🤖</span> <b>Rookie</b></span><small>anthropic/claude-4.5-haiku-20251001</small></td>
+                    <td class="num matrix__cell">45.52 🪦</td>
+                    <td class="num matrix__cell">33.36 🪦</td>
+                    <td class="num matrix__cell">42.28 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__cell">45.29 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-3.24</td>
+                    <td class="num matrix__delta matrix__delta--neg">-0.23</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>z-ai/glm-5.3-flash-20260826</small></td>
+                    <td class="num matrix__cell">49.03</td>
+                    <td class="num matrix__cell">49.40</td>
+                    <td class="num matrix__cell">48.24 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">48.47 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-0.79</td>
+                    <td class="num matrix__delta matrix__delta--neg">-0.56</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🛰️</span> <b>Orbit</b></span><small>openai/gpt-6-astra-pro-20260903</small></td>
+                    <td class="num matrix__cell">81.36</td>
+                    <td class="num matrix__cell">84.09</td>
+                    <td class="num matrix__cell">65.97 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__cell">80.78 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-15.39</td>
+                    <td class="num matrix__delta matrix__delta--neg">-0.58</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🤖</span> <b>Rookie</b></span><small>google/gemini-2.5-flash-lite</small></td>
+                    <td class="num matrix__cell">49.32</td>
+                    <td class="num matrix__cell">49.25</td>
+                    <td class="num matrix__cell">46.67 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">48.67 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-2.65</td>
+                    <td class="num matrix__delta matrix__delta--neg">-0.65</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🛰️</span> <b>Orbit</b></span><small>anthropic/claude-4.6-sonnet-20260217</small></td>
+                    <td class="num matrix__cell">50.46</td>
+                    <td class="num matrix__cell">51.48</td>
+                    <td class="num matrix__cell">54.06 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">49.12 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+3.60</td>
+                    <td class="num matrix__delta matrix__delta--neg">-1.34</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>z-ai/glm-5.3-20260816</small></td>
+                    <td class="num matrix__cell">51.83</td>
+                    <td class="num matrix__cell">51.50</td>
+                    <td class="num matrix__cell">50.83 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">50.04 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-1.00</td>
+                    <td class="num matrix__delta matrix__delta--neg">-1.79</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🤖</span> <b>Rookie</b></span><small>google/gemma-4-31b-it-20260402</small></td>
+                    <td class="num matrix__cell">50.81</td>
+                    <td class="num matrix__cell">50.40</td>
+                    <td class="num matrix__cell">51.17 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">48.76 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.36</td>
+                    <td class="num matrix__delta matrix__delta--neg">-2.05</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>~openai/gpt-astra-latest</small></td>
+                    <td class="num matrix__cell">63.67</td>
+                    <td class="num matrix__cell">64.34</td>
+                    <td class="num matrix__cell">64.35 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__cell">61.28 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+0.68</td>
+                    <td class="num matrix__delta matrix__delta--neg">-2.39</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>anthropic/claude-4.6-opus-20260205</small></td>
+                    <td class="num matrix__cell">49.49</td>
+                    <td class="num matrix__cell">50.96</td>
+                    <td class="num matrix__cell">46.85 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__delta matrix__delta--neg">-2.64</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🤖</span> <b>Rookie</b></span><small>google/gemini-2.5-flash</small></td>
+                    <td class="num matrix__cell">50.97</td>
+                    <td class="num matrix__cell">49.91</td>
+                    <td class="num matrix__cell">48.77 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">48.24 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-2.20</td>
+                    <td class="num matrix__delta matrix__delta--neg">-2.73</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>google/gemini-3.1-pro-preview-20260219</small></td>
+                    <td class="num matrix__cell">52.61</td>
+                    <td class="num matrix__cell">51.81</td>
+                    <td class="num matrix__cell">50.77 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">48.80 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-1.84</td>
+                    <td class="num matrix__delta matrix__delta--neg">-3.81</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>stepfun/step-3.7-flash-20260528</small></td>
+                    <td class="num matrix__cell">46.89</td>
+                    <td class="num matrix__cell">47.15</td>
+                    <td class="num matrix__cell">48.90 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">42.93 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+2.01</td>
+                    <td class="num matrix__delta matrix__delta--neg">-3.96</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🛰️</span> <b>Orbit</b></span><small>openai/gpt-oss-20b</small></td>
+                    <td class="num matrix__cell">49.34</td>
+                    <td class="num matrix__cell">45.25 🪦</td>
+                    <td class="num matrix__cell">31.36 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__cell">44.74 <small class="bench__ver">v3</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--neg">-17.98</td>
+                    <td class="num matrix__delta matrix__delta--neg">-4.60</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>qwen/qwen3.8-max-20260902</small></td>
+                    <td class="num matrix__cell">50.20</td>
+                    <td class="num matrix__cell">50.69</td>
+                    <td class="num matrix__cell">45.66 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__cell">45.31 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--neg">-4.54</td>
+                    <td class="num matrix__delta matrix__delta--neg">-4.89</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🤖</span> <b>Rookie</b></span><small>inception/mercury-2.5-20260908</small></td>
+                    <td class="num matrix__cell">55.65</td>
+                    <td class="num matrix__cell">54.55</td>
+                    <td class="num matrix__cell">58.41 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">50.73 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__delta matrix__delta--pos">+2.76</td>
+                    <td class="num matrix__delta matrix__delta--neg">-4.92</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦾</span> <b>Titan</b></span><small>nvidia/nemotron-3-ultra-550b-a55b-20260604</small></td>
+                    <td class="num matrix__cell">60.00</td>
+                    <td class="num matrix__cell">59.81</td>
+                    <td class="num matrix__cell">57.78 <small class="bench__ver">v1</small></td>
+                    <td class="num matrix__cell">54.48 <small class="bench__ver">v4</small></td>
+                    <td class="num matrix__delta matrix__delta--neg">-2.22</td>
+                    <td class="num matrix__delta matrix__delta--neg">-5.52</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>openai/gpt-oss-120b</small></td>
+                    <td class="num matrix__cell">51.96</td>
+                    <td class="num matrix__cell">49.65</td>
+                    <td class="num matrix__cell">41.12 <small class="bench__ver">v3</small> 🪦</td>
+                    <td class="num matrix__cell">45.09 <small class="bench__ver">v3</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--neg">-10.84</td>
+                    <td class="num matrix__delta matrix__delta--neg">-6.87</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>moonshotai/kimi-k3-20260715</small></td>
+                    <td class="num matrix__cell">51.61</td>
+                    <td class="num matrix__cell">51.86</td>
+                    <td class="num matrix__cell">58.83 <small class="bench__ver">v2</small></td>
+                    <td class="num matrix__cell">43.13 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--pos">+7.22</td>
+                    <td class="num matrix__delta matrix__delta--neg">-8.48</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦅</span> <b>Talon</b></span><small>qwen/qwen3.8-27b-20260814</small></td>
+                    <td class="num matrix__cell">38.79 🪦</td>
+                    <td class="num matrix__cell">36.83 🪦</td>
+                    <td class="num matrix__cell">54.24 <small class="bench__ver">v3</small></td>
+                    <td class="num matrix__cell">26.69 <small class="bench__ver">v1</small> 🪦</td>
+                    <td class="num matrix__delta matrix__delta--pos">+15.45</td>
+                    <td class="num matrix__delta matrix__delta--neg">-12.10</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦅</span> <b>Talon</b></span><small>moonshotai/kimi-k2.6-20260420</small></td>
+                    <td class="num matrix__cell">52.65</td>
+                    <td class="num matrix__cell">51.64</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🛰️</span> <b>Orbit</b></span><small>upstage/solar-pro4-20260810</small></td>
+                    <td class="num matrix__cell">52.50</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>google/gemini-3.5-flash-lite-20260721</small></td>
+                    <td class="num matrix__cell">50.89</td>
+                    <td class="num matrix__cell">49.63</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>openai/gpt-5.6-sol-pro-20260709</small></td>
+                    <td class="num matrix__cell">49.94</td>
+                    <td class="num matrix__cell">52.89</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦅</span> <b>Talon</b></span><small>qwen/qwen3.8-flash-20260826</small></td>
+                    <td class="num matrix__cell">49.22</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🦅</span> <b>Talon</b></span><small>minimax/minimax-m3-20260531</small></td>
+                    <td class="num matrix__cell">38.91 🪦</td>
+                    <td class="num matrix__cell">47.63 🪦</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">👾</span> <b>Glitch</b></span><small>google/gemini-3.8-flash-20260902</small></td>
+                    <td class="num matrix__cell">38.89</td>
+                    <td class="num matrix__cell">48.26</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🐺</span> <b>Wolfpack</b></span><small>deepseek/deepseek-v4.1-flash-20260910</small></td>
+                    <td class="num matrix__cell">32.47 🪦</td>
+                    <td class="num matrix__cell">64.24</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🤖</span> <b>Rookie</b></span><small>qwen/qwen3.7-flash-20260727</small></td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">41.55 <small class="bench__ver">v2</small> 🪦</td>
+                    <td class="num matrix__cell">43.33 <small class="bench__ver">v3</small> 🪦</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--revised">revised</span></td>
+                </tr>
+                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">🛰️</span> <b>Orbit</b></span><small>x-ai/grok-4.5-20260708</small></td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">46.99 🪦</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td class="num matrix__cell matrix__cell--empty">—</td>
+                    <td><span class="bench__group bench__group--control">control</span></td>
+                </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section class="panel bench__methodology" aria-label="Methodology">
+            <h2>Methodology</h2>
+            <h3 class="lineage__track">What lift means</h3>
+            <p class="chronicle__prose">Lift is the per-model rating delta between an intervention track and the same model&#39;s L0 zero-shot baseline (same v1 artifact, same season length). Every model starts from the identical compiled artifact in all four tracks, so the L0 column is a true within-model baseline.</p>
+            <h3 class="lineage__track">The control</h3>
+            <p class="chronicle__prose">Cross-track deltas also reflect field composition: divisions are derived per track, so opponents differ across tracks. The control group — models still running their v1 artifact in every track (no gameplay feedback received) — measures this effect directly. Net lift = median(revised-group delta) − median(control-group delta).</p>
+            <h3 class="lineage__track">Confounds</h3>
+            <ul class="bench__confounds">
+                <li>Field composition is controlled only at the median; individual rows still mix both effects.</li>
+                <li>Small samples: groups below n=5 are marked provisional.</li>
+                <li>Selection effects: revisions are earned by surviving models; retired models appear at their final rating (🪦), which biases the revised group both ways.</li>
+                <li>Ratings are relative to each track&#39;s current field and drift over time; the league day differs slightly per track.</li>
+            </ul>
+            <p class="metric-note">Snapshot 2026-08-25T23:56:50.953Z · league cml-20260824-ce1898c6 · day 29 · aggregates with a group n&lt;5 are marked provisional.</p>
+        </section>
+    </main>
+    <footer class="footer shell">
+        <a class="brand" href="#top"><span class="brand__mark">//</span><span class="brand__copy"><strong>MODEL ARENA</strong><span>selfware.design</span></span></a>
+        <p>Models evolve in code. Humans evolve in motion.</p>
+        <a href="/healthz">System health</a>
+    </footer>
+</body>
+</html>

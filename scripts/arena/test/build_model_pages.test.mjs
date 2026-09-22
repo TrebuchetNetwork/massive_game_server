@@ -21,6 +21,7 @@ import {
   weeklyBackupPathFor,
 } from '../build_model_pages.mjs';
 import { sha256 } from '../autopsy.mjs';
+import { benchmarkJson, benchmarkRows, computeBenchmark, median, MIN_GROUP_N } from '../benchmark.mjs';
 import { trackPolicy, TRACKS } from '../continuous/league.mjs';
 import { freezeRecord } from '../continuous/season.mjs';
 
@@ -1950,4 +1951,131 @@ test('press box: absent, malformed or stale press files leave the HTML byte-iden
       );
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// Intervention Lift benchmark
+// ---------------------------------------------------------------------------
+
+test('median: odd, even, empty', () => {
+  assert.equal(median([3, 1, 2]), 2);
+  assert.equal(median([1, 2, 3, 4]), 2.5);
+  assert.equal(median([]), null);
+  assert.equal(median([5, Number.NaN, 7]), 6, 'non-finite values are dropped');
+});
+
+test('benchmarkRows: lifts, revised vs field-control grouping, sort order', () => {
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-bench-state-'));
+  writeContinuousFixture(cmlDir);
+  const state = JSON.parse(fs.readFileSync(path.join(cmlDir, 'state.json'), 'utf8'));
+  const rows = benchmarkRows(state);
+  assert.equal(rows.length, 14, 'roster union + retired entries at their final rating');
+
+  const alpha = rows.find((r) => r.slug === 'test/alpha-one-20260101');
+  assert.deepEqual([alpha.l0, alpha.l1, alpha.l2, alpha.l3], [66, 67, 68, 70]);
+  assert.equal(alpha.l2_version, 2);
+  assert.equal(alpha.l3_version, 2);
+  assert.equal(alpha.l2_lift, 2, '68 - 66');
+  assert.equal(alpha.l3_lift, 4, '70 - 66');
+  assert.equal(alpha.revised, true);
+  assert.equal(alpha.field_control, false);
+
+  const beta = rows.find((r) => r.slug === 'test/beta-two-20260102');
+  assert.equal(beta.revised, false);
+  assert.equal(beta.field_control, true, 'v1 in every track');
+  assert.equal(beta.l2_lift, -2);
+  assert.equal(beta.l3_lift, -3);
+
+  // Retired entries surface at their final rating: delta retired in L0 only,
+  // gamma in L1 only; both are never-revised control models.
+  const delta = rows.find((r) => r.slug === 'test/delta-20260101');
+  assert.equal(delta.l0, 30);
+  assert.equal(delta.l2, null);
+  assert.deepEqual(delta.retired_in, ['L0']);
+  assert.equal(delta.field_control, true);
+  const gamma = rows.find((r) => r.slug === 'test/gamma-20260101');
+  assert.deepEqual(gamma.retired_in, ['L1']);
+
+  // Sorted by lift desc: alpha (+4) first, epsilon (+3) second.
+  assert.equal(rows[0].slug, 'test/alpha-one-20260101');
+  assert.equal(rows[1].slug, 'test/epsilon-20260101');
+});
+
+test('computeBenchmark: group medians, net lift, provisional flagging', () => {
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-bench-state-'));
+  writeContinuousFixture(cmlDir);
+  const state = JSON.parse(fs.readFileSync(path.join(cmlDir, 'state.json'), 'utf8'));
+  const bench = computeBenchmark(state);
+
+  // Revised group is alpha alone (L2 v2 + L3 v2).
+  assert.equal(bench.aggregates.l2.revised_n, 1);
+  assert.equal(bench.aggregates.l2.revised_median, 2);
+  assert.equal(bench.aggregates.l3.revised_median, 4);
+  // Control: beta (-2/-3), epsilon (+2/+3), 9 fillers (0/0) -> median 0.
+  assert.equal(bench.aggregates.l2.control_n, 11);
+  assert.equal(bench.aggregates.l2.control_median, 0);
+  assert.equal(bench.aggregates.l2.net, 2);
+  assert.equal(bench.aggregates.l3.net, 4);
+  assert.equal(bench.aggregates.l2.provisional, true, 'revised n=1 < MIN_GROUP_N');
+  assert.equal(bench.aggregates.models_total, 14);
+  assert.equal(bench.aggregates.revised_total, 1);
+  assert.equal(bench.aggregates.control_total, 13, 'delta and gamma are v1 everywhere they appear');
+  assert.ok(MIN_GROUP_N >= 5);
+
+  // A healthy (non-provisional) aggregate: 5 revised models with lifts.
+  const big = JSON.parse(fs.readFileSync(path.join(cmlDir, 'state.json'), 'utf8'));
+  for (const t of ['L2', 'L3']) {
+    for (const e of big.tracks[t].roster.slice(0, 5)) {
+      e.artifact = { ...e.artifact, version: 2, parent_version: 1 };
+      e.rating += t === 'L2' ? 2 : 3;
+    }
+  }
+  const bigBench = computeBenchmark(big);
+  assert.equal(bigBench.aggregates.l3.revised_n, 5);
+  assert.equal(bigBench.aggregates.l3.provisional, false);
+});
+
+test('benchmark page + json render with the continuous overlay; absent state removes them', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-bench-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-bench-state-'));
+  writeContinuousFixture(cmlDir);
+  await buildWithContinuous(outDir, cmlDir);
+
+  const html = fs.readFileSync(path.join(outDir, 'benchmark.html'), 'utf8');
+  assert.match(html, /Does feedback help\?/);
+  assert.match(html, /Net lift · L2 two-iteration/);
+  assert.match(html, /Net lift · L3 weekly feedback/);
+  assert.match(html, /\+2\.00/, 'net L2 lift visible');
+  assert.match(html, /\+4\.00/, 'net L3 lift visible');
+  assert.match(html, /revised n=1 median \+2\.00 · control n=11 median \+0\.00/);
+  assert.match(html, /provisional/);
+  assert.match(html, /Methodology/);
+  assert.match(html, /Field composition/);
+  assert.match(html, /benchmark\.json/);
+  // Nav + index cross-links.
+  assert.match(html, /aria-current="page">Benchmark/);
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.match(index, /\/models\/benchmark\.html/, 'index nav links the benchmark');
+  assert.match(index, /Intervention Lift benchmark →/, 'matrix section links the benchmark');
+  // Sorted table: alpha row before epsilon row.
+  assert.ok(html.indexOf('<b>Alpha</b>') < html.indexOf('<b>Epsilon</b>'));
+
+  const payload = JSON.parse(fs.readFileSync(path.join(outDir, 'benchmark.json'), 'utf8'));
+  assert.equal(payload.benchmark, 'intervention-lift');
+  assert.equal(payload.schema_version, 1);
+  assert.equal(payload.league_id, 'cml-test-0001');
+  assert.equal(payload.rows.length, 14);
+  assert.equal(payload.aggregates.l3.net, 4);
+  assert.ok(Array.isArray(payload.methodology.confounds));
+
+  // Overlay gone -> stale benchmark files removed, other outputs untouched.
+  fs.writeFileSync(path.join(cmlDir, 'state.json'), JSON.stringify({ schema_version: 99 }));
+  await buildWithContinuous(outDir, cmlDir);
+  assert.ok(!fs.existsSync(path.join(outDir, 'benchmark.html')), 'stale benchmark.html removed');
+  assert.ok(!fs.existsSync(path.join(outDir, 'benchmark.json')), 'stale benchmark.json removed');
+  assert.equal(
+    fs.readFileSync(path.join(outDir, 'index.html'), 'utf8'),
+    fs.readFileSync(path.join(FIXTURES, 'golden', 'index.html'), 'utf8'),
+    'index falls back to the byte-identical weekly view',
+  );
 });

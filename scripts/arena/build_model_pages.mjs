@@ -30,6 +30,10 @@
 //   static_client/models/mascots.json           slug -> {emoji,title,color}
 //   static_client/models/league.json            landing-ticker payload (only when the
 //                                               continuous league state validates)
+//   static_client/models/benchmark.html         Intervention Lift benchmark page
+//   static_client/models/benchmark.json         machine-readable benchmark payload
+//                                               (both only when the continuous state validates;
+//                                               stale files are removed otherwise)
 //   artifacts/arena/page-cache.json             incremental battle-sample cache
 //   artifacts/arena/continuous/seasons/<id>.json
 //                                               frozen season finale record, written
@@ -82,6 +86,7 @@ import { fileURLToPath } from 'node:url';
 
 import { mascotFor } from './mascots.mjs';
 import { AUTOPSY_MAX_CHANGED_LINES, autopsyFor, loadAutopsies, revisionDiffs } from './autopsy.mjs';
+import { benchmarkJson, computeBenchmark, METHODOLOGY, MIN_GROUP_N } from './benchmark.mjs';
 import { TRACKS } from './continuous/league.mjs';
 import { MAX_ROSTER_SIZE, validateState } from './continuous/state.mjs';
 import {
@@ -622,7 +627,7 @@ function fmtPct(x, digits = 1) {
   return x === null || x === undefined ? '—' : `${(x * 100).toFixed(digits)}%`;
 }
 
-function chrome({ title, description, active, loreLink = false }) {
+function chrome({ title, description, active, loreLink = false, benchmarkLink = false }) {
   const navLink = (href, label, key) =>
     `<a href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`;
   return {
@@ -656,7 +661,7 @@ function chrome({ title, description, active, loreLink = false }) {
                 <div class="nav__links">
                     ${navLink('/', 'Home', 'home')}
                     ${navLink('/models/', 'Models', 'models')}
-${loreLink ? `                    ${navLink('/models/lore.html', 'Lore', 'lore')}\n` : ''}                </div>
+${benchmarkLink ? `                    ${navLink('/models/benchmark.html', 'Benchmark', 'benchmark')}\n` : ''}${loreLink ? `                    ${navLink('/models/lore.html', 'Lore', 'lore')}\n` : ''}                </div>
             </nav>
             <a class="button button--compact button--primary" href="/client.html?match_type=mobile_blitz">Enter arena</a>
         </div>
@@ -1064,6 +1069,7 @@ export function renderModelPage(ctx) {
     description: `Arena profile for ${model.model_name}: rank #${model.rank}, ratings, behavior fingerprint, rivalries and highlights.`,
     active: 'models',
     loreLink: Boolean(ctx.loreLink),
+    benchmarkLink: Boolean(ctx.benchmarkLink),
   });
   const winRate = model.matches_played
     ? (model.wins + model.draws * 0.5) / model.matches_played
@@ -1132,6 +1138,7 @@ export function renderIndexPage(ctx) {
     description: 'The weekly top-10 model roster: rankings, season points and per-model profile pages.',
     active: 'models',
     loreLink: Boolean(ctx.loreLink),
+    benchmarkLink: Boolean(ctx.benchmarkLink),
   });
   const continuous = ctx.continuous || null;
   const rows = ctx.cards.map((c) => `            <a class="model-row" href="${esc(c.slug)}.html">
@@ -1750,7 +1757,7 @@ ${cells}
                     </tr>`;
   }).join('\n');
   return `        <section class="panel matrix" aria-label="Experiment matrix">
-            <h2>Experiment matrix <span class="hof__hint">rating per track · Δ = L3 − L0 · rows in L0 division order</span></h2>
+            <h2>Experiment matrix <span class="hof__hint">rating per track · Δ = L3 − L0 · rows in L0 division order</span> <span class="hof__hint">· <a class="text-link" href="benchmark.html">Intervention Lift benchmark →</a></span></h2>
             <table class="matrix__table">
                 <thead><tr><th>Model</th>${TRACKS.map((t) => `<th>${trackBadge(t)}</th>`).join('')}<th>Δ feedback</th></tr></thead>
                 <tbody>
@@ -1759,6 +1766,103 @@ ${body}
             </table>
             <p class="metric-note">Same v1 artifacts in every track; tracks diverge only by compile-fix and feedback policy. Raw measured stats only — no coaching. Δ reads as indicative, not causal: once rosters diverge, tracks fight different opponents, so part of any gap is the draw, not feedback.</p>
         </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// Intervention Lift benchmark page (continuous overlay)
+// ---------------------------------------------------------------------------
+
+function fmtSigned(v) {
+  if (v === null || v === undefined) return '—';
+  return `${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
+}
+
+function benchLiftCell(v) {
+  if (v === null || v === undefined) return '<td class="num matrix__cell matrix__cell--empty">—</td>';
+  return `<td class="num matrix__delta matrix__delta--${v >= 0 ? 'pos' : 'neg'}">${fmtSigned(v)}</td>`;
+}
+
+function benchAggregateCard(label, agg) {
+  const net = agg.net === null ? '—' : fmtSigned(agg.net);
+  const provisional = agg.provisional ? ' <span class="bench__provisional">provisional · n&lt;5</span>' : '';
+  return `            <div class="bench__stat">
+                <dt>${esc(label)}${provisional}</dt>
+                <dd class="bench__net">${esc(net)}</dd>
+                <dd class="league-strip__sub">revised n=${agg.revised_n} median ${fmtSigned(agg.revised_median)} · control n=${agg.control_n} median ${fmtSigned(agg.control_median)}</dd>
+            </div>`;
+}
+
+export function renderBenchmarkPage({ benchmark, generatedAt, loreLink = false }) {
+  const { head, foot } = chrome({
+    title: 'Intervention Lift Benchmark // Model Arena',
+    description: 'Does feedback make models better? Cross-track rating deltas against each model\'s zero-shot baseline, net of a never-revised control group.',
+    active: 'benchmark',
+    loreLink,
+    benchmarkLink: true,
+  });
+  const agg = benchmark.aggregates;
+  const rows = benchmark.rows.map((r) => {
+    const group = r.field_control
+      ? '<span class="bench__group bench__group--control">control</span>'
+      : (r.revised ? '<span class="bench__group bench__group--revised">revised</span>' : '');
+    const ratingCell = (v, trackId, version) => {
+      if (v === null) return '—';
+      const retired = r.retired_in?.includes(trackId) ? ' 🪦' : '';
+      const ver = version ? ` <small class="bench__ver">v${version}</small>` : '';
+      return `${v.toFixed(2)}${ver}${retired}`;
+    };
+    return `                <tr>
+                    <td class="matrix__model"><span><span class="standings__emoji">${esc(r.mascot?.emoji || '')}</span> <b>${esc(r.mascot?.title || r.slug)}</b></span><small>${esc(r.slug)}</small></td>
+                    <td class="num matrix__cell">${ratingCell(r.l0, 'L0')}</td>
+                    <td class="num matrix__cell">${ratingCell(r.l1, 'L1')}</td>
+                    <td class="num matrix__cell">${ratingCell(r.l2, 'L2', r.l2_version)}</td>
+                    <td class="num matrix__cell">${ratingCell(r.l3, 'L3', r.l3_version)}</td>
+                    ${benchLiftCell(r.l2_lift)}
+                    ${benchLiftCell(r.l3_lift)}
+                    <td>${group}</td>
+                </tr>`;
+  }).join('\n');
+  const confounds = METHODOLOGY.confounds.map((c) => `                <li>${esc(c)}</li>`).join('\n');
+  return `${head}
+        <section class="models-hero">
+            <p class="eyebrow"><span class="live-dot"></span> ${esc(benchmark.league_id)} · league day ${fmtInt(benchmark.day_index)}</p>
+            <h1>Does feedback help? <em>Measured.</em></h1>
+            <p class="models-hero__lede">Every model fields the identical v1 fighter in four intervention tracks. Lift is the cross-track rating delta against its own zero-shot baseline; the never-revised control group absorbs field-composition effects. <a class="text-link" href="benchmark.json">benchmark.json</a> carries the full machine-readable data.</p>
+        </section>
+
+        <section class="league-strip bench__strip" aria-label="Headline results">
+${benchAggregateCard('Net lift · L2 two-iteration', agg.l2)}
+${benchAggregateCard('Net lift · L3 weekly feedback', agg.l3)}
+            <div class="bench__stat">
+                <dt>Models</dt>
+                <dd class="bench__net">${fmtInt(agg.models_total)}</dd>
+                <dd class="league-strip__sub">revised ${fmtInt(agg.revised_total)} · control ${fmtInt(agg.control_total)}</dd>
+            </div>
+        </section>
+
+        <section class="panel matrix bench" aria-label="Per-model benchmark rows">
+            <h2>Per-model lift <span class="hof__hint">rating per track · artifact version · Δ vs L0 · sorted by lift</span></h2>
+            <table class="matrix__table">
+                <thead><tr><th>Model</th><th>${trackBadge('L0')}</th><th>${trackBadge('L1')}</th><th>${trackBadge('L2')}</th><th>${trackBadge('L3')}</th><th>Δ L2</th><th>Δ L3</th><th>Group</th></tr></thead>
+                <tbody>
+${rows}
+                </tbody>
+            </table>
+        </section>
+
+        <section class="panel bench__methodology" aria-label="Methodology">
+            <h2>Methodology</h2>
+            <h3 class="lineage__track">What lift means</h3>
+            <p class="chronicle__prose">${esc(METHODOLOGY.lift)}</p>
+            <h3 class="lineage__track">The control</h3>
+            <p class="chronicle__prose">${esc(METHODOLOGY.control)}</p>
+            <h3 class="lineage__track">Confounds</h3>
+            <ul class="bench__confounds">
+${confounds}
+            </ul>
+            <p class="metric-note">Snapshot ${esc(generatedAt)} · league ${esc(benchmark.league_id)} · day ${fmtInt(benchmark.day_index)} · aggregates with a group n&lt;${MIN_GROUP_N} are marked provisional.</p>
+        </section>
+${foot}`;
 }
 
 function hallOfFameSection(state) {
@@ -3187,6 +3291,34 @@ a.toplist__card:hover { border-color: var(--acid); }
 .standings__division h4 { margin: 0 0 8px; }
 .standings__rank { white-space: nowrap; color: var(--dim); }
 table.matrix__table tr.matrix__row--boundary td { border-top: 1px solid var(--line); }
+
+/* intervention lift benchmark */
+.bench__strip { margin-top: 0; }
+.bench__stat dt { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bench__net { font-size: 22px !important; }
+.bench__provisional {
+    display: inline-block;
+    border: 1px solid rgba(250, 204, 21, 0.4);
+    padding: 2px 6px;
+    color: #facc15;
+    font: 800 7px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.bench__ver { color: var(--dim); font: 700 8px/1 var(--mono); }
+.bench__group {
+    display: inline-block;
+    border: 1px solid var(--line-soft);
+    padding: 3px 7px;
+    font: 800 8px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.bench__group--revised { color: var(--acid); border-color: var(--line); }
+.bench__group--control { color: var(--muted); }
+.bench__methodology h3 { margin-top: 24px; }
+.bench__confounds { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13.5px; line-height: 1.7; }
+.bench__confounds li { margin-bottom: 6px; }
 .standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; }
 .standings__track h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
 .standings__track h3 small { margin-left: auto; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; }
@@ -3670,6 +3802,7 @@ export async function buildPages({
       ? measuredRivalriesSection(battleScan.rivalries, metaById, slugById)
       : null,
     loreLink: Boolean(lore),
+    benchmarkLink: Boolean(continuous),
     nowMs,
   }));
 
@@ -3686,10 +3819,27 @@ export async function buildPages({
       path.join(outDir, 'league.json'),
       `${JSON.stringify(leagueTickerPayload(continuous.state), null, 2)}\n`,
     );
+    // Intervention Lift benchmark — the citable "does feedback help?" answer.
+    const benchmark = computeBenchmark(continuous.state);
+    io.writeFile(
+      path.join(outDir, 'benchmark.html'),
+      renderBenchmarkPage({ benchmark, generatedAt: ratings.generated_at, loreLink: Boolean(lore) }),
+    );
+    io.writeFile(
+      path.join(outDir, 'benchmark.json'),
+      `${JSON.stringify(benchmarkJson(benchmark, ratings.generated_at), null, 2)}\n`,
+    );
   } else if (io.exists(path.join(outDir, 'league.json'))) {
     // Overlay inactive (state absent/invalid): drop any stale ticker payload
     // from a previous valid run so the landing ticker never serves old data.
     io.remove(path.join(outDir, 'league.json'));
+  }
+  if (!continuous) {
+    // Same stale-file discipline for the benchmark page + payload.
+    for (const f of ['benchmark.html', 'benchmark.json']) {
+      const p = path.join(outDir, f);
+      if (io.exists(p)) io.remove(p);
+    }
   }
 
   // Republish the public ratings file from the continuous L0 baseline. The
@@ -3756,6 +3906,7 @@ export async function buildPages({
         : null,
       loreTitle: loreEntry ? loreEntry.title : null,
       loreLink: Boolean(lore),
+      benchmarkLink: Boolean(continuous),
       slugById,
       metaById,
       mediaBase,

@@ -521,6 +521,34 @@ a.toplist__card:hover { border-color: var(--acid); }
 .standings__division h4 { margin: 0 0 8px; }
 .standings__rank { white-space: nowrap; color: var(--dim); }
 table.matrix__table tr.matrix__row--boundary td { border-top: 1px solid var(--line); }
+
+/* intervention lift benchmark */
+.bench__strip { margin-top: 0; }
+.bench__stat dt { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bench__net { font-size: 22px !important; }
+.bench__provisional {
+    display: inline-block;
+    border: 1px solid rgba(250, 204, 21, 0.4);
+    padding: 2px 6px;
+    color: #facc15;
+    font: 800 7px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.bench__ver { color: var(--dim); font: 700 8px/1 var(--mono); }
+.bench__group {
+    display: inline-block;
+    border: 1px solid var(--line-soft);
+    padding: 3px 7px;
+    font: 800 8px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.bench__group--revised { color: var(--acid); border-color: var(--line); }
+.bench__group--control { color: var(--muted); }
+.bench__methodology h3 { margin-top: 24px; }
+.bench__confounds { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13.5px; line-height: 1.7; }
+.bench__confounds li { margin-bottom: 6px; }
 .standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; }
 .standings__track h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
 .standings__track h3 small { margin-left: auto; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; }

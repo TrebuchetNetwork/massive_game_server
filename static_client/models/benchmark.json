@@ -1,0 +1,1488 @@
+{
+  "schema_version": 1,
+  "benchmark": "intervention-lift",
+  "league_id": "cml-20260824-ce1898c6",
+  "day_index": 29,
+  "generated_at": "2026-08-25T23:56:50.953Z",
+  "min_group_n": 5,
+  "methodology": {
+    "summary": "Cross-track rating deltas against each model's own L0 zero-shot baseline, with a never-revised control group subtracting field-composition effects.",
+    "lift": "Lift is the per-model rating delta between an intervention track and the same model's L0 zero-shot baseline (same v1 artifact, same season length). Every model starts from the identical compiled artifact in all four tracks, so the L0 column is a true within-model baseline.",
+    "control": "Cross-track deltas also reflect field composition: divisions are derived per track, so opponents differ across tracks. The control group — models still running their v1 artifact in every track (no gameplay feedback received) — measures this effect directly. Net lift = median(revised-group delta) − median(control-group delta).",
+    "confounds": [
+      "Field composition is controlled only at the median; individual rows still mix both effects.",
+      "Small samples: groups below n=5 are marked provisional.",
+      "Selection effects: revisions are earned by surviving models; retired models appear at their final rating (🪦), which biases the revised group both ways.",
+      "Ratings are relative to each track's current field and drift over time; the league day differs slightly per track."
+    ]
+  },
+  "aggregates": {
+    "l2": {
+      "revised_n": 52,
+      "revised_median": 0.84,
+      "control_n": 2,
+      "control_median": 4.67,
+      "net": -3.83,
+      "provisional": true
+    },
+    "l3": {
+      "revised_n": 51,
+      "revised_median": 0.7,
+      "control_n": 2,
+      "control_median": 5.95,
+      "net": -5.25,
+      "provisional": true
+    },
+    "models_total": 64,
+    "revised_total": 53,
+    "control_total": 11
+  },
+  "rows": [
+    {
+      "slug": "google/gemini-3.7-flash-20260813",
+      "model_id": "google/gemini-3.7-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 16.02,
+      "l1": 52.08,
+      "l2": 51.83,
+      "l3": 52.19,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [
+        "L0"
+      ],
+      "l2_lift": 35.81,
+      "l3_lift": 36.17,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "~openai/gpt-terra-latest",
+      "model_id": "~openai/gpt-terra-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 27.89,
+      "l1": 24.13,
+      "l2": 47.08,
+      "l3": 53.68,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [
+        "L0",
+        "L1"
+      ],
+      "l2_lift": 19.19,
+      "l3_lift": 25.79,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "dots-studio/dots-3-note-preview-20260813",
+      "model_id": "dots-studio/dots-3-note-preview:free",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 25.58,
+      "l1": 49.77,
+      "l2": 39.79,
+      "l3": 48.65,
+      "l2_version": 3,
+      "l3_version": 4,
+      "retired_in": [
+        "L0",
+        "L2"
+      ],
+      "l2_lift": 14.21,
+      "l3_lift": 23.07,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "xiaomi/mimo-v2.5-20260422",
+      "model_id": "xiaomi/mimo-v2.5",
+      "mascot": {
+        "key": "xiaomi/mimo-v2.5",
+        "emoji": "🦊",
+        "title": "Kitsune",
+        "color": "#f97316"
+      },
+      "l0": 25.61,
+      "l1": 45.49,
+      "l2": 46.6,
+      "l3": 42.45,
+      "l2_version": 1,
+      "l3_version": 2,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L3"
+      ],
+      "l2_lift": 20.99,
+      "l3_lift": 16.84,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "anthropic/claude-opus-5-20260723",
+      "model_id": "anthropic/claude-opus-5",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 56.54,
+      "l1": 58.37,
+      "l2": 59.63,
+      "l3": 68.92,
+      "l2_version": 1,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": 3.09,
+      "l3_lift": 12.38,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-4o-mini",
+      "model_id": "openai/gpt-4o-mini",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 38.48,
+      "l1": 41.24,
+      "l2": 42.2,
+      "l3": 50.81,
+      "l2_version": 3,
+      "l3_version": 4,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "l2_lift": 3.72,
+      "l3_lift": 12.33,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "nex-agi/nex-n2.5-mini-20260908",
+      "model_id": "nex-agi/nex-n2.5-mini:free",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 22.22,
+      "l1": 27.78,
+      "l2": 31.48,
+      "l3": 33.91,
+      "l2_version": 1,
+      "l3_version": 1,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": 9.26,
+      "l3_lift": 11.69,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "google/gemini-3.1-flash-lite-20260507",
+      "model_id": "google/gemini-3.1-flash-lite",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 33.26,
+      "l1": 34.06,
+      "l2": 42.41,
+      "l3": 41.35,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": 9.15,
+      "l3_lift": 8.09,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "deepseek/deepseek-v4-pro-20260813",
+      "model_id": "deepseek/deepseek-v4-pro-0813",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-pro",
+        "emoji": "🐋",
+        "title": "Abyss",
+        "color": "#4d6bfe"
+      },
+      "l0": 11.38,
+      "l1": 16.77,
+      "l2": 20.46,
+      "l3": 19.01,
+      "l2_version": 2,
+      "l3_version": 1,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": 9.08,
+      "l3_lift": 7.63,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "xiaomi/mimo-v2.5-pro-20260422",
+      "model_id": "xiaomi/mimo-v2.5-pro",
+      "mascot": {
+        "key": "xiaomi/mimo-v2.5",
+        "emoji": "🦊",
+        "title": "Kitsune",
+        "color": "#f97316"
+      },
+      "l0": 41.68,
+      "l1": 45.4,
+      "l2": 48.75,
+      "l3": 48.24,
+      "l2_version": 2,
+      "l3_version": 4,
+      "retired_in": [
+        "L0",
+        "L1"
+      ],
+      "l2_lift": 7.07,
+      "l3_lift": 6.56,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "nex-agi/nex-n2.5-pro-20260907",
+      "model_id": "nex-agi/nex-n2.5-pro:free",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 40.16,
+      "l1": 36.81,
+      "l2": 44.79,
+      "l3": 45.49,
+      "l2_version": 2,
+      "l3_version": 1,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": 4.63,
+      "l3_lift": 5.33,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-6-astra-20260903",
+      "model_id": "openai/gpt-6-astra",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 67.31,
+      "l1": 66.15,
+      "l2": 65.34,
+      "l3": 72,
+      "l2_version": 3,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": -1.97,
+      "l3_lift": 4.69,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-5.6-luna-20260709",
+      "model_id": "openai/gpt-5.6-luna",
+      "mascot": {
+        "key": "openai/gpt-5.6-luna",
+        "emoji": "🌙",
+        "title": "Luna",
+        "color": "#10a37f"
+      },
+      "l0": 34.46,
+      "l1": 20.49,
+      "l2": 16.16,
+      "l3": 38.12,
+      "l2_version": 1,
+      "l3_version": 2,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -18.3,
+      "l3_lift": 3.66,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "anthropic/claude-sonnet-5-20260630",
+      "model_id": "anthropic/claude-sonnet-5",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 41.82,
+      "l1": 45.75,
+      "l2": 45.32,
+      "l3": 45.25,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "l2_lift": 3.5,
+      "l3_lift": 3.43,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "x-ai/grok-4.6-20260810",
+      "model_id": "x-ai/grok-4.6",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 45.04,
+      "l1": 47.56,
+      "l2": 48.49,
+      "l3": 48.36,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [
+        "L0",
+        "L1"
+      ],
+      "l2_lift": 3.45,
+      "l3_lift": 3.32,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "anthropic/claude-4.8-opus-20260528",
+      "model_id": "anthropic/claude-opus-4.8",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 50.63,
+      "l1": 50.26,
+      "l2": 53.44,
+      "l3": 53.93,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": 2.81,
+      "l3_lift": 3.3,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-5.6-sol-20260709",
+      "model_id": "openai/gpt-5.6-sol",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 50.93,
+      "l1": 51.11,
+      "l2": 52.03,
+      "l3": 53.89,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": 1.1,
+      "l3_lift": 2.96,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "tencent/hy3-20260706",
+      "model_id": "tencent/hy3",
+      "mascot": {
+        "key": "tencent/hy3",
+        "emoji": "🐉",
+        "title": "Emberwing",
+        "color": "#fb7185"
+      },
+      "l0": 50,
+      "l1": 39.93,
+      "l2": 46.95,
+      "l3": 52.47,
+      "l2_version": 1,
+      "l3_version": 4,
+      "retired_in": [
+        "L1"
+      ],
+      "l2_lift": -3.05,
+      "l3_lift": 2.47,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "tencent/hy4-preview-20260827",
+      "model_id": "tencent/hy4-preview",
+      "mascot": {
+        "key": "tencent/hy4-preview",
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 53.19,
+      "l1": 49.48,
+      "l2": 54.18,
+      "l3": 55.15,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": 0.99,
+      "l3_lift": 1.96,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "inclusionai/ling-3.0-flash-sante-20260904",
+      "model_id": "inclusionai/ling-3.0-flash-sante:free",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 45.92,
+      "l1": 47.78,
+      "l2": 42.29,
+      "l3": 47.81,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "l2_lift": -3.63,
+      "l3_lift": 1.89,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-5.6-terra-20260709",
+      "model_id": "openai/gpt-5.6-terra",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 51.06,
+      "l1": 51.51,
+      "l2": 51.08,
+      "l3": 52.43,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": 0.02,
+      "l3_lift": 1.37,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "z-ai/glm-5.2-20260616",
+      "model_id": "z-ai/glm-5.2",
+      "mascot": {
+        "key": "z-ai/glm-5.2",
+        "emoji": "🦉",
+        "title": "Sage",
+        "color": "#a78bfa"
+      },
+      "l0": 51.95,
+      "l1": 51.81,
+      "l2": 54.18,
+      "l3": 53.31,
+      "l2_version": 1,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": 2.23,
+      "l3_lift": 1.36,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-5.6-luna-pro-20260709",
+      "model_id": "openai/gpt-5.6-luna-pro",
+      "mascot": {
+        "key": "openai/gpt-5.6-luna",
+        "emoji": "🌙",
+        "title": "Luna",
+        "color": "#10a37f"
+      },
+      "l0": 32.03,
+      "l1": 36.25,
+      "l2": 40.92,
+      "l3": 33.22,
+      "l2_version": 2,
+      "l3_version": 2,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": 8.89,
+      "l3_lift": 1.19,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "~openai/gpt-sol-latest",
+      "model_id": "~openai/gpt-sol-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 49.09,
+      "l1": 48.46,
+      "l2": 53.41,
+      "l3": 50.17,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [],
+      "l2_lift": 4.32,
+      "l3_lift": 1.08,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-3-flash-preview-20251217",
+      "model_id": "google/gemini-3-flash-preview",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 50.81,
+      "l1": 51.27,
+      "l2": 51.43,
+      "l3": 51.88,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": 0.62,
+      "l3_lift": 1.07,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemma-4-26b-a4b-it-20260403",
+      "model_id": "google/gemma-4-26b-a4b-it",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 50.19,
+      "l1": 46.96,
+      "l2": 48.36,
+      "l3": 50.95,
+      "l2_version": 3,
+      "l3_version": 4,
+      "retired_in": [
+        "L1"
+      ],
+      "l2_lift": -1.83,
+      "l3_lift": 0.76,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "deepseek/deepseek-v4-flash-20260423",
+      "model_id": "deepseek/deepseek-v4-flash",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-flash",
+        "emoji": "⚡",
+        "title": "Surge",
+        "color": "#38bdf8"
+      },
+      "l0": 51.78,
+      "l1": 51.78,
+      "l2": 54.1,
+      "l3": 52.48,
+      "l2_version": 1,
+      "l3_version": 4,
+      "retired_in": [],
+      "l2_lift": 2.32,
+      "l3_lift": 0.7,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "unbiased/pareto-20260917",
+      "model_id": "unbiased/pareto",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 82.29,
+      "l1": 82.18,
+      "l2": 83.33,
+      "l3": 82.99,
+      "l2_version": 2,
+      "l3_version": 1,
+      "retired_in": [],
+      "l2_lift": 1.04,
+      "l3_lift": 0.7,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "deepseek/deepseek-v4-pro-20260423",
+      "model_id": "deepseek/deepseek-v4-pro",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-pro",
+        "emoji": "🐋",
+        "title": "Abyss",
+        "color": "#4d6bfe"
+      },
+      "l0": 48.01,
+      "l1": 34.6,
+      "l2": 47.81,
+      "l3": 48.64,
+      "l2_version": 1,
+      "l3_version": 4,
+      "retired_in": [
+        "L0",
+        "L1"
+      ],
+      "l2_lift": -0.2,
+      "l3_lift": 0.63,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-3.6-flash-20260721",
+      "model_id": "google/gemini-3.6-flash",
+      "mascot": {
+        "key": "google/gemini-3.6-flash",
+        "emoji": "💎",
+        "title": "Prism",
+        "color": "#4285f4"
+      },
+      "l0": 50.05,
+      "l1": 50.59,
+      "l2": 48.94,
+      "l3": 50.64,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": -1.11,
+      "l3_lift": 0.59,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "deepseek/deepseek-v4-flash-20260731",
+      "model_id": "deepseek/deepseek-v4-flash-0731",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-flash",
+        "emoji": "⚡",
+        "title": "Surge",
+        "color": "#38bdf8"
+      },
+      "l0": 51.1,
+      "l1": 51.82,
+      "l2": 53.37,
+      "l3": 51.31,
+      "l2_version": 1,
+      "l3_version": 4,
+      "retired_in": [],
+      "l2_lift": 2.27,
+      "l3_lift": 0.21,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "stealth/ox-alpha",
+      "model_id": "stealth/ox-alpha",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 48.01,
+      "l1": 48.58,
+      "l2": 48.08,
+      "l3": 48.22,
+      "l2_version": 1,
+      "l3_version": 1,
+      "retired_in": [
+        "L0"
+      ],
+      "l2_lift": 0.07,
+      "l3_lift": 0.21,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "~openai/gpt-luna-latest",
+      "model_id": "~openai/gpt-luna-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 44.53,
+      "l1": 47.4,
+      "l2": 41.67,
+      "l3": 44.68,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [
+        "L0",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -2.86,
+      "l3_lift": 0.15,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "~deepseek/deepseek-flash-latest",
+      "model_id": "~deepseek/deepseek-flash-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 49.19,
+      "l1": 48.54,
+      "l2": 47.05,
+      "l3": 49.31,
+      "l2_version": 3,
+      "l3_version": 1,
+      "retired_in": [],
+      "l2_lift": -2.14,
+      "l3_lift": 0.12,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "~deepseek/deepseek-pro-latest",
+      "model_id": "~deepseek/deepseek-pro-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 48.21,
+      "l1": 49.1,
+      "l2": 47.31,
+      "l3": 48.18,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [],
+      "l2_lift": -0.9,
+      "l3_lift": -0.03,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "anthropic/claude-4.5-haiku-20251001",
+      "model_id": "anthropic/claude-haiku-4.5",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 45.52,
+      "l1": 33.36,
+      "l2": 42.28,
+      "l3": 45.29,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "l2_lift": -3.24,
+      "l3_lift": -0.23,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "z-ai/glm-5.3-flash-20260826",
+      "model_id": "z-ai/glm-5.3-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 49.03,
+      "l1": 49.4,
+      "l2": 48.24,
+      "l3": 48.47,
+      "l2_version": 2,
+      "l3_version": 4,
+      "retired_in": [],
+      "l2_lift": -0.79,
+      "l3_lift": -0.56,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-6-astra-pro-20260903",
+      "model_id": "openai/gpt-6-astra-pro",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 81.36,
+      "l1": 84.09,
+      "l2": 65.97,
+      "l3": 80.78,
+      "l2_version": 3,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": -15.39,
+      "l3_lift": -0.58,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-2.5-flash-lite",
+      "model_id": "google/gemini-2.5-flash-lite",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 49.32,
+      "l1": 49.25,
+      "l2": 46.67,
+      "l3": 48.67,
+      "l2_version": 2,
+      "l3_version": 4,
+      "retired_in": [],
+      "l2_lift": -2.65,
+      "l3_lift": -0.65,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "anthropic/claude-4.6-sonnet-20260217",
+      "model_id": "anthropic/claude-sonnet-4.6",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 50.46,
+      "l1": 51.48,
+      "l2": 54.06,
+      "l3": 49.12,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": 3.6,
+      "l3_lift": -1.34,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "z-ai/glm-5.3-20260816",
+      "model_id": "z-ai/glm-5.3",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 51.83,
+      "l1": 51.5,
+      "l2": 50.83,
+      "l3": 50.04,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": -1,
+      "l3_lift": -1.79,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemma-4-31b-it-20260402",
+      "model_id": "google/gemma-4-31b-it",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 50.81,
+      "l1": 50.4,
+      "l2": 51.17,
+      "l3": 48.76,
+      "l2_version": 2,
+      "l3_version": 4,
+      "retired_in": [],
+      "l2_lift": 0.36,
+      "l3_lift": -2.05,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "~openai/gpt-astra-latest",
+      "model_id": "~openai/gpt-astra-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 63.67,
+      "l1": 64.34,
+      "l2": 64.35,
+      "l3": 61.28,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [],
+      "l2_lift": 0.68,
+      "l3_lift": -2.39,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "anthropic/claude-4.6-opus-20260205",
+      "model_id": "anthropic/claude-opus-4.6",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 49.49,
+      "l1": 50.96,
+      "l2": 46.85,
+      "l3": null,
+      "l2_version": 2,
+      "l3_version": null,
+      "retired_in": [],
+      "l2_lift": -2.64,
+      "l3_lift": null,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-2.5-flash",
+      "model_id": "google/gemini-2.5-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 50.97,
+      "l1": 49.91,
+      "l2": 48.77,
+      "l3": 48.24,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": -2.2,
+      "l3_lift": -2.73,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-3.1-pro-preview-20260219",
+      "model_id": "google/gemini-3.1-pro-preview",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 52.61,
+      "l1": 51.81,
+      "l2": 50.77,
+      "l3": 48.8,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": -1.84,
+      "l3_lift": -3.81,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "stepfun/step-3.7-flash-20260528",
+      "model_id": "stepfun/step-3.7-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 46.89,
+      "l1": 47.15,
+      "l2": 48.9,
+      "l3": 42.93,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": 2.01,
+      "l3_lift": -3.96,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-oss-20b",
+      "model_id": "openai/gpt-oss-20b",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 49.34,
+      "l1": 45.25,
+      "l2": 31.36,
+      "l3": 44.74,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -17.98,
+      "l3_lift": -4.6,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "qwen/qwen3.8-max-20260902",
+      "model_id": "qwen/qwen3.8-max-0902",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 50.2,
+      "l1": 50.69,
+      "l2": 45.66,
+      "l3": 45.31,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [
+        "L3"
+      ],
+      "l2_lift": -4.54,
+      "l3_lift": -4.89,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "inception/mercury-2.5-20260908",
+      "model_id": "inception/mercury-2.5",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 55.65,
+      "l1": 54.55,
+      "l2": 58.41,
+      "l3": 50.73,
+      "l2_version": 2,
+      "l3_version": 2,
+      "retired_in": [],
+      "l2_lift": 2.76,
+      "l3_lift": -4.92,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
+      "model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "mascot": {
+        "key": "nvidia/nemotron-3-ultra",
+        "emoji": "🦾",
+        "title": "Titan",
+        "color": "#76b900"
+      },
+      "l0": 60,
+      "l1": 59.81,
+      "l2": 57.78,
+      "l3": 54.48,
+      "l2_version": 1,
+      "l3_version": 4,
+      "retired_in": [],
+      "l2_lift": -2.22,
+      "l3_lift": -5.52,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-oss-120b",
+      "model_id": "openai/gpt-oss-120b",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 51.96,
+      "l1": 49.65,
+      "l2": 41.12,
+      "l3": 45.09,
+      "l2_version": 3,
+      "l3_version": 3,
+      "retired_in": [
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -10.84,
+      "l3_lift": -6.87,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "moonshotai/kimi-k3-20260715",
+      "model_id": "moonshotai/kimi-k3",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 51.61,
+      "l1": 51.86,
+      "l2": 58.83,
+      "l3": 43.13,
+      "l2_version": 2,
+      "l3_version": 2,
+      "retired_in": [
+        "L3"
+      ],
+      "l2_lift": 7.22,
+      "l3_lift": -8.48,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "qwen/qwen3.8-27b-20260814",
+      "model_id": "qwen/qwen3.8-27b",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 38.79,
+      "l1": 36.83,
+      "l2": 54.24,
+      "l3": 26.69,
+      "l2_version": 3,
+      "l3_version": 1,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L3"
+      ],
+      "l2_lift": 15.45,
+      "l3_lift": -12.1,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "moonshotai/kimi-k2.6-20260420",
+      "model_id": "moonshotai/kimi-k2.6",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 52.65,
+      "l1": 51.64,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "upstage/solar-pro4-20260810",
+      "model_id": "upstage/solar-pro4",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 52.5,
+      "l1": null,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "google/gemini-3.5-flash-lite-20260721",
+      "model_id": "google/gemini-3.5-flash-lite",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 50.89,
+      "l1": 49.63,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "openai/gpt-5.6-sol-pro-20260709",
+      "model_id": "openai/gpt-5.6-sol-pro",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 49.94,
+      "l1": 52.89,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "qwen/qwen3.8-flash-20260826",
+      "model_id": "qwen/qwen3.8-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 49.22,
+      "l1": null,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "minimax/minimax-m3-20260531",
+      "model_id": "minimax/minimax-m3",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 38.91,
+      "l1": 47.63,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [
+        "L0",
+        "L1"
+      ],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "google/gemini-3.8-flash-20260902",
+      "model_id": "google/gemini-3.8-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 38.89,
+      "l1": 48.26,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "deepseek/deepseek-v4.1-flash-20260910",
+      "model_id": "deepseek/deepseek-v4.1-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 32.47,
+      "l1": 64.24,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [
+        "L0"
+      ],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "qwen/qwen3.7-flash-20260727",
+      "model_id": "qwen/qwen3.7-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": null,
+      "l1": null,
+      "l2": 41.55,
+      "l3": 43.33,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [
+        "L2",
+        "L3"
+      ],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "x-ai/grok-4.5-20260708",
+      "model_id": "x-ai/grok-4.5",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": null,
+      "l1": 46.99,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [
+        "L1"
+      ],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    }
+  ]
+}
