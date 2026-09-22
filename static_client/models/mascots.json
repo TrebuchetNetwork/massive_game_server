@@ -1,15 +1,5 @@
 {
-  "gpt-6-astra-pro": {
-    "emoji": "🤖",
-    "title": "Rookie",
-    "color": "#94a3b8"
-  },
-  "gpt-astra-latest": {
-    "emoji": "🐺",
-    "title": "Wolfpack",
-    "color": "#facc15"
-  },
-  "gpt-6-astra": {
+  "claude-opus-5": {
     "emoji": "👾",
     "title": "Glitch",
     "color": "#c084fc"
@@ -19,174 +9,44 @@
     "title": "Titan",
     "color": "#76b900"
   },
-  "mercury-2.5": {
-    "emoji": "🦅",
-    "title": "Talon",
-    "color": "#34d399"
-  },
-  "claude-opus-5": {
-    "emoji": "👾",
-    "title": "Glitch",
-    "color": "#c084fc"
-  },
-  "hy4-preview": {
-    "emoji": "👾",
-    "title": "Glitch",
-    "color": "#c084fc"
-  },
-  "kimi-k2.6": {
-    "emoji": "🦅",
-    "title": "Talon",
-    "color": "#34d399"
-  },
-  "qwen3.8-max": {
-    "emoji": "👾",
-    "title": "Glitch",
-    "color": "#c084fc"
-  },
-  "solar-pro4": {
-    "emoji": "🤖",
-    "title": "Rookie",
-    "color": "#94a3b8"
-  },
-  "glm-5.3": {
-    "emoji": "🛰️",
-    "title": "Orbit",
-    "color": "#60a5fa"
-  },
-  "gemini-3.1-pro-preview": {
-    "emoji": "🐺",
-    "title": "Wolfpack",
-    "color": "#facc15"
-  },
-  "kimi-k3": {
-    "emoji": "🐺",
-    "title": "Wolfpack",
-    "color": "#facc15"
-  },
   "deepseek-v4-flash": {
     "emoji": "⚡",
     "title": "Surge",
     "color": "#38bdf8"
   },
-  "gpt-oss-120b": {
-    "emoji": "👾",
-    "title": "Glitch",
-    "color": "#c084fc"
+  "hy3": {
+    "emoji": "🐉",
+    "title": "Emberwing",
+    "color": "#fb7185"
   },
-  "glm-5.2": {
-    "emoji": "🦉",
-    "title": "Sage",
-    "color": "#a78bfa"
-  },
-  "gpt-5.6-terra": {
-    "emoji": "🦅",
-    "title": "Talon",
-    "color": "#34d399"
-  },
-  "claude-4.6-opus": {
-    "emoji": "🦅",
-    "title": "Talon",
-    "color": "#34d399"
-  },
-  "gemini-3-flash-preview": {
-    "emoji": "🤖",
-    "title": "Rookie",
-    "color": "#94a3b8"
-  },
-  "gemini-3.6-flash": {
-    "emoji": "💎",
-    "title": "Prism",
-    "color": "#4285f4"
-  },
-  "gpt-5.6-sol": {
-    "emoji": "🐺",
-    "title": "Wolfpack",
-    "color": "#facc15"
-  },
-  "claude-4.6-sonnet": {
-    "emoji": "👾",
-    "title": "Glitch",
-    "color": "#c084fc"
-  },
-  "gemma-4-26b-a4b-it": {
-    "emoji": "🤖",
-    "title": "Rookie",
-    "color": "#94a3b8"
-  },
-  "gemini-2.5-flash": {
-    "emoji": "🤖",
-    "title": "Rookie",
-    "color": "#94a3b8"
-  },
-  "gemma-4-31b-it": {
-    "emoji": "👾",
-    "title": "Glitch",
-    "color": "#c084fc"
-  },
-  "claude-4.8-opus": {
-    "emoji": "🛰️",
-    "title": "Orbit",
-    "color": "#60a5fa"
-  },
-  "gemini-3.5-flash-lite": {
-    "emoji": "🐺",
-    "title": "Wolfpack",
-    "color": "#facc15"
+  "deepseek-v4-pro": {
+    "emoji": "🐋",
+    "title": "Abyss",
+    "color": "#4d6bfe"
   },
   "deepseek-v4-flash-0731": {
     "emoji": "⚡",
     "title": "Surge",
     "color": "#38bdf8"
   },
-  "gpt-5.6-sol-pro": {
-    "emoji": "🦅",
-    "title": "Talon",
-    "color": "#34d399"
-  },
-  "gemini-2.5-flash-lite": {
-    "emoji": "🤖",
-    "title": "Rookie",
-    "color": "#94a3b8"
-  },
-  "qwen3.8-flash": {
-    "emoji": "🛰️",
-    "title": "Orbit",
-    "color": "#60a5fa"
-  },
-  "gpt-oss-20b": {
-    "emoji": "🛰️",
-    "title": "Orbit",
-    "color": "#60a5fa"
-  },
-  "step-3.7-flash": {
-    "emoji": "👾",
-    "title": "Glitch",
-    "color": "#c084fc"
-  },
-  "glm-5.3-flash": {
-    "emoji": "🐺",
-    "title": "Wolfpack",
-    "color": "#facc15"
-  },
-  "gpt-sol-latest": {
-    "emoji": "👾",
-    "title": "Glitch",
-    "color": "#c084fc"
-  },
-  "gpt-luna-latest": {
-    "emoji": "🦅",
-    "title": "Talon",
-    "color": "#34d399"
+  "glm-5.2": {
+    "emoji": "🦉",
+    "title": "Sage",
+    "color": "#a78bfa"
   },
   "mimo-v2.5": {
     "emoji": "🦊",
     "title": "Kitsune",
     "color": "#f97316"
   },
-  "gpt-terra-latest": {
-    "emoji": "🐺",
-    "title": "Wolfpack",
-    "color": "#facc15"
+  "ox-alpha": {
+    "emoji": "👾",
+    "title": "Glitch",
+    "color": "#c084fc"
+  },
+  "gpt-5.6-luna": {
+    "emoji": "🌙",
+    "title": "Luna",
+    "color": "#10a37f"
   }
 }
