@@ -36,6 +36,19 @@ fn error_response(code: &'static str, message: String) -> warp::reply::Json {
     })
 }
 
+/// Battle simulation is CPU-bound and runs for seconds. Run inline, it blocks
+/// a tokio worker and stalls everything scheduled there — including the live
+/// 60Hz game loop, which is how each daily league evaluation produced hundreds
+/// of accumulator overflows. The blocking pool keeps it off the async workers.
+async fn run_blocking<F>(work: F) -> Result<warp::reply::Json, warp::Rejection>
+where
+    F: FnOnce() -> warp::reply::Json + Send + 'static,
+{
+    Ok(tokio::task::spawn_blocking(work).await.unwrap_or_else(|_| {
+        error_response("internal_error", "Simulation task failed.".to_owned())
+    }))
+}
+
 fn with_service(
     service: ArenaService,
 ) -> impl Filter<Extract = (ArenaService,), Error = std::convert::Infallible> + Clone {
@@ -239,8 +252,8 @@ pub fn build_arena_routes(
                 .unify(),
         )
         .and(with_service(service.clone()))
-        .map(
-            |authorization: Option<String>, body: ExecuteNextBody, arena: ArenaService| {
+        .and_then(
+            |authorization: Option<String>, body: ExecuteNextBody, arena: ArenaService| run_blocking(move || {
                 if !inline_admin_authorized(authorization.as_deref()) {
                     return error_response(
                         "admin_auth_required",
@@ -251,7 +264,7 @@ pub fn build_arena_routes(
                     Ok(result) => ok_response(result),
                     Err(err) => error_response(err.code(), err.message()),
                 }
-            },
+            })
         );
 
     let simulate_team_battle = warp::path!("api" / "arena" / "matches" / "simulate_team_battle")
@@ -264,8 +277,8 @@ pub fn build_arena_routes(
                 .unify(),
         )
         .and(with_service(service.clone()))
-        .map(
-            |authorization: Option<String>, body: SimulateTeamBattleBody, arena: ArenaService| {
+        .and_then(
+            |authorization: Option<String>, body: SimulateTeamBattleBody, arena: ArenaService| run_blocking(move || {
                 if !inline_admin_authorized(authorization.as_deref()) {
                     return error_response(
                         "admin_auth_required",
@@ -276,7 +289,7 @@ pub fn build_arena_routes(
                     Ok(result) => ok_response(result),
                     Err(err) => error_response(err.code(), err.message()),
                 }
-            },
+            })
         );
 
     let simulate_world_battle = warp::path!("api" / "arena" / "matches" / "simulate_world_battle")
@@ -289,8 +302,8 @@ pub fn build_arena_routes(
                 .unify(),
         )
         .and(with_service(service.clone()))
-        .map(
-            |authorization: Option<String>, body: SimulateWorldBattleBody, arena: ArenaService| {
+        .and_then(
+            |authorization: Option<String>, body: SimulateWorldBattleBody, arena: ArenaService| run_blocking(move || {
                 if !inline_admin_authorized(authorization.as_deref()) {
                     return error_response(
                         "admin_auth_required",
@@ -301,7 +314,7 @@ pub fn build_arena_routes(
                     Ok(result) => ok_response(result),
                     Err(err) => error_response(err.code(), err.message()),
                 }
-            },
+            })
         );
 
     let simulate_mixed_team_battle = warp::path!("api" / "arena" / "matches" / "simulate_mixed_team_battle")
@@ -314,10 +327,10 @@ pub fn build_arena_routes(
                 .unify(),
         )
         .and(with_service(service.clone()))
-        .map(
+        .and_then(
             |authorization: Option<String>,
              body: SimulateMixedTeamBattleBody,
-             arena: ArenaService| {
+             arena: ArenaService| run_blocking(move || {
                 if !inline_admin_authorized(authorization.as_deref()) {
                     return error_response(
                         "admin_auth_required",
@@ -328,7 +341,7 @@ pub fn build_arena_routes(
                     Ok(result) => ok_response(result),
                     Err(err) => error_response(err.code(), err.message()),
                 }
-            },
+            })
         );
 
     let list_pending = warp::path!("api" / "arena" / "matches" / "pending")
