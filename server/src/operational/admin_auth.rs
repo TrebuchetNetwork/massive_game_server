@@ -130,11 +130,26 @@ pub fn is_admin_protected_path(path: &str) -> bool {
         || normalized.starts_with("/api/arena/")
 }
 
+/// Resolve the client address from an `X-Forwarded-For` header.
+///
+/// Walks from the right and returns the first address that is not a trusted
+/// proxy. Each hop a trusted proxy appends is itself a proxy address, so the
+/// rightmost untrusted entry is the real client; everything to its left was
+/// supplied by an earlier hop or by the client itself.
+///
+/// Taking the *leftmost* entry instead trusts a client-supplied value. ngrok
+/// appends the real peer rather than replacing the header, so a spoofed address
+/// survives at index 0 — confirmed against the live space.selfware.design
+/// tunnel, where it defeated the per-IP connection cap and rate limiter.
+/// Returns `None` when every hop is a trusted proxy, letting the caller fall
+/// back to the socket peer.
 pub fn parse_forwarded_for_ip(raw: &str) -> Option<IpAddr> {
     raw.split(',')
         .map(str::trim)
         .filter(|candidate| !candidate.is_empty())
-        .find_map(|candidate| candidate.parse::<IpAddr>().ok())
+        .filter_map(|candidate| candidate.parse::<IpAddr>().ok())
+        .rev()
+        .find(|ip| !is_trusted_proxy(*ip))
 }
 
 pub fn resolve_admin_source_ip(socket_ip: Option<IpAddr>, headers: &HeaderMap) -> Option<IpAddr> {

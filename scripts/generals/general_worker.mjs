@@ -42,14 +42,27 @@ const MODEL_POOL_FILE = process.env.GENERAL_MODEL_POOL_FILE
   || path.join(path.dirname(new URL(import.meta.url).pathname), '../../data/arena_ratings.json');
 const FALLBACK_POOL = ['anthropic/claude-opus-5', 'openai/gpt-6-astra', 'google/gemini-3.1-pro-preview', 'z-ai/glm-5.2'];
 
+// A roster id may carry the `~` fast-lane provisional marker, which is not part
+// of the provider id; sending it verbatim gets a 404 from OpenRouter. This
+// mirrors providerModelFor() in ../arena/press_conference.mjs, inlined rather
+// than imported so this worker's deps stay at node builtins plus the raster lib.
+const providerId = (id) => String(id).replace(/^~+/, '');
+
 async function loadModelPool() {
-  const explicit = (process.env.GENERAL_MODEL_POOL || '').split(',').map((m) => m.trim()).filter(Boolean);
-  if (explicit.length >= 2) return explicit;
+  const explicit = (process.env.GENERAL_MODEL_POOL || '')
+    .split(',')
+    .map((m) => providerId(m.trim()))
+    .filter(Boolean);
+  if (explicit.length >= 2) return [...new Set(explicit)];
   try {
     const snapshot = JSON.parse(await readFile(MODEL_POOL_FILE, 'utf8'));
-    const ids = (snapshot.roster || [])
-      .map((f) => f.model_id)
-      .filter((id) => typeof id === 'string' && id.includes('/'));
+    const ids = [...new Set(
+      (snapshot.roster || [])
+        .map((f) => f.model_id)
+        .filter((id) => typeof id === 'string')
+        .map(providerId)
+        .filter((id) => id.includes('/')),
+    )];
     if (ids.length >= 2) return ids;
   } catch (_) { /* fall through */ }
   return FALLBACK_POOL;

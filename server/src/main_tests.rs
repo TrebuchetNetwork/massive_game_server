@@ -277,11 +277,48 @@ fn test_parse_forwarded_for_ip_single() {
 
 #[test]
 fn test_parse_forwarded_for_ip_multiple() {
+    // The rightmost untrusted hop is the real client. Anything to its left was
+    // supplied by the client or an earlier hop and must not be believed.
     assert_eq!(
         massive_game_server_core::operational::admin_auth::parse_forwarded_for_ip(
             "10.0.0.1, 192.168.1.1",
         ),
-        Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)))
+        Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)))
+    );
+}
+
+#[test]
+fn test_parse_forwarded_for_ip_ignores_spoofed_leading_hops() {
+    // ngrok appends the real peer to a client-supplied header rather than
+    // replacing it, so a spoofed leftmost value must never win.
+    assert_eq!(
+        massive_game_server_core::operational::admin_auth::parse_forwarded_for_ip(
+            "203.0.113.99, 198.51.100.7",
+        ),
+        Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)))
+    );
+
+    // A spoofed loopback entry is a trusted proxy, so it is skipped and the
+    // walk continues to the real client instead of resolving to loopback.
+    assert_eq!(
+        massive_game_server_core::operational::admin_auth::parse_forwarded_for_ip(
+            "127.0.0.1, 198.51.100.7",
+        ),
+        Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)))
+    );
+
+    // A genuine intermediate proxy hop after the client is skipped too.
+    assert_eq!(
+        massive_game_server_core::operational::admin_auth::parse_forwarded_for_ip(
+            "198.51.100.7, 127.0.0.1",
+        ),
+        Some(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)))
+    );
+
+    // Every hop trusted -> None, so the caller falls back to the socket peer.
+    assert_eq!(
+        massive_game_server_core::operational::admin_auth::parse_forwarded_for_ip("127.0.0.1, ::1"),
+        None
     );
 }
 
