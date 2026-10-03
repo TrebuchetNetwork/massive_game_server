@@ -14,9 +14,6 @@
 use super::*;
 use std::sync::atomic::{AtomicU32, AtomicU8};
 
-/// On-demand: when a human joins a running non-gauntlet match, the match is
-/// wound down to this many seconds so the gauntlet can form.
-const ON_DEMAND_FAST_FORWARD_SECS: f32 = 12.0;
 
 /// Default per-wave size increment when `MGS_GAUNTLET_WAVE_STEP` is unset.
 pub(crate) const DEFAULT_GAUNTLET_WAVE_STEP: usize = 2;
@@ -381,22 +378,18 @@ impl MassiveGameServer {
         self.remove_bots(bot_count);
     }
 
-    /// A human just joined. In on-demand mode with the rotation running,
-    /// wind the current match down so the gauntlet can form instead of
-    /// making them sit through up to five minutes of spectator content.
+    /// A human just joined. They play the match already in progress; the
+    /// gauntlet forms at the next natural match boundary.
+    ///
+    /// This used to wind the running match down to 12 seconds so the gauntlet
+    /// could form sooner. In practice that made joining feel broken: a player
+    /// arrived, the match ended almost at once, the end screen took over, and
+    /// the whole bot roster was rebuilt around them — roughly the first fifty
+    /// seconds of every session were unplayable (2026-10-03 report: "not able
+    /// to shoot", session lasted 26s).
     pub fn note_human_joined(&self) {
-        if !coop_gauntlet_configured() || !coop_gauntlet_on_demand() || gauntlet_active() {
-            return;
-        }
-        let mut match_info = self.match_info.write();
-        if match_info.match_state == fb::MatchStateType::Active
-            && match_info.time_remaining > ON_DEMAND_FAST_FORWARD_SECS
-        {
-            info!(
-                "Human joined during the rotation: winding the match down from {:.0}s to {:.0}s so the gauntlet can form",
-                match_info.time_remaining, ON_DEMAND_FAST_FORWARD_SECS
-            );
-            match_info.time_remaining = ON_DEMAND_FAST_FORWARD_SECS;
+        if coop_gauntlet_configured() && coop_gauntlet_on_demand() && !gauntlet_active() {
+            debug!("Human joined during the rotation; the gauntlet forms at the next match boundary");
         }
     }
 

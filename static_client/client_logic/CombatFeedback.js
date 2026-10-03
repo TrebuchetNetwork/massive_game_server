@@ -1227,7 +1227,10 @@ export function createCombatFeedback(getCtx) {
         ) { return; }
 
         if (
-            !ctx.myPlayerId || !ctx.localPlayerState || ctx.ultraPerformanceMode ||
+            // Ultra mode trims particles and audio elsewhere; it must not
+            // hide hit markers, damage flash and kill banners — without them
+            // shooting gives no feedback at all.
+            !ctx.myPlayerId || !ctx.localPlayerState ||
             (ctx.RESPAWN_ANIMATION_LIGHTWEIGHT && !ctx.localPlayerState.alive)
         ) {
             ctx.damageFlashLayerDiv.style.opacity = '0';

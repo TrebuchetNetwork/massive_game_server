@@ -846,6 +846,9 @@ export function createPerformanceBudget(getCtx) {
 
     // ── Ultra performance mode ──────────────────────────────────────
 
+    const ULTRA_JOIN_GRACE_MS = 8000;
+    let ultraGraceStartedAt = 0;
+
     function setUltraPerformanceMode(enabled, reason = '') {
         const ctx = getCtx();
         const forced = ctx.ULTRA_MODE_FORCED;
@@ -909,8 +912,15 @@ export function createPerformanceBudget(getCtx) {
 
         const playerCount = ctx.players.size;
         const hasActiveMatchLoad = playerCount >= 4 || !!ctx.localPlayerState;
+        // Joining a live match costs a one-off hitch (initial state, 24 ships'
+        // sprites, walls). That hitch used to flip the client into ultra mode
+        // on arrival — no combat effects for the rest of the session. Give the
+        // first seconds after the local player appears a grace period.
+        if (ctx.localPlayerState && !ultraGraceStartedAt) ultraGraceStartedAt = currentTime;
+        const inJoinGrace = ultraGraceStartedAt > 0 && currentTime - ultraGraceStartedAt < ULTRA_JOIN_GRACE_MS;
         const emergencyFrameMs = getCapAwareFrameThresholdMs(ctx, ctx.ULTRA_EMERGENCY_FRAME_MS, 1.4);
-        if (!ctx.ultraPerformanceMode && hasActiveMatchLoad && ctx.smoothedFrameMs >= emergencyFrameMs) {
+        if (!ctx.ultraPerformanceMode && hasActiveMatchLoad && !inJoinGrace
+            && ctx.smoothedFrameMs >= emergencyFrameMs && ctx.lowFpsDurationMs >= 1200) {
             setUltraPerformanceMode(true, `emergency ${ctx.smoothedFrameMs.toFixed(1)}ms`);
             return;
         }
@@ -922,7 +932,8 @@ export function createPerformanceBudget(getCtx) {
         if (
             !ctx.ultraPerformanceMode &&
             hasActiveMatchLoad &&
-            (ctx.lowFpsDurationMs >= ctx.ULTRA_AUTO_LOW_FPS_TRIGGER_MS || ctx.lowFpsFrameStreak >= 24)
+            !inJoinGrace &&
+            (ctx.lowFpsDurationMs >= ctx.ULTRA_AUTO_LOW_FPS_TRIGGER_MS || ctx.lowFpsFrameStreak >= 150)
         ) {
             setUltraPerformanceMode(true, `frame ${ctx.smoothedFrameMs.toFixed(1)}ms`);
             return;

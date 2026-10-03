@@ -928,11 +928,11 @@
         let recoveryFrameStreak = 0;
         let lowFpsDurationMs = 0;
         let recoveryDurationMs = 0;
-        const ULTRA_AUTO_LOW_FPS_TRIGGER_MS = STABLE_MODE_FORCED ? 450 : 900;
-        const ULTRA_AUTO_RECOVERY_TRIGGER_MS = STABLE_MODE_FORCED ? 9000 : 14000;
+        const ULTRA_AUTO_LOW_FPS_TRIGGER_MS = STABLE_MODE_FORCED ? 1500 : 2500;
+        const ULTRA_AUTO_RECOVERY_TRIGGER_MS = STABLE_MODE_FORCED ? 5000 : 6000;
         const ULTRA_EMERGENCY_FRAME_MS = STABLE_MODE_FORCED ? 38 : 48;
-        const ULTRA_MIN_HOLD_MS = STABLE_MODE_FORCED ? 12000 : 18000;
-        const ULTRA_DOWNSHIFT_MAX_FRAME_MS = STABLE_MODE_FORCED ? 16.9 : 18.2;
+        const ULTRA_MIN_HOLD_MS = STABLE_MODE_FORCED ? 8000 : 8000;
+        const ULTRA_DOWNSHIFT_MAX_FRAME_MS = STABLE_MODE_FORCED ? 18.2 : 20;
         const ULTRA_DOWNSHIFT_MAX_LOW_FPS_MS = STABLE_MODE_FORCED ? 60 : 120;
         const E2E_STATS_UPDATE_INTERVAL_MS = 120;
         const RENDER_RESOLUTION_DOWNSHIFT_COOLDOWN_MS = STABLE_MODE_FORCED ? 1500 : 900;
@@ -3296,6 +3296,18 @@
             AIM_ASSIST_MAGNETISM,
             AIM_ASSIST_MAX_DISTANCE,
         });
+
+        // Input must not depend on render speed. It used to be sent only at
+        // the end of each render frame, so any slow or stalled frame (a busy
+        // fight, the join hitch, a weak GPU) also stopped shots and movement
+        // from reaching the server. The sender is rate-capped and gated
+        // internally, so this extra driver cannot double-send.
+        const INPUT_DRIVER_INTERVAL_MS = Math.max(8, Math.floor(1000 / INPUT_SEND_RATE));
+        setInterval(() => {
+            try { sendInputsToServer(); } catch (err) {
+                if (window.__e2e) window.__e2e.inputDriverError = String(err && err.message || err);
+            }
+        }, INPUT_DRIVER_INTERVAL_MS);
 
         setupInputHandlers = () => {
             if (!inputManager) return;

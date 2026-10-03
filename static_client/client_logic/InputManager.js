@@ -672,7 +672,15 @@ export function createInputManager({
         const dynamicsTuning = getDynamicsTuning();
         const backgroundThrottleActive = getBackgroundThrottleActive();
         if (!dataChannel || dataChannel.readyState !== 'open' || !localPlayerState || !localPlayerState.alive) {
-            if (window.__e2e) window.__e2e.lastInputGate = 'prereq';
+            if (window.__e2e) {
+                window.__e2e.lastInputGate = 'prereq';
+                window.__e2e.inputPrereq = {
+                    dataChannel: !!dataChannel,
+                    readyState: dataChannel ? dataChannel.readyState : null,
+                    localPlayer: !!localPlayerState,
+                    alive: localPlayerState ? localPlayerState.alive : null,
+                };
+            }
             return;
         }
 
