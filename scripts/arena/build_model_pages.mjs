@@ -631,6 +631,30 @@ function fmtPct(x, digits = 1) {
   return x === null || x === undefined ? '—' : `${(x * 100).toFixed(digits)}%`;
 }
 
+// The /models/ pages are served with a strict CSP (style-src 'self', no
+// 'unsafe-inline' — see server/src/routes/static_files.rs), which strips
+// inline style attributes. Data-dependent styling therefore ships as classes:
+// `.w-<n>` width steps (static, in MODELS_CSS) and generated `.accent--<hex>`
+// / `.bg--<hex>` rules appended to models.css per build (see buildPages).
+
+/** Class suffix for a hex color ("#caff00" -> "caff00"), null for non-hex. */
+function hexSuffix(color) {
+  const m = /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(String(color || '').trim());
+  return m ? m[1].toLowerCase() : null;
+}
+
+/** Border-accent class fragment (" accent--caff00"; "" for non-hex colors). */
+function accentClass(color) {
+  const hex = hexSuffix(color);
+  return hex ? ` accent--${hex}` : '';
+}
+
+/** Background class fragment (" bg--caff00"; "" for non-hex colors). */
+function bgClass(color) {
+  const hex = hexSuffix(color);
+  return hex ? ` bg--${hex}` : '';
+}
+
 function chrome({ title, description, active, loreLink = false, benchmarkLink = false }) {
   const navLink = (href, label, key) =>
     `<a href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`;
@@ -727,7 +751,7 @@ function behaviorBars(agg, color) {
     const share = n / agg.actionTotal;
     return `            <div class="bar-row">
                 <span class="bar-row__name">${esc(a)}</span>
-                <span class="bar-row__track"><span class="bar-row__fill" style="width:${((n / max) * 100).toFixed(1)}%;background:${esc(color)}"></span></span>
+                <span class="bar-row__track"><span class="bar-row__fill w-${Math.round((n / max) * 100)}${bgClass(color)}"></span></span>
                 <span class="bar-row__pct">${fmtPct(share)}</span>
             </div>`;
   }).join('\n');
@@ -769,7 +793,7 @@ function rivalryTable(agg, slugById, metaById) {
                 <td class="num loss">${r.l}</td>
                 <td class="num">${r.d}</td>
                 <td class="num">${fmtPct(winRate, 0)}</td>
-                <td class="mini-bar"><span class="mini-bar__track"><span class="mini-bar__fill" style="width:${(winRate * 100).toFixed(1)}%"></span></span></td>
+                <td class="mini-bar"><span class="mini-bar__track"><span class="mini-bar__fill w-${Math.round(winRate * 100)}"></span></span></td>
             </tr>`,
     });
   }
@@ -1087,7 +1111,7 @@ export function renderModelPage(ctx) {
   return `${head}
         <section class="profile-hero">
             <div class="profile-hero__id">
-                <span class="profile-hero__emoji" style="border-color:${esc(mascot.color)}">${esc(mascot.emoji)}</span>
+                <span class="profile-hero__emoji${accentClass(mascot.color)}">${esc(mascot.emoji)}</span>
                 <div>
                     <p class="eyebrow"><span class="live-dot"></span> Rank #${model.rank} · ${esc(mascot.title)}</p>
                     <h1>${esc(model.model_name)}</h1>
@@ -1148,7 +1172,7 @@ export function renderIndexPage(ctx) {
   const continuous = ctx.continuous || null;
   const rows = ctx.cards.map((c) => `            <a class="model-row" href="${esc(c.slug)}.html">
                 <span class="model-row__rank">${String(c.model.rank).padStart(2, '0')}</span>
-                <span class="model-row__emoji" style="border-color:${esc(c.mascot.color)}">${esc(c.mascot.emoji)}</span>
+                <span class="model-row__emoji${accentClass(c.mascot.color)}">${esc(c.mascot.emoji)}</span>
                 <span class="model-row__name"><b>${esc(c.mascot.title)}</b><small>${esc(c.model.model_name)}</small></span>
                 <span class="model-row__points"><b>${fmtInt(c.model.season_points)}</b><small>season pts</small></span>
                 <span class="model-row__go" aria-hidden="true">↗</span>
@@ -1978,7 +2002,7 @@ function hallOfFameSection(state) {
   if (!groups.length) return '';
   const sections = groups.map(({ trackId, retired }) => {
     const cards = [...retired].reverse().map((e) => `                <article class="hof__card">
-                    <span class="hof__emoji" style="border-color:${esc(e.mascot.color)}">${esc(e.mascot.emoji)}</span>
+                    <span class="hof__emoji${accentClass(e.mascot.color)}">${esc(e.mascot.emoji)}</span>
                     <div class="hof__id">
                         <b>${esc(e.mascot.title)}</b>
                         <small>${esc(e.slug)}</small>
@@ -2284,7 +2308,7 @@ function toplistSection(toplist, cards) {
   const items = cards.map((c) => {
     const badge = c.onRoster ? '' : '<span class="toplist__badge">league</span>';
     const inner = `                <span class="toplist__rank">${String(c.rank).padStart(2, '0')}</span>
-                <span class="toplist__emoji" style="border-color:${esc(c.mascot.color)}">${esc(c.mascot.emoji)}</span>
+                <span class="toplist__emoji${accentClass(c.mascot.color)}">${esc(c.mascot.emoji)}</span>
                 <div class="toplist__body">
                     <p class="toplist__model"><b>${esc(c.mascot.title)}</b><small>${esc(c.sub)}</small>${badge}</p>
                     <p class="toplist__headline">${esc(c.headline)}</p>
@@ -2493,7 +2517,7 @@ function pressBoxSection(entry) {
   return `        <section class="press-box" aria-label="Press box">
             <p class="eyebrow press-box__eyebrow"><span class="live-dot"></span> Press box · ${esc(label)}</p>
             <figure class="press-box__card">
-                <span class="press-box__emoji" style="border-color:${esc(mascot.color)}">${esc(mascot.emoji)}</span>
+                <span class="press-box__emoji${accentClass(mascot.color)}">${esc(mascot.emoji)}</span>
                 <blockquote class="press-box__quote">
                     <p class="press-box__text"><em>${esc(entry.quote)}</em></p>
                     <figcaption class="press-box__caption">
@@ -2711,7 +2735,7 @@ export function seasonFinaleSection(finale) {
   const days = crowned ? numbers.days : source.numbers.days;
 
   const championBlock = `            <article class="finale__champion${crowned ? ' finale__champion--crowned' : ''}">
-                <span class="finale__emoji" style="border-color:${esc(champion.mascot.color)}">${esc(champion.mascot.emoji)}</span>
+                <span class="finale__emoji${accentClass(champion.mascot.color)}">${esc(champion.mascot.emoji)}</span>
                 <div class="finale__champion-body">
                     <p class="finale__tag">${crowned ? '👑 Season champion' : 'Projected champion'}</p>
                     <h3>${esc(champion.mascot.title)}</h3>
@@ -2735,7 +2759,7 @@ ${d.models.map((m) => `                        <li><span class="standings__emoji
                 </div>`).join('\n');
 
   const hofCards = retirements.map((r) => `                <article class="hof__card">
-                    <span class="hof__emoji" style="border-color:${esc(r.mascot.color)}">${esc(r.mascot.emoji)}</span>
+                    <span class="hof__emoji${accentClass(r.mascot.color)}">${esc(r.mascot.emoji)}</span>
                     <div class="hof__id">
                         <b>${esc(r.mascot.title)}</b>
                         <small>${trackBadge(r.track)} ${esc(r.slug)}</small>
@@ -2846,7 +2870,7 @@ export function renderLorePage({ lore, roster, slugById }) {
     const model = roster.find((m) => matchLoreEntry({ [slug]: entry }, m));
     const href = model ? `${slugById.get(model.model_id)}.html` : null;
     return `            <article class="lore__fighter">
-                <span class="lore__emoji" style="border-color:${esc(mascot.color)}">${esc(mascot.emoji)}</span>
+                <span class="lore__emoji${accentClass(mascot.color)}">${esc(mascot.emoji)}</span>
                 <div class="lore__fighter-body">
                     <h3 class="lore__fighter-title">${esc(entry.title)}</h3>
                     <p class="lore__fighter-slug">${esc(entry.mascot || mascot.title)} · ${esc(slug)}</p>
@@ -3759,6 +3783,10 @@ table.measured__table tr:last-child td { border-bottom: none; }
     .lore__fighter { gap: 14px; }
     .lore__emoji { width: 44px; height: 44px; font-size: 22px; }
 }
+
+/* width utility steps (w-0..w-100): data-dependent bar widths as classes —
+   the strict style-src CSP on /models/ strips inline style attributes */
+${Array.from({ length: 101 }, (_, i) => `.w-${i} { width: ${i}%; }`).join('\n')}
 `;
 
 // ---------------------------------------------------------------------------
@@ -3908,7 +3936,32 @@ export async function buildPages({
     ? chemistryLookup({ roster, metaById, slugById, continuous })
     : null;
 
-  io.writeFile(path.join(outDir, 'models.css'), MODELS_CSS);
+  // Data-dependent mascot colors ship as generated classes — the strict
+  // style-src CSP on /models/ strips inline style attributes. Collect every
+  // color this build can render (roster, toplist, continuous league, press,
+  // finale, lore) and append .accent--<hex> / .bg--<hex> rules to models.css.
+  const accentColors = new Set();
+  const addColor = (c) => { if (hexSuffix(c)) accentColors.add(String(c).trim().toLowerCase()); };
+  for (const meta of metaById.values()) addColor(meta.color);
+  if (toplist) for (const e of toplist.entries) addColor(mascotFor(e.slug).color);
+  if (continuous) {
+    for (const trackId of TRACKS) {
+      const slice = continuous.state.tracks[trackId];
+      for (const e of [...(slice?.roster || []), ...(slice?.retired || [])]) addColor(e?.mascot?.color);
+    }
+  }
+  if (press) for (const e of press.entries) addColor(e.mascot?.color);
+  if (lore) for (const slug of Object.keys(lore.fighters)) addColor(mascotFor(slug).color);
+  if (finale) {
+    const src = finale.mode === 'crowned' ? finale.record : finale.view;
+    addColor((finale.mode === 'crowned' ? finale.record.champion : finale.view.projected)?.mascot?.color);
+    for (const d of src.divisions || []) for (const m of d.models || []) addColor(m?.mascot?.color);
+    for (const r of src.retirements || []) addColor((r.entry || r)?.mascot?.color);
+  }
+  const accentCss = [...accentColors].sort()
+    .map((c) => `.accent--${c.slice(1)} { border-color: ${c}; }\n.bg--${c.slice(1)} { background: ${c}; }`)
+    .join('\n');
+  io.writeFile(path.join(outDir, 'models.css'), `${MODELS_CSS}\n${accentCss}\n`);
   io.writeFile(
     path.join(outDir, 'mascots.json'),
     `${JSON.stringify(Object.fromEntries(cards.map((c) => [c.slug, {

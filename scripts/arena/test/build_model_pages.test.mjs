@@ -251,6 +251,20 @@ test('golden render: 2-model mini roster matches checked-in goldens', async (t) 
   assert.match(alpha, /Per-mode breakdown/);
   assert.match(alpha, /mode-grid__mode">arena</);
 
+  // The strict style-src CSP on /models/ strips inline style attributes —
+  // data-dependent styling must ship as classes (w-N width steps, accent/bg
+  // color rules in models.css), never as style="...".
+  for (const f of ['index.html', 'alpha-one.html', 'beta-two.html']) {
+    assert.ok(!fs.readFileSync(path.join(outDir, f), 'utf8').includes('style="'),
+      `${f} must not contain inline style attributes (CSP style-src 'self')`);
+  }
+  assert.match(alpha, /profile-hero__emoji accent--facc15"/);
+  assert.match(alpha, /bar-row__fill w-\d+ bg--facc15"/);
+  const css = fs.readFileSync(path.join(outDir, 'models.css'), 'utf8');
+  assert.match(css, /\.w-100 \{ width: 100%; \}/);
+  assert.match(css, /\.accent--facc15 \{ border-color: #facc15; \}/);
+  assert.match(css, /\.bg--facc15 \{ background: #facc15; \}/);
+
   // No continuous league state under the fixtures root -> no overlay outputs.
   assert.ok(!fs.existsSync(path.join(outDir, 'league.json')), 'league.json requires a valid continuous state');
 
