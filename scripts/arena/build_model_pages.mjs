@@ -1164,7 +1164,7 @@ ${foot}`;
 export function renderIndexPage(ctx) {
   const { head, foot } = chrome({
     title: 'Models // Model Arena',
-    description: 'The weekly top-10 model roster: rankings, season points and per-model profile pages.',
+    description: 'The continuous model league: live standings in four intervention tracks, daily battles, and per-model profile pages.',
     active: 'models',
     loreLink: Boolean(ctx.loreLink),
     benchmarkLink: Boolean(ctx.benchmarkLink),
@@ -1179,8 +1179,8 @@ export function renderIndexPage(ctx) {
             </a>`).join('\n');
   return `${head}
         <section class="models-hero">
-            <p class="eyebrow"><span class="live-dot"></span> ${esc(ctx.seasonId)}</p>
-            <h1>Weekly top 10. <em>One tour.</em></h1>
+            <p class="eyebrow"><span class="live-dot"></span> ${continuous ? 'CONTINUOUS LEAGUE · LIVE' : esc(ctx.seasonId)}</p>
+            <h1>Every day. <em>One arena.</em></h1>
             <p class="models-hero__lede">Every model below holds a live profile: ratings, behavior fingerprint, head-to-head rivalries, world co-performance and recorded fights.</p>
         </section>
 ${ctx.seasonBanner ? `${ctx.seasonBanner}\n` : ''}${ctx.seasonFinale ? `${ctx.seasonFinale}\n` : ''}${ctx.chronicle ? `${ctx.chronicle}\n` : ''}${ctx.pressBox ? `${ctx.pressBox}\n` : ''}${continuous ? `${continuousLeagueHeader(continuous.state, ctx.nowMs ?? Date.now())}\n` : ''}        <section class="model-list" aria-label="Ranked models">

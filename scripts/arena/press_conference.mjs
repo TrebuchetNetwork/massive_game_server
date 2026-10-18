@@ -261,9 +261,11 @@ export function sanitizeQuote(raw, { maxChars = QUOTE_MAX_CHARS, maxSentences = 
   if (!text) return null;
 
   // Sentence cap: split after . ! ? followed by whitespace/end.
-  const sentences = text.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) || [];
+  // Protect decimal points first so "84.09" isn't split at the period.
+  const protectedText = text.replace(/(\d)\.(\d)/g, '$1\x00$2');
+  const sentences = protectedText.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) || [];
   if (!sentences.length) return null;
-  text = sentences.slice(0, maxSentences).map((s) => s.trim()).filter(Boolean).join(' ').trim();
+  text = sentences.slice(0, maxSentences).map((s) => s.trim().replace(/\x00/g, '.')).filter(Boolean).join(' ').trim();
   if (!text) return null;
 
   // Drop a trailing fragment cut off mid-sentence (provider hit the token

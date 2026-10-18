@@ -17,5 +17,18 @@
     "theme": "The crown has an owner. Genesis wrote the first records; Ascension is the climb to take them — every revision, every recruit, every feedback cycle aimed at the top rung.",
     "champion_rule": "Highest L0 (zero-shot) rating at season end; ties broken by win rate, then matches played."
   },
-  "archive": []
+  "archive": [
+    {
+      "id": "S1",
+      "name": "Genesis",
+      "started_at": "2026-08-24T00:00:00.000Z",
+      "ends_at": "2026-09-21T00:00:00.000Z",
+      "champion": {
+        "slug": "unbiased/pareto-20260917",
+        "title": "Talon",
+        "rating": 84.55,
+        "win_rate": 0.8159722222222222
+      }
+    }
+  ]
 }
