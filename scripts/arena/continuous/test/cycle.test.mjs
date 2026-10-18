@@ -2292,3 +2292,43 @@ test('two fast-lane challengers displace two DIFFERENT models in a full track', 
   assert.equal(new Set(retiredIds).size, retiredIds.length, 'retired ledger ids unique');
   validateState(next);
 });
+
+test('announcement feed stays capped at 200 through fast-lane displacements', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const state = fastLaneState();
+  // L0: full roster (all tenured) + 199 prior announcements.
+  state.tracks.L0.roster = Array.from({ length: 40 }, (_, index) => model({
+    model_id: `vendor/fill-${index}`,
+    rating: 90 - index,
+  }));
+  state.tracks.L0.announcements = Array.from({ length: 199 }, (_, index) => ({
+    type: 'entrant',
+    track: 'L0',
+    model_id: `vendor/old-${index}`,
+    slug: `vendor/old-${index}`,
+    mascot: mascotFor(`vendor/old-${index}`),
+    at: new Date(NOW - (199 - index) * 3600_000).toISOString(),
+  }));
+  const catalog = [
+    catalogModel('vendor/fresh-1', NOW - DAY_MS),
+    catalogModel('vendor/fresh-2', NOW - 2 * DAY_MS),
+  ];
+  const next = await runCycle({
+    state,
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: fastLaneDeps(catalog),
+  });
+
+  const feed = next.tracks.L0.announcements;
+  assert.equal(feed.length, 200, 'capped at 200');
+  // Newest kept: the last four entries are this cycle's retirement+challenger pairs.
+  assert.deepEqual(feed.slice(-4).map((a) => a.type), [
+    'retirement', 'fresh_challenger', 'retirement', 'fresh_challenger',
+  ]);
+  assert.equal(feed.at(-1).model_id, 'vendor/fresh-2');
+  assert.ok(!feed.some((a) => a.model_id === 'vendor/old-0'), 'oldest entries dropped');
+  assert.ok(feed.some((a) => a.model_id === 'vendor/old-3'), 'cut is exactly 3 old entries');
+  validateState(next);
+});

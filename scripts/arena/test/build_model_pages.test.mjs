@@ -22,6 +22,14 @@ import {
 } from '../build_model_pages.mjs';
 import { sha256 } from '../autopsy.mjs';
 import { benchmarkJson, benchmarkRows, computeBenchmark, median, MIN_GROUP_N } from '../benchmark.mjs';
+import {
+  buildOpsModel,
+  collectSystemdJobs,
+  fetchArenaMetrics,
+  parseMetrics,
+  parseServiceShow,
+  parseTimerList,
+} from '../ops.mjs';
 import { trackPolicy, TRACKS } from '../continuous/league.mjs';
 import { freezeRecord } from '../continuous/season.mjs';
 
@@ -2078,4 +2086,152 @@ test('benchmark page + json render with the continuous overlay; absent state rem
     fs.readFileSync(path.join(FIXTURES, 'golden', 'index.html'), 'utf8'),
     'index falls back to the byte-identical weekly view',
   );
+});
+
+// ---------------------------------------------------------------------------
+// System ops page
+// ---------------------------------------------------------------------------
+
+const OPS_TIMERS_JSON = JSON.stringify([
+  { next: 1792397820000000, last: 1792320000000000, unit: 'massive-game-media-daily.timer', activates: 'massive-game-media-daily.service' },
+  { next: 1792401780000000, last: 1792323600000000, unit: 'massive-game-continuous-league.timer', activates: 'massive-game-continuous-league.service' },
+  // maintenance timer absent from the list (e.g. masked) -> nulls
+]);
+
+const STUB_JOBS = {
+  available: true,
+  jobs: [
+    { unit: 'massive-game-media-daily', schedule: 'daily 04:17', blurb: 'Rebuilds the site.', available: true, nextMs: 1792397820000, lastMs: 1792320000000, result: 'success', exitStatus: 0, enabled: 'enabled' },
+    { unit: 'massive-game-continuous-league', schedule: 'daily 05:23', blurb: 'Runs the league day.', available: true, nextMs: 1792401780000, lastMs: 1792323600000, result: 'exit-code', exitStatus: 1, enabled: 'enabled' },
+    { unit: 'massive-game-selfware-maintenance', schedule: 'daily 06:17', blurb: 'Housekeeping.', available: true, nextMs: null, lastMs: null, result: null, exitStatus: null, enabled: 'disabled' },
+  ],
+};
+const STUB_METRICS = { exhibitionActive: 7, framesTotal: 3918326 };
+const stubOpsCollectors = () => ({
+  collectJobs: () => STUB_JOBS,
+  fetchMetrics: async () => STUB_METRICS,
+});
+
+test('ops parsers: timer list JSON, service show, prometheus metrics', () => {
+  const timers = parseTimerList(OPS_TIMERS_JSON);
+  assert.equal(timers.get('massive-game-media-daily.timer').nextMs, 1792397820000);
+  assert.equal(timers.get('massive-game-media-daily.timer').activates, 'massive-game-media-daily.service');
+  assert.equal(parseTimerList('not json').size, 0, 'garbage yields an empty map');
+
+  const shown = parseServiceShow('Result=exit-code\nExecMainStatus=4\n');
+  assert.deepEqual(shown, { result: 'exit-code', exitStatus: 4 });
+
+  const metrics = parseMetrics('# HELP x\ngame_frames_total 3918326\ngame_arena_exhibition_runtimes_active 7\n');
+  assert.deepEqual(metrics, { exhibitionActive: 7, framesTotal: 3918326 });
+  assert.deepEqual(parseMetrics(''), { exhibitionActive: null, framesTotal: null });
+});
+
+test('collectSystemdJobs maps the three jobs and degrades honestly', () => {
+  const exec = (cmd) => {
+    if (cmd.includes('list-timers')) return OPS_TIMERS_JSON;
+    if (cmd.includes('show massive-game-media-daily')) return 'Result=success\nExecMainStatus=0\n';
+    if (cmd.includes('show massive-game-continuous-league')) return 'Result=exit-code\nExecMainStatus=1\n';
+    if (cmd.includes('show massive-game-selfware-maintenance')) return 'Result=exit-code\nExecMainStatus=4\n';
+    if (cmd.includes('is-enabled')) {
+      if (cmd.includes('maintenance')) {
+        const err = new Error('disabled');
+        err.stdout = 'disabled\n';
+        throw err;
+      }
+      return 'enabled\n';
+    }
+    throw new Error(`unexpected: ${cmd}`);
+  };
+  const { available, jobs } = collectSystemdJobs({ exec });
+  assert.equal(available, true);
+  assert.equal(jobs.length, 3);
+  assert.equal(jobs[0].result, 'success');
+  assert.equal(jobs[0].nextMs, 1792397820000);
+  assert.equal(jobs[1].result, 'exit-code');
+  assert.equal(jobs[1].exitStatus, 1);
+  assert.equal(jobs[2].enabled, 'disabled', 'is-enabled non-zero exit reads stdout');
+  assert.equal(jobs[2].nextMs, null, 'timer missing from list');
+
+  const dead = collectSystemdJobs({ exec: () => { throw new Error('no systemd'); } });
+  assert.equal(dead.available, false);
+  assert.equal(dead.jobs.length, 3, 'rows still present, marked unavailable');
+});
+
+test('fetchArenaMetrics parses via injected fetch and returns null on failure', async () => {
+  const ok = await fetchArenaMetrics({ fetchImpl: async () => 'game_frames_total 10\ngame_arena_exhibition_runtimes_active 2\n' });
+  assert.deepEqual(ok, { exhibitionActive: 2, framesTotal: 10 });
+  const bad = await fetchArenaMetrics({ fetchImpl: async () => { throw new Error('down'); } });
+  assert.equal(bad, null);
+});
+
+test('ops page renders jobs, league stats, arena stats, pipeline; graceful without league', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-ops-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-ops-state-'));
+  writeContinuousFixture(cmlDir);
+  // Press dir with two quotes to count.
+  fs.mkdirSync(path.join(cmlDir, 'press'), { recursive: true });
+  fs.writeFileSync(path.join(cmlDir, 'press', '2026-08-20.json'), '{}');
+  fs.writeFileSync(path.join(cmlDir, 'press', '2026-08-21.json'), '{}');
+
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    continuousDir: cmlDir,
+    highlightsPath: path.join(FIXTURES, 'highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    opsCollectors: stubOpsCollectors(),
+    nowMs: NOW_MS,
+  });
+
+  const ops = fs.readFileSync(path.join(outDir, 'ops.html'), 'utf8');
+  assert.match(ops, /How the arena runs\./);
+  assert.match(ops, /aria-current="page">System/, 'nav marks System active');
+  assert.match(ops, /massive-game-media-daily/);
+  assert.match(ops, /massive-game-continuous-league/);
+  assert.match(ops, /massive-game-selfware-maintenance/);
+  assert.match(ops, /daily 04:17/);
+  assert.match(ops, /ops__badge--ok">success/);
+  assert.match(ops, /ops__badge--fail">failed · exit 1/);
+  assert.match(ops, /ops__badge--disabled">disabled/, 'maintenance shown as disabled, honestly');
+  // League stats from the fixture state.
+  assert.match(ops, /day 10 · 12 active · 1 retired/);
+  assert.match(ops, /day 13 · 12 active · 0 retired/);
+  assert.match(ops, /Submissions/);
+  // Arena stats from stubbed metrics + highlights fixture + press count.
+  assert.match(ops, /Exhibition fighters active/);
+  assert.match(ops, />7</);
+  assert.match(ops, /3,918,326/);
+  assert.match(ops, /Press quotes/);
+  assert.match(ops, />2</);
+  // Pipeline section.
+  assert.match(ops, /The pipeline, explained/);
+  assert.match(ops, /50 KB source cap/);
+  assert.match(ops, /04:17 site \+ media build/);
+  // Baked-at label present (build time, not the ratings snapshot time).
+  assert.match(ops, /baked 2026-08-23 12:00 UTC/);
+
+  // Nav link present on the index too.
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  assert.match(index, /\/models\/ops\.html/);
+});
+
+test('ops page without a league state marks league stats unavailable and never crashes', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-ops-out-'));
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    continuousDir: path.join(FIXTURES, 'no-such-dir'),
+    highlightsPath: path.join(FIXTURES, 'no-such-highlights.json'),
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    opsCollectors: {
+      collectJobs: () => ({ available: false, jobs: STUB_JOBS.jobs.map((j) => ({ ...j, available: false, nextMs: null, lastMs: null, result: null, exitStatus: null })) }),
+      fetchMetrics: async () => null,
+    },
+  });
+  const ops = fs.readFileSync(path.join(outDir, 'ops.html'), 'utf8');
+  assert.match(ops, /league state missing or invalid at bake time/);
+  assert.match(ops, /unavailable/, 'metrics/jobs degrade to unavailable');
+  assert.match(ops, /The pipeline, explained/, 'static sections still render');
 });

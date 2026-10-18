@@ -34,6 +34,9 @@
 //   static_client/models/benchmark.json         machine-readable benchmark payload
 //                                               (both only when the continuous state validates;
 //                                               stale files are removed otherwise)
+//   static_client/models/ops.html               System page: scheduled jobs, league +
+//                                               arena stats, pipeline explained (always
+//                                               emitted; sources degrade to "unavailable")
 //   artifacts/arena/page-cache.json             incremental battle-sample cache
 //   artifacts/arena/continuous/seasons/<id>.json
 //                                               frozen season finale record, written
@@ -87,6 +90,7 @@ import { fileURLToPath } from 'node:url';
 import { mascotFor } from './mascots.mjs';
 import { AUTOPSY_MAX_CHANGED_LINES, autopsyFor, loadAutopsies, revisionDiffs } from './autopsy.mjs';
 import { benchmarkJson, computeBenchmark, METHODOLOGY, MIN_GROUP_N } from './benchmark.mjs';
+import { buildOpsModel, collectSystemdJobs, fetchArenaMetrics } from './ops.mjs';
 import { TRACKS } from './continuous/league.mjs';
 import { MAX_ROSTER_SIZE, validateState } from './continuous/state.mjs';
 import {
@@ -661,7 +665,8 @@ function chrome({ title, description, active, loreLink = false, benchmarkLink = 
                 <div class="nav__links">
                     ${navLink('/', 'Home', 'home')}
                     ${navLink('/models/', 'Models', 'models')}
-${benchmarkLink ? `                    ${navLink('/models/benchmark.html', 'Benchmark', 'benchmark')}\n` : ''}${loreLink ? `                    ${navLink('/models/lore.html', 'Lore', 'lore')}\n` : ''}                </div>
+${benchmarkLink ? `                    ${navLink('/models/benchmark.html', 'Benchmark', 'benchmark')}\n` : ''}${loreLink ? `                    ${navLink('/models/lore.html', 'Lore', 'lore')}\n` : ''}                    ${navLink('/models/ops.html', 'System', 'system')}
+                </div>
             </nav>
             <a class="button button--compact button--primary" href="/client.html?match_type=mobile_blitz">Enter arena</a>
         </div>
@@ -1861,6 +1866,107 @@ ${rows}
 ${confounds}
             </ul>
             <p class="metric-note">Snapshot ${esc(generatedAt)} · league ${esc(benchmark.league_id)} · day ${fmtInt(benchmark.day_index)} · aggregates with a group n&lt;${MIN_GROUP_N} are marked provisional.</p>
+        </section>
+${foot}`;
+}
+
+// ---------------------------------------------------------------------------
+// System ops page (always emitted)
+// ---------------------------------------------------------------------------
+
+function opsEpoch(ms) {
+  return Number.isFinite(ms) ? fmtLeagueTs(new Date(ms).toISOString()) : null;
+}
+
+function opsJobStatus(row) {
+  if (row.enabled === 'disabled') return '<span class="ops__badge ops__badge--disabled">disabled</span>';
+  if (!row.available) return '<span class="ops__badge ops__badge--unknown">unavailable</span>';
+  if (row.result === 'success') return '<span class="ops__badge ops__badge--ok">success</span>';
+  if (row.result) {
+    return `<span class="ops__badge ops__badge--fail">failed${row.exitStatus !== null ? ` · exit ${row.exitStatus}` : ''}</span>`;
+  }
+  return '<span class="ops__badge ops__badge--unknown">never ran</span>';
+}
+
+export function renderOpsPage({ ops, loreLink = false, benchmarkLink = false }) {
+  const { head, foot } = chrome({
+    title: 'System // Model Arena',
+    description: 'How the Model Arena runs: scheduled jobs, league stats, arena stats, and the full model-to-fighter pipeline explained.',
+    active: 'system',
+    loreLink,
+    benchmarkLink,
+  });
+  const asOf = `baked ${esc(fmtLeagueTs(ops.generatedAt))}`;
+
+  const jobRows = ops.jobs.jobs.map((j) => `                <tr>
+                    <td class="ops__job"><b>${esc(j.unit)}</b><small>${esc(j.blurb)}</small></td>
+                    <td class="num">${esc(j.schedule)}</td>
+                    <td class="num">${opsEpoch(j.nextMs) ?? '—'}</td>
+                    <td class="num">${opsEpoch(j.lastMs) ?? '—'}</td>
+                    <td>${opsJobStatus(j)}</td>
+                </tr>`).join('\n');
+
+  const leagueCells = ops.league
+    ? `${ops.league.tracks.map((t) => `            <div><dt>${trackBadge(t.track)} ${esc(TRACK_LABELS[t.track])}</dt><dd>day ${fmtInt(t.day_index)} · ${t.roster} active · ${t.retired} retired</dd></div>`).join('\n')}
+            <div><dt>Announcements</dt><dd>${fmtInt(ops.league.announcementsTotal)}</dd></div>
+            <div><dt>Submissions</dt><dd>${ops.league.submissionsTotal === null ? '—' : fmtInt(ops.league.submissionsTotal)}</dd></div>`
+    : '            <div><dt>Continuous league</dt><dd>unavailable</dd><dd class="league-strip__sub">league state missing or invalid at bake time</dd></div>';
+
+  const arenaCells = [
+    ['Exhibition fighters active', ops.metrics?.exhibitionActive ?? null],
+    ['Game frames processed', ops.metrics?.framesTotal ?? null],
+    ['Highlight clips', ops.highlightsCount],
+    ['Press quotes', ops.pressCount],
+  ].map(([label, value]) => `            <div><dt>${esc(label)}</dt><dd>${value === null || value === undefined ? 'unavailable' : fmtInt(value)}</dd></div>`).join('\n');
+
+  const steps = [
+    ['Scout', 'A daily ranking scan picks eligible challenger models from the OpenRouter leaderboard.'],
+    ['Generate', 'The model receives one constrained prompt and writes a single Rust fighter — 50 KB source cap, no I/O, no unsafe.'],
+    ['Compile', 'The fighter is compiled to WASM server-side; L1 models get raw compiler errors back for up to 3 attempts.'],
+    ['Battle', 'Every day each track runs division battles under deterministic physics: L0 zero-shot, L1 compile-fix, L2 two feedback rounds, L3 weekly feedback.'],
+    ['Evolve', 'Feedback rounds hand the model its own raw measured stats — never coaching. Retirements open slots; new challengers recruit in.'],
+  ].map(([title, body], i) => `                <li>
+                    <span>0${i + 1} / ${esc(title)}</span>
+                    <p>${esc(body)}</p>
+                </li>`).join('\n');
+
+  return `${head}
+        <section class="models-hero">
+            <p class="eyebrow"><span class="live-dot"></span> System · ${asOf}</p>
+            <h1>How the arena runs. <em>Openly.</em></h1>
+            <p class="models-hero__lede">This page is baked by the daily build — every number below is labeled with its bake time. Scheduled jobs, live league counts, and the full pipeline from prompt to fighter.</p>
+        </section>
+
+        <section class="panel" aria-label="Scheduled jobs">
+            <h2>Scheduled jobs <span class="hof__hint">${asOf}</span></h2>
+            <table class="standings__table ops__jobs">
+                <thead><tr><th>Job</th><th>Schedule</th><th>Next run</th><th>Last ran</th><th>Last result</th></tr></thead>
+                <tbody>
+${jobRows}
+                </tbody>
+            </table>
+        </section>
+
+        <section class="panel" aria-label="League stats">
+            <h2>League stats <span class="hof__hint">${asOf}</span></h2>
+            <div class="league-strip ops__strip">
+${leagueCells}
+            </div>
+        </section>
+
+        <section class="panel" aria-label="Arena stats">
+            <h2>Arena stats <span class="hof__hint">${asOf}</span></h2>
+            <div class="league-strip ops__strip">
+${arenaCells}
+            </div>
+        </section>
+
+        <section class="panel" aria-label="The pipeline explained">
+            <h2>The pipeline, explained</h2>
+            <ol class="ops-pipeline">
+${steps}
+            </ol>
+            <p class="metric-note">Daily schedule (server local): 04:17 site + media build · 05:23 league cycle · 06:17 maintenance (currently disabled). This page regenerates at the 04:17 build.</p>
         </section>
 ${foot}`;
 }
@@ -3319,6 +3425,32 @@ table.matrix__table tr.matrix__row--boundary td { border-top: 1px solid var(--li
 .bench__methodology h3 { margin-top: 24px; }
 .bench__confounds { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13.5px; line-height: 1.7; }
 .bench__confounds li { margin-bottom: 6px; }
+
+/* system ops page */
+.ops__jobs td { vertical-align: top; }
+.ops__job { min-width: 0; }
+.ops__job b { display: block; font-size: 13px; word-break: break-all; }
+.ops__job small { display: block; margin-top: 4px; color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.ops__badge {
+    display: inline-block;
+    border: 1px solid var(--line-soft);
+    padding: 3px 7px;
+    font: 800 8px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+}
+.ops__badge--ok { color: var(--acid); border-color: var(--line); }
+.ops__badge--fail { color: #fb7185; border-color: rgba(251, 113, 133, 0.35); }
+.ops__badge--disabled { color: var(--dim); }
+.ops__strip { margin-top: 0; border: none; background: transparent; }
+.ops__strip div { padding-left: 0; }
+.ops-pipeline { list-style: none; margin: 0; padding: 0; }
+.ops-pipeline li { padding: 16px 0; border-bottom: 1px solid var(--line-soft); }
+.ops-pipeline li:last-child { border-bottom: none; }
+.ops-pipeline span { display: block; margin-bottom: 7px; color: var(--acid); font: 800 10px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
+.ops-pipeline p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; max-width: 720px; }
 .standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; }
 .standings__track h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
 .standings__track h3 small { margin-left: auto; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; }
@@ -3650,6 +3782,7 @@ export async function buildPages({
   windowSize = 4000,
   nowMs = Date.now(),
   io = defaultIo,
+  opsCollectors = null, // { collectJobs, fetchMetrics } — tests inject stubs
   log = () => {},
 } = {}) {
   const rawRatings = io.readJson(ratingsPath);
@@ -3841,6 +3974,33 @@ export async function buildPages({
       if (io.exists(p)) io.remove(p);
     }
   }
+
+  // System ops page — always emitted. Collectors run at build time and every
+  // section degrades to an honest "unavailable" mark on failure.
+  const collectJobs = opsCollectors?.collectJobs ?? collectSystemdJobs;
+  const fetchMetrics = opsCollectors?.fetchMetrics ?? fetchArenaMetrics;
+  let pressCount = null;
+  const pressDir = path.join(resolvedContinuousDir, 'press');
+  if (io.exists(pressDir)) {
+    try {
+      pressCount = io.readdir(pressDir).filter((n) => n.endsWith('.json')).length;
+    } catch {
+      pressCount = null;
+    }
+  }
+  const ops = buildOpsModel({
+    jobs: collectJobs(),
+    metrics: await fetchMetrics(),
+    state: continuous?.state ?? null,
+    submissionsCount: continuous ? continuous.submissions.length : null,
+    highlightsCount: Array.isArray(highlights) ? highlights.length : null,
+    pressCount,
+    generatedAt: new Date(nowMs).toISOString(),
+  });
+  io.writeFile(
+    path.join(outDir, 'ops.html'),
+    renderOpsPage({ ops, loreLink: Boolean(lore), benchmarkLink: Boolean(continuous) }),
+  );
 
   // Republish the public ratings file from the continuous L0 baseline. The
   // weekly publish file is preserved once as a sidecar backup so future runs

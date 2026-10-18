@@ -477,6 +477,20 @@ async function evaluateWithRebind(context) {
 }
 
 /**
+ * Append one announcement to a track's feed, always enforcing the
+ * MAX_ANNOUNCEMENTS cap (keep newest). The state validator deliberately
+ * throws on an over-cap feed (we want to notice), so EVERY append must go
+ * through this helper — an uncapped post-loop push once crashed a cycle at
+ * writeState with "announcements must be capped at 200".
+ */
+function appendAnnouncement(track, entry) {
+  track.announcements.push(entry);
+  if (track.announcements.length > MAX_ANNOUNCEMENTS) {
+    track.announcements = track.announcements.slice(-MAX_ANNOUNCEMENTS);
+  }
+}
+
+/**
  * Move one roster entry into the track's retired ledger with a reason and a
  * final-stats announcement — the single retirement path shared by the
  * retirement bar and fast-lane displacement (so publishing/Hall-of-Fame sees
@@ -497,7 +511,7 @@ function retireModelEntry({ track, trackId, entry, reason, at, log }) {
   } else {
     track.retired.push(retiredEntry);
   }
-  track.announcements.push({
+  appendAnnouncement(track, {
     type: 'retirement',
     track: trackId,
     model_id: entry.model_id,
@@ -648,7 +662,7 @@ async function reviseModel({
   let journal = await readJson(journalPath).catch(() => null);
 
   const announce = (outcome) => {
-    track.announcements.push({
+    appendAnnouncement(track, {
       type: 'revision',
       track: trackId,
       model_id: entry.model_id,
@@ -1019,7 +1033,7 @@ async function recruitChallengers({
         days_in_league: 0,
         status: 'active',
       });
-      track.announcements.push({
+      appendAnnouncement(track, {
         type: 'entrant',
         track: trackId,
         model_id: providerId,
@@ -1126,7 +1140,6 @@ export async function runTrackCycle({
     });
   }
 
-  track.announcements = track.announcements.slice(-MAX_ANNOUNCEMENTS);
   return track;
 }
 
@@ -1270,7 +1283,7 @@ async function fastLaneRecruit({ state, stateDirectory, rootDirectory, deps, log
         days_in_league: 0,
         status: 'active',
       });
-      track.announcements.push({
+      appendAnnouncement(track, {
         type: 'fresh_challenger',
         track: trackId,
         model_id: providerId,

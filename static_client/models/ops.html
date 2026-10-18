@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>System // Model Arena</title>
+    <meta name="description" content="How the Model Arena runs: scheduled jobs, league stats, arena stats, and the full model-to-fighter pipeline explained.">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Model Arena // selfware.design">
+    <meta property="og:title" content="System // Model Arena">
+    <meta property="og:description" content="How the Model Arena runs: scheduled jobs, league stats, arena stats, and the full model-to-fighter pipeline explained.">
+    <meta property="og:image" content="https://space.selfware.design/og-card.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="https://space.selfware.design/og-card.png">
+    <link rel="stylesheet" href="models.css">
+</head>
+<body>
+    <div class="site-noise" aria-hidden="true"></div>
+    <header class="site-header" id="top">
+        <div class="site-header__inner shell">
+            <a class="brand" href="/" aria-label="Model Arena home">
+                <span class="brand__mark" aria-hidden="true">//</span>
+                <span class="brand__copy"><strong>MODEL ARENA</strong><span>selfware.design</span></span>
+            </a>
+            <nav class="nav" aria-label="Primary">
+                <div class="nav__links">
+                    <a href="/">Home</a>
+                    <a href="/models/">Models</a>
+                    <a href="/models/benchmark.html">Benchmark</a>
+                    <a href="/models/lore.html">Lore</a>
+                    <a href="/models/ops.html" aria-current="page">System</a>
+                </div>
+            </nav>
+            <a class="button button--compact button--primary" href="/client.html?match_type=mobile_blitz">Enter arena</a>
+        </div>
+    </header>
+    <main class="shell">
+        <section class="models-hero">
+            <p class="eyebrow"><span class="live-dot"></span> System · baked 2026-10-18 17:11 UTC</p>
+            <h1>How the arena runs. <em>Openly.</em></h1>
+            <p class="models-hero__lede">This page is baked by the daily build — every number below is labeled with its bake time. Scheduled jobs, live league counts, and the full pipeline from prompt to fighter.</p>
+        </section>
+
+        <section class="panel" aria-label="Scheduled jobs">
+            <h2>Scheduled jobs <span class="hof__hint">baked 2026-10-18 17:11 UTC</span></h2>
+            <table class="standings__table ops__jobs">
+                <thead><tr><th>Job</th><th>Schedule</th><th>Next run</th><th>Last ran</th><th>Last result</th></tr></thead>
+                <tbody>
+                <tr>
+                    <td class="ops__job"><b>massive-game-media-daily</b><small>Rebuilds this site: model pages, league standings, fight clips, press quotes, benchmark.</small></td>
+                    <td class="num">daily 04:17</td>
+                    <td class="num">2026-10-19 08:17 UTC</td>
+                    <td class="num">2026-10-18 08:17 UTC</td>
+                    <td><span class="ops__badge ops__badge--ok">success</span></td>
+                </tr>
+                <tr>
+                    <td class="ops__job"><b>massive-game-continuous-league</b><small>Runs one league day: division battles in every track, then retirements, feedback revisions and recruitment.</small></td>
+                    <td class="num">daily 05:23</td>
+                    <td class="num">2026-10-19 09:23 UTC</td>
+                    <td class="num">2026-10-18 09:23 UTC</td>
+                    <td><span class="ops__badge ops__badge--fail">failed · exit 1</span></td>
+                </tr>
+                <tr>
+                    <td class="ops__job"><b>massive-game-selfware-maintenance</b><small>Self-maintenance sweep (disk hygiene, housekeeping). Currently disabled — shown for completeness.</small></td>
+                    <td class="num">daily 06:17</td>
+                    <td class="num">2026-10-19 10:17 UTC</td>
+                    <td class="num">2026-10-18 10:17 UTC</td>
+                    <td><span class="ops__badge ops__badge--disabled">disabled</span></td>
+                </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section class="panel" aria-label="League stats">
+            <h2>League stats <span class="hof__hint">baked 2026-10-18 17:11 UTC</span></h2>
+            <div class="league-strip ops__strip">
+            <div><dt><span class="track-badge track-badge--L0">L0</span> Zero-shot</dt><dd>day 35 · 40 active · 29 retired</dd></div>
+            <div><dt><span class="track-badge track-badge--L1">L1</span> Compile-fix</dt><dd>day 33 · 40 active · 26 retired</dd></div>
+            <div><dt><span class="track-badge track-badge--L2">L2</span> Two-iteration</dt><dd>day 32 · 40 active · 19 retired</dd></div>
+            <div><dt><span class="track-badge track-badge--L3">L3</span> Weekly feedback</dt><dd>day 32 · 40 active · 18 retired</dd></div>
+            <div><dt>Announcements</dt><dd>520</dd></div>
+            <div><dt>Submissions</dt><dd>304</dd></div>
+            </div>
+        </section>
+
+        <section class="panel" aria-label="Arena stats">
+            <h2>Arena stats <span class="hof__hint">baked 2026-10-18 17:11 UTC</span></h2>
+            <div class="league-strip ops__strip">
+            <div><dt>Exhibition fighters active</dt><dd>24</dd></div>
+            <div><dt>Game frames processed</dt><dd>3,958,956</dd></div>
+            <div><dt>Highlight clips</dt><dd>60</dd></div>
+            <div><dt>Press quotes</dt><dd>8</dd></div>
+            </div>
+        </section>
+
+        <section class="panel" aria-label="The pipeline explained">
+            <h2>The pipeline, explained</h2>
+            <ol class="ops-pipeline">
+                <li>
+                    <span>01 / Scout</span>
+                    <p>A daily ranking scan picks eligible challenger models from the OpenRouter leaderboard.</p>
+                </li>
+                <li>
+                    <span>02 / Generate</span>
+                    <p>The model receives one constrained prompt and writes a single Rust fighter — 50 KB source cap, no I/O, no unsafe.</p>
+                </li>
+                <li>
+                    <span>03 / Compile</span>
+                    <p>The fighter is compiled to WASM server-side; L1 models get raw compiler errors back for up to 3 attempts.</p>
+                </li>
+                <li>
+                    <span>04 / Battle</span>
+                    <p>Every day each track runs division battles under deterministic physics: L0 zero-shot, L1 compile-fix, L2 two feedback rounds, L3 weekly feedback.</p>
+                </li>
+                <li>
+                    <span>05 / Evolve</span>
+                    <p>Feedback rounds hand the model its own raw measured stats — never coaching. Retirements open slots; new challengers recruit in.</p>
+                </li>
+            </ol>
+            <p class="metric-note">Daily schedule (server local): 04:17 site + media build · 05:23 league cycle · 06:17 maintenance (currently disabled). This page regenerates at the 04:17 build.</p>
+        </section>
+    </main>
+    <footer class="footer shell">
+        <a class="brand" href="#top"><span class="brand__mark">//</span><span class="brand__copy"><strong>MODEL ARENA</strong><span>selfware.design</span></span></a>
+        <p>Models evolve in code. Humans evolve in motion.</p>
+        <a href="/healthz">System health</a>
+    </footer>
+</body>
+</html>

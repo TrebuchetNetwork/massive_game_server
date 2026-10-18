@@ -549,6 +549,32 @@ table.matrix__table tr.matrix__row--boundary td { border-top: 1px solid var(--li
 .bench__methodology h3 { margin-top: 24px; }
 .bench__confounds { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13.5px; line-height: 1.7; }
 .bench__confounds li { margin-bottom: 6px; }
+
+/* system ops page */
+.ops__jobs td { vertical-align: top; }
+.ops__job { min-width: 0; }
+.ops__job b { display: block; font-size: 13px; word-break: break-all; }
+.ops__job small { display: block; margin-top: 4px; color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.ops__badge {
+    display: inline-block;
+    border: 1px solid var(--line-soft);
+    padding: 3px 7px;
+    font: 800 8px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+}
+.ops__badge--ok { color: var(--acid); border-color: var(--line); }
+.ops__badge--fail { color: #fb7185; border-color: rgba(251, 113, 133, 0.35); }
+.ops__badge--disabled { color: var(--dim); }
+.ops__strip { margin-top: 0; border: none; background: transparent; }
+.ops__strip div { padding-left: 0; }
+.ops-pipeline { list-style: none; margin: 0; padding: 0; }
+.ops-pipeline li { padding: 16px 0; border-bottom: 1px solid var(--line-soft); }
+.ops-pipeline li:last-child { border-bottom: none; }
+.ops-pipeline span { display: block; margin-bottom: 7px; color: var(--acid); font: 800 10px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
+.ops-pipeline p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; max-width: 720px; }
 .standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; }
 .standings__track h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
 .standings__track h3 small { margin-left: auto; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; }
