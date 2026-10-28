@@ -1,0 +1,255 @@
+{
+  "generated_at": "2026-10-28T10:02:16.802Z",
+  "window_days": null,
+  "matches_total": 3656,
+  "commanded_one_side": {
+    "matches": 182,
+    "decided": 182,
+    "draws": 0,
+    "commanded_side_wins": 42,
+    "commanded_side_win_rate": 0.23076923076923078,
+    "p_value_vs_coin_flip": 1.7075609218544516e-12,
+    "mean_score_margin_for_commanded": -63.76373626373626,
+    "mean_kills": 33.75824175824176,
+    "mean_kills_per_minute": 6.7516483516483525
+  },
+  "commanded_both_sides": {
+    "matches": 0,
+    "mean_kills": null,
+    "mean_kills_per_minute": null
+  },
+  "uncommanded": {
+    "matches": 3474,
+    "decided": 3474,
+    "team1_win_rate": 0.5166954519286125,
+    "side_bias_p_value": 0.051027705907778304,
+    "mean_kills": 31.890616004605643,
+    "mean_kills_per_minute": 6.378932560995958
+  },
+  "by_model": [
+    {
+      "model": "openai/gpt-6-astra-pro",
+      "name": "gpt-6-astra-pro",
+      "played": 24,
+      "won": 6,
+      "orders": 138
+    },
+    {
+      "model": "moonshotai/kimi-k3",
+      "name": "kimi-k3",
+      "played": 15,
+      "won": 2,
+      "orders": 45
+    },
+    {
+      "model": "openai/gpt-6-astra",
+      "name": "gpt-6-astra",
+      "played": 11,
+      "won": 2,
+      "orders": 69
+    },
+    {
+      "model": "google/gemma-4-26b-a4b-it",
+      "name": "gemma-4-26b-a4b-it",
+      "played": 8,
+      "won": 1,
+      "orders": 58
+    },
+    {
+      "model": "google/gemini-3-flash-preview",
+      "name": "gemini-3-flash-preview",
+      "played": 8,
+      "won": 1,
+      "orders": 58
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "name": "glm-5.3-flash",
+      "played": 8,
+      "won": 3,
+      "orders": 16
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash",
+      "name": "deepseek-v4-flash",
+      "played": 8,
+      "won": 3,
+      "orders": 24
+    },
+    {
+      "model": "openai/gpt-oss-120b",
+      "name": "gpt-oss-120b",
+      "played": 8,
+      "won": 1,
+      "orders": 47
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash-1017",
+      "name": "deepseek-v4.1-flash-1017",
+      "played": 8,
+      "won": 2,
+      "orders": 31
+    },
+    {
+      "model": "openai/gpt-5.6-sol-pro",
+      "name": "gpt-5.6-sol-pro",
+      "played": 7,
+      "won": 2,
+      "orders": 40
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "name": "gemini-3.5-flash-lite",
+      "played": 4,
+      "won": 0,
+      "orders": 30
+    },
+    {
+      "model": "openai/gpt-oss-20b",
+      "name": "gpt-oss-20b",
+      "played": 4,
+      "won": 1,
+      "orders": 20
+    },
+    {
+      "model": "unbiased/pareto",
+      "name": "pareto",
+      "played": 4,
+      "won": 0,
+      "orders": 25
+    },
+    {
+      "model": "upstage/solar-pro4",
+      "name": "solar-pro4",
+      "played": 4,
+      "won": 0,
+      "orders": 29
+    },
+    {
+      "model": "anthropic/claude-opus-4.6",
+      "name": "claude-opus-4.6",
+      "played": 4,
+      "won": 2,
+      "orders": 27
+    },
+    {
+      "model": "anthropic/claude-sonnet-4.6",
+      "name": "claude-sonnet-4.6",
+      "played": 4,
+      "won": 1,
+      "orders": 24
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "name": "deepseek-v4-flash-0731",
+      "played": 4,
+      "won": 2,
+      "orders": 13
+    },
+    {
+      "model": "anthropic/claude-opus-5.5",
+      "name": "claude-opus-5.5",
+      "played": 4,
+      "won": 1,
+      "orders": 24
+    },
+    {
+      "model": "anthropic/claude-opus-5",
+      "name": "claude-opus-5",
+      "played": 4,
+      "won": 0,
+      "orders": 26
+    },
+    {
+      "model": "google/gemini-2.5-flash",
+      "name": "gemini-2.5-flash",
+      "played": 4,
+      "won": 1,
+      "orders": 30
+    },
+    {
+      "model": "openai/gpt-5.6-terra",
+      "name": "gpt-5.6-terra",
+      "played": 4,
+      "won": 0,
+      "orders": 27
+    },
+    {
+      "model": "google/gemini-3.8-flash",
+      "name": "gemini-3.8-flash",
+      "played": 4,
+      "won": 1,
+      "orders": 22
+    },
+    {
+      "model": "google/gemma-4-31b-it",
+      "name": "gemma-4-31b-it",
+      "played": 4,
+      "won": 2,
+      "orders": 28
+    },
+    {
+      "model": "unbiased/pareto-26.10",
+      "name": "pareto-26.10",
+      "played": 4,
+      "won": 0,
+      "orders": 25
+    },
+    {
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "name": "nemotron-3-ultra-550b-a55b:free",
+      "played": 4,
+      "won": 3,
+      "orders": 14
+    },
+    {
+      "model": "google/gemini-3.1-pro-preview",
+      "name": "gemini-3.1-pro-preview",
+      "played": 4,
+      "won": 2,
+      "orders": 22
+    },
+    {
+      "model": "google/gemini-3.6-flash",
+      "name": "gemini-3.6-flash",
+      "played": 3,
+      "won": 0,
+      "orders": 26
+    },
+    {
+      "model": "tencent/hy3",
+      "name": "hy3",
+      "played": 3,
+      "won": 1,
+      "orders": 11
+    },
+    {
+      "model": "moonshotai/kimi-k3.1-pro",
+      "name": "kimi-k3.1-pro",
+      "played": 3,
+      "won": 0,
+      "orders": 4
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "name": "qwen3.8-flash",
+      "played": 2,
+      "won": 0,
+      "orders": 3
+    },
+    {
+      "model": "reflection/beam-1.0-501b-a23b",
+      "name": "beam-1.0-501b-a23b",
+      "played": 1,
+      "won": 1,
+      "orders": 1
+    },
+    {
+      "model": "inception/mercury-2.5",
+      "name": "mercury-2.5",
+      "played": 1,
+      "won": 1,
+      "orders": 1
+    }
+  ]
+}

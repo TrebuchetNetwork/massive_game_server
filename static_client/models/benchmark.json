@@ -2,7 +2,7 @@
   "schema_version": 1,
   "benchmark": "intervention-lift",
   "league_id": "cml-20260824-ce1898c6",
-  "day_index": 35,
+  "day_index": 43,
   "generated_at": "2026-08-25T23:56:50.953Z",
   "min_group_n": 5,
   "methodology": {
@@ -18,24 +18,24 @@
   },
   "aggregates": {
     "l2": {
-      "revised_n": 55,
-      "revised_median": 1.69,
-      "control_n": 3,
+      "revised_n": 65,
+      "revised_median": 1.47,
+      "control_n": 7,
       "control_median": 0,
-      "net": 1.69,
-      "provisional": true
+      "net": 1.47,
+      "provisional": false
     },
     "l3": {
-      "revised_n": 54,
-      "revised_median": 0.79,
-      "control_n": 3,
-      "control_median": 0.51,
-      "net": 0.28,
-      "provisional": true
+      "revised_n": 64,
+      "revised_median": 1.36,
+      "control_n": 7,
+      "control_median": 0.58,
+      "net": 0.78,
+      "provisional": false
     },
-    "models_total": 71,
-    "revised_total": 56,
-    "control_total": 15
+    "models_total": 85,
+    "revised_total": 66,
+    "control_total": 19
   },
   "rows": [
     {
@@ -48,16 +48,41 @@
         "color": "#60a5fa"
       },
       "l0": 16.02,
-      "l1": 51.67,
-      "l2": 52.2,
-      "l3": 51.58,
+      "l1": 51.11,
+      "l2": 51.44,
+      "l3": 52.5,
       "l2_version": 2,
-      "l3_version": 5,
+      "l3_version": 6,
       "retired_in": [
         "L0"
       ],
-      "l2_lift": 36.18,
-      "l3_lift": 35.56,
+      "l2_lift": 35.42,
+      "l3_lift": 36.48,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "dots-studio/dots-3-note-preview-20260813",
+      "model_id": "dots-studio/dots-3-note-preview:free",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 25.58,
+      "l1": 48.08,
+      "l2": 39.79,
+      "l3": 47.72,
+      "l2_version": 3,
+      "l3_version": 7,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "l2_lift": 14.21,
+      "l3_lift": 22.14,
       "revised": true,
       "field_control": false
     },
@@ -72,64 +97,16 @@
       },
       "l0": 27.89,
       "l1": 24.13,
-      "l2": 49.76,
-      "l3": 51.25,
+      "l2": 49.21,
+      "l3": 49.8,
       "l2_version": 3,
-      "l3_version": 4,
+      "l3_version": 5,
       "retired_in": [
         "L0",
         "L1"
       ],
-      "l2_lift": 21.87,
-      "l3_lift": 23.36,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "dots-studio/dots-3-note-preview-20260813",
-      "model_id": "dots-studio/dots-3-note-preview:free",
-      "mascot": {
-        "key": null,
-        "emoji": "🦅",
-        "title": "Talon",
-        "color": "#34d399"
-      },
-      "l0": 25.58,
-      "l1": 48.63,
-      "l2": 39.79,
-      "l3": 48.81,
-      "l2_version": 3,
-      "l3_version": 6,
-      "retired_in": [
-        "L0",
-        "L2"
-      ],
-      "l2_lift": 14.21,
-      "l3_lift": 23.23,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "tencent/hy3-20260706",
-      "model_id": "tencent/hy3",
-      "mascot": {
-        "key": "tencent/hy3",
-        "emoji": "🐉",
-        "title": "Emberwing",
-        "color": "#fb7185"
-      },
-      "l0": 30.44,
-      "l1": 39.93,
-      "l2": 46.31,
-      "l3": 51.74,
-      "l2_version": 1,
-      "l3_version": 6,
-      "retired_in": [
-        "L0",
-        "L1"
-      ],
-      "l2_lift": 15.87,
-      "l3_lift": 21.3,
+      "l2_lift": 21.32,
+      "l3_lift": 21.91,
       "revised": true,
       "field_control": false
     },
@@ -186,23 +163,53 @@
       "field_control": false
     },
     {
-      "slug": "anthropic/claude-opus-5-20260723",
-      "model_id": "anthropic/claude-opus-5",
+      "slug": "nvidia/nemotron-3.5-super-vl-20261015",
+      "model_id": "nvidia/nemotron-3.5-super-vl",
       "mascot": {
         "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
       },
-      "l0": 53.35,
-      "l1": 55.26,
-      "l2": 57.25,
-      "l3": 67.55,
-      "l2_version": 1,
-      "l3_version": 4,
-      "retired_in": [],
-      "l2_lift": 3.9,
-      "l3_lift": 14.2,
+      "l0": 22.48,
+      "l1": 18.52,
+      "l2": 50.21,
+      "l3": 34.38,
+      "l2_version": 2,
+      "l3_version": 2,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L3"
+      ],
+      "l2_lift": 27.73,
+      "l3_lift": 11.9,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "inception/mercury-3-20261019",
+      "model_id": "inception/mercury-3",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 31.42,
+      "l1": 29.86,
+      "l2": 45.49,
+      "l3": 43.19,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": 14.07,
+      "l3_lift": 11.77,
       "revised": true,
       "field_control": false
     },
@@ -233,6 +240,51 @@
       "field_control": true
     },
     {
+      "slug": "openai/gpt-6-luna-pro-20260922",
+      "model_id": "openai/gpt-6-luna-pro",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 35.42,
+      "l1": 49.62,
+      "l2": 50.78,
+      "l3": 46.88,
+      "l2_version": 3,
+      "l3_version": 3,
+      "retired_in": [
+        "L0",
+        "L3"
+      ],
+      "l2_lift": 15.36,
+      "l3_lift": 11.46,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "anthropic/claude-opus-5-20260723",
+      "model_id": "anthropic/claude-opus-5",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 52.15,
+      "l1": 52.14,
+      "l2": 54.77,
+      "l3": 63.24,
+      "l2_version": 1,
+      "l3_version": 5,
+      "retired_in": [],
+      "l2_lift": 2.62,
+      "l3_lift": 11.09,
+      "revised": true,
+      "field_control": false
+    },
+    {
       "slug": "openai/gpt-4o-mini",
       "model_id": "openai/gpt-4o-mini",
       "mascot": {
@@ -244,39 +296,16 @@
       "l0": 38.48,
       "l1": 41.24,
       "l2": 42.2,
-      "l3": 49.95,
+      "l3": 49.53,
       "l2_version": 3,
-      "l3_version": 6,
+      "l3_version": 7,
       "retired_in": [
         "L0",
         "L1",
         "L2"
       ],
       "l2_lift": 3.72,
-      "l3_lift": 11.47,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "openai/gpt-6-luna-pro-20260922",
-      "model_id": "openai/gpt-6-luna-pro",
-      "mascot": {
-        "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
-      },
-      "l0": 35.42,
-      "l1": 49.31,
-      "l2": 51.04,
-      "l3": 45.25,
-      "l2_version": 3,
-      "l3_version": 3,
-      "retired_in": [
-        "L0"
-      ],
-      "l2_lift": 15.62,
-      "l3_lift": 9.83,
+      "l3_lift": 11.05,
       "revised": true,
       "field_control": false
     },
@@ -359,6 +388,77 @@
       "field_control": false
     },
     {
+      "slug": "tencent/hy3-20260706",
+      "model_id": "tencent/hy3",
+      "mascot": {
+        "key": "tencent/hy3",
+        "emoji": "🐉",
+        "title": "Emberwing",
+        "color": "#fb7185"
+      },
+      "l0": 42.92,
+      "l1": 31.71,
+      "l2": 45.94,
+      "l3": 50.14,
+      "l2_version": 1,
+      "l3_version": 7,
+      "retired_in": [
+        "L0",
+        "L2"
+      ],
+      "l2_lift": 3.02,
+      "l3_lift": 7.22,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "meta/muse-spark-open-20261015",
+      "model_id": "meta/muse-spark-open",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 31.16,
+      "l1": 26.16,
+      "l2": 38.08,
+      "l3": 37.15,
+      "l2_version": 2,
+      "l3_version": 2,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": 6.92,
+      "l3_lift": 5.99,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "~openai/gpt-astra-latest",
+      "model_id": "~openai/gpt-astra-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 57.58,
+      "l1": 56.81,
+      "l2": 57.29,
+      "l3": 63.56,
+      "l2_version": 3,
+      "l3_version": 5,
+      "retired_in": [],
+      "l2_lift": -0.29,
+      "l3_lift": 5.98,
+      "revised": true,
+      "field_control": false
+    },
+    {
       "slug": "xiaomi/mimo-v2.5-pro-20260422",
       "model_id": "xiaomi/mimo-v2.5-pro",
       "mascot": {
@@ -369,40 +469,70 @@
       },
       "l0": 41.68,
       "l1": 45.4,
-      "l2": 47.88,
-      "l3": 47.92,
+      "l2": 47.52,
+      "l3": 47.59,
       "l2_version": 2,
       "l3_version": 6,
       "retired_in": [
         "L0",
-        "L1"
+        "L1",
+        "L2",
+        "L3"
       ],
-      "l2_lift": 6.2,
-      "l3_lift": 6.24,
+      "l2_lift": 5.84,
+      "l3_lift": 5.91,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "xiaomi/mimo-v2.6-flash-20260921",
-      "model_id": "xiaomi/mimo-v2.6-flash",
+      "slug": "reflection/beam-1.0-501b-a23b-20261016",
+      "model_id": "reflection/beam-1.0-501b-a23b",
       "mascot": {
         "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
       },
-      "l0": 45.83,
-      "l1": 47.4,
-      "l2": 47.74,
-      "l3": 51.3,
-      "l2_version": 3,
-      "l3_version": 3,
+      "l0": 23.5,
+      "l1": 22.8,
+      "l2": 27.31,
+      "l3": 29.28,
+      "l2_version": 2,
+      "l3_version": 1,
       "retired_in": [
         "L0",
-        "L1"
+        "L1",
+        "L2",
+        "L3"
       ],
-      "l2_lift": 1.91,
-      "l3_lift": 5.47,
+      "l2_lift": 3.81,
+      "l3_lift": 5.78,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "nvidia/nemotron-3.5-super-vl-20261015",
+      "model_id": "nvidia/nemotron-3.5-super-vl:free",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 40.76,
+      "l1": 47.31,
+      "l2": 47.01,
+      "l3": 46.53,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": 6.25,
+      "l3_lift": 5.77,
       "revised": true,
       "field_control": false
     },
@@ -443,39 +573,105 @@
       },
       "l0": 45.04,
       "l1": 47.56,
-      "l2": 48.9,
-      "l3": 48.94,
+      "l2": 49.64,
+      "l3": 50.05,
       "l2_version": 2,
-      "l3_version": 5,
+      "l3_version": 6,
       "retired_in": [
         "L0",
         "L1"
       ],
-      "l2_lift": 3.86,
-      "l3_lift": 3.9,
+      "l2_lift": 4.6,
+      "l3_lift": 5.01,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "~openai/gpt-sol-latest",
-      "model_id": "~openai/gpt-sol-latest",
+      "slug": "google/gemini-4-argon-20261013",
+      "model_id": "google/gemini-4-argon",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 32.99,
+      "l1": 39.58,
+      "l2": 35.42,
+      "l3": 37.85,
+      "l2_version": 1,
+      "l3_version": 1,
+      "retired_in": [],
+      "l2_lift": 2.43,
+      "l3_lift": 4.86,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "minimax/minimax-m3.1-flash-20261019",
+      "model_id": "minimax/minimax-m3.1-flash:free",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 48.44,
+      "l1": 52.88,
+      "l2": 52.48,
+      "l3": 53.08,
+      "l2_version": 2,
+      "l3_version": 1,
+      "retired_in": [
+        "L0"
+      ],
+      "l2_lift": 4.04,
+      "l3_lift": 4.64,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "unbiased/pareto-26.9-20260917",
+      "model_id": "unbiased/pareto-26.9",
       "mascot": {
         "key": null,
         "emoji": "👾",
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 47.64,
-      "l1": 47.71,
-      "l2": 51.36,
-      "l3": 51.39,
+      "l0": 75.17,
+      "l1": 69.97,
+      "l2": 69.62,
+      "l3": 78.47,
+      "l2_version": 1,
+      "l3_version": 1,
+      "retired_in": [],
+      "l2_lift": -5.55,
+      "l3_lift": 3.3,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "xiaomi/mimo-v2.6-flash-20260921",
+      "model_id": "xiaomi/mimo-v2.6-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 45.83,
+      "l1": 47.4,
+      "l2": 49.73,
+      "l3": 49.07,
       "l2_version": 3,
       "l3_version": 4,
       "retired_in": [
-        "L0"
+        "L0",
+        "L1"
       ],
-      "l2_lift": 3.72,
-      "l3_lift": 3.75,
+      "l2_lift": 3.9,
+      "l3_lift": 3.24,
       "revised": true,
       "field_control": false
     },
@@ -488,36 +684,17 @@
         "title": "Rookie",
         "color": "#94a3b8"
       },
-      "l0": 50.26,
-      "l1": 51.04,
-      "l2": 52.34,
-      "l3": 53.54,
-      "l2_version": 2,
-      "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": 2.08,
-      "l3_lift": 3.28,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "anthropic/claude-4.8-opus-20260528",
-      "model_id": "anthropic/claude-opus-4.8",
-      "mascot": {
-        "key": null,
-        "emoji": "🛰️",
-        "title": "Orbit",
-        "color": "#60a5fa"
-      },
-      "l0": 50.09,
+      "l0": 49.71,
       "l1": 50.08,
-      "l2": 54.54,
-      "l3": 53.27,
+      "l2": 51.32,
+      "l3": 52.83,
       "l2_version": 2,
-      "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": 4.45,
-      "l3_lift": 3.18,
+      "l3_version": 6,
+      "retired_in": [
+        "L0"
+      ],
+      "l2_lift": 1.61,
+      "l3_lift": 3.12,
       "revised": true,
       "field_control": false
     },
@@ -548,44 +725,47 @@
       "field_control": false
     },
     {
-      "slug": "z-ai/glm-5.2-20260616",
-      "model_id": "z-ai/glm-5.2",
+      "slug": "anthropic/claude-4.8-opus-20260528",
+      "model_id": "anthropic/claude-opus-4.8",
       "mascot": {
-        "key": "z-ai/glm-5.2",
-        "emoji": "🦉",
-        "title": "Sage",
-        "color": "#a78bfa"
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
       },
-      "l0": 51,
-      "l1": 51.47,
-      "l2": 53.96,
-      "l3": 53.53,
-      "l2_version": 1,
-      "l3_version": 5,
+      "l0": 49.68,
+      "l1": 49.67,
+      "l2": 53.11,
+      "l3": 52.01,
+      "l2_version": 2,
+      "l3_version": 6,
       "retired_in": [],
-      "l2_lift": 2.96,
-      "l3_lift": 2.53,
+      "l2_lift": 3.43,
+      "l3_lift": 2.33,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "openai/gpt-6-astra-20260903",
-      "model_id": "openai/gpt-6-astra",
+      "slug": "~openai/gpt-sol-latest",
+      "model_id": "~openai/gpt-sol-latest",
       "mascot": {
         "key": null,
-        "emoji": "🤖",
-        "title": "Rookie",
-        "color": "#94a3b8"
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
       },
-      "l0": 65.88,
-      "l1": 64.85,
-      "l2": 63.61,
-      "l3": 67.97,
+      "l0": 47.64,
+      "l1": 48.05,
+      "l2": 51.35,
+      "l3": 49.9,
       "l2_version": 3,
       "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": -2.27,
-      "l3_lift": 2.09,
+      "retired_in": [
+        "L0",
+        "L1"
+      ],
+      "l2_lift": 3.71,
+      "l3_lift": 2.26,
       "revised": true,
       "field_control": false
     },
@@ -599,16 +779,133 @@
         "color": "#facc15"
       },
       "l0": 48.07,
-      "l1": 49.06,
-      "l2": 48.42,
-      "l3": 50.12,
+      "l1": 49.13,
+      "l2": 46.27,
+      "l3": 49.92,
       "l2_version": 3,
-      "l3_version": 4,
+      "l3_version": 5,
       "retired_in": [
-        "L0"
+        "L0",
+        "L1",
+        "L2"
       ],
-      "l2_lift": 0.35,
-      "l3_lift": 2.05,
+      "l2_lift": -1.8,
+      "l3_lift": 1.85,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "z-ai/glm-5.2-20260616",
+      "model_id": "z-ai/glm-5.2",
+      "mascot": {
+        "key": "z-ai/glm-5.2",
+        "emoji": "🦉",
+        "title": "Sage",
+        "color": "#a78bfa"
+      },
+      "l0": 50.27,
+      "l1": 51.33,
+      "l2": 53.64,
+      "l3": 51.93,
+      "l2_version": 1,
+      "l3_version": 6,
+      "retired_in": [],
+      "l2_lift": 3.37,
+      "l3_lift": 1.66,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "z-ai/glm-5.3-flash-20260826",
+      "model_id": "z-ai/glm-5.3-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 48.08,
+      "l1": 49.09,
+      "l2": 47.15,
+      "l3": 49.71,
+      "l2_version": 2,
+      "l3_version": 7,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "l2_lift": -0.93,
+      "l3_lift": 1.63,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "deepseek/deepseek-v4-pro-20260423",
+      "model_id": "deepseek/deepseek-v4-pro",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-pro",
+        "emoji": "🐋",
+        "title": "Abyss",
+        "color": "#4d6bfe"
+      },
+      "l0": 48.01,
+      "l1": 34.6,
+      "l2": 46.92,
+      "l3": 49.6,
+      "l2_version": 1,
+      "l3_version": 6,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2"
+      ],
+      "l2_lift": -1.09,
+      "l3_lift": 1.59,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "deepseek/deepseek-v4-flash-20260423",
+      "model_id": "deepseek/deepseek-v4-flash",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-flash",
+        "emoji": "⚡",
+        "title": "Surge",
+        "color": "#38bdf8"
+      },
+      "l0": 50.44,
+      "l1": 50.08,
+      "l2": 51.91,
+      "l3": 51.88,
+      "l2_version": 1,
+      "l3_version": 7,
+      "retired_in": [],
+      "l2_lift": 1.47,
+      "l3_lift": 1.44,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "moonshotai/kimi-k3.1-pro-20261023",
+      "model_id": "moonshotai/kimi-k3.1-pro",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 56.13,
+      "l1": 40.86,
+      "l2": 56.37,
+      "l3": 57.41,
+      "l2_version": 2,
+      "l3_version": 1,
+      "retired_in": [
+        "L1"
+      ],
+      "l2_lift": 0.24,
+      "l3_lift": 1.28,
       "revised": true,
       "field_control": false
     },
@@ -639,155 +936,47 @@
       "field_control": false
     },
     {
-      "slug": "z-ai/glm-5.3-flash-20260826",
-      "model_id": "z-ai/glm-5.3-flash",
-      "mascot": {
-        "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
-      },
-      "l0": 48.08,
-      "l1": 49.31,
-      "l2": 47.57,
-      "l3": 49.22,
-      "l2_version": 2,
-      "l3_version": 6,
-      "retired_in": [],
-      "l2_lift": -0.51,
-      "l3_lift": 1.14,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "deepseek/deepseek-v4-pro-20260423",
-      "model_id": "deepseek/deepseek-v4-pro",
-      "mascot": {
-        "key": "deepseek/deepseek-v4-pro",
-        "emoji": "🐋",
-        "title": "Abyss",
-        "color": "#4d6bfe"
-      },
-      "l0": 48.01,
-      "l1": 34.6,
-      "l2": 48,
-      "l3": 49.1,
-      "l2_version": 1,
-      "l3_version": 6,
-      "retired_in": [
-        "L0",
-        "L1"
-      ],
-      "l2_lift": -0.01,
-      "l3_lift": 1.09,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "deepseek/deepseek-v4-flash-20260423",
-      "model_id": "deepseek/deepseek-v4-flash",
-      "mascot": {
-        "key": "deepseek/deepseek-v4-flash",
-        "emoji": "⚡",
-        "title": "Surge",
-        "color": "#38bdf8"
-      },
-      "l0": 51.34,
-      "l1": 51.49,
-      "l2": 53.11,
-      "l3": 52.24,
-      "l2_version": 1,
-      "l3_version": 6,
-      "retired_in": [],
-      "l2_lift": 1.77,
-      "l3_lift": 0.9,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "deepseek/deepseek-v4-flash-20260731",
-      "model_id": "deepseek/deepseek-v4-flash-0731",
-      "mascot": {
-        "key": "deepseek/deepseek-v4-flash",
-        "emoji": "⚡",
-        "title": "Surge",
-        "color": "#38bdf8"
-      },
-      "l0": 50.59,
-      "l1": 51.38,
-      "l2": 52.56,
-      "l3": 51.27,
-      "l2_version": 1,
-      "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": 1.97,
-      "l3_lift": 0.68,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "stealth/ox-alpha",
-      "model_id": "stealth/ox-alpha",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 48.01,
-      "l1": 47.88,
-      "l2": 48.01,
-      "l3": 48.52,
-      "l2_version": 1,
-      "l3_version": 1,
-      "retired_in": [
-        "L0",
-        "L1"
-      ],
-      "l2_lift": 0,
-      "l3_lift": 0.51,
-      "revised": false,
-      "field_control": true
-    },
-    {
-      "slug": "inception/mercury-2.5-20260908",
-      "model_id": "inception/mercury-2.5",
+      "slug": "xingchen-agi/xing4.0-29b-a4b-20261015",
+      "model_id": "xingchen-agi/xing4.0-29b-a4b:free",
       "mascot": {
         "key": null,
         "emoji": "🤖",
         "title": "Rookie",
         "color": "#94a3b8"
       },
-      "l0": 52.31,
-      "l1": 51.32,
-      "l2": 54.96,
-      "l3": 52.8,
-      "l2_version": 2,
-      "l3_version": 3,
-      "retired_in": [],
-      "l2_lift": 2.65,
-      "l3_lift": 0.49,
-      "revised": true,
-      "field_control": false
+      "l0": 44.33,
+      "l1": 51.17,
+      "l2": 51.69,
+      "l3": 44.91,
+      "l2_version": 1,
+      "l3_version": 1,
+      "retired_in": [
+        "L0",
+        "L3"
+      ],
+      "l2_lift": 7.36,
+      "l3_lift": 0.58,
+      "revised": false,
+      "field_control": true
     },
     {
-      "slug": "~openai/gpt-astra-latest",
-      "model_id": "~openai/gpt-astra-latest",
+      "slug": "openai/gpt-6-astra-20260903",
+      "model_id": "openai/gpt-6-astra",
       "mascot": {
         "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
       },
-      "l0": 60.14,
-      "l1": 60.33,
-      "l2": 60.57,
-      "l3": 60.42,
+      "l0": 63.79,
+      "l1": 62.17,
+      "l2": 60.88,
+      "l3": 64.01,
       "l2_version": 3,
-      "l3_version": 4,
+      "l3_version": 6,
       "retired_in": [],
-      "l2_lift": 0.43,
-      "l3_lift": 0.28,
+      "l2_lift": -2.91,
+      "l3_lift": 0.22,
       "revised": true,
       "field_control": false
     },
@@ -800,36 +989,15 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 51.16,
-      "l1": 51.69,
-      "l2": 50.93,
-      "l3": 51.34,
+      "l0": 50.06,
+      "l1": 50.67,
+      "l2": 49.65,
+      "l3": 50.21,
       "l2_version": 2,
-      "l3_version": 5,
+      "l3_version": 6,
       "retired_in": [],
-      "l2_lift": -0.23,
-      "l3_lift": 0.18,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "google/gemini-3.6-flash-20260721",
-      "model_id": "google/gemini-3.6-flash",
-      "mascot": {
-        "key": "google/gemini-3.6-flash",
-        "emoji": "💎",
-        "title": "Prism",
-        "color": "#4285f4"
-      },
-      "l0": 50.09,
-      "l1": 49.92,
-      "l2": 48.61,
-      "l3": 50.25,
-      "l2_version": 2,
-      "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": -1.48,
-      "l3_lift": 0.16,
+      "l2_lift": -0.41,
+      "l3_lift": 0.15,
       "revised": true,
       "field_control": false
     },
@@ -860,8 +1028,8 @@
       "field_control": false
     },
     {
-      "slug": "deepseek/deepseek-v4.1-flash-20261017",
-      "model_id": "deepseek/deepseek-v4.1-flash-1017",
+      "slug": "openai/gpt-6.1-terra-pro-20261026",
+      "model_id": "openai/gpt-6.1-terra-pro",
       "mascot": {
         "key": null,
         "emoji": "🛰️",
@@ -881,23 +1049,89 @@
       "field_control": true
     },
     {
-      "slug": "tencent/hy4-preview-20260827",
-      "model_id": "tencent/hy4-preview",
+      "slug": "openai/gpt-6.1-terra-20261026",
+      "model_id": "openai/gpt-6.1-terra",
       "mascot": {
-        "key": "tencent/hy4-preview",
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
       },
-      "l0": 52.67,
-      "l1": 49.5,
-      "l2": 53.91,
-      "l3": 52.49,
-      "l2_version": 2,
-      "l3_version": 5,
+      "l0": 50,
+      "l1": 50,
+      "l2": 50,
+      "l3": 50,
+      "l2_version": 1,
+      "l3_version": 1,
       "retired_in": [],
-      "l2_lift": 1.24,
-      "l3_lift": -0.18,
+      "l2_lift": 0,
+      "l3_lift": 0,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "deepseek/deepseek-v4-flash-20260731",
+      "model_id": "deepseek/deepseek-v4-flash-0731",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-flash",
+        "emoji": "⚡",
+        "title": "Surge",
+        "color": "#38bdf8"
+      },
+      "l0": 50.43,
+      "l1": 51.06,
+      "l2": 51.34,
+      "l3": 50.35,
+      "l2_version": 1,
+      "l3_version": 6,
+      "retired_in": [],
+      "l2_lift": 0.91,
+      "l3_lift": -0.08,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "deepseek/deepseek-v4.1-flash-20261017",
+      "model_id": "deepseek/deepseek-v4.1-flash-1017",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 49.39,
+      "l1": 47.85,
+      "l2": 44.18,
+      "l3": 49.27,
+      "l2_version": 2,
+      "l3_version": 2,
+      "retired_in": [
+        "L1",
+        "L2"
+      ],
+      "l2_lift": -5.21,
+      "l3_lift": -0.12,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-3.6-flash-20260721",
+      "model_id": "google/gemini-3.6-flash",
+      "mascot": {
+        "key": "google/gemini-3.6-flash",
+        "emoji": "💎",
+        "title": "Prism",
+        "color": "#4285f4"
+      },
+      "l0": 50.05,
+      "l1": 49.88,
+      "l2": 49.38,
+      "l3": 49.77,
+      "l2_version": 2,
+      "l3_version": 6,
+      "retired_in": [],
+      "l2_lift": -0.67,
+      "l3_lift": -0.28,
       "revised": true,
       "field_control": false
     },
@@ -910,38 +1144,43 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 50.8,
-      "l1": 50.92,
-      "l2": 51.62,
-      "l3": 50.62,
+      "l0": 49.73,
+      "l1": 50.55,
+      "l2": 50.8,
+      "l3": 49.33,
       "l2_version": 2,
-      "l3_version": 4,
+      "l3_version": 5,
       "retired_in": [],
-      "l2_lift": 0.82,
-      "l3_lift": -0.18,
+      "l2_lift": 1.07,
+      "l3_lift": -0.4,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "openai/gpt-5.6-terra-20260709",
-      "model_id": "openai/gpt-5.6-terra",
+      "slug": "stealth/ox-alpha",
+      "model_id": "stealth/ox-alpha",
       "mascot": {
         "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
       },
-      "l0": 50.76,
-      "l1": 51.11,
-      "l2": 51.81,
-      "l3": 50.29,
-      "l2_version": 2,
-      "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": 1.05,
-      "l3_lift": -0.47,
-      "revised": true,
-      "field_control": false
+      "l0": 48.01,
+      "l1": 47.88,
+      "l2": 46.9,
+      "l3": 47.57,
+      "l2_version": 1,
+      "l3_version": 1,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -1.11,
+      "l3_lift": -0.44,
+      "revised": false,
+      "field_control": true
     },
     {
       "slug": "anthropic/claude-4.5-haiku-20251001",
@@ -970,48 +1209,88 @@
       "field_control": false
     },
     {
-      "slug": "google/gemma-4-26b-a4b-it-20260403",
-      "model_id": "google/gemma-4-26b-a4b-it",
+      "slug": "openai/gpt-5.6-terra-20260709",
+      "model_id": "openai/gpt-5.6-terra",
       "mascot": {
         "key": null,
         "emoji": "🐺",
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 50.51,
-      "l1": 46.96,
-      "l2": 47.77,
-      "l3": 49.64,
-      "l2_version": 3,
-      "l3_version": 5,
-      "retired_in": [
-        "L1"
-      ],
-      "l2_lift": -2.74,
-      "l3_lift": -0.87,
+      "l0": 50.14,
+      "l1": 50.57,
+      "l2": 50.81,
+      "l3": 49.42,
+      "l2_version": 2,
+      "l3_version": 6,
+      "retired_in": [],
+      "l2_lift": 0.67,
+      "l3_lift": -0.72,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "google/gemini-2.5-flash-lite",
-      "model_id": "google/gemini-2.5-flash-lite",
+      "slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
+      "model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "mascot": {
+        "key": "nvidia/nemotron-3-ultra",
+        "emoji": "🦾",
+        "title": "Titan",
+        "color": "#76b900"
+      },
+      "l0": 53.28,
+      "l1": 53.05,
+      "l2": 53.96,
+      "l3": 52.53,
+      "l2_version": 1,
+      "l3_version": 6,
+      "retired_in": [],
+      "l2_lift": 0.68,
+      "l3_lift": -0.75,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "tencent/hy4-preview-20260827",
+      "model_id": "tencent/hy4-preview",
+      "mascot": {
+        "key": "tencent/hy4-preview",
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 51.99,
+      "l1": 48.67,
+      "l2": 53.1,
+      "l3": 51.1,
+      "l2_version": 2,
+      "l3_version": 6,
+      "retired_in": [
+        "L1"
+      ],
+      "l2_lift": 1.11,
+      "l3_lift": -0.89,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "inception/mercury-2.5-20260908",
+      "model_id": "inception/mercury-2.5",
       "mascot": {
         "key": null,
         "emoji": "🤖",
         "title": "Rookie",
         "color": "#94a3b8"
       },
-      "l0": 49.32,
-      "l1": 48.11,
-      "l2": 46.31,
-      "l3": 48.41,
+      "l0": 50.87,
+      "l1": 53.8,
+      "l2": 54.42,
+      "l3": 49.92,
       "l2_version": 2,
-      "l3_version": 5,
-      "retired_in": [
-        "L2"
-      ],
-      "l2_lift": -3.01,
-      "l3_lift": -0.91,
+      "l3_version": 4,
+      "retired_in": [],
+      "l2_lift": 3.55,
+      "l3_lift": -0.95,
       "revised": true,
       "field_control": false
     },
@@ -1024,36 +1303,107 @@
         "title": "Orbit",
         "color": "#60a5fa"
       },
-      "l0": 50.87,
-      "l1": 50.86,
-      "l2": 54.12,
-      "l3": 49.29,
+      "l0": 50.62,
+      "l1": 50.06,
+      "l2": 54.34,
+      "l3": 49.62,
       "l2_version": 2,
-      "l3_version": 5,
+      "l3_version": 6,
       "retired_in": [],
-      "l2_lift": 3.25,
-      "l3_lift": -1.58,
+      "l2_lift": 3.72,
+      "l3_lift": -1,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "openai/gpt-6-astra-pro-20260903",
-      "model_id": "openai/gpt-6-astra-pro",
+      "slug": "google/gemini-3.1-pro-preview-20260219",
+      "model_id": "google/gemini-3.1-pro-preview",
       "mascot": {
         "key": null,
-        "emoji": "🛰️",
-        "title": "Orbit",
-        "color": "#60a5fa"
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
       },
-      "l0": 79.93,
-      "l1": 83.66,
-      "l2": 63.54,
-      "l3": 78.21,
-      "l2_version": 3,
-      "l3_version": 4,
+      "l0": 51.05,
+      "l1": 50.22,
+      "l2": 50,
+      "l3": 49.91,
+      "l2_version": 2,
+      "l3_version": 6,
       "retired_in": [],
-      "l2_lift": -16.39,
-      "l3_lift": -1.72,
+      "l2_lift": -1.05,
+      "l3_lift": -1.14,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-2.5-flash-lite",
+      "model_id": "google/gemini-2.5-flash-lite",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 48.85,
+      "l1": 47.89,
+      "l2": 46.31,
+      "l3": 47.55,
+      "l2_version": 2,
+      "l3_version": 5,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -2.54,
+      "l3_lift": -1.3,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemma-4-26b-a4b-it-20260403",
+      "model_id": "google/gemma-4-26b-a4b-it",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 50.07,
+      "l1": 46.96,
+      "l2": 47.21,
+      "l3": 48.16,
+      "l2_version": 3,
+      "l3_version": 6,
+      "retired_in": [
+        "L1",
+        "L2"
+      ],
+      "l2_lift": -2.86,
+      "l3_lift": -1.91,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "~unbiased/pareto-latest",
+      "model_id": "~unbiased/pareto-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 66.23,
+      "l1": 64.76,
+      "l2": 60.94,
+      "l3": 64.32,
+      "l2_version": 2,
+      "l3_version": 2,
+      "retired_in": [],
+      "l2_lift": -5.29,
+      "l3_lift": -1.91,
       "revised": true,
       "field_control": false
     },
@@ -1066,15 +1416,65 @@
         "title": "Rookie",
         "color": "#94a3b8"
       },
-      "l0": 50.04,
-      "l1": 48.93,
-      "l2": 48.14,
-      "l3": 47.55,
+      "l0": 50,
+      "l1": 48.48,
+      "l2": 49.05,
+      "l3": 47.3,
       "l2_version": 2,
       "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": -1.9,
-      "l3_lift": -2.49,
+      "retired_in": [
+        "L1",
+        "L3"
+      ],
+      "l2_lift": -0.95,
+      "l3_lift": -2.7,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "~deepseek/deepseek-flash-latest",
+      "model_id": "~deepseek/deepseek-flash-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 51.27,
+      "l1": 51.17,
+      "l2": 45.38,
+      "l3": 48.29,
+      "l2_version": 3,
+      "l3_version": 3,
+      "retired_in": [
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -5.89,
+      "l3_lift": -2.98,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemma-4-31b-it-20260402",
+      "model_id": "google/gemma-4-31b-it",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 50.28,
+      "l1": 49.92,
+      "l2": 49.8,
+      "l3": 47.24,
+      "l2_version": 2,
+      "l3_version": 6,
+      "retired_in": [
+        "L3"
+      ],
+      "l2_lift": -0.48,
+      "l3_lift": -3.04,
       "revised": true,
       "field_control": false
     },
@@ -1090,100 +1490,111 @@
       "l0": 45.92,
       "l1": 47.78,
       "l2": 42.29,
-      "l3": 42.99,
+      "l3": 42.23,
       "l2_version": 2,
       "l3_version": 4,
       "retired_in": [
         "L0",
         "L1",
-        "L2"
+        "L2",
+        "L3"
       ],
       "l2_lift": -3.63,
-      "l3_lift": -2.93,
+      "l3_lift": -3.69,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "google/gemma-4-31b-it-20260402",
-      "model_id": "google/gemma-4-31b-it",
-      "mascot": {
-        "key": null,
-        "emoji": "🤖",
-        "title": "Rookie",
-        "color": "#94a3b8"
-      },
-      "l0": 50.69,
-      "l1": 50.61,
-      "l2": 50.67,
-      "l3": 47.5,
-      "l2_version": 2,
-      "l3_version": 6,
-      "retired_in": [],
-      "l2_lift": -0.02,
-      "l3_lift": -3.19,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "google/gemini-3.1-pro-preview-20260219",
-      "model_id": "google/gemini-3.1-pro-preview",
+      "slug": "anthropic/claude-4.6-opus-20260205",
+      "model_id": "anthropic/claude-opus-4.6",
       "mascot": {
         "key": null,
         "emoji": "👾",
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 51.72,
-      "l1": 51.2,
-      "l2": 50.79,
-      "l3": 48.31,
+      "l0": 49.92,
+      "l1": 50.2,
+      "l2": 45.83,
+      "l3": null,
       "l2_version": 2,
-      "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": -0.93,
-      "l3_lift": -3.41,
+      "l3_version": null,
+      "retired_in": [
+        "L2"
+      ],
+      "l2_lift": -4.09,
+      "l3_lift": null,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "~deepseek/deepseek-flash-latest",
-      "model_id": "~deepseek/deepseek-flash-latest",
+      "slug": "unbiased/pareto-26.10-20261015",
+      "model_id": "unbiased/pareto-26.10",
       "mascot": {
         "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
       },
-      "l0": 51.48,
-      "l1": 50.24,
-      "l2": 45.33,
-      "l3": 47.76,
-      "l2_version": 3,
-      "l3_version": 3,
+      "l0": 62.33,
+      "l1": 58.51,
+      "l2": 55.82,
+      "l3": 58.16,
+      "l2_version": 2,
+      "l3_version": 2,
       "retired_in": [],
-      "l2_lift": -6.15,
-      "l3_lift": -3.72,
+      "l2_lift": -6.51,
+      "l3_lift": -4.17,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
-      "model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "slug": "qwen/qwen3.8-max-20260902",
+      "model_id": "qwen/qwen3.8-max-0902",
       "mascot": {
-        "key": "nvidia/nemotron-3-ultra",
-        "emoji": "🦾",
-        "title": "Titan",
-        "color": "#76b900"
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
       },
-      "l0": 57.08,
-      "l1": 57.01,
-      "l2": 54.68,
-      "l3": 53.02,
-      "l2_version": 1,
-      "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": -2.4,
-      "l3_lift": -4.06,
+      "l0": 49.56,
+      "l1": 49.82,
+      "l2": 45.14,
+      "l3": 45.31,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -4.42,
+      "l3_lift": -4.25,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-oss-20b",
+      "model_id": "openai/gpt-oss-20b",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 49.13,
+      "l1": 45.25,
+      "l2": 31.36,
+      "l3": 44.74,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -17.77,
+      "l3_lift": -4.39,
       "revised": true,
       "field_control": false
     },
@@ -1198,7 +1609,7 @@
       },
       "l0": 46.67,
       "l1": 46.43,
-      "l2": 48.36,
+      "l2": 49.06,
       "l3": 42.14,
       "l2_version": 2,
       "l3_version": 3,
@@ -1207,78 +1618,29 @@
         "L1",
         "L3"
       ],
-      "l2_lift": 1.69,
+      "l2_lift": 2.39,
       "l3_lift": -4.53,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "openai/gpt-oss-20b",
-      "model_id": "openai/gpt-oss-20b",
+      "slug": "openai/gpt-6-astra-pro-20260903",
+      "model_id": "openai/gpt-6-astra-pro",
       "mascot": {
         "key": null,
         "emoji": "🛰️",
         "title": "Orbit",
         "color": "#60a5fa"
       },
-      "l0": 49.42,
-      "l1": 45.25,
-      "l2": 31.36,
-      "l3": 44.74,
-      "l2_version": 2,
-      "l3_version": 3,
-      "retired_in": [
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "l2_lift": -18.06,
-      "l3_lift": -4.68,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "anthropic/claude-4.6-opus-20260205",
-      "model_id": "anthropic/claude-opus-4.6",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 50.82,
-      "l1": 50.6,
-      "l2": 45.69,
-      "l3": null,
-      "l2_version": 2,
-      "l3_version": null,
-      "retired_in": [],
-      "l2_lift": -5.13,
-      "l3_lift": null,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "qwen/qwen3.8-max-20260902",
-      "model_id": "qwen/qwen3.8-max-0902",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 50.7,
-      "l1": 49.74,
-      "l2": 45.14,
-      "l3": 45.31,
+      "l0": 79.38,
+      "l1": 81.66,
+      "l2": 61.6,
+      "l3": 74.75,
       "l2_version": 3,
-      "l3_version": 2,
-      "retired_in": [
-        "L2",
-        "L3"
-      ],
-      "l2_lift": -5.56,
-      "l3_lift": -5.39,
+      "l3_version": 5,
+      "retired_in": [],
+      "l2_lift": -17.78,
+      "l3_lift": -4.63,
       "revised": true,
       "field_control": false
     },
@@ -1291,39 +1653,19 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 50.81,
-      "l1": 49.45,
+      "l0": 50.57,
+      "l1": 49.31,
       "l2": 41.12,
       "l3": 45.09,
       "l2_version": 3,
       "l3_version": 3,
       "retired_in": [
+        "L1",
         "L2",
         "L3"
       ],
-      "l2_lift": -9.69,
-      "l3_lift": -5.72,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "unbiased/pareto-20260917",
-      "model_id": "unbiased/pareto",
-      "mascot": {
-        "key": null,
-        "emoji": "🦅",
-        "title": "Talon",
-        "color": "#34d399"
-      },
-      "l0": 77.82,
-      "l1": 80.21,
-      "l2": 73.02,
-      "l3": 71.97,
-      "l2_version": 3,
-      "l3_version": 3,
-      "retired_in": [],
-      "l2_lift": -4.8,
-      "l3_lift": -5.85,
+      "l2_lift": -9.45,
+      "l3_lift": -5.48,
       "revised": true,
       "field_control": false
     },
@@ -1336,17 +1678,38 @@
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 50.75,
-      "l1": 51.5,
-      "l2": 57.11,
+      "l0": 51.43,
+      "l1": 50.84,
+      "l2": 55.83,
       "l3": 43.13,
       "l2_version": 2,
       "l3_version": 2,
       "retired_in": [
         "L3"
       ],
-      "l2_lift": 6.36,
-      "l3_lift": -7.62,
+      "l2_lift": 4.4,
+      "l3_lift": -8.3,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "unbiased/pareto-20260917",
+      "model_id": "unbiased/pareto",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 76.95,
+      "l1": 77.98,
+      "l2": 67.14,
+      "l3": 66.97,
+      "l2_version": 3,
+      "l3_version": 4,
+      "retired_in": [],
+      "l2_lift": -9.81,
+      "l3_lift": -9.98,
       "revised": true,
       "field_control": false
     },
@@ -1361,7 +1724,7 @@
       },
       "l0": 38.79,
       "l1": 36.83,
-      "l2": 54.59,
+      "l2": 53.32,
       "l3": 26.69,
       "l2_version": 3,
       "l3_version": 1,
@@ -1370,22 +1733,22 @@
         "L1",
         "L3"
       ],
-      "l2_lift": 15.8,
+      "l2_lift": 14.53,
       "l3_lift": -12.1,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "moonshotai/kimi-k2.6-20260420",
-      "model_id": "moonshotai/kimi-k2.6",
+      "slug": "deepseek/deepseek-v4.1-flash-20260910",
+      "model_id": "deepseek/deepseek-v4.1-flash",
       "mascot": {
         "key": null,
-        "emoji": "🦅",
-        "title": "Talon",
-        "color": "#34d399"
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
       },
-      "l0": 52.69,
-      "l1": 51,
+      "l0": 54.51,
+      "l1": 50.42,
       "l2": null,
       "l3": null,
       "l2_version": null,
@@ -1397,16 +1760,16 @@
       "field_control": true
     },
     {
-      "slug": "stealth/space-bunny-alpha",
-      "model_id": "stealth/space-bunny-alpha",
+      "slug": "moonshotai/kimi-k2.6-20260420",
+      "model_id": "moonshotai/kimi-k2.6",
       "mascot": {
         "key": null,
         "emoji": "🦅",
         "title": "Talon",
         "color": "#34d399"
       },
-      "l0": 52.2,
-      "l1": 50,
+      "l0": 52.39,
+      "l1": 50.61,
       "l2": null,
       "l3": null,
       "l2_version": null,
@@ -1426,29 +1789,8 @@
         "title": "Orbit",
         "color": "#60a5fa"
       },
-      "l0": 51.82,
+      "l0": 52.19,
       "l1": null,
-      "l2": null,
-      "l3": null,
-      "l2_version": null,
-      "l3_version": null,
-      "retired_in": [],
-      "l2_lift": null,
-      "l3_lift": null,
-      "revised": false,
-      "field_control": true
-    },
-    {
-      "slug": "google/gemini-3.5-flash-lite-20260721",
-      "model_id": "google/gemini-3.5-flash-lite",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 50.29,
-      "l1": 49.32,
       "l2": null,
       "l3": null,
       "l2_version": null,
@@ -1468,8 +1810,75 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 50,
+      "l0": 52,
+      "l1": 59.17,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "google/gemini-3.5-flash-lite-20260721",
+      "model_id": "google/gemini-3.5-flash-lite",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 50.69,
+      "l1": 49.32,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [
+        "L1"
+      ],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "qwen/qwen3.8-flash-20260826",
+      "model_id": "qwen/qwen3.8-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 49.58,
       "l1": null,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [
+        "L0"
+      ],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
+      "slug": "google/gemini-3.8-flash-20260902",
+      "model_id": "google/gemini-3.8-flash",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 49.53,
+      "l1": 50.03,
       "l2": null,
       "l3": null,
       "l2_version": null,
@@ -1489,55 +1898,38 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 49.74,
-      "l1": 51.32,
+      "l0": 49.36,
+      "l1": 51.79,
       "l2": null,
       "l3": null,
       "l2_version": null,
       "l3_version": null,
-      "retired_in": [],
+      "retired_in": [
+        "L0"
+      ],
       "l2_lift": null,
       "l3_lift": null,
       "revised": false,
       "field_control": true
     },
     {
-      "slug": "qwen/qwen3.8-flash-20260826",
-      "model_id": "qwen/qwen3.8-flash",
+      "slug": "stealth/space-bunny-alpha",
+      "model_id": "stealth/space-bunny-alpha",
       "mascot": {
         "key": null,
         "emoji": "🦅",
         "title": "Talon",
         "color": "#34d399"
       },
-      "l0": 49.6,
-      "l1": null,
+      "l0": 48.35,
+      "l1": 50.16,
       "l2": null,
       "l3": null,
       "l2_version": null,
       "l3_version": null,
-      "retired_in": [],
-      "l2_lift": null,
-      "l3_lift": null,
-      "revised": false,
-      "field_control": true
-    },
-    {
-      "slug": "google/gemini-3.8-flash-20260902",
-      "model_id": "google/gemini-3.8-flash",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 49.39,
-      "l1": 50.91,
-      "l2": null,
-      "l3": null,
-      "l2_version": null,
-      "l3_version": null,
-      "retired_in": [],
+      "retired_in": [
+        "L0"
+      ],
       "l2_lift": null,
       "l3_lift": null,
       "revised": false,
@@ -1552,13 +1944,15 @@
         "title": "Talon",
         "color": "#34d399"
       },
-      "l0": 40.23,
+      "l0": 41.91,
       "l1": null,
       "l2": null,
       "l3": null,
       "l2_version": null,
       "l3_version": null,
-      "retired_in": [],
+      "retired_in": [
+        "L0"
+      ],
       "l2_lift": null,
       "l3_lift": null,
       "revised": false,
@@ -1582,29 +1976,6 @@
       "retired_in": [
         "L0",
         "L1"
-      ],
-      "l2_lift": null,
-      "l3_lift": null,
-      "revised": false,
-      "field_control": true
-    },
-    {
-      "slug": "deepseek/deepseek-v4.1-flash-20260910",
-      "model_id": "deepseek/deepseek-v4.1-flash",
-      "mascot": {
-        "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
-      },
-      "l0": 7.99,
-      "l1": 49.48,
-      "l2": null,
-      "l3": null,
-      "l2_version": null,
-      "l3_version": null,
-      "retired_in": [
-        "L0"
       ],
       "l2_lift": null,
       "l3_lift": null,
