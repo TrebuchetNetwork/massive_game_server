@@ -602,15 +602,31 @@ impl MassiveGameServer {
         let effective_participant_count = player_count;
         let fortress_attack_defend_mode = self.fortress_attack_defend_map();
         let coop_gauntlet = coop_gauntlet_enabled() && !fortress_attack_defend_mode;
-        let dynamic_mode_transitions =
-            dynamic_mode_transitions_enabled() && !fortress_attack_defend_mode && !coop_gauntlet;
+        let champion_duel = self.duel_rules_active() && !fortress_attack_defend_mode;
+        let dynamic_mode_transitions = dynamic_mode_transitions_enabled()
+            && !fortress_attack_defend_mode
+            && !coop_gauntlet
+            && !champion_duel;
 
         match match_info_guard.match_state {
             fb::MatchStateType::Waiting => {
+                // A challenger who connected during the brief Waiting
+                // intermission (or while the server sat idle in Waiting)
+                // still gets their duel at this boundary instead of playing
+                // a full non-duel round first.
+                if self.match_type != MatchType::ChampionDuel
+                    && self.duel_challenger_count() > 0
+                    && !self.duel_active()
+                {
+                    drop(match_info_guard);
+                    self.sync_duel_activation();
+                    self.sync_gauntlet_activation();
+                    match_info_guard = self.match_info.write();
+                }
                 if effective_participant_count >= MIN_PLAYERS_TO_START {
                     match_info_guard.match_state = fb::MatchStateType::Active;
                     self.arena_exhibition.mark_round_started();
-                    match_info_guard.time_remaining = self.match_duration_secs;
+                    match_info_guard.time_remaining = self.effective_round_duration_secs();
                     let epoch = crate::server::epoch::MatchEpoch::new(
                         self.frame_counter.load(AtomicOrdering::Relaxed),
                         self.get_server_timestamp_ms() as i64,
@@ -636,6 +652,10 @@ impl MassiveGameServer {
                     match_info_guard.late_phase_final_stand_triggered = false;
                     if fortress_attack_defend_mode {
                         match_info_guard.game_mode = fb::GameModeType::CaptureTheFlag;
+                    } else if champion_duel {
+                        // 1v1 against the champion is a team duel: humans on
+                        // team 1, the champion's fighter alone on team 2.
+                        match_info_guard.game_mode = fb::GameModeType::TeamDeathmatch;
                     } else if coop_gauntlet {
                         // Humans + model roster vs the wave is a team fight
                         // from the first tick; an FFA opening would turn the
@@ -697,6 +717,12 @@ impl MassiveGameServer {
                     // Publish after releasing the match write lock so a
                     // slow/hung Redis cannot stall the tick loop.
                     drop(match_info_guard);
+                    if champion_duel {
+                        // On-demand activations already moved everyone at the
+                        // boundary; this covers dedicated duel instances and
+                        // humans who joined mid-duel on the wrong side.
+                        self.move_humans_to_duel_side();
+                    }
                     if coop_gauntlet {
                         // Tell everyone which wave just started so the HUD
                         // can show the escalation without opening Tab.
@@ -1080,8 +1106,10 @@ impl MassiveGameServer {
                     self.reset_match_state(&mut match_info_guard);
                     info!("Match reset to Waiting.");
                     // Between matches is the only safe moment to switch
-                    // between gauntlet rules and the league rotation.
+                    // between duel, gauntlet, and league-rotation rules. The
+                    // duel takes precedence over the gauntlet.
                     drop(match_info_guard);
+                    self.sync_duel_activation();
                     self.sync_gauntlet_activation();
                 }
             }

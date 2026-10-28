@@ -158,6 +158,7 @@ export function createConnectionManager(getCtx) {
             if (normalized === 'quick') return 'quick';
             if (normalized === 'mobile_blitz' || normalized === 'blitz') return 'mobile_blitz';
             if (normalized === 'mobile_standard' || normalized === 'mobile') return 'mobile_standard';
+            if (normalized === 'champion_duel' || normalized === 'duel' || normalized === 'champion') return 'champion_duel';
             return '';
         })();
         // Match type describes the ruleset, not the player's hardware. The

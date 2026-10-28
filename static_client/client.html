@@ -316,6 +316,7 @@
                         <option value="quick">Quick Match (Short Round)</option>
                         <option value="mobile_standard">Mobile Standard</option>
                         <option value="mobile_blitz">Mobile Blitz</option>
+                        <option value="champion_duel">Champion Duel (1v1)</option>
                     </select>
                 </div>
                 <div id="authCard" class="p-3 bg-gray-800 border border-gray-700 rounded-md space-y-2">
@@ -592,7 +593,7 @@
             createUpdateSprites,
             createMapThemes,
             flushPendingClientLogs,
-        } from './client_logic/index.js?v=20260828-joinux1';
+        } from './client_logic/index.js?v=20261028-duel1';
         const GP = GameProtocol;
         const {
             uiModeParams,
@@ -2466,18 +2467,23 @@
             if (normalized === 'mobile_standard' || normalized === 'mobilestandard' || normalized === 'mobile') {
                 return 'mobile_standard';
             }
+            if (normalized === 'champion_duel' || normalized === 'duel' || normalized === 'champion') {
+                return 'champion_duel';
+            }
             return '';
         }
 
         function loadSelectedMatchType() {
-            if (IS_PUBLIC_MOBILE_ARENA) {
-                return 'mobile_blitz';
-            }
+            // An explicit match_type in the URL always wins — it is how the
+            // landing page drops a visitor straight into a champion duel.
             const urlMatchType = normalizeSelectedMatchType(
                 uiModeParams.get('match_type') || uiModeParams.get('mode') || ''
             );
             if (urlMatchType) {
                 return urlMatchType;
+            }
+            if (IS_PUBLIC_MOBILE_ARENA) {
+                return 'mobile_blitz';
             }
             try {
                 const stored = localStorage.getItem(MATCH_TYPE_STORAGE_KEY);
@@ -2507,6 +2513,38 @@
                 matchTypeSelect.disabled = true;
                 matchTypeSelect.title = 'This public instance runs the authoritative Mobile Blitz ruleset.';
             }
+            if (selectedMatchType === 'champion_duel') {
+                startDuelChampionNamePoll();
+            }
+        }
+
+        // The champion's fighter may sit outside the client's AoI, so the
+        // local player map cannot name the duel opponent. Poll the public
+        // scoreboard until the "#1 <name>" fighter (the published roster's
+        // top entry) shows up; the match-info banner reads duelChampionName.
+        let duelChampionName = '';
+        let duelChampionPollId = null;
+        async function fetchDuelChampionName() {
+            if (duelChampionName) return;
+            try {
+                const res = await fetch('/api/public/match/scoreboard', { headers: { Accept: 'application/json' } });
+                if (!res.ok) return;
+                const payload = await res.json();
+                const playersArr = Array.isArray(payload?.players) ? payload.players : [];
+                const champion = playersArr.find((p) => p && p.is_bot && /^#1\s+/.test(String(p.username || '')));
+                if (champion) {
+                    duelChampionName = String(champion.username).replace(/^#\d+\s+/, '').trim();
+                    if (duelChampionPollId !== null) {
+                        clearInterval(duelChampionPollId);
+                        duelChampionPollId = null;
+                    }
+                }
+            } catch (_) { /* banner falls back to the waiting text */ }
+        }
+        function startDuelChampionNamePoll() {
+            if (duelChampionPollId !== null) return;
+            fetchDuelChampionName();
+            duelChampionPollId = setInterval(fetchDuelChampionName, 5000);
         }
 
         function sanitizePreferredPlayerName(rawName) {
@@ -3184,6 +3222,8 @@
             setHotZoneEvent,
             setObjectiveUrgency, setTextIfChanged, processKillFeedCombatMoments,
             getCommanderIdForTeam, getCommanderWaypointForTeam, isLocalTeamCommander,
+            getSelectedMatchType: () => selectedMatchType,
+            getDuelChampionName: () => duelChampionName,
             normalizeCombatUiQuality, applyMobilePresetSettings, applyTournamentPresetSettings,
             applyStablePresetSettings, applyBenchPresetSettings, applyEffectsProfile,
             syncParticlesBudget, syncMobileFireButtonState, updateMobileButtonSizing,
@@ -5099,7 +5139,9 @@
 
         // Settings event listeners
         mobileArenaJoinButton?.addEventListener('click', () => {
-            saveSelectedMatchType('mobile_blitz');
+            // Keep an explicit champion-duel selection (landing-page CTA);
+            // otherwise the mobile join button means the blitz ruleset.
+            saveSelectedMatchType(selectedMatchType === 'champion_duel' ? 'champion_duel' : 'mobile_blitz');
             syncMobileArenaJoinButton('connecting');
             connectButton.click();
         });

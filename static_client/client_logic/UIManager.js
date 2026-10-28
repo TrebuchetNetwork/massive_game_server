@@ -2007,6 +2007,7 @@ export function createUIManager(getCtx) {
             ctx.matchInfo.winner_id || '',
             ctx.matchInfo.winner_name || '',
             ctx.players.size,
+            typeof ctx.getDuelChampionName === 'function' ? ctx.getDuelChampionName() : '',
             teamScoresSignature,
             commanderSignature
         ].join(':');
@@ -2031,7 +2032,34 @@ export function createUIManager(getCtx) {
             return row;
         };
 
-        appendTextRow('font-semibold', gameModeName);
+        // Champion duel framing: the visitor asked for the 1v1 explicitly, so
+        // headline the duel and name the champion (the only other player) once
+        // their fighter is in the match.
+        const isChampionDuel = typeof ctx.getSelectedMatchType === 'function'
+            && ctx.getSelectedMatchType() === 'champion_duel';
+        let duelChampionName = '';
+        if (isChampionDuel) {
+            for (const [pid, player] of ctx.players) {
+                if (String(pid) === String(ctx.myPlayerId)) continue;
+                const uname = String(player?.username || '').trim();
+                if (uname) {
+                    duelChampionName = uname.replace(/^#\d+\s+/, '');
+                    break;
+                }
+            }
+            // The champion can sit outside the AoI; fall back to the name the
+            // scoreboard poll resolved.
+            if (!duelChampionName && typeof ctx.getDuelChampionName === 'function') {
+                duelChampionName = String(ctx.getDuelChampionName() || '');
+            }
+        }
+        const headline = isChampionDuel
+            ? (duelChampionName
+                ? `DUEL — you vs the champion ${duelChampionName}`
+                : 'DUEL — waiting for the champion…')
+            : gameModeName;
+
+        appendTextRow('font-semibold', headline);
 
         const describeCommander = (teamId) => {
             const commanderId = ctx.getCommanderIdForTeam(teamId);

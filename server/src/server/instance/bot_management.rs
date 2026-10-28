@@ -53,7 +53,11 @@ impl MassiveGameServer {
             None
         };
 
-        let base_desired = if human_player_count >= effective_bot_capacity {
+        let base_desired = if self.duel_rules_active() {
+            // The champion is the opponent, not filler: it never yields its
+            // slot to a joining human.
+            crate::server::instance::duel::DUEL_BOT_TARGET as usize
+        } else if human_player_count >= effective_bot_capacity {
             0
         } else {
             (effective_bot_capacity - human_player_count).min(
@@ -324,7 +328,7 @@ impl MassiveGameServer {
         true
     }
 
-    fn spawn_additional_bots(&self, count_to_add: usize) {
+    pub(super) fn spawn_additional_bots(&self, count_to_add: usize) {
         if count_to_add == 0 {
             return;
         }
@@ -353,6 +357,7 @@ impl MassiveGameServer {
         // model fighters on team 1 (the humans' side); everything beyond that
         // is the generic wave on team 2.
         let coop_gauntlet = coop_gauntlet_enabled();
+        let champion_duel = self.duel_rules_active();
         let gauntlet_ally_target = gauntlet_ally_bots();
         let mut team1_bot_count = if coop_gauntlet {
             let mut count = 0usize;
@@ -398,7 +403,10 @@ impl MassiveGameServer {
 
             let bot_player_id_str = format!("bot_{}", uuid::Uuid::new_v4());
 
-            let team_id = if coop_gauntlet {
+            let team_id = if champion_duel {
+                // The champion always opposes the humans, who play team 1.
+                2
+            } else if coop_gauntlet {
                 if team1_bot_count < gauntlet_ally_target {
                     1
                 } else {
@@ -446,9 +454,18 @@ impl MassiveGameServer {
                 spawn_pos.y,
             ) {
                 let exhibition_team_slot = self.next_exhibition_team_slot(team_id);
-                // Gauntlet wave bots stay generic on purpose: only the
-                // humans' team 1 fields model fighters.
-                let exhibition_assignment = if coop_gauntlet && team_id != 1 {
+                // Champion duel: the single bot fields the published roster's
+                // top fighter (falling back down the published order). Gauntlet
+                // wave bots stay generic on purpose: only the humans' team 1
+                // fields model fighters.
+                let exhibition_assignment = if champion_duel {
+                    self.arena_exhibition.attach_champion_bot(
+                        player_id_arc.clone(),
+                        team_id,
+                        exhibition_team_slot,
+                        seed ^ bot_name_num,
+                    )
+                } else if coop_gauntlet && team_id != 1 {
                     None
                 } else {
                     self.arena_exhibition.attach_bot(

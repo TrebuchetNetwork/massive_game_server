@@ -541,6 +541,9 @@ pub fn build_signaling_route(
                 if match_type == MatchType::QuickMatch {
                     server_inst.note_human_queue_arrival();
                 }
+                if match_type == MatchType::ChampionDuel {
+                    server_inst.note_duel_challenger(&peer_id);
+                }
                 ws.on_upgrade(move |socket| {
                     handle_signaling_connection(
                         socket,

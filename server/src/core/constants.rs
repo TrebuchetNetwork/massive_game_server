@@ -389,6 +389,10 @@ pub const MOBILE_BLITZ_DURATION_SECS: f32 = 180.0; // 3 minutes
 pub const MOBILE_STANDARD_MAX_PLAYERS: usize = 32;
 pub const MOBILE_STANDARD_DURATION_SECS: f32 = 300.0; // 5 minutes
 
+// ── Champion duel (1v1 vs the league champion's exhibition fighter) ──
+pub const CHAMPION_DUEL_MAX_PLAYERS: usize = 2;
+pub const CHAMPION_DUEL_DURATION_SECS: f32 = MOBILE_BLITZ_DURATION_SECS; // 3 minutes
+
 // ── Default full match ────────────────────────────────────────────
 pub const FULL_MATCH_DURATION_SECS: f32 = 300.0; // 5 minutes (existing default)
 

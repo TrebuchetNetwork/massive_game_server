@@ -108,5 +108,6 @@ impl MassiveGameServer {
             .remove(&player_id);
         self.runtime_tracking.aim_anomaly_states.remove(&player_id);
         self.snapshots.player_last_sync_positions.remove(&player_id);
+        self.remove_duel_challenger(peer_id);
     }
 }

@@ -65,6 +65,10 @@ struct ExhibitionBinding {
     team_id: u8,
     team_slot: i32,
     seed: u64,
+    /// Champion-duel bindings pin the published roster's top entry (roster[0]
+    /// in published order) instead of the fair side/rotation assignment, so
+    /// the duel always fights the current champion across round rotations.
+    champion: bool,
 }
 
 struct ExhibitionRuntimeEntry {
@@ -308,6 +312,7 @@ impl ArenaExhibition {
             team_id,
             team_slot,
             seed,
+            champion: false,
         };
 
         for _attempt in 0..2 {
@@ -374,6 +379,118 @@ impl ArenaExhibition {
             team_slot,
             "No prebuilt verified fighter was available; retaining generic live bot identity"
         );
+        None
+    }
+
+    /// Attach the champion's fighter for a 1v1 champion duel.
+    ///
+    /// The champion is the published roster's top entry (roster[0] in
+    /// published order). If its prepared runtime is unavailable (artifact
+    /// rejected at startup, pool exhausted), the next published entry with an
+    /// available runtime takes the slot — the duel degrades down the
+    /// published order instead of failing closed. Unlike `attach_bot`, a
+    /// champion binding is not queued mid-round: the duel setup retries at
+    /// the match boundary, and queuing would surface as a generic bot for a
+    /// full round. The binding is marked `champion` so generation rebuilds
+    /// keep it pinned to roster[0] instead of the fair rotation assignment.
+    pub fn attach_champion_bot(
+        &self,
+        player_id: PlayerID,
+        team_id: u8,
+        team_slot: i32,
+        seed: u64,
+    ) -> Option<ExhibitionAssignment> {
+        if !self.enabled || !matches!(team_id, 1 | 2) || team_slot < 0 {
+            return None;
+        }
+        let binding = ExhibitionBinding {
+            team_id,
+            team_slot,
+            seed,
+            champion: true,
+        };
+
+        for _attempt in 0..2 {
+            let (generation, rotation, roster, round_active) = {
+                let state = self.roster.read();
+                (
+                    state.generation,
+                    state.rotation,
+                    state.fighters.clone(),
+                    state.round_active,
+                )
+            };
+            if round_active || roster.is_empty() {
+                metrics::record_arena_exhibition_runtime_event("champion_attach_unavailable");
+                return None;
+            }
+
+            // Walk the published order: champion first, then #2, and so on.
+            let mut chosen: Option<(ExhibitionFighter, ExhibitionBotRuntime)> = None;
+            {
+                let mut prepared = self.prepared.lock();
+                for fighter in roster.iter() {
+                    if let Some(runtime) = prepared.pop(generation, &fighter.model_id) {
+                        chosen = Some((fighter.clone(), runtime));
+                        break;
+                    }
+                }
+            }
+            let Some((fighter, runtime)) = chosen else {
+                metrics::record_arena_exhibition_runtime_event("champion_attach_pool_exhausted");
+                warn!("No prepared runtime for any published fighter; duel champion unavailable");
+                return None;
+            };
+            if fighter.model_id != roster[0].model_id {
+                warn!(
+                    champion = roster[0].model_id,
+                    substitute = fighter.model_id,
+                    "Champion artifact unavailable; duel falls back to the next published fighter"
+                );
+            }
+            let assignment = ExhibitionAssignment {
+                fighter,
+                team_id,
+                slot: team_slot,
+                rotation,
+            };
+
+            let mut runtimes = self.runtimes.lock();
+            let current = self.roster.read();
+            if current.generation != generation
+                || current.rotation != rotation
+                || current.round_active
+            {
+                drop(current);
+                drop(runtimes);
+                // Return the runtime to the pool before retrying so the next
+                // attempt can re-select the same fighter.
+                let mut prepared = self.prepared.lock();
+                if prepared.generation == generation {
+                    prepared
+                        .by_model
+                        .entry(assignment.fighter.model_id.clone())
+                        .or_default()
+                        .push(runtime);
+                }
+                continue;
+            }
+            drop(current);
+            self.pending.lock().remove(&player_id);
+            runtimes.insert(
+                player_id.clone(),
+                ExhibitionRuntimeEntry {
+                    assignment: assignment.clone(),
+                    binding,
+                    runtime,
+                },
+            );
+            metrics::record_arena_exhibition_runtime_event("champion_attach_success");
+            metrics::set_arena_exhibition_runtimes_active(runtimes.len());
+            return Some(assignment);
+        }
+
+        metrics::record_arena_exhibition_runtime_event("champion_attach_unavailable");
         None
     }
 
@@ -805,9 +922,16 @@ fn build_replacement_runtimes(
 ) -> Option<HashMap<PlayerID, ExhibitionRuntimeEntry>> {
     let mut replacements = HashMap::with_capacity(bindings.len());
     for (player_id, binding) in bindings {
-        let fighter = fighters
-            [fair_fighter_index(fighters.len(), binding.team_id, binding.team_slot, rotation)]
-        .clone();
+        let fighter = if binding.champion {
+            // Champion-duel bindings stay pinned to the published roster's
+            // top entry; the roster is verified complete at generation
+            // commit, so roster[0] is always loadable here.
+            fighters[0].clone()
+        } else {
+            fighters
+                [fair_fighter_index(fighters.len(), binding.team_id, binding.team_slot, rotation)]
+            .clone()
+        };
         let seed = runtime_seed(binding, &fighter, rotation);
         let runtime = match sandbox.build_exhibition_runtime(
             &fighter.model_id,
@@ -1436,9 +1560,152 @@ mod tests {
                 team_id: 1,
                 team_slot: 0,
                 seed: 3,
+                champion: false,
             },
         )]);
 
         assert!(build_replacement_runtimes(&sandbox, &fighters, &bindings, 0).is_none());
+    }
+
+    fn duel_test_exhibition(
+        sandbox: BotSandbox,
+        published_fighters: Vec<ExhibitionFighter>,
+        live_fighters: Vec<ExhibitionFighter>,
+        prepared: PreparedRuntimePool,
+        round_active: bool,
+    ) -> ArenaExhibition {
+        ArenaExhibition {
+            enabled: true,
+            ratings_path: PathBuf::new(),
+            roster_limit: 10,
+            prepared_per_fighter: 1,
+            sandbox: Some(sandbox),
+            roster: RwLock::new(ExhibitionRosterState {
+                modified_at: None,
+                season_id: Some("duel-test".to_owned()),
+                published_fighters: Arc::new(published_fighters),
+                fighters: Arc::new(live_fighters),
+                generation: 0,
+                rotation: 0,
+                round_active,
+            }),
+            prepared: Mutex::new(prepared),
+            runtimes: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
+            requested_rotation: AtomicU64::new(0),
+            round_rotation_requested: AtomicBool::new(false),
+            refresh_running: AtomicBool::new(false),
+        }
+    }
+
+    #[test]
+    fn champion_attach_picks_published_roster_top() {
+        let fixture = ExhibitionWasmFixture::new(&["model_a", "model_b"]);
+        let sandbox = BotSandbox::with_wasm_dir_for_tests(fixture.dir.clone());
+        let published_fighters = vec![fighter(1, "model_a"), fighter(2, "model_b")];
+        let (live_fighters, prepared) =
+            prepare_runtime_pool(&sandbox, published_fighters.clone(), 1, 0, 0);
+        assert_eq!(live_fighters, published_fighters);
+        let exhibition =
+            duel_test_exhibition(sandbox, published_fighters, live_fighters, prepared, false);
+
+        // Team 2 slot 0 would fairly map to the roster's second half; the
+        // champion attach must ignore that and take roster[0].
+        let player_id: PlayerID = Arc::from("duel-champion-bot");
+        let assignment = exhibition
+            .attach_champion_bot(player_id.clone(), 2, 0, 7)
+            .expect("champion runtime should attach between rounds");
+        assert_eq!(assignment.fighter.model_id, "model_a");
+        assert_eq!(assignment.fighter.rank, 1);
+        assert_eq!(assignment.fighter.display_name(), "#1 model_a");
+        assert_eq!(
+            exhibition
+                .current_assignment(&player_id)
+                .map(|a| a.fighter.model_id),
+            Some("model_a".to_owned())
+        );
+    }
+
+    #[test]
+    fn champion_attach_falls_back_down_the_published_order() {
+        // The champion's artifact never prepared (e.g. rejected at startup);
+        // only the #2 fighter has a runtime in the pool.
+        let fixture = ExhibitionWasmFixture::new(&["model_b"]);
+        let sandbox = BotSandbox::with_wasm_dir_for_tests(fixture.dir.clone());
+        let champion = fighter(1, "model_a");
+        let runner_up = fighter(2, "model_b");
+        let runner_up_runtime = sandbox
+            .build_exhibition_runtime("model_b", runner_up.wasm_bytes, &runner_up.wasm_sha256, 11)
+            .expect("runner-up runtime should build");
+        let mut by_model = HashMap::new();
+        by_model.insert("model_b".to_owned(), vec![runner_up_runtime]);
+        let prepared = PreparedRuntimePool {
+            generation: 0,
+            by_model,
+        };
+        let published = vec![champion, runner_up];
+        let exhibition =
+            duel_test_exhibition(sandbox, published.clone(), published, prepared, false);
+
+        let player_id: PlayerID = Arc::from("duel-fallback-bot");
+        let assignment = exhibition
+            .attach_champion_bot(player_id.clone(), 2, 0, 13)
+            .expect("the #2 fighter should substitute for the missing champion");
+        assert_eq!(assignment.fighter.model_id, "model_b");
+        assert_eq!(assignment.fighter.rank, 2);
+    }
+
+    #[test]
+    fn champion_attach_returns_none_mid_round_and_when_roster_empty() {
+        let fixture = ExhibitionWasmFixture::new(&["model_a", "model_b"]);
+        let sandbox = BotSandbox::with_wasm_dir_for_tests(fixture.dir.clone());
+        let published_fighters = vec![fighter(1, "model_a"), fighter(2, "model_b")];
+        let (live_fighters, prepared) =
+            prepare_runtime_pool(&sandbox, published_fighters.clone(), 1, 0, 0);
+        let exhibition = duel_test_exhibition(
+            sandbox,
+            published_fighters,
+            live_fighters,
+            prepared,
+            true, // round active
+        );
+        let player_id: PlayerID = Arc::from("duel-mid-round-bot");
+        assert_eq!(exhibition.attach_champion_bot(player_id.clone(), 2, 0, 7), None);
+        // A failed champion attach must not queue a pending binding that a
+        // later refresh would promote into a fair-rotation fighter.
+        assert!(exhibition.pending.lock().is_empty());
+        assert!(exhibition.current_assignment(&player_id).is_none());
+
+        let empty = phase_test_exhibition();
+        assert_eq!(empty.attach_champion_bot(player_id, 2, 0, 7), None);
+    }
+
+    #[test]
+    fn champion_binding_rebuild_stays_pinned_to_roster_top() {
+        let fixture = ExhibitionWasmFixture::new(&["model_a", "model_b"]);
+        let sandbox = BotSandbox::with_wasm_dir_for_tests(fixture.dir.clone());
+        let fighters = vec![fighter(1, "model_a"), fighter(2, "model_b")];
+        // team 2 / slot 0 / rotation 0 fairly maps to roster index 1; the
+        // champion binding must still rebuild against roster[0].
+        assert_eq!(fair_fighter_index(fighters.len(), 2, 0, 0), 1);
+        let player_id: PlayerID = Arc::from("duel-champion-rebuild");
+        let bindings = HashMap::from([(
+            player_id.clone(),
+            ExhibitionBinding {
+                team_id: 2,
+                team_slot: 0,
+                seed: 3,
+                champion: true,
+            },
+        )]);
+
+        let replacements = build_replacement_runtimes(&sandbox, &fighters, &bindings, 0)
+            .expect("champion binding should rebuild against roster[0]");
+        assert_eq!(
+            replacements
+                .get(&player_id)
+                .map(|entry| entry.assignment.fighter.model_id.as_str()),
+            Some("model_a")
+        );
     }
 }

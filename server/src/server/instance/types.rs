@@ -14,6 +14,9 @@ pub enum MatchType {
     MobileBlitz,
     /// Mobile Standard: 32 players, 5-min rounds, medium maps.
     MobileStandard,
+    /// Champion duel: 1 human vs the league champion's exhibition fighter,
+    /// 3-min rounds, small maps, no bot auto-fill beyond the champion.
+    ChampionDuel,
 }
 
 impl MatchType {
@@ -23,6 +26,7 @@ impl MatchType {
             "quick" | "quick_match" | "quickmatch" => MatchType::QuickMatch,
             "mobile_blitz" | "mobileblitz" | "blitz" => MatchType::MobileBlitz,
             "mobile_standard" | "mobilestandard" | "mobile" => MatchType::MobileStandard,
+            "champion_duel" | "duel" | "champion" => MatchType::ChampionDuel,
             "full" | "full_match" | "fullmatch" | "desktop" => MatchType::FullMatch,
             _ => MatchType::FullMatch,
         }
@@ -35,6 +39,7 @@ impl MatchType {
             MatchType::QuickMatch => QUICK_MATCH_MAX_PLAYERS,
             MatchType::MobileBlitz => MOBILE_BLITZ_MAX_PLAYERS,
             MatchType::MobileStandard => MOBILE_STANDARD_MAX_PLAYERS,
+            MatchType::ChampionDuel => CHAMPION_DUEL_MAX_PLAYERS,
         }
     }
 
@@ -45,6 +50,7 @@ impl MatchType {
             MatchType::QuickMatch => QUICK_MATCH_DURATION_SECS,
             MatchType::MobileBlitz => MOBILE_BLITZ_DURATION_SECS,
             MatchType::MobileStandard => MOBILE_STANDARD_DURATION_SECS,
+            MatchType::ChampionDuel => CHAMPION_DUEL_DURATION_SECS,
         }
     }
 
@@ -70,6 +76,7 @@ impl MatchType {
             MatchType::QuickMatch => "QuickMatch",
             MatchType::MobileBlitz => "MobileBlitz",
             MatchType::MobileStandard => "MobileStandard",
+            MatchType::ChampionDuel => "ChampionDuel",
         }
     }
 }

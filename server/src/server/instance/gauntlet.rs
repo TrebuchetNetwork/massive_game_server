@@ -326,7 +326,9 @@ impl MassiveGameServer {
             return;
         }
         let humans = self.human_participant_count();
-        let want_active = humans > 0;
+        // A champion duel takes precedence: while a challenger is connected
+        // the gauntlet stays stood down.
+        let want_active = humans > 0 && !self.duel_active();
         let was_active = GAUNTLET_ACTIVE.swap(want_active, AtomicOrdering::Relaxed);
         if was_active == want_active {
             return;

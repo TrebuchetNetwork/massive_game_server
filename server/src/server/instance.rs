@@ -81,6 +81,7 @@ mod broadcast_state;
 mod collision_utils;
 mod combat_melee;
 mod constants;
+mod duel;
 mod entity_store;
 mod exhibition_combat;
 mod game_modes;
@@ -435,6 +436,15 @@ pub struct MassiveGameServer {
     pub match_type: MatchType,
     /// Duration of a single round in seconds (derived from match_type).
     pub match_duration_secs: f32,
+
+    // ── Champion duel ("Beat the champion") ──────────────────────────
+    /// Peer ids of connected players who joined with match_type=champion_duel,
+    /// with the registration time (used to prune dead join attempts).
+    pub duel_challengers: Arc<DashMap<String, Instant>>,
+    /// On-demand duel rules are in force for the current match.
+    pub duel_active: Arc<AtomicBool>,
+    /// Bot target to restore when the on-demand duel stands down.
+    pub duel_saved_bot_target: Arc<AtomicU64>,
 }
 
 impl MassiveGameServer {
@@ -646,9 +656,13 @@ impl MassiveGameServer {
             wall_spatial_index.size()
         );
 
-        let configured_target_bot_count = runtime
-            .target_bot_count
-            .unwrap_or(if cfg!(debug_assertions) { 8 } else { 20 });
+        let configured_target_bot_count = match match_type {
+            // A dedicated duel instance fields exactly one bot: the champion.
+            MatchType::ChampionDuel => duel::DUEL_BOT_TARGET,
+            _ => runtime
+                .target_bot_count
+                .unwrap_or(if cfg!(debug_assertions) { 8 } else { 20 }),
+        };
         // In the co-op gauntlet the bot target follows the persisted wave
         // streak (allies + current wave size) rather than the static env.
         let initial_target_bot_count = gauntlet::bootstrap_gauntlet(
@@ -657,7 +671,14 @@ impl MassiveGameServer {
         ) as u64;
         let human_priority_enabled = runtime.human_priority_enabled;
         let reserved_human_slots = if human_priority_enabled {
-            runtime.reserved_human_slots.min(effective_max_players)
+            let reserved = runtime.reserved_human_slots.min(effective_max_players);
+            if match_type == MatchType::ChampionDuel {
+                // The duel is 1 human + the champion bot: reserving two human
+                // slots on a two-slot match would leave no room for the bot.
+                reserved.min(1)
+            } else {
+                reserved
+            }
         } else {
             0
         };
@@ -824,6 +845,9 @@ impl MassiveGameServer {
             )),
             match_type,
             match_duration_secs,
+            duel_challengers: Arc::new(DashMap::new()),
+            duel_active: Arc::new(AtomicBool::new(false)),
+            duel_saved_bot_target: Arc::new(AtomicU64::new(initial_target_bot_count)),
         };
 
         server.publish_authoritative_lock_free_snapshots();
@@ -1281,6 +1305,43 @@ mod instance_tests {
             MatchType::MobileBlitz
         );
         assert_eq!(MatchType::from_query_str("blitz"), MatchType::MobileBlitz);
+    }
+
+    #[test]
+    fn match_type_from_query_str_champion_duel() {
+        assert_eq!(
+            MatchType::from_query_str("champion_duel"),
+            MatchType::ChampionDuel
+        );
+        assert_eq!(MatchType::from_query_str("duel"), MatchType::ChampionDuel);
+        assert_eq!(
+            MatchType::from_query_str("champion"),
+            MatchType::ChampionDuel
+        );
+        assert_eq!(
+            MatchType::from_query_str("CHAMPION_DUEL"),
+            MatchType::ChampionDuel
+        );
+        assert_eq!(
+            MatchType::from_query_str("  duel  "),
+            MatchType::ChampionDuel
+        );
+    }
+
+    #[test]
+    fn match_type_champion_duel_shape() {
+        assert_eq!(MatchType::ChampionDuel.max_players(), CHAMPION_DUEL_MAX_PLAYERS);
+        assert_eq!(MatchType::ChampionDuel.max_players(), 2);
+        assert_eq!(
+            MatchType::ChampionDuel.duration_secs(),
+            CHAMPION_DUEL_DURATION_SECS
+        );
+        assert_eq!(MatchType::ChampionDuel.duration_secs(), 180.0);
+        // No bot auto-fill beyond the single champion.
+        assert!(MatchType::ChampionDuel.bot_fill_delay_secs().is_none());
+        assert!(MatchType::ChampionDuel.min_humans_for_bot_fill().is_none());
+        assert_eq!(MatchType::ChampionDuel.label(), "ChampionDuel");
+        assert_eq!(format!("{}", MatchType::ChampionDuel), "ChampionDuel");
     }
 
     #[test]
