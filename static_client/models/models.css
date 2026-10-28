@@ -570,6 +570,16 @@ table.matrix__table tr.matrix__row--boundary td { border-top: 1px solid var(--li
 .ops__badge--disabled { color: var(--dim); }
 .ops__strip { margin-top: 0; border: none; background: transparent; }
 .ops__strip div { padding-left: 0; }
+.ops-res__meta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; }
+.ops-res__src { color: var(--dim); font: 700 9px/1.6 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.ops-res__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.ops-res__card { border: 1px solid var(--line-soft); padding: 12px 14px; background: rgba(202, 255, 0, 0.02); }
+.ops-res__card h3 { margin: 0 0 6px; font: 800 10px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.ops-res__val { margin: 0 0 8px; font: 800 22px/1.1 var(--mono); color: var(--acid); }
+.ops-res__val small { display: block; margin-top: 3px; font: 700 9px/1.4 var(--mono); color: var(--muted); letter-spacing: 0.04em; }
+.ops-res__card svg { display: block; width: 100%; height: auto; }
+.ops-res__cap { margin: 6px 0 0; color: var(--dim); font: 700 8px/1.5 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.ops-res__empty { margin: 0; padding: 18px 0; color: var(--dim); font: 700 10px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; }
 .ops-pipeline { list-style: none; margin: 0; padding: 0; }
 .ops-pipeline li { padding: 16px 0; border-bottom: 1px solid var(--line-soft); }
 .ops-pipeline li:last-child { border-bottom: none; }
