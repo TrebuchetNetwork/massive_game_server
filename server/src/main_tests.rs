@@ -246,6 +246,70 @@ fn test_index_html_uses_strict_self_hosted_csp() {
     assert!(csp.contains("frame-ancestors 'none'"));
 }
 
+#[tokio::test]
+async fn test_static_html_x_frame_options_are_scoped_to_client() {
+    use massive_game_server_core::routes::{
+        app::compose_http_routes, static_files::build_static_files_route,
+    };
+    use warp::Filter as _;
+
+    let original_dir = std::env::current_dir().expect("read test working directory");
+    struct RestoreWorkingDirectory(std::path::PathBuf);
+    impl Drop for RestoreWorkingDirectory {
+        fn drop(&mut self) {
+            std::env::set_current_dir(&self.0).expect("restore test working directory");
+        }
+    }
+    let _restore_working_directory = RestoreWorkingDirectory(original_dir);
+    std::env::set_current_dir(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("server crate should have a parent directory"),
+    )
+    .expect("enter workspace root for static files");
+
+    let unused_routes = || {
+        warp::path("__unused__")
+            .map(|| warp::reply::Response::new(warp::hyper::Body::empty()))
+            .boxed()
+    };
+    let routes = compose_http_routes(
+        unused_routes(),
+        unused_routes(),
+        build_static_files_route(None).boxed(),
+        Vec::new(),
+        false,
+    );
+
+    let client = warp::test::request()
+        .method("GET")
+        .path("/client.html")
+        .reply(&routes)
+        .await;
+    assert_eq!(client.status(), warp::http::StatusCode::OK);
+    assert_eq!(
+        client
+            .headers()
+            .get("x-frame-options")
+            .and_then(|value| value.to_str().ok()),
+        Some("SAMEORIGIN")
+    );
+
+    let index = warp::test::request()
+        .method("GET")
+        .path("/index.html")
+        .reply(&routes)
+        .await;
+    assert_eq!(index.status(), warp::http::StatusCode::OK);
+    assert_eq!(
+        index
+            .headers()
+            .get("x-frame-options")
+            .and_then(|value| value.to_str().ok()),
+        Some("DENY")
+    );
+}
+
 #[test]
 fn test_index_html_does_not_depend_on_external_cdns() {
     let index_html_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../static_client/index.html");
