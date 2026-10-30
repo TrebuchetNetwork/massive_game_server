@@ -61,3 +61,4 @@ export {
     createMapThemes,
     resolveMapTheme,
 } from './MapThemes.js';
+export * from './commentary_templates.js';
