@@ -62,3 +62,4 @@ export {
     resolveMapTheme,
 } from './MapThemes.js';
 export * from './commentary_templates.js';
+export * from './BroadcastDirector.js';
