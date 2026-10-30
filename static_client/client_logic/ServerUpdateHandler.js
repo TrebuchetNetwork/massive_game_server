@@ -575,6 +575,7 @@ export function createServerUpdateHandler(getCtx) {
             );
             killFeed = messageData.kill_feed;
             ctx.setKillFeed(killFeed);
+            if (ctx.broadcastHooks) ctx.broadcastHooks.onKillFeed(killFeed);
             updateKillFeed();
         }
 
@@ -601,11 +602,13 @@ export function createServerUpdateHandler(getCtx) {
                 const gameEvents = messageData.game_events;
                 for (let i = 0; i < gameEvents.length; i += 1) {
                     effectsManager.processGameEvent(gameEvents[i]);
+                    if (ctx.broadcastHooks) ctx.broadcastHooks.onGameEvent(gameEvents[i]);
                 }
             }
         }
 
         maybeRecordInterpolationSnapshot(serverTime);
+        if (ctx.broadcastHooks) ctx.broadcastHooks.onSnapshot();
     }
 
 
@@ -632,6 +635,7 @@ export function createServerUpdateHandler(getCtx) {
         } = ctx;
 
         let localPlayerState = ctx.localPlayerState;
+        let killFeed = ctx.killFeed;
         let lastProcessedInput = ctx.lastProcessedInput;
         let pendingInputs = ctx.pendingInputs;
         const deltaAckSequence = Number(delta.lastProcessedInputSequence());
@@ -948,6 +952,7 @@ export function createServerUpdateHandler(getCtx) {
                 );
                 killFeed = rows;
                 ctx.setKillFeed(rows);
+                if (ctx.broadcastHooks) ctx.broadcastHooks.onKillFeed(rows);
                 updateKillFeed();
             }
         }
@@ -991,7 +996,7 @@ export function createServerUpdateHandler(getCtx) {
                 const gameEvent = delta.gameEvents(i, gameEventTable);
                 if (!gameEvent) continue;
                 const position = gameEvent.position(vecTable);
-                effectsManager.processGameEvent({
+                const parsedGameEvent = {
                     event_type: gameEvent.eventType(),
                     position: position ? { x: position.x(), y: position.y() } : { x: 0, y: 0 },
                     instigator_id: gameEvent.instigatorId(),
@@ -1001,11 +1006,14 @@ export function createServerUpdateHandler(getCtx) {
                     falloff_multiplier: typeof gameEvent.falloffMultiplier === 'function'
                         ? gameEvent.falloffMultiplier()
                         : 1.0,
-                });
+                };
+                effectsManager.processGameEvent(parsedGameEvent);
+                if (ctx.broadcastHooks) ctx.broadcastHooks.onGameEvent(parsedGameEvent);
             }
         }
 
         maybeRecordInterpolationSnapshot(serverTime);
+        if (ctx.broadcastHooks) ctx.broadcastHooks.onSnapshot();
     }
 
 

@@ -20,6 +20,14 @@ export function formatClock(seconds) {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+export function formatTeamScores(teamScores) {
+    return teamScores.map((entry, i) => {
+        const team = entry && typeof entry === 'object' ? (entry.team_id ?? i + 1) : i + 1;
+        const score = entry && typeof entry === 'object' ? entry.score : entry;
+        return `T${team} ${score}`;
+    }).join(' · ');
+}
+
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[c]));
@@ -65,7 +73,7 @@ export function createBroadcastOverlay({ document: doc, parent }) {
         setScoreboard(payload = {}) {
             const { teamScores, timeRemaining } = payload || {};
             if (Array.isArray(teamScores)) {
-                scoresEl.textContent = teamScores.map((s, i) => `T${i + 1} ${s}`).join(' · ');
+                scoresEl.textContent = formatTeamScores(teamScores);
             }
             clockEl.textContent = formatClock(timeRemaining);
         },

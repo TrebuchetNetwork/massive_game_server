@@ -1132,6 +1132,21 @@ export function createWorldRenderer(getCtx) {
         } = ctx;
         if (!app || !gameScene) return;
 
+        if (typeof ctx.isBroadcastMode === 'function' && ctx.isBroadcastMode()) {
+            const frame = ctx.getBroadcastCameraFrame?.();
+            if (frame) {
+                const targetScale = frame.zoom * dynamicsTuning.cameraBaseScale;
+                const currentScale = gameScene.scale.x;
+                const newScale = currentScale + (targetScale - currentScale) * 0.15;
+                gameScene.scale.set(newScale);
+                const targetX = app.screen.width / 2 - frame.focusX * newScale;
+                const targetY = app.screen.height / 2 - frame.focusY * newScale;
+                gameScene.position.x += (targetX - gameScene.position.x) * 0.06;
+                gameScene.position.y += (targetY - gameScene.position.y) * 0.06;
+            }
+            return;
+        }
+
         const deltaSec = Math.max(0.001, (app.ticker?.deltaMS || 16.67) / 1000);
         const currentTimeMs = (typeof performance !== 'undefined' && typeof performance.now === 'function')
             ? performance.now()

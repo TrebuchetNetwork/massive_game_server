@@ -893,7 +893,7 @@ export function createSpriteManager(getCtx) {
 
     function updateShieldVisual(sprite, current, max) {
         const ctx = getCtx();
-        const { myPlayerId, frameNowMs } = ctx;
+        const { myPlayerId, frameNowMs, PLAYER_RADIUS } = ctx;
         if (!sprite.shieldVisual) return;
 
         const hideByDensity = sprite.playerId !== myPlayerId && !!sprite._lastDenseVisualMode;

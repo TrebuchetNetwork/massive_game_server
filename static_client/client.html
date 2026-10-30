@@ -32,10 +32,62 @@
         body.broadcast-mode #chatDisplay,
         body.broadcast-mode #controls,
         body.broadcast-mode #killFeed { display: none !important; }
+        .arena-tv-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            pointer-events: none;
+            color: #f8fafc;
+            font-family: 'DM Mono', monospace;
+            text-shadow: 0 1px 3px #000;
+        }
+        .arena-tv-top {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            right: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 16px;
+        }
+        .arena-tv-live {
+            padding: 3px 8px;
+            border-radius: 3px;
+            background: #dc2626;
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+        }
+        .arena-tv-scores { color: #fbbf24; }
+        .arena-tv-clock { margin-left: auto; }
+        .arena-tv-killfeed {
+            position: absolute;
+            top: 52px;
+            right: 16px;
+            text-align: right;
+            font-size: 13px;
+            line-height: 1.7;
+        }
+        .arena-tv-commentary {
+            position: absolute;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%);
+            max-width: 80vw;
+            padding: 6px 12px;
+            background: rgba(2, 6, 23, 0.72);
+            border-radius: 4px;
+            text-align: center;
+            font-size: 15px;
+        }
+        .arena-tv-commentary:empty { display: none; }
     </style>
     <script src="./client_logic/arena_telemetry.js?v=20260725-mobile-arena2" defer></script>
 </head>
 <body class="bg-gray-900 text-white min-h-screen overflow-hidden">
+    <div id="arenaTvRoot"></div>
 
     <!-- Game Container (Fullscreen) -->
     <div id="gameContainer">
@@ -601,6 +653,9 @@
             createUpdateSprites,
             createMapThemes,
             flushPendingClientLogs,
+            createBroadcastDirector,
+            createCommentary,
+            createBroadcastOverlay,
         } from './client_logic/index.js?v=20261028-duel1';
         const GP = GameProtocol;
         const {
@@ -1531,7 +1586,146 @@
             if (!BROADCAST_MODE) return;
             window.parent.postMessage({ type: 'arena-tv', status, reason: reason || null }, window.location.origin);
         }
+        const broadcastDirector = createBroadcastDirector();
+        const broadcastCommentary = createCommentary();
+        const broadcastOverlay = BROADCAST_MODE ? createBroadcastOverlay({
+            document,
+            parent: document.getElementById('arenaTvRoot'),
+        }) : null;
+        const broadcastKillFeedKeys = new Set();
+        const broadcastKillFeedKeyOrder = [];
+        let broadcastLastLeaderTeam = null;
+        let broadcastRosterInitialized = false;
+        const broadcastKnownUsernames = new Set();
+        const broadcastKillers = new Map();
+
+        function emitBroadcastCommentary(event, atMs) {
+            const line = broadcastCommentary.onEvent(event, atMs);
+            if (line && broadcastOverlay) broadcastOverlay.setCommentary(line);
+        }
+
+        function onBroadcastGameEvent(event) {
+            const eventType = event?.event_type ?? event?.eventType;
+            if (eventType !== GP.GameEventType.PlayerDamageEffect) return;
+            const instigatorId = event.instigator_id ?? event.instigatorId;
+            const value = Number(event.value ?? event.damage);
+            if (instigatorId === undefined || instigatorId === null || instigatorId === '' || !Number.isFinite(value)) return;
+            broadcastDirector.recordDamage({ instigatorId: String(instigatorId), value, atMs: Date.now() });
+        }
+
+        function onBroadcastKillFeed(entries) {
+            if (!Array.isArray(entries)) return;
+            for (const entry of entries) {
+                if (!entry) continue;
+                const killerName = String(entry.killer_name ?? entry.killerName ?? '');
+                const victimName = String(entry.victim_name ?? entry.victimName ?? '');
+                const key = JSON.stringify([
+                    killerName,
+                    victimName,
+                    entry.timestamp ?? null,
+                    entry.weapon ?? null,
+                    entry.is_headshot ?? entry.isHeadshot ?? false,
+                ]);
+                if (broadcastKillFeedKeys.has(key)) continue;
+                broadcastKillFeedKeys.add(key);
+                broadcastKillFeedKeyOrder.push(key);
+                if (broadcastKillFeedKeyOrder.length > 512) {
+                    broadcastKillFeedKeys.delete(broadcastKillFeedKeyOrder.shift());
+                }
+                const atMs = Date.now();
+                broadcastDirector.recordKill({ killerName, atMs });
+                if (broadcastOverlay) broadcastOverlay.pushKill({ killerName, victimName, atMs });
+
+                const victimState = broadcastKillers.get(victimName);
+                if (victimState) {
+                    victimState.streak = 0;
+                    victimState.recentKillFrames = [];
+                }
+                if (!killerName) continue;
+                const killerState = broadcastKillers.get(killerName) || { streak: 0, recentKillFrames: [] };
+                killerState.streak += 1;
+                const killFrame = Number(entry.timestamp);
+                killerState.recentKillFrames = Number.isFinite(killFrame) && killFrame > 0
+                    ? killerState.recentKillFrames.filter((frame) => {
+                        const elapsedFrames = killFrame - frame;
+                        return elapsedFrames >= 0 && elapsedFrames <= 180;
+                    }).concat(killFrame)
+                    : [];
+                broadcastKillers.set(killerName, killerState);
+
+                if (victimName.startsWith('#1 ')) {
+                    emitBroadcastCommentary({ type: 'champion_kill', killer: killerName, victim: victimName }, atMs);
+                }
+                if (killerState.streak >= 3) {
+                    emitBroadcastCommentary({ type: 'streak', name: killerName, count: killerState.streak }, atMs);
+                }
+                if (killerState.recentKillFrames.length >= 2) {
+                    emitBroadcastCommentary({ type: 'multi_kill', name: killerName, count: killerState.recentKillFrames.length }, atMs);
+                }
+            }
+        }
+
+        function onBroadcastSnapshot() {
+            if (!broadcastLive) {
+                broadcastLive = true;
+                broadcastStatus('live');
+            }
+            players.forEach((player) => {
+                const username = String(player?.username || '').trim();
+                const isBot = player?.is_bot ?? player?.isBot;
+                if (!username || isBot !== false) return;
+                if (broadcastRosterInitialized && !broadcastKnownUsernames.has(username)) {
+                    emitBroadcastCommentary({ type: 'duel_start', name: username }, Date.now());
+                }
+                broadcastKnownUsernames.add(username);
+            });
+            broadcastRosterInitialized = true;
+        }
+
+        async function pollBroadcastScoreboard() {
+            const response = await fetch('/api/public/match/scoreboard', { cache: 'no-store' });
+            if (!response.ok) return;
+            const scoreboard = await response.json();
+            if (broadcastOverlay) {
+                broadcastOverlay.setScoreboard({
+                    teamScores: scoreboard.team_scores,
+                    timeRemaining: scoreboard.time_remaining,
+                });
+            }
+            const teamScores = Array.isArray(scoreboard.team_scores) ? scoreboard.team_scores : [];
+            let leaderTeam = null;
+            let leaderScore = -Infinity;
+            let tied = false;
+            teamScores.forEach((entry, index) => {
+                const team = Number(entry && typeof entry === 'object' ? (entry.team_id ?? index + 1) : index + 1);
+                const score = Number(entry && typeof entry === 'object' ? entry.score : entry);
+                if (!Number.isFinite(team) || !Number.isFinite(score)) return;
+                if (score > leaderScore) {
+                    leaderTeam = team;
+                    leaderScore = score;
+                    tied = false;
+                } else if (score === leaderScore) {
+                    tied = true;
+                }
+            });
+            const currentLeader = tied ? null : leaderTeam;
+            if (currentLeader !== null) {
+                if (broadcastLastLeaderTeam !== null && currentLeader !== broadcastLastLeaderTeam) {
+                    emitBroadcastCommentary({ type: 'lead_change', team: currentLeader }, Date.now());
+                }
+                broadcastLastLeaderTeam = currentLeader;
+            }
+        }
+
+        const broadcastHooks = BROADCAST_MODE ? {
+            onSnapshot: onBroadcastSnapshot,
+            onGameEvent: onBroadcastGameEvent,
+            onKillFeed: onBroadcastKillFeed,
+        } : null;
         if (BROADCAST_MODE) {
+            window.__arenaTv = { director: broadcastDirector };
+            setInterval(() => { if (broadcastOverlay) broadcastOverlay.tick(Date.now()); }, 500);
+            setInterval(() => { pollBroadcastScoreboard().catch(() => {}); }, 2000);
             setTimeout(() => { if (!broadcastLive) broadcastStatus('fallback', 'connect_timeout'); }, 9000);
         }
         if (BENCH_MODE) {
@@ -3484,6 +3678,31 @@
             dynamicsTuning, cameraCombatImpulse, mouseWorldPos,
             players, myPlayerId, setObjectiveUrgency, hotZoneState, tacticalPings,
             tacticalPingLabelContainer,
+            isBroadcastMode: () => BROADCAST_MODE,
+            getBroadcastCameraFrame: () => {
+                const directorPlayers = [];
+                let exhibitionLeaderId = null;
+                players.forEach((player, playerId) => {
+                    if (!player || !player.alive) return;
+                    const teamId = Number(player.teamId ?? player.team_id);
+                    const x = Number(player.x);
+                    const y = Number(player.y);
+                    if (!Number.isFinite(teamId) || teamId === 0 || !Number.isFinite(x) || !Number.isFinite(y)) return;
+                    const id = String(player.id ?? playerId);
+                    const username = String(player.username || '');
+                    if (username.startsWith('#1 ')) exhibitionLeaderId = id;
+                    directorPlayers.push({
+                        id,
+                        x,
+                        y,
+                        hp: Number(player.hp ?? player.health),
+                        maxHp: Number(player.maxHp ?? player.max_health),
+                        teamId,
+                        username,
+                    });
+                });
+                return broadcastDirector.cameraFrame(directorPlayers, exhibitionLeaderId, Date.now());
+            },
             mapTheme: activeMapTheme,
             setWorldBounds: (bounds) => {
                 if (!bounds || !Number.isFinite(bounds.minX) || !Number.isFinite(bounds.minY) || !Number.isFinite(bounds.maxX) || !Number.isFinite(bounds.maxY)) {
@@ -5049,6 +5268,7 @@
         const serverUpdateHandler = wrapModuleInit('ServerUpdateHandler', () =>
             createServerUpdateHandler(() => ({
                 log, GP, normalizeAngle, walls, players, projectiles, pickups, zones,
+                broadcastHooks,
                 localPlayerState, myPlayerId, drawWalls, drawZones,
                 removePlayerClientState, removeProjectileClientState,
                 normalizePlayerDeltaMask, assignPlayerStateFromObject,
