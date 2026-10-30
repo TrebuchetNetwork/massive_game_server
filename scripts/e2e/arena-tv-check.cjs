@@ -4,17 +4,55 @@ const { chromium } = require('@playwright/test');
 const BASE_URL = process.env.ARENA_TV_BASE_URL || 'https://space.selfware.design';
 const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-landing.png';
 
+const REQUIRE_LIVE = process.env.ARENA_TV_REQUIRE_LIVE === '1';
+
 const watchPage = (page) => {
-  const state = { errors: [], tvRequests: 0 };
+  const state = {
+    errors: [], consoleErrors: [], failedTvRequests: [], tvResponses: [], webSocketErrors: [], tvRequests: 0,
+  };
   page.on('pageerror', error => state.errors.push(error.stack || String(error)));
+  page.on('console', message => {
+    if (message.type() === 'error') {
+      state.consoleErrors.push({ text: message.text(), location: message.location() });
+    }
+  });
+  page.on('websocket', socket => {
+    socket.on('socketerror', error => state.webSocketErrors.push({ url: socket.url(), error }));
+  });
   page.on('request', request => {
     const url = new URL(request.url());
     if (url.pathname === '/client.html' && url.searchParams.get('broadcast') === '1') {
       state.tvRequests += 1;
     }
   });
+  page.on('response', response => {
+    const url = new URL(response.url());
+    if (url.pathname === '/client.html' && url.searchParams.get('broadcast') === '1') {
+      state.tvResponses.push(response.status());
+    }
+  });
+  page.on('requestfailed', request => {
+    const url = new URL(request.url());
+    if (url.pathname === '/client.html' && url.searchParams.get('broadcast') === '1') {
+      state.failedTvRequests.push(request.failure()?.errorText || 'unknown request failure');
+    }
+  });
   return state;
 };
+
+const captureArenaTvMessages = page => page.addInitScript(() => {
+  window.__arenaTvMessages = [];
+  window.addEventListener('message', event => {
+    if (event.data?.type !== 'arena-tv') return;
+    const frame = document.querySelector('.arena-tv-frame');
+    window.__arenaTvMessages.push({
+      status: event.data.status,
+      reason: event.data.reason,
+      originMatches: event.origin === window.location.origin,
+      sourceMatches: !!frame && event.source === frame.contentWindow,
+    });
+  });
+});
 
 const waitForHero = async (page) => {
   await page.waitForFunction(() => {
@@ -32,6 +70,7 @@ const waitForHero = async (page) => {
       frames: field?.querySelectorAll('iframe.arena-tv-frame').length || 0,
       strategyFeedDisplay: getComputedStyle(document.querySelector('.strategy-feed')).display,
       fieldHeight: rect?.height || 0,
+      messages: window.__arenaTvMessages || [],
     };
   });
 };
@@ -41,12 +80,14 @@ const waitForHero = async (page) => {
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const defaultState = watchPage(page);
+    await captureArenaTvMessages(page);
     await page.goto(`${BASE_URL}/index.html`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const defaultResult = await waitForHero(page);
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: false });
 
     const optOutPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const optOutState = watchPage(optOutPage);
+    await captureArenaTvMessages(optOutPage);
     await optOutPage.addInitScript(() => {
       window.__arenaTvFrameInserted = false;
       const observer = new MutationObserver(records => {
@@ -67,14 +108,25 @@ const waitForHero = async (page) => {
 
     console.log('default hero:', JSON.stringify(defaultResult));
     console.log('default broadcast requests:', defaultState.tvRequests);
+    console.log('default broadcast responses:', JSON.stringify(defaultState.tvResponses));
+    console.log('default broadcast request failures:', JSON.stringify(defaultState.failedTvRequests));
+    console.log('default WebSocket errors:', JSON.stringify(defaultState.webSocketErrors));
     console.log('opt-out hero:', JSON.stringify(optOutResult));
     console.log('opt-out broadcast requests:', optOutState.tvRequests);
     console.log('page errors:', JSON.stringify([...defaultState.errors, ...optOutState.errors]));
+    console.log('console errors:', JSON.stringify([...defaultState.consoleErrors, ...optOutState.consoleErrors]));
     console.log('screenshot:', SCREENSHOT_PATH);
 
     assert.ok(defaultState.tvRequests > 0, 'Arena TV iframe was never requested');
+    assert.ok(defaultState.tvResponses.includes(200), 'broadcast client did not return HTTP 200');
+    assert.deepEqual(defaultState.failedTvRequests, [], 'broadcast client request failed');
+    assert.deepEqual(defaultState.consoleErrors, [], 'default landing page produced console errors');
+    assert.deepEqual(defaultState.webSocketErrors, [], 'broadcast client produced WebSocket errors');
     assert.notEqual(defaultResult.live, defaultResult.fallback, 'default hero must be exactly one of live or highlight fallback');
     assert.equal(defaultResult.frames, defaultResult.live ? 1 : 0, 'unexpected iframe count after hero settled');
+    assert.ok(defaultResult.messages.length > 0, 'broadcast client never posted an arena-tv status');
+    assert.ok(defaultResult.messages.every(message => message.originMatches && message.sourceMatches), 'arena-tv message failed origin/source validation');
+    if (REQUIRE_LIVE) assert.equal(defaultResult.live, true, 'Arena TV was required to reach the live state');
     assert.deepEqual(defaultState.errors, [], 'default landing page produced page errors');
 
     assert.equal(optOutResult.live, false, '?tv=0 must not enter the live state');

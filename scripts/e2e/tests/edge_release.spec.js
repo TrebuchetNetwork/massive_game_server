@@ -28,8 +28,8 @@ test('@critical edge serves hardened headers and cache policy over https', async
     .split(';')
     .find((directive) => directive.trim().startsWith('script-src')) || '';
   expect(htmlHeaders['strict-transport-security']).toContain('max-age=');
-  expect(htmlHeaders['x-frame-options']).toBe('DENY');
-  expect(htmlHeaders['content-security-policy']).toContain("frame-ancestors 'none'");
+  expect(htmlHeaders['x-frame-options']).toBe('SAMEORIGIN');
+  expect(htmlHeaders['content-security-policy']).toContain("frame-ancestors 'self'");
   expect(clientScriptPolicy).toContain("script-src 'self'");
   expect(clientScriptPolicy).not.toContain("'unsafe-inline'");
 

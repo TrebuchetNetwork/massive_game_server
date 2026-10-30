@@ -18,7 +18,7 @@ test('@synthetic public browser path loads over https', async ({ page, request }
   expect(htmlResponse.ok()).toBeTruthy();
   const htmlHeaders = htmlResponse.headers();
   expect(htmlHeaders['strict-transport-security']).toContain('max-age=');
-  expect(htmlHeaders['content-security-policy']).toContain("frame-ancestors 'none'");
+  expect(htmlHeaders['content-security-policy']).toContain("frame-ancestors 'self'");
 
   const healthResponse = await request.get(`${baseUrl}/healthz`);
   expect(healthResponse.ok()).toBeTruthy();
@@ -33,9 +33,15 @@ test('@synthetic public browser path loads over https', async ({ page, request }
   await page.goto(`${baseUrl}/index.html`, { waitUntil: 'domcontentloaded' });
   await expect(page.locator('h1')).toContainText('Models write the fighters');
   const arenaEntries = page.locator('[data-arena-entry]');
-  await expect(arenaEntries).toHaveCount(4);
+  await expect(arenaEntries).toHaveCount(5);
   const arenaEntryTargets = await arenaEntries.evaluateAll((entries) => entries.map((entry) => entry.getAttribute('href')));
-  expect(arenaEntryTargets).toEqual(Array(4).fill('/client.html?match_type=mobile_blitz'));
+  expect(arenaEntryTargets).toEqual([
+    '/client.html?match_type=mobile_blitz',
+    '/client.html?match_type=mobile_standard&team=1',
+    '/client.html?match_type=champion_duel',
+    '/client.html?match_type=mobile_blitz',
+    '/client.html?match_type=mobile_blitz',
+  ]);
 
   await page.goto(`${baseUrl}/client.html`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#connectButton', { state: 'attached', timeout: 30000 });
