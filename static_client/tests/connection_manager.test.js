@@ -371,6 +371,21 @@ test('broadcast mode skips input handler setup when the data channel opens', (t)
     assert.equal(inputSetupCount, 0);
 });
 
+test('non-broadcast mode installs input handlers when the data channel opens', (t) => {
+    const { ctx, manager } = createHarness(t);
+    t.after(() => manager.destroy());
+    let inputSetupCount = 0;
+    ctx.setupInputHandlers = () => {
+        inputSetupCount += 1;
+    };
+
+    const dataChannel = { label: 'gameDataChannel', readyState: 'open' };
+    manager.setupDataChannelEvents(dataChannel);
+    dataChannel.onopen();
+
+    assert.equal(inputSetupCount, 1);
+});
+
 test('initial invalid signaling URL reports an unrecoverable broadcast error', (t) => {
     const { ctx, manager } = createHarness(t);
     t.after(() => manager.destroy());

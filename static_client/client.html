@@ -30,6 +30,7 @@
         body.broadcast-mode #scoreboard,
         body.broadcast-mode #mobileControls,
         body.broadcast-mode #chatDisplay,
+        body.broadcast-mode #controls,
         body.broadcast-mode #killFeed { display: none !important; }
     </style>
     <script src="./client_logic/arena_telemetry.js?v=20260725-mobile-arena2" defer></script>
@@ -4922,12 +4923,14 @@
                 fogOfWarMask.clear();
             }
 
-            if (perfEnabled) {
-                const t = perfStart();
-                sendInputsToServer();
-                perfEnd('sendInputs', t);
-            } else {
-                sendInputsToServer();
+            if (!BROADCAST_MODE) {
+                if (perfEnabled) {
+                    const t = perfStart();
+                    sendInputsToServer();
+                    perfEnd('sendInputs', t);
+                } else {
+                    sendInputsToServer();
+                }
             }
             if (currentTime - lastUiUpdateTime >= UI_UPDATE_INTERVAL_MS) {
                 if (perfEnabled) {
@@ -6092,6 +6095,7 @@
         });
 
         function sendChatMessage() {
+            if (BROADCAST_MODE) return;
             if (dataChannel && dataChannel.readyState === 'open') {
                 const text = chatInput.value.trim();
                 if (text && text.length <= MAX_CHAT_MESSAGE_LENGTH) {

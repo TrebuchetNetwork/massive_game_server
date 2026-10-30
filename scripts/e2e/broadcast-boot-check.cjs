@@ -26,21 +26,34 @@ const { chromium } = require('@playwright/test');
     await page.waitForTimeout(12000);
 
     const usernameModalVisible = await page.locator('#usernameModal').isVisible();
-    const result = await page.evaluate(() => ({
-      broadcastMode: document.body.classList.contains('broadcast-mode'),
-      messages: window.__arenaTvMessages,
-    }));
+    const result = await page.evaluate(() => {
+      const controls = document.getElementById('controls');
+      const hadHiddenClass = controls.classList.contains('hidden');
+      controls.classList.remove('hidden');
+      const chatControlsDisplay = getComputedStyle(controls).display;
+      controls.classList.toggle('hidden', hadHiddenClass);
+      return {
+        broadcastMode: document.body.classList.contains('broadcast-mode'),
+        chatControlsDisplay,
+        inputSendCalls: window.__e2e?.inputSendCalls || 0,
+        messages: window.__arenaTvMessages,
+      };
+    });
     const arenaTvMessages = result.messages
       .filter(entry => entry.message?.type === 'arena-tv')
       .map(entry => ({ ...entry.message, targetOrigin: entry.targetOrigin }));
 
     console.log('broadcast body class:', result.broadcastMode);
     console.log('username modal visible:', usernameModalVisible);
+    console.log('chat controls display:', result.chatControlsDisplay);
+    console.log('input send calls:', result.inputSendCalls);
     console.log('page errors:', errors.length ? errors.join(' | ') : 'none');
     console.log('arena-tv messages:', JSON.stringify(arenaTvMessages));
 
     assert.equal(result.broadcastMode, true, 'broadcast mode body class is missing');
     assert.equal(usernameModalVisible, false, 'username modal must stay hidden');
+    assert.equal(result.chatControlsDisplay, 'none', 'chat input controls must stay hidden');
+    assert.equal(result.inputSendCalls, 0, 'render loop must not send inputs in broadcast mode');
     assert.deepEqual(errors, [], 'broadcast boot produced page errors');
     assert.ok(
       arenaTvMessages.some(message =>
