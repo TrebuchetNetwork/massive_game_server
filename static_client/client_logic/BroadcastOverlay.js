@@ -62,7 +62,8 @@ export function createBroadcastOverlay({ document: doc, parent }) {
         setCommentary(line) {
             commentaryEl.textContent = line || '';
         },
-        setScoreboard({ teamScores, timeRemaining }) {
+        setScoreboard(payload = {}) {
+            const { teamScores, timeRemaining } = payload || {};
             if (Array.isArray(teamScores)) {
                 scoresEl.textContent = teamScores.map((s, i) => `T${i + 1} ${s}`).join(' · ');
             }
