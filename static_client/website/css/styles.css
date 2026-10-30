@@ -432,6 +432,17 @@ select {
     filter: brightness(1.5) saturate(1.15);
 }
 
+.arena-tv-frame {
+    border: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.arena-field--tv-live .strategy-feed,
+.arena-field--tv-live + .strategy-feed {
+    display: none;
+}
+
 .arena-field.arena-field--footage {
     height: auto;
     aspect-ratio: 16 / 9;

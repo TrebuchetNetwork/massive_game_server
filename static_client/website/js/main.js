@@ -436,6 +436,48 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  // Live Arena TV broadcast in the hero. Falls back to the newest highlight
+  // clip when the broadcast cannot start, or when ?tv=0 opts out.
+  const hydrateArenaTv = () => {
+    const field = document.querySelector('.arena-field');
+    if (!field) return hydrateHeroFootage();
+    if (new URLSearchParams(window.location.search).get('tv') === '0') return hydrateHeroFootage();
+
+    const frame = document.createElement('iframe');
+    frame.className = 'arena-field__video arena-tv-frame';
+    frame.src = 'client.html?spectator=1&broadcast=1&auto_connect=1';
+    frame.title = 'Live exhibition broadcast';
+    frame.allow = 'autoplay';
+
+    let live = false;
+    let watchdog;
+    const fallback = () => {
+      window.clearTimeout(watchdog);
+      window.removeEventListener('message', onMessage);
+      frame.remove();
+      hydrateHeroFootage();
+    };
+    const onMessage = (event) => {
+      if (event.origin !== window.location.origin
+        || event.source !== frame.contentWindow
+        || event.data?.type !== 'arena-tv') return;
+
+      if (event.data.status === 'live') {
+        live = true;
+        window.clearTimeout(watchdog);
+        field.classList.add('arena-field--tv-live');
+      } else if (event.data.status === 'fallback' && !live) {
+        fallback();
+      }
+    };
+
+    window.addEventListener('message', onMessage);
+    field.prepend(frame);
+    watchdog = window.setTimeout(() => {
+      if (!live) fallback();
+    }, 12000);
+  };
+
   // Compact live telemetry strip under the hero. Reads the public overview
   // plus the league state, refreshes every 30s, and hides on any error.
   const hydrateLiveStrip = async () => {
@@ -499,6 +541,6 @@ document.addEventListener('DOMContentLoaded', () => {
   hydrateArenaTelemetry();
   hydrateHighlights();
   hydrateLeagueTicker();
-  hydrateHeroFootage();
+  hydrateArenaTv();
   hydrateLiveStrip();
 });
