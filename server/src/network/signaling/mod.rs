@@ -45,6 +45,8 @@ fn default_signaling_env_config() -> SignalingEnv {
         disable_stun: false,
         stun_urls: vec!["stun:stun.l.google.com:19302".to_owned()],
         turn_urls: Vec::new(),
+        server_stun_urls: Vec::new(),
+        server_turn_urls: Vec::new(),
         turn_credential_type: None,
         turn_username: None,
         turn_credential: None,
@@ -85,8 +87,8 @@ mod tests {
     use super::chat::try_consume_chat_rate_limit_with_map;
     use super::ice_config::parse_ice_servers_env;
     use super::ice_config::{
-        build_client_ice_config_from_config, build_ice_servers_from_config, CachedIceConfig,
-        TurnCredentialType, TURN_CREDENTIAL_TTL_SECS,
+        build_client_ice_config_from_config, build_ice_servers_from_config, resolve_server_urls,
+        CachedIceConfig, TurnCredentialType, TURN_CREDENTIAL_TTL_SECS,
     };
     use super::rate_limiting::{
         env_u32, normalize_ws_keepalive_interval_secs, validate_signaling_payload,
@@ -1098,6 +1100,8 @@ mod tests {
             disable_stun: true,
             stun_urls: Vec::new(),
             turn_urls: vec!["turn:127.0.0.1:3478?transport=udp".to_owned()],
+            server_stun_urls: Vec::new(),
+            server_turn_urls: vec!["turn:127.0.0.1:3478?transport=udp".to_owned()],
             turn_credential_type: TurnCredentialType::Password,
             turn_username: Some("turn-user".to_owned()),
             turn_credential: Some("turn-password".to_owned()),
@@ -1117,6 +1121,8 @@ mod tests {
             disable_stun: true,
             stun_urls: Vec::new(),
             turn_urls: vec!["turn:127.0.0.1:3478?transport=udp".to_owned()],
+            server_stun_urls: Vec::new(),
+            server_turn_urls: Vec::new(),
             turn_credential_type: TurnCredentialType::Password,
             turn_username: Some("turn-user".to_owned()),
             turn_credential: Some("turn-password".to_owned()),
@@ -1135,6 +1141,84 @@ mod tests {
             turn_entry.credential.as_deref(),
             Some("turn-password"),
             "client config should include credential"
+        );
+    }
+
+    /// The point of MGS_SERVER_STUN_URLS / MGS_SERVER_TURN_URLS: this server's
+    /// own ICE agent gathers from a short list while browsers still receive the
+    /// full one. webrtc-ice 0.17.2 binds one UDP socket per URL in
+    /// gather_candidates_srflx with no scheme filter, and its relay path only
+    /// implements turn:+UDP — so every TCP/TURNS URL a browser can use cost this
+    /// server a stranded socket while contributing no candidate. Measured at 10
+    /// sockets per peer connection with the 8-URL production list.
+    #[test]
+    fn server_and_client_ice_url_lists_are_independent() {
+        let config = CachedIceConfig {
+            disable_stun: false,
+            // What browsers get: 2 STUN + 6 TURN, including TCP and TURNS.
+            stun_urls: vec![
+                "stun:stun.cloudflare.com:3478".to_owned(),
+                "stun:stun.cloudflare.com:53".to_owned(),
+            ],
+            turn_urls: vec![
+                "turn:turn.cloudflare.com:3478?transport=udp".to_owned(),
+                "turn:turn.cloudflare.com:3478?transport=tcp".to_owned(),
+                "turns:turn.cloudflare.com:5349?transport=tcp".to_owned(),
+                "turn:turn.cloudflare.com:443?transport=udp".to_owned(),
+                "turn:turn.cloudflare.com:80?transport=tcp".to_owned(),
+                "turns:turn.cloudflare.com:443?transport=tcp".to_owned(),
+            ],
+            // What this server gathers with: same two hosts, UDP only.
+            server_stun_urls: vec!["stun:stun.cloudflare.com:3478".to_owned()],
+            server_turn_urls: vec![
+                "turn:turn.cloudflare.com:3478?transport=udp".to_owned(),
+                "turn:turn.cloudflare.com:443?transport=udp".to_owned(),
+            ],
+            turn_credential_type: TurnCredentialType::Password,
+            turn_username: Some("turn-user".to_owned()),
+            turn_credential: Some("turn-password".to_owned()),
+            extra_ice_servers: Vec::new(),
+        };
+
+        let server_servers = build_ice_servers_from_config(&config);
+        let client_servers = build_client_ice_config_from_config(&config, "session-1");
+        let server_urls: usize = server_servers.iter().map(|s| s.urls.len()).sum();
+        let client_urls: usize = client_servers.iter().map(|s| s.urls.len()).sum();
+
+        assert_eq!(client_urls, 8, "clients must still receive the full list");
+        assert_eq!(server_urls, 3, "the server gathers from the short list only");
+
+        // No TCP/TURNS URL may reach the server-side agent: its relay path
+        // cannot use them, so they would only strand sockets.
+        for server in &server_servers {
+            for url in &server.urls {
+                assert!(
+                    !url.starts_with("turns:") && !url.contains("transport=tcp"),
+                    "server-side list must not contain {url}"
+                );
+            }
+        }
+        // Credentials must still be attached to the server's TURN entry.
+        assert!(
+            server_servers
+                .iter()
+                .any(|s| s.username == "turn-user" && s.credential == "turn-password"),
+            "server TURN entry should keep its credentials"
+        );
+    }
+
+    /// An unset override must resolve to the shared list, so deployments that
+    /// do not set the new variables behave exactly as before.
+    #[test]
+    fn server_url_override_falls_back_when_unset() {
+        let shared = vec![
+            "stun:stun.cloudflare.com:3478".to_owned(),
+            "stun:stun.cloudflare.com:53".to_owned(),
+        ];
+        assert_eq!(resolve_server_urls(&[], &shared), shared);
+        assert_eq!(
+            resolve_server_urls(&["stun:stun.cloudflare.com:3478".to_owned()], &shared),
+            vec!["stun:stun.cloudflare.com:3478".to_owned()],
         );
     }
 }

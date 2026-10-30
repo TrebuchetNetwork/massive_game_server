@@ -8,7 +8,7 @@ use std::{
     sync::OnceLock,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tracing::warn;
+use tracing::{info, warn};
 use webrtc::ice_transport::ice_server::RTCIceServer;
 
 /// HMAC-SHA1 type alias for legacy TURN credential generation.
@@ -135,10 +135,28 @@ pub(super) struct CachedIceConfig {
     pub(super) disable_stun: bool,
     pub(super) stun_urls: Vec<String>,
     pub(super) turn_urls: Vec<String>,
+    /// Already resolved: falls back to `stun_urls`/`turn_urls` when the
+    /// `MGS_SERVER_*_URLS` overrides are unset, so callers never branch.
+    /// Used only by `build_ice_servers_from_config` (this server's own ICE
+    /// agent); `build_client_ice_config_from_config` keeps using the full lists.
+    pub(super) server_stun_urls: Vec<String>,
+    pub(super) server_turn_urls: Vec<String>,
     pub(super) turn_credential_type: TurnCredentialType,
     pub(super) turn_username: Option<String>,
     pub(super) turn_credential: Option<String>,
     pub(super) extra_ice_servers: Vec<RTCIceServer>,
+}
+
+/// Resolve the server-side ICE URL override.
+///
+/// An empty override means "gather from the same list clients are offered",
+/// which is the historical behaviour. A non-empty override replaces it.
+pub(super) fn resolve_server_urls(override_urls: &[String], shared_urls: &[String]) -> Vec<String> {
+    if override_urls.is_empty() {
+        shared_urls.to_vec()
+    } else {
+        override_urls.to_vec()
+    }
 }
 
 fn load_cached_ice_config() -> CachedIceConfig {
@@ -150,6 +168,21 @@ fn load_cached_ice_config() -> CachedIceConfig {
         runtime.stun_urls.clone()
     };
     let turn_urls = runtime.turn_urls.clone();
+    // Resolve the server-side override once, here, so neither builder branches.
+    // An empty override means "same list as clients", which preserves the
+    // previous behaviour exactly for any deployment that does not set it.
+    let server_stun_urls = resolve_server_urls(&runtime.server_stun_urls, &stun_urls);
+    let server_turn_urls = resolve_server_urls(&runtime.server_turn_urls, &turn_urls);
+    if server_stun_urls.len() + server_turn_urls.len() < stun_urls.len() + turn_urls.len() {
+        info!(
+            "ICE: server-side agent will gather from {} URL(s) while clients are offered {} \
+             (MGS_SERVER_STUN_URLS/MGS_SERVER_TURN_URLS are set). webrtc-ice binds one UDP \
+             socket per URL during srflx gathering, so this is the difference in sockets \
+             stranded per peer connection.",
+            server_stun_urls.len() + server_turn_urls.len(),
+            stun_urls.len() + turn_urls.len(),
+        );
+    }
     let turn_credential_type =
         TurnCredentialType::from_raw(runtime.turn_credential_type.as_deref());
     let turn_username = runtime.turn_username.clone();
@@ -164,6 +197,8 @@ fn load_cached_ice_config() -> CachedIceConfig {
         disable_stun,
         stun_urls,
         turn_urls,
+        server_stun_urls,
+        server_turn_urls,
         turn_credential_type,
         turn_username,
         turn_credential,
@@ -181,14 +216,14 @@ pub(super) fn build_ice_servers_from_config(cfg: &CachedIceConfig) -> Vec<RTCIce
 
     if !cfg.disable_stun {
         ice_servers.push(RTCIceServer {
-            urls: cfg.stun_urls.clone(),
+            urls: cfg.server_stun_urls.clone(),
             ..Default::default()
         });
     }
 
-    if !cfg.turn_urls.is_empty() {
+    if !cfg.server_turn_urls.is_empty() {
         let mut turn_server = RTCIceServer {
-            urls: cfg.turn_urls.clone(),
+            urls: cfg.server_turn_urls.clone(),
             ..Default::default()
         };
         match cfg.turn_credential_type {

@@ -150,6 +150,19 @@ pub struct SignalingEnv {
     pub disable_stun: bool,
     pub stun_urls: Vec<String>,
     pub turn_urls: Vec<String>,
+    /// Server-side-only ICE URL overrides. Empty means "use `stun_urls`/`turn_urls`".
+    ///
+    /// The list advertised to browsers and the list this server's own ICE agent
+    /// gathers with have different requirements, and sharing one list is
+    /// expensive: `gather_candidates_srflx` in webrtc-ice 0.17.2 binds one UDP
+    /// socket per URL with no scheme filter, and `gather_candidates_relay` only
+    /// implements `turn:`+UDP (TCP and TURNS fall into an unimplemented branch).
+    /// So every `turn:`-over-TCP or `turns:` URL a browser could use costs the
+    /// server a socket and a STUN round trip while contributing no candidate.
+    /// These overrides let the server gather from a short list while clients
+    /// still receive the full one.
+    pub server_stun_urls: Vec<String>,
+    pub server_turn_urls: Vec<String>,
     pub turn_credential_type: Option<String>,
     pub turn_username: Option<String>,
     pub turn_credential: Option<String>,
@@ -483,6 +496,8 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
     let signaling_disable_stun = parse_bool_with_default("MGS_DISABLE_STUN", false, &mut errors);
     let signaling_stun_urls = parse_list("MGS_STUN_URLS");
     let signaling_turn_urls = parse_list("MGS_TURN_URLS");
+    let signaling_server_stun_urls = parse_list("MGS_SERVER_STUN_URLS");
+    let signaling_server_turn_urls = parse_list("MGS_SERVER_TURN_URLS");
     let signaling_turn_credential_type =
         get_optional_trimmed("MGS_TURN_CREDENTIAL_TYPE").map(|raw| raw.to_ascii_lowercase());
     let signaling_turn_username = get_optional_trimmed("MGS_TURN_USERNAME");
@@ -665,6 +680,8 @@ pub fn load_app_env_config() -> Result<AppEnvConfig> {
             disable_stun: signaling_disable_stun,
             stun_urls: signaling_stun_urls,
             turn_urls: signaling_turn_urls,
+            server_stun_urls: signaling_server_stun_urls,
+            server_turn_urls: signaling_server_turn_urls,
             turn_credential_type: signaling_turn_credential_type,
             turn_username: signaling_turn_username,
             turn_credential: signaling_turn_credential,
