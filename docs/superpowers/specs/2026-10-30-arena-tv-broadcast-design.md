@@ -12,7 +12,7 @@ Non-goals: video streaming infrastructure (HLS/relay), LLM live commentary, chan
 ## Architecture
 
 Landing page (`static_client/index.html`) embeds the real client in a broadcast frame:
-`client.html?spectate=1&broadcast=1` in a same-origin iframe. Read-only: no input, no join-as-player. Click-through opens the full client (play or duel). What is rendered is the server's authoritative spectator state — never a replay, never scripted.
+`client.html?spectator=1&broadcast=1&auto_connect=1` in a same-origin iframe (uses the existing `spectator` join param; `broadcast` is the new read-only cinematic flag). Read-only: no input, no join-as-player. Click-through opens the full client (play or duel). What is rendered is the server's authoritative spectator state — never a replay, never scripted.
 
 New client modules (all under `static_client/client_logic/`, plain JS, CSP-safe, unit-testable in `node --test` like the existing modules):
 
@@ -23,7 +23,7 @@ New client modules (all under `static_client/client_logic/`, plain JS, CSP-safe,
 Server-side changes are intentionally minimal:
 
 1. **CSP:** `frame-ancestors 'self'` for `client.html` responses only (currently `none`, which blocks same-origin iframes). All other paths keep `none`.
-2. **Broadcast spectator cap:** max 32 concurrent broadcast spectators server-side (env-tunable `MGS_BROADCAST_MAX_SPECTATORS`), counted separately from players. Over-cap joins get a clean rejection the client maps to the highlights fallback. No simulation changes.
+2. **Broadcast spectators reuse the existing spectator cap** (`MGS_SPECTATOR_CAP`, default 20) rather than adding a new limiter. Over-cap rejection surfaces in the client as the data channel closing before the first snapshot; broadcast mode maps that to the highlights fallback within a connect timeout. No simulation changes.
 
 ## Director behavior
 
@@ -61,4 +61,4 @@ Camera rules:
 
 ## Rollout
 
-Single feature flag `?tv=0` on the landing page to disable the broadcast frame (reverts to static hero). Default on. Ship behind one PR sequence: server CSP+cap → director+overlay modules+tests → landing integration+e2e → load check + docs (MAINTENANCE note for the new env var).
+Single feature flag `?tv=0` on the landing page to disable the broadcast frame (reverts to static hero). Default on. Ship behind one PR sequence: server CSP+XFO → director+overlay modules+tests → landing integration+e2e → load check + docs. Protocol note: kill-feed entries carry names, not ids, and kills reuse the damage event type — director kill attribution therefore matches kill-feed names against the current target's `username`, and scoring is driven by damage events (which do carry instigator/target ids).
