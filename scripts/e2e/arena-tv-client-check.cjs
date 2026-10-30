@@ -74,6 +74,7 @@ const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-client
         calls: window.__arenaTvProbeCalls,
         renderFrames: window.__e2e?.renderFrames,
         playerCount: window.__e2e?.playerCount,
+        autoReconnectEnabled: window.__e2e?.autoReconnectEnabled,
         chromeDisplays: Object.fromEntries(playerOnlyChrome.map(selector => [
           selector,
           document.querySelector(selector) ? getComputedStyle(document.querySelector(selector)).display : 'missing',
@@ -97,6 +98,7 @@ const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-client
     console.log('screenshot:', SCREENSHOT_PATH);
     assert.deepEqual(errors, [], 'broadcast client produced page errors');
     assert.equal(result.overlayExists, true, 'Arena TV overlay is missing');
+    assert.equal(result.autoReconnectEnabled, true, 'broadcast auto-reconnect must stay enabled');
     assert.ok(result.scoreboardText.length > 0, 'scoreboard text is empty');
     for (const [selector, display] of Object.entries(result.chromeDisplays)) {
       assert.equal(display, 'none', `${selector} must be hidden in broadcast mode`);

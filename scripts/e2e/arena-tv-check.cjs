@@ -85,6 +85,32 @@ const waitForHero = async (page) => {
     const defaultResult = await waitForHero(page);
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: false });
 
+    let postLiveFallbackResult = null;
+    if (defaultResult.live) {
+      await page.evaluate(() => {
+        const frame = document.querySelector('.arena-tv-frame');
+        const source = frame.contentWindow;
+        for (let i = 0; i < 2; i += 1) {
+          window.dispatchEvent(new MessageEvent('message', {
+            data: { type: 'arena-tv', status: 'fallback', reason: 'stale' },
+            origin: window.location.origin,
+            source,
+          }));
+        }
+      });
+      await page.waitForFunction(() => {
+        const field = document.querySelector('.arena-field');
+        return !field.classList.contains('arena-field--tv-live')
+          && !field.querySelector('iframe.arena-tv-frame')
+          && !!field.querySelector('video.arena-field__video');
+      }, null, { timeout: 5000 });
+      postLiveFallbackResult = await page.evaluate(() => ({
+        live: document.querySelector('.arena-field').classList.contains('arena-field--tv-live'),
+        frames: document.querySelectorAll('iframe.arena-tv-frame').length,
+        videos: document.querySelectorAll('.arena-field video.arena-field__video').length,
+      }));
+    }
+
     const optOutPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const optOutState = watchPage(optOutPage);
     await captureArenaTvMessages(optOutPage);
@@ -107,6 +133,7 @@ const waitForHero = async (page) => {
     optOutResult.frameInserted = await optOutPage.evaluate(() => window.__arenaTvFrameInserted);
 
     console.log('default hero:', JSON.stringify(defaultResult));
+    console.log('post-live fallback:', JSON.stringify(postLiveFallbackResult));
     console.log('default broadcast requests:', defaultState.tvRequests);
     console.log('default broadcast responses:', JSON.stringify(defaultState.tvResponses));
     console.log('default broadcast request failures:', JSON.stringify(defaultState.failedTvRequests));
@@ -127,6 +154,9 @@ const waitForHero = async (page) => {
     assert.ok(defaultResult.messages.length > 0, 'broadcast client never posted an arena-tv status');
     assert.ok(defaultResult.messages.every(message => message.originMatches && message.sourceMatches), 'arena-tv message failed origin/source validation');
     if (REQUIRE_LIVE) assert.equal(defaultResult.live, true, 'Arena TV was required to reach the live state');
+    if (defaultResult.live) {
+      assert.deepEqual(postLiveFallbackResult, { live: false, frames: 0, videos: 1 });
+    }
     assert.deepEqual(defaultState.errors, [], 'default landing page produced page errors');
 
     assert.equal(optOutResult.live, false, '?tv=0 must not enter the live state');

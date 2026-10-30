@@ -64,3 +64,4 @@ export {
 export * from './commentary_templates.js';
 export * from './BroadcastDirector.js';
 export * from './BroadcastOverlay.js';
+export * from './broadcast_lifecycle.js';

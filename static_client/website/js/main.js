@@ -450,11 +450,16 @@ document.addEventListener('DOMContentLoaded', () => {
     frame.allow = 'autoplay';
 
     let live = false;
+    let fallbackHydrated = false;
     let watchdog;
     const fallback = () => {
       window.clearTimeout(watchdog);
       window.removeEventListener('message', onMessage);
+      live = false;
       frame.remove();
+      field.classList.remove('arena-field--tv-live');
+      if (fallbackHydrated) return;
+      fallbackHydrated = true;
       hydrateHeroFootage();
     };
     const onMessage = (event) => {
@@ -465,9 +470,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (event.data.status === 'live') {
         live = true;
         window.clearTimeout(watchdog);
-        window.removeEventListener('message', onMessage);
         field.classList.add('arena-field--tv-live');
-      } else if (event.data.status === 'fallback' && !live) {
+      } else if (event.data.status === 'fallback') {
         fallback();
       }
     };
