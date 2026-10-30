@@ -25,6 +25,13 @@
         }
     </script>
     <link rel="stylesheet" href="./css/game.css?v=20260909-generals1">
+    <style>
+        body.broadcast-mode #usernameModal,
+        body.broadcast-mode #scoreboard,
+        body.broadcast-mode #mobileControls,
+        body.broadcast-mode #chatDisplay,
+        body.broadcast-mode #killFeed { display: none !important; }
+    </style>
     <script src="./client_logic/arena_telemetry.js?v=20260725-mobile-arena2" defer></script>
 </head>
 <body class="bg-gray-900 text-white min-h-screen overflow-hidden">
@@ -1516,6 +1523,16 @@
             Math.min(45000, Math.floor(Number(uiModeParams.get('auto_reconnect_max_ms')) || 12000))
         );
         autoConnectOnLoad = uiModeParams.get('auto_connect') === '1' || uiModeParams.get('autoconnect') === '1';
+        const BROADCAST_MODE = new URLSearchParams(window.location.search).get('broadcast') === '1';
+        if (BROADCAST_MODE) document.body.classList.add('broadcast-mode');
+        let broadcastLive = false;
+        function broadcastStatus(status, reason) {
+            if (!BROADCAST_MODE) return;
+            window.parent.postMessage({ type: 'arena-tv', status, reason: reason || null }, window.location.origin);
+        }
+        if (BROADCAST_MODE) {
+            setTimeout(() => { if (!broadcastLive) broadcastStatus('fallback', 'connect_timeout'); }, 9000);
+        }
         if (BENCH_MODE) {
             setFocusMode(true);
             setControlsPanelHidden(true);
@@ -1816,7 +1833,14 @@
         function resetReconnectState() { return reconnectHelpers.resetReconnectState(); }
         function canStartConnectionAttempt() { return reconnectHelpers.canStartConnectionAttempt(); }
         function computeReconnectDelayMs(attemptNumber) { return reconnectHelpers.computeReconnectDelayMs(attemptNumber); }
-        function scheduleAutoReconnect(reason = '') { return reconnectHelpers.scheduleAutoReconnect(reason); }
+        function scheduleAutoReconnect(reason = '') {
+            const scheduled = reconnectHelpers.scheduleAutoReconnect(reason);
+            if (!scheduled && autoReconnectEnabled && hasAttemptedConnection
+                && reconnectAttemptCount >= autoReconnectMaxAttempts) {
+                broadcastStatus('fallback', 'connect_failed');
+            }
+            return scheduled;
+        }
 
         let inputManager = null;
         let setupInputHandlers = () => {};
@@ -3344,8 +3368,10 @@
         // internally, so this extra driver cannot double-send.
         const INPUT_DRIVER_INTERVAL_MS = Math.max(8, Math.floor(1000 / INPUT_SEND_RATE));
         setInterval(() => {
-            try { sendInputsToServer(); } catch (err) {
-                if (window.__e2e) window.__e2e.inputDriverError = String(err && err.message || err);
+            if (!BROADCAST_MODE) {
+                try { sendInputsToServer(); } catch (err) {
+                    if (window.__e2e) window.__e2e.inputDriverError = String(err && err.message || err);
+                }
             }
         }, INPUT_DRIVER_INTERVAL_MS);
 
@@ -5240,7 +5266,7 @@
         if (!preferredPlayerName && IS_AUTOMATION_CONTEXT) {
             savePreferredPlayerName('E2EPlayer');
         }
-        if (!preferredPlayerName && !IS_AUTOMATION_CONTEXT && !mobileDynamicsEnabled) {
+        if (!preferredPlayerName && !IS_AUTOMATION_CONTEXT && !mobileDynamicsEnabled && !BROADCAST_MODE) {
             openUsernameModal(true);
         }
 
@@ -5336,6 +5362,7 @@
                     log(detail, 'error');
                     setConnectionError(detail);
                     applyConnectionStatus('error', detail);
+                    broadcastStatus('fallback', 'connect_failed');
                     break;
                 }
                 default:
@@ -5355,7 +5382,7 @@
                 canStartConnectionAttempt, initCullWorker, cullWorker, WORKER_CULL_ENABLED,
                 startJoinTimingAttempt, markJoinTimingStage, markJoinTimingAborted,
                 withAuthTokenInUrl, setConnectionError, clearConnectionOverride,
-                clearReconnectTimer, scheduleAutoReconnect, applyConnectionStatus,
+                clearReconnectTimer, scheduleAutoReconnect, applyConnectionStatus, broadcastStatus,
                 connectButton, peerConnectionConfig, peerConnection, signalingSocket, dataChannel,
                 processServerUpdate, tryProcessDeltaMessageFast, parseFlatBufferMessage, unpackCoalescedPackets,
                 controlsDiv, setupInputHandlers, ensureHudWidgets,
@@ -5605,6 +5632,9 @@
             const reconnectReason = String(options.reconnectReason || '').trim();
             const destroyRenderer = options.destroyRenderer === true;
             const lifecycleReason = reconnectReason || connectionErrorDetail || 'connection reset';
+            if (!allowReconnect && connectionStateOverride === 'error') {
+                broadcastStatus('fallback', 'connect_failed');
+            }
             connectAttemptInFlight = false;
             markJoinTimingAborted(lifecycleReason);
             notifyModuleConnectionReset(lifecycleReason, destroyRenderer);

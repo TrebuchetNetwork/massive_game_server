@@ -253,6 +253,8 @@ export function createConnectionManager(getCtx) {
             markJoinTimingAborted(normalized.error);
             if (isRetry) {
                 scheduleAutoReconnect('Invalid signaling URL');
+            } else if (typeof ctx.broadcastStatus === 'function') {
+                ctx.broadcastStatus('fallback', 'connect_failed');
             }
             return false;
         }
@@ -607,7 +609,7 @@ export function createConnectionManager(getCtx) {
             markJoinTimingStage, markJoinTimingComplete,
             setConnectionError, applyConnectionStatus,
             controlsDiv, setupInputHandlers, ensureHudWidgets,
-            loadSettings, initRenderAssetCache,
+            loadSettings, initRenderAssetCache, uiModeParams,
         } = ctx;
 
         dcInstance.binaryType = 'arraybuffer';
@@ -622,7 +624,9 @@ export function createConnectionManager(getCtx) {
                 currentCtx.connectButton.textContent = 'Connected';
             }
             controlsDiv.classList.remove('hidden');
-            setupInputHandlers();
+            if (uiModeParams.get('broadcast') !== '1') {
+                setupInputHandlers();
+            }
             ensureHudWidgets();
             loadSettings();
             initRenderAssetCache();

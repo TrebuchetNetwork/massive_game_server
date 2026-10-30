@@ -354,3 +354,30 @@ test('transient signaling failures still request automatic reconnect', (t) => {
     assert.equal(records.resets.at(-1)?.allowReconnect, true);
     assert.deepEqual(records.reconnects, ['Temporary signaling failure']);
 });
+
+test('broadcast mode skips input handler setup when the data channel opens', (t) => {
+    const { ctx, manager } = createHarness(t);
+    t.after(() => manager.destroy());
+    ctx.uiModeParams = new URLSearchParams('broadcast=1');
+    let inputSetupCount = 0;
+    ctx.setupInputHandlers = () => {
+        inputSetupCount += 1;
+    };
+
+    const dataChannel = { label: 'gameDataChannel', readyState: 'open' };
+    manager.setupDataChannelEvents(dataChannel);
+    dataChannel.onopen();
+
+    assert.equal(inputSetupCount, 0);
+});
+
+test('initial invalid signaling URL reports an unrecoverable broadcast error', (t) => {
+    const { ctx, manager } = createHarness(t);
+    t.after(() => manager.destroy());
+    ctx.normalizeSignalingUrl = () => ({ ok: false, error: 'Invalid signaling URL' });
+    const statuses = [];
+    ctx.broadcastStatus = (status, reason) => statuses.push({ status, reason });
+
+    assert.equal(manager.startConnectionAttempt(), false);
+    assert.deepEqual(statuses, [{ status: 'fallback', reason: 'connect_failed' }]);
+});
