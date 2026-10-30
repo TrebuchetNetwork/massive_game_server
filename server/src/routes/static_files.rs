@@ -75,6 +75,16 @@ pub fn build_static_files_route(
                     csp_header,
                 );
             }
+            if requested_path
+                .file_name()
+                .and_then(|file_name| file_name.to_str())
+                .is_some_and(|file_name| file_name.eq_ignore_ascii_case("client.html"))
+            {
+                headers.insert(
+                    HeaderName::from_static("x-frame-options"),
+                    HeaderValue::from_static("SAMEORIGIN"),
+                );
+            }
         }
 
         if let Some(origin) = static_asset_allow_origin.as_deref() {
@@ -132,7 +142,7 @@ pub fn static_content_security_policy_for_path(path: &Path) -> Option<String> {
         .map(|hash| format!(" 'sha256-{}'", hash))
         .collect::<String>();
     let csp = format!(
-        "default-src 'self'; script-src 'self' 'unsafe-eval' blob:{}; worker-src 'self' blob:; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+        "default-src 'self'; script-src 'self' 'unsafe-eval' blob:{}; worker-src 'self' blob:; connect-src 'self' ws: wss:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'",
         hash_list
     );
     Some(csp)

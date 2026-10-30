@@ -64,10 +64,9 @@ pub fn compose_http_routes(
                     HeaderName::from_static("x-content-type-options"),
                     HeaderValue::from_static("nosniff"),
                 );
-                headers.insert(
-                    HeaderName::from_static("x-frame-options"),
-                    HeaderValue::from_static("DENY"),
-                );
+                headers
+                    .entry(HeaderName::from_static("x-frame-options"))
+                    .or_insert(HeaderValue::from_static("DENY"));
                 headers.insert(
                     HeaderName::from_static("referrer-policy"),
                     HeaderValue::from_static("strict-origin-when-cross-origin"),

@@ -196,6 +196,8 @@ fn test_client_html_uses_hash_based_csp_without_unsafe_inline() {
         !csp.contains("script-src 'self' 'unsafe-inline'"),
         "client.html should no longer require unsafe-inline in script-src"
     );
+    assert!(csp.contains("frame-ancestors 'self'"));
+    assert!(!csp.contains("frame-ancestors 'none'"));
 }
 
 #[test]
@@ -241,6 +243,7 @@ fn test_index_html_uses_strict_self_hosted_csp() {
     assert!(csp.contains("style-src 'self'"));
     assert!(!csp.contains("'unsafe-inline'"));
     assert!(!csp.contains("'unsafe-eval'"));
+    assert!(csp.contains("frame-ancestors 'none'"));
 }
 
 #[test]
