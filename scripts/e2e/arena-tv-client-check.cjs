@@ -58,16 +58,25 @@ const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-client
     });
     await page.waitForTimeout(3000);
 
-    const result = await page.evaluate(() => ({
-      overlayExists: !!document.querySelector('#arenaTvRoot .arena-tv-overlay'),
-      scoreboardText: document.querySelector('#arenaTvRoot .arena-tv-top')?.textContent?.trim() || '',
-      messages: window.__arenaTvMessages.map(entry => entry.message),
-      frames: window.__arenaTvProbeFrames,
-      calls: window.__arenaTvProbeCalls,
-      renderFrames: window.__e2e?.renderFrames,
-      playerCount: window.__e2e?.playerCount,
-      logText: document.getElementById('log')?.textContent?.slice(-5000) || '',
-    }));
+    const result = await page.evaluate(() => {
+      const playerOnlyChrome = [
+        '#controlHintsOverlay', '#audioUnlockNudge', '#musicPlayer', '#tipsToast', '#joinProgressOverlay',
+      ];
+      return {
+        overlayExists: !!document.querySelector('#arenaTvRoot .arena-tv-overlay'),
+        scoreboardText: document.querySelector('#arenaTvRoot .arena-tv-top')?.textContent?.trim() || '',
+        messages: window.__arenaTvMessages.map(entry => entry.message),
+        frames: window.__arenaTvProbeFrames,
+        calls: window.__arenaTvProbeCalls,
+        renderFrames: window.__e2e?.renderFrames,
+        playerCount: window.__e2e?.playerCount,
+        chromeDisplays: Object.fromEntries(playerOnlyChrome.map(selector => [
+          selector,
+          document.querySelector(selector) ? getComputedStyle(document.querySelector(selector)).display : 'missing',
+        ])),
+        logText: document.getElementById('log')?.textContent?.slice(-5000) || '',
+      };
+    });
     const uniqueTargets = new Set(result.frames.map(frame => frame.targetId));
     console.log('arena-tv messages:', JSON.stringify(result.messages));
     console.log('overlay exists:', result.overlayExists);
@@ -75,6 +84,7 @@ const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-client
     console.log('director frame samples:', result.frames.length, 'unique targets:', [...uniqueTargets]);
     console.log('director call samples:', JSON.stringify(result.calls));
     console.log('render frames / players:', result.renderFrames, result.playerCount);
+    console.log('player-only chrome displays:', JSON.stringify(result.chromeDisplays));
     if (!result.frames.length || errors.length) console.log('client log tail:', result.logText);
     console.log('page errors:', errors.length ? errors.join(' | ') : 'none');
     console.log('console errors:', consoleErrors.length ? consoleErrors.join(' | ') : 'none');
@@ -84,6 +94,9 @@ const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-client
     assert.deepEqual(errors, [], 'broadcast client produced page errors');
     assert.equal(result.overlayExists, true, 'Arena TV overlay is missing');
     assert.ok(result.scoreboardText.length > 0, 'scoreboard text is empty');
+    for (const [selector, display] of Object.entries(result.chromeDisplays)) {
+      assert.equal(display, 'none', `${selector} must be hidden in broadcast mode`);
+    }
     assert.ok(
       uniqueTargets.size > 1 || result.frames.some(frame => frame.targetId != null),
       'director never selected a camera target',

@@ -240,3 +240,118 @@ test("processDeltaStateFast fans parsed game events, kill feed, and snapshots ou
     assert.equal(received.feeds[0][0].killer_name, "Attacker");
     assert.equal(received.snapshots, 1);
 });
+
+test("processServerUpdate continues after every broadcast hook throws", (t) => {
+    const warnings = [];
+    t.mock.method(console, "warn", (...args) => warnings.push(args));
+    const calls = { events: 0, feeds: 0, snapshots: 0, killFeedUi: 0, interpolation: 0 };
+    const killFeed = [{ killer_name: "Attacker", victim_name: "Victim", timestamp: 10 }];
+    const ctx = makeCtx({
+        effectsManager: {
+            processGameEvent: () => { calls.events += 1; },
+        },
+        updateKillFeed: () => { calls.killFeedUi += 1; },
+        maybeRecordInterpolationSnapshot: () => { calls.interpolation += 1; },
+        broadcastHooks: {
+            onGameEvent: () => { throw new Error("event hook failed"); },
+            onKillFeed: () => { throw new Error("feed hook failed"); },
+            onSnapshot: () => { calls.snapshots += 1; throw new Error("snapshot hook failed"); },
+        },
+    });
+    const handler = createServerUpdateHandler(() => ctx);
+    const update = () => handler.processServerUpdate({
+        timestamp: 10,
+        game_events: [{ event_type: 3, instigator_id: "attacker", value: 25 }],
+        kill_feed: killFeed,
+    }, false);
+
+    assert.doesNotThrow(update);
+    assert.doesNotThrow(update);
+
+    assert.equal(ctx.killFeed, killFeed);
+    assert.equal(calls.events, 2);
+    assert.equal(calls.snapshots, 2);
+    assert.equal(calls.killFeedUi, 2);
+    assert.equal(calls.interpolation, 2);
+    assert.equal(warnings.length, 3, "each JSON hook site warns only once");
+});
+
+test("processDeltaStateFast continues after every broadcast hook throws", (t) => {
+    const warnings = [];
+    t.mock.method(console, "warn", (...args) => warnings.push(args));
+    const calls = { events: 0, snapshots: 0, killFeedUi: 0, interpolation: 0 };
+    const killFeedRow = {
+        killerPosition: () => null,
+        victimPosition: () => null,
+        killerName: () => "Attacker",
+        victimName: () => "Victim",
+        weapon: () => 1,
+        timestamp: () => 10,
+        isHeadshot: () => false,
+        killContext: () => 0,
+    };
+    const gameEvent = {
+        position: () => null,
+        eventType: () => 3,
+        instigatorId: () => "attacker",
+        targetId: () => "victim",
+        weaponType: () => 1,
+        value: () => 25,
+        falloffMultiplier: () => 1,
+    };
+    const zeroLength = () => 0;
+    const delta = {
+        lastProcessedInputSequence: () => 0,
+        timestamp: () => 10,
+        destroyedWallIdsLength: zeroLength,
+        updatedWallsLength: zeroLength,
+        wallsLength: zeroLength,
+        playersLength: zeroLength,
+        changedPlayerFieldsLength: zeroLength,
+        removedPlayerIdsLength: zeroLength,
+        projectilesLength: zeroLength,
+        removedProjectilesLength: zeroLength,
+        pickupsLength: zeroLength,
+        deactivatedPickupIdsLength: zeroLength,
+        killFeedLength: () => 1,
+        killFeed: () => killFeedRow,
+        matchInfo: () => null,
+        flagStatesLength: zeroLength,
+        gameEventsLength: () => 1,
+        gameEvents: () => gameEvent,
+    };
+    const ctx = makeCtx({
+        effectsManager: {
+            processGameEvent: () => { calls.events += 1; },
+        },
+        updateKillFeed: () => { calls.killFeedUi += 1; },
+        maybeRecordInterpolationSnapshot: () => { calls.interpolation += 1; },
+        broadcastHooks: {
+            onGameEvent: () => { throw new Error("event hook failed"); },
+            onKillFeed: () => { throw new Error("feed hook failed"); },
+            onSnapshot: () => { calls.snapshots += 1; throw new Error("snapshot hook failed"); },
+        },
+        parseMatchInfo: () => null,
+        flatbufferParseScratch: {
+            wall: {}, playerState: {}, projectileState: {}, pickup: {}, vec2: {},
+            killFeedEntry: {}, matchInfo: {}, flagState: {}, gameEvent: {},
+        },
+        DELTA_SUPPORTS_REMOVED_PLAYER_IDS: false,
+        DELTA_SUPPORTS_CHANGED_PLAYER_FIELDS: false,
+        DELTA_SUPPORTS_UPDATED_WALLS: false,
+        DELTA_SUPPORTS_FULL_WALLS: false,
+        PLAYER_DELTA_FULL_MASK: 0,
+    });
+    const handler = createServerUpdateHandler(() => ctx);
+
+    assert.doesNotThrow(() => handler.processDeltaStateFast(delta));
+    assert.doesNotThrow(() => handler.processDeltaStateFast(delta));
+
+    assert.equal(ctx.killFeed.length, 1);
+    assert.equal(ctx.killFeed[0].killer_name, "Attacker");
+    assert.equal(calls.events, 2);
+    assert.equal(calls.snapshots, 2);
+    assert.equal(calls.killFeedUi, 2);
+    assert.equal(calls.interpolation, 2);
+    assert.equal(warnings.length, 3, "each delta hook site warns only once");
+});

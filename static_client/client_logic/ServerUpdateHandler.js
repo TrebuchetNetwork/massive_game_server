@@ -20,6 +20,13 @@ export function createServerUpdateHandler(getCtx) {
     const LOCAL_REPLAY_STEP_MIN_SEC = 1 / 240;
     const LOCAL_REPLAY_STEP_MAX_SEC = 0.125;
     const LOCAL_REPLAY_FALLBACK_STEP_SEC = 1 / 30;
+    const broadcastHookWarningSites = new Set();
+
+    function warnBroadcastHookFailure(site, error) {
+        if (broadcastHookWarningSites.has(site)) return;
+        broadcastHookWarningSites.add(site);
+        console.warn(`[ServerUpdateHandler] broadcast hook ${site} failed`, error);
+    }
 
     function clampReplayStepSec(valueSec) {
         if (!Number.isFinite(valueSec)) return LOCAL_REPLAY_FALLBACK_STEP_SEC;
@@ -575,7 +582,11 @@ export function createServerUpdateHandler(getCtx) {
             );
             killFeed = messageData.kill_feed;
             ctx.setKillFeed(killFeed);
-            if (ctx.broadcastHooks) ctx.broadcastHooks.onKillFeed(killFeed);
+            try {
+                if (ctx.broadcastHooks) ctx.broadcastHooks.onKillFeed(killFeed);
+            } catch (error) {
+                warnBroadcastHookFailure('json:onKillFeed', error);
+            }
             updateKillFeed();
         }
 
@@ -602,13 +613,21 @@ export function createServerUpdateHandler(getCtx) {
                 const gameEvents = messageData.game_events;
                 for (let i = 0; i < gameEvents.length; i += 1) {
                     effectsManager.processGameEvent(gameEvents[i]);
-                    if (ctx.broadcastHooks) ctx.broadcastHooks.onGameEvent(gameEvents[i]);
+                    try {
+                        if (ctx.broadcastHooks) ctx.broadcastHooks.onGameEvent(gameEvents[i]);
+                    } catch (error) {
+                        warnBroadcastHookFailure('json:onGameEvent', error);
+                    }
                 }
             }
         }
 
         maybeRecordInterpolationSnapshot(serverTime);
-        if (ctx.broadcastHooks) ctx.broadcastHooks.onSnapshot();
+        try {
+            if (ctx.broadcastHooks) ctx.broadcastHooks.onSnapshot();
+        } catch (error) {
+            warnBroadcastHookFailure('json:onSnapshot', error);
+        }
     }
 
 
@@ -952,7 +971,11 @@ export function createServerUpdateHandler(getCtx) {
                 );
                 killFeed = rows;
                 ctx.setKillFeed(rows);
-                if (ctx.broadcastHooks) ctx.broadcastHooks.onKillFeed(rows);
+                try {
+                    if (ctx.broadcastHooks) ctx.broadcastHooks.onKillFeed(rows);
+                } catch (error) {
+                    warnBroadcastHookFailure('delta:onKillFeed', error);
+                }
                 updateKillFeed();
             }
         }
@@ -1008,12 +1031,20 @@ export function createServerUpdateHandler(getCtx) {
                         : 1.0,
                 };
                 effectsManager.processGameEvent(parsedGameEvent);
-                if (ctx.broadcastHooks) ctx.broadcastHooks.onGameEvent(parsedGameEvent);
+                try {
+                    if (ctx.broadcastHooks) ctx.broadcastHooks.onGameEvent(parsedGameEvent);
+                } catch (error) {
+                    warnBroadcastHookFailure('delta:onGameEvent', error);
+                }
             }
         }
 
         maybeRecordInterpolationSnapshot(serverTime);
-        if (ctx.broadcastHooks) ctx.broadcastHooks.onSnapshot();
+        try {
+            if (ctx.broadcastHooks) ctx.broadcastHooks.onSnapshot();
+        } catch (error) {
+            warnBroadcastHookFailure('delta:onSnapshot', error);
+        }
     }
 
 
