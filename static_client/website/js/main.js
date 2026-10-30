@@ -465,6 +465,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (event.data.status === 'live') {
         live = true;
         window.clearTimeout(watchdog);
+        window.removeEventListener('message', onMessage);
         field.classList.add('arena-field--tv-live');
       } else if (event.data.status === 'fallback' && !live) {
         fallback();

@@ -453,7 +453,12 @@ select {
 .arena-field--footage .arena-field__axis,
 .arena-field--footage .arena-field__scan,
 .arena-field--footage .arena-field__core,
-.arena-field--footage .fighter {
+.arena-field--footage .fighter,
+.arena-field--tv-live .arena-field__ring,
+.arena-field--tv-live .arena-field__axis,
+.arena-field--tv-live .arena-field__scan,
+.arena-field--tv-live .arena-field__core,
+.arena-field--tv-live .fighter {
     display: none;
 }
 
