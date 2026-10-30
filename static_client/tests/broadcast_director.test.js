@@ -48,3 +48,60 @@ test('empty player list yields null frame', () => {
     const d = createBroadcastDirector();
     assert.equal(d.cameraFrame([], null, 1000), null);
 });
+
+test('periodic sweeps expire old damage and allow fresh recordings', () => {
+    const d = createBroadcastDirector({
+        damageDecayMs: 50,
+        sweepMs: 20,
+        dwellMs: 0,
+        switchSustainMs: 0,
+    });
+    const players = [P('a'), P('b')];
+    d.recordDamage({ instigatorId: 'a', value: 40, atMs: 0 });
+    assert.equal(d.cameraFrame(players, null, 0).targetId, 'a');
+    for (let atMs = 60; atMs <= 200; atMs += 20) {
+        d.cameraFrame(players, 'b', atMs);
+    }
+    assert.equal(d.cameraFrame(players, 'b', 200).targetId, 'b');
+    d.recordDamage({ instigatorId: 'a', value: 1, atMs: 210 });
+    assert.equal(d.cameraFrame(players, 'b', 210).targetId, 'b');
+    assert.equal(d.cameraFrame(players, 'b', 211).targetId, 'a');
+});
+
+test('non-finite coordinates are excluded from camera frames', () => {
+    const d = createBroadcastDirector();
+    const players = [
+        P('bad-x', { x: undefined }),
+        P('bad-y', { y: NaN }),
+        P('valid', { x: 25, y: 40 }),
+    ];
+    const frame = d.cameraFrame(players, null, 1000);
+    assert.equal(frame.targetId, 'valid');
+    assert.equal(frame.focusX, 25);
+    assert.equal(frame.focusY, 40);
+    assert.ok(Number.isFinite(frame.focusX));
+    assert.ok(Number.isFinite(frame.focusY));
+    assert.equal(d.cameraFrame([P('bad', { x: undefined, y: undefined })], null, 2000), null);
+});
+
+test('non-finite health and enemy coordinates do not create drama', () => {
+    const d = createBroadcastDirector();
+    const players = [
+        P('bad-enemy', { teamId: 2, x: undefined }),
+        P('enemy', { teamId: 2, x: 100 }),
+        P('low', { hp: -Infinity }),
+        P('leader'),
+    ];
+    assert.equal(d.selectTarget(players, 'leader', 1000), 'leader');
+});
+
+test('duplicate ids compare stably without throwing', () => {
+    const d = createBroadcastDirector();
+    const players = [P('dup', { x: 10 }), P('dup', { x: 20 })];
+    let first;
+    assert.doesNotThrow(() => {
+        first = d.cameraFrame(players, null, 1000);
+    });
+    assert.equal(first.focusX, 10);
+    assert.deepEqual(d.cameraFrame(players, null, 2000), first);
+});
