@@ -6,6 +6,72 @@
  * and all combat presentation logic.
  */
 
+export function selectCtfObjectiveTargets({
+    localPlayerState,
+    myFlag,
+    enemyFlag,
+    worldBoundsState,
+    players,
+    FlagStatus,
+}) {
+    const targets = [];
+    const addTarget = (position, label, tone) => {
+        if (!position) return false;
+        const x = Number(position.x);
+        const y = Number(position.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+        targets.push({ x, y, label, tone });
+        return true;
+    };
+    const myTeamId = Number(localPlayerState?.team_id) || 0;
+    const enemyTeamId = myTeamId === 1 ? 2 : (myTeamId === 2 ? 1 : 0);
+    const carryingEnemyFlag = enemyTeamId !== 0 &&
+        Number(localPlayerState?.is_carrying_flag_team_id) === enemyTeamId;
+    const getOwnBasePosition = () => {
+        if (!worldBoundsState?.valid) return null;
+        const x = myTeamId === 1
+            ? Number(worldBoundsState.minX) + 100
+            : (myTeamId === 2 ? Number(worldBoundsState.maxX) - 100 : NaN);
+        return Number.isFinite(x) ? { x, y: 0 } : null;
+    };
+
+    if (carryingEnemyFlag) {
+        if (myFlag?.status === FlagStatus.AtBase) {
+            if (!addTarget(myFlag.position, 'RETURN TO BASE', 'positive')) {
+                addTarget(getOwnBasePosition(), 'RETURN TO BASE', 'positive');
+            }
+        } else if (myFlag?.status === FlagStatus.Dropped) {
+            if (!addTarget(myFlag.position, 'RECOVER FLAG FIRST', 'critical')) {
+                addTarget(getOwnBasePosition(), 'RECOVER FLAG FIRST', 'critical');
+            }
+        } else if (myFlag?.status === FlagStatus.Carried) {
+            const carrier = myFlag.carrier_id ? players?.get(myFlag.carrier_id) : null;
+            const carrierPosition = carrier ? {
+                x: carrier.render_x ?? carrier.x,
+                y: carrier.render_y ?? carrier.y,
+            } : null;
+            if (!addTarget(carrierPosition, 'STOP ENEMY CARRIER', 'critical')) {
+                addTarget(getOwnBasePosition(), 'RECOVER FLAG FIRST', 'critical');
+            }
+        } else {
+            addTarget(getOwnBasePosition(), 'RECOVER FLAG FIRST', 'critical');
+        }
+        return targets;
+    }
+
+    if (enemyFlag?.position) {
+        addTarget(
+            enemyFlag.position,
+            enemyFlag.status === FlagStatus.Carried ? 'ENEMY FLAG (C)' : 'ENEMY FLAG',
+            'critical'
+        );
+    }
+    if (myFlag?.status === FlagStatus.Dropped && myFlag.position) {
+        addTarget(myFlag.position, 'RECOVER FLAG', 'positive');
+    }
+    return targets;
+}
+
 export function createCombatFeedback(getCtx) {
     let lastLocalDamageImpactAt = 0;
     const streakPingCooldownByPlayer = new Map();
@@ -252,22 +318,14 @@ export function createCombatFeedback(getCtx) {
             const enemyTeamId = myTeamId === 1 ? 2 : (myTeamId === 2 ? 1 : 0);
             const myFlag = myTeamId ? ctx.flagStates.get(myTeamId) : null;
             const enemyFlag = enemyTeamId ? ctx.flagStates.get(enemyTeamId) : null;
-            if (enemyFlag?.position) {
-                targets.push({
-                    x: Number(enemyFlag.position.x),
-                    y: Number(enemyFlag.position.y),
-                    label: enemyFlag.status === ctx.GP.FlagStatus.Carried ? 'ENEMY FLAG (C)' : 'ENEMY FLAG',
-                    tone: 'critical',
-                });
-            }
-            if (myFlag?.status === ctx.GP.FlagStatus.Dropped && myFlag.position) {
-                targets.push({
-                    x: Number(myFlag.position.x),
-                    y: Number(myFlag.position.y),
-                    label: 'RECOVER FLAG',
-                    tone: 'positive',
-                });
-            }
+            targets.push(...selectCtfObjectiveTargets({
+                localPlayerState: ctx.localPlayerState,
+                myFlag,
+                enemyFlag,
+                worldBoundsState: ctx.worldBoundsState,
+                players: ctx.players,
+                FlagStatus: ctx.GP.FlagStatus,
+            }));
         }
         if (ctx.hotZoneState?.active) {
             targets.push({
