@@ -322,6 +322,7 @@ struct EnemySnapshot {
     carries_flag_team_id: u8,
     weapon: ServerWeaponType,
     health: i32,
+    is_spectator: bool,
     /// Stable zero-based exhibition slot when this player is a model fighter.
     arena_slot: Option<i32>,
 }
@@ -577,6 +578,7 @@ impl OptimizedBotAI {
                     carries_flag_team_id: player.is_carrying_flag_team_id,
                     weapon: player.weapon,
                     health: player.health,
+                    is_spectator: player.is_spectator,
                     arena_slot,
                 };
 
@@ -730,7 +732,7 @@ impl OptimizedBotAI {
                     ffa_enemies = enemies_team1
                         .iter()
                         .chain(enemies_team2.iter())
-                        .filter(|enemy| enemy.id != bot_snapshot.id)
+                        .filter(|enemy| !enemy.is_spectator && enemy.id != bot_snapshot.id)
                         .cloned()
                         .collect::<Vec<_>>();
                     &ffa_enemies
@@ -2972,6 +2974,7 @@ mod tests {
             carries_flag_team_id: 0,
             weapon: ServerWeaponType::Rifle,
             health: 100,
+            is_spectator: false,
             arena_slot,
         }
     }

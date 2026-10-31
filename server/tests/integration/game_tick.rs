@@ -202,8 +202,7 @@ async fn bots_have_unique_names() {
     assert_eq!(unique_count, 26, "All 26 bots should have unique names");
 }
 
-#[test]
-fn ffa_bot_targets_nearby_same_team_human() {
+fn setup_bot_combat_scenario(game_mode: fb::GameModeType) -> (Arc<MassiveGameServer>, PlayerID) {
     let server = setup_test_server();
     server.spawn_initial_bots(1);
     let bot_id = server
@@ -216,9 +215,7 @@ fn ffa_bot_targets_nearby_same_team_human() {
     server
         .player_manager
         .update_player_position(&bot_id, 0.0, 0.0);
-    add_player(&server, "same_team_human", 1, 100.0, 0.0);
-
-    server.match_info.write().game_mode = fb::GameModeType::FreeForAll;
+    server.match_info.write().game_mode = game_mode;
     if let Some(mut bot_state) = server.player_manager.get_player_state_mut(&bot_id) {
         bot_state.rotation = 1.0;
     }
@@ -228,21 +225,65 @@ fn ffa_bot_targets_nearby_same_team_human() {
         bot_controller.target_position = None;
         bot_controller.last_decision_tick = server.frame_counter.load(Ordering::Relaxed);
     }
+    (server, bot_id)
+}
 
+fn run_bot_combat_and_get_rotation(server: &MassiveGameServer, bot_id: &PlayerID) -> f32 {
     massive_game_server_core::systems::ai::optimized_bot_ai::OptimizedBotAI::update_bots_batch(
-        &server, 0.016,
+        server, 0.016,
     );
-
     let bot_state = server
         .player_manager
-        .get_player_state(&bot_id)
+        .get_player_state(bot_id)
         .expect("bot state");
-    let input = bot_state.input_queue.back().expect("queued bot input");
+    bot_state
+        .input_queue
+        .back()
+        .expect("queued bot input")
+        .rotation
+}
+
+#[test]
+fn ffa_bot_targets_nearby_same_team_human() {
+    let (server, bot_id) = setup_bot_combat_scenario(fb::GameModeType::FreeForAll);
+    add_player(&server, "same_team_human", 1, 100.0, 0.0);
+
+    let rotation = run_bot_combat_and_get_rotation(&server, &bot_id);
     assert!(
-        input.rotation.abs() < 0.2,
-        "FFA bot should aim at the nearby team-1 human, not keep its old rotation: {}",
-        input.rotation
+        rotation.abs() < 0.2,
+        "FFA bot should aim at the nearby team-1 human, not keep its old rotation: {rotation}"
     );
+}
+
+#[test]
+fn ffa_bot_with_no_other_players_has_no_target() {
+    let (server, bot_id) = setup_bot_combat_scenario(fb::GameModeType::FreeForAll);
+
+    let rotation = run_bot_combat_and_get_rotation(&server, &bot_id);
+    assert_eq!(rotation, 1.0, "FFA bot must not target itself");
+}
+
+#[test]
+fn ffa_bot_does_not_target_alive_team_spectator() {
+    let (server, bot_id) = setup_bot_combat_scenario(fb::GameModeType::FreeForAll);
+    let spectator_id = add_player(&server, "team_spectator", 1, 100.0, 0.0);
+    if let Some(mut spectator) = server.player_manager.get_player_state_mut(&spectator_id) {
+        spectator.is_spectator = true;
+        assert!(spectator.alive);
+        assert_eq!(spectator.team_id, 1);
+    }
+
+    let rotation = run_bot_combat_and_get_rotation(&server, &bot_id);
+    assert_eq!(rotation, 1.0, "FFA bot must not target an alive spectator");
+}
+
+#[test]
+fn tdm_bot_does_not_target_same_team_human() {
+    let (server, bot_id) = setup_bot_combat_scenario(fb::GameModeType::TeamDeathmatch);
+    add_player(&server, "same_team_human", 1, 100.0, 0.0);
+
+    let rotation = run_bot_combat_and_get_rotation(&server, &bot_id);
+    assert_eq!(rotation, 1.0, "TDM bot must ignore same-team players");
 }
 
 // ── Spectator handling ──────────────────────────────────────────────
