@@ -202,6 +202,49 @@ async fn bots_have_unique_names() {
     assert_eq!(unique_count, 26, "All 26 bots should have unique names");
 }
 
+#[test]
+fn ffa_bot_targets_nearby_same_team_human() {
+    let server = setup_test_server();
+    server.spawn_initial_bots(1);
+    let bot_id = server
+        .bot_players
+        .iter()
+        .next()
+        .expect("one bot")
+        .key()
+        .clone();
+    server
+        .player_manager
+        .update_player_position(&bot_id, 0.0, 0.0);
+    add_player(&server, "same_team_human", 1, 100.0, 0.0);
+
+    server.match_info.write().game_mode = fb::GameModeType::FreeForAll;
+    if let Some(mut bot_state) = server.player_manager.get_player_state_mut(&bot_id) {
+        bot_state.rotation = 1.0;
+    }
+    if let Some(mut bot_controller) = server.bot_players.get_mut(&bot_id) {
+        bot_controller.arena_model_id = None;
+        bot_controller.arena_action = None;
+        bot_controller.target_position = None;
+        bot_controller.last_decision_tick = server.frame_counter.load(Ordering::Relaxed);
+    }
+
+    massive_game_server_core::systems::ai::optimized_bot_ai::OptimizedBotAI::update_bots_batch(
+        &server, 0.016,
+    );
+
+    let bot_state = server
+        .player_manager
+        .get_player_state(&bot_id)
+        .expect("bot state");
+    let input = bot_state.input_queue.back().expect("queued bot input");
+    assert!(
+        input.rotation.abs() < 0.2,
+        "FFA bot should aim at the nearby team-1 human, not keep its old rotation: {}",
+        input.rotation
+    );
+}
+
 // ── Spectator handling ──────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread")]

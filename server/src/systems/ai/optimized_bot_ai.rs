@@ -725,7 +725,16 @@ impl OptimizedBotAI {
             // Update bot controller
             if let Some(mut bot_controller_entry) = server_instance.bot_players.get_mut(bot_id) {
                 let bot_controller = bot_controller_entry.value_mut();
-                let enemies = if bot_snapshot.team_id == 1 {
+                let ffa_enemies;
+                let enemies = if game_mode == fb::GameModeType::FreeForAll {
+                    ffa_enemies = enemies_team1
+                        .iter()
+                        .chain(enemies_team2.iter())
+                        .filter(|enemy| enemy.id != bot_snapshot.id)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    &ffa_enemies
+                } else if bot_snapshot.team_id == 1 {
                     &enemies_team1
                 } else {
                     &enemies_team2
