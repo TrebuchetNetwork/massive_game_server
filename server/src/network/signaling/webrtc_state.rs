@@ -65,15 +65,35 @@ impl PeerConnectionDropGuard {
 /// Wait, up to `GATHERING_DRAIN_TIMEOUT`, for ICE gathering to reach `Complete`
 /// before a `PeerConnection` is closed.
 ///
-/// This works around a defect in webrtc-ice 0.17.2 rather than fixing it. The
-/// candidate-gathering task is spawned detached with no cancellation check, and
-/// `AgentInternal::close()` early-returns on `done_tx.is_none()` *before*
-/// reaching `delete_all_candidates()` — the only code that closes the gathered
-/// sockets. So any socket bound after `close()` ran is stranded for the life of
-/// the process, and a second `close()` can never reclaim it because the guard
-/// fires first. Waiting for `Complete` means every socket is already registered
-/// in `local_candidates` when `close()` runs, so `delete_all_candidates()` sees
-/// and closes all of them.
+/// **This does NOT stop the UDP socket leak.** It was written to, and measured
+/// not to. One real Chromium peer connection held for ~30s and then disconnected
+/// still stranded 7 sockets, identical to before this function existed — because
+/// gathering had long since completed, so `close()` was already running after it
+/// and the leak happened anyway.
+///
+/// The actual cause is one layer below the ICE agent. webrtc-util implements
+/// `Conn` directly on `tokio::net::UdpSocket` and its `close()` is a no-op:
+///
+/// ```text
+/// webrtc-util-0.17.2/src/conn/conn_udp.rs:35   async fn close(&self) -> Result<()> { Ok(()) }
+/// ```
+///
+/// So `delete_all_candidates()` → `candidate.close()` → `conn.close()` closes
+/// nothing; the fd is only released when the last `Arc<UdpSocket>` drops, and a
+/// recv task blocked in `recv_from().await` holds one forever because nothing
+/// ever wakes it. tokio's `UdpSocket` has no `shutdown()`, so this cannot be
+/// fixed by adding a call — it needs a forked webrtc-util with a cancellation
+/// channel. Until then the leak is bounded only by the service's 20-hour
+/// `RuntimeMaxSec` recycle.
+///
+/// What this function *does* do is close the gather-after-close race that the
+/// crate source shows is possible: the gathering task is spawned detached with
+/// no cancellation check, and `AgentInternal::close()` early-returns on
+/// `done_tx.is_none()` before reaching `delete_all_candidates()`, so a peer that
+/// disconnects *during* gathering can bind sockets nothing will ever reclaim.
+/// That window is real but was not what the measurement above exercised, and it
+/// is unproven here — kept because it is bounded, cheap and returns immediately
+/// in the common cases.
 ///
 /// Returns `true` when gathering finished, `false` when it never started or the
 /// wait timed out. `New`/`Unspecified` means no SDP was ever applied, so there
@@ -105,8 +125,9 @@ impl Drop for PeerConnectionDropGuard {
         if let Some(pc) = self.peer_connection.take() {
             let pid = self.peer_id.clone();
             tokio::spawn(async move {
-                // Drain gathering first; see drain_ice_gathering for why this
-                // ordering is what prevents the socket leak.
+                // Drain gathering first to close the gather-after-close race
+                // window. This does not stop the socket leak; see
+                // drain_ice_gathering for the measured result and real cause.
                 let drained = drain_ice_gathering(&pc, &pid).await;
                 if let Err(e) = pc.close().await {
                     error!(

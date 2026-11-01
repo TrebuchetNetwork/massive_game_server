@@ -1354,8 +1354,9 @@ async fn teardown_connection(
     pc_drop_guard.defuse();
     // Clean up interpolation history to prevent memory leak after disconnect.
     ctx.server_instance.cleanup_player_tracking_state(peer_id_str);
-    // Drain ICE gathering before close(). Ordering matters: see
-    // drain_ice_gathering for the webrtc-ice 0.17.2 socket-leak race.
+    // Drain ICE gathering before close() to close the gather-after-close race
+    // window. NOTE: this does not stop the UDP socket leak -- the cause is
+    // webrtc-util's no-op Conn::close(); see drain_ice_gathering.
     let gathering_drained = drain_ice_gathering(peer_connection, peer_id_str).await;
     if let Err(e) = peer_connection.close().await {
         error!(
