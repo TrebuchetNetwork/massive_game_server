@@ -70,6 +70,14 @@ const waitForHero = async (page) => {
       frames: field?.querySelectorAll('iframe.arena-tv-frame').length || 0,
       strategyFeedDisplay: getComputedStyle(document.querySelector('.strategy-feed')).display,
       fieldHeight: rect?.height || 0,
+      joinLive: (() => {
+        const link = document.querySelector('[data-join-live]');
+        return link ? {
+          hidden: link.hidden,
+          visible: !link.hidden && getComputedStyle(link).display !== 'none',
+          href: link.getAttribute('href'),
+        } : null;
+      })(),
       messages: window.__arenaTvMessages || [],
     };
   });
@@ -108,6 +116,11 @@ const waitForHero = async (page) => {
         live: document.querySelector('.arena-field').classList.contains('arena-field--tv-live'),
         frames: document.querySelectorAll('iframe.arena-tv-frame').length,
         videos: document.querySelectorAll('.arena-field video.arena-field__video').length,
+        joinHidden: document.querySelector('[data-join-live]')?.hidden ?? null,
+        joinVisible: (() => {
+          const link = document.querySelector('[data-join-live]');
+          return !!link && !link.hidden && getComputedStyle(link).display !== 'none';
+        })(),
       }));
     }
 
@@ -151,11 +164,15 @@ const waitForHero = async (page) => {
     assert.deepEqual(defaultState.webSocketErrors, [], 'broadcast client produced WebSocket errors');
     assert.notEqual(defaultResult.live, defaultResult.fallback, 'default hero must be exactly one of live or highlight fallback');
     assert.equal(defaultResult.frames, defaultResult.live ? 1 : 0, 'unexpected iframe count after hero settled');
+    assert.ok(defaultResult.joinLive, 'live Join CTA is missing');
+    assert.equal(defaultResult.joinLive.href, '/client.html?match_type=mobile_blitz', 'unexpected live Join CTA href');
+    assert.equal(defaultResult.joinLive.hidden, !defaultResult.live, 'live Join CTA hidden state does not match Arena TV state');
+    assert.equal(defaultResult.joinLive.visible, defaultResult.live, 'live Join CTA visibility does not match Arena TV state');
     assert.ok(defaultResult.messages.length > 0, 'broadcast client never posted an arena-tv status');
     assert.ok(defaultResult.messages.every(message => message.originMatches && message.sourceMatches), 'arena-tv message failed origin/source validation');
     if (REQUIRE_LIVE) assert.equal(defaultResult.live, true, 'Arena TV was required to reach the live state');
     if (defaultResult.live) {
-      assert.deepEqual(postLiveFallbackResult, { live: false, frames: 0, videos: 1 });
+      assert.deepEqual(postLiveFallbackResult, { live: false, frames: 0, videos: 1, joinHidden: true, joinVisible: false });
     }
     assert.deepEqual(defaultState.errors, [], 'default landing page produced page errors');
 
@@ -164,6 +181,10 @@ const waitForHero = async (page) => {
     assert.equal(optOutResult.frames, 0, '?tv=0 left an Arena TV iframe in the document');
     assert.equal(optOutResult.frameInserted, false, '?tv=0 inserted an Arena TV iframe');
     assert.equal(optOutState.tvRequests, 0, '?tv=0 requested the broadcast client');
+    assert.ok(optOutResult.joinLive, '?tv=0 live Join CTA is missing');
+    assert.equal(optOutResult.joinLive.href, '/client.html?match_type=mobile_blitz', 'unexpected ?tv=0 live Join CTA href');
+    assert.equal(optOutResult.joinLive.hidden, true, '?tv=0 must hide the live Join CTA');
+    assert.equal(optOutResult.joinLive.visible, false, '?tv=0 live Join CTA must not be visible');
     assert.deepEqual(optOutState.errors, [], '?tv=0 landing page produced page errors');
   } finally {
     await browser.close();

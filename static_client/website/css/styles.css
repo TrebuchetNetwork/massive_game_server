@@ -343,6 +343,10 @@ select {
     min-width: 194px;
 }
 
+.hero__join-live[hidden] {
+    display: none;
+}
+
 .hero__stats {
     display: grid;
     grid-template-columns: repeat(3, 1fr);

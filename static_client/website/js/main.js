@@ -440,8 +440,22 @@ document.addEventListener('DOMContentLoaded', () => {
   // clip when the broadcast cannot start, or when ?tv=0 opts out.
   const hydrateArenaTv = () => {
     const field = document.querySelector('.arena-field');
-    if (!field) return hydrateHeroFootage();
-    if (new URLSearchParams(window.location.search).get('tv') === '0') return hydrateHeroFootage();
+    const joinLive = document.querySelector('[data-join-live]');
+    let live = false;
+    const setLiveState = (nextLive) => {
+      live = nextLive;
+      field?.classList.toggle('arena-field--tv-live', nextLive);
+      if (joinLive) joinLive.hidden = !nextLive;
+    };
+
+    if (!field) {
+      setLiveState(false);
+      return hydrateHeroFootage();
+    }
+    if (new URLSearchParams(window.location.search).get('tv') === '0') {
+      setLiveState(false);
+      return hydrateHeroFootage();
+    }
 
     const frame = document.createElement('iframe');
     frame.className = 'arena-field__video arena-tv-frame';
@@ -449,15 +463,13 @@ document.addEventListener('DOMContentLoaded', () => {
     frame.title = 'Live exhibition broadcast';
     frame.allow = 'autoplay';
 
-    let live = false;
     let fallbackHydrated = false;
     let watchdog;
     const fallback = () => {
       window.clearTimeout(watchdog);
       window.removeEventListener('message', onMessage);
-      live = false;
+      setLiveState(false);
       frame.remove();
-      field.classList.remove('arena-field--tv-live');
       if (fallbackHydrated) return;
       fallbackHydrated = true;
       hydrateHeroFootage();
@@ -468,9 +480,8 @@ document.addEventListener('DOMContentLoaded', () => {
         || event.data?.type !== 'arena-tv') return;
 
       if (event.data.status === 'live') {
-        live = true;
+        setLiveState(true);
         window.clearTimeout(watchdog);
-        field.classList.add('arena-field--tv-live');
       } else if (event.data.status === 'fallback') {
         fallback();
       }
