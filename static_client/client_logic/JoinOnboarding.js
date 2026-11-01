@@ -19,6 +19,7 @@ export function createJoinOnboarding({
     let baseRotation = null;
     let aimGesture = false;
     let primeProjectiles = true;
+    let projectileIdThreshold = -Infinity;
     const seenProjectileIds = new Set();
 
     try {
@@ -61,20 +62,28 @@ export function createJoinOnboarding({
 
         bind(state) {
             rebase(state);
+            aimGesture = false;
             primeProjectileObservation();
         },
 
         onLocalState({ x, y, rotation }) {
+            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(rotation)) return;
             if (step === 'move') {
-                if (baseX === null || baseY === null) return;
-                if (Math.hypot(x - baseX, y - baseY) < minMoveDistance) return;
+                if (!Number.isFinite(baseX) || !Number.isFinite(baseY)) return;
+                const distance = Math.hypot(x - baseX, y - baseY);
+                if (!(distance >= minMoveDistance)) return;
                 step = 'aim';
                 baseRotation = rotation;
                 aimGesture = false;
                 return;
             }
-            if (step !== 'aim' || !aimGesture || baseRotation === null) return;
-            if (Math.abs(rotation - baseRotation) < minAimDelta) return;
+            if (step !== 'aim' || !aimGesture || !Number.isFinite(baseRotation)) return;
+            const delta = rotation - baseRotation;
+            const absoluteDelta = Math.abs(delta);
+            const aimDelta = absoluteDelta <= Math.PI
+                ? absoluteDelta
+                : Math.abs(Math.atan2(Math.sin(delta), Math.cos(delta)));
+            if (!(aimDelta >= minAimDelta)) return;
             step = 'fire';
             primeProjectileObservation();
         },
@@ -89,13 +98,21 @@ export function createJoinOnboarding({
             let completed = false;
 
             for (const projectile of projectiles) {
-                const id = String(projectile.id);
-                const isNew = !seenProjectileIds.has(id);
-                rememberProjectile(id);
+                rememberProjectile(String(projectile.id));
+                const rawId = projectile.id;
+                const isNumericId = typeof rawId === 'number'
+                    || (typeof rawId === 'string' && rawId.trim() !== '');
+                if (!isNumericId) continue;
+
+                const numericId = Number(rawId);
+                if (!Number.isFinite(numericId)) continue;
+
+                const isAboveThreshold = numericId > projectileIdThreshold;
+                if (isAboveThreshold) projectileIdThreshold = numericId;
                 if (
                     !priming
                     && step === 'fire'
-                    && isNew
+                    && isAboveThreshold
                     && String(projectile.owner_id) === String(myPlayerId)
                 ) {
                     completed = true;
@@ -128,6 +145,7 @@ export function createJoinOnboarding({
             baseY = null;
             baseRotation = null;
             aimGesture = false;
+            projectileIdThreshold = -Infinity;
             primeProjectileObservation();
         },
     };
