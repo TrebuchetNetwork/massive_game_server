@@ -49,7 +49,8 @@ use super::sanitization::{
     signaling_protocol_version,
 };
 use super::webrtc_state::{
-    begin_cleanup_once, record_webrtc_peer_state, shared_webrtc_api, PeerConnectionDropGuard,
+    begin_cleanup_once, drain_ice_gathering, record_webrtc_peer_state, shared_webrtc_api,
+    PeerConnectionDropGuard,
 };
 use super::{
     ChatMessagesQueue, DataChannelsMap, PlayerManagerRef, ServerInstanceRef, SignalingPeers,
@@ -1353,7 +1354,13 @@ async fn teardown_connection(
     pc_drop_guard.defuse();
     // Clean up interpolation history to prevent memory leak after disconnect.
     ctx.server_instance.cleanup_player_tracking_state(peer_id_str);
+    // Drain ICE gathering before close(). Ordering matters: see
+    // drain_ice_gathering for the webrtc-ice 0.17.2 socket-leak race.
+    let gathering_drained = drain_ice_gathering(peer_connection, peer_id_str).await;
     if let Err(e) = peer_connection.close().await {
-        error!("[{}]: Error closing PeerConnection: {}", peer_id_str, e);
+        error!(
+            "[{}]: Error closing PeerConnection: {} (gathering drained: {})",
+            peer_id_str, e, gathering_drained
+        );
     }
 }

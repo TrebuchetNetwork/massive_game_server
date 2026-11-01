@@ -102,7 +102,9 @@ mod tests {
         sanitize_chat_field, sanitize_text_field, sanitize_username_field,
         signaling_protocol_version,
     };
-    use super::webrtc_state::{webrtc_state_label, PeerConnectionDropGuard};
+    use super::webrtc_state::{
+        drain_ice_gathering, shared_webrtc_api, webrtc_state_label, PeerConnectionDropGuard,
+    };
     use super::*;
 
     use crate::core::constants::*;
@@ -1220,5 +1222,36 @@ mod tests {
             resolve_server_urls(&["stun:stun.cloudflare.com:3478".to_owned()], &shared),
             vec!["stun:stun.cloudflare.com:3478".to_owned()],
         );
+    }
+
+    /// The main risk of draining before close() is added teardown latency. A
+    /// connection that never applied SDP has nothing to drain and must return
+    /// immediately rather than burning the full timeout: the drop guard runs one
+    /// detached task per connection, so a 3s stall there would accumulate under
+    /// churn. Creating the peer connection does not gather anything -- gathering
+    /// only starts at set_local_description -- so this stays socket-free.
+    #[tokio::test]
+    async fn drain_ice_gathering_returns_immediately_when_gathering_never_started() {
+        use webrtc::peer_connection::configuration::RTCConfiguration;
+
+        let api = shared_webrtc_api().expect("shared WebRTC API should build");
+        let pc = api
+            .new_peer_connection(RTCConfiguration::default())
+            .await
+            .expect("peer connection should be created");
+
+        let started = std::time::Instant::now();
+        let drained = drain_ice_gathering(&pc, "test-peer").await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            !drained,
+            "a connection that never applied SDP has nothing to drain"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "must not block for the full GATHERING_DRAIN_TIMEOUT; took {elapsed:?}"
+        );
+        let _ = pc.close().await;
     }
 }

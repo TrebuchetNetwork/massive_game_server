@@ -2,13 +2,26 @@ use crate::operational::monitoring::metrics;
 use dashmap::DashMap;
 use std::net::IpAddr;
 use std::sync::{atomic::AtomicBool, Arc, OnceLock};
-use tracing::{error, info};
+use std::time::{Duration, Instant};
+use tracing::{error, info, warn};
 use webrtc::{
     api::{media_engine::MediaEngine, setting_engine::SettingEngine, APIBuilder, API},
     ice::udp_network::{EphemeralUDP, UDPNetwork},
     ice_transport::ice_candidate_type::RTCIceCandidateType,
+    ice_transport::ice_gathering_state::RTCIceGatheringState,
     peer_connection::peer_connection_state::RTCPeerConnectionState,
+    peer_connection::RTCPeerConnection,
 };
+
+/// Upper bound on how long teardown will wait for ICE gathering to finish.
+///
+/// Gathering normally completes well inside this, but a peer that stalls on a
+/// TURN allocation must not pin teardown — and the drop guard runs on a
+/// detached task, so an unbounded wait there would accumulate.
+const GATHERING_DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Poll interval while waiting for gathering to reach `Complete`.
+const GATHERING_DRAIN_POLL: Duration = Duration::from_millis(25);
 
 static SHARED_WEBRTC_API: OnceLock<Result<Arc<API>, String>> = OnceLock::new();
 static WEBRTC_PEER_STATES: OnceLock<DashMap<String, &'static str>> = OnceLock::new();
@@ -49,18 +62,62 @@ impl PeerConnectionDropGuard {
     }
 }
 
+/// Wait, up to `GATHERING_DRAIN_TIMEOUT`, for ICE gathering to reach `Complete`
+/// before a `PeerConnection` is closed.
+///
+/// This works around a defect in webrtc-ice 0.17.2 rather than fixing it. The
+/// candidate-gathering task is spawned detached with no cancellation check, and
+/// `AgentInternal::close()` early-returns on `done_tx.is_none()` *before*
+/// reaching `delete_all_candidates()` — the only code that closes the gathered
+/// sockets. So any socket bound after `close()` ran is stranded for the life of
+/// the process, and a second `close()` can never reclaim it because the guard
+/// fires first. Waiting for `Complete` means every socket is already registered
+/// in `local_candidates` when `close()` runs, so `delete_all_candidates()` sees
+/// and closes all of them.
+///
+/// Returns `true` when gathering finished, `false` when it never started or the
+/// wait timed out. `New`/`Unspecified` means no SDP was ever applied, so there
+/// is nothing to drain and waiting would be pointless — which is also why this
+/// is safe to call on connections that never got past signaling.
+pub(super) async fn drain_ice_gathering(pc: &RTCPeerConnection, peer_id: &str) -> bool {
+    let deadline = Instant::now() + GATHERING_DRAIN_TIMEOUT;
+    loop {
+        match pc.ice_gathering_state() {
+            RTCIceGatheringState::Complete => return true,
+            RTCIceGatheringState::New | RTCIceGatheringState::Unspecified => return false,
+            RTCIceGatheringState::Gathering => {}
+        }
+        if Instant::now() >= deadline {
+            warn!(
+                "[{}]: ICE gathering still running after {}s; closing anyway. Sockets bound \
+                 after this point may be stranded by the webrtc-ice close() race.",
+                peer_id,
+                GATHERING_DRAIN_TIMEOUT.as_secs()
+            );
+            return false;
+        }
+        tokio::time::sleep(GATHERING_DRAIN_POLL).await;
+    }
+}
+
 impl Drop for PeerConnectionDropGuard {
     fn drop(&mut self) {
         if let Some(pc) = self.peer_connection.take() {
             let pid = self.peer_id.clone();
             tokio::spawn(async move {
+                // Drain gathering first; see drain_ice_gathering for why this
+                // ordering is what prevents the socket leak.
+                let drained = drain_ice_gathering(&pc, &pid).await;
                 if let Err(e) = pc.close().await {
                     error!(
-                        "[{}]: Error closing PeerConnection in drop guard: {}",
-                        pid, e
+                        "[{}]: Error closing PeerConnection in drop guard: {} (gathering drained: {})",
+                        pid, e, drained
                     );
                 } else {
-                    info!("[{}]: PeerConnection closed via drop guard.", pid);
+                    info!(
+                        "[{}]: PeerConnection closed via drop guard (gathering drained: {}).",
+                        pid, drained
+                    );
                 }
             });
         }
