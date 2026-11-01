@@ -341,7 +341,7 @@ test('reconnect preserves Fire and re-primes existing projectiles', () => {
     const ob = createJoinOnboarding({ storage: createStorage() });
     enterFire(ob);
 
-    ob.onReconnect({ x: 50, y: 60, rotation: 4 });
+    ob.onReconnect({ x: 50, y: 60, rotation: 4 }, 'me');
     ob.onProjectiles([{ id: 100, owner_id: 'me' }], 'me');
     ob.onProjectiles([{ id: 100, owner_id: 'me' }], 'me');
     assert.equal(ob.view().step, 'fire');
@@ -355,7 +355,7 @@ test('reconnect preserves the projectile threshold across empty and stale snapsh
     enterFire(ob);
     ob.onProjectiles([{ id: 100, owner_id: 'me' }], 'me');
 
-    ob.onReconnect({ x: 50, y: 60, rotation: 4 });
+    ob.onReconnect({ x: 50, y: 60, rotation: 4 }, 'me');
     ob.onProjectiles([], 'me');
     ob.onProjectiles([{ id: 100, owner_id: 'me' }], 'me');
     assert.equal(ob.view().step, 'fire');
@@ -371,13 +371,44 @@ test('partial reconnect priming cannot lower the projectile threshold', () => {
     enterFire(ob);
     ob.onProjectiles([{ id: 100, owner_id: 'other' }], 'me');
 
-    ob.onReconnect({ x: 50, y: 60, rotation: 4 });
+    ob.onReconnect({ x: 50, y: 60, rotation: 4 }, 'me');
     ob.onProjectiles([{ id: 50, owner_id: 'other' }], 'me');
     ob.onProjectiles([{ id: 75, owner_id: 'me' }], 'me');
     assert.equal(ob.view().step, 'fire');
 
     ob.onProjectiles([{ id: 101, owner_id: 'me' }], 'me');
     assert.equal(ob.view().step, 'done');
+});
+
+test('new join identity resets a stale high projectile threshold and accepts newer low ids', () => {
+    const ob = createJoinOnboarding({ storage: createStorage() });
+    enterFire(ob);
+    ob.onProjectiles([{ id: 1000, owner_id: 'old-player' }], 'old-player');
+
+    ob.onReconnect({ x: 50, y: 60, rotation: 4 }, 'new-player');
+    ob.onProjectiles([{ id: 2, owner_id: 'new-player' }], 'new-player');
+    assert.equal(ob.view().step, 'fire');
+
+    ob.onProjectiles([
+        { id: 2, owner_id: 'new-player' },
+        { id: 3, owner_id: 'new-player' },
+    ], 'new-player');
+    assert.equal(ob.view().step, 'done');
+});
+
+test('same join identity preserves the threshold and rejects old projectile ids', () => {
+    const ob = createJoinOnboarding({ storage: createStorage() });
+    enterFire(ob);
+    ob.onProjectiles([{ id: 1000, owner_id: 'me' }], 'me');
+
+    ob.onReconnect({ x: 50, y: 60, rotation: 4 }, 'me');
+    ob.onProjectiles([{ id: 1000, owner_id: 'me' }], 'me');
+    ob.onProjectiles([
+        { id: 999, owner_id: 'me' },
+        { id: 1000, owner_id: 'me' },
+    ], 'me');
+
+    assert.equal(ob.view().step, 'fire');
 });
 
 test('evicted old projectile ids stay ineligible and a newer owned id completes', () => {

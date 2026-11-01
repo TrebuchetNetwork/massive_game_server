@@ -1863,7 +1863,7 @@
                     joinOnboardingBound = true;
                     joinOnboardingReconnectPending = false;
                 } else if (joinOnboardingReconnectPending) {
-                    joinOnboarding.onReconnect(state);
+                    joinOnboarding.onReconnect(state, myPlayerId);
                     joinOnboardingReconnectPending = false;
                 }
                 joinOnboarding.onLocalState(state);

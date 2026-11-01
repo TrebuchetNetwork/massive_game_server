@@ -143,9 +143,13 @@ async function joinFromLiveLanding(page, mobile, journey) {
   assert.equal(await join.getAttribute('href'), '/client.html?match_type=mobile_blitz');
   console.log(`${journey} live Arena TV Join CTA visible`);
 
-  // Dispatch the real link click without Playwright's long-lived-resource
-  // navigation auto-wait, then wait explicitly for the client document.
-  await join.dispatchEvent('click');
+  // Exercise the visible CTA with hit-tested input, then wait explicitly for
+  // the client document rather than relying on navigation auto-wait.
+  if (mobile) {
+    await join.tap();
+  } else {
+    await join.click({ noWaitAfter: true });
+  }
   await page.waitForURL(url => url.pathname === '/client.html'
     && url.searchParams.get('match_type') === 'mobile_blitz', { timeout: 15000 });
   await page.waitForFunction(() => !!window.__e2e && !!document.getElementById('connectButton'), null, { timeout: 30000 });

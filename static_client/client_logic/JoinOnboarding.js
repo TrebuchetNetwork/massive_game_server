@@ -21,6 +21,7 @@ export function createJoinOnboarding({
     let respawnRebasePending = false;
     let primeProjectiles = true;
     let projectileIdThreshold = -Infinity;
+    let projectilePlayerId;
     const seenProjectileIds = new Set();
 
     try {
@@ -105,6 +106,7 @@ export function createJoinOnboarding({
         },
 
         onProjectiles(projectiles, myPlayerId) {
+            projectilePlayerId = myPlayerId;
             const priming = primeProjectiles;
             primeProjectiles = false;
             let completed = false;
@@ -137,7 +139,12 @@ export function createJoinOnboarding({
             }
         },
 
-        onReconnect(state) {
+        onReconnect(state, myPlayerId) {
+            // Server entity ids are process-local; a new join identity starts a
+            // new id generation, while a same-id reconnect must keep its high-water mark.
+            if (projectilePlayerId !== undefined && String(projectilePlayerId) !== String(myPlayerId)) {
+                projectileIdThreshold = -Infinity;
+            }
             rebase(state);
             aimGesture = false;
             respawnRebasePending = state.alive === false;
@@ -160,6 +167,7 @@ export function createJoinOnboarding({
             aimGesture = false;
             respawnRebasePending = false;
             projectileIdThreshold = -Infinity;
+            projectilePlayerId = undefined;
             primeProjectileObservation();
         },
     };
