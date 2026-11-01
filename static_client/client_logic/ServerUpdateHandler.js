@@ -21,6 +21,17 @@ export function createServerUpdateHandler(getCtx) {
     const LOCAL_REPLAY_STEP_MAX_SEC = 0.125;
     const LOCAL_REPLAY_FALLBACK_STEP_SEC = 1 / 30;
     const broadcastHookWarningSites = new Set();
+    const onboardingHookWarningSites = new Set();
+
+    function runOnboardingHook(site, callback, ...args) {
+        try {
+            callback?.(...args);
+        } catch (error) {
+            if (onboardingHookWarningSites.has(site)) return;
+            onboardingHookWarningSites.add(site);
+            console.warn(`[ServerUpdateHandler] onboarding hook ${site} failed`, error);
+        }
+    }
 
     function warnBroadcastHookFailure(site, error) {
         if (broadcastHookWarningSites.has(site)) return;
@@ -474,7 +485,7 @@ export function createServerUpdateHandler(getCtx) {
                         changedMask,
                         forceFullState
                     );
-                    ctx.onRawLocalState?.(localPlayerState);
+                    runOnboardingHook('rawLocalState', ctx.onRawLocalState, localPlayerState);
 
                     const serverX = Number.isFinite(localPlayerState.x) ? localPlayerState.x : previousPredictedX;
                     const serverY = Number.isFinite(localPlayerState.y) ? localPlayerState.y : previousPredictedY;
@@ -555,7 +566,7 @@ export function createServerUpdateHandler(getCtx) {
                 removeProjectileClientState(removedProjectiles[i]);
             }
         }
-        ctx.onProjectileMapUpdated?.(projectiles.values(), myPlayerId);
+        runOnboardingHook('projectileMapUpdated', ctx.onProjectileMapUpdated, projectiles.values(), myPlayerId);
 
         if (messageData.pickups) {
             const incomingPickups = messageData.pickups;
@@ -831,7 +842,7 @@ export function createServerUpdateHandler(getCtx) {
                     changedMask,
                     !existingPlayer
                 );
-                ctx.onRawLocalState?.(localPlayerState);
+                runOnboardingHook('rawLocalState', ctx.onRawLocalState, localPlayerState);
 
                 const serverX = localPlayerState.x;
                 const serverY = localPlayerState.y;
@@ -916,7 +927,7 @@ export function createServerUpdateHandler(getCtx) {
                 removeProjectileClientState(projectileId);
             }
         }
-        ctx.onProjectileMapUpdated?.(projectiles.values(), myPlayerId);
+        runOnboardingHook('projectileMapUpdated', ctx.onProjectileMapUpdated, projectiles.values(), myPlayerId);
 
         const pickupTable = flatbufferParseScratch.pickup;
         const pickupLength = delta.pickupsLength();

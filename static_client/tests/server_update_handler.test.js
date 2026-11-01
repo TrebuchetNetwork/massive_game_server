@@ -451,3 +451,86 @@ test("processDeltaStateFast exposes raw local state and updated projectiles", ()
         { type: "projectiles", owned: 1 },
     ]);
 });
+
+test("processServerUpdate continues after onboarding hooks throw", (t) => {
+    t.mock.method(console, "warn", () => {});
+    const ctx = makeCtx({
+        assignPlayerStateFromObject: (target, player) => Object.assign(target, {
+            x: player.x, y: player.y, rotation: player.rotation, team_id: player.team_id,
+        }),
+        onRawLocalState: () => { throw new Error("raw presentation failed"); },
+        onProjectileMapUpdated: () => { throw new Error("projectile presentation failed"); },
+    });
+    const handler = createServerUpdateHandler(() => ctx);
+
+    assert.doesNotThrow(() => handler.processServerUpdate({
+        timestamp: 10,
+        players: [{ id: "local-player", x: 10, y: 20, rotation: 0, team_id: 1 }],
+        projectiles: [{ id: 7, owner_id: "local-player" }],
+        pickups: [{ id: "pickup-1" }],
+    }, false));
+
+    assert.equal(ctx.players.has("local-player"), true);
+    assert.equal(ctx.projectiles.has(7), true);
+    assert.equal(ctx.pickups.has("pickup-1"), true);
+});
+
+test("processDeltaStateFast continues after onboarding hooks throw", (t) => {
+    t.mock.method(console, "warn", () => {});
+    const zeroLength = () => 0;
+    const player = {
+        id: () => "local-player", username: () => "Human",
+        x: () => 30, y: () => 40, rotation: () => 0.5,
+    };
+    const projectile = { id: () => 8 };
+    const pickup = { id: () => "pickup-1" };
+    const delta = {
+        lastProcessedInputSequence: () => 0,
+        timestamp: () => 10,
+        destroyedWallIdsLength: zeroLength,
+        updatedWallsLength: zeroLength,
+        wallsLength: zeroLength,
+        playersLength: () => 1,
+        players: () => player,
+        changedPlayerFieldsLength: zeroLength,
+        removedPlayerIdsLength: zeroLength,
+        projectilesLength: () => 1,
+        projectiles: () => projectile,
+        removedProjectilesLength: zeroLength,
+        pickupsLength: () => 1,
+        pickups: () => pickup,
+        deactivatedPickupIdsLength: zeroLength,
+        killFeedLength: zeroLength,
+        matchInfo: () => null,
+        flagStatesLength: zeroLength,
+        gameEventsLength: zeroLength,
+    };
+    const ctx = makeCtx({
+        assignPlayerStateFromTable: (target) => Object.assign(target, {
+            x: player.x(), y: player.y(), rotation: player.rotation(), team_id: 1,
+        }),
+        assignProjectileStateFromTable: (target, table) => Object.assign(target, {
+            id: table.id(), owner_id: "local-player",
+        }),
+        assignPickupStateFromTable: (target, table) => { target.id = table.id(); },
+        onRawLocalState: () => { throw new Error("raw presentation failed"); },
+        onProjectileMapUpdated: () => { throw new Error("projectile presentation failed"); },
+        parseMatchInfo: () => null,
+        flatbufferParseScratch: {
+            wall: {}, playerState: {}, projectileState: {}, pickup: {}, vec2: {},
+            killFeedEntry: {}, matchInfo: {}, flagState: {}, gameEvent: {},
+        },
+        DELTA_SUPPORTS_REMOVED_PLAYER_IDS: false,
+        DELTA_SUPPORTS_CHANGED_PLAYER_FIELDS: false,
+        DELTA_SUPPORTS_UPDATED_WALLS: false,
+        DELTA_SUPPORTS_FULL_WALLS: false,
+        PLAYER_DELTA_FULL_MASK: 0,
+    });
+    const handler = createServerUpdateHandler(() => ctx);
+
+    assert.doesNotThrow(() => handler.processDeltaStateFast(delta));
+
+    assert.equal(ctx.players.has("local-player"), true);
+    assert.equal(ctx.projectiles.has(8), true);
+    assert.equal(ctx.pickups.has("pickup-1"), true);
+});

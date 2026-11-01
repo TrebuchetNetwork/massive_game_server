@@ -18,6 +18,7 @@ export function createJoinOnboarding({
     let baseY = null;
     let baseRotation = null;
     let aimGesture = false;
+    let respawnRebasePending = false;
     let primeProjectiles = true;
     let projectileIdThreshold = -Infinity;
     const seenProjectileIds = new Set();
@@ -63,11 +64,22 @@ export function createJoinOnboarding({
         bind(state) {
             rebase(state);
             aimGesture = false;
+            respawnRebasePending = state.alive === false;
             primeProjectileObservation();
         },
 
-        onLocalState({ x, y, rotation }) {
+        onLocalState({ x, y, rotation, alive }) {
+            if (alive === false) {
+                respawnRebasePending = true;
+                return;
+            }
             if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(rotation)) return;
+            if (respawnRebasePending) {
+                rebase({ x, y, rotation });
+                respawnRebasePending = false;
+                aimGesture = false;
+                primeProjectileObservation();
+            }
             if (step === 'move') {
                 if (!Number.isFinite(baseX) || !Number.isFinite(baseY)) return;
                 const distance = Math.hypot(x - baseX, y - baseY);
@@ -128,6 +140,7 @@ export function createJoinOnboarding({
         onReconnect(state) {
             rebase(state);
             aimGesture = false;
+            respawnRebasePending = state.alive === false;
             primeProjectileObservation();
         },
 
@@ -145,6 +158,7 @@ export function createJoinOnboarding({
             baseY = null;
             baseRotation = null;
             aimGesture = false;
+            respawnRebasePending = false;
             projectileIdThreshold = -Infinity;
             primeProjectileObservation();
         },

@@ -24,7 +24,7 @@
           }
         }
     </script>
-    <link rel="stylesheet" href="./css/game.css?v=20260909-generals1">
+    <link rel="stylesheet" href="./css/game.css?v=20261101-onboarding2">
     <style>
         body.broadcast-mode #usernameModal,
         body.broadcast-mode #scoreboard,
@@ -682,7 +682,7 @@
             createBroadcastOverlay,
             collectBroadcastPlayers,
             createBroadcastLifecycle,
-        } from './client_logic/index.js?v=20261028-duel1';
+        } from './client_logic/index.js?v=20261101-onboarding2';
         const GP = GameProtocol;
         const {
             uiModeParams,
@@ -1816,6 +1816,7 @@
         const joinOnboarding = createJoinOnboarding({ storage: window.localStorage });
         let joinOnboardingBound = false;
         let joinOnboardingReconnectPending = false;
+        let joinOnboardingPresentationKey = null;
         let controlHintsDismissTimerId = null;
 
         function isValidJoinedHumanState(state) {
@@ -1837,8 +1838,12 @@
             const visible = !BROADCAST_MODE &&
                 joinOnboardingBound &&
                 isValidJoinedHumanState(localPlayerState) &&
+                localPlayerState?.alive !== false &&
                 view.visible &&
                 !controlHintsVisible;
+            const presentationKey = `${view.step}|${view.hint}|${visible}`;
+            if (presentationKey === joinOnboardingPresentationKey) return;
+            joinOnboardingPresentationKey = presentationKey;
             if (joinOnboardingDiv) {
                 if (joinOnboardingDiv.textContent !== view.hint) {
                     joinOnboardingDiv.textContent = view.hint;
@@ -1867,21 +1872,21 @@
         }
 
         function notifyJoinOnboardingAimInput() {
-            if (!BROADCAST_MODE && joinOnboardingBound) {
+            if (!BROADCAST_MODE && joinOnboardingBound && localPlayerState?.alive !== false) {
                 joinOnboarding.notifyAimInput();
             }
         }
 
         function observeJoinOnboardingProjectiles() {
+            if (BROADCAST_MODE || !joinOnboardingBound) return;
             if (
-                !BROADCAST_MODE &&
-                joinOnboardingBound &&
                 myPlayerId != null &&
+                localPlayerState?.alive !== false &&
                 joinOnboarding.view().step === 'fire'
             ) {
                 joinOnboarding.onProjectiles(projectiles.values(), myPlayerId);
+                refreshJoinOnboarding();
             }
-            refreshJoinOnboarding();
         }
 
         function refreshJoinProgressOverlay() {

@@ -467,3 +467,61 @@ test('a custom storage key is used for persistence', () => {
         storageKey: 'custom-onboarding',
     }).view().step, 'done');
 });
+
+test('death suppresses Move and the next alive snapshot rebases before movement', () => {
+    const ob = createJoinOnboarding({ storage: createStorage() });
+    ob.bind({ x: 0, y: 0, rotation: 0, alive: true });
+
+    ob.onLocalState({ x: 500, y: 500, rotation: 2, alive: false });
+    assert.equal(ob.view().step, 'move');
+
+    ob.onLocalState({ x: 500, y: 500, rotation: 2, alive: true });
+    assert.equal(ob.view().step, 'move');
+    ob.onLocalState({ x: 511.9, y: 500, rotation: 2, alive: true });
+    assert.equal(ob.view().step, 'move');
+    ob.onLocalState({ x: 512, y: 500, rotation: 2, alive: true });
+    assert.equal(ob.view().step, 'aim');
+});
+
+test('death suppresses Aim and respawn rebases rotation and clears the gesture', () => {
+    const ob = createJoinOnboarding({ storage: createStorage() });
+    enterAim(ob);
+    ob.notifyAimInput();
+
+    ob.onLocalState({ x: 50, y: 60, rotation: 4, alive: false });
+    ob.onLocalState({ x: 50, y: 60, rotation: 4.5, alive: true });
+    assert.equal(ob.view().step, 'aim');
+
+    ob.notifyAimInput();
+    ob.onLocalState({ x: 50, y: 60, rotation: 4.57, alive: true });
+    assert.equal(ob.view().step, 'aim');
+    ob.onLocalState({ x: 50, y: 60, rotation: 4.58, alive: true });
+    assert.equal(ob.view().step, 'fire');
+});
+
+test('binding while dead rebases before the first alive movement snapshot', () => {
+    const ob = createJoinOnboarding({ storage: createStorage() });
+    ob.bind({ x: 0, y: 0, rotation: 0, alive: false });
+
+    ob.onLocalState({ x: 500, y: 500, rotation: 2, alive: true });
+    assert.equal(ob.view().step, 'move');
+    ob.onLocalState({ x: 511.9, y: 500, rotation: 2, alive: true });
+    assert.equal(ob.view().step, 'move');
+    ob.onLocalState({ x: 512, y: 500, rotation: 2, alive: true });
+    assert.equal(ob.view().step, 'aim');
+});
+
+test('respawn re-primes existing projectiles without resetting Fire', () => {
+    const ob = createJoinOnboarding({ storage: createStorage() });
+    enterFire(ob);
+    ob.onProjectiles([], 'me');
+
+    ob.onLocalState({ x: 50, y: 60, rotation: 4, alive: false });
+    ob.onLocalState({ x: 500, y: 600, rotation: 2, alive: true });
+    ob.onProjectiles([{ id: 100, owner_id: 'me' }], 'me');
+    ob.onProjectiles([{ id: 100, owner_id: 'me' }], 'me');
+    assert.equal(ob.view().step, 'fire');
+
+    ob.onProjectiles([{ id: 101, owner_id: 'me' }], 'me');
+    assert.equal(ob.view().step, 'done');
+});
