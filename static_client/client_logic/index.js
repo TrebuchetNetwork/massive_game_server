@@ -65,3 +65,4 @@ export * from './commentary_templates.js';
 export * from './BroadcastDirector.js';
 export * from './BroadcastOverlay.js';
 export * from './broadcast_lifecycle.js';
+export * from './JoinOnboarding.js';
