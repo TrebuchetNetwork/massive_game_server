@@ -474,6 +474,7 @@ export function createServerUpdateHandler(getCtx) {
                         changedMask,
                         forceFullState
                     );
+                    ctx.onRawLocalState?.(localPlayerState);
 
                     const serverX = Number.isFinite(localPlayerState.x) ? localPlayerState.x : previousPredictedX;
                     const serverY = Number.isFinite(localPlayerState.y) ? localPlayerState.y : previousPredictedY;
@@ -554,6 +555,7 @@ export function createServerUpdateHandler(getCtx) {
                 removeProjectileClientState(removedProjectiles[i]);
             }
         }
+        ctx.onProjectileMapUpdated?.(projectiles.values(), myPlayerId);
 
         if (messageData.pickups) {
             const incomingPickups = messageData.pickups;
@@ -829,6 +831,7 @@ export function createServerUpdateHandler(getCtx) {
                     changedMask,
                     !existingPlayer
                 );
+                ctx.onRawLocalState?.(localPlayerState);
 
                 const serverX = localPlayerState.x;
                 const serverY = localPlayerState.y;
@@ -913,6 +916,7 @@ export function createServerUpdateHandler(getCtx) {
                 removeProjectileClientState(projectileId);
             }
         }
+        ctx.onProjectileMapUpdated?.(projectiles.values(), myPlayerId);
 
         const pickupTable = flatbufferParseScratch.pickup;
         const pickupLength = delta.pickupsLength();

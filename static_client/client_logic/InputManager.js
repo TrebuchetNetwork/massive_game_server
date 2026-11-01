@@ -79,6 +79,7 @@ export function createInputManager({
     getAudioManager,
     getMinimap,
     applyScreenShake,
+    notifyAimInput,
     // Aim assist
     AIM_ASSIST_MAGNETISM,
     AIM_ASSIST_MAX_DISTANCE,
@@ -660,6 +661,7 @@ export function createInputManager({
         const dx = mouseLocalToGameScene.x - (localPlayerState.render_x || localPlayerState.x);
         const dy = mouseLocalToGameScene.y - (localPlayerState.render_y || localPlayerState.y);
         inputState.rotation = Math.atan2(dy, dx);
+        notifyAimInput?.();
     }
 
     // ── Send inputs to server ─────────────────────────────────────────
@@ -1147,6 +1149,7 @@ export function createInputManager({
             mobileAimActive = true;
             recordMobileActionReachSample(touch);
             updateAimFromTouch(touch, true);
+            notifyAimInput?.();
             if (gameSettings.mobileAutoFireAim) {
                 inputState.shooting = true;
                 triggerHapticFn(10);
@@ -1160,6 +1163,7 @@ export function createInputManager({
                 if (touch.identifier === aimTouchId) {
                     recordMobileActionReachSample(touch);
                     updateAimFromTouch(touch);
+                    notifyAimInput?.();
                     if (gameSettings.mobileAutoFireAim) inputState.shooting = true;
                     event.preventDefault();
                     break;

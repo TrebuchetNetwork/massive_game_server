@@ -32,6 +32,7 @@
         body.broadcast-mode #chatDisplay,
         body.broadcast-mode #controls,
         body.broadcast-mode #controlHintsOverlay,
+        body.broadcast-mode #joinOnboarding,
         body.broadcast-mode #audioUnlockNudge,
         body.broadcast-mode #musicPlayer,
         body.broadcast-mode #tipsToast,
@@ -145,6 +146,7 @@
             <ul id="controlHintsList" class="control-hints__list"></ul>
             <button id="controlHintsClose" class="control-hints__close" type="button">Got it</button>
         </div>
+        <div id="joinOnboarding" class="join-onboarding" role="status" aria-live="polite"></div>
         <button id="audioUnlockNudge" class="audio-unlock-nudge hidden" type="button">🔊 tap for sound</button>
         <button id="arenaEvolutionChip" class="arena-evolution-chip" type="button" aria-haspopup="dialog" aria-controls="arenaRatingsDialog" aria-label="Open model season ratings">
             <span class="arena-evolution-chip__signal"></span>
@@ -655,6 +657,7 @@
             getControlHintItems,
             shouldShowControlHints,
             markControlHintsSeen,
+            createJoinOnboarding,
             createErrorBoundary,
             createGameRenderer,
             createProtocolHandler,
@@ -850,6 +853,7 @@
             spawning: document.getElementById('joinProgressStepSpawning'),
         };
         const controlHintsOverlay = document.getElementById('controlHintsOverlay');
+        const joinOnboardingDiv = document.getElementById('joinOnboarding');
         const controlHintsList = document.getElementById('controlHintsList');
         const controlHintsCloseButton = document.getElementById('controlHintsClose');
         const audioUnlockNudgeButton = document.getElementById('audioUnlockNudge');
@@ -1383,6 +1387,8 @@
         window.__e2e.objectiveUrgencyVisible = false;
         window.__e2e.tipsToastText = '';
         window.__e2e.tipsToastVisible = false;
+        window.__e2e.joinOnboarding = { step: 'move', visible: false };
+        window.__e2e.localOwnedProjectileCount = 0;
         window.__e2e.killFeedEntries = [];
         window.__e2e.chatMessages = [];
         window.__e2e.localPlayerHealth = null;
@@ -1807,7 +1813,76 @@
 
         // ── Staged join progress, first-visit control hints, audio nudge ──
         const joinProgressTracker = createJoinProgressTracker();
+        const joinOnboarding = createJoinOnboarding({ storage: window.localStorage });
+        let joinOnboardingBound = false;
+        let joinOnboardingReconnectPending = false;
         let controlHintsDismissTimerId = null;
+
+        function isValidJoinedHumanState(state) {
+            const teamId = Number(state?.team_id);
+            return !!state &&
+                Number.isFinite(state.x) &&
+                Number.isFinite(state.y) &&
+                Number.isFinite(state.rotation) &&
+                Number.isFinite(teamId) &&
+                teamId !== 0 &&
+                state.is_bot !== true &&
+                state.is_spectator !== true;
+        }
+
+        function refreshJoinOnboarding() {
+            const view = joinOnboarding.view();
+            const controlHintsVisible = !!controlHintsOverlay &&
+                !controlHintsOverlay.classList.contains('hidden');
+            const visible = !BROADCAST_MODE &&
+                joinOnboardingBound &&
+                isValidJoinedHumanState(localPlayerState) &&
+                view.visible &&
+                !controlHintsVisible;
+            if (joinOnboardingDiv) {
+                if (joinOnboardingDiv.textContent !== view.hint) {
+                    joinOnboardingDiv.textContent = view.hint;
+                }
+                joinOnboardingDiv.classList.toggle('join-onboarding--visible', visible);
+                joinOnboardingDiv.setAttribute('aria-hidden', String(!visible));
+            }
+            if (window.__e2e) {
+                window.__e2e.joinOnboarding = { step: view.step, visible };
+            }
+        }
+
+        function handleRawJoinOnboardingLocalState(state) {
+            if (!BROADCAST_MODE && isValidJoinedHumanState(state)) {
+                if (!joinOnboardingBound) {
+                    joinOnboarding.bind(state);
+                    joinOnboardingBound = true;
+                    joinOnboardingReconnectPending = false;
+                } else if (joinOnboardingReconnectPending) {
+                    joinOnboarding.onReconnect(state);
+                    joinOnboardingReconnectPending = false;
+                }
+                joinOnboarding.onLocalState(state);
+            }
+            refreshJoinOnboarding();
+        }
+
+        function notifyJoinOnboardingAimInput() {
+            if (!BROADCAST_MODE && joinOnboardingBound) {
+                joinOnboarding.notifyAimInput();
+            }
+        }
+
+        function observeJoinOnboardingProjectiles() {
+            if (
+                !BROADCAST_MODE &&
+                joinOnboardingBound &&
+                myPlayerId != null &&
+                joinOnboarding.view().step === 'fire'
+            ) {
+                joinOnboarding.onProjectiles(projectiles.values(), myPlayerId);
+            }
+            refreshJoinOnboarding();
+        }
 
         function refreshJoinProgressOverlay() {
             applyJoinProgressUi({
@@ -1841,6 +1916,7 @@
             if (persist) {
                 markControlHintsSeen(window.localStorage, CONTROL_HINTS_STORAGE_KEY);
             }
+            refreshJoinOnboarding();
         }
 
         function maybeShowControlHints() {
@@ -1864,6 +1940,7 @@
             }
             controlHintsOverlay.classList.remove('hidden');
             controlHintsOverlay.setAttribute('aria-hidden', 'false');
+            refreshJoinOnboarding();
             // Auto-dismiss on first gameplay input or after ~6s; either way
             // the hints never show again (localStorage flag).
             document.addEventListener('keydown', handleControlHintsFirstInput, true);
@@ -3606,6 +3683,7 @@
             getAudioManager: () => audioManager,
             getMinimap: () => minimap,
             applyScreenShake,
+            notifyAimInput: notifyJoinOnboardingAimInput,
             AIM_ASSIST_MAGNETISM,
             AIM_ASSIST_MAX_DISTANCE,
         });
@@ -4881,6 +4959,19 @@
                     e2e.objectiveUrgencyVisible = !!objectiveUrgencyDiv?.classList.contains('objective-urgency--visible');
                     e2e.tipsToastText = tipsToastDiv?.textContent || '';
                     e2e.tipsToastVisible = !!tipsToastDiv?.classList.contains('tips-toast--visible');
+                    e2e.joinOnboarding = {
+                        step: joinOnboarding.view().step,
+                        visible: !!joinOnboardingDiv?.classList.contains('join-onboarding--visible'),
+                    };
+                    {
+                        let ownedCount = 0;
+                        if (myPlayerId != null) {
+                            for (const projectile of projectiles.values()) {
+                                if (String(projectile.owner_id) === String(myPlayerId)) ownedCount += 1;
+                            }
+                        }
+                        e2e.localOwnedProjectileCount = ownedCount;
+                    }
                     e2e.mobileAimActive = !!mobileAimActive;
                     e2e.mobileFireTouchActive = !!mobileFireTouchActive;
                     e2e.bodyMobileMode = !!document.body.classList.contains('mobile-mode');
@@ -5324,6 +5415,8 @@
                 bindFlatBufferData,
                 fastDeltaPathErrorCount,
                 incrementFastDeltaPathErrorCount: () => { fastDeltaPathErrorCount += 1; },
+                onRawLocalState: handleRawJoinOnboardingLocalState,
+                onProjectileMapUpdated: observeJoinOnboardingProjectiles,
                 setLocalPlayerState: (v) => { localPlayerState = v; },
                 setMatchInfo: (v) => { matchInfo = v; },
                 setKillFeed: (v) => { killFeed = v; },
@@ -5810,6 +5903,8 @@
         function clearGameStateForReconnect() {
             myPlayerId = null;
             localPlayerState = null;
+            if (joinOnboardingBound) joinOnboardingReconnectPending = true;
+            refreshJoinOnboarding();
             players.clear();
             broadcastKnownUsernames.clear();
             broadcastKillers.clear();
@@ -5886,6 +5981,8 @@
                 window.__e2e.localPlayerTeam = null;
                 window.__e2e.teamScores = [0, 0];
                 window.__e2e.respawnCount = 0;
+                window.__e2e.joinOnboarding = { step: joinOnboarding.view().step, visible: false };
+                window.__e2e.localOwnedProjectileCount = 0;
             }
             log('Game state cleared for reconnect.', 'info');
         }
@@ -5952,6 +6049,8 @@
             stopFxStress(true);
             myPlayerId = null;
             localPlayerState = null;
+            if (joinOnboardingBound) joinOnboardingReconnectPending = true;
+            refreshJoinOnboarding();
             if (commanderRoleSpan) commanderRoleSpan.textContent = 'Member';
             players.clear();
             broadcastKnownUsernames.clear();
@@ -6181,6 +6280,8 @@
                 window.__e2e.localPlayerTeam = null;
                 window.__e2e.teamScores = [0, 0];
                 window.__e2e.respawnCount = 0;
+                window.__e2e.joinOnboarding = { step: joinOnboarding.view().step, visible: false };
+                window.__e2e.localOwnedProjectileCount = 0;
                 window.__e2e.mobileAimActive = false;
                 window.__e2e.mobileFireTouchActive = false;
                 window.__e2e.bodyMobileMode = !!document.body.classList.contains('mobile-mode');

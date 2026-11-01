@@ -355,3 +355,99 @@ test("processDeltaStateFast continues after every broadcast hook throws", (t) =>
     assert.equal(calls.interpolation, 2);
     assert.equal(warnings.length, 3, "each delta hook site warns only once");
 });
+
+test("processServerUpdate exposes raw local state before reconciliation and projectiles after map updates", () => {
+    const events = [];
+    const ctx = makeCtx({
+        pendingInputs: [{ sequence: 1, timestamp: 1000, move_forward: true, rotation: 0 }],
+        assignPlayerStateFromObject: (target, player) => Object.assign(target, {
+            x: player.x,
+            y: player.y,
+            rotation: player.rotation,
+            team_id: player.team_id,
+            is_bot: player.is_bot,
+        }),
+        onRawLocalState: (state) => events.push({ type: "raw", x: state.x, y: state.y }),
+        onProjectileMapUpdated: (projectiles, myPlayerId) => events.push({
+            type: "projectiles",
+            owned: Array.from(projectiles).filter((p) => p.owner_id === myPlayerId).length,
+        }),
+    });
+    const handler = createServerUpdateHandler(() => ctx);
+
+    handler.processServerUpdate({
+        timestamp: 10,
+        players: [{ id: "local-player", x: 10, y: 20, rotation: 0, team_id: 1, is_bot: false }],
+        projectiles: [{ id: 7, owner_id: "local-player" }],
+    }, false);
+
+    assert.deepEqual(events, [
+        { type: "raw", x: 10, y: 20 },
+        { type: "projectiles", owned: 1 },
+    ]);
+    assert.equal(ctx.localPlayerState.x, 15, "reconciliation replays pending input after the raw hook");
+});
+
+test("processDeltaStateFast exposes raw local state and updated projectiles", () => {
+    const events = [];
+    const zeroLength = () => 0;
+    const player = {
+        id: () => "local-player",
+        username: () => "Human",
+        x: () => 30,
+        y: () => 40,
+        rotation: () => 0.5,
+    };
+    const projectile = { id: () => 8 };
+    const delta = {
+        lastProcessedInputSequence: () => 0,
+        timestamp: () => 10,
+        destroyedWallIdsLength: zeroLength,
+        updatedWallsLength: zeroLength,
+        wallsLength: zeroLength,
+        playersLength: () => 1,
+        players: () => player,
+        changedPlayerFieldsLength: zeroLength,
+        removedPlayerIdsLength: zeroLength,
+        projectilesLength: () => 1,
+        projectiles: () => projectile,
+        removedProjectilesLength: zeroLength,
+        pickupsLength: zeroLength,
+        deactivatedPickupIdsLength: zeroLength,
+        killFeedLength: zeroLength,
+        matchInfo: () => null,
+        flagStatesLength: zeroLength,
+        gameEventsLength: zeroLength,
+    };
+    const ctx = makeCtx({
+        assignPlayerStateFromTable: (target) => Object.assign(target, {
+            x: player.x(), y: player.y(), rotation: player.rotation(), team_id: 1, is_bot: false,
+        }),
+        assignProjectileStateFromTable: (target, table) => Object.assign(target, {
+            id: table.id(), owner_id: "local-player",
+        }),
+        onRawLocalState: (state) => events.push({ type: "raw", x: state.x, y: state.y }),
+        onProjectileMapUpdated: (projectiles, myPlayerId) => events.push({
+            type: "projectiles",
+            owned: Array.from(projectiles).filter((p) => p.owner_id === myPlayerId).length,
+        }),
+        parseMatchInfo: () => null,
+        flatbufferParseScratch: {
+            wall: {}, playerState: {}, projectileState: {}, pickup: {}, vec2: {},
+            killFeedEntry: {}, matchInfo: {}, flagState: {}, gameEvent: {},
+        },
+        DELTA_SUPPORTS_REMOVED_PLAYER_IDS: false,
+        DELTA_SUPPORTS_CHANGED_PLAYER_FIELDS: false,
+        DELTA_SUPPORTS_UPDATED_WALLS: false,
+        DELTA_SUPPORTS_FULL_WALLS: false,
+        PLAYER_DELTA_FULL_MASK: 0,
+    });
+    const handler = createServerUpdateHandler(() => ctx);
+
+    handler.processDeltaStateFast(delta);
+
+    assert.deepEqual(events, [
+        { type: "raw", x: 30, y: 40 },
+        { type: "projectiles", owned: 1 },
+    ]);
+});

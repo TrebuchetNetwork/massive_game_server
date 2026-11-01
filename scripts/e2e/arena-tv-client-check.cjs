@@ -60,7 +60,7 @@ const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-client
 
     const result = await page.evaluate(() => {
       const playerOnlyChrome = [
-        '#controlHintsOverlay', '#audioUnlockNudge', '#musicPlayer', '#tipsToast', '#joinProgressOverlay',
+        '#controlHintsOverlay', '#joinOnboarding', '#audioUnlockNudge', '#musicPlayer', '#tipsToast', '#joinProgressOverlay',
         '#hudMenuToggle', '#mobileCombatHud .mobile-combat-hud__stats', '#connectionStatus',
         '#combatHud', '#combatRadialHud', '#combatMomentum', '#deathMomentBanner', '#deathRecap',
         '#killcamPanel', '#postMatchPanel', '#pingWheel', '#boundaryWarning', '#fpsCounter',
