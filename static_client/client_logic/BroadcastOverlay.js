@@ -5,6 +5,7 @@
 
 export const KILL_FEED_TTL_MS = 8000;
 export const KILL_FEED_LIMIT = 5;
+export const COMMENTARY_TTL_MS = 7000;
 
 export function pushKillEntry(feed, entry) {
     return [entry, ...feed].slice(0, KILL_FEED_LIMIT);
@@ -42,13 +43,23 @@ export function createBroadcastOverlay({ document: doc, parent }) {
         '<span class="arena-tv-clock">--:--</span>' +
         '</div>' +
         '<div class="arena-tv-killfeed"></div>' +
+        '<div class="arena-tv-focus" hidden>' +
+        '<span class="arena-tv-focus-kicker">FOLLOWING</span>' +
+        '<strong class="arena-tv-focus-name"></strong>' +
+        '<span class="arena-tv-focus-meta"></span>' +
+        '</div>' +
         '<div class="arena-tv-commentary"></div>';
     parent.appendChild(element);
     const scoresEl = element.querySelector('.arena-tv-scores');
     const clockEl = element.querySelector('.arena-tv-clock');
     const feedEl = element.querySelector('.arena-tv-killfeed');
+    const focusEl = element.querySelector('.arena-tv-focus');
+    const focusNameEl = element.querySelector('.arena-tv-focus-name');
+    const focusMetaEl = element.querySelector('.arena-tv-focus-meta');
     const commentaryEl = element.querySelector('.arena-tv-commentary');
     let feed = [];
+    let focusSignature = null;
+    let commentarySetAt = null;
 
     function renderFeed() {
         feedEl.innerHTML = feed.map((e) =>
@@ -66,9 +77,62 @@ export function createBroadcastOverlay({ document: doc, parent }) {
             const before = feed.length;
             feed = pruneKillFeed(feed, atMs);
             if (feed.length !== before) renderFeed();
+            if (commentarySetAt !== null && atMs - commentarySetAt >= COMMENTARY_TTL_MS) {
+                commentarySetAt = null;
+                commentaryEl.textContent = '';
+            }
         },
-        setCommentary(line) {
-            commentaryEl.textContent = line || '';
+        setFocus(frame) {
+            if (!frame) {
+                if (focusSignature !== null) {
+                    focusSignature = null;
+                    focusEl.hidden = true;
+                }
+                return;
+            }
+            const rawName = typeof frame.targetName === 'string' ? frame.targetName : '';
+            const name = rawName.trim() ? rawName : String(frame.targetId ?? '');
+            if (!name.trim()) {
+                focusSignature = null;
+                focusEl.hidden = true;
+                return;
+            }
+            const teamId = frame.targetTeamId;
+            const hp = frame.targetHp;
+            const maxHp = frame.targetMaxHp;
+            const team = typeof teamId === 'number' && Number.isFinite(teamId) && teamId !== 0
+                ? `TEAM ${teamId}`
+                : '';
+            const health = typeof hp === 'number' && Number.isFinite(hp)
+                && typeof maxHp === 'number' && Number.isFinite(maxHp) && maxHp > 0
+                ? `HP ${Math.ceil(Math.max(0, hp))}/${Math.ceil(maxHp)}`
+                : '';
+            const meta = [team, health].filter(Boolean).join(' · ');
+            const signature = JSON.stringify([name, meta]);
+            if (signature === focusSignature) return;
+            focusSignature = signature;
+            focusNameEl.textContent = name;
+            focusMetaEl.textContent = meta;
+            focusMetaEl.hidden = !meta;
+            focusEl.hidden = false;
+        },
+        setCommentary(line, atMs = Date.now()) {
+            const text = String(line || '');
+            commentaryEl.textContent = text;
+            commentarySetAt = text ? (Number.isFinite(atMs) ? atMs : Date.now()) : null;
+        },
+        reset() {
+            feed = [];
+            renderFeed();
+            focusSignature = null;
+            focusEl.hidden = true;
+            focusNameEl.textContent = '';
+            focusMetaEl.textContent = '';
+            focusMetaEl.hidden = true;
+            commentarySetAt = null;
+            commentaryEl.textContent = '';
+            scoresEl.textContent = '';
+            clockEl.textContent = '--:--';
         },
         setScoreboard(payload = {}) {
             const { teamScores, timeRemaining } = payload || {};
