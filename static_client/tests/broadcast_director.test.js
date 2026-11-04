@@ -105,3 +105,48 @@ test('duplicate ids compare stably without throwing', () => {
     assert.equal(first.focusX, 10);
     assert.deepEqual(d.cameraFrame(players, null, 2000), first);
 });
+
+test('camera frame exposes metadata from the exact selected candidate', () => {
+    const d = createBroadcastDirector();
+    const frame = d.cameraFrame([
+        P('a', { username: '#2 Astra', teamId: 2, hp: 72, maxHp: 100 }),
+        P('leader', { username: '#1 Orbit', teamId: 1, hp: 90, maxHp: 120 }),
+    ], 'leader', 1000);
+    assert.equal(frame.targetId, 'leader');
+    assert.equal(frame.targetName, '#1 Orbit');
+    assert.equal(frame.targetTeamId, 1);
+    assert.equal(frame.targetHp, 90);
+    assert.equal(frame.targetMaxHp, 120);
+});
+
+test('reset clears target and event history', () => {
+    const d = createBroadcastDirector();
+    const players = [P('a'), P('b')];
+    assert.equal(d.cameraFrame(players, 'a', 1000).targetId, 'a');
+    d.recordDamage({ instigatorId: 'b', value: 500, atMs: 5100 });
+    assert.equal(d.cameraFrame(players, 'a', 5100).targetId, 'a');
+    assert.equal(d.cameraFrame(players, 'a', 6700).targetId, 'b');
+    d.recordKill({ killerName: 'b', atMs: 6700 });
+    assert.equal(d.cameraFrame(players, null, 6700).zoom, 1.15);
+    d.reset();
+    const frame = d.cameraFrame(players, null, 7000);
+    const freshFrame = createBroadcastDirector().cameraFrame(players, null, 7000);
+    assert.deepEqual(frame, freshFrame);
+    assert.equal(frame.targetId, 'a');
+    assert.equal(frame.zoom, 1);
+    d.recordKill({ killerName: 'b', atMs: 7100 });
+    assert.equal(d.cameraFrame(players, null, 7100).zoom, 1);
+});
+
+test('reset clears current target name before the next camera frame', () => {
+    const d = createBroadcastDirector({ killBoostMs: 0 });
+    const players = [P('a'), P('b')];
+    assert.equal(d.cameraFrame(players, 'b', 1000).targetId, 'b');
+    d.reset();
+    // At 2100 this kill no longer affects target scoring, but a stale target
+    // name would still incorrectly activate the 1.2s kill zoom.
+    d.recordKill({ killerName: 'b', atMs: 2000 });
+    const frame = d.cameraFrame(players, null, 2100);
+    assert.equal(frame.targetId, 'a');
+    assert.equal(frame.zoom, 1);
+});

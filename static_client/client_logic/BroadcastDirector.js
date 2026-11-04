@@ -120,8 +120,29 @@ export function createBroadcastDirector({
         const id = selectTarget(visiblePlayers, leaderId, atMs);
         const target = visiblePlayers.find((p) => p.id === id);
         if (!target) return null;
-        return { focusX: target.x, focusY: target.y, zoom: atMs < zoomUntil ? 1.15 : 1, targetId: id };
+        return {
+            focusX: target.x,
+            focusY: target.y,
+            zoom: atMs < zoomUntil ? 1.15 : 1,
+            targetId: id,
+            targetName: target.username,
+            targetTeamId: target.teamId,
+            targetHp: target.hp,
+            targetMaxHp: target.maxHp,
+        };
     }
 
-    return { recordDamage, recordKill, selectTarget, cameraFrame };
+    function reset() {
+        damage.clear();
+        kills.clear();
+        targetId = null;
+        targetSince = 0;
+        challengerId = null;
+        challengerSince = 0;
+        zoomUntil = 0;
+        currentTargetName = null;
+        lastSweepAt = null;
+    }
+
+    return { recordDamage, recordKill, selectTarget, cameraFrame, reset };
 }
