@@ -62,7 +62,7 @@ export {
     resolveMapTheme,
 } from './MapThemes.js';
 export * from './commentary_templates.js';
-export * from './BroadcastDirector.js';
-export * from './BroadcastOverlay.js';
+export * from './BroadcastDirector.js?v=20261104-spotlight1';
+export * from './BroadcastOverlay.js?v=20261104-spotlight1';
 export * from './broadcast_lifecycle.js';
 export * from './JoinOnboarding.js?v=20261101-onboarding2';
