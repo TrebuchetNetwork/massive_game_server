@@ -312,7 +312,11 @@ async fn main() -> anyhow::Result<()> {
         static_routes,
         allowed_cors_origins,
         behind_tls_proxy,
-    );
+    )
+    .with(warp::log::custom(
+        massive_game_server_core::operational::monitoring::access_log::log_request,
+    ))
+    .boxed();
 
     let game_server_for_loop = Arc::clone(&game_server_instance); // Use the renamed variable
     let game_loop_handle = tokio::spawn(async move {
