@@ -593,6 +593,50 @@ test('season lock contention retries without republishing fighters', async () =>
   validateTrackSlice(next, 'L2');
 });
 
+test('a later division failure leaves every rating and the day boundary untouched', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const roster = Array.from({ length: 40 }, (_, index) => model({
+    model_id: `vendor/model-${index}`,
+    rating: 90 - index,
+  }));
+  for (const entry of roster) await makeFighter(stateDir, entry.model_id);
+  const state = stateWith({ roster, last_feedback_at: new Date(NOW).toISOString() });
+  const before = structuredClone(state.roster);
+  const results = Object.fromEntries(roster.map((entry) => [
+    entry.model_id,
+    { wins: 3, losses: 1, draws: 0, matches_played: 4 },
+  ]));
+  const successfulRunner = fakeEvaluateRunner(rootDir, results, []);
+  let divisionAttempts = 0;
+
+  await assert.rejects(runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: {
+      nowMs: NOW,
+      log: () => {},
+      runRunner: async (args, options) => {
+        divisionAttempts += 1;
+        if (divisionAttempts === 3) throw new Error('third division failed');
+        return successfulRunner(args, options);
+      },
+      publishFighter: async () => {},
+      adminToken: 'test-token',
+      apiBase: 'http://127.0.0.1:9',
+    },
+  }), /third division failed/);
+
+  assert.equal(divisionAttempts, 3);
+  assert.deepEqual(state.roster, before);
+  assert.equal(state.day_index, 0);
+  assert.equal(await fs.stat(path.join(stateDir, 'history')).catch((error) => error.code), 'ENOENT');
+});
+
 const REBOUND_CODE_STATUS = {
   prompt_version: 'arena-v2',
   prompt_sha256: sha('1'),

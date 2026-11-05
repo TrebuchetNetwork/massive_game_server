@@ -267,6 +267,9 @@ async function evaluateRoster({
     EVALUATION_SEED_COUNT,
   );
   const seasonIds = [];
+  // Stage ratings locally: a later division failure must not persist a
+  // partially evaluated roster that a retry would then rate again.
+  let ratedRoster = track.roster;
 
   for (const division of divisionSlices(track.roster)) {
     if (division.models.length < 2) {
@@ -342,11 +345,12 @@ async function evaluateRoster({
     const seasonJson = await readJson(path.join(seasonDirectory, 'season.json'));
     const rated = applyBattleRatings(division.models, seasonJson);
     const ratedById = new Map(rated.map((entry) => [entry.model_id, entry]));
-    track.roster = track.roster.map((entry) => ratedById.get(entry.model_id) ?? entry);
+    ratedRoster = ratedRoster.map((entry) => ratedById.get(entry.model_id) ?? entry);
     seasonIds.push(seasonId);
     log(`evaluate: ${seasonId} complete (${models.length} models, seeds ${seeds.join('/')})`);
   }
 
+  track.roster = ratedRoster;
   const completedDay = track.day_index;
   track.day_index += 1;
   const divisionById = new Map();
