@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { mascotFor } from '../../mascots.mjs';
 import { runCycle, runTrackCycle, stateDirectoryFromEnv } from '../../continuous_league.mjs';
+import * as recoveryGate from '../../continuous_league.mjs';
 import { trackPolicy } from '../league.mjs';
 import { writeFighterRecord } from '../generation.mjs';
 import { createState, validateState, validateTrackSlice } from '../state.mjs';
@@ -2430,4 +2431,62 @@ test('announcement feed stays capped at 200 through fast-lane displacements', as
   assert.ok(!feed.some((a) => a.model_id === 'vendor/old-0'), 'oldest entries dropped');
   assert.ok(feed.some((a) => a.model_id === 'vendor/old-3'), 'cut is exactly 3 old entries');
   validateState(next);
+});
+
+async function replayGateFixture(t, { backup = false, journal = null } = {}) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cml-replay-gate-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const stateDirectory = path.join(root, 'continuous');
+  const backupDirectory = path.join(root, 'recovery', 'l0-day51-pre-replay');
+  if (backup) await fs.mkdir(backupDirectory, { recursive: true });
+  if (journal) {
+    await fs.writeFile(
+      path.join(backupDirectory, 'journal.json'),
+      `${JSON.stringify(journal)}\n`,
+    );
+  }
+  return { stateDirectory };
+}
+
+test('replay recovery gate allows startup when no backup exists', async (t) => {
+  const { stateDirectory } = await replayGateFixture(t);
+  assert.equal(await recoveryGate.assertReplayRecoveryNotPending(stateDirectory), true);
+});
+
+test('replay recovery gate allows a committed journal', async (t) => {
+  const { stateDirectory } = await replayGateFixture(t, {
+    backup: true,
+    journal: { version: 1, phase: 'committed' },
+  });
+  assert.equal(await recoveryGate.assertReplayRecoveryNotPending(stateDirectory), true);
+});
+
+test('replay recovery gate blocks a prepared journal', async (t) => {
+  const { stateDirectory } = await replayGateFixture(t, {
+    backup: true,
+    journal: { version: 1, phase: 'prepared' },
+  });
+  await assert.rejects(
+    recoveryGate.assertReplayRecoveryNotPending(stateDirectory),
+    /prepared.*replay_l0_day51\.mjs/,
+  );
+});
+
+test('replay recovery gate blocks a rolled_back journal', async (t) => {
+  const { stateDirectory } = await replayGateFixture(t, {
+    backup: true,
+    journal: { version: 1, phase: 'rolled_back' },
+  });
+  await assert.rejects(
+    recoveryGate.assertReplayRecoveryNotPending(stateDirectory),
+    /rolled_back.*replay_l0_day51\.mjs/,
+  );
+});
+
+test('replay recovery gate blocks a backup without its journal', async (t) => {
+  const { stateDirectory } = await replayGateFixture(t, { backup: true });
+  await assert.rejects(
+    recoveryGate.assertReplayRecoveryNotPending(stateDirectory),
+    /journal.*replay_l0_day51\.mjs/,
+  );
 });

@@ -200,6 +200,38 @@ async function readJson(targetPath) {
   return JSON.parse(await fs.readFile(targetPath, 'utf8'));
 }
 
+function replayRecoveryBlock(detail) {
+  return new Error(
+    `L0 day 51 replay recovery is ${detail}; run `
+    + 'scripts/arena/continuous/replay_l0_day51.mjs before starting normal continuous cycles',
+  );
+}
+
+/** Fail closed unless the one-shot L0 recovery has no pending/ambiguous journal. */
+export async function assertReplayRecoveryNotPending(stateDirectory) {
+  const backupDirectory = path.join(
+    path.dirname(stateDirectory),
+    'recovery',
+    'l0-day51-pre-replay',
+  );
+  try {
+    await fs.access(backupDirectory);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return true;
+    throw replayRecoveryBlock('unreadable; its backup cannot be inspected safely');
+  }
+
+  let journal;
+  try {
+    journal = await readJson(path.join(backupDirectory, 'journal.json'));
+  } catch {
+    throw replayRecoveryBlock('incomplete; its journal.json is missing or unreadable');
+  }
+  if (journal?.phase === 'committed') return true;
+  const phase = typeof journal?.phase === 'string' ? journal.phase : 'unknown';
+  throw replayRecoveryBlock(`pending (phase ${phase})`);
+}
+
 /**
  * Append a compact per-evaluation snapshot to the track's day history file.
  * Idempotent per (league_id, day_index): if the cycle crashed after the
@@ -1399,6 +1431,7 @@ async function main() {
     },
   );
   try {
+    await assertReplayRecoveryNotPending(stateDirectory);
     const { state, created, migrated } = await loadOrCreateState(stateDirectory);
     validateState(state);
     if (migrated) {
