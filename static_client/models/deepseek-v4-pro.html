@@ -255,21 +255,21 @@
                 <img src="/media/highlights/2026-10-24/replay_1792811081437_time_expired_34415-59982.png" alt="Highlight: Kill cluster x8" loading="lazy">
                 <span class="clip__meta"><b>Kill cluster x8</b><small>2026-10-24 · score 304.1</small></span>
             </a>
-            <a class="clip" href="/media/highlights/2026-10-20/replay_1792485929210_time_expired_2915-31918.webm" target="_blank" rel="noopener">
-                <img src="/media/highlights/2026-10-20/replay_1792485929210_time_expired_2915-31918.png" alt="Highlight: Kill cluster x8" loading="lazy">
-                <span class="clip__meta"><b>Kill cluster x8</b><small>2026-10-20 · score 270.0</small></span>
-            </a>
-            <a class="clip" href="/media/highlights/2026-10-20/replay_1792476167551_time_expired_0-27733.webm" target="_blank" rel="noopener">
-                <img src="/media/highlights/2026-10-20/replay_1792476167551_time_expired_0-27733.png" alt="Highlight: Kill cluster x9" loading="lazy">
-                <span class="clip__meta"><b>Kill cluster x9</b><small>2026-10-20 · score 245.0</small></span>
-            </a>
-            <a class="clip" href="/media/highlights/2026-10-19/replay_1792394222026_time_expired_0-29986.webm" target="_blank" rel="noopener">
-                <img src="/media/highlights/2026-10-19/replay_1792394222026_time_expired_0-29986.png" alt="Highlight: Kill cluster x7" loading="lazy">
-                <span class="clip__meta"><b>Kill cluster x7</b><small>2026-10-19 · score 245.0</small></span>
+            <a class="clip" href="/media/highlights/2026-11-01/replay_1793494385297_time_expired_817-24766.webm" target="_blank" rel="noopener">
+                <img src="/media/highlights/2026-11-01/replay_1793494385297_time_expired_817-24766.png" alt="Highlight: Kill cluster x7" loading="lazy">
+                <span class="clip__meta"><b>Kill cluster x7</b><small>2026-11-01 · score 235.0</small></span>
             </a>
             <a class="clip" href="/media/highlights/2026-10-24/replay_1792811391490_time_expired_31583-56001.webm" target="_blank" rel="noopener">
                 <img src="/media/highlights/2026-10-24/replay_1792811391490_time_expired_31583-56001.png" alt="Highlight: Kill cluster x6" loading="lazy">
                 <span class="clip__meta"><b>Kill cluster x6</b><small>2026-10-24 · score 231.9</small></span>
+            </a>
+            <a class="clip" href="/media/highlights/2026-10-25/replay_1792921056945_time_expired_26817-59554.webm" target="_blank" rel="noopener">
+                <img src="/media/highlights/2026-10-25/replay_1792921056945_time_expired_26817-59554.png" alt="Highlight: Kill cluster x6" loading="lazy">
+                <span class="clip__meta"><b>Kill cluster x6</b><small>2026-10-25 · score 229.5</small></span>
+            </a>
+            <a class="clip" href="/media/highlights/2026-10-30/replay_1793326747005_time_expired_34500-59983.webm" target="_blank" rel="noopener">
+                <img src="/media/highlights/2026-10-30/replay_1793326747005_time_expired_34500-59983.png" alt="Highlight: Kill cluster x7" loading="lazy">
+                <span class="clip__meta"><b>Kill cluster x7</b><small>2026-10-30 · score 219.9</small></span>
             </a>
         </div>
         </section>
@@ -364,7 +364,7 @@
                 <span class="lineage__version">v6</span>
                 <span class="lineage__outcome">accepted</span>
                 <span class="lineage__meta">compile attempts 1</span>
-                <span class="lineage__delta">+1338W +1196L +346D while live</span>
+                <span class="lineage__delta">+1808W +1760L +464D while live</span>
                 <time class="lineage__at" datetime="2026-10-09T09:24:29.918Z">2026-10-09 09:24 UTC</time>
             </li>
             <li class="lineage__node lineage__node--codegen_failed">
@@ -372,8 +372,16 @@
                 <span class="lineage__version">v7</span>
                 <span class="lineage__outcome">codegen failed</span>
                 <span class="lineage__meta">compile attempts 0</span>
-                
+                <span class="lineage__delta">+394W +352L +118D while live</span>
                 <time class="lineage__at" datetime="2026-10-24T09:24:31.076Z">2026-10-24 09:24 UTC</time>
+            </li>
+            <li class="lineage__node lineage__node--accepted">
+                <span class="lineage__icon" aria-hidden="true">🔧</span>
+                <span class="lineage__version">v7</span>
+                <span class="lineage__outcome">accepted</span>
+                <span class="lineage__meta">compile attempts 1</span>
+                <span class="lineage__delta">+394W +352L +118D while live</span>
+                <time class="lineage__at" datetime="2026-11-01T10:24:23.389Z">2026-11-01 10:24 UTC</time>
             </li>
             </ol>
             <p class="metric-note">W/L/D deltas derive from the track's daily history snapshots; a failed attempt consumes a submission but the previous artifact stays live.</p>
@@ -396,6 +404,8 @@
                 <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v6</span>
                 <span class="autopsy__arrow" aria-hidden="true">→</span>
                 <span class="autopsy__badge autopsy__badge--codegen_failed" title="codegen_failed">v7</span>
+                <span class="autopsy__arrow" aria-hidden="true">→</span>
+                <span class="autopsy__badge autopsy__badge--accepted" title="accepted">v7</span>
             </div>
             <details class="autopsy__diff autopsy__diff--diff">
                 <summary><span class="autopsy__range">v1 → v2</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-09-02T09:24:19.477Z">2026-09-02 09:24 UTC</time></span></summary>
@@ -1514,6 +1524,210 @@
 <span class="diff-line diff-ctx">          _ =&gt; {</span>
 <span class="diff-line diff-del">−             if self_health &lt; 18 {</span>
 <span class="diff-line diff-add">+             if self_health &lt; 22 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              return ATTACK;</span></pre>
+            </details>
+            <details class="autopsy__diff autopsy__diff--diff">
+                <summary><span class="autopsy__range">v6 → v7</span> <span class="autopsy__stats">compile attempts 1 · accepted · <time datetime="2026-11-01T10:24:23.389Z">2026-11-01 10:24 UTC</time></span></summary>
+<pre class="autopsy__pre"><span class="diff-line diff-hunk">@@ v-old:30 v-new:30 @@</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">  fn is_support_slot(slot: i32, allies_alive: i32) -&gt; bool {</span>
+<span class="diff-line diff-del">−     // Only activate support slots when team is large enough</span>
+<span class="diff-line diff-ctx">      allies_alive &gt; 2 &amp;&amp; slot % 2 == 1 &amp;&amp; slot &lt; allies_alive</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-hunk">@@ v-old:39 v-new:38 @@</span>
+<span class="diff-line diff-ctx">  }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">  fn should_charge(mode: i32, tick: i32, slot: i32, self_health: i32, team_score_delta: i32) -&gt; bool {</span>
+<span class="diff-line diff-del">−     if self_health &lt; 65 {</span>
+<span class="diff-line diff-add">+     if self_health &lt; 60 {</span>
+<span class="diff-line diff-ctx">          return false;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">      match mode {</span>
+<span class="diff-line diff-ctx">          MODE_KOTH =&gt; {</span>
+<span class="diff-line diff-del">−             // Desperate situation: charge when behind and healthy</span>
+<span class="diff-line diff-del">−             if team_score_delta &lt; -10 &amp;&amp; self_health &gt;= 70 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-del">−                 return true;</span>
+<span class="diff-line diff-add">+             if team_score_delta &lt; -10 &amp;&amp; self_health &gt;= 70 {</span>
+<span class="diff-line diff-add">+                 return random_bounded(tick, slot, 6) == 0;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // Comfortable lead: occasional charge to disrupt</span>
+<span class="diff-line diff-del">−             if team_score_delta &gt;= 5 &amp;&amp; self_health &gt;= 85 &amp;&amp; random_bounded(tick, slot, 12) == 0 {</span>
+<span class="diff-line diff-del">−                 return true;</span>
+<span class="diff-line diff-add">+             if team_score_delta &gt;= 5 &amp;&amp; self_health &gt;= 80 {</span>
+<span class="diff-line diff-add">+                 return random_bounded(tick, slot, 10) == 0;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_CTF =&gt; {</span>
+<span class="diff-line diff-del">−             if team_score_delta &lt; -12 &amp;&amp; self_health &gt;= 75 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-del">−                 return true;</span>
+<span class="diff-line diff-add">+             if team_score_delta &lt; -8 &amp;&amp; self_health &gt;= 70 {</span>
+<span class="diff-line diff-add">+                 return random_bounded(tick, slot, 5) == 0;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if team_score_delta &gt; 10 &amp;&amp; self_health &gt;= 80 &amp;&amp; random_bounded(tick, slot, 10) == 0 {</span>
+<span class="diff-line diff-del">−                 return true;</span>
+<span class="diff-line diff-add">+             if team_score_delta &gt; 8 &amp;&amp; self_health &gt;= 75 {</span>
+<span class="diff-line diff-add">+                 return random_bounded(tick, slot, 9) == 0;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_TDM =&gt; {</span>
+<span class="diff-line diff-del">−             if team_score_delta &lt; -15 &amp;&amp; self_health &gt;= 70 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-del">−                 return true;</span>
+<span class="diff-line diff-add">+             if team_score_delta &lt; -10 &amp;&amp; self_health &gt;= 65 {</span>
+<span class="diff-line diff-add">+                 return random_bounded(tick, slot, 6) == 0;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if team_score_delta &gt; 20 &amp;&amp; self_health &gt;= 80 &amp;&amp; random_bounded(tick, slot, 14) == 0 {</span>
+<span class="diff-line diff-del">−                 return true;</span>
+<span class="diff-line diff-add">+             if team_score_delta &gt; 15 &amp;&amp; self_health &gt;= 75 {</span>
+<span class="diff-line diff-add">+                 return random_bounded(tick, slot, 12) == 0;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          _ =&gt; {}</span>
+<span class="diff-line diff-hunk">@@ v-old:92 v-new:89 @@</span>
+<span class="diff-line diff-ctx">          return IDLE;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Defend thresholds: slightly increased from previous to reduce defend rate</span>
+<span class="diff-line diff-ctx">      let defend_threshold: i32 = match mode {</span>
+<span class="diff-line diff-del">−         MODE_ARENA =&gt; 20,</span>
+<span class="diff-line diff-del">−         MODE_CTF =&gt; 22,</span>
+<span class="diff-line diff-del">−         MODE_KOTH =&gt; 18,</span>
+<span class="diff-line diff-del">−         _ =&gt; 22,</span>
+<span class="diff-line diff-add">+         MODE_ARENA =&gt; 25,</span>
+<span class="diff-line diff-add">+         MODE_CTF =&gt; 28,</span>
+<span class="diff-line diff-add">+         MODE_KOTH =&gt; 22,</span>
+<span class="diff-line diff-add">+         _ =&gt; 26,</span>
+<span class="diff-line diff-ctx">      };</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Defend only at critically low health</span>
+<span class="diff-line diff-ctx">      if self_health &lt;= defend_threshold {</span>
+<span class="diff-line diff-ctx">          return DEFEND;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Support logic: much more selective</span>
+<span class="diff-line diff-ctx">      let urgent = needs_urgent_support(lowest_ally_health, allies_alive);</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     if urgent &amp;&amp; self_health &gt; 40 {</span>
+<span class="diff-line diff-del">−         // Urgent support with slot priority</span>
+<span class="diff-line diff-del">−         if is_support_slot(slot, allies_alive) {</span>
+<span class="diff-line diff-del">−             return SUPPORT;</span>
+<span class="diff-line diff-del">−         }</span>
+<span class="diff-line diff-del">−         // Emergency support only when team is ahead and we are safe</span>
+<span class="diff-line diff-del">−         if allies_alive &gt;= enemies_alive &amp;&amp; self_health &gt;= 75 &amp;&amp; random_bounded(tick, slot, 20) == 0 {</span>
+<span class="diff-line diff-del">−             return SUPPORT;</span>
+<span class="diff-line diff-del">−         }</span>
+<span class="diff-line diff-add">+     // Support only when urgent and we have health &gt; 55, very restricted</span>
+<span class="diff-line diff-add">+     if urgent &amp;&amp; self_health &gt; 55 &amp;&amp; is_support_slot(slot, allies_alive) {</span>
+<span class="diff-line diff-add">+         return SUPPORT;</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-del">−     // Non-urgent support: very rare, only with excess health and numerical advantage</span>
+<span class="diff-line diff-del">−     if !urgent &amp;&amp; allies_alive &gt; enemies_alive + 1 &amp;&amp; lowest_ally_health &lt; 45 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; self_health &gt; 75 &amp;&amp; is_support_slot(slot, allies_alive) {</span>
+<span class="diff-line diff-del">−         if random_bounded(tick, slot, 25) == 0 {</span>
+<span class="diff-line diff-add">+     // Almost never support otherwise - the 32% support rate was far too high</span>
+<span class="diff-line diff-add">+     if !urgent &amp;&amp; allies_alive &gt;= enemies_alive + 2 &amp;&amp; lowest_ally_health &lt; 40 &amp;&amp; lowest_ally_health &gt; 0 &amp;&amp; self_health &gt; 80 &amp;&amp; is_support_slot(slot, allies_alive) {</span>
+<span class="diff-line diff-add">+         if random_bounded(tick, slot, 50) == 0 {</span>
+<span class="diff-line diff-ctx">              return SUPPORT;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">      }</span>
+<span class="diff-line diff-ctx">  </span>
+<span class="diff-line diff-ctx">      match mode {</span>
+<span class="diff-line diff-ctx">          MODE_ARENA =&gt; {</span>
+<span class="diff-line diff-del">−             if self_health &lt; 25 {</span>
+<span class="diff-line diff-add">+             if self_health &lt; 30 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // Charge very rarely when high score and health</span>
+<span class="diff-line diff-del">−             if self_health &gt;= 85 &amp;&amp; personal_score &gt;= 200 &amp;&amp; random_bounded(tick, slot, 7) == 0 {</span>
+<span class="diff-line diff-add">+             if self_health &gt;= 85 &amp;&amp; personal_score &gt;= 180 &amp;&amp; random_bounded(tick, slot, 6) == 0 {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // Heavy attack bias</span>
+<span class="diff-line diff-del">−             if random_bounded(tick, slot, 14) &lt; 13 {</span>
+<span class="diff-line diff-add">+             // Aggressive attack unless very low health</span>
+<span class="diff-line diff-add">+             if random_bounded(tick, slot, 12) &lt; 11 {</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              return DEFEND;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_TDM =&gt; {</span>
+<span class="diff-line diff-del">−             if self_health &lt; 22 {</span>
+<span class="diff-line diff-add">+             if self_health &lt; 25 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if should_charge(mode, tick, slot, self_health, team_score_delta) {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // When outnumbered and moderate health, consider defend</span>
+<span class="diff-line diff-del">−             if allies_alive &lt; enemies_alive &amp;&amp; self_health &lt; 45 {</span>
+<span class="diff-line diff-add">+             if allies_alive &lt; enemies_alive &amp;&amp; self_health &lt; 50 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             // When heavily outnumbered, even slightly lower health defend</span>
+<span class="diff-line diff-del">−             if allies_alive * 2 &lt; enemies_alive &amp;&amp; self_health &lt; 60 {</span>
+<span class="diff-line diff-add">+             if allies_alive * 2 &lt; enemies_alive &amp;&amp; self_health &lt; 65 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              return ATTACK;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_CTF =&gt; {</span>
+<span class="diff-line diff-del">−             if self_health &lt; 22 {</span>
+<span class="diff-line diff-add">+             if self_health &lt; 25 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if should_charge(mode, tick, slot, self_health, team_score_delta) {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if objective_delta &gt; 0 {</span>
+<span class="diff-line diff-del">−                 // Leading: press advantage with high health, else cautious defend</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 50 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 55 {</span>
+<span class="diff-line diff-ctx">                      return ATTACK;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              } else {</span>
+<span class="diff-line diff-del">−                 // Behind: aggressive push but not suicidal</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 45 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 50 {</span>
+<span class="diff-line diff-ctx">                      return ATTACK;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          MODE_KOTH =&gt; {</span>
+<span class="diff-line diff-del">−             if self_health &lt; 18 {</span>
+<span class="diff-line diff-add">+             if self_health &lt; 22 {</span>
+<span class="diff-line diff-ctx">                  return DEFEND;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if should_charge(mode, tick, slot, self_health, team_score_delta) {</span>
+<span class="diff-line diff-ctx">                  return CHARGE;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              if objective_delta &gt; 25 {</span>
+<span class="diff-line diff-del">−                 // Strong lead: hold with defense unless very healthy</span>
+<span class="diff-line diff-del">−                 if self_health &lt; 45 {</span>
+<span class="diff-line diff-add">+                 if self_health &lt; 50 {</span>
+<span class="diff-line diff-ctx">                      return DEFEND;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              } else if objective_delta &lt; -25 {</span>
+<span class="diff-line diff-del">−                 // Desperate: charge more frequently</span>
+<span class="diff-line diff-del">−                 if self_health &gt;= 60 &amp;&amp; random_bounded(tick, slot, 4) == 0 {</span>
+<span class="diff-line diff-add">+                 if self_health &gt;= 65 &amp;&amp; random_bounded(tick, slot, 5) == 0 {</span>
+<span class="diff-line diff-ctx">                      return CHARGE;</span>
+<span class="diff-line diff-ctx">                  }</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-del">−             if self_health &gt;= 42 {</span>
+<span class="diff-line diff-add">+             if self_health &gt;= 45 {</span>
+<span class="diff-line diff-ctx">                  return ATTACK;</span>
+<span class="diff-line diff-ctx">              }</span>
+<span class="diff-line diff-ctx">              return DEFEND;</span>
+<span class="diff-line diff-ctx">          }</span>
+<span class="diff-line diff-ctx">          _ =&gt; {</span>
+<span class="diff-line diff-del">−             if self_health &lt; 22 {</span>
+<span class="diff-line diff-add">+             if self_health &lt; 25 {</span>
 <span class="diff-line diff-ctx">                  return DEFEND;</span>
 <span class="diff-line diff-ctx">              }</span>
 <span class="diff-line diff-ctx">              return ATTACK;</span></pre>

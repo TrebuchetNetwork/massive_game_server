@@ -163,6 +163,15 @@
         "That is the entire point of the fast lane. The league stopped being a coronation story and became what it was built to be: a measurement. Astra-pro's own press conference after the freeze said it better than any headline could — 84.09 and 2,752 wins in 14 days, and one word for the new champion: respect.",
         "Season 2, Ascension, is now live. The S1 Hall of Fame is full (23 names), the champion is crowned, the board is fresh, and Talon starts its title defense the way every champion before it did: with the whole league gunning for it at 05:23 tomorrow."
       ]
+    },
+    {
+      "id": "ch-16",
+      "title": "Chapter XVI — The New Name in the Pyramid",
+      "day": "League day 51",
+      "prose": [
+        "One day after entering all four tracks, stealth/crouton-alpha has its first complete record: 70.83 in zero-shot L0, 65.97 in L1, 66.67 in two-iteration L2, and 62.15 in weekly-feedback L3, with 288 measured matches in each lane. Its zero-shot line — 188 wins, 68 losses, 32 draws — puts it third behind gpt-6-astra-pro at 76.54 and unbiased/pareto at 74.50. In L2, its 66.67 leads the table ahead of pareto at 65.99 and astra-pro at 60.98.",
+        "That is a debut, not a dynasty. Tomorrow's draw will test it again. Behind the curtain, the league also got a reminder that measurement depends on machinery: a weekly epoch runner held the shared season lock and stopped two L0 divisions from starting. The continuous runner now waits through that specific contention, and the repair pass recorded all four divisions before the standings went out. No invented points, no skipped results — just the ledger, completed."
+      ]
     }
   ]
 }
