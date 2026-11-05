@@ -316,15 +316,28 @@ async function evaluateRoster({
       }
     }
 
-    await runRunner(
-      ['--ranking-file', rankingPath, '--season-id', seasonId, '--evaluate-only', '--no-publish'],
-      {
-        env: {
-          ARENA_SEEDS: seeds.join(','),
-          ARENA_TOP_MODELS: String(models.length),
-        },
-      },
-    );
+    let lockRetries = 0;
+    while (true) {
+      try {
+        await runRunner(
+          ['--ranking-file', rankingPath, '--season-id', seasonId, '--evaluate-only', '--no-publish'],
+          {
+            env: {
+              ARENA_SEEDS: seeds.join(','),
+              ARENA_TOP_MODELS: String(models.length),
+            },
+          },
+        );
+        break;
+      } catch (error) {
+        const lockBusy = /another arena season runner is active/.test(String(error?.message || error));
+        if (!lockBusy || lockRetries >= 7) throw error;
+        lockRetries += 1;
+        const delayMs = deps.lockRetryDelayMs ?? 1000;
+        log(`evaluate: ${seasonId} waiting for season lock (retry ${lockRetries}/7 in ${delayMs}ms)`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
 
     const seasonJson = await readJson(path.join(seasonDirectory, 'season.json'));
     const rated = applyBattleRatings(division.models, seasonJson);

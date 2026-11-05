@@ -538,6 +538,61 @@ test('history append is idempotent per day_index on a retried cycle', async () =
   validateTrackSlice(next, 'L2');
 });
 
+test('season lock contention retries without republishing fighters', async () => {
+  const { stateDir, rootDir } = await tempDirs();
+  const roster = Array.from({ length: 2 }, (_, index) => model({
+    model_id: `vendor/model-${index}`,
+  }));
+  for (const entry of roster) await makeFighter(stateDir, entry.model_id);
+  const state = stateWith({ roster, last_feedback_at: new Date(NOW).toISOString() });
+
+  const runnerCalls = [];
+  const published = [];
+  const logs = [];
+  let attempts = 0;
+  const results = Object.fromEntries(roster.map((entry) => [
+    entry.model_id,
+    { wins: 3, losses: 1, draws: 0, matches_played: 4 },
+  ]));
+  const successfulRunner = fakeEvaluateRunner(rootDir, results, runnerCalls);
+  const next = await runTrackCycle({
+    track: state,
+    leagueId: 'cml-test',
+    trackId: 'L2',
+    flags: { shadow: false },
+    stateDirectory: stateDir,
+    trackDirectory: stateDir,
+    rootDirectory: rootDir,
+    deps: {
+      nowMs: NOW,
+      log: (line) => logs.push(line),
+      lockRetryDelayMs: 0,
+      runRunner: async (args, options) => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw new Error(
+            'season runner exited with code 1: [arena] Error: another arena season runner is active (pid 42)',
+          );
+        }
+        return successfulRunner(args, options);
+      },
+      publishFighter: async ({ entrant }) => {
+        published.push(entrant.model_id);
+      },
+      fetchRanking: async () => ({ models: [] }),
+      adminToken: 'test-token',
+      apiBase: 'http://127.0.0.1:9',
+    },
+  });
+
+  assert.equal(attempts, 3);
+  assert.equal(runnerCalls.length, 1);
+  assert.equal(published.length, 2);
+  assert.equal(next.day_index, 1);
+  assert.equal(logs.filter((line) => line.includes('waiting for season lock')).length, 2);
+  validateTrackSlice(next, 'L2');
+});
+
 const REBOUND_CODE_STATUS = {
   prompt_version: 'arena-v2',
   prompt_sha256: sha('1'),
