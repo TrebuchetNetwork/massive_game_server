@@ -447,7 +447,7 @@ function redactorFor(adminToken) {
 
 async function runStagedSeasonRunner(args, { env = {}, timeoutMs = RUNNER_TIMEOUT_MS } = {}, adminToken) {
   const redact = redactorFor(adminToken);
-  const child = spawn(process.execPath, [STAGED_RUNNER_PATH, ...args], {
+  const child = spawn(process.execPath, [STAGING_RUNNER_PATH, ...args], {
     cwd: STAGING_ROOT,
     env: {
       ...process.env,
@@ -764,7 +764,7 @@ const invokedAsScript = process.argv[1]
 if (invokedAsScript) {
   main().catch((error) => {
     process.stderr.write(
-      `[arena-l0-day51-replay] ${String(error?.message || error).slice(0, MAX_ERROR_CHARS)}\n`,
+      `[arena-l0-day51-replay] ${String(error?.stack || error).slice(0, MAX_ERROR_CHARS)}\n`,
     );
     process.exitCode = 1;
   });
