@@ -19,15 +19,15 @@
     "title": "Glitch",
     "color": "#c084fc"
   },
-  "step-5-preview": {
-    "emoji": "🛰️",
-    "title": "Orbit",
-    "color": "#60a5fa"
-  },
   "glm-5.3-flash": {
     "emoji": "🐺",
     "title": "Wolfpack",
     "color": "#facc15"
+  },
+  "step-5-preview": {
+    "emoji": "🛰️",
+    "title": "Orbit",
+    "color": "#60a5fa"
   },
   "deepseek-v4.1-flash-1017": {
     "emoji": "👾",

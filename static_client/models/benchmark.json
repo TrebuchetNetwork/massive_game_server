@@ -3,7 +3,7 @@
   "benchmark": "intervention-lift",
   "league_id": "cml-20260824-ce1898c6",
   "day_index": 52,
-  "generated_at": "2026-11-05T12:02:27.763Z",
+  "generated_at": "2026-11-06T00:31:17.134Z",
   "min_group_n": 5,
   "methodology": {
     "summary": "Cross-track rating deltas against each model's own L0 zero-shot baseline, with a never-revised control group subtracting field-composition effects.",
@@ -19,18 +19,18 @@
   "aggregates": {
     "l2": {
       "revised_n": 70,
-      "revised_median": 1.8,
+      "revised_median": 1.75,
       "control_n": 5,
       "control_median": 1.39,
-      "net": 0.41,
+      "net": 0.36,
       "provisional": false
     },
     "l3": {
       "revised_n": 69,
-      "revised_median": 1.56,
+      "revised_median": 1.36,
       "control_n": 5,
       "control_median": 0.58,
-      "net": 0.98,
+      "net": 0.78,
       "provisional": false
     },
     "models_total": 88,
@@ -444,6 +444,27 @@
       "field_control": false
     },
     {
+      "slug": "anthropic/claude-opus-5-20260723",
+      "model_id": "anthropic/claude-opus-5",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 51.66,
+      "l1": 51.73,
+      "l2": 53.51,
+      "l3": 59.28,
+      "l2_version": 1,
+      "l3_version": 6,
+      "retired_in": [],
+      "l2_lift": 1.85,
+      "l3_lift": 7.62,
+      "revised": true,
+      "field_control": false
+    },
+    {
       "slug": "tencent/hy3-20260706",
       "model_id": "tencent/hy3",
       "mascot": {
@@ -465,27 +486,6 @@
       ],
       "l2_lift": 3.02,
       "l3_lift": 7.48,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "anthropic/claude-opus-5-20260723",
-      "model_id": "anthropic/claude-opus-5",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 51.82,
-      "l1": 51.73,
-      "l2": 53.51,
-      "l3": 59.28,
-      "l2_version": 1,
-      "l3_version": 6,
-      "retired_in": [],
-      "l2_lift": 1.69,
-      "l3_lift": 7.46,
       "revised": true,
       "field_control": false
     },
@@ -568,27 +568,6 @@
       "field_control": false
     },
     {
-      "slug": "~openai/gpt-astra-latest",
-      "model_id": "~openai/gpt-astra-latest",
-      "mascot": {
-        "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
-      },
-      "l0": 53.13,
-      "l1": 52.03,
-      "l2": 55.38,
-      "l3": 58.72,
-      "l2_version": 3,
-      "l3_version": 6,
-      "retired_in": [],
-      "l2_lift": 2.25,
-      "l3_lift": 5.59,
-      "revised": true,
-      "field_control": false
-    },
-    {
       "slug": "nex-agi/nex-n2.5-pro-20260907",
       "model_id": "nex-agi/nex-n2.5-pro:free",
       "mascot": {
@@ -611,6 +590,27 @@
       ],
       "l2_lift": 4.63,
       "l3_lift": 5.33,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "~openai/gpt-astra-latest",
+      "model_id": "~openai/gpt-astra-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 53.41,
+      "l1": 52.03,
+      "l2": 55.38,
+      "l3": 58.72,
+      "l2_version": 3,
+      "l3_version": 6,
+      "retired_in": [],
+      "l2_lift": 1.97,
+      "l3_lift": 5.31,
       "revised": true,
       "field_control": false
     },
@@ -861,15 +861,15 @@
         "title": "Sage",
         "color": "#a78bfa"
       },
-      "l0": 50.05,
+      "l0": 50.09,
       "l1": 51.19,
       "l2": 53.27,
       "l3": 52.45,
       "l2_version": 1,
       "l3_version": 7,
       "retired_in": [],
-      "l2_lift": 3.22,
-      "l3_lift": 2.4,
+      "l2_lift": 3.18,
+      "l3_lift": 2.36,
       "revised": true,
       "field_control": false
     },
@@ -882,57 +882,15 @@
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 59.03,
+      "l0": 59.38,
       "l1": 58.97,
       "l2": 59,
       "l3": 61.08,
       "l2_version": 3,
       "l3_version": 3,
       "retired_in": [],
-      "l2_lift": -0.03,
-      "l3_lift": 2.05,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
-      "model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
-      "mascot": {
-        "key": "nvidia/nemotron-3-ultra",
-        "emoji": "🦾",
-        "title": "Titan",
-        "color": "#76b900"
-      },
-      "l0": 51.41,
-      "l1": 52.01,
-      "l2": 53.69,
-      "l3": 52.97,
-      "l2_version": 1,
-      "l3_version": 7,
-      "retired_in": [],
-      "l2_lift": 2.28,
-      "l3_lift": 1.56,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "deepseek/deepseek-v4-flash-20260423",
-      "model_id": "deepseek/deepseek-v4-flash",
-      "mascot": {
-        "key": "deepseek/deepseek-v4-flash",
-        "emoji": "⚡",
-        "title": "Surge",
-        "color": "#38bdf8"
-      },
-      "l0": 50.14,
-      "l1": 50.08,
-      "l2": 51.37,
-      "l3": 51.7,
-      "l2_version": 1,
-      "l3_version": 8,
-      "retired_in": [],
-      "l2_lift": 1.23,
-      "l3_lift": 1.56,
+      "l2_lift": -0.38,
+      "l3_lift": 1.7,
       "revised": true,
       "field_control": false
     },
@@ -962,6 +920,27 @@
       "field_control": false
     },
     {
+      "slug": "deepseek/deepseek-v4-flash-20260423",
+      "model_id": "deepseek/deepseek-v4-flash",
+      "mascot": {
+        "key": "deepseek/deepseek-v4-flash",
+        "emoji": "⚡",
+        "title": "Surge",
+        "color": "#38bdf8"
+      },
+      "l0": 50.34,
+      "l1": 50.08,
+      "l2": 51.37,
+      "l3": 51.7,
+      "l2_version": 1,
+      "l3_version": 8,
+      "retired_in": [],
+      "l2_lift": 1.03,
+      "l3_lift": 1.36,
+      "revised": true,
+      "field_control": false
+    },
+    {
       "slug": "openai/gpt-5.6-luna-pro-20260709",
       "model_id": "openai/gpt-5.6-luna-pro",
       "mascot": {
@@ -984,6 +963,27 @@
       ],
       "l2_lift": 8.89,
       "l3_lift": 1.19,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
+      "model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "mascot": {
+        "key": "nvidia/nemotron-3-ultra",
+        "emoji": "🦾",
+        "title": "Titan",
+        "color": "#76b900"
+      },
+      "l0": 51.87,
+      "l1": 52.01,
+      "l2": 53.69,
+      "l3": 52.97,
+      "l2_version": 1,
+      "l3_version": 7,
+      "retired_in": [],
+      "l2_lift": 1.82,
+      "l3_lift": 1.1,
       "revised": true,
       "field_control": false
     },
@@ -1020,15 +1020,15 @@
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 49.78,
+      "l0": 49.91,
       "l1": 50.19,
       "l2": 50.7,
       "l3": 50.12,
       "l2_version": 2,
       "l3_version": 7,
       "retired_in": [],
-      "l2_lift": 0.92,
-      "l3_lift": 0.34,
+      "l2_lift": 0.79,
+      "l3_lift": 0.21,
       "revised": true,
       "field_control": false
     },
@@ -1041,7 +1041,7 @@
         "title": "Orbit",
         "color": "#60a5fa"
       },
-      "l0": 50.87,
+      "l0": 50.93,
       "l1": 40.86,
       "l2": 51.3,
       "l3": 51.1,
@@ -1050,8 +1050,8 @@
       "retired_in": [
         "L1"
       ],
-      "l2_lift": 0.43,
-      "l3_lift": 0.23,
+      "l2_lift": 0.37,
+      "l3_lift": 0.17,
       "revised": true,
       "field_control": false
     },
@@ -1090,36 +1090,15 @@
         "title": "Surge",
         "color": "#38bdf8"
       },
-      "l0": 50.16,
+      "l0": 50.25,
       "l1": 50.51,
       "l2": 51.24,
       "l3": 50.25,
       "l2_version": 1,
       "l3_version": 7,
       "retired_in": [],
-      "l2_lift": 1.08,
-      "l3_lift": 0.09,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "inception/mercury-2.5-20260908",
-      "model_id": "inception/mercury-2.5",
-      "mascot": {
-        "key": null,
-        "emoji": "🤖",
-        "title": "Rookie",
-        "color": "#94a3b8"
-      },
-      "l0": 51.01,
-      "l1": 51.6,
-      "l2": 53.19,
-      "l3": 50.82,
-      "l2_version": 2,
-      "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": 2.18,
-      "l3_lift": -0.19,
+      "l2_lift": 0.99,
+      "l3_lift": 0,
       "revised": true,
       "field_control": false
     },
@@ -1132,15 +1111,15 @@
         "title": "Talon",
         "color": "#34d399"
       },
-      "l0": 49.65,
+      "l0": 49.34,
       "l1": 49.81,
       "l2": 50.12,
       "l3": 49.34,
       "l2_version": 3,
       "l3_version": 2,
       "retired_in": [],
-      "l2_lift": 0.47,
-      "l3_lift": -0.31,
+      "l2_lift": 0.78,
+      "l3_lift": 0,
       "revised": true,
       "field_control": false
     },
@@ -1205,36 +1184,59 @@
         "title": "Prism",
         "color": "#4285f4"
       },
-      "l0": 49.9,
+      "l0": 49.93,
       "l1": 49.98,
       "l2": 48.83,
       "l3": 49.24,
       "l2_version": 2,
       "l3_version": 7,
       "retired_in": [],
-      "l2_lift": -1.07,
-      "l3_lift": -0.66,
+      "l2_lift": -1.1,
+      "l3_lift": -0.69,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "openai/gpt-6-astra-20260903",
-      "model_id": "openai/gpt-6-astra",
+      "slug": "deepseek/deepseek-v4.1-flash-20261017",
+      "model_id": "deepseek/deepseek-v4.1-flash-1017",
       "mascot": {
         "key": null,
-        "emoji": "🤖",
-        "title": "Rookie",
-        "color": "#94a3b8"
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
       },
-      "l0": 60.3,
-      "l1": 58.36,
-      "l2": 58.97,
-      "l3": 59.56,
-      "l2_version": 3,
+      "l0": 50.33,
+      "l1": 46.18,
+      "l2": 44.18,
+      "l3": 49.58,
+      "l2_version": 2,
+      "l3_version": 3,
+      "retired_in": [
+        "L2"
+      ],
+      "l2_lift": -6.15,
+      "l3_lift": -0.75,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-3.1-pro-preview-20260219",
+      "model_id": "google/gemini-3.1-pro-preview",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 50.08,
+      "l1": 50.55,
+      "l2": 49.92,
+      "l3": 49.28,
+      "l2_version": 2,
       "l3_version": 7,
       "retired_in": [],
-      "l2_lift": -1.33,
-      "l3_lift": -0.74,
+      "l2_lift": -0.16,
+      "l3_lift": -0.8,
       "revised": true,
       "field_control": false
     },
@@ -1265,6 +1267,71 @@
       "field_control": false
     },
     {
+      "slug": "openai/gpt-6-astra-20260903",
+      "model_id": "openai/gpt-6-astra",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 60.47,
+      "l1": 58.36,
+      "l2": 58.97,
+      "l3": 59.56,
+      "l2_version": 3,
+      "l3_version": 7,
+      "retired_in": [],
+      "l2_lift": -1.5,
+      "l3_lift": -0.91,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "inception/mercury-2.5-20260908",
+      "model_id": "inception/mercury-2.5",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 51.79,
+      "l1": 51.6,
+      "l2": 53.19,
+      "l3": 50.82,
+      "l2_version": 2,
+      "l3_version": 5,
+      "retired_in": [],
+      "l2_lift": 1.4,
+      "l3_lift": -0.97,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "tencent/hy4-preview-20260827",
+      "model_id": "tencent/hy4-preview",
+      "mascot": {
+        "key": "tencent/hy4-preview",
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 51.58,
+      "l1": 48.67,
+      "l2": 51.9,
+      "l3": 50.58,
+      "l2_version": 2,
+      "l3_version": 7,
+      "retired_in": [
+        "L1"
+      ],
+      "l2_lift": 0.32,
+      "l3_lift": -1,
+      "revised": true,
+      "field_control": false
+    },
+    {
       "slug": "anthropic/claude-4.6-sonnet-20260217",
       "model_id": "anthropic/claude-sonnet-4.6",
       "mascot": {
@@ -1273,36 +1340,15 @@
         "title": "Orbit",
         "color": "#60a5fa"
       },
-      "l0": 50.09,
+      "l0": 50.18,
       "l1": 50.15,
       "l2": 53.36,
       "l3": 49.07,
       "l2_version": 2,
       "l3_version": 7,
       "retired_in": [],
-      "l2_lift": 3.27,
-      "l3_lift": -1.02,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "google/gemini-3.1-pro-preview-20260219",
-      "model_id": "google/gemini-3.1-pro-preview",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 50.3,
-      "l1": 50.55,
-      "l2": 49.92,
-      "l3": 49.28,
-      "l2_version": 2,
-      "l3_version": 7,
-      "retired_in": [],
-      "l2_lift": -0.38,
-      "l3_lift": -1.02,
+      "l2_lift": 3.18,
+      "l3_lift": -1.11,
       "revised": true,
       "field_control": false
     },
@@ -1315,38 +1361,15 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 50.25,
+      "l0": 50.35,
       "l1": 50.42,
       "l2": 50.02,
       "l3": 49.14,
       "l2_version": 2,
       "l3_version": 7,
       "retired_in": [],
-      "l2_lift": -0.23,
-      "l3_lift": -1.11,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "deepseek/deepseek-v4.1-flash-20261017",
-      "model_id": "deepseek/deepseek-v4.1-flash-1017",
-      "mascot": {
-        "key": null,
-        "emoji": "🛰️",
-        "title": "Orbit",
-        "color": "#60a5fa"
-      },
-      "l0": 50.69,
-      "l1": 46.18,
-      "l2": 44.18,
-      "l3": 49.58,
-      "l2_version": 2,
-      "l3_version": 3,
-      "retired_in": [
-        "L2"
-      ],
-      "l2_lift": -6.51,
-      "l3_lift": -1.11,
+      "l2_lift": -0.33,
+      "l3_lift": -1.21,
       "revised": true,
       "field_control": false
     },
@@ -1373,53 +1396,6 @@
       ],
       "l2_lift": -2.54,
       "l3_lift": -1.3,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "tencent/hy4-preview-20260827",
-      "model_id": "tencent/hy4-preview",
-      "mascot": {
-        "key": "tencent/hy4-preview",
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 51.93,
-      "l1": 48.67,
-      "l2": 51.9,
-      "l3": 50.58,
-      "l2_version": 2,
-      "l3_version": 7,
-      "retired_in": [
-        "L1"
-      ],
-      "l2_lift": -0.03,
-      "l3_lift": -1.35,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "~deepseek/deepseek-flash-latest",
-      "model_id": "~deepseek/deepseek-flash-latest",
-      "mascot": {
-        "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
-      },
-      "l0": 50.02,
-      "l1": 51.26,
-      "l2": 45.38,
-      "l3": 48.29,
-      "l2_version": 3,
-      "l3_version": 3,
-      "retired_in": [
-        "L2",
-        "L3"
-      ],
-      "l2_lift": -4.64,
-      "l3_lift": -1.73,
       "revised": true,
       "field_control": false
     },
@@ -1456,15 +1432,15 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 68.55,
+      "l0": 68.5,
       "l1": 67.36,
       "l2": 53.22,
       "l3": 66.54,
       "l2_version": 3,
       "l3_version": 2,
       "retired_in": [],
-      "l2_lift": -15.33,
-      "l3_lift": -2.01,
+      "l2_lift": -15.28,
+      "l3_lift": -1.96,
       "revised": true,
       "field_control": false
     },
@@ -1490,6 +1466,30 @@
       "field_control": false
     },
     {
+      "slug": "~deepseek/deepseek-flash-latest",
+      "model_id": "~deepseek/deepseek-flash-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 50.48,
+      "l1": 51.26,
+      "l2": 45.38,
+      "l3": 48.29,
+      "l2_version": 3,
+      "l3_version": 3,
+      "retired_in": [
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -5.1,
+      "l3_lift": -2.19,
+      "revised": true,
+      "field_control": false
+    },
+    {
       "slug": "google/gemini-2.5-flash",
       "model_id": "google/gemini-2.5-flash",
       "mascot": {
@@ -1498,7 +1498,7 @@
         "title": "Rookie",
         "color": "#94a3b8"
       },
-      "l0": 49.77,
+      "l0": 49.89,
       "l1": 48.48,
       "l2": 47.24,
       "l3": 47.3,
@@ -1508,8 +1508,8 @@
         "L1",
         "L3"
       ],
-      "l2_lift": -2.53,
-      "l3_lift": -2.47,
+      "l2_lift": -2.65,
+      "l3_lift": -2.59,
       "revised": true,
       "field_control": false
     },
@@ -1563,27 +1563,6 @@
       "field_control": false
     },
     {
-      "slug": "unbiased/pareto-26.10-20261015",
-      "model_id": "unbiased/pareto-26.10",
-      "mascot": {
-        "key": null,
-        "emoji": "🦅",
-        "title": "Talon",
-        "color": "#34d399"
-      },
-      "l0": 56.42,
-      "l1": 55.74,
-      "l2": 53.95,
-      "l3": 52.51,
-      "l2_version": 3,
-      "l3_version": 3,
-      "retired_in": [],
-      "l2_lift": -2.47,
-      "l3_lift": -3.91,
-      "revised": true,
-      "field_control": false
-    },
-    {
       "slug": "qwen/qwen3.8-max-20260902",
       "model_id": "qwen/qwen3.8-max-0902",
       "mascot": {
@@ -1627,6 +1606,27 @@
       ],
       "l2_lift": -4.21,
       "l3_lift": null,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "unbiased/pareto-26.10-20261015",
+      "model_id": "unbiased/pareto-26.10",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 56.84,
+      "l1": 55.74,
+      "l2": 53.95,
+      "l3": 52.51,
+      "l2_version": 3,
+      "l3_version": 3,
+      "retired_in": [],
+      "l2_lift": -2.89,
+      "l3_lift": -4.33,
       "revised": true,
       "field_control": false
     },
@@ -1682,6 +1682,27 @@
       "field_control": false
     },
     {
+      "slug": "openai/gpt-6-astra-pro-20260903",
+      "model_id": "openai/gpt-6-astra-pro",
+      "mascot": {
+        "key": null,
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 76.65,
+      "l1": 78.06,
+      "l2": 60.98,
+      "l3": 71.68,
+      "l2_version": 3,
+      "l3_version": 5,
+      "retired_in": [],
+      "l2_lift": -15.67,
+      "l3_lift": -4.97,
+      "revised": true,
+      "field_control": false
+    },
+    {
       "slug": "openai/gpt-oss-120b",
       "model_id": "openai/gpt-oss-120b",
       "mascot": {
@@ -1690,7 +1711,7 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 49.92,
+      "l0": 50.36,
       "l1": 49.31,
       "l2": 41.12,
       "l3": 45.09,
@@ -1701,29 +1722,8 @@
         "L2",
         "L3"
       ],
-      "l2_lift": -8.8,
-      "l3_lift": -4.83,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "openai/gpt-6-astra-pro-20260903",
-      "model_id": "openai/gpt-6-astra-pro",
-      "mascot": {
-        "key": null,
-        "emoji": "🛰️",
-        "title": "Orbit",
-        "color": "#60a5fa"
-      },
-      "l0": 76.54,
-      "l1": 78.06,
-      "l2": 60.98,
-      "l3": 71.68,
-      "l2_version": 3,
-      "l3_version": 5,
-      "retired_in": [],
-      "l2_lift": -15.56,
-      "l3_lift": -4.86,
+      "l2_lift": -9.24,
+      "l3_lift": -5.27,
       "revised": true,
       "field_control": false
     },
@@ -1736,7 +1736,7 @@
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 50.8,
+      "l0": 50.82,
       "l1": 50.84,
       "l2": 54.55,
       "l3": 43.13,
@@ -1745,8 +1745,8 @@
       "retired_in": [
         "L3"
       ],
-      "l2_lift": 3.75,
-      "l3_lift": -7.67,
+      "l2_lift": 3.73,
+      "l3_lift": -7.69,
       "revised": true,
       "field_control": false
     },
@@ -1759,15 +1759,15 @@
         "title": "Talon",
         "color": "#34d399"
       },
-      "l0": 74.5,
+      "l0": 74.61,
       "l1": 75.37,
       "l2": 65.99,
       "l3": 66.32,
       "l2_version": 3,
       "l3_version": 5,
       "retired_in": [],
-      "l2_lift": -8.51,
-      "l3_lift": -8.18,
+      "l2_lift": -8.62,
+      "l3_lift": -8.29,
       "revised": true,
       "field_control": false
     },
@@ -1780,15 +1780,15 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 70.83,
+      "l0": 71.53,
       "l1": 65.97,
       "l2": 66.67,
       "l3": 62.15,
       "l2_version": 1,
       "l3_version": 1,
       "retired_in": [],
-      "l2_lift": -4.16,
-      "l3_lift": -8.68,
+      "l2_lift": -4.86,
+      "l3_lift": -9.38,
       "revised": false,
       "field_control": true
     },
@@ -1818,6 +1818,27 @@
       "field_control": false
     },
     {
+      "slug": "anthropic/claude-opus-5.5-20260921",
+      "model_id": "anthropic/claude-opus-5.5",
+      "mascot": {
+        "key": "anthropic/claude-opus-5",
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 52.84,
+      "l1": 53.13,
+      "l2": null,
+      "l3": null,
+      "l2_version": null,
+      "l3_version": null,
+      "retired_in": [],
+      "l2_lift": null,
+      "l3_lift": null,
+      "revised": false,
+      "field_control": true
+    },
+    {
       "slug": "upstage/solar-pro4-20260810",
       "model_id": "upstage/solar-pro4",
       "mascot": {
@@ -1826,7 +1847,7 @@
         "title": "Orbit",
         "color": "#60a5fa"
       },
-      "l0": 51.96,
+      "l0": 51.74,
       "l1": null,
       "l2": null,
       "l3": null,
@@ -1847,29 +1868,8 @@
         "title": "Talon",
         "color": "#34d399"
       },
-      "l0": 51.82,
+      "l0": 51.57,
       "l1": 50.17,
-      "l2": null,
-      "l3": null,
-      "l2_version": null,
-      "l3_version": null,
-      "retired_in": [],
-      "l2_lift": null,
-      "l3_lift": null,
-      "revised": false,
-      "field_control": true
-    },
-    {
-      "slug": "anthropic/claude-opus-5.5-20260921",
-      "model_id": "anthropic/claude-opus-5.5",
-      "mascot": {
-        "key": "anthropic/claude-opus-5",
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 51.72,
-      "l1": 53.13,
       "l2": null,
       "l3": null,
       "l2_version": null,

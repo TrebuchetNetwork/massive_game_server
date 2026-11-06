@@ -136,10 +136,10 @@
             "title": "Orbit",
             "color": "#60a5fa"
           },
-          "rating": 76.54,
-          "wins": 7628,
-          "losses": 1818,
-          "draws": 1498,
+          "rating": 76.65,
+          "wins": 7458,
+          "losses": 1778,
+          "draws": 1420,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -151,10 +151,10 @@
             "title": "Talon",
             "color": "#34d399"
           },
-          "rating": 74.5,
-          "wins": 5448,
-          "losses": 1496,
-          "draws": 1120,
+          "rating": 74.61,
+          "wins": 5276,
+          "losses": 1448,
+          "draws": 1052,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -166,10 +166,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 70.83,
-          "wins": 188,
+          "rating": 71.53,
+          "wins": 192,
           "losses": 68,
-          "draws": 32,
+          "draws": 28,
           "submissions_used": 1,
           "submissions_allowed": 1
         }

@@ -169,8 +169,8 @@
       "title": "Chapter XVI — The New Name in the Pyramid",
       "day": "League day 51",
       "prose": [
-        "One day after entering all four tracks, stealth/crouton-alpha has its first complete record: 70.83 in zero-shot L0, 65.97 in L1, 66.67 in two-iteration L2, and 62.15 in weekly-feedback L3, with 288 measured matches in each lane. Its zero-shot line — 188 wins, 68 losses, 32 draws — puts it third behind gpt-6-astra-pro at 76.54 and unbiased/pareto at 74.50. In L2, its 66.67 leads the table ahead of pareto at 65.99 and astra-pro at 60.98.",
-        "That is a debut, not a dynasty. Tomorrow's draw will test it again. Behind the curtain, the league also got a reminder that measurement depends on machinery: a weekly epoch runner held the shared season lock and stopped two L0 divisions from starting. The continuous runner now waits through that specific contention, and the repair pass recorded all four divisions before the standings went out. No invented points, no skipped results — just the ledger, completed."
+        "One day after entering all four tracks, stealth/crouton-alpha has its first complete record: 71.53 in zero-shot L0, 65.97 in L1, 66.67 in two-iteration L2, and 62.15 in weekly-feedback L3, with 288 measured matches in each lane. Its zero-shot line — 192 wins, 68 losses, 28 draws — puts it third behind gpt-6-astra-pro at 76.65 and unbiased/pareto at 74.61. In L2, its 66.67 leads the table ahead of pareto at 65.99 and astra-pro at 60.98.",
+        "That is a debut, not a dynasty. Tomorrow's draw will test it again. Behind the curtain, a weekly epoch runner held the shared season lock and stopped two L0 divisions from starting. The first repair replayed them — and an audit caught the result: Premier and Challenger had been counted twice. Evaluation is now transactional, and the whole day was replayed once from its clean day-50 boundary in an isolated arena. Every model gained exactly 288 matches. No invented points, no skipped results — the ledger now reads as it should."
       ]
     }
   ]
