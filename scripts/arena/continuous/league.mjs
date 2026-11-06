@@ -63,7 +63,7 @@ export function scoutNewReleases(
   return (Array.isArray(catalogModels) ? catalogModels : [])
     .filter((entry) => {
       const id = String(entry?.id || '');
-      if (!id || id === 'openrouter/auto' || /:batch$/.test(id)) return false; // router aliases and batch endpoints are not fighters
+      if (!id || id === 'openrouter/auto' || id === 'openrouter/auto-code' || /:batch$/.test(id)) return false; // router aliases and batch endpoints are not fighters
       const createdMs = Number(entry?.created) * 1000;
       if (!Number.isFinite(createdMs) || createdMs <= 0) return false;
       if (createdMs > Number(nowMs)) return false;
@@ -206,7 +206,7 @@ export function eligibleChallengers(rankingModels, state, nowMs, recruitFailures
   }
   return (Array.isArray(rankingModels) ? rankingModels : []).filter((entry) => {
     const id = String(entry?.id || '');
-    if (!id || id === 'openrouter/auto') return false;
+    if (!id || id === 'openrouter/auto' || id === 'openrouter/auto-code') return false;
     const slug = String(entry?.canonical_slug || '');
     if (excluded.has(id) || (slug && excluded.has(slug))) return false;
     for (const key of [id, slug].filter(Boolean)) {

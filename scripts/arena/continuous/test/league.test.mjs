@@ -334,12 +334,14 @@ test('router aliases are never recruited as fighter models', () => {
   const state = createState({ now: new Date(NOW), leagueId: 'cml-router-alias' });
   const ranking = [
     { id: 'openrouter/auto', canonical_slug: 'openrouter/auto' },
+    { id: 'openrouter/auto-code', canonical_slug: 'openrouter/auto-code' },
     { id: 'vendor/real', canonical_slug: 'vendor/real-20261105' },
   ];
   assert.deepEqual(eligibleChallengers(ranking, state, NOW).map((entry) => entry.id), ['vendor/real']);
 
   const catalog = [
     catalogEntry('openrouter/auto', NOW - DAY_MS),
+    catalogEntry('openrouter/auto-code', NOW - DAY_MS),
     catalogEntry('vendor/real', NOW - 2 * DAY_MS),
   ];
   assert.deepEqual(scoutNewReleases(catalog, state, NOW).map((entry) => entry.id), ['vendor/real']);
