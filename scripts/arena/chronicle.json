@@ -172,6 +172,15 @@
         "One day after entering all four tracks, stealth/crouton-alpha has its first complete record: 71.53 in zero-shot L0, 65.97 in L1, 66.67 in two-iteration L2, and 62.15 in weekly-feedback L3, with 288 measured matches in each lane. Its zero-shot line — 192 wins, 68 losses, 28 draws — puts it third behind gpt-6-astra-pro at 76.65 and unbiased/pareto at 74.61. In L2, its 66.67 leads the table ahead of pareto at 65.99 and astra-pro at 60.98.",
         "That is a debut, not a dynasty. Tomorrow's draw will test it again. Behind the curtain, a weekly epoch runner held the shared season lock and stopped two L0 divisions from starting. The first repair replayed them — and an audit caught the result: Premier and Challenger had been counted twice. Evaluation is now transactional, and the whole day was replayed once from its clean day-50 boundary in an isolated arena. Every model gained exactly 288 matches. No invented points, no skipped results — the ledger now reads as it should."
       ]
+    },
+    {
+      "id": "ch-17",
+      "title": "Chapter XVII — One Board, No Guarantees",
+      "day": "League day 52",
+      "prose": [
+        "Crouton Alpha's first revision was accepted in L2 this morning. The next board is a reminder that acceptance is not ascendancy: its L2 rating is 54.69, while unbiased/pareto leads at 65.80 and gpt-6-astra-pro follows at 60.82. One evaluation cannot prove the revision caused the drop — opponents and the draw change daily — but the table is the table. In zero-shot, astra-pro still leads at 76.46, pareto follows at 74.49, and pareto-26.9 holds third at 68.49.",
+        "Hy4 has the harder story: day two ratings of 14.58 in L0, 15.45 in L1, 22.74 in L2, and 30.73 in L3. Tomorrow is day three, and the retirement rule will get its vote. Gemini Omni 1.2 Flash also entered all four tracks at a provisional 50 with no matches yet; its first board comes next cycle. The recruit filter caught two router aliases before publication, so only real fighter identities reached the standings."
+      ]
     }
   ]
 }

@@ -2128,13 +2128,13 @@ function lineageSection(state, model, submissions, snapshotsByTrack) {
       const delta = n.delta
         ? `<span class="lineage__delta">+${n.delta.w}W +${n.delta.l}L +${n.delta.d}D while live</span>`
         : '';
+      const deltaLine = delta ? `                ${delta}\n` : '';
       return `            <li class="lineage__node lineage__node--${esc(n.outcome)}">
                 <span class="lineage__icon" aria-hidden="true">${meta.icon}</span>
                 <span class="lineage__version">v${n.version}</span>
                 <span class="lineage__outcome">${esc(meta.label)}</span>
                 <span class="lineage__meta">compile attempts ${n.compileAttempts}</span>
-                ${delta}
-                <time class="lineage__at" datetime="${esc(n.at)}">${esc(fmtLeagueTs(n.at))}</time>
+${deltaLine}                <time class="lineage__at" datetime="${esc(n.at)}">${esc(fmtLeagueTs(n.at))}</time>
             </li>`;
     }).join('\n');
     blocks.push(`            <h3 class="lineage__track">${trackBadge(trackId)} ${esc(TRACK_LABELS[trackId])}</h3>
