@@ -6,6 +6,23 @@
  * and all combat presentation logic.
  */
 
+export function objectiveArrowPosition({
+    x,
+    y,
+    cardWidth,
+    cardHeight,
+    viewportWidth,
+    viewportHeight,
+    margin = 8,
+}) {
+    const maxX = Math.max(margin, viewportWidth - cardWidth - margin);
+    const maxY = Math.max(margin, viewportHeight - cardHeight - margin);
+    return {
+        x: Math.min(Math.max(x - cardWidth / 2, margin), maxX),
+        y: Math.min(Math.max(y - cardHeight / 2, margin), maxY),
+    };
+}
+
 export function selectCtfObjectiveTargets({
     localPlayerState,
     myFlag,
@@ -391,7 +408,17 @@ export function createCombatFeedback(getCtx) {
             const px = centerX + dx * t;
             const py = centerY + dy * t;
             item.el.style.display = 'flex';
-            item.el.style.transform = `translate(${Math.round(px)}px, ${Math.round(py)}px)`;
+            const cardWidth = item.el.offsetWidth || 120;
+            const cardHeight = item.el.offsetHeight || 42;
+            const position = objectiveArrowPosition({
+                x: px,
+                y: py,
+                cardWidth,
+                cardHeight,
+                viewportWidth: ctx.app.screen.width,
+                viewportHeight: ctx.app.screen.height,
+            });
+            item.el.style.transform = `translate(${Math.round(position.x)}px, ${Math.round(position.y)}px)`;
             item.glyph.style.transform = `rotate(${((angle * 180 / Math.PI) + 90).toFixed(1)}deg)`;
             item.el.classList.toggle('objective-arrow--critical', target.tone === 'critical');
             item.el.classList.toggle('objective-arrow--positive', target.tone !== 'critical');

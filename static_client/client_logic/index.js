@@ -43,7 +43,7 @@ export { createErrorBoundary } from './ErrorBoundary.js';
 export { createGameRenderer } from './GameRenderer.js';
 export { createProtocolHandler } from './ProtocolHandler.js?v=20260309a';
 export { createInputManager } from './InputManager.js?v=20261101-onboarding2';
-export { createCombatFeedback } from './CombatFeedback.js';
+export { createCombatFeedback } from './CombatFeedback.js?v=20261107-objective1';
 export { createAimingSystem } from './AimingSystem.js';
 export { createUIManager } from './UIManager.js';
 export { createSpriteManager } from './SpriteManager.js';
