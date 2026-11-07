@@ -53,6 +53,8 @@
         body.broadcast-mode #arenaEvolutionChip,
         body.broadcast-mode .arena-brand-chip,
         body.broadcast-mode .arena-watermark,
+        body.broadcast-mode #matchInfo,
+        body.broadcast-mode #minimapContainer,
         body.broadcast-mode #killFeed { display: none !important; }
         .arena-tv-overlay {
             position: fixed;
@@ -3813,7 +3815,8 @@
             // Phones already use the native CSS connection bars and the compact
             // HUD intentionally hides the minimap. Avoid creating two additional
             // Pixi/WebGL applications that can exhaust fragile mobile drivers.
-            if (!app || mobileDynamicsEnabled) return;
+            // Broadcast spectators need only the cinematic world canvas.
+            if (!app || mobileDynamicsEnabled || BROADCAST_MODE) return;
             const minimapContainerElement = document.getElementById('minimapContainer');
             if (!minimap && minimapContainerElement) {
                 minimap = new Minimap({
