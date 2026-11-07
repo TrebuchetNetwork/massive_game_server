@@ -1738,7 +1738,7 @@ function matrixSection(state) {
   const byModel = new Map(); // modelKey -> { mascot, cells: {track -> {rating, retired}} }
   for (const trackId of TRACKS) {
     const slice = state.tracks[trackId];
-    for (const [list, retired] of [[slice.roster, false], [slice.retired, true]]) {
+    for (const [list, retired] of [[slice.retired, true], [slice.roster, false]]) {
       for (const e of list) {
         const key = String(e.model_id);
         if (!byModel.has(key)) byModel.set(key, { key, mascot: e.mascot, slug: e.slug, cells: {} });

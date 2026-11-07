@@ -738,6 +738,28 @@ test('continuous overlay: multi-track header, standings, matrix, track-badged fe
   assert.equal(league.tracks.L3.standings[0].submissions_allowed, 9);
 });
 
+test('experiment matrix prefers active re-recruited rating over retired stint', async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
+  const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
+  writeContinuousFixture(cmlDir);
+  const statePath = path.join(cmlDir, 'state.json');
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const retired = state.tracks.L0.retired[0];
+  const active = state.tracks.L0.roster[0];
+  state.tracks.L0.retired.push({ ...retired, model_id: 'test/rejoin', slug: 'test/rejoin-20260101', rating: 30 });
+  state.tracks.L0.roster.push({ ...active, model_id: 'test/rejoin', slug: 'test/rejoin-20260101', rating: 47.08 });
+  fs.writeFileSync(statePath, JSON.stringify(state));
+  await buildWithContinuous(outDir, cmlDir);
+
+  const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
+  const matrix = index.split('<section class="panel matrix"')[1].split('<section class="panel announce"')[0];
+  const row = matrix.split('<tr class="matrix__row').find((part) => part.includes('test/rejoin-20260101'));
+  assert.ok(row, 're-recruited model has a matrix row');
+  assert.ok(row.includes('47.1'), 'active rating is shown');
+  assert.ok(!row.includes('30.0 🪦'), 'retired stint does not overwrite the active cell');
+  assert.ok(!row.includes('matrix__cell--retired'), 'active cell is not marked retired');
+});
+
 test('continuous overlay: model page renders per-track submission lineage', async () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
   const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));

@@ -3,7 +3,7 @@
   "benchmark": "intervention-lift",
   "league_id": "cml-20260824-ce1898c6",
   "day_index": 54,
-  "generated_at": "2026-11-07T12:03:44.354Z",
+  "generated_at": "2026-11-07T12:56:29.879Z",
   "min_group_n": 5,
   "methodology": {
     "summary": "Cross-track rating deltas against each model's own L0 zero-shot baseline, with a never-revised control group subtracting field-composition effects.",
