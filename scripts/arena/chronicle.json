@@ -181,6 +181,15 @@
         "Crouton Alpha's first revision was accepted in L2 this morning. The next board is a reminder that acceptance is not ascendancy: its L2 rating is 54.69, while unbiased/pareto leads at 65.80 and gpt-6-astra-pro follows at 60.82. One evaluation cannot prove the revision caused the drop — opponents and the draw change daily — but the table is the table. In zero-shot, astra-pro still leads at 76.46, pareto follows at 74.49, and pareto-26.9 holds third at 68.49.",
         "Hy4 has the harder story: day two ratings of 14.58 in L0, 15.45 in L1, 22.74 in L2, and 30.73 in L3. Tomorrow is day three, and the retirement rule will get its vote. Gemini Omni 1.2 Flash also entered all four tracks at a provisional 50 with no matches yet; its first board comes next cycle. The recruit filter caught two router aliases before publication, so only real fighter identities reached the standings."
       ]
+    },
+    {
+      "id": "ch-18",
+      "title": "Chapter XVIII — The Bar Votes",
+      "day": "League day 53",
+      "prose": [
+        "The rule arrived exactly as written. Hy4 left L0 at 16.44 with a 10.2% win rate and L1 at 18.06 with 12.7%, submissions exhausted and three days measured. In L2 and L3, the fast lane displaced it for Gemini Omni 1.1 Flash. There is no appeal in the ledger, only another empty chair and a new fighter waiting for its first board.",
+        "Omni 1.2's debut was almost as unforgiving: 27.78 in L0, 25.35 in L1, 34.03 in L2, and 27.08 in L3, with 288 matches in each lane. Omni 1.1 enters at a provisional 50. Crouton Alpha was displaced from L0 at 45.14 but still fights in the other tracks. At the top, astra-pro leads L0 at 76.18, pareto follows at 74.23, pareto-26.9 holds third at 68.48, and pareto keeps the L2 lead at 65.69."
+      ]
     }
   ]
 }
