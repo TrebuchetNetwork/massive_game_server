@@ -21,7 +21,7 @@ const DEFAULT_LOG_PATH: &str = "logs/access.jsonl";
 
 /// warp `log::custom` handler — call once per completed request.
 pub fn log_request(info: Info<'_>) {
-    let line = json!({
+    let mut line = json!({
         "ts": SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
@@ -35,6 +35,10 @@ pub fn log_request(info: Info<'_>) {
         "referer": info.referer().unwrap_or("-"),
     })
     .to_string();
+    // Single write of the whole line: concurrent requests on multi-threaded
+    // runtimes otherwise interleave (writeln! issues separate writes for the
+    // payload and the newline), corrupting the JSONL stream.
+    line.push('\n');
     append_line(&line);
 }
 
@@ -57,7 +61,7 @@ fn log_path() -> String {
 fn append_line(line: &str) {
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path()) {
         // Logging must never break request handling; ignore write errors.
-        let _ = writeln!(file, "{}", line);
+        let _ = file.write_all(line.as_bytes());
     }
 }
 
