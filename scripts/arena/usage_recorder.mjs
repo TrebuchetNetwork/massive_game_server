@@ -28,6 +28,7 @@ import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSyn
 import { execSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { evaluateResourceAlert } from './resource_alerts.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
@@ -187,6 +188,29 @@ function countFds(pid) {
   }
 }
 
+function countUdpSockets(pid) {
+  try {
+    const out = execSync('ss -H -u -a -p -n', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 3000,
+    });
+    let udpSockets = 0;
+    let udpOutOfRange = 0;
+    for (const line of out.split('\n')) {
+      if (!line.includes(`pid=${pid},`)) continue;
+      const local = line.trim().split(/\s+/)[3] || '';
+      const port = Number(local.match(/:(\d+)$/)?.[1]);
+      if (!Number.isFinite(port)) continue;
+      udpSockets += 1;
+      if (port < 19000 || port > 32767) udpOutOfRange += 1;
+    }
+    return { udpSockets, udpOutOfRange };
+  } catch {
+    return { udpSockets: null, udpOutOfRange: null };
+  }
+}
+
 async function fetchText(url, timeoutMs) {
   const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`http ${res.status}`);
@@ -243,6 +267,7 @@ function collectProcess(nowMs) {
     rssMb: status.rssKb !== null ? Math.round(status.rssKb / 1024) : null,
     threads: status.threads,
     fds: countFds(pid),
+    ...countUdpSockets(pid),
   };
 }
 
@@ -305,10 +330,12 @@ export function buildUsageDoc({ sample, history, nowMs }) {
     history.map((s) => ({ t: s.t, value: pick(s) })).filter((p) => p.value !== null && p.value !== undefined),
     SERIES_MAX_POINTS,
   );
+  const alert = evaluateResourceAlert(history, { nowMs });
   return {
     generatedAt: new Date(nowMs).toISOString(),
     intervalSec: Math.round(SAMPLE_INTERVAL_MS / 1000),
     latest: sample,
+    alerts: alert ? [alert] : [],
     series: {
       cpuPct: seriesOf((s) => s.process?.cpuPct),
       rssMb: seriesOf((s) => s.process?.rssMb),

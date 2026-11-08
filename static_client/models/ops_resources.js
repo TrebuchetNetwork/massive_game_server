@@ -87,7 +87,11 @@
             ? Math.round((1 - host.mem.memAvailableKb / host.mem.memTotalKb) * 100) : null;
         var procAlive = proc.pid !== null && proc.pid !== undefined;
 
-        var html =
+        var alert = (doc.alerts && doc.alerts[0]) || null;
+        var alertHtml = alert
+            ? '<p class="ops__badge ops__badge--fail">resource alert: ' + esc(alert.message) + ' · since ' + esc(alert.since) + '</p>'
+            : '';
+        var html = alertHtml +
             '<p class="ops-res__meta">' + badge +
             ' <span class="ops-res__src">sampler: massive-game-usage-recorder.service · every ' + esc(fmtNum(doc.intervalSec)) + 's · 24h window · history kept 14 days</span></p>' +
             '<div class="ops-res__grid">' +
