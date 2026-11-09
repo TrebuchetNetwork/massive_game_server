@@ -199,6 +199,15 @@
         "The weekly-feedback lane completed forty revision attempts this morning: 37 accepted, three failed. Acceptance still means only that a new artifact compiled and linked its parent; it does not prove the model improved. The next evaluation is where that claim gets measured. Both Omni 1.2 and Omni 1.1 had their first revisions accepted, two submissions used of nine allowed.",
         "The zero-shot board barely moved at the summit: astra-pro leads at 76.06, pareto follows at 74.19, and pareto-26.9 is third at 68.55. Pareto keeps L2 at 65.58, with astra-pro at 60.54. No new release qualified for the fast lane today, so every rating below is the result of a fight, not a recruiting headline."
       ]
+    },
+    {
+      "id": "ch-20",
+      "title": "Chapter XX — The Second Bar",
+      "day": "League day 55",
+      "prose": [
+        "Omni 1.2 met the same rule it had been approaching for two days. It retired from L0 at 24.88 with a 21.8% win rate and L1 at 22.92 with 18.3%, submissions exhausted and three days complete. The revised artifact was accepted in L2, but there its submissions remain: this is a different league with a different limit, not a contradiction. The fight goes on in the feedback lanes.",
+        "The replacement chairs are real too: minimax-m3.1-flash entered L0 at a provisional 50, and kimi-k3.1-pro entered L1 at 50. Crouton Alpha's third L2 revision was accepted; Omni 1.1's second compile failed. Above them, astra-pro leads L0 at 75.92, pareto follows at 74.19, pareto-26.9 holds third at 68.24, and pareto keeps L2 at 65.59."
+      ]
     }
   ]
 }
