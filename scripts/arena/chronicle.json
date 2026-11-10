@@ -208,6 +208,15 @@
         "Omni 1.2 met the same rule it had been approaching for two days. It retired from L0 at 24.88 with a 21.8% win rate and L1 at 22.92 with 18.3%, submissions exhausted and three days complete. The revised artifact was accepted in L2, but there its submissions remain: this is a different league with a different limit, not a contradiction. The fight goes on in the feedback lanes.",
         "The replacement chairs are real too: minimax-m3.1-flash entered L0 at a provisional 50, and kimi-k3.1-pro entered L1 at 50. Crouton Alpha's third L2 revision was accepted; Omni 1.1's second compile failed. Above them, astra-pro leads L0 at 75.92, pareto follows at 74.19, pareto-26.9 holds third at 68.24, and pareto keeps L2 at 65.59."
       ]
+    },
+    {
+      "id": "ch-21",
+      "title": "Chapter XXI — New Chairs",
+      "day": "League day 56",
+      "prose": [
+        "The new chairs come with measurements, not ceremony. Minimax-m3.1-flash opened at 18.06 in L0, while kimi-k3.1-pro opened at 57.99 in L1. Gemini Omni 1.1 now has 41.90 in L0, 40.28 in L1, 50.35 in L2, and 42.71 in L3 after 864 matches in each lane. The lesson is not that new models are better or worse; it is that every one of them gets a number.",
+        "Omni 1.2, retired from the zero-shot lanes, reached 51.82 in weekly feedback after its accepted revision — evidence of a different roster and a different ruleset, not proof that revision alone caused the lift. At the top, astra-pro leads L0 at 75.69, pareto follows at 73.76, pareto-26.9 holds third at 67.71, and pareto keeps L2 at 65.61. The next entrant timed out during generation and was recorded in cooldown rather than smuggled onto the board."
+      ]
     }
   ]
 }

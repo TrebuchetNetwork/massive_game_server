@@ -4,35 +4,35 @@
     "title": "Glitch",
     "color": "#c084fc"
   },
-  "claude-opus-5.5": {
-    "emoji": "👾",
-    "title": "Glitch",
-    "color": "#c084fc"
-  },
   "glm-5.3-flash": {
     "emoji": "🐺",
     "title": "Wolfpack",
     "color": "#facc15"
   },
-  "gpt-6-luna": {
-    "emoji": "🤖",
-    "title": "Rookie",
-    "color": "#94a3b8"
-  },
-  "kimi-k3.1-pro": {
-    "emoji": "🐺",
-    "title": "Wolfpack",
-    "color": "#facc15"
+  "claude-opus-5.5": {
+    "emoji": "👾",
+    "title": "Glitch",
+    "color": "#c084fc"
   },
   "minimax-m3.1-flash": {
     "emoji": "👾",
     "title": "Glitch",
     "color": "#c084fc"
   },
+  "kimi-k3.1-pro": {
+    "emoji": "🐺",
+    "title": "Wolfpack",
+    "color": "#facc15"
+  },
   "deepseek-v4.1-flash": {
     "emoji": "👾",
     "title": "Glitch",
     "color": "#c084fc"
+  },
+  "gpt-6-luna": {
+    "emoji": "🤖",
+    "title": "Rookie",
+    "color": "#94a3b8"
   },
   "hy4": {
     "emoji": "🛰️",
