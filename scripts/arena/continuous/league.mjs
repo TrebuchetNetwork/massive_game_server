@@ -206,7 +206,7 @@ export function eligibleChallengers(rankingModels, state, nowMs, recruitFailures
   }
   return (Array.isArray(rankingModels) ? rankingModels : []).filter((entry) => {
     const id = String(entry?.id || '');
-    if (!id || id === 'openrouter/auto' || id === 'openrouter/auto-code') return false;
+    if (!id || id === 'openrouter/auto' || id === 'openrouter/auto-code' || /:batch$/.test(id)) return false;
     const slug = String(entry?.canonical_slug || '');
     if (excluded.has(id) || (slug && excluded.has(slug))) return false;
     for (const key of [id, slug].filter(Boolean)) {

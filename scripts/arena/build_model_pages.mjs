@@ -1078,6 +1078,26 @@ ${cards}
         </div>`;
 }
 
+function pruneUnavailableFightCards(html, mediaBase, highlightsRoot, io) {
+  const base = `${escapeRegExp(mediaBase)}/`;
+  const cardPattern = new RegExp(`\\s*<a class="clip" href="${base}([^"]+)" target="_blank" rel="noopener">\\s*<img src="${base}([^"]+)"[\\s\\S]*?<\\/a>`, 'g');
+  let pruned = 0;
+  let next = html.replace(cardPattern, (card, webm, poster) => {
+    if (io.exists(path.join(highlightsRoot, webm)) && io.exists(path.join(highlightsRoot, poster))) {
+      return card;
+    }
+    pruned += 1;
+    return '';
+  });
+  if (pruned > 0 && !next.includes('<a class="clip"')) {
+    next = next.replace(
+      /\s*<div class="clips">[\s\S]*?<\/div>/,
+      '\n<p class="empty">No recorded highlights featuring this model yet.</p>',
+    );
+  }
+  return { html: next, pruned };
+}
+
 function provenanceFooter(ctx) {
   const sha = String(ctx.league?.ledger_sha256 || '');
   return `        <section class="provenance">
@@ -1690,7 +1710,7 @@ function standingsSection(state) {
         const overall = division.offset + i + 1;
         return `                        <tr>
                             <td class="num standings__rank">#${overall} · ${esc(divisionLabel(division.name))} #${i + 1}</td>
-                            <td><span class="standings__emoji">${esc(e.mascot.emoji)}</span> <b>${esc(e.mascot.title)}</b></td>
+                            <td class="standings__model"><span><span class="standings__emoji">${esc(e.mascot.emoji)}</span> <b>${esc(e.mascot.title)}</b></span><small>${esc(e.slug)}</small></td>
                             <td class="num standings__rating">${Number(e.rating).toFixed(1)}</td>
                             <td class="num"><span class="win">${fmtInt(e.wins)}</span>‑<span class="loss">${fmtInt(e.losses)}</span>‑${fmtInt(e.draws)}</td>
                             <td class="num">${e.submissions_used}/${allowed}</td>
@@ -3493,7 +3513,9 @@ table.matrix__table tr.matrix__row--boundary td { border-top: 1px solid var(--li
 .ops-pipeline li:last-child { border-bottom: none; }
 .ops-pipeline span { display: block; margin-bottom: 7px; color: var(--acid); font: 800 10px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
 .ops-pipeline p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; max-width: 720px; }
-.standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; }
+.standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); gap: 18px; }
+.standings__division { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.standings__division .standings__table { min-width: 440px; }
 .standings__track h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
 .standings__track h3 small { margin-left: auto; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; }
 table.standings__table { width: 100%; border-collapse: collapse; }
@@ -3521,9 +3543,9 @@ table.standings__table tr:last-child td { border-bottom: none; }
     border-bottom: 1px solid var(--line);
 }
 .matrix__table td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--line-soft); }
-.matrix__model { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 13px; }
-.matrix__model > span { display: flex; align-items: center; gap: 7px; }
-.matrix__model small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; word-break: break-all; }
+.standings__model, .matrix__model { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 13px; }
+.standings__model > span, .matrix__model > span { display: flex; align-items: center; gap: 7px; }
+.standings__model small, .matrix__model small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; word-break: break-all; }
 .matrix__cell { font-size: 13px; color: var(--acid-soft); }
 .matrix__cell--empty { color: var(--dim); }
 .matrix__cell--retired { color: var(--muted); }
@@ -3933,7 +3955,12 @@ export async function buildPages({
       : (log(`world: ${worldDir} missing — continuing with empty aggregates`), emptyWorldScan),
   ]);
 
-  const highlights = io.exists(highlightsPath) ? io.readJson(highlightsPath) : [];
+  const highlightEntries = io.exists(highlightsPath) ? io.readJson(highlightsPath) : [];
+  const highlightsRoot = path.dirname(highlightsPath);
+  const highlights = (Array.isArray(highlightEntries) ? highlightEntries : []).filter((clip) => (
+    ['webm', 'poster'].every((key) => typeof clip?.[key] === 'string'
+      && clip[key].length > 0 && io.exists(path.join(highlightsRoot, clip[key])))
+  ));
 
   const metaById = new Map();
   for (const m of roster) {
@@ -4145,6 +4172,14 @@ export async function buildPages({
       generated_at: ratings.generated_at,
       league: ratings.league,
     }));
+  }
+
+  // Older generated profiles can outlive the 14-day media retention window.
+  // Keep their measured statistics, but remove only cards whose assets expired.
+  for (const name of io.readdir(outDir).filter((entry) => entry.endsWith('.html'))) {
+    const file = path.join(outDir, name);
+    const result = pruneUnavailableFightCards(io.readText(file), mediaBase, highlightsRoot, io);
+    if (result.pruned > 0) io.writeFile(file, result.html);
   }
 
   io.writeFile(cachePath, JSON.stringify(battleScan.cacheData));

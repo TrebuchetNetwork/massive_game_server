@@ -117,6 +117,18 @@ async fn health_ready_and_root_redirect_work() {
         .and_then(|value| value.to_str().ok());
     assert_eq!(location, Some("/index.html"));
 
+    let root_with_query = client
+        .get(format!("{}/?tv=0", proc.base_url))
+        .send()
+        .await
+        .expect("GET /?tv=0");
+    assert!(root_with_query.status().is_redirection());
+    let location = root_with_query
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|value| value.to_str().ok());
+    assert_eq!(location, Some("/index.html?tv=0"));
+
     let health = client
         .get(format!("{}/healthz", proc.base_url))
         .send()

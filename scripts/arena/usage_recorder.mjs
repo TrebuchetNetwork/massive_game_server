@@ -24,7 +24,7 @@
 // Pure parsers are exported for tests; collectors are thin wrappers and the
 // main loop never throws.
 
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,7 @@ import { evaluateResourceAlert } from './resource_alerts.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
+const SERVER_EXE = join(REPO, 'target', 'release', 'massive_game_server_core');
 
 export const METRICS_URL = process.env.MGS_METRICS_URL || 'http://127.0.0.1:9090/metrics';
 export const MONITOR_DIR = process.env.MGS_MONITOR_DIR || join(REPO, 'artifacts', 'monitoring');
@@ -166,6 +167,19 @@ const readText = (path) => {
   }
 };
 
+export function selectServerPid(candidates, expectedExe, readLink) {
+  for (const candidate of candidates) {
+    const pid = Number(candidate);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    try {
+      if (readLink(`/proc/${pid}/exe`) === expectedExe) return pid;
+    } catch {
+      // The process exited between pgrep and /proc inspection.
+    }
+  }
+  return null;
+}
+
 function serverPid() {
   try {
     const out = execSync('pgrep -f massive_game_server_core', {
@@ -173,8 +187,7 @@ function serverPid() {
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 3000,
     }).trim();
-    const pid = Number(out.split('\n')[0]);
-    return Number.isFinite(pid) && pid > 0 ? pid : null;
+    return selectServerPid(out.split('\n'), SERVER_EXE, readlinkSync);
   } catch {
     return null;
   }

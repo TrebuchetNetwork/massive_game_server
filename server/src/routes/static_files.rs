@@ -34,7 +34,16 @@ pub fn build_root_route(
 ) -> impl Filter<Extract = (warp::reply::Response,), Error = warp::Rejection> + Clone {
     warp::path::end()
         .and(warp::get())
-        .map(|| warp::redirect::temporary(Uri::from_static("/index.html")))
+        .and(warp::query::raw().or(warp::any().map(String::new)).unify())
+        .map(|query: String| {
+            let uri = if query.is_empty() {
+                Uri::from_static("/index.html")
+            } else {
+                Uri::from_maybe_shared(format!("/index.html?{query}"))
+                    .unwrap_or_else(|_| Uri::from_static("/index.html"))
+            };
+            warp::redirect::temporary(uri)
+        })
         .map(warp::reply::Reply::into_response)
 }
 

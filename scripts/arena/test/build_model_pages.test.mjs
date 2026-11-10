@@ -211,6 +211,52 @@ test('matchFights prefers exact "#rank Title" tag over loose title match', () =>
   assert.deepEqual(one.map((c) => c.webm), ['w3', 'w1']);
 });
 
+test('buildPages omits clips whose webm or poster is missing', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-media-'));
+  const highlightsDir = path.join(root, 'highlights');
+  const clips = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'highlights.json'), 'utf8'));
+  for (const clip of clips) clip.players = ['#1 Wolfpack'];
+  for (const file of ['a.webm', 'a.png', 'b.webm']) {
+    const target = path.join(highlightsDir, 'd', file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, '');
+  }
+  const highlightsPath = path.join(highlightsDir, 'index.json');
+  fs.writeFileSync(highlightsPath, JSON.stringify(clips));
+  const outDir = path.join(root, 'out');
+  fs.mkdirSync(outDir, { recursive: true });
+  const card = (name) => `            <a class="clip" href="/media/highlights/d/${name}.webm" target="_blank" rel="noopener">
+                <img src="/media/highlights/d/${name}.png" alt="Highlight: test" loading="lazy">
+                <span class="clip__meta"><b>test</b><small>2026-08-15 · score 1.0</small></span>
+            </a>`;
+  fs.writeFileSync(path.join(outDir, 'historical.html'), `<main><div class="clips">\n${card('a')}\n${card('b')}\n</div></main>`);
+  fs.writeFileSync(path.join(outDir, 'retired-empty.html'), `<main><div class="clips">\n${card('c')}\n</div></main>`);
+  await buildPages({
+    ratingsPath: path.join(FIXTURES, 'ratings.json'),
+    artifactsRoot: FIXTURES,
+    highlightsPath,
+    outDir,
+    cachePath: path.join(outDir, 'page-cache.json'),
+    toplistPath: path.join(FIXTURES, 'no-such-toplist.json'),
+    chroniclePath: path.join(FIXTURES, 'no-such-chronicle.json'),
+    seasonsPath: path.join(FIXTURES, 'no-such-seasons.json'),
+    lorePath: path.join(FIXTURES, 'no-such-lore.json'),
+  });
+
+  const alpha = fs.readFileSync(path.join(outDir, 'alpha-one.html'), 'utf8');
+  assert.match(alpha, /d\/a\.webm/);
+  assert.match(alpha, /d\/a\.png/);
+  assert.doesNotMatch(alpha, /d\/b\.webm/, 'partial clip without a poster must be omitted');
+  assert.doesNotMatch(alpha, /d\/c\.webm/, 'clip without assets must be omitted');
+
+  const historical = fs.readFileSync(path.join(outDir, 'historical.html'), 'utf8');
+  assert.match(historical, /d\/a\.webm/, 'valid historical media is preserved');
+  assert.doesNotMatch(historical, /d\/b\.webm/, 'dead card is pruned from a historical profile');
+  const retiredEmpty = fs.readFileSync(path.join(outDir, 'retired-empty.html'), 'utf8');
+  assert.doesNotMatch(retiredEmpty, /d\/c\.webm/);
+  assert.match(retiredEmpty, /No recorded highlights featuring this model yet/);
+});
+
 test('golden render: 2-model mini roster matches checked-in goldens', async (t) => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-'));
   const cachePath = path.join(outDir, 'page-cache.json');
@@ -644,6 +690,12 @@ test('continuous overlay: multi-track header, standings, matrix, track-badged fe
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-out-'));
   const cmlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'modelpages-cml-state-'));
   writeContinuousFixture(cmlDir);
+  const statePath = path.join(cmlDir, 'state.json');
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  for (const slice of Object.values(state.tracks)) {
+    slice.roster[2].mascot = { ...slice.roster[3].mascot };
+  }
+  fs.writeFileSync(statePath, JSON.stringify(state));
   await buildWithContinuous(outDir, cmlDir);
 
   const index = fs.readFileSync(path.join(outDir, 'index.html'), 'utf8');
@@ -672,6 +724,17 @@ test('continuous overlay: multi-track header, standings, matrix, track-badged fe
   assert.match(l0Block, /#12 · Challenger #2/, 'epsilon overall + division rank');
   assert.match(index, /2\/3/, 'L2 submissions used/allowed');
   assert.match(index, /2\/9/, 'L3 submissions used/allowed');
+  const standingsRows = index.match(/<tr>\s*<td class="num standings__rank">[\s\S]*?<\/tr>/g) || [];
+  assert.equal(standingsRows.length, 48, 'every active roster entry has a standings row');
+  for (const slice of Object.values(state.tracks)) {
+    for (const entry of slice.roster) {
+      assert.ok(
+        standingsRows.some((row) => row.includes(`<b>${entry.mascot.title}</b>`)
+          && row.includes(`<small>${entry.slug}</small>`)),
+        `standings identity missing for ${entry.slug}, including duplicate mascots`,
+      );
+    }
+  }
 
   // Experiment matrix: rows in L0 rating order with division tags and a
   // boundary separator at the premier/challenger transition; Δ column kept.

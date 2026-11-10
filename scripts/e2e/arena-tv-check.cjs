@@ -145,6 +145,126 @@ const waitForHero = async (page) => {
     const optOutResult = await waitForHero(optOutPage);
     optOutResult.frameInserted = await optOutPage.evaluate(() => window.__arenaTvFrameInserted);
 
+    const stripPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await stripPage.route('**/api/public/arena/overview', route => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, data: { active_models: 11781, pending_matches: 0, in_flight_matches: 0 } }),
+    }));
+    await stripPage.route('**/api/public/match/scoreboard', route => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, players: [{ alive: true }, { alive: false }, { alive: true }] }),
+    }));
+    await stripPage.route('**/api/public/arena/ratings', route => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, data: {
+        active: true,
+        roster: Array.from({ length: 40 }, (_, i) => ({ model_id: `test/model-${i}`, provider_model: `test/model-${i}` })),
+      } }),
+    }));
+    await stripPage.route('**/models/league.json', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ day_index: 57 }),
+    }));
+    await stripPage.goto(`${BASE_URL}/index.html?tv=0`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await stripPage.waitForFunction(() => {
+      const strip = document.querySelector('[data-live-strip]');
+      return strip && !strip.hidden;
+    }, null, { timeout: 10000 });
+    const liveStrip = await stripPage.evaluate(() => {
+      const items = [...document.querySelectorAll('[data-live-strip] .live-strip__item')];
+      return {
+        label: items[0]?.querySelector('b')?.textContent,
+        models: items[1]?.querySelector('b')?.textContent,
+        fighters: items[2]?.querySelector('b')?.textContent,
+        fightersLabel: items[2]?.textContent,
+        day: items[3]?.querySelector('b')?.textContent,
+        liveClass: items[0]?.classList.contains('live-strip__item--live'),
+        idleDot: items[0]?.querySelector('.live-strip__dot')?.classList.contains('live-strip__dot--idle'),
+      };
+    });
+
+    const racePage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await racePage.addInitScript(() => {
+      window.__liveStripRefresh = null;
+      window.setInterval = (callback) => {
+        window.__liveStripRefresh = callback;
+        return 1;
+      };
+    });
+    await racePage.route('**/api/public/arena/ratings', route => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, data: { active: true, roster: Array.from({ length: 40 }, () => ({})) } }),
+    }));
+    await racePage.route('**/models/league.json', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ day_index: 57 }),
+    }));
+    let racePoll = 0;
+    await racePage.route('**/api/public/match/scoreboard', async route => {
+      racePoll += 1;
+      const thisPoll = racePoll;
+      if (thisPoll === 2) await new Promise(resolve => setTimeout(resolve, 250));
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, players: thisPoll === 3 ? [] : [{ alive: true }] }),
+      });
+    });
+    await racePage.goto(`${BASE_URL}/index.html?tv=0`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await racePage.waitForFunction(() => !document.querySelector('[data-live-strip]')?.hidden);
+    await racePage.evaluate(async () => {
+      const older = window.__liveStripRefresh();
+      const newer = window.__liveStripRefresh();
+      await Promise.all([older, newer]);
+    });
+    const racedStrip = await racePage.evaluate(() => {
+      const items = [...document.querySelectorAll('[data-live-strip] .live-strip__item')];
+      return {
+        label: items[0]?.querySelector('b')?.textContent,
+        fighters: items[2]?.querySelector('b')?.textContent,
+        liveClass: items[0]?.classList.contains('live-strip__item--live'),
+        idleDot: items[0]?.querySelector('.live-strip__dot')?.classList.contains('live-strip__dot--idle'),
+      };
+    });
+    console.log('out-of-order live strip polls:', JSON.stringify(racedStrip));
+    assert.deepEqual(racedStrip, {
+      label: 'Standby', fighters: '0', liveClass: false, idleDot: true,
+    }, 'an older poll must not overwrite newer fighter liveness');
+
+    const stalledPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await stalledPage.addInitScript(() => {
+      window.__liveStripRefresh = null;
+      window.setInterval = (callback) => {
+        window.__liveStripRefresh = callback;
+        return 1;
+      };
+    });
+    await stalledPage.route('**/api/public/arena/ratings', route => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, data: { active: true, roster: Array.from({ length: 40 }, () => ({})) } }),
+    }));
+    await stalledPage.route('**/models/league.json', route => route.fulfill({
+      contentType: 'application/json', body: JSON.stringify({ day_index: 57 }),
+    }));
+    await stalledPage.route('**/api/public/match/scoreboard', async () => {
+      await new Promise(() => {});
+    });
+    await stalledPage.goto(`${BASE_URL}/index.html?tv=0`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await stalledPage.waitForTimeout(200);
+    const stalledIntervalRegistered = await stalledPage.evaluate(() => typeof window.__liveStripRefresh === 'function');
+    let stalledRecovery = null;
+    if (stalledIntervalRegistered) {
+      await stalledPage.unroute('**/api/public/match/scoreboard');
+      await stalledPage.route('**/api/public/match/scoreboard', route => route.fulfill({
+        contentType: 'application/json', body: JSON.stringify({ ok: true, players: [] }),
+      }));
+      await stalledPage.evaluate(() => window.__liveStripRefresh());
+      stalledRecovery = await stalledPage.evaluate(() => ({
+        hidden: document.querySelector('[data-live-strip]')?.hidden,
+        label: document.querySelector('[data-live-strip] .live-strip__item b')?.textContent,
+      }));
+    }
+    console.log('stalled initial poll recovery:', JSON.stringify({ stalledIntervalRegistered, stalledRecovery }));
+    assert.equal(stalledIntervalRegistered, true, 'a stalled initial request must not prevent future polls');
+    assert.deepEqual(stalledRecovery, { hidden: false, label: 'Standby' });
+
     console.log('default hero:', JSON.stringify(defaultResult));
     console.log('post-live fallback:', JSON.stringify(postLiveFallbackResult));
     console.log('default broadcast requests:', defaultState.tvRequests);
@@ -153,6 +273,7 @@ const waitForHero = async (page) => {
     console.log('default WebSocket errors:', JSON.stringify(defaultState.webSocketErrors));
     console.log('opt-out hero:', JSON.stringify(optOutResult));
     console.log('opt-out broadcast requests:', optOutState.tvRequests);
+    console.log('live strip with zero arena jobs:', JSON.stringify(liveStrip));
     console.log('page errors:', JSON.stringify([...defaultState.errors, ...optOutState.errors]));
     console.log('console errors:', JSON.stringify([...defaultState.consoleErrors, ...optOutState.consoleErrors]));
     console.log('screenshot:', SCREENSHOT_PATH);
@@ -186,6 +307,16 @@ const waitForHero = async (page) => {
     assert.equal(optOutResult.joinLive.hidden, true, '?tv=0 must hide the live Join CTA');
     assert.equal(optOutResult.joinLive.visible, false, '?tv=0 live Join CTA must not be visible');
     assert.deepEqual(optOutState.errors, [], '?tv=0 landing page produced page errors');
+
+    assert.deepEqual(liveStrip, {
+      label: 'Live',
+      models: '40',
+      fighters: '2',
+      fightersLabel: '2 fighters live',
+      day: '57',
+      liveClass: true,
+      idleDot: false,
+    }, 'live strip must use alive scoreboard fighters and weekly roster size, not arena jobs');
   } finally {
     await browser.close();
   }

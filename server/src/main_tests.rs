@@ -297,7 +297,7 @@ async fn test_static_html_x_frame_options_are_scoped_to_client() {
 
     let index = warp::test::request()
         .method("GET")
-        .path("/index.html")
+        .path("/index.html?tv=0")
         .reply(&routes)
         .await;
     assert_eq!(index.status(), warp::http::StatusCode::OK);

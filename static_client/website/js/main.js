@@ -494,9 +494,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 12000);
   };
 
-  // Compact live telemetry strip under the hero. Reads the public overview
-  // plus the league state, refreshes every 30s, and hides on any error.
-  const hydrateLiveStrip = async () => {
+  // Compact live telemetry strip under the hero. Reads actual match fighters,
+  // the active weekly roster, and league state; refreshes every 30s.
+  const hydrateLiveStrip = () => {
     const strip = document.querySelector('[data-live-strip]');
     if (!strip) return;
 
@@ -510,10 +510,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const modelsValue = document.createElement('b');
     modelsItem.append(modelsValue, document.createTextNode(' models registered'));
 
-    const flightItem = document.createElement('span');
-    flightItem.className = 'live-strip__item';
-    const flightValue = document.createElement('b');
-    flightItem.append(flightValue, document.createTextNode(' in flight'));
+    const fightersItem = document.createElement('span');
+    fightersItem.className = 'live-strip__item';
+    const fightersValue = document.createElement('b');
+    fightersItem.append(fightersValue, document.createTextNode(' fighters live'));
 
     const dayItem = document.createElement('span');
     dayItem.className = 'live-strip__item';
@@ -521,36 +521,49 @@ document.addEventListener('DOMContentLoaded', () => {
     const dayValue = document.createElement('b');
     dayItem.append(dayValue);
 
-    strip.replaceChildren(pulse, modelsItem, flightItem, dayItem);
+    strip.replaceChildren(pulse, modelsItem, fightersItem, dayItem);
 
+    let latestRefresh = 0;
     const refresh = async () => {
+      const refreshId = ++latestRefresh;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 10000);
       try {
-        const [overviewResponse, leagueResponse] = await Promise.all([
-          fetch('/api/public/arena/overview', { headers: { Accept: 'application/json' }, cache: 'no-store' }),
-          fetch('/models/league.json', { headers: { Accept: 'application/json' }, cache: 'no-store' }),
+        const options = { headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller.signal };
+        const [scoreboardResponse, ratingsResponse, leagueResponse] = await Promise.all([
+          fetch('/api/public/match/scoreboard', options),
+          fetch('/api/public/arena/ratings', options),
+          fetch('/models/league.json', options),
         ]);
-        if (!overviewResponse.ok || !leagueResponse.ok) throw new Error('live strip unavailable');
+        if (!scoreboardResponse.ok || !ratingsResponse.ok || !leagueResponse.ok) throw new Error('live strip unavailable');
 
-        const overviewPayload = await overviewResponse.json();
+        const scoreboard = await scoreboardResponse.json();
+        const ratingsPayload = await ratingsResponse.json();
         const leaguePayload = await leagueResponse.json();
-        const overview = overviewPayload?.data;
-        if (!overview) throw new Error('live strip payload invalid');
+        const ratings = ratingsPayload?.data;
+        if (scoreboard?.ok !== true || !Array.isArray(scoreboard.players) || !ratings) {
+          throw new Error('live strip payload invalid');
+        }
+        if (refreshId !== latestRefresh) return;
 
-        const inFlight = Number(overview.in_flight_matches) || 0;
-        pulse.className = inFlight > 0 ? 'live-strip__item live-strip__item--live' : 'live-strip__item';
-        pulseDot.className = inFlight > 0 ? 'live-strip__dot' : 'live-strip__dot live-strip__dot--idle';
-        pulseLabel.textContent = inFlight > 0 ? 'Live' : 'Standby';
-        modelsValue.textContent = String(Number(overview.active_models) || 0);
-        flightValue.textContent = String(inFlight);
+        const aliveFighters = scoreboard.players.filter((player) => player?.alive === true).length;
+        const rosterSize = ratings.active === true && Array.isArray(ratings.roster) ? ratings.roster.length : 0;
+        pulse.className = aliveFighters > 0 ? 'live-strip__item live-strip__item--live' : 'live-strip__item';
+        pulseDot.className = aliveFighters > 0 ? 'live-strip__dot' : 'live-strip__dot live-strip__dot--idle';
+        pulseLabel.textContent = aliveFighters > 0 ? 'Live' : 'Standby';
+        modelsValue.textContent = String(rosterSize);
+        fightersValue.textContent = String(aliveFighters);
         dayValue.textContent = String(Number(leaguePayload?.day_index) || 0).padStart(2, '0');
 
         strip.hidden = false;
       } catch (_) {
-        strip.hidden = true;
+        if (refreshId === latestRefresh) strip.hidden = true;
+      } finally {
+        window.clearTimeout(timeout);
       }
     };
 
-    await refresh();
+    refresh();
     window.setInterval(refresh, 30000);
   };
 

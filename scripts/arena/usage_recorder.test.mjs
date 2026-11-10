@@ -19,6 +19,7 @@ import {
   parsePromSample,
   readRecentSamples,
 } from './usage_recorder.mjs';
+import * as usageRecorder from './usage_recorder.mjs';
 
 test('parseProcStat reads utime/stime past a comm with spaces and parens', () => {
   // field order after comm: state ppid pgrp session tty_nr tpgid flags
@@ -31,6 +32,19 @@ test('parseProcStat returns null on garbage', () => {
   assert.equal(parseProcStat(''), null);
   assert.equal(parseProcStat('no parens here'), null);
   assert.equal(parseProcStat('1 (x) S a b c d e f g h i j k l m'), null);
+});
+
+test('selectServerPid ignores transient commands and selects the exact server executable', () => {
+  const select = usageRecorder.selectServerPid;
+  assert.equal(typeof select, 'function');
+  const expected = '/repo/target/release/massive_game_server_core';
+  const links = {
+    '/proc/101/exe': '/bin/bash',
+    '/proc/202/exe': expected,
+  };
+  assert.equal(select(['101', '202'], expected, (path) => links[path] || '/bin/bash'), 202);
+  assert.equal(select(['101'], expected, () => '/bin/bash'), null);
+  assert.equal(select(['101'], expected, () => { throw new Error('process exited'); }), null);
 });
 
 test('parseProcStatus extracts VmRSS and Threads', () => {

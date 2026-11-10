@@ -106,6 +106,7 @@ const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-client
         '#combatHud', '#combatRadialHud', '#combatMomentum', '#deathMomentBanner', '#deathRecap',
         '#killcamPanel', '#postMatchPanel', '#pingWheel', '#boundaryWarning', '#fpsCounter',
         '#arenaEvolutionChip', '.arena-brand-chip', '.arena-watermark', '#matchInfo', '#minimapContainer',
+        '#combatOverlay', '#gameModeIntro', '#objectiveUrgency',
       ];
       return {
         overlayExists: !!document.querySelector('#arenaTvRoot .arena-tv-overlay'),

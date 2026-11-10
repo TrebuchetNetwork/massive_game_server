@@ -7,7 +7,7 @@
 //   node render_highlights.mjs [--replay-dir DIR] [--replay FILE]
 //                              [--out-dir DIR] [--max-clips N] [--fps N]
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -141,10 +141,50 @@ async function pruneOldDirs(outDir, keepDays = 14) {
   return pruned;
 }
 
+async function pruneMissingAssets(entries, outDir) {
+  const complete = [];
+  for (const entry of entries) {
+    let valid = entry && typeof entry === 'object';
+    for (const key of ['webm', 'gif', 'poster']) {
+      if (!valid || typeof entry[key] !== 'string' || !entry[key]) {
+        valid = false;
+        break;
+      }
+      try {
+        if (!(await stat(path.join(outDir, entry[key]))).isFile()) valid = false;
+      } catch {
+        valid = false;
+      }
+      if (!valid) break;
+    }
+    if (valid) complete.push(entry);
+  }
+  return complete;
+}
+
+async function clipOutputsExist(outBase) {
+  try {
+    for (const ext of ['.webm', '.gif', '.png']) {
+      if (!(await stat(`${outBase}${ext}`)).isFile()) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const opts = parseArgs(process.argv);
   await mkdir(opts.outDir, { recursive: true });
   const cutoff = Date.now() - 14 * 86_400_000;
+
+  const indexPath = path.join(opts.outDir, 'index.json');
+  let index = [];
+  try {
+    index = JSON.parse(await readFile(indexPath, 'utf8'));
+  } catch { /* fresh index */ }
+  const pruned = await pruneOldDirs(opts.outDir);
+  index = await pruneMissingAssets(index.filter((e) => !pruned.has(e.date)), opts.outDir);
 
   const files = opts.replay
     ? [opts.replay]
@@ -157,10 +197,7 @@ async function main() {
           const m = path.basename(f).match(/replay_(\d+)/);
           return !m || Number(m[1]) >= cutoff;
         });
-  if (!files.length) {
-    console.log('no replay files found');
-    return;
-  }
+  if (!files.length) console.log('no replay files found');
 
   // Gather candidate clips across matches, keep the global top maxClips.
   // A failed replay (corrupt file, hung zstd) is skipped, not fatal.
@@ -191,14 +228,6 @@ async function main() {
   candidates.sort((a, b) => b.clip.score - a.clip.score);
   const chosen = candidates.slice(0, opts.maxClips);
 
-  const indexPath = path.join(opts.outDir, 'index.json');
-  let index = [];
-  try {
-    index = JSON.parse(await readFile(indexPath, 'utf8'));
-  } catch { /* fresh index */ }
-  const pruned = await pruneOldDirs(opts.outDir);
-  index = index.filter((e) => !pruned.has(e.date));
-
   for (const { file, replay, clip, kills, killCounts } of chosen) {
     const date = dateDir(matchDateMs(file, replay));
     const dir = path.join(opts.outDir, date);
@@ -206,13 +235,17 @@ async function main() {
     const base = path.basename(file).replace(/\.json\.zst$/, '').replace(/\.json$/, '');
     const outBase = path.join(dir, `${base}_${clip.startMs}-${clip.endMs}`);
 
-    console.log(`rendering ${path.basename(outBase)} (${clip.reason}, score ${clip.score}, ${((clip.endMs - clip.startMs) / 1000).toFixed(1)}s)`);
-    try {
-      await renderClip(replay, clip, kills, killCounts, outBase, opts.fps);
-    } catch (err) {
-      // A failed clip (ffmpeg crash/timeout) is skipped, not fatal.
-      console.error(`skipping clip ${path.basename(outBase)}: ${err.message}`);
-      continue;
+    if (await clipOutputsExist(outBase)) {
+      console.log(`skipping ${path.basename(outBase)}: existing complete outputs`);
+    } else {
+      console.log(`rendering ${path.basename(outBase)} (${clip.reason}, score ${clip.score}, ${((clip.endMs - clip.startMs) / 1000).toFixed(1)}s)`);
+      try {
+        await renderClip(replay, clip, kills, killCounts, outBase, opts.fps);
+      } catch (err) {
+        // A failed clip (ffmpeg crash/timeout) is skipped, not fatal.
+        console.error(`skipping clip ${path.basename(outBase)}: ${err.message}`);
+        continue;
+      }
     }
 
     const scene = prepareScene(replay, { startMs: clip.startMs, endMs: clip.endMs, kills, killCounts });
