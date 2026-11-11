@@ -585,7 +585,9 @@ table.matrix__table tr.matrix__row--boundary td { border-top: 1px solid var(--li
 .ops-pipeline li:last-child { border-bottom: none; }
 .ops-pipeline span { display: block; margin-bottom: 7px; color: var(--acid); font: 800 10px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
 .ops-pipeline p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; max-width: 720px; }
-.standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; }
+.standings__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); gap: 18px; }
+.standings__division { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.standings__division .standings__table { min-width: 440px; }
 .standings__track h3 { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; font: 800 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--white); }
 .standings__track h3 small { margin-left: auto; color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; }
 table.standings__table { width: 100%; border-collapse: collapse; }
@@ -613,9 +615,9 @@ table.standings__table tr:last-child td { border-bottom: none; }
     border-bottom: 1px solid var(--line);
 }
 .matrix__table td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--line-soft); }
-.matrix__model { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 13px; }
-.matrix__model > span { display: flex; align-items: center; gap: 7px; }
-.matrix__model small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; word-break: break-all; }
+.standings__model, .matrix__model { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 13px; }
+.standings__model > span, .matrix__model > span { display: flex; align-items: center; gap: 7px; }
+.standings__model small, .matrix__model small { color: var(--dim); font: 700 8px/1 var(--mono); letter-spacing: 0.07em; text-transform: uppercase; word-break: break-all; }
 .matrix__cell { font-size: 13px; color: var(--acid-soft); }
 .matrix__cell--empty { color: var(--dim); }
 .matrix__cell--retired { color: var(--muted); }
