@@ -158,11 +158,11 @@ const waitForHero = async (page) => {
       contentType: 'application/json',
       body: JSON.stringify({ ok: true, data: {
         active: true,
-        roster: Array.from({ length: 40 }, (_, i) => ({ model_id: `test/model-${i}`, provider_model: `test/model-${i}` })),
+        roster: Array.from({ length: 39 }, (_, i) => ({ model_id: `test/model-${i}`, provider_model: `test/model-${i}` })),
       } }),
     }));
     await stripPage.route('**/models/league.json', route => route.fulfill({
-      contentType: 'application/json', body: JSON.stringify({ day_index: 57 }),
+      contentType: 'application/json', body: JSON.stringify({ day_index: 57, tracks: { L0: { roster_size: 40 } } }),
     }));
     await stripPage.goto(`${BASE_URL}/index.html?tv=0`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await stripPage.waitForFunction(() => {

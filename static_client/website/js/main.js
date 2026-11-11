@@ -547,7 +547,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (refreshId !== latestRefresh) return;
 
         const aliveFighters = scoreboard.players.filter((player) => player?.alive === true).length;
-        const rosterSize = ratings.active === true && Array.isArray(ratings.roster) ? ratings.roster.length : 0;
+        const activeRosterSize = Number(leaguePayload?.tracks?.L0?.roster_size);
+        const ratedRosterSize = ratings.active === true && Array.isArray(ratings.roster) ? ratings.roster.length : 0;
+        const rosterSize = Number.isSafeInteger(activeRosterSize) && activeRosterSize >= 0
+          ? activeRosterSize : ratedRosterSize;
         pulse.className = aliveFighters > 0 ? 'live-strip__item live-strip__item--live' : 'live-strip__item';
         pulseDot.className = aliveFighters > 0 ? 'live-strip__dot' : 'live-strip__dot live-strip__dot--idle';
         pulseLabel.textContent = aliveFighters > 0 ? 'Live' : 'Standby';

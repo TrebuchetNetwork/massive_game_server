@@ -1407,6 +1407,7 @@ export function leagueTickerPayload(state) {
     const slice = state.tracks[trackId];
     tracks[trackId] = {
       day_index: slice.day_index,
+      roster_size: slice.roster.length,
       standings: trackStandings(slice).slice(0, 3).map((e) => ({
         slug: e.slug,
         mascot: e.mascot,

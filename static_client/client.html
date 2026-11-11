@@ -31,6 +31,8 @@
         body.broadcast-mode #mobileControls,
         body.broadcast-mode #chatDisplay,
         body.broadcast-mode #controls,
+        body.broadcast-mode #controlsPanel,
+        body.broadcast-mode #settingsMenu,
         body.broadcast-mode #controlHintsOverlay,
         body.broadcast-mode #joinOnboarding,
         body.broadcast-mode #audioUnlockNudge,
@@ -145,6 +147,11 @@
     <script src="./client_logic/arena_telemetry.js?v=20260725-mobile-arena2" defer></script>
 </head>
 <body class="bg-gray-900 text-white min-h-screen overflow-hidden">
+    <script>
+        if (new URLSearchParams(window.location.search).get('broadcast') === '1') {
+            document.body.classList.add('broadcast-mode');
+        }
+    </script>
     <div id="arenaTvRoot"></div>
 
     <!-- Game Container (Fullscreen) -->

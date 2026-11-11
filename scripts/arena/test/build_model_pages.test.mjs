@@ -792,6 +792,7 @@ test('continuous overlay: multi-track header, standings, matrix, track-badged fe
   assert.equal(league.announcements[0].track, 'L2');
   for (const t of ['L0', 'L1', 'L2', 'L3']) {
     assert.ok(league.tracks[t], `tracks.${t} present`);
+    assert.equal(league.tracks[t].roster_size, 12, 'active roster size includes unevaluated entrants');
     assert.equal(league.tracks[t].standings.length, 3, 'top-3 standings per track');
   }
   assert.equal(league.tracks.L0.day_index, 10);

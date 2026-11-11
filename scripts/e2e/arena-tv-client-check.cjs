@@ -58,7 +58,14 @@ const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-client
       };
     });
 
-    await page.goto(CLIENT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.route('**/client_logic/index.js*', async route => {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      await route.continue();
+    });
+    const navigation = page.goto(CLIENT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForSelector('#controlsPanel', { state: 'attached' });
+    const earlyControlsPanelDisplay = await page.$eval('#controlsPanel', element => getComputedStyle(element).display);
+    await navigation;
     await page.waitForFunction(() => window.__arenaTvMessages.some(
       entry => entry.message?.type === 'arena-tv' && entry.message?.status === 'live',
     ), null, { timeout: 30000 });
@@ -101,7 +108,7 @@ const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-client
 
     const result = await page.evaluate(() => {
       const playerOnlyChrome = [
-        '#controlHintsOverlay', '#joinOnboarding', '#audioUnlockNudge', '#musicPlayer', '#tipsToast', '#joinProgressOverlay',
+        '#controlHintsOverlay', '#controlsPanel', '#settingsMenu', '#joinOnboarding', '#audioUnlockNudge', '#musicPlayer', '#tipsToast', '#joinProgressOverlay',
         '#hudMenuToggle', '#mobileCombatHud', '#mobileCombatHud .mobile-combat-hud__stats',
         '#mobileCombatHud .mobile-combat-hud__objective', '#connectionStatus',
         '#combatHud', '#combatRadialHud', '#combatMomentum', '#deathMomentBanner', '#deathRecap',
@@ -145,6 +152,7 @@ const SCREENSHOT_PATH = process.env.ARENA_TV_SCREENSHOT || '/tmp/arena-tv-client
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: false });
     console.log('screenshot:', SCREENSHOT_PATH);
     assert.deepEqual(errors, [], 'broadcast client produced page errors');
+    assert.equal(earlyControlsPanelDisplay, 'none', 'controls panel must be hidden before live initialization too');
     assert.equal(result.overlayExists, true, 'Arena TV overlay is missing');
     assert.equal(result.autoReconnectEnabled, true, 'broadcast auto-reconnect must stay enabled');
     assert.ok(result.scoreboardText.length > 0, 'scoreboard text is empty');
