@@ -1,6 +1,6 @@
 # Continuous Model League — Cutover Runbook
 
-**Date:** 2026-08-24 · **Status:** LIVE since 2026-08-26 (weekly supervisor disabled, rollback path below)
+**Date:** 2026-08-24 · **Status:** LIVE since 2026-08-26 (weekly supervisor masked since 2026-11-12, rollback path below)
 **League supervisor:** `scripts/arena/continuous_league.mjs` (schema v2, multi-track amendment)
 **Amendment spec:** `docs/superpowers/specs/2026-08-24-continuous-league-multitrack-amendment.md`
 
@@ -67,6 +67,9 @@ live mode and retires the weekly supervisor.
 1. **Freeze the weekly league:**
    `systemctl --user stop massive-game-arena-weekly.service && systemctl --user disable massive-game-arena-weekly.service`
    (Its state under `artifacts/arena/weekly-supervisor/` is untouched — rollback path.)
+   A disabled unit can still be started manually, so production also masks it:
+   preserve the unit file, then `systemctl --user mask --now massive-game-arena-weekly.service`.
+   Masking refuses future manual starts as well as automatic starts.
 2. **Seed the live league from the shadow league** (keeps shadow ratings/history):
    `cp -a artifacts/arena/continuous-shadow artifacts/arena/continuous`
    (or re-run `node scripts/arena/continuous/bootstrap_from_weekly.mjs` against a
@@ -94,8 +97,23 @@ live mode and retires the weekly supervisor.
 
 ## Rollback
 
-`systemctl --user disable --now massive-game-continuous-league.timer &&
-systemctl --user enable --now massive-game-arena-weekly.service`
+First quiesce every continuous publisher. Disabling a timer does not stop an
+already-running oneshot service, and the daily media build also republishes
+continuous ratings:
+
+`systemctl --user disable --now massive-game-continuous-league.timer massive-game-media-daily.timer arena-highlights.timer`
+`systemctl --user stop massive-game-continuous-league.service massive-game-media-daily.service arena-highlights.service`
+
+Verify all three services are inactive. Do not run `build_model_pages.mjs`
+with the continuous overlay during rollback: it would overwrite the weekly
+ratings file again. Keep media publishing paused until a weekly-compatible
+page-publishing path is deliberately restored.
+
+Then restore the weekly supervisor:
+
+`systemctl --user unmask massive-game-arena-weekly.service`
+`cp artifacts/arena/maintenance/2026-11-12-weekly-mask/massive-game-arena-weekly.service ~/.config/systemd/user/massive-game-arena-weekly.service`
+`systemctl --user daemon-reload && systemctl --user enable --now massive-game-arena-weekly.service`
 
 The weekly supervisor resumes from its frozen state exactly where it
 stopped; the continuous league's state dirs are left intact for inspection.
