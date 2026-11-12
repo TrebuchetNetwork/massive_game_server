@@ -2,8 +2,8 @@
   "schema_version": 1,
   "benchmark": "intervention-lift",
   "league_id": "cml-20260824-ce1898c6",
-  "day_index": 58,
-  "generated_at": "2026-08-25T23:56:50.953Z",
+  "day_index": 59,
+  "generated_at": "2026-11-12T11:53:58.302Z",
   "min_group_n": 5,
   "methodology": {
     "summary": "Cross-track rating deltas against each model's own L0 zero-shot baseline, with a never-revised control group subtracting field-composition effects.",
@@ -18,23 +18,23 @@
   },
   "aggregates": {
     "l2": {
-      "revised_n": 74,
-      "revised_median": 2.05,
+      "revised_n": 75,
+      "revised_median": 2.04,
       "control_n": 4,
-      "control_median": 3.26,
-      "net": -1.21,
+      "control_median": 3.24,
+      "net": -1.19,
       "provisional": true
     },
     "l3": {
-      "revised_n": 73,
-      "revised_median": 1.38,
+      "revised_n": 74,
+      "revised_median": 1.34,
       "control_n": 4,
       "control_median": 0.29,
-      "net": 1.09,
+      "net": 1.05,
       "provisional": true
     },
-    "models_total": 92,
-    "revised_total": 75,
+    "models_total": 93,
+    "revised_total": 76,
     "control_total": 17
   },
   "rows": [
@@ -48,16 +48,16 @@
         "color": "#60a5fa"
       },
       "l0": 16.02,
-      "l1": 50.58,
-      "l2": 50.88,
-      "l3": 52.18,
+      "l1": 50.51,
+      "l2": 50.84,
+      "l3": 51.64,
       "l2_version": 2,
       "l3_version": 7,
       "retired_in": [
         "L0"
       ],
-      "l2_lift": 34.86,
-      "l3_lift": 36.16,
+      "l2_lift": 34.82,
+      "l3_lift": 35.62,
       "revised": true,
       "field_control": false
     },
@@ -73,7 +73,7 @@
       "l0": 24.88,
       "l1": 22.92,
       "l2": 29.24,
-      "l3": 48.13,
+      "l3": 50.06,
       "l2_version": 2,
       "l3_version": 2,
       "retired_in": [
@@ -82,7 +82,28 @@
         "L2"
       ],
       "l2_lift": 4.36,
-      "l3_lift": 23.25,
+      "l3_lift": 25.18,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "baidu/ernie-light-dt-1.0-intl-20261110",
+      "model_id": "baidu/ernie-light-dt-1.0-intl",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 32.99,
+      "l1": 27.78,
+      "l2": 42.71,
+      "l3": 57.29,
+      "l2_version": 2,
+      "l3_version": 1,
+      "retired_in": [],
+      "l2_lift": 9.72,
+      "l3_lift": 24.3,
       "revised": true,
       "field_control": false
     },
@@ -97,40 +118,16 @@
       },
       "l0": 26.16,
       "l1": 23.09,
-      "l2": 49.63,
-      "l3": 49.02,
+      "l2": 49.55,
+      "l3": 49.31,
       "l2_version": 3,
       "l3_version": 6,
       "retired_in": [
         "L0",
         "L1"
       ],
-      "l2_lift": 23.47,
-      "l3_lift": 22.86,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "~openai/gpt-terra-latest",
-      "model_id": "~openai/gpt-terra-latest",
-      "mascot": {
-        "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
-      },
-      "l0": 27.89,
-      "l1": 24.13,
-      "l2": 49.87,
-      "l3": 49.61,
-      "l2_version": 3,
-      "l3_version": 7,
-      "retired_in": [
-        "L0",
-        "L1"
-      ],
-      "l2_lift": 21.98,
-      "l3_lift": 21.72,
+      "l2_lift": 23.39,
+      "l3_lift": 23.15,
       "revised": true,
       "field_control": false
     },
@@ -157,6 +154,30 @@
       ],
       "l2_lift": 14.21,
       "l3_lift": 21.64,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "~openai/gpt-terra-latest",
+      "model_id": "~openai/gpt-terra-latest",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 27.89,
+      "l1": 24.13,
+      "l2": 50.06,
+      "l3": 49.49,
+      "l2_version": 3,
+      "l3_version": 7,
+      "retired_in": [
+        "L0",
+        "L1"
+      ],
+      "l2_lift": 22.17,
+      "l3_lift": 21.6,
       "revised": true,
       "field_control": false
     },
@@ -249,7 +270,7 @@
       },
       "l0": 22.48,
       "l1": 18.52,
-      "l2": 48.89,
+      "l2": 48.78,
       "l3": 34.38,
       "l2_version": 2,
       "l3_version": 2,
@@ -258,7 +279,7 @@
         "L1",
         "L3"
       ],
-      "l2_lift": 26.41,
+      "l2_lift": 26.3,
       "l3_lift": 11.9,
       "revised": true,
       "field_control": false
@@ -326,7 +347,7 @@
       },
       "l0": 35.42,
       "l1": 49.51,
-      "l2": 50.17,
+      "l2": 50.09,
       "l3": 46.88,
       "l2_version": 3,
       "l3_version": 3,
@@ -335,7 +356,7 @@
         "L1",
         "L3"
       ],
-      "l2_lift": 14.75,
+      "l2_lift": 14.67,
       "l3_lift": 11.46,
       "revised": true,
       "field_control": false
@@ -352,7 +373,7 @@
       "l0": 39.24,
       "l1": 45.95,
       "l2": 42.82,
-      "l3": 48.84,
+      "l3": 49.35,
       "l2_version": 3,
       "l3_version": 3,
       "retired_in": [
@@ -361,30 +382,7 @@
         "L2"
       ],
       "l2_lift": 3.58,
-      "l3_lift": 9.6,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "stealth/crouton-alpha",
-      "model_id": "stealth/crouton-alpha",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 45.14,
-      "l1": 52.28,
-      "l2": 52.38,
-      "l3": 53.97,
-      "l2_version": 3,
-      "l3_version": 2,
-      "retired_in": [
-        "L0"
-      ],
-      "l2_lift": 7.24,
-      "l3_lift": 8.83,
+      "l3_lift": 10.11,
       "revised": true,
       "field_control": false
     },
@@ -467,31 +465,6 @@
       "field_control": false
     },
     {
-      "slug": "openai/gpt-4o-mini",
-      "model_id": "openai/gpt-4o-mini",
-      "mascot": {
-        "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
-      },
-      "l0": 38.48,
-      "l1": 41.24,
-      "l2": 42.2,
-      "l3": 46.57,
-      "l2_version": 3,
-      "l3_version": 9,
-      "retired_in": [
-        "L0",
-        "L1",
-        "L2"
-      ],
-      "l2_lift": 3.72,
-      "l3_lift": 8.09,
-      "revised": true,
-      "field_control": false
-    },
-    {
       "slug": "tencent/hy3-20260706",
       "model_id": "tencent/hy3",
       "mascot": {
@@ -503,7 +476,7 @@
       "l0": 42.92,
       "l1": 30.56,
       "l2": 45.94,
-      "l3": 50.93,
+      "l3": 50.82,
       "l2_version": 1,
       "l3_version": 9,
       "retired_in": [
@@ -512,7 +485,33 @@
         "L2"
       ],
       "l2_lift": 3.02,
-      "l3_lift": 8.01,
+      "l3_lift": 7.9,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-4o-mini",
+      "model_id": "openai/gpt-4o-mini",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 38.48,
+      "l1": 41.24,
+      "l2": 42.2,
+      "l3": 46.32,
+      "l2_version": 3,
+      "l3_version": 9,
+      "retired_in": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "l2_lift": 3.72,
+      "l3_lift": 7.84,
       "revised": true,
       "field_control": false
     },
@@ -551,15 +550,38 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 51.15,
-      "l1": 51.33,
-      "l2": 53.04,
-      "l3": 57.69,
+      "l0": 51.02,
+      "l1": 51.42,
+      "l2": 52.9,
+      "l3": 57.47,
       "l2_version": 1,
       "l3_version": 7,
       "retired_in": [],
-      "l2_lift": 1.89,
-      "l3_lift": 6.54,
+      "l2_lift": 1.88,
+      "l3_lift": 6.45,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "stealth/crouton-alpha",
+      "model_id": "stealth/crouton-alpha",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 45.14,
+      "l1": 49.18,
+      "l2": 50.78,
+      "l3": 51.35,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [
+        "L0"
+      ],
+      "l2_lift": 5.64,
+      "l3_lift": 6.21,
       "revised": true,
       "field_control": false
     },
@@ -676,15 +698,15 @@
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 51.6,
-      "l1": 51.47,
+      "l0": 51.26,
+      "l1": 52.05,
       "l2": 54.85,
-      "l3": 56.55,
+      "l3": 56.23,
       "l2_version": 3,
       "l3_version": 7,
       "retired_in": [],
-      "l2_lift": 3.25,
-      "l3_lift": 4.95,
+      "l2_lift": 3.59,
+      "l3_lift": 4.97,
       "revised": true,
       "field_control": false
     },
@@ -699,16 +721,16 @@
       },
       "l0": 45.04,
       "l1": 47.56,
-      "l2": 48.9,
-      "l3": 49.12,
+      "l2": 48.86,
+      "l3": 49.5,
       "l2_version": 2,
       "l3_version": 8,
       "retired_in": [
         "L0",
         "L1"
       ],
-      "l2_lift": 3.86,
-      "l3_lift": 4.08,
+      "l2_lift": 3.82,
+      "l3_lift": 4.46,
       "revised": true,
       "field_control": false
     },
@@ -721,15 +743,15 @@
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 58.61,
-      "l1": 57.89,
-      "l2": 59.61,
-      "l3": 61.97,
+      "l0": 58.33,
+      "l1": 57.93,
+      "l2": 59.64,
+      "l3": 62.08,
       "l2_version": 3,
       "l3_version": 4,
       "retired_in": [],
-      "l2_lift": 1,
-      "l3_lift": 3.36,
+      "l2_lift": 1.31,
+      "l3_lift": 3.75,
       "revised": true,
       "field_control": false
     },
@@ -743,16 +765,16 @@
         "color": "#94a3b8"
       },
       "l0": 48.44,
-      "l1": 51.91,
-      "l2": 52.94,
-      "l3": 51.7,
+      "l1": 50.88,
+      "l2": 52.91,
+      "l3": 51.63,
       "l2_version": 2,
       "l3_version": 1,
       "retired_in": [
         "L0"
       ],
-      "l2_lift": 4.5,
-      "l3_lift": 3.26,
+      "l2_lift": 4.47,
+      "l3_lift": 3.19,
       "revised": true,
       "field_control": false
     },
@@ -818,16 +840,16 @@
         "color": "#60a5fa"
       },
       "l0": 49.19,
-      "l1": 49.94,
-      "l2": 51.4,
-      "l3": 52.13,
+      "l1": 49.97,
+      "l2": 51.32,
+      "l3": 52.05,
       "l2_version": 2,
       "l3_version": 8,
       "retired_in": [
         "L0"
       ],
-      "l2_lift": 2.21,
-      "l3_lift": 2.94,
+      "l2_lift": 2.13,
+      "l3_lift": 2.86,
       "revised": true,
       "field_control": false
     },
@@ -843,7 +865,7 @@
       "l0": 48.07,
       "l1": 49.13,
       "l2": 46.27,
-      "l3": 50.61,
+      "l3": 50.88,
       "l2_version": 3,
       "l3_version": 7,
       "retired_in": [
@@ -852,6 +874,29 @@
         "L2"
       ],
       "l2_lift": -1.8,
+      "l3_lift": 2.81,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-5.6-sol-20260709",
+      "model_id": "openai/gpt-5.6-sol",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 49.71,
+      "l1": 50.38,
+      "l2": 50.91,
+      "l3": 52.25,
+      "l2_version": 2,
+      "l3_version": 8,
+      "retired_in": [
+        "L0"
+      ],
+      "l2_lift": 1.2,
       "l3_lift": 2.54,
       "revised": true,
       "field_control": false
@@ -867,39 +912,16 @@
       },
       "l0": 47.64,
       "l1": 48.05,
-      "l2": 51.04,
-      "l3": 50.13,
+      "l2": 51.37,
+      "l3": 49.89,
       "l2_version": 3,
       "l3_version": 7,
       "retired_in": [
         "L0",
         "L1"
       ],
-      "l2_lift": 3.4,
-      "l3_lift": 2.49,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "openai/gpt-5.6-sol-20260709",
-      "model_id": "openai/gpt-5.6-sol",
-      "mascot": {
-        "key": null,
-        "emoji": "🤖",
-        "title": "Rookie",
-        "color": "#94a3b8"
-      },
-      "l0": 49.71,
-      "l1": 50.23,
-      "l2": 51.15,
-      "l3": 52.13,
-      "l2_version": 2,
-      "l3_version": 8,
-      "retired_in": [
-        "L0"
-      ],
-      "l2_lift": 1.44,
-      "l3_lift": 2.42,
+      "l2_lift": 3.73,
+      "l3_lift": 2.25,
       "revised": true,
       "field_control": false
     },
@@ -914,16 +936,17 @@
       },
       "l0": 43.14,
       "l1": 39.93,
-      "l2": 45.66,
+      "l2": 47.01,
       "l3": 44.97,
       "l2_version": 1,
       "l3_version": 2,
       "retired_in": [
         "L0",
         "L1",
+        "L2",
         "L3"
       ],
-      "l2_lift": 2.52,
+      "l2_lift": 3.87,
       "l3_lift": 1.83,
       "revised": true,
       "field_control": false
@@ -937,15 +960,15 @@
         "title": "Sage",
         "color": "#a78bfa"
       },
-      "l0": 50.23,
-      "l1": 50.43,
-      "l2": 52.48,
-      "l3": 51.61,
+      "l0": 50.15,
+      "l1": 50.41,
+      "l2": 52.44,
+      "l3": 51.49,
       "l2_version": 1,
       "l3_version": 8,
       "retired_in": [],
-      "l2_lift": 2.25,
-      "l3_lift": 1.38,
+      "l2_lift": 2.29,
+      "l3_lift": 1.34,
       "revised": true,
       "field_control": false
     },
@@ -961,7 +984,7 @@
       "l0": 48.01,
       "l1": 34.6,
       "l2": 46.92,
-      "l3": 49.39,
+      "l3": 49.34,
       "l2_version": 1,
       "l3_version": 8,
       "retired_in": [
@@ -970,7 +993,7 @@
         "L2"
       ],
       "l2_lift": -1.09,
-      "l3_lift": 1.38,
+      "l3_lift": 1.33,
       "revised": true,
       "field_control": false
     },
@@ -1009,15 +1032,15 @@
         "title": "Surge",
         "color": "#38bdf8"
       },
-      "l0": 50.08,
-      "l1": 49.96,
-      "l2": 50.9,
-      "l3": 51.21,
+      "l0": 50.21,
+      "l1": 50.14,
+      "l2": 50.87,
+      "l3": 51.11,
       "l2_version": 1,
       "l3_version": 9,
       "retired_in": [],
-      "l2_lift": 0.82,
-      "l3_lift": 1.13,
+      "l2_lift": 0.66,
+      "l3_lift": 0.9,
       "revised": true,
       "field_control": false
     },
@@ -1030,15 +1053,36 @@
         "title": "Surge",
         "color": "#38bdf8"
       },
-      "l0": 50.31,
-      "l1": 50.47,
-      "l2": 51.05,
-      "l3": 51.1,
+      "l0": 50.38,
+      "l1": 50.28,
+      "l2": 51.14,
+      "l3": 51.21,
       "l2_version": 1,
       "l3_version": 8,
       "retired_in": [],
-      "l2_lift": 0.74,
-      "l3_lift": 0.79,
+      "l2_lift": 0.76,
+      "l3_lift": 0.83,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
+      "model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "mascot": {
+        "key": "nvidia/nemotron-3-ultra",
+        "emoji": "🦾",
+        "title": "Titan",
+        "color": "#76b900"
+      },
+      "l0": 51.68,
+      "l1": 51.31,
+      "l2": 52.75,
+      "l3": 52.44,
+      "l2_version": 1,
+      "l3_version": 8,
+      "retired_in": [],
+      "l2_lift": 1.07,
+      "l3_lift": 0.76,
       "revised": true,
       "field_control": false
     },
@@ -1052,8 +1096,8 @@
         "color": "#94a3b8"
       },
       "l0": 44.33,
-      "l1": 50.06,
-      "l2": 50.85,
+      "l1": 49.75,
+      "l2": 50.8,
       "l3": 44.91,
       "l2_version": 1,
       "l3_version": 1,
@@ -1061,31 +1105,10 @@
         "L0",
         "L3"
       ],
-      "l2_lift": 6.52,
+      "l2_lift": 6.47,
       "l3_lift": 0.58,
       "revised": false,
       "field_control": true
-    },
-    {
-      "slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
-      "model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
-      "mascot": {
-        "key": "nvidia/nemotron-3-ultra",
-        "emoji": "🦾",
-        "title": "Titan",
-        "color": "#76b900"
-      },
-      "l0": 51.54,
-      "l1": 51.25,
-      "l2": 52.71,
-      "l3": 52.07,
-      "l2_version": 1,
-      "l3_version": 8,
-      "retired_in": [],
-      "l2_lift": 1.17,
-      "l3_lift": 0.53,
-      "revised": true,
-      "field_control": false
     },
     {
       "slug": "openai/gpt-5.6-terra-20260709",
@@ -1096,36 +1119,15 @@
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 49.99,
-      "l1": 50.26,
-      "l2": 50.17,
-      "l3": 50.46,
+      "l0": 50.13,
+      "l1": 50.31,
+      "l2": 50.06,
+      "l3": 50.44,
       "l2_version": 2,
       "l3_version": 8,
       "retired_in": [],
-      "l2_lift": 0.18,
-      "l3_lift": 0.47,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "moonshotai/kimi-k3.1-pro-20261023",
-      "model_id": "moonshotai/kimi-k3.1-pro",
-      "mascot": {
-        "key": null,
-        "emoji": "🛰️",
-        "title": "Orbit",
-        "color": "#60a5fa"
-      },
-      "l0": 50.66,
-      "l1": 35.76,
-      "l2": 51.79,
-      "l3": 51.02,
-      "l2_version": 3,
-      "l3_version": 3,
-      "retired_in": [],
-      "l2_lift": 1.13,
-      "l3_lift": 0.36,
+      "l2_lift": -0.07,
+      "l3_lift": 0.31,
       "revised": true,
       "field_control": false
     },
@@ -1156,13 +1158,36 @@
       "field_control": false
     },
     {
-      "slug": "baidu/ernie-light-dt-1.0-intl-20261110",
-      "model_id": "baidu/ernie-light-dt-1.0-intl",
+      "slug": "deepseek/deepseek-v4.1-flash-20261017",
+      "model_id": "deepseek/deepseek-v4.1-flash-1017",
       "mascot": {
         "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
+      },
+      "l0": 50.54,
+      "l1": 49.62,
+      "l2": 44.18,
+      "l3": 50.57,
+      "l2_version": 2,
+      "l3_version": 4,
+      "retired_in": [
+        "L2"
+      ],
+      "l2_lift": -6.36,
+      "l3_lift": 0.03,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-4-carbon-20261110",
+      "model_id": "google/gemini-4-carbon",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
       },
       "l0": 50,
       "l1": 50,
@@ -1177,70 +1202,23 @@
       "field_control": true
     },
     {
-      "slug": "deepseek/deepseek-v4.1-flash-20261017",
-      "model_id": "deepseek/deepseek-v4.1-flash-1017",
+      "slug": "moonshotai/kimi-k3.1-pro-20261023",
+      "model_id": "moonshotai/kimi-k3.1-pro",
       "mascot": {
         "key": null,
         "emoji": "🛰️",
         "title": "Orbit",
         "color": "#60a5fa"
       },
-      "l0": 50.53,
-      "l1": 48.47,
-      "l2": 44.18,
-      "l3": 50.48,
-      "l2_version": 2,
-      "l3_version": 4,
-      "retired_in": [
-        "L2"
-      ],
-      "l2_lift": -6.35,
-      "l3_lift": -0.05,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "z-ai/glm-5.3-flash-20260826",
-      "model_id": "z-ai/glm-5.3-flash",
-      "mascot": {
-        "key": "z-ai/glm-5.3-flash",
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
-      },
-      "l0": 49.5,
-      "l1": 34.2,
-      "l2": 47.15,
-      "l3": 49.22,
-      "l2_version": 2,
-      "l3_version": 9,
-      "retired_in": [
-        "L1",
-        "L2"
-      ],
-      "l2_lift": -2.35,
-      "l3_lift": -0.28,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "inception/mercury-2.5-20260908",
-      "model_id": "inception/mercury-2.5",
-      "mascot": {
-        "key": null,
-        "emoji": "🤖",
-        "title": "Rookie",
-        "color": "#94a3b8"
-      },
-      "l0": 51.13,
-      "l1": 51.87,
-      "l2": 53.35,
-      "l3": 50.81,
-      "l2_version": 2,
-      "l3_version": 5,
+      "l0": 50.58,
+      "l1": 42.01,
+      "l2": 51.17,
+      "l3": 50.46,
+      "l2_version": 3,
+      "l3_version": 3,
       "retired_in": [],
-      "l2_lift": 2.22,
-      "l3_lift": -0.32,
+      "l2_lift": 0.59,
+      "l3_lift": -0.12,
       "revised": true,
       "field_control": false
     },
@@ -1253,17 +1231,17 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 51.03,
+      "l0": 51.2,
       "l1": 48.67,
-      "l2": 51.26,
-      "l3": 50.64,
+      "l2": 51.22,
+      "l3": 50.97,
       "l2_version": 2,
       "l3_version": 8,
       "retired_in": [
         "L1"
       ],
-      "l2_lift": 0.23,
-      "l3_lift": -0.39,
+      "l2_lift": 0.02,
+      "l3_lift": -0.23,
       "revised": true,
       "field_control": false
     },
@@ -1302,15 +1280,15 @@
         "title": "Prism",
         "color": "#4285f4"
       },
-      "l0": 50.07,
-      "l1": 49.78,
-      "l2": 48.73,
-      "l3": 49.49,
+      "l0": 49.81,
+      "l1": 49.65,
+      "l2": 48.75,
+      "l3": 49.27,
       "l2_version": 2,
       "l3_version": 8,
       "retired_in": [],
-      "l2_lift": -1.34,
-      "l3_lift": -0.58,
+      "l2_lift": -1.06,
+      "l3_lift": -0.54,
       "revised": true,
       "field_control": false
     },
@@ -1376,14 +1354,35 @@
         "color": "#c084fc"
       },
       "l0": 50.12,
-      "l1": 50.31,
-      "l2": 49.8,
-      "l3": 49.2,
+      "l1": 50.43,
+      "l2": 50.02,
+      "l3": 49.3,
       "l2_version": 2,
       "l3_version": 8,
       "retired_in": [],
-      "l2_lift": -0.32,
-      "l3_lift": -0.92,
+      "l2_lift": -0.1,
+      "l3_lift": -0.82,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "inception/mercury-2.5-20260908",
+      "model_id": "inception/mercury-2.5",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      },
+      "l0": 51.5,
+      "l1": 51.25,
+      "l2": 53.18,
+      "l3": 50.48,
+      "l2_version": 2,
+      "l3_version": 5,
+      "retired_in": [],
+      "l2_lift": 1.68,
+      "l3_lift": -1.02,
       "revised": true,
       "field_control": false
     },
@@ -1396,39 +1395,15 @@
         "title": "Rookie",
         "color": "#94a3b8"
       },
-      "l0": 58.91,
-      "l1": 56.78,
-      "l2": 58.19,
-      "l3": 57.67,
+      "l0": 58.74,
+      "l1": 56.61,
+      "l2": 58.06,
+      "l3": 57.58,
       "l2_version": 3,
       "l3_version": 8,
       "retired_in": [],
-      "l2_lift": -0.72,
-      "l3_lift": -1.24,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "google/gemma-4-26b-a4b-it-20260403",
-      "model_id": "google/gemma-4-26b-a4b-it",
-      "mascot": {
-        "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
-      },
-      "l0": 49.42,
-      "l1": 46.96,
-      "l2": 47.21,
-      "l3": 48.12,
-      "l2_version": 3,
-      "l3_version": 8,
-      "retired_in": [
-        "L1",
-        "L2"
-      ],
-      "l2_lift": -2.21,
-      "l3_lift": -1.3,
+      "l2_lift": -0.68,
+      "l3_lift": -1.16,
       "revised": true,
       "field_control": false
     },
@@ -1459,23 +1434,50 @@
       "field_control": false
     },
     {
-      "slug": "openai/gpt-6.1-terra-20261026",
-      "model_id": "openai/gpt-6.1-terra",
+      "slug": "google/gemma-4-26b-a4b-it-20260403",
+      "model_id": "google/gemma-4-26b-a4b-it",
       "mascot": {
         "key": null,
-        "emoji": "🦅",
-        "title": "Talon",
-        "color": "#34d399"
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
       },
-      "l0": 49.19,
-      "l1": 49.98,
-      "l2": 50.76,
-      "l3": 47.73,
+      "l0": 49.46,
+      "l1": 46.96,
+      "l2": 47.21,
+      "l3": 48.13,
       "l2_version": 3,
-      "l3_version": 3,
-      "retired_in": [],
-      "l2_lift": 1.57,
-      "l3_lift": -1.46,
+      "l3_version": 8,
+      "retired_in": [
+        "L1",
+        "L2"
+      ],
+      "l2_lift": -2.25,
+      "l3_lift": -1.33,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "z-ai/glm-5.3-flash-20260826",
+      "model_id": "z-ai/glm-5.3-flash",
+      "mascot": {
+        "key": "z-ai/glm-5.3-flash",
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      },
+      "l0": 50.56,
+      "l1": 34.2,
+      "l2": 47.15,
+      "l3": 49.06,
+      "l2_version": 2,
+      "l3_version": 9,
+      "retired_in": [
+        "L1",
+        "L2"
+      ],
+      "l2_lift": -3.41,
+      "l3_lift": -1.5,
       "revised": true,
       "field_control": false
     },
@@ -1488,59 +1490,15 @@
         "title": "Orbit",
         "color": "#60a5fa"
       },
-      "l0": 50.13,
-      "l1": 50.26,
-      "l2": 52.99,
-      "l3": 48.57,
+      "l0": 50.14,
+      "l1": 50.17,
+      "l2": 52.73,
+      "l3": 48.5,
       "l2_version": 2,
       "l3_version": 8,
       "retired_in": [],
-      "l2_lift": 2.86,
-      "l3_lift": -1.56,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "google/gemini-3.1-pro-preview-20260219",
-      "model_id": "google/gemini-3.1-pro-preview",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 50.22,
-      "l1": 50.67,
-      "l2": 50.04,
-      "l3": 48.42,
-      "l2_version": 2,
-      "l3_version": 8,
-      "retired_in": [],
-      "l2_lift": -0.18,
-      "l3_lift": -1.8,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "google/gemini-3-flash-preview-20251217",
-      "model_id": "google/gemini-3-flash-preview",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "l0": 50.2,
-      "l1": 50.22,
-      "l2": 50.01,
-      "l3": 48.05,
-      "l2_version": 2,
-      "l3_version": 6,
-      "retired_in": [
-        "L3"
-      ],
-      "l2_lift": -0.19,
-      "l3_lift": -2.15,
+      "l2_lift": 2.59,
+      "l3_lift": -1.64,
       "revised": true,
       "field_control": false
     },
@@ -1553,8 +1511,8 @@
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 50.62,
-      "l1": 50.82,
+      "l0": 50.22,
+      "l1": 50.96,
       "l2": 45.38,
       "l3": 48.29,
       "l2_version": 3,
@@ -1563,8 +1521,75 @@
         "L2",
         "L3"
       ],
-      "l2_lift": -5.24,
-      "l3_lift": -2.33,
+      "l2_lift": -4.84,
+      "l3_lift": -1.93,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-3-flash-preview-20251217",
+      "model_id": "google/gemini-3-flash-preview",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 50.18,
+      "l1": 50.33,
+      "l2": 49.92,
+      "l3": 48.05,
+      "l2_version": 2,
+      "l3_version": 6,
+      "retired_in": [
+        "L3"
+      ],
+      "l2_lift": -0.26,
+      "l3_lift": -2.13,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "openai/gpt-6.1-terra-20261026",
+      "model_id": "openai/gpt-6.1-terra",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      },
+      "l0": 49.35,
+      "l1": 50.2,
+      "l2": 51.39,
+      "l3": 47.14,
+      "l2_version": 3,
+      "l3_version": 3,
+      "retired_in": [
+        "L0"
+      ],
+      "l2_lift": 2.04,
+      "l3_lift": -2.21,
+      "revised": true,
+      "field_control": false
+    },
+    {
+      "slug": "google/gemini-3.1-pro-preview-20260219",
+      "model_id": "google/gemini-3.1-pro-preview",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 50.62,
+      "l1": 50.36,
+      "l2": 49.71,
+      "l3": 48.21,
+      "l2_version": 2,
+      "l3_version": 8,
+      "retired_in": [],
+      "l2_lift": -0.91,
+      "l3_lift": -2.41,
       "revised": true,
       "field_control": false
     },
@@ -1577,7 +1602,7 @@
         "title": "Rookie",
         "color": "#94a3b8"
       },
-      "l0": 49.97,
+      "l0": 50.22,
       "l1": 48.48,
       "l2": 47.09,
       "l3": 47.3,
@@ -1588,8 +1613,8 @@
         "L2",
         "L3"
       ],
-      "l2_lift": -2.88,
-      "l3_lift": -2.67,
+      "l2_lift": -3.13,
+      "l3_lift": -2.92,
       "revised": true,
       "field_control": false
     },
@@ -1602,38 +1627,17 @@
         "title": "Rookie",
         "color": "#94a3b8"
       },
-      "l0": 50.06,
-      "l1": 49.99,
-      "l2": 49.93,
+      "l0": 50.2,
+      "l1": 49.88,
+      "l2": 49.9,
       "l3": 47.24,
       "l2_version": 2,
       "l3_version": 6,
       "retired_in": [
         "L3"
       ],
-      "l2_lift": -0.13,
-      "l3_lift": -2.82,
-      "revised": true,
-      "field_control": false
-    },
-    {
-      "slug": "unbiased/pareto-26.10-20261015",
-      "model_id": "unbiased/pareto-26.10",
-      "mascot": {
-        "key": null,
-        "emoji": "🦅",
-        "title": "Talon",
-        "color": "#34d399"
-      },
-      "l0": 55.63,
-      "l1": 54.4,
-      "l2": 52.94,
-      "l3": 52.34,
-      "l2_version": 3,
-      "l3_version": 4,
-      "retired_in": [],
-      "l2_lift": -2.69,
-      "l3_lift": -3.29,
+      "l2_lift": -0.3,
+      "l3_lift": -2.96,
       "revised": true,
       "field_control": false
     },
@@ -1664,25 +1668,23 @@
       "field_control": false
     },
     {
-      "slug": "anthropic/claude-4.6-opus-20260205",
-      "model_id": "anthropic/claude-opus-4.6",
+      "slug": "unbiased/pareto-26.10-20261015",
+      "model_id": "unbiased/pareto-26.10",
       "mascot": {
         "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
       },
-      "l0": 49.74,
-      "l1": 49.84,
-      "l2": 45.83,
-      "l3": null,
-      "l2_version": 2,
-      "l3_version": null,
-      "retired_in": [
-        "L2"
-      ],
-      "l2_lift": -3.91,
-      "l3_lift": null,
+      "l0": 55.4,
+      "l1": 54.29,
+      "l2": 53.68,
+      "l3": 51.68,
+      "l2_version": 3,
+      "l3_version": 4,
+      "retired_in": [],
+      "l2_lift": -1.72,
+      "l3_lift": -3.72,
       "revised": true,
       "field_control": false
     },
@@ -1695,39 +1697,38 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 67.54,
-      "l1": 66.56,
-      "l2": 52.55,
-      "l3": 63.5,
+      "l0": 67.73,
+      "l1": 66.76,
+      "l2": 52.91,
+      "l3": 63.72,
       "l2_version": 3,
       "l3_version": 3,
       "retired_in": [],
-      "l2_lift": -14.99,
-      "l3_lift": -4.04,
+      "l2_lift": -14.82,
+      "l3_lift": -4.01,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "qwen/qwen3.8-max-20260902",
-      "model_id": "qwen/qwen3.8-max-0902",
+      "slug": "anthropic/claude-4.6-opus-20260205",
+      "model_id": "anthropic/claude-opus-4.6",
       "mascot": {
         "key": null,
         "emoji": "👾",
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 49.64,
-      "l1": 49.77,
-      "l2": 45.14,
-      "l3": 45.31,
-      "l2_version": 3,
-      "l3_version": 2,
+      "l0": 49.89,
+      "l1": 49.65,
+      "l2": 45.83,
+      "l3": null,
+      "l2_version": 2,
+      "l3_version": null,
       "retired_in": [
-        "L2",
-        "L3"
+        "L2"
       ],
-      "l2_lift": -4.5,
-      "l3_lift": -4.33,
+      "l2_lift": -4.06,
+      "l3_lift": null,
       "revised": true,
       "field_control": false
     },
@@ -1758,6 +1759,30 @@
       "field_control": false
     },
     {
+      "slug": "qwen/qwen3.8-max-20260902",
+      "model_id": "qwen/qwen3.8-max-0902",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "l0": 49.76,
+      "l1": 49.6,
+      "l2": 45.14,
+      "l3": 45.31,
+      "l2_version": 3,
+      "l3_version": 2,
+      "retired_in": [
+        "L2",
+        "L3"
+      ],
+      "l2_lift": -4.62,
+      "l3_lift": -4.45,
+      "revised": true,
+      "field_control": false
+    },
+    {
       "slug": "stepfun/step-3.7-flash-20260528",
       "model_id": "stepfun/step-3.7-flash",
       "mascot": {
@@ -1768,7 +1793,7 @@
       },
       "l0": 46.67,
       "l1": 46.43,
-      "l2": 48.09,
+      "l2": 48.1,
       "l3": 42.14,
       "l2_version": 2,
       "l3_version": 3,
@@ -1777,7 +1802,7 @@
         "L1",
         "L3"
       ],
-      "l2_lift": 1.42,
+      "l2_lift": 1.43,
       "l3_lift": -4.53,
       "revised": true,
       "field_control": false
@@ -1791,7 +1816,7 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 50.46,
+      "l0": 50.17,
       "l1": 49.31,
       "l2": 41.12,
       "l3": 45.09,
@@ -1802,8 +1827,8 @@
         "L2",
         "L3"
       ],
-      "l2_lift": -9.34,
-      "l3_lift": -5.37,
+      "l2_lift": -9.05,
+      "l3_lift": -5.08,
       "revised": true,
       "field_control": false
     },
@@ -1816,15 +1841,15 @@
         "title": "Orbit",
         "color": "#60a5fa"
       },
-      "l0": 75.55,
-      "l1": 76.69,
-      "l2": 60.58,
-      "l3": 70.12,
+      "l0": 75.42,
+      "l1": 76.46,
+      "l2": 60.47,
+      "l3": 69.88,
       "l2_version": 3,
       "l3_version": 6,
       "retired_in": [],
-      "l2_lift": -14.97,
-      "l3_lift": -5.43,
+      "l2_lift": -14.95,
+      "l3_lift": -5.54,
       "revised": true,
       "field_control": false
     },
@@ -1837,15 +1862,15 @@
         "title": "Talon",
         "color": "#34d399"
       },
-      "l0": 73.66,
-      "l1": 74.28,
-      "l2": 65.59,
-      "l3": 66.72,
+      "l0": 73.43,
+      "l1": 74.23,
+      "l2": 65.48,
+      "l3": 66.71,
       "l2_version": 3,
       "l3_version": 6,
       "retired_in": [],
-      "l2_lift": -8.07,
-      "l3_lift": -6.94,
+      "l2_lift": -7.95,
+      "l3_lift": -6.72,
       "revised": true,
       "field_control": false
     },
@@ -1858,17 +1883,17 @@
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 50.48,
-      "l1": 50.37,
-      "l2": 54.03,
+      "l0": 50.47,
+      "l1": 50.72,
+      "l2": 53.87,
       "l3": 43.13,
       "l2_version": 2,
       "l3_version": 2,
       "retired_in": [
         "L3"
       ],
-      "l2_lift": 3.55,
-      "l3_lift": -7.35,
+      "l2_lift": 3.4,
+      "l3_lift": -7.34,
       "revised": true,
       "field_control": false
     },
@@ -1883,7 +1908,7 @@
       },
       "l0": 38.79,
       "l1": 36.83,
-      "l2": 53.05,
+      "l2": 52.69,
       "l3": 26.69,
       "l2_version": 3,
       "l3_version": 1,
@@ -1892,22 +1917,22 @@
         "L1",
         "L3"
       ],
-      "l2_lift": 14.26,
+      "l2_lift": 13.9,
       "l3_lift": -12.1,
       "revised": true,
       "field_control": false
     },
     {
-      "slug": "deepseek/deepseek-v4.1-flash-20260910",
-      "model_id": "deepseek/deepseek-v4.1-flash",
+      "slug": "upstage/solar-pro4-20260810",
+      "model_id": "upstage/solar-pro4",
       "mascot": {
         "key": null,
-        "emoji": "🐺",
-        "title": "Wolfpack",
-        "color": "#facc15"
+        "emoji": "🛰️",
+        "title": "Orbit",
+        "color": "#60a5fa"
       },
-      "l0": 53.73,
-      "l1": 50.49,
+      "l0": 51.45,
+      "l1": null,
       "l2": null,
       "l3": null,
       "l2_version": null,
@@ -1919,16 +1944,16 @@
       "field_control": true
     },
     {
-      "slug": "anthropic/claude-opus-5.5-20260921",
-      "model_id": "anthropic/claude-opus-5.5",
+      "slug": "deepseek/deepseek-v4.1-flash-20260910",
+      "model_id": "deepseek/deepseek-v4.1-flash",
       "mascot": {
-        "key": "anthropic/claude-opus-5",
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
       },
-      "l0": 51.71,
-      "l1": 52.24,
+      "l0": 51.32,
+      "l1": 50.16,
       "l2": null,
       "l3": null,
       "l2_version": null,
@@ -1948,8 +1973,8 @@
         "title": "Talon",
         "color": "#34d399"
       },
-      "l0": 51.54,
-      "l1": 50.18,
+      "l0": 51.03,
+      "l1": 50.2,
       "l2": null,
       "l3": null,
       "l2_version": null,
@@ -1961,16 +1986,16 @@
       "field_control": true
     },
     {
-      "slug": "upstage/solar-pro4-20260810",
-      "model_id": "upstage/solar-pro4",
+      "slug": "anthropic/claude-opus-5.5-20260921",
+      "model_id": "anthropic/claude-opus-5.5",
       "mascot": {
-        "key": null,
-        "emoji": "🛰️",
-        "title": "Orbit",
-        "color": "#60a5fa"
+        "key": "anthropic/claude-opus-5",
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
       },
-      "l0": 51.52,
-      "l1": null,
+      "l0": 50.88,
+      "l1": 52,
       "l2": null,
       "l3": null,
       "l2_version": null,
@@ -1990,7 +2015,7 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 50.18,
+      "l0": 50.2,
       "l1": 49.32,
       "l2": null,
       "l3": null,
@@ -2013,8 +2038,8 @@
         "title": "Glitch",
         "color": "#c084fc"
       },
-      "l0": 50.13,
-      "l1": 49.9,
+      "l0": 49.64,
+      "l1": 50.07,
       "l2": null,
       "l3": null,
       "l2_version": null,
@@ -2058,7 +2083,7 @@
         "color": "#c084fc"
       },
       "l0": 49.36,
-      "l1": 51.23,
+      "l1": 51.18,
       "l2": null,
       "l3": null,
       "l2_version": null,
@@ -2129,13 +2154,14 @@
         "color": "#34d399"
       },
       "l0": 37.92,
-      "l1": 42.43,
+      "l1": 41.32,
       "l2": null,
       "l3": null,
       "l2_version": null,
       "l3_version": null,
       "retired_in": [
-        "L0"
+        "L0",
+        "L1"
       ],
       "l2_lift": null,
       "l3_lift": null,
@@ -2151,7 +2177,7 @@
         "title": "Wolfpack",
         "color": "#facc15"
       },
-      "l0": 17.88,
+      "l0": 17.25,
       "l1": null,
       "l2": null,
       "l3": null,

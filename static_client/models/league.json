@@ -1,121 +1,11 @@
 {
-  "day_index": 58,
+  "day_index": 59,
   "announcements": [
     {
-      "type": "retirement",
-      "at": "2026-11-11T10:23:33.628Z",
-      "track": "L0",
-      "slug": "google/gemini-omni-1.1-flash-20260911",
-      "mascot": {
-        "key": null,
-        "emoji": "🤖",
-        "title": "Rookie",
-        "color": "#94a3b8"
-      }
-    },
-    {
-      "type": "fresh_challenger",
-      "at": "2026-11-11T10:23:33.628Z",
-      "track": "L0",
-      "slug": "baidu/ernie-light-dt-1.0-intl-20261110",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      }
-    },
-    {
-      "type": "retirement",
-      "at": "2026-11-11T10:23:33.628Z",
-      "track": "L1",
-      "slug": "google/gemini-omni-1.1-flash-20260911",
-      "mascot": {
-        "key": null,
-        "emoji": "🤖",
-        "title": "Rookie",
-        "color": "#94a3b8"
-      }
-    },
-    {
-      "type": "fresh_challenger",
-      "at": "2026-11-11T10:23:33.628Z",
-      "track": "L1",
-      "slug": "baidu/ernie-light-dt-1.0-intl-20261110",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      }
-    },
-    {
-      "type": "retirement",
-      "at": "2026-11-11T10:23:33.628Z",
-      "track": "L2",
-      "slug": "google/gemini-omni-1.2-flash-20261105",
-      "mascot": {
-        "key": null,
-        "emoji": "🤖",
-        "title": "Rookie",
-        "color": "#94a3b8"
-      }
-    },
-    {
-      "type": "fresh_challenger",
-      "at": "2026-11-11T10:23:33.628Z",
-      "track": "L2",
-      "slug": "baidu/ernie-light-dt-1.0-intl-20261110",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      }
-    },
-    {
-      "type": "retirement",
-      "at": "2026-11-11T10:23:33.628Z",
-      "track": "L3",
-      "slug": "google/gemini-omni-1.1-flash-20260911",
-      "mascot": {
-        "key": null,
-        "emoji": "🤖",
-        "title": "Rookie",
-        "color": "#94a3b8"
-      }
-    },
-    {
-      "type": "fresh_challenger",
-      "at": "2026-11-11T10:23:33.628Z",
-      "track": "L3",
-      "slug": "baidu/ernie-light-dt-1.0-intl-20261110",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      }
-    },
-    {
       "type": "revision",
-      "at": "2026-11-09T10:24:21.570Z",
+      "at": "2026-11-12T10:24:14.795Z",
       "track": "L2",
-      "slug": "stealth/crouton-alpha",
-      "mascot": {
-        "key": null,
-        "emoji": "👾",
-        "title": "Glitch",
-        "color": "#c084fc"
-      },
-      "version": 3,
-      "outcome": "accepted"
-    },
-    {
-      "type": "revision",
-      "at": "2026-11-09T10:24:21.570Z",
-      "track": "L2",
-      "slug": "google/gemini-omni-1.2-flash-20261105",
+      "slug": "google/gemini-omni-1.1-flash-20260911",
       "mascot": {
         "key": null,
         "emoji": "🤖",
@@ -123,11 +13,172 @@
         "color": "#94a3b8"
       },
       "version": 2,
+      "outcome": "codegen_failed"
+    },
+    {
+      "type": "revision",
+      "at": "2026-11-12T10:24:14.795Z",
+      "track": "L2",
+      "slug": "baidu/ernie-light-dt-1.0-intl-20261110",
+      "mascot": {
+        "key": null,
+        "emoji": "👾",
+        "title": "Glitch",
+        "color": "#c084fc"
+      },
+      "version": 2,
       "outcome": "accepted"
+    },
+    {
+      "type": "retirement",
+      "at": "2026-11-12T10:23:33.624Z",
+      "track": "L0",
+      "slug": "openai/gpt-6.1-terra-20261026",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      }
+    },
+    {
+      "type": "fresh_challenger",
+      "at": "2026-11-12T10:23:33.624Z",
+      "track": "L0",
+      "slug": "google/gemini-4-carbon-20261110",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      }
+    },
+    {
+      "type": "retirement",
+      "at": "2026-11-12T10:23:33.624Z",
+      "track": "L1",
+      "slug": "openai/gpt-6-luna-20260922",
+      "mascot": {
+        "key": null,
+        "emoji": "🦅",
+        "title": "Talon",
+        "color": "#34d399"
+      }
+    },
+    {
+      "type": "fresh_challenger",
+      "at": "2026-11-12T10:23:33.624Z",
+      "track": "L1",
+      "slug": "google/gemini-4-carbon-20261110",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      }
+    },
+    {
+      "type": "retirement",
+      "at": "2026-11-12T10:23:33.624Z",
+      "track": "L2",
+      "slug": "google/gemini-omni-1.1-flash-20260911",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      }
+    },
+    {
+      "type": "fresh_challenger",
+      "at": "2026-11-12T10:23:33.624Z",
+      "track": "L2",
+      "slug": "google/gemini-4-carbon-20261110",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      }
+    },
+    {
+      "type": "retirement",
+      "at": "2026-11-12T10:23:33.624Z",
+      "track": "L3",
+      "slug": "openai/gpt-4o-mini",
+      "mascot": {
+        "key": null,
+        "emoji": "🐺",
+        "title": "Wolfpack",
+        "color": "#facc15"
+      }
+    },
+    {
+      "type": "fresh_challenger",
+      "at": "2026-11-12T10:23:33.624Z",
+      "track": "L3",
+      "slug": "google/gemini-4-carbon-20261110",
+      "mascot": {
+        "key": null,
+        "emoji": "🤖",
+        "title": "Rookie",
+        "color": "#94a3b8"
+      }
     }
   ],
   "tracks": {
     "L0": {
+      "day_index": 59,
+      "roster_size": 40,
+      "standings": [
+        {
+          "slug": "openai/gpt-6-astra-pro-20260903",
+          "mascot": {
+            "key": null,
+            "emoji": "🛰️",
+            "title": "Orbit",
+            "color": "#60a5fa"
+          },
+          "rating": 75.42,
+          "wins": 8602,
+          "losses": 2160,
+          "draws": 1910,
+          "submissions_used": 1,
+          "submissions_allowed": 1
+        },
+        {
+          "slug": "unbiased/pareto-20260917",
+          "mascot": {
+            "key": null,
+            "emoji": "🦅",
+            "title": "Talon",
+            "color": "#34d399"
+          },
+          "rating": 73.43,
+          "wins": 6458,
+          "losses": 1870,
+          "draws": 1464,
+          "submissions_used": 1,
+          "submissions_allowed": 1
+        },
+        {
+          "slug": "unbiased/pareto-26.9-20260917",
+          "mascot": {
+            "key": null,
+            "emoji": "👾",
+            "title": "Glitch",
+            "color": "#c084fc"
+          },
+          "rating": 67.73,
+          "wins": 2934,
+          "losses": 1096,
+          "draws": 1154,
+          "submissions_used": 1,
+          "submissions_allowed": 1
+        }
+      ]
+    },
+    "L1": {
       "day_index": 58,
       "roster_size": 40,
       "standings": [
@@ -139,10 +190,10 @@
             "title": "Orbit",
             "color": "#60a5fa"
           },
-          "rating": 75.55,
-          "wins": 8436,
-          "losses": 2108,
-          "draws": 1840,
+          "rating": 76.46,
+          "wins": 8266,
+          "losses": 1864,
+          "draws": 1966,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -154,10 +205,10 @@
             "title": "Talon",
             "color": "#34d399"
           },
-          "rating": 73.66,
-          "wins": 6302,
-          "losses": 1804,
-          "draws": 1398,
+          "rating": 74.23,
+          "wins": 6284,
+          "losses": 1678,
+          "draws": 1542,
           "submissions_used": 1,
           "submissions_allowed": 1
         },
@@ -169,68 +220,17 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 67.54,
-          "wins": 2766,
-          "losses": 1048,
-          "draws": 1082,
-          "submissions_used": 1,
-          "submissions_allowed": 1
-        }
-      ]
-    },
-    "L1": {
-      "day_index": 57,
-      "roster_size": 40,
-      "standings": [
-        {
-          "slug": "openai/gpt-6-astra-pro-20260903",
-          "mascot": {
-            "key": null,
-            "emoji": "🛰️",
-            "title": "Orbit",
-            "color": "#60a5fa"
-          },
-          "rating": 76.69,
-          "wins": 8102,
-          "losses": 1798,
-          "draws": 1908,
-          "submissions_used": 1,
-          "submissions_allowed": 1
-        },
-        {
-          "slug": "unbiased/pareto-20260917",
-          "mascot": {
-            "key": null,
-            "emoji": "🦅",
-            "title": "Talon",
-            "color": "#34d399"
-          },
-          "rating": 74.28,
-          "wins": 6102,
-          "losses": 1626,
-          "draws": 1488,
-          "submissions_used": 1,
-          "submissions_allowed": 1
-        },
-        {
-          "slug": "unbiased/pareto-26.9-20260917",
-          "mascot": {
-            "key": null,
-            "emoji": "👾",
-            "title": "Glitch",
-            "color": "#c084fc"
-          },
-          "rating": 66.56,
-          "wins": 2712,
-          "losses": 1090,
-          "draws": 1094,
+          "rating": 66.76,
+          "wins": 2886,
+          "losses": 1148,
+          "draws": 1150,
           "submissions_used": 1,
           "submissions_allowed": 1
         }
       ]
     },
     "L2": {
-      "day_index": 56,
+      "day_index": 57,
       "roster_size": 40,
       "standings": [
         {
@@ -241,10 +241,10 @@
             "title": "Talon",
             "color": "#34d399"
           },
-          "rating": 65.59,
-          "wins": 4824,
-          "losses": 2040,
-          "draws": 2064,
+          "rating": 65.48,
+          "wins": 4960,
+          "losses": 2106,
+          "draws": 2150,
           "submissions_used": 3,
           "submissions_allowed": 3
         },
@@ -256,10 +256,10 @@
             "title": "Orbit",
             "color": "#60a5fa"
           },
-          "rating": 60.58,
-          "wins": 5784,
-          "losses": 3346,
-          "draws": 2390,
+          "rating": 60.47,
+          "wins": 5904,
+          "losses": 3432,
+          "draws": 2472,
           "submissions_used": 3,
           "submissions_allowed": 3
         },
@@ -271,17 +271,17 @@
             "title": "Wolfpack",
             "color": "#facc15"
           },
-          "rating": 59.61,
-          "wins": 2522,
-          "losses": 1470,
-          "draws": 1480,
+          "rating": 59.64,
+          "wins": 2650,
+          "losses": 1540,
+          "draws": 1570,
           "submissions_used": 3,
           "submissions_allowed": 3
         }
       ]
     },
     "L3": {
-      "day_index": 56,
+      "day_index": 57,
       "roster_size": 40,
       "standings": [
         {
@@ -292,10 +292,10 @@
             "title": "Orbit",
             "color": "#60a5fa"
           },
-          "rating": 70.12,
-          "wins": 6608,
-          "losses": 1972,
-          "draws": 2940,
+          "rating": 69.88,
+          "wins": 6738,
+          "losses": 2044,
+          "draws": 3026,
           "submissions_used": 8,
           "submissions_allowed": 9
         },
@@ -307,10 +307,10 @@
             "title": "Talon",
             "color": "#34d399"
           },
-          "rating": 66.72,
-          "wins": 4488,
-          "losses": 1502,
-          "draws": 2938,
+          "rating": 66.71,
+          "wins": 4628,
+          "losses": 1548,
+          "draws": 3040,
           "submissions_used": 6,
           "submissions_allowed": 9
         },
@@ -322,10 +322,10 @@
             "title": "Glitch",
             "color": "#c084fc"
           },
-          "rating": 63.5,
-          "wins": 2326,
-          "losses": 1004,
-          "draws": 1566,
+          "rating": 63.72,
+          "wins": 2484,
+          "losses": 1062,
+          "draws": 1638,
           "submissions_used": 3,
           "submissions_allowed": 9
         }

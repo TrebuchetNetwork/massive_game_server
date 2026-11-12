@@ -1,52 +1,52 @@
 {
-  "claude-opus-5": {
+  "gpt-6.1-sol": {
     "emoji": "👾",
     "title": "Glitch",
     "color": "#c084fc"
   },
-  "nemotron-3-ultra-550b-a55b": {
-    "emoji": "🦾",
-    "title": "Titan",
-    "color": "#76b900"
+  "glm-5.3-flash": {
+    "emoji": "🐺",
+    "title": "Wolfpack",
+    "color": "#facc15"
   },
-  "deepseek-v4-flash": {
-    "emoji": "⚡",
-    "title": "Surge",
-    "color": "#38bdf8"
-  },
-  "hy3": {
-    "emoji": "🐉",
-    "title": "Emberwing",
-    "color": "#fb7185"
-  },
-  "deepseek-v4-pro": {
-    "emoji": "🐋",
-    "title": "Abyss",
-    "color": "#4d6bfe"
-  },
-  "deepseek-v4-flash-0731": {
-    "emoji": "⚡",
-    "title": "Surge",
-    "color": "#38bdf8"
-  },
-  "glm-5.2": {
-    "emoji": "🦉",
-    "title": "Sage",
-    "color": "#a78bfa"
-  },
-  "mimo-v2.5": {
-    "emoji": "🦊",
-    "title": "Kitsune",
-    "color": "#f97316"
-  },
-  "ox-alpha": {
+  "claude-opus-5.5": {
     "emoji": "👾",
     "title": "Glitch",
     "color": "#c084fc"
   },
-  "gpt-5.6-luna": {
-    "emoji": "🌙",
-    "title": "Luna",
-    "color": "#10a37f"
+  "minimax-m3.1-flash": {
+    "emoji": "👾",
+    "title": "Glitch",
+    "color": "#c084fc"
+  },
+  "kimi-k3.1-pro": {
+    "emoji": "🐺",
+    "title": "Wolfpack",
+    "color": "#facc15"
+  },
+  "deepseek-v4.1-flash": {
+    "emoji": "👾",
+    "title": "Glitch",
+    "color": "#c084fc"
+  },
+  "gpt-6-luna": {
+    "emoji": "🤖",
+    "title": "Rookie",
+    "color": "#94a3b8"
+  },
+  "hy4": {
+    "emoji": "🛰️",
+    "title": "Orbit",
+    "color": "#60a5fa"
+  },
+  "step-5-preview": {
+    "emoji": "🛰️",
+    "title": "Orbit",
+    "color": "#60a5fa"
+  },
+  "deepseek-v4.1-flash-1017": {
+    "emoji": "👾",
+    "title": "Glitch",
+    "color": "#c084fc"
   }
 }
