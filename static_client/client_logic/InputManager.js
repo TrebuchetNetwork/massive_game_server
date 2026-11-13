@@ -99,6 +99,7 @@ export function createInputManager({
     let inputUiKeyDownHandler = null;
     let inputUiKeyUpHandler = null;
     let inputWindowResizeHandler = null;
+    let inputWindowBlurHandler = null;
     let managedTouchListeners = [];
     let appViewRectCache = null;
     let appViewRectCachedAt = 0;
@@ -936,15 +937,18 @@ export function createInputManager({
         if (inputWindowResizeHandler) {
             window.removeEventListener('resize', inputWindowResizeHandler);
         }
+        if (inputWindowBlurHandler) {
+            window.removeEventListener('blur', inputWindowBlurHandler);
+        }
+        if (inputMouseUpHandler) {
+            document.removeEventListener('mouseup', inputMouseUpHandler);
+        }
         const view = app?.view || null;
         if (view && inputMouseMoveHandler) {
             view.removeEventListener('mousemove', inputMouseMoveHandler);
         }
         if (view && inputMouseDownHandler) {
             view.removeEventListener('mousedown', inputMouseDownHandler);
-        }
-        if (view && inputMouseUpHandler) {
-            view.removeEventListener('mouseup', inputMouseUpHandler);
         }
         if (view && inputContextMenuHandler) {
             view.removeEventListener('contextmenu', inputContextMenuHandler);
@@ -958,6 +962,7 @@ export function createInputManager({
         inputUiKeyDownHandler = null;
         inputUiKeyUpHandler = null;
         inputWindowResizeHandler = null;
+        inputWindowBlurHandler = null;
         if (outOfAmmoSoundResetTimer) {
             clearTimeout(outOfAmmoSoundResetTimer);
             outOfAmmoSoundResetTimer = null;
@@ -1014,8 +1019,13 @@ export function createInputManager({
                 }
             }
         };
+        const releaseMouseFire = () => {
+            if (!mobileStickyFireArmed && !mobileFireTouchActive && !(mobileAimActive && gameSettings.mobileAutoFireAim)) {
+                inputState.shooting = false;
+            }
+        };
         inputMouseUpHandler = (e) => {
-            if (e.button === 0) inputState.shooting = false;
+            if (e.button === 0) releaseMouseFire();
         };
         inputContextMenuHandler = (e) => e.preventDefault();
 
@@ -1060,9 +1070,11 @@ export function createInputManager({
             }
         };
         window.addEventListener('resize', inputWindowResizeHandler);
+        inputWindowBlurHandler = releaseMouseFire;
+        window.addEventListener('blur', inputWindowBlurHandler);
+        document.addEventListener('mouseup', inputMouseUpHandler);
         app.view.addEventListener('mousemove', inputMouseMoveHandler);
         app.view.addEventListener('mousedown', inputMouseDownHandler);
-        app.view.addEventListener('mouseup', inputMouseUpHandler);
         app.view.addEventListener('contextmenu', inputContextMenuHandler);
 
         setupTouchControls();
@@ -1191,7 +1203,9 @@ export function createInputManager({
         let fireTouchId = null;
         const endFire = () => {
             mobileFireTouchActive = false;
-            if (!mobileStickyFireArmed && !mobileAimActive) inputState.shooting = false;
+            if (!mobileStickyFireArmed && (!mobileAimActive || !gameSettings.mobileAutoFireAim)) {
+                inputState.shooting = false;
+            }
             fireTouchId = null;
         };
 
