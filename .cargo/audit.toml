@@ -4,5 +4,4 @@
 # are upgraded.
 ignore = [
     "RUSTSEC-2025-0134", # rustls-pemfile (direct; unmaintained warning, no drop-in replacement yet)
-    "RUSTSEC-2025-0141", # bincode (transitive via webrtc)
 ]
